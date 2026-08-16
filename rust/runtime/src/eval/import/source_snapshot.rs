@@ -5,9 +5,16 @@
 
 use std::{
     collections::BTreeSet,
-    fs::{self, OpenOptions},
-    io::{self, Write},
-    os::unix::fs::PermissionsExt,
+    ffi::{CStr, CString, OsString},
+    fs::{self, File, Metadata, OpenOptions},
+    io::{self, Read, Write},
+    os::{
+        fd::{AsRawFd, FromRawFd, IntoRawFd},
+        unix::{
+            ffi::{OsStrExt, OsStringExt},
+            fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+        },
+    },
     path::{Component, Path},
     sync::Arc,
 };
@@ -241,75 +248,121 @@ pub(super) struct SourceTreeSnapshot {
 
 impl SourceTreeSnapshot {
     pub(super) fn capture(root: &Path) -> Result<Self, HarborImportError> {
-        let metadata = fs::symlink_metadata(root).map_err(|error| {
+        Self::capture_with_hook(root, &mut |_relative_path: &Path| {})
+    }
+
+    #[cfg(test)]
+    fn capture_with_before_open(
+        root: &Path,
+        mut before_open: impl FnMut(&Path),
+    ) -> Result<Self, HarborImportError> {
+        Self::capture_with_hook(root, &mut before_open)
+    }
+
+    fn capture_with_hook<F>(root: &Path, before_open: &mut F) -> Result<Self, HarborImportError>
+    where
+        F: FnMut(&Path),
+    {
+        let path_metadata = fs::symlink_metadata(root).map_err(|error| {
             HarborImportError::Unavailable(format!("{}: {error}", root.display()))
         })?;
-        if !metadata.file_type().is_dir() {
+        if !path_metadata.file_type().is_dir() {
             return Err(HarborImportError::InvalidPackage(format!(
                 "source tree root must be a directory: {}",
                 root.display()
             )));
         }
+        let root_directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(root)
+            .map_err(|error| {
+                HarborImportError::Unavailable(format!("{}: {error}", root.display()))
+            })?;
+        let opened_metadata = root_directory.metadata().map_err(|error| {
+            HarborImportError::Unavailable(format!("{}: {error}", root.display()))
+        })?;
+        if !same_opened_object(&path_metadata, &opened_metadata)
+            || !opened_metadata.file_type().is_dir()
+        {
+            return Err(source_changed_error(Path::new(".")));
+        }
 
         let mut entries = Vec::new();
-        Self::capture_directory(root, root, &mut entries)?;
+        Self::capture_directory(&root_directory, Path::new(""), &mut entries, before_open)?;
         entries.sort_by(|left, right| left.path.cmp(&right.path));
         Ok(Self { entries })
     }
 
-    fn capture_directory(
-        root: &Path,
-        directory: &Path,
+    fn capture_directory<F>(
+        directory: &File,
+        relative_directory: &Path,
         entries: &mut Vec<SourceEntry>,
-    ) -> Result<(), HarborImportError> {
-        let children = fs::read_dir(directory)
-            .map_err(|error| {
-                HarborImportError::Unavailable(format!("{}: {error}", directory.display()))
-            })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                HarborImportError::Unavailable(format!("{}: {error}", directory.display()))
-            })?;
+        before_open: &mut F,
+    ) -> Result<(), HarborImportError>
+    where
+        F: FnMut(&Path),
+    {
+        let before = directory
+            .metadata()
+            .map_err(|error| source_unavailable_error(relative_directory, error))?;
+        let children = read_directory(directory)
+            .map_err(|error| source_unavailable_error(relative_directory, error))?;
         for child in children {
-            let path = child.path();
-            let relative = path.strip_prefix(root).map_err(|error| {
-                HarborImportError::Unavailable(format!("{}: {error}", path.display()))
-            })?;
-            let source_path = SourcePath::from_relative_path(relative)?;
-            let file_type = child.file_type().map_err(|error| {
-                HarborImportError::Unavailable(format!("{}: {error}", path.display()))
-            })?;
-            if file_type.is_dir() {
+            let relative = relative_directory.join(&child.name);
+            let source_path = SourcePath::from_relative_path(&relative)?;
+            if !is_supported_directory_entry_type(child.entry_type) {
+                return Err(unsupported_source_entry_error(&source_path));
+            }
+            before_open(&relative);
+            let mut opened = open_source_entry(directory, &child.name, &source_path)?;
+            let metadata = opened
+                .metadata()
+                .map_err(|error| source_unavailable_error(&relative, error))?;
+            if (child.inode != 0 && child.inode != metadata.ino())
+                || !directory_entry_type_matches(child.entry_type, &metadata)
+            {
+                return Err(source_changed_error(&relative));
+            }
+            if metadata.file_type().is_dir() {
                 entries.push(SourceEntry {
                     path: source_path,
                     kind: SourceEntryKind::Directory,
                     mode: 0o755,
                     bytes: Arc::from(Vec::<u8>::new()),
                 });
-                Self::capture_directory(root, &path, entries)?;
-            } else if file_type.is_file() {
-                let metadata = child.metadata().map_err(|error| {
-                    HarborImportError::Unavailable(format!("{}: {error}", path.display()))
-                })?;
+                Self::capture_directory(&opened, &relative, entries, before_open)?;
+            } else if metadata.file_type().is_file() {
                 let mode = if metadata.permissions().mode() & 0o111 == 0 {
                     0o644
                 } else {
                     0o755
                 };
+                let mut bytes = Vec::new();
+                opened
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| source_unavailable_error(&relative, error))?;
+                let after = opened
+                    .metadata()
+                    .map_err(|error| source_unavailable_error(&relative, error))?;
+                if metadata_fingerprint(&metadata) != metadata_fingerprint(&after) {
+                    return Err(source_changed_error(&relative));
+                }
                 entries.push(SourceEntry {
                     path: source_path,
                     kind: SourceEntryKind::File,
                     mode,
-                    bytes: Arc::from(fs::read(&path).map_err(|error| {
-                        HarborImportError::Unavailable(format!("{}: {error}", path.display()))
-                    })?),
+                    bytes: Arc::from(bytes),
                 });
             } else {
-                return Err(HarborImportError::InvalidPackage(format!(
-                    "source entry must be a regular file or directory: {}",
-                    source_path.as_str()
-                )));
+                return Err(unsupported_source_entry_error(&source_path));
             }
+        }
+        let after = directory
+            .metadata()
+            .map_err(|error| source_unavailable_error(relative_directory, error))?;
+        if metadata_fingerprint(&before) != metadata_fingerprint(&after) {
+            return Err(source_changed_error(relative_directory));
         }
         Ok(())
     }
@@ -416,6 +469,186 @@ impl SourceTreeSnapshot {
     }
 }
 
+#[derive(Debug)]
+struct EnumeratedSourceEntry {
+    name: OsString,
+    inode: u64,
+    entry_type: u8,
+}
+
+struct DirectoryStream(*mut libc::DIR);
+
+impl DirectoryStream {
+    fn open(directory: &File) -> io::Result<Self> {
+        let descriptor = directory.try_clone()?.into_raw_fd();
+        // SAFETY: `descriptor` is a valid owned directory descriptor. On success,
+        // `fdopendir` takes ownership and `DirectoryStream::drop` closes it.
+        let stream = unsafe { libc::fdopendir(descriptor) };
+        if stream.is_null() {
+            let error = io::Error::last_os_error();
+            // SAFETY: `fdopendir` did not take ownership on failure, so rebuilding
+            // the `File` transfers the still-owned descriptor back to RAII cleanup.
+            drop(unsafe { File::from_raw_fd(descriptor) });
+            return Err(error);
+        }
+        Ok(Self(stream))
+    }
+
+    fn read_entries(&mut self) -> io::Result<Vec<EnumeratedSourceEntry>> {
+        let mut entries = Vec::new();
+        loop {
+            set_errno(0);
+            // SAFETY: `self.0` remains a live `DIR*` owned by this stream, and the
+            // returned pointer is consumed before the next `readdir` call.
+            let entry = unsafe { libc::readdir(self.0) };
+            if entry.is_null() {
+                let error = current_errno();
+                if error == 0 {
+                    break;
+                }
+                return Err(io::Error::from_raw_os_error(error));
+            }
+            // SAFETY: POSIX guarantees that `d_name` is NUL-terminated for the
+            // lifetime of the current directory entry.
+            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            entries.push(EnumeratedSourceEntry {
+                name: OsString::from_vec(name.to_vec()),
+                // SAFETY: `entry` is non-null and valid until the next readdir.
+                inode: unsafe { (*entry).d_ino as u64 },
+                // SAFETY: same as for `d_ino`; copy the value before advancing.
+                entry_type: unsafe { (*entry).d_type },
+            });
+        }
+        entries.sort_by(|left, right| left.name.as_bytes().cmp(right.name.as_bytes()));
+        Ok(entries)
+    }
+}
+
+impl Drop for DirectoryStream {
+    fn drop(&mut self) {
+        // SAFETY: this stream uniquely owns the live `DIR*` returned by fdopendir.
+        let _ = unsafe { libc::closedir(self.0) };
+    }
+}
+
+fn read_directory(directory: &File) -> io::Result<Vec<EnumeratedSourceEntry>> {
+    DirectoryStream::open(directory)?.read_entries()
+}
+
+fn open_source_entry(
+    directory: &File,
+    name: &std::ffi::OsStr,
+    source_path: &SourcePath,
+) -> Result<File, HarborImportError> {
+    let name = CString::new(name.as_bytes()).map_err(|_| {
+        HarborImportError::InvalidPackage(format!(
+            "source entry name contains NUL: {:?}",
+            source_path.as_str()
+        ))
+    })?;
+    // SAFETY: `directory` is a live directory descriptor and `name` is a
+    // NUL-terminated single directory-entry name. O_NOFOLLOW prevents the final
+    // component from becoming a link traversal between enumeration and open.
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        )
+    };
+    if descriptor < 0 {
+        let error = io::Error::last_os_error();
+        return Err(match error.raw_os_error() {
+            Some(libc::ELOOP | libc::ENOENT | libc::ENOTDIR | libc::ESTALE) => {
+                source_changed_error(Path::new(source_path.as_str()))
+            }
+            _ => HarborImportError::Unavailable(format!("{}: {error}", source_path.as_str())),
+        });
+    }
+    // SAFETY: a successful `openat` returns one new owned descriptor.
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+fn is_supported_directory_entry_type(entry_type: u8) -> bool {
+    entry_type == libc::DT_UNKNOWN || entry_type == libc::DT_DIR || entry_type == libc::DT_REG
+}
+
+fn directory_entry_type_matches(entry_type: u8, metadata: &Metadata) -> bool {
+    entry_type == libc::DT_UNKNOWN
+        || (entry_type == libc::DT_DIR && metadata.file_type().is_dir())
+        || (entry_type == libc::DT_REG && metadata.file_type().is_file())
+}
+
+fn same_opened_object(before: &Metadata, after: &Metadata) -> bool {
+    before.dev() == after.dev()
+        && before.ino() == after.ino()
+        && before.file_type().is_dir() == after.file_type().is_dir()
+        && before.file_type().is_file() == after.file_type().is_file()
+}
+
+fn metadata_fingerprint(metadata: &Metadata) -> (u64, u64, u32, u64, i64, i64, i64, i64) {
+    (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.mode(),
+        metadata.size(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    )
+}
+
+fn unsupported_source_entry_error(source_path: &SourcePath) -> HarborImportError {
+    HarborImportError::InvalidPackage(format!(
+        "source entry must be a regular file or directory: {}",
+        source_path.as_str()
+    ))
+}
+
+fn source_changed_error(relative_path: &Path) -> HarborImportError {
+    HarborImportError::InvalidPackage(format!(
+        "source entry changed during acquisition or became a link: {}",
+        relative_path.display()
+    ))
+}
+
+fn source_unavailable_error(relative_path: &Path, error: io::Error) -> HarborImportError {
+    HarborImportError::Unavailable(format!("{}: {error}", relative_path.display()))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn errno_pointer() -> *mut libc::c_int {
+    // SAFETY: libc exposes the calling thread's errno location on these targets.
+    unsafe { libc::__errno_location() }
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
+fn errno_pointer() -> *mut libc::c_int {
+    // SAFETY: libc exposes the calling thread's errno location on these targets.
+    unsafe { libc::__error() }
+}
+
+fn set_errno(value: libc::c_int) {
+    // SAFETY: `errno_pointer` returns this thread's writable errno cell.
+    unsafe { *errno_pointer() = value };
+}
+
+fn current_errno() -> libc::c_int {
+    // SAFETY: `errno_pointer` returns this thread's readable errno cell.
+    unsafe { *errno_pointer() }
+}
+
 fn ensure_empty_directory(destination: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(destination)?;
     if !metadata.file_type().is_dir() || fs::read_dir(destination)?.next().is_some() {
@@ -474,6 +707,7 @@ fn append_bytes(material: &mut Vec<u8>, value: &[u8]) {
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::Cell,
         ffi::OsString,
         fs,
         os::{
@@ -484,7 +718,7 @@ mod tests {
         process::Command,
     };
 
-    use super::{SourceEntryKind, SourcePath, SourceTreeSnapshot};
+    use super::{HarborImportError, SourceEntryKind, SourcePath, SourceTreeSnapshot};
 
     #[test]
     fn capture_orders_entries_and_normalizes_modes_independent_of_creation_order() {
@@ -635,5 +869,27 @@ mod tests {
         assert!(SourcePath::from_relative_path(Path::new("../escape")).is_err());
         assert!(SourcePath::from_relative_path(Path::new("/absolute")).is_err());
         assert!(SourcePath::from_relative_path(Path::new("")).is_err());
+    }
+
+    #[test]
+    fn snapshot_rejects_file_swapped_to_an_outside_symlink_before_open() {
+        let origin = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let source_file = origin.path().join("source.txt");
+        let outside_file = outside.path().join("outside.txt");
+        fs::write(&source_file, b"source bytes\n").unwrap();
+        fs::write(&outside_file, b"outside bytes must never be captured\n").unwrap();
+        let did_swap = Cell::new(false);
+
+        let result = SourceTreeSnapshot::capture_with_before_open(origin.path(), |relative| {
+            if relative == Path::new("source.txt") {
+                fs::remove_file(&source_file).unwrap();
+                symlink(&outside_file, &source_file).unwrap();
+                did_swap.set(true);
+            }
+        });
+
+        assert!(did_swap.get(), "the adversarial swap hook must run");
+        assert!(matches!(result, Err(HarborImportError::InvalidPackage(_))));
     }
 }
