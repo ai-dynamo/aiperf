@@ -81,18 +81,14 @@ impl<'a> HarborImporter<'a> {
         let (mut package, task) = normalize::normalize(&bytes)?;
         if let HarborSource::Local(location) = source {
             let path = std::path::Path::new(location);
-            let source_root = if path.is_dir() {
-                path.to_path_buf()
-            } else {
-                path.parent()
-                    .ok_or_else(|| {
-                        HarborImportError::Unavailable(format!(
-                            "local package has no parent: {location}"
-                        ))
-                    })?
-                    .to_path_buf()
-            };
-            package.set_source_root(source_root);
+            let source_root = path.is_dir().then(|| path.to_path_buf()).or_else(|| {
+                path.is_file()
+                    .then(|| path.parent().map(std::path::Path::to_path_buf))
+                    .flatten()
+            });
+            if let Some(source_root) = source_root {
+                package.set_source_root(source_root);
+            }
         }
         let report = ImportReport {
             source_digest,
