@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::process::Command;
+use std::time::Duration;
 
 use aiperf_runtime::eval::{
     ArtifactDigest, HarborImporter, HarborSource, ImportDisposition, NativeSourceAcquirer,
@@ -205,10 +206,10 @@ fn imports_standard_directory_manifest_with_instruction_and_verifier() {
 name = "example/repair-1"
 
 [agent]
-timeout_sec = 60.0
+timeout_sec = 7.5
 
 [verifier]
-timeout_sec = 30.0
+timeout_sec = 3.25
 
 [environment]
 cpus = 1
@@ -236,6 +237,10 @@ memory_mb = 512
     );
     assert_eq!(imported.package.verifier_mode(), VerifierMode::Shared);
     assert_eq!(imported.package.container_resources(), Some((1, 512)));
+    assert_eq!(
+        imported.package.timeouts(),
+        Some((Duration::from_millis(7500), Duration::from_millis(3250)))
+    );
 
     fs::write(
         task_root.join("instruction.md"),
@@ -246,6 +251,38 @@ memory_mb = 512
         .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
         .unwrap();
     assert_ne!(imported.report.source_digest, changed.report.source_digest);
+}
+
+#[test]
+fn rejects_standard_zero_timeout() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("zero-timeout");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+
+[task]
+name = "example/zero-timeout"
+
+[agent]
+timeout_sec = 0
+
+[verifier]
+timeout_sec = 3
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+
+    assert!(matches!(
+        HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),
+        Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
+    ));
 }
 
 #[test]

@@ -7,6 +7,7 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Component, Path},
+    time::Duration,
 };
 
 use serde::Deserialize;
@@ -31,6 +32,7 @@ pub struct HarborTaskPackage {
     source_root: Option<std::path::PathBuf>,
     is_standard_directory: bool,
     container_resources: Option<(u64, u64)>,
+    timeouts: Option<(Duration, Duration)>,
 }
 
 impl HarborTaskPackage {
@@ -99,6 +101,11 @@ impl HarborTaskPackage {
         self.container_resources
     }
 
+    /// Returns authored agent and verifier execution timeouts, when configured.
+    pub const fn timeouts(&self) -> Option<(Duration, Duration)> {
+        self.timeouts
+    }
+
     /// Associates an acquired local source tree with this immutable package material.
     pub(crate) fn set_source_root(&mut self, source_root: std::path::PathBuf) {
         self.source_root = Some(source_root);
@@ -165,6 +172,7 @@ pub(super) fn normalize(
         source_root: None,
         is_standard_directory: false,
         container_resources: None,
+        timeouts: None,
     };
     Ok((package, reference))
 }
@@ -173,6 +181,7 @@ pub(super) fn normalize(
 struct StandardTaskManifest {
     schema_version: String,
     task: StandardTaskSection,
+    agent: Option<StandardAgentSection>,
     verifier: Option<StandardVerifierSection>,
     #[serde(default)]
     artifacts: Vec<String>,
@@ -185,8 +194,14 @@ struct StandardTaskSection {
 }
 
 #[derive(Debug, Deserialize)]
+struct StandardAgentSection {
+    timeout_sec: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct StandardVerifierSection {
     environment_mode: Option<String>,
+    timeout_sec: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -237,8 +252,8 @@ pub(super) fn normalize_standard_directory(
     );
     let verifier_mode = match manifest
         .verifier
-        .and_then(|verifier| verifier.environment_mode)
-        .as_deref()
+        .as_ref()
+        .and_then(|verifier| verifier.environment_mode.as_deref())
     {
         None | Some("shared") => VerifierMode::Shared,
         Some("separate") => VerifierMode::Separate,
@@ -248,6 +263,13 @@ pub(super) fn normalize_standard_directory(
             )));
         }
     };
+    let timeouts = normalize_timeouts(
+        manifest.agent.as_ref().and_then(|agent| agent.timeout_sec),
+        manifest
+            .verifier
+            .as_ref()
+            .and_then(|verifier| verifier.timeout_sec),
+    )?;
     let declared_artifacts = normalize_declared_artifacts(manifest.artifacts)?;
     let container_resources = manifest
         .environment
@@ -278,8 +300,41 @@ pub(super) fn normalize_standard_directory(
         source_root: None,
         is_standard_directory: true,
         container_resources,
+        timeouts,
     };
     Ok((package, task))
+}
+
+fn normalize_timeouts(
+    agent_seconds: Option<f64>,
+    verifier_seconds: Option<f64>,
+) -> Result<Option<(Duration, Duration)>, HarborImportError> {
+    let Some(agent_seconds) = agent_seconds else {
+        if verifier_seconds.is_some() {
+            return Err(HarborImportError::InvalidPackage(
+                "agent.timeout_sec must be configured with verifier.timeout_sec".to_owned(),
+            ));
+        }
+        return Ok(None);
+    };
+    let Some(verifier_seconds) = verifier_seconds else {
+        return Err(HarborImportError::InvalidPackage(
+            "verifier.timeout_sec must be configured with agent.timeout_sec".to_owned(),
+        ));
+    };
+    let agent = normalize_timeout("agent.timeout_sec", agent_seconds)?;
+    let verifier = normalize_timeout("verifier.timeout_sec", verifier_seconds)?;
+    Ok(Some((agent, verifier)))
+}
+
+fn normalize_timeout(field: &str, seconds: f64) -> Result<Duration, HarborImportError> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "{field} must be finite and positive"
+        )));
+    }
+    Duration::try_from_secs_f64(seconds)
+        .map_err(|error| HarborImportError::InvalidPackage(format!("{field} is invalid: {error}")))
 }
 
 fn read_required_source_file(
