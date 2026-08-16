@@ -167,6 +167,8 @@ struct StandardTaskManifest {
     schema_version: String,
     task: StandardTaskSection,
     verifier: Option<StandardVerifierSection>,
+    #[serde(default)]
+    artifacts: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,6 +228,7 @@ pub(super) fn normalize_standard_directory(
             )));
         }
     };
+    let declared_artifacts = normalize_declared_artifacts(manifest.artifacts)?;
     let reference_digest = ArtifactDigest::from_bytes(
         format!(
             "id={}\u{1f}instruction={}\u{1f}environment={}\u{1f}verifier={}",
@@ -246,7 +249,7 @@ pub(super) fn normalize_standard_directory(
         agent_command: vec!["aiperf-task-agent".to_owned()],
         verifier_command: vec!["/bin/sh".to_owned(), "tests/test.sh".to_owned()],
         verifier_mode,
-        declared_artifacts: Vec::new(),
+        declared_artifacts,
         source_digest: ArtifactDigest::from_bytes(manifest_bytes),
         source_bytes: manifest_bytes.to_vec(),
         source_root: None,

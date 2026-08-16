@@ -247,6 +247,35 @@ memory_mb = 512
     assert_ne!(imported.report.source_digest, changed.report.source_digest);
 }
 
+#[test]
+fn imports_standard_separate_verifier_artifacts() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("separate-task");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+artifacts = ["/work/result.txt"]
+[task]
+name = "example/separate-1"
+[verifier]
+environment_mode = "separate"
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Write a result.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+
+    assert_eq!(imported.package.verifier_mode(), VerifierMode::Separate);
+    assert_eq!(imported.package.declared_artifacts(), ["/work/result.txt"]);
+}
+
 fn run_git<const N: usize>(repository: &std::path::Path, arguments: [&str; N]) {
     let status = Command::new("git")
         .arg("-C")
