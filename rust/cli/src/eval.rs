@@ -120,11 +120,46 @@ struct MultiStepEvalStepOutput {
 #[derive(Serialize)]
 struct LifecycleRecord<'a> {
     version: u32,
+    source: LifecycleSourceProvenance<'a>,
     trial: &'a TrialSpec,
     verifier_result: &'a aiperf_runtime::eval::VerifierResult,
     initial_score: &'a aiperf_runtime::eval::ScoreVersion,
     regraded_score: &'a aiperf_runtime::eval::ScoreVersion,
     evidence: &'a [aiperf_runtime::eval::EvidenceEvent],
+}
+
+/// Immutable caller-selected package source retained with a lifecycle record.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum LifecycleSourceProvenance<'a> {
+    /// A caller-selected local source location.
+    Local { location: &'a str },
+    /// A Git package identified by its repository, exact revision, and package path.
+    PinnedGit {
+        repository: &'a str,
+        revision: &'a str,
+        package_path: &'a str,
+    },
+    /// A caller-selected registry package reference.
+    Registry { reference: &'a str },
+}
+
+impl<'a> From<&'a HarborSource> for LifecycleSourceProvenance<'a> {
+    fn from(source: &'a HarborSource) -> Self {
+        match source {
+            HarborSource::Local(location) => Self::Local { location },
+            HarborSource::PinnedGit {
+                repository,
+                revision,
+                package_path,
+            } => Self::PinnedGit {
+                repository,
+                revision,
+                package_path,
+            },
+            HarborSource::Registry(reference) => Self::Registry { reference },
+        }
+    }
 }
 
 /// Serializes a completed native evaluation result into its public JSON shape.
@@ -176,13 +211,13 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .lifecycle_output
         .unwrap_or_else(|| PathBuf::from("aiperf-eval-lifecycle.json"));
     let has_external_agent_command = flags.agent_command.is_some();
-    let source = source_from_flags(
+    let requested_source = source_from_flags(
         flags.task,
         flags.git_repository,
         flags.git_revision,
         flags.git_path,
     )?;
-    let (_pinned_tree, source) = materialize_pinned_directory(&source)?;
+    let (_pinned_tree, source) = materialize_pinned_directory(&requested_source)?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
     let use_docker = match flags.sandbox {
         SandboxFlag::Auto => imported.package.is_standard_directory(),
@@ -208,7 +243,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .unwrap_or_else(|| imported.package.agent_command().to_vec());
     let requested_verifier_mode = flags.verifier_mode.map(VerifierMode::from);
     let verifier_mode = requested_verifier_mode.unwrap_or_else(|| imported.package.verifier_mode());
-    if let Some(lifecycle) = &lifecycle {
+    let lifecycle_trial = if let Some(lifecycle) = &lifecycle {
         validate_lifecycle_execution(
             lifecycle,
             &imported,
@@ -217,7 +252,12 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             has_external_agent_command,
             &agent_command,
         )?;
-    }
+        Some(HarborEvaluationCoordinator::resolve_trial(
+            &imported, lifecycle,
+        )?)
+    } else {
+        None
+    };
     if use_docker && imported.package.is_standard_directory() {
         let plan = imported.package.execution_plan();
         let has_verifier_mode_conflict = requested_verifier_mode.is_some_and(|requested| {
@@ -277,8 +317,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             artifacts: &result.artifacts,
             reward: &result.reward.metrics,
         })?;
-        if let Some(lifecycle) = lifecycle {
-            let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)?;
+        if let (Some(lifecycle), Some(trial)) = (lifecycle, lifecycle_trial) {
             let completed = HarborEvaluationCoordinator::complete_attempt(
                 imported.clone(),
                 trial,
@@ -288,6 +327,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             )?;
             let record = LifecycleRecord {
                 version: lifecycle.version,
+                source: LifecycleSourceProvenance::from(&requested_source),
                 trial: &completed.trial,
                 verifier_result: &completed.verifier_result,
                 initial_score: &completed.initial_score,
@@ -464,8 +504,8 @@ mod tests {
     use std::{fs, process::Command};
 
     use super::{
-        agent_command_argv, materialize_pinned_directory, persist_lifecycle_record,
-        read_lifecycle_request, source_from_flags,
+        LifecycleSourceProvenance, agent_command_argv, materialize_pinned_directory,
+        persist_lifecycle_record, read_lifecycle_request, source_from_flags,
     };
     use aiperf_runtime::eval::HarborSource;
 
@@ -522,6 +562,31 @@ mod tests {
         )
         .unwrap();
         assert!(read_lifecycle_request(&request_path).is_err());
+    }
+
+    #[test]
+    fn lifecycle_provenance_keeps_the_original_pinned_git_identity() {
+        let first = HarborSource::pinned_git(
+            "https://example.invalid/tasks.git",
+            "a".repeat(40),
+            "tasks/example/task.toml",
+        )
+        .unwrap();
+        let second = HarborSource::pinned_git(
+            "https://example.invalid/tasks.git",
+            "b".repeat(40),
+            "tasks/example/task.toml",
+        )
+        .unwrap();
+
+        let first = serde_json::to_value(LifecycleSourceProvenance::from(&first)).unwrap();
+        let second = serde_json::to_value(LifecycleSourceProvenance::from(&second)).unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(first["kind"], "pinned_git");
+        assert_eq!(first["repository"], "https://example.invalid/tasks.git");
+        assert_eq!(first["revision"], "a".repeat(40));
+        assert_eq!(first["package_path"], "tasks/example/task.toml");
     }
 
     #[test]
