@@ -333,8 +333,15 @@ fn normalize_timeout(field: &str, seconds: f64) -> Result<Duration, HarborImport
             "{field} must be finite and positive"
         )));
     }
-    Duration::try_from_secs_f64(seconds)
-        .map_err(|error| HarborImportError::InvalidPackage(format!("{field} is invalid: {error}")))
+    let duration = Duration::try_from_secs_f64(seconds).map_err(|error| {
+        HarborImportError::InvalidPackage(format!("{field} is invalid: {error}"))
+    })?;
+    if duration.is_zero() {
+        return Err(HarborImportError::InvalidPackage(format!(
+            "{field} is below nanosecond precision"
+        )));
+    }
+    Ok(duration)
 }
 
 fn read_required_source_file(

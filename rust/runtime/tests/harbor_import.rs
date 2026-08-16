@@ -254,35 +254,39 @@ memory_mb = 512
 }
 
 #[test]
-fn rejects_standard_zero_timeout() {
+fn rejects_standard_zero_or_subnanosecond_timeout() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("zero-timeout");
     fs::create_dir_all(task_root.join("environment")).unwrap();
     fs::create_dir_all(task_root.join("tests")).unwrap();
-    fs::write(
-        task_root.join("task.toml"),
-        r#"schema_version = "1.0"
+    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    for timeout in ["0.0000000001", "0"] {
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                r#"schema_version = "1.0"
 
 [task]
 name = "example/zero-timeout"
 
 [agent]
-timeout_sec = 0
+timeout_sec = {timeout}
 
 [verifier]
 timeout_sec = 3
-"#,
-    )
-    .unwrap();
-    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
-    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
-    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+"#
+            ),
+        )
+        .unwrap();
 
-    assert!(matches!(
-        HarborImporter::new(&NativeSourceAcquirer)
-            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),
-        Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
-    ));
+        assert!(matches!(
+            HarborImporter::new(&NativeSourceAcquirer)
+                .import(&HarborSource::local(task_root.to_string_lossy()).unwrap()),
+            Err(aiperf_runtime::eval::HarborImportError::InvalidPackage(_))
+        ));
+    }
 }
 
 #[test]
