@@ -263,6 +263,44 @@ fn native_eval_command_transfers_only_declared_directory_artifacts_to_a_separate
 
 #[test]
 #[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
+fn native_eval_command_allows_a_non_root_separate_verifier_to_read_artifacts() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("docker-non-root-artifacts");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\nartifacts = [\"/work/result.txt\"]\n[task]\nname = \"example/docker-non-root-artifacts\"\n[environment]\nworkdir = \"/work\"\n[agent]\nuser = \"root\"\n[verifier]\nenvironment_mode = \"separate\"\nuser = \"nobody\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Write a result.\n").unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "FROM openclaw-sandbox:bookworm-slim\nUSER root\nRUN mkdir -p /logs/verifier && chmod 0777 /logs/verifier\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "set -eu\ntest \"$(cat /work/result.txt)\" = result\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+
+    let exit = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--agent-command".to_owned(),
+        "printf result > result.txt".to_owned(),
+    ])
+    .unwrap();
+
+    assert_eq!(exit, 0);
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
 fn docker_timeout_removes_agent_container_after_descendant_command() {
     let _docker_test_lock = DOCKER_TIMEOUT_TEST_LOCK.lock().unwrap();
     let task_root = docker_timeout_task(

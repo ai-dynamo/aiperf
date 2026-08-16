@@ -7,6 +7,7 @@ use std::{
     cell::{Cell, RefCell},
     fs,
     io::{self, Read},
+    os::unix::fs::PermissionsExt,
     process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
@@ -212,6 +213,8 @@ impl DockerProcessSandbox {
             let verifier_container = if verifier.mode() == VerifierMode::Separate {
                 let verifier_workspace = tempfile::tempdir()
                     .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                fs::set_permissions(verifier_workspace.path(), fs::Permissions::from_mode(0o755))
+                    .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
                 transfer_artifacts(
                     artifact_collection.path(),
                     verifier_workspace.path(),
@@ -249,9 +252,6 @@ impl DockerProcessSandbox {
             let verifier_name = verifier_container
                 .as_ref()
                 .map_or(container.as_str(), |(name, _)| name.as_str());
-            let verifier_workspace = verifier_container
-                .as_ref()
-                .map_or(&workspace, |(_, workspace)| workspace);
             runtime.copy(&DockerCopyRequest::new([
                 "cp".to_owned(),
                 format!("{}/.", source_root.join("tests").display()),
@@ -274,7 +274,9 @@ impl DockerProcessSandbox {
                 verifier.phase(),
                 secrets,
             )?;
-            let reward = read_reward_with_runtime(runtime, verifier_name, verifier_workspace)?;
+            let reward_workspace = tempfile::tempdir()
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            let reward = read_reward_with_runtime(runtime, verifier_name, &reward_workspace)?;
             Ok(LocalExecutionResult {
                 artifacts,
                 reward,

@@ -8,6 +8,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fs,
     io::{self, Read},
+    os::unix::fs::PermissionsExt,
 };
 
 use aiperf_runtime::eval::{
@@ -346,6 +347,35 @@ fn transfer_revalidates_the_collected_file_digest() {
     .expect_err("transfer must verify the collection digest before copying");
 
     assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
+}
+
+#[test]
+fn transfer_makes_a_verified_artifact_readable_by_the_verifier() {
+    let temporary = tempfile::tempdir().unwrap();
+    let source = temporary.path().join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("result.txt"), b"result").unwrap();
+    fs::set_permissions(source.join("result.txt"), fs::Permissions::from_mode(0o600)).unwrap();
+    let destination = temporary.path().join("destination");
+
+    transfer_artifacts(
+        &source,
+        &destination,
+        &[(
+            "result.txt".to_owned(),
+            aiperf_runtime::eval::ArtifactDigest::from_bytes(b"result"),
+        )],
+    )
+    .unwrap();
+
+    assert_eq!(
+        fs::metadata(destination.join("result.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o644
+    );
 }
 
 #[test]

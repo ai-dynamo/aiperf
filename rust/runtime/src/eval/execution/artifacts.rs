@@ -7,6 +7,7 @@ use std::{
     collections::BTreeSet,
     fs,
     io::{self, Read, Write},
+    os::unix::fs::PermissionsExt,
     path::{Component, Path, PathBuf},
 };
 
@@ -234,13 +235,15 @@ fn write_artifact_stream(
             relative.display()
         )));
     }
-    temporary.persist_noclobber(path).map_err(|error| {
+    let file = temporary.persist_noclobber(path).map_err(|error| {
         EvalExecutionError::ArtifactCollection(format!(
             "artifact destination already exists: {} ({})",
             relative.display(),
             error.error
         ))
     })?;
+    file.set_permissions(fs::Permissions::from_mode(0o644))
+        .map_err(artifact_error)?;
     Ok(digest)
 }
 
