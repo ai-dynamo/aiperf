@@ -5,11 +5,12 @@ use std::cell::{Cell, RefCell};
 use std::fs;
 
 use aiperf_runtime::eval::{
-    AgentCapability, ArtifactDigest, AttemptId, DeclaredArtifactTransfer, DockerProcessSandbox,
-    EvalExecutionError, EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator,
-    HarborImportError, HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
-    NativeSourceAcquirer, SandboxRole, SourceAcquirer, VerifierExecutionError, VerifierMode,
-    VerifierSandboxFactory, WorkspaceOverlay,
+    AgentCapability, AgentVariantRef, ArtifactDigest, AttemptId, DeclaredArtifactTransfer,
+    DockerProcessSandbox, EvalExecutionError, EvalSandboxFactory, HarborAgentContract,
+    HarborEvaluationCoordinator, HarborImportError, HarborImporter, HarborLocalEvaluationRequest,
+    HarborSandboxRecipe, HarborSource, LocalProcessSandbox, ModelIdentity, NativeSourceAcquirer,
+    PolicyIdentity, RuntimeIdentity, SandboxRole, SourceAcquirer, TrialBudget,
+    VerifierExecutionError, VerifierMode, VerifierSandboxFactory, WorkspaceOverlay,
 };
 
 struct RecordingFactory {
@@ -257,6 +258,64 @@ fn local_process_sandbox_materializes_the_imported_directory_package_after_origi
         .unwrap();
 
     assert_eq!(result.reward.metrics["reward"], 1.0);
+}
+
+#[test]
+fn coordinator_completed_local_execution_constructs_trial_scores_and_ordered_evidence() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","printf patch > \"$AIPERF_EVAL_ROOT/results/patch.diff\""],"verifier_command":["sh","-c","test -f results/patch.diff && printf '{\"reward\":1.0,\"quality\":0.75}' > reward.json"],"declared_artifacts":["/results/patch.diff"]}"#;
+    let package_path = temporary.path().join("task.json");
+    fs::write(&package_path, package).unwrap();
+    let sandbox = RecordingFactory {
+        opened: Cell::new(false),
+        capabilities: vec![AgentCapability::ReadOnlyBase],
+    };
+    let verifier = RecordingVerifier::default();
+    let coordinator = HarborEvaluationCoordinator::new(&NativeSourceAcquirer, &sandbox, &verifier);
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let request = HarborLocalEvaluationRequest {
+        source: HarborSource::local(package_path.to_string_lossy()).unwrap(),
+        recipe,
+        contract: HarborAgentContract::installed(vec![AgentCapability::ReadOnlyBase]),
+        agent_variant: AgentVariantRef::new("installed").unwrap(),
+        model: ModelIdentity::new("native", "local").unwrap(),
+        seed: 7,
+        policy: PolicyIdentity::new(ArtifactDigest::from_bytes(b"policy")),
+        runtime: RuntimeIdentity::new("native-local").unwrap(),
+        budget: TrialBudget::new(30.0, 30.0).unwrap(),
+        attempt: AttemptId::new("completed-local").unwrap(),
+        verifier_mode: VerifierMode::Separate,
+        agent_command: None,
+        score_metric: "reward".to_owned(),
+        initial_rationale: ArtifactDigest::from_bytes(b"initial"),
+        regrade_metric: "quality".to_owned(),
+        regrade_rationale: ArtifactDigest::from_bytes(b"regrade"),
+    };
+
+    let completed = coordinator
+        .execute_local(&LocalProcessSandbox::new(), request)
+        .unwrap();
+
+    assert_eq!(completed.trial.task.id.as_str(), "repair-1");
+    assert_eq!(completed.initial_score.value, 1.0);
+    assert_eq!(completed.regraded_score.value, 0.75);
+    assert_eq!(
+        completed.regraded_score.predecessor,
+        Some(completed.initial_score.identity_digest())
+    );
+    assert_eq!(
+        completed
+            .evidence
+            .iter()
+            .map(|event| event.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sandbox", "agent", "artifact", "evaluator"]
+    );
+    assert!(sandbox.opened.get());
 }
 
 #[test]

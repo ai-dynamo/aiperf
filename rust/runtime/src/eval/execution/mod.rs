@@ -22,7 +22,10 @@ pub use agent::{
     HarborAgentContract, SecretProvider, SecretValue,
 };
 pub use artifacts::{collect_artifacts, transfer_artifacts};
-pub use coordinator::{HarborEvaluationCoordinator, HarborEvaluationError};
+pub use coordinator::{
+    HarborCompletedEvaluation, HarborEvaluationCoordinator, HarborEvaluationError,
+    HarborLocalEvaluationRequest,
+};
 pub use docker_process::DockerProcessSandbox;
 #[allow(unused_imports)]
 pub use docker_runtime::{

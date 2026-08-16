@@ -38,8 +38,9 @@ pub use execution::{
     DockerCreateRequest, DockerEnvironment, DockerExecRequest, DockerProcessSandbox,
     DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding, EnvName, EnvironmentPlan,
     EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory, HarborAgentContract,
-    HarborEvaluationCoordinator, HarborEvaluationError, HarborSandboxRecipe, HealthcheckPlan,
-    ImageSource, ImageSourceKind, ImmutablePatch, LocalExecutionResult, LocalProcessSandbox,
+    HarborCompletedEvaluation, HarborEvaluationCoordinator, HarborEvaluationError,
+    HarborLocalEvaluationRequest, HarborSandboxRecipe, HealthcheckPlan, ImageSource,
+    ImageSourceKind, ImmutablePatch, LocalExecutionResult, LocalProcessSandbox,
     MaterializedSandbox, MultiStepExecutionResult, MultiStepRewardStrategy, NetworkPolicy,
     OwnedComposeResources, PhasePlan, ProcessOutput, ProviderCapabilities, SandboxRole,
     SecretProvider, SecretValue, StepExecutionResult, VerifierCollectHook, VerifierPlan,
@@ -66,7 +67,7 @@ pub use semantic::{
 };
 pub use source::{EvalDatasetId, EvalDatasetManifest};
 pub use training::{TrainingError, TrajectoryExportManifest};
-pub use trial::{TrialBudget, TrialSpec};
+pub use trial::{TrialBudget, TrialIdentityError, TrialSpec};
 pub use verifier::{
     ArtifactTransferError, DeclaredArtifactTransfer, RegradeError, RegradeRequest, RewardDocument,
     RewardError, RewardParseOutcome, VerifierExecutionError, VerifierMode, VerifierResult,

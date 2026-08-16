@@ -1,59 +1,83 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::cell::Cell;
+use std::path::Path;
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, DeclaredArtifactTransfer, VerifierExecutionError, VerifierMode,
-    VerifierSandboxFactory, prepare_verifier,
+    AgentCapability, AgentVariantRef, ArtifactDigest, AttemptId, EvalExecutionError,
+    EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator,
+    HarborLocalEvaluationRequest, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
+    ModelIdentity, NativeSourceAcquirer, PolicyIdentity, RuntimeIdentity, TrialBudget,
+    VerifierExecutionError, VerifierMode, VerifierSandboxFactory,
 };
 
-fn digest(seed: char) -> ArtifactDigest {
-    ArtifactDigest::parse(format!("blake3:{}", seed.to_string().repeat(64))).unwrap()
+struct LocalFactory {
+    opened: Cell<bool>,
 }
 
-struct IsolatedVerifier {
-    files: RefCell<BTreeMap<String, ArtifactDigest>>,
-}
+impl EvalSandboxFactory for LocalFactory {
+    fn capabilities(&self) -> &[AgentCapability] {
+        const CAPABILITIES: [AgentCapability; 1] = [AgentCapability::ReadOnlyBase];
+        &CAPABILITIES
+    }
 
-impl VerifierSandboxFactory for IsolatedVerifier {
-    fn prepare(
-        &self,
-        mode: VerifierMode,
-        artifacts: &[(String, ArtifactDigest)],
-    ) -> Result<(), VerifierExecutionError> {
-        if mode != VerifierMode::Separate {
-            return Err(VerifierExecutionError::PreparationFailed(
-                "verifier must be separately provisioned".to_owned(),
-            ));
-        }
-        let mut files = self.files.borrow_mut();
-        files.clear();
-        files.extend(artifacts.iter().cloned());
+    fn open(&self, _: &HarborSandboxRecipe) -> Result<(), EvalExecutionError> {
+        self.opened.set(true);
         Ok(())
     }
 }
 
+struct UnusedVerifier;
+
+impl VerifierSandboxFactory for UnusedVerifier {
+    fn prepare(
+        &self,
+        _: VerifierMode,
+        _: &[(String, ArtifactDigest)],
+    ) -> Result<(), VerifierExecutionError> {
+        unreachable!("local process execution provisions the verifier itself")
+    }
+}
+
 #[test]
-fn separate_verifier_receives_only_declared_artifacts_at_exact_paths() {
-    let verifier = IsolatedVerifier {
-        files: RefCell::new(BTreeMap::from([("/agent/secret".to_owned(), digest('c'))])),
+fn separate_local_verifier_receives_only_declared_artifacts_and_no_ambient_secret() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/harbor_p0/isolation");
+    let factory = LocalFactory {
+        opened: Cell::new(false),
     };
-    let transfer = DeclaredArtifactTransfer::new(vec![
-        ("/results/patch.diff", digest('a')),
-        ("/results/report.json", digest('b')),
-    ])
-    .unwrap();
-
-    prepare_verifier(&verifier, VerifierMode::Separate, &transfer).unwrap();
-
-    assert_eq!(
-        *verifier.files.borrow(),
-        BTreeMap::from([
-            ("/results/patch.diff".to_owned(), digest('a')),
-            ("/results/report.json".to_owned(), digest('b')),
-        ])
+    let verifier = UnusedVerifier;
+    let coordinator = HarborEvaluationCoordinator::new(&NativeSourceAcquirer, &factory, &verifier);
+    unsafe { std::env::set_var("AIPERF_EVAL_AMBIENT_SECRET", "host-secret") };
+    let result = coordinator.execute_local(
+        &LocalProcessSandbox::new(),
+        HarborLocalEvaluationRequest {
+            source: HarborSource::local(fixture.to_string_lossy()).unwrap(),
+            recipe: HarborSandboxRecipe::new(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "/work",
+            )
+            .unwrap(),
+            contract: HarborAgentContract::installed(vec![AgentCapability::ReadOnlyBase]),
+            agent_variant: AgentVariantRef::new("isolation-agent").unwrap(),
+            model: ModelIdentity::new("native", "local").unwrap(),
+            seed: 1,
+            policy: PolicyIdentity::new(ArtifactDigest::from_bytes(b"isolation-policy")),
+            runtime: RuntimeIdentity::new("native-local").unwrap(),
+            budget: TrialBudget::new(10.0, 10.0).unwrap(),
+            attempt: AttemptId::new("isolation-attempt").unwrap(),
+            verifier_mode: VerifierMode::Separate,
+            agent_command: None,
+            score_metric: "reward".to_owned(),
+            initial_rationale: ArtifactDigest::from_bytes(b"initial"),
+            regrade_metric: "reward".to_owned(),
+            regrade_rationale: ArtifactDigest::from_bytes(b"regrade"),
+        },
     );
-    assert!(!verifier.files.borrow().contains_key("/agent/secret"));
+    unsafe { std::env::remove_var("AIPERF_EVAL_AMBIENT_SECRET") };
+    let result = result.unwrap();
+
+    assert!(factory.opened.get());
+    assert_eq!(result.verifier_result.evidence.len(), 1);
+    assert_eq!(result.initial_score.value, 1.0);
 }
