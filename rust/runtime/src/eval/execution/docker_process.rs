@@ -1073,6 +1073,11 @@ impl DockerRuntime for DockerCliRuntime {
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
         let removal = if let Some(timeout) = request.deadline() {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                return Err(EvalExecutionError::RuntimeContext(
+                    "bounded Docker lease cleanup",
+                ));
+            }
             docker_remove_bounded(
                 self.clock.clone(),
                 request
@@ -1127,10 +1132,12 @@ fn docker_remove_bounded(
         &mut no_remove,
     ) {
         Err(
-            EvalExecutionError::Timeout { .. } | EvalExecutionError::TerminalUncertainty { .. },
+            EvalExecutionError::Timeout { .. }
+            | EvalExecutionError::TerminalUncertainty { .. }
+            | EvalExecutionError::ProcessFailure(_),
         ) => Err(EvalExecutionError::ContainerTeardown {
             container: target.to_owned(),
-            reason: "bounded Docker removal did not terminate cleanly".to_owned(),
+            reason: "bounded Docker removal did not complete cleanly".to_owned(),
         }),
         other => other,
     }
@@ -1780,14 +1787,32 @@ mod tests {
     use std::{cell::Cell, collections::VecDeque, fs, rc::Rc, time::Duration};
 
     use super::{
-        DockerExecProcess, DockerExecState, DockerProcessSandbox, EvalExecutionError,
-        EvalExecutionPhase, docker_container_name, docker_image_name, drive_docker_exec,
-        ensure_network_exists, redact_secret_values, reports_absent_container,
+        DockerCliRuntime, DockerExecProcess, DockerExecState, DockerProcessSandbox, DockerRuntime,
+        EvalExecutionError, EvalExecutionPhase, docker_container_name, docker_image_name,
+        drive_docker_exec, ensure_network_exists, redact_secret_values, reports_absent_container,
     };
     use crate::clock::SimClock;
     use crate::eval::{
-        HarborImporter, HarborSandboxRecipe, HarborSource, NativeSourceAcquirer, VerifierMode,
+        DockerRemoveRequest, HarborImporter, HarborSandboxRecipe, HarborSource,
+        NativeSourceAcquirer, VerifierMode,
     };
+
+    #[tokio::test]
+    async fn bounded_remove_refuses_nested_clock_drive_before_spawning_docker() {
+        let runtime = DockerCliRuntime {
+            clock: Rc::new(SimClock::new()),
+        };
+        let result = runtime.remove(
+            &DockerRemoveRequest::new(["rm", "--force", "missing"])
+                .with_deadline(Duration::from_secs(1)),
+        );
+        assert_eq!(
+            result,
+            Err(EvalExecutionError::RuntimeContext(
+                "bounded Docker lease cleanup"
+            ))
+        );
+    }
 
     #[test]
     fn completed_command_observed_after_deadline_times_out() {
