@@ -66,6 +66,7 @@ struct FakeRuntime {
     has_suspended_create: Cell<bool>,
     has_start_failure: Cell<bool>,
     has_suspended_start: Cell<bool>,
+    has_remove_failure: Cell<bool>,
     outputs: RefCell<VecDeque<Vec<Bytes>>>,
     inspected_images: RefCell<Vec<String>>,
     label_queries: RefCell<Vec<(String, String)>>,
@@ -162,6 +163,7 @@ impl FakeRuntime {
             has_suspended_create: Cell::new(false),
             has_start_failure: Cell::new(false),
             has_suspended_start: Cell::new(false),
+            has_remove_failure: Cell::new(false),
             outputs: RefCell::new(outputs.into_iter().collect()),
             inspected_images: RefCell::new(Vec::new()),
             label_queries: RefCell::new(Vec::new()),
@@ -186,6 +188,11 @@ impl FakeRuntime {
 
     fn with_suspended_create(self) -> Self {
         self.has_suspended_create.set(true);
+        self
+    }
+
+    fn with_remove_failure(self) -> Self {
+        self.has_remove_failure.set(true);
         self
     }
 }
@@ -259,6 +266,9 @@ impl ContainerRuntime for FakeRuntime {
     ) -> Result<(), ToolSandboxError> {
         self.remove_count
             .set(self.remove_count.get().saturating_add(1));
+        if self.has_remove_failure.get() {
+            return Err(ToolSandboxError::new("fake Docker removal failed"));
+        }
         Ok(())
     }
 
@@ -552,6 +562,34 @@ async fn failed_container_start_force_removes_the_created_orphan() {
     assert!(error.to_string().contains("start failed"));
     assert_eq!(runtime.created.borrow().len(), 1);
     assert_eq!(runtime.remove_count.get(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn failed_container_close_falls_back_once_and_remains_idempotent() {
+    let runtime = Rc::new(FakeRuntime::new([]).with_remove_failure());
+    let sandbox = DockerSessionSandbox::new(
+        swe_environment(),
+        None,
+        trace(),
+        ReplayRunIdentity::mint(RngRoot::new(Some(4)), "persisted-run"),
+        RealClock::new(),
+        runtime.clone(),
+        1024,
+    )
+    .expect("sandbox is constructed");
+    sandbox.open().await.expect("sandbox opens");
+
+    let error = sandbox
+        .close()
+        .await
+        .expect_err("awaited Docker removal fails");
+    assert!(error.to_string().contains("fake Docker removal failed"));
+    assert_eq!(runtime.remove_count.get(), 2);
+    sandbox
+        .close()
+        .await
+        .expect("closed sandbox remains idempotent");
+    assert_eq!(runtime.remove_count.get(), 2);
 }
 
 #[tokio::test(flavor = "current_thread")]

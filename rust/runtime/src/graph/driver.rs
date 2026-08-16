@@ -23,6 +23,8 @@ use crate::graph::replay::ReplayRunIdentity;
 use crate::graph::supplement::TraceTerminalSupplement;
 use crate::graph::{agent, tools};
 
+const LIFECYCLE_LEASE_CLOSE_TIMEOUT_NS: i64 = 10_000_000_000;
+
 /// Stable replay task identity shared by input discovery and graph programs.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
@@ -589,6 +591,7 @@ struct RecordedReplayTraceProgramDriver {
 struct RecordedReplayTraceSession {
     dispatcher: Rc<dyn tools::ToolDispatcher>,
     lifecycle_lease: LifecycleLeaseGuard,
+    clock: Rc<dyn Clock>,
 }
 
 /// Ensures the opened lifecycle lease receives cancellation-safe cleanup.
@@ -740,6 +743,7 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
         self.session = Some(RecordedReplayTraceSession {
             dispatcher,
             lifecycle_lease,
+            clock: execution.clock.clone(),
         });
         Ok(())
     }
@@ -755,7 +759,22 @@ impl TraceProgramDriver for RecordedReplayTraceProgramDriver {
             return Ok(());
         };
         let close_dispatcher = session.dispatcher.close_trace(&self.trace).await;
-        let close_lease = session.lifecycle_lease.close().await;
+        let close_lease = {
+            let close = session.lifecycle_lease.close();
+            tokio::pin!(close);
+            let timeout = session
+                .clock
+                .clone()
+                .sleep(LIFECYCLE_LEASE_CLOSE_TIMEOUT_NS);
+            tokio::pin!(timeout);
+            tokio::select! {
+                biased;
+                result = &mut close => result,
+                () = &mut timeout => Err(agent::AgentLoopError::new(
+                    "recorded replay lifecycle teardown timed out after 10 seconds",
+                )),
+            }
+        };
         match (close_dispatcher, close_lease) {
             (Err(error), _) => Err(TraceDriverError::new(error.to_string())),
             (Ok(()), Err(error)) => Err(TraceDriverError::new(error.to_string())),

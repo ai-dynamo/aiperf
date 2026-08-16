@@ -63,8 +63,6 @@ use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::{NativeTransportExecution, ValidatedEndpointProfileV2};
 
-const TRACE_DRIVER_CLOSE_TIMEOUT_NS: i64 = 10_000_000_000;
-
 /// Composition seam for whole-trace graph execution placement.
 ///
 /// The coordinator owns admission policy; this factory owns trace placement.
@@ -1073,38 +1071,25 @@ impl GraphWorkerBackend {
     /// Driver open remains cancellable because its opening guards can perform
     /// synchronous rollback. Once open succeeds, however, dispatcher and sandbox
     /// teardown is asynchronous and owns external resources. The worker therefore
-    /// awaits close until its Clock-driven bound, after which driver RAII performs
-    /// synchronous fallback fencing. Cancellation becomes terminal only after that
-    /// teardown boundary finishes or expires.
+    /// awaits close to completion. Resource-owning drivers place Clock-driven bounds
+    /// inside their teardown layers so a generic deadline cannot drop an in-flight
+    /// external-resource cleanup future.
     async fn close_driver(
         &self,
         driver: &mut dyn crate::graph::driver::TraceProgramDriver,
     ) -> Result<(), TraceError> {
-        let close = driver.close();
-        tokio::pin!(close);
-        let timeout = self.clock.clone().sleep(TRACE_DRIVER_CLOSE_TIMEOUT_NS);
-        tokio::pin!(timeout);
-        let (close, has_timed_out) = tokio::select! {
-            biased;
-            result = &mut close => (
-                result.map_err(|error| TraceError::Other(error.to_string())),
-                false,
-            ),
-            () = &mut timeout => (
-                Err(TraceError::Other(format!(
-                    "graph trace driver teardown timed out after {} seconds",
-                    TRACE_DRIVER_CLOSE_TIMEOUT_NS / 1_000_000_000,
-                ))),
-                true,
-            ),
-        };
+        let close = driver
+            .close()
+            .await
+            .map_err(|error| TraceError::Other(error.to_string()));
         if self.cancelled.get() {
-            let message = if has_timed_out {
-                "graph trace driver teardown timed out after cancellation"
-            } else {
-                "graph trace driver finished teardown after cancellation"
+            let message = match close {
+                Ok(()) => "graph trace driver finished teardown after cancellation".into(),
+                Err(error) => {
+                    format!("graph trace driver finished teardown after cancellation: {error}")
+                }
             };
-            Err(TraceError::Cancelled(message.into()))
+            Err(TraceError::Cancelled(message))
         } else {
             close
         }
@@ -2038,6 +2023,11 @@ mod tests {
         removed: Arc<AtomicUsize>,
     }
 
+    struct SuspendingCleanupContainerRuntime {
+        remove_started: Arc<AtomicUsize>,
+        fallback_removes: Arc<AtomicUsize>,
+    }
+
     #[async_trait(?Send)]
     impl tools::ContainerRuntime for CleanupRecordingContainerRuntime {
         async fn inspect_image(&self, _image: &str) -> Result<(), tools::ToolSandboxError> {
@@ -2072,6 +2062,55 @@ mod tests {
         ) -> Result<(), tools::ToolSandboxError> {
             self.removed.fetch_add(1, Ordering::SeqCst);
             Ok(())
+        }
+
+        async fn list_by_label(
+            &self,
+            _key: &str,
+            _value: &str,
+        ) -> Result<Vec<tools::ContainerId>, tools::ToolSandboxError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl tools::ContainerRuntime for SuspendingCleanupContainerRuntime {
+        async fn inspect_image(&self, _image: &str) -> Result<(), tools::ToolSandboxError> {
+            Ok(())
+        }
+
+        async fn create(
+            &self,
+            _spec: &tools::ContainerCreateSpec,
+        ) -> Result<tools::ContainerId, tools::ToolSandboxError> {
+            Ok(tools::ContainerId::new("suspended-cleanup"))
+        }
+
+        async fn start(&self, _id: &tools::ContainerId) -> Result<(), tools::ToolSandboxError> {
+            Ok(())
+        }
+
+        async fn open_exec(
+            &self,
+            _id: &tools::ContainerId,
+            _argv: &[std::ffi::OsString],
+        ) -> Result<Box<dyn tools::FramedCommandIo>, tools::ToolSandboxError> {
+            Err(tools::ToolSandboxError::new(
+                "cleanup test must not execute a Docker command",
+            ))
+        }
+
+        async fn force_remove(
+            &self,
+            _id: &tools::ContainerId,
+            _timeout_ns: u64,
+        ) -> Result<(), tools::ToolSandboxError> {
+            self.remove_started.fetch_add(1, Ordering::SeqCst);
+            std::future::pending().await
+        }
+
+        fn force_remove_on_drop(&self, _id: &tools::ContainerId) {
+            self.fallback_removes.fetch_add(1, Ordering::SeqCst);
         }
 
         async fn list_by_label(
@@ -2625,7 +2664,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn graph_agent_cancellation_bounds_never_resolving_close_with_execution_clock() {
+    async fn graph_agent_cancellation_bounds_never_resolving_lifecycle_close_with_execution_clock()
+    {
         let lifecycle = Arc::new(PlacementLifecycleCounts::default());
         let release = Arc::new(tokio::sync::Notify::new());
         let removed = Arc::new(AtomicUsize::new(0));
@@ -2710,6 +2750,104 @@ mod tests {
                 assert!(matches!(error, TraceError::Cancelled(_)));
                 assert!(error.to_string().contains("timed out"), "{error}");
                 assert_eq!(removed.load(Ordering::SeqCst), 1);
+                assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn graph_agent_cancellation_fences_never_resolving_docker_remove_before_lifecycle_close()
+    {
+        let lifecycle = Arc::new(PlacementLifecycleCounts::default());
+        let release = Arc::new(tokio::sync::Notify::new());
+        release.notify_one();
+        let remove_started = Arc::new(AtomicUsize::new(0));
+        let fallback_removes = Arc::new(AtomicUsize::new(0));
+        let runtime_remove_started = remove_started.clone();
+        let runtime_fallback_removes = fallback_removes.clone();
+        let trace_driver = RecordedReplayTraceProgramDriverFactory::default()
+            .with_agent_loop_factories(RecordedReplayAgentLoopFactories::new(
+                Arc::new(agent::StaticAgentTurnCoordinatorFactory::default()),
+                Arc::new(agent::InMemoryAgentResponseStoreFactory),
+                Arc::new(agent::InMemoryAgentTrajectorySinkFactory),
+                Arc::new(agent::InMemoryInvocationLeaseFactoryFactory),
+                Arc::new(SuspendingCloseLifecycleFactoryFactory {
+                    counts: lifecycle.clone(),
+                    release,
+                }),
+                Arc::new(tools::DockerToolDispatcherFactory::with_runtime_factory(
+                    1024,
+                    move |_| {
+                        Rc::new(SuspendingCleanupContainerRuntime {
+                            remove_started: runtime_remove_started.clone(),
+                            fallback_removes: runtime_fallback_removes.clone(),
+                        })
+                    },
+                )),
+                Arc::new(tools::InMemoryAgentToolCallDecoderFactory),
+                Arc::new(tools::InMemoryAgentObservationFormatterFactory),
+            ));
+        let clock = Rc::new(SimClock::new());
+        let backend = Rc::new(empty_graph_worker_with_clock(
+            Arc::new(trace_driver),
+            clock.clone(),
+        ));
+        let task_backend = backend.clone();
+
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let mut program = empty_recorded_program("trace-remove-timeout");
+                let environment = tools::ResolvedTraceEnvironment {
+                    kind: tools::EnvironmentRecipe::SweBench,
+                    backend: tools::ToolExecutionBackend::Docker,
+                    image: "recorded-agent-test:latest".into(),
+                    workspace: tools::WorkspaceSpec::image_native(
+                        "/testbed",
+                        vec!["bash".into(), "-c".into()],
+                        5_000_000_000,
+                    ),
+                };
+                program.environment = Some(
+                    crate::graph::driver::TraceEnvironmentSpec::from_resolved(&environment)
+                        .unwrap(),
+                );
+                let task =
+                    tokio::task::spawn_local(
+                        async move { task_backend.execute_trace(program).await },
+                    );
+                for _ in 0..8 {
+                    if remove_started.load(Ordering::SeqCst) == 1 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(remove_started.load(Ordering::SeqCst), 1);
+                backend.cancel_inflight().unwrap();
+
+                clock.advance_to(19_999_999_999);
+                tokio::task::yield_now().await;
+                assert!(
+                    !task.is_finished(),
+                    "Docker cleanup must retain its command and reap budget"
+                );
+                assert_eq!(fallback_removes.load(Ordering::SeqCst), 0);
+
+                clock.advance_to(20_000_000_000);
+                for _ in 0..8 {
+                    if task.is_finished() {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert!(task.is_finished(), "Docker cleanup must be Clock-bounded");
+                let error = task
+                    .await
+                    .unwrap()
+                    .expect_err("cancellation remains primary after Docker cleanup timeout");
+                assert!(matches!(error, TraceError::Cancelled(_)));
+                assert_eq!(remove_started.load(Ordering::SeqCst), 1);
+                assert_eq!(fallback_removes.load(Ordering::SeqCst), 1);
+                assert_eq!(lifecycle.close_started.load(Ordering::SeqCst), 1);
                 assert_eq!(lifecycle.closed.load(Ordering::SeqCst), 1);
             })
             .await;

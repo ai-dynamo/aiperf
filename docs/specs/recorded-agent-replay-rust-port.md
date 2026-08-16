@@ -1050,13 +1050,18 @@ cancellation, phase grace escalation, timeout, placement shutdown, and a
 partially opened sandbox. A close failure is recorded as infrastructure detail.
 It becomes the trace error only when no earlier trace error exists; it never
 masks the primary cause. Cancellation waits for bounded cleanup before the
-placement reports terminal. The placement-level driver-close boundary is capped
-at 10 seconds by the injected execution `Clock`; an expiry drops the close future
-inline so its RAII fallback fences remaining lifecycle state, never as detached
-work. Driver provisioning remains cancellable until open succeeds. After that
-boundary, cancellation stops graph work but does not immediately abort or detach
-the driver-close future: dispatcher/sandbox cleanup is awaited exactly once until
-the bound, and the original cancellation or trace failure remains primary.
+placement reports terminal. Driver provisioning remains cancellable until open
+succeeds. After that boundary, cancellation stops graph work but does not abort
+or detach the driver-close future. Each resource-owning layer owns its deadline:
+Docker container removal has a 20-second injected-`Clock` fence that preserves
+the Docker command's 10-second execution budget plus its 10-second reap budget,
+and an armed removal guard launches fallback removal if the async operation is
+dropped, fails, or exceeds that fence. Only after dispatcher/sandbox cleanup
+returns does the recorded driver apply a 10-second injected-`Clock` bound to
+lifecycle-lease close; lease RAII fences an expired close exactly once. The
+placement itself has no generic close deadline that could preempt either resource
+owner. The original cancellation or trace failure remains primary, with cleanup
+errors retained as infrastructure detail.
 
 Workspace paths are rooted in a run/cell-owned tool directory and use a
 sanitized execution-instance slug. They never derive a filesystem path directly

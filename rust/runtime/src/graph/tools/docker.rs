@@ -35,6 +35,8 @@ pub const CONTAINER_RUN_LABEL_KEY: &str = "aiperf.recorded-agent.run-label";
 
 const TERMINAL_PREFIX: &[u8] = b"\0aiperf-terminal:";
 const CONTAINER_REMOVE_TIMEOUT_NS: u64 = 10_000_000_000;
+// `run_docker` may spend one command timeout terminating and one more reaping.
+const CONTAINER_REMOVE_FENCE_TIMEOUT_NS: i64 = 20_000_000_000;
 static CONTAINER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const DEFAULT_TOOL_OUTPUT_LIMIT: usize = 1 << 20;
 type DockerRuntimeFactory = dyn Fn(Rc<dyn Clock>) -> Rc<dyn ContainerRuntime> + Send + Sync;
@@ -662,6 +664,40 @@ impl Drop for ContainerOpeningGuard<'_> {
     }
 }
 
+struct ContainerRemovalGuard<'a> {
+    runtime: &'a dyn ContainerRuntime,
+    cleanup_target: Option<ContainerId>,
+}
+
+impl<'a> ContainerRemovalGuard<'a> {
+    fn new(runtime: &'a dyn ContainerRuntime, id: ContainerId) -> Self {
+        Self {
+            runtime,
+            cleanup_target: Some(id),
+        }
+    }
+
+    fn target(&self) -> Result<&ContainerId, ToolSandboxError> {
+        self.cleanup_target.as_ref().ok_or_else(|| {
+            ToolSandboxError::new("Docker removal guard lost its container identity")
+        })
+    }
+
+    fn disarm(&mut self) -> Result<ContainerId, ToolSandboxError> {
+        self.cleanup_target.take().ok_or_else(|| {
+            ToolSandboxError::new("Docker removal guard lost its container identity")
+        })
+    }
+}
+
+impl Drop for ContainerRemovalGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(id) = self.cleanup_target.take() {
+            self.runtime.force_remove_on_drop(&id);
+        }
+    }
+}
+
 /// One trace-owned Docker container and its independently framed exec commands.
 pub struct DockerSessionSandbox {
     environment: ResolvedTraceEnvironment,
@@ -801,16 +837,29 @@ impl DockerSessionSandbox {
         let ContainerState::Live(id) = previous else {
             return Ok(());
         };
-        match self
-            .runtime
-            .force_remove(&id, CONTAINER_REMOVE_TIMEOUT_NS)
-            .await
-        {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                self.container.replace(ContainerState::Live(id));
-                Err(error)
+        let mut removal = ContainerRemovalGuard::new(self.runtime.as_ref(), id);
+        let result = {
+            let remove = self
+                .runtime
+                .force_remove(removal.target()?, CONTAINER_REMOVE_TIMEOUT_NS);
+            tokio::pin!(remove);
+            let timeout = self.clock.clone().sleep(CONTAINER_REMOVE_FENCE_TIMEOUT_NS);
+            tokio::pin!(timeout);
+            tokio::select! {
+                biased;
+                result = &mut remove => Some(result),
+                () = &mut timeout => None,
             }
+        };
+        match result {
+            Some(Ok(())) => {
+                removal.disarm()?;
+                Ok(())
+            }
+            Some(Err(error)) => Err(error),
+            None => Err(ToolSandboxError::new(
+                "Docker container cleanup timed out after 20 seconds",
+            )),
         }
     }
 
