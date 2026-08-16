@@ -73,7 +73,10 @@ fn local_process_provider_rejects_separate_verifier_isolation_before_opening() {
             regrade_rationale: ArtifactDigest::from_bytes(b"regrade"),
         },
     );
-    let error = result.expect_err("local process execution cannot isolate a separate verifier");
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("local process execution cannot isolate a separate verifier"),
+    };
 
     assert_eq!(
         error.to_string(),
