@@ -5,6 +5,7 @@
 
 mod agent;
 mod artifacts;
+mod compose_policy;
 mod coordinator;
 mod docker_process;
 mod docker_runtime;
