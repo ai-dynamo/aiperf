@@ -3,12 +3,7 @@
 
 //! State-bounded lifecycle management for a task-owned Compose project.
 
-use std::{
-    collections::BTreeSet,
-    io::Read,
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
-};
+use std::{collections::BTreeSet, io::Read, time::Duration};
 
 use super::task_environment::{
     ServiceArchiveRequest, ServiceExecRequest, ServiceHandle, TaskEnvironmentLease,
@@ -19,8 +14,6 @@ use super::{
     DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
     DockerComposeUpRequest, DockerRemoveRequest, EvalExecutionError, OwnedComposeResources,
 };
-
-static NEXT_COMPOSE_RUN_ID: AtomicU64 = AtomicU64::new(1);
 
 /// The monotonic lifecycle state of a Compose task environment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,9 +55,8 @@ impl<'a> ComposeProjectLease<'a> {
         if prefix.is_empty() {
             return Err(EvalExecutionError::InvalidRecipe("source digest"));
         }
-        let run = NEXT_COMPOSE_RUN_ID.fetch_add(1, Ordering::Relaxed);
         let project =
-            ComposeProjectId::new(format!("aiperf-{prefix}-{}-{run}", std::process::id()));
+            ComposeProjectId::new(format!("aiperf-{prefix}-{}", uuid::Uuid::new_v4().simple()));
         Ok(Self {
             runtime,
             project,

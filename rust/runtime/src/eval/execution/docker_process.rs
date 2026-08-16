@@ -38,7 +38,6 @@ use super::docker_runtime::preflight_compose_configuration;
 use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
 use super::{
     artifacts::{Deadline, collect_service_artifacts, collect_service_evidence},
-    compose_policy::render_generated_main_compose,
     compose_project::ComposeProjectLease,
     task_environment::{ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease},
 };
@@ -618,7 +617,7 @@ impl DockerProcessSandbox {
         let labels = lease.project().ownership_labels();
         let overlay = fs::read(source_root.join(compose.definition_path()))
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        preflight_compose_configuration(
+        let generated = preflight_compose_configuration(
             runtime,
             plan,
             &environment,
@@ -630,8 +629,6 @@ impl DockerProcessSandbox {
             workspace.path(),
             &overlay,
         )?;
-        let generated =
-            render_generated_main_compose(&image, &labels, &environment, workspace.path())?;
         fs::write(
             source_root.join("aiperf.generated.compose.yaml"),
             generated.into_bytes(),
@@ -1798,10 +1795,7 @@ impl DockerComposeRuntime for DockerCliRuntime {
         &self,
         project: &ComposeProjectId,
     ) -> Result<super::OwnedComposeResources, EvalExecutionError> {
-        let filters = [format!(
-            "label=com.docker.compose.project={}",
-            project.as_str()
-        )];
+        let filters = compose_ownership_filters(project);
         let resources = |kind: &str, extra: &[&str]| -> Result<Vec<String>, EvalExecutionError> {
             let mut arguments = vec![kind.to_owned(), "ls".to_owned(), "-q".to_owned()];
             arguments.extend(extra.iter().map(|value| (*value).to_owned()));
@@ -1929,17 +1923,21 @@ fn compose_service_container(
     project: &ComposeProjectId,
     service: &super::ComposeServiceName,
 ) -> Result<String, EvalExecutionError> {
+    let mut arguments = vec![
+        "container".to_owned(),
+        "ls".to_owned(),
+        "--all".to_owned(),
+        "--quiet".to_owned(),
+    ];
+    for filter in compose_ownership_filters(project) {
+        arguments.extend(["--filter".to_owned(), filter]);
+    }
+    arguments.extend([
+        "--filter".to_owned(),
+        format!("label=com.docker.compose.service={}", service.as_str()),
+    ]);
     let output = docker(
-        [
-            "container",
-            "ls",
-            "--all",
-            "--quiet",
-            "--filter",
-            &format!("label=com.docker.compose.project={}", project.as_str()),
-            "--filter",
-            &format!("label=com.docker.compose.service={}", service.as_str()),
-        ],
+        arguments.iter().map(String::as_str),
         "find Compose service container",
     )?;
     let output = String::from_utf8_lossy(&output);
@@ -1960,6 +1958,17 @@ fn compose_service_container(
         });
     }
     Ok(container.to_owned())
+}
+
+fn compose_ownership_filters(project: &ComposeProjectId) -> Vec<String> {
+    let mut filters = vec![format!(
+        "label=com.docker.compose.project={}",
+        project.as_str()
+    )];
+    for (name, value) in project.ownership_labels() {
+        filters.push(format!("label={name}={value}"));
+    }
+    filters
 }
 
 impl DockerCliRuntime {
@@ -2823,12 +2832,12 @@ mod tests {
     use super::{
         DockerCliRuntime, DockerExecProcess, DockerExecState, DockerProcessSandbox, DockerRuntime,
         EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
-        docker_container_name, docker_image_name, drive_docker_exec, ensure_network_exists,
-        redact_secret_values, reports_absent_container,
+        compose_ownership_filters, docker_container_name, docker_image_name, drive_docker_exec,
+        ensure_network_exists, redact_secret_values, reports_absent_container,
     };
     use crate::clock::SimClock;
     use crate::eval::{
-        DockerRemoveRequest, HarborImporter, HarborSandboxRecipe, HarborSource,
+        ComposeProjectId, DockerRemoveRequest, HarborImporter, HarborSandboxRecipe, HarborSource,
         NativeSourceAcquirer, VerifierMode,
     };
 
@@ -2847,6 +2856,21 @@ mod tests {
                 "bounded Docker lease cleanup"
             ))
         );
+    }
+
+    #[test]
+    fn compose_resource_discovery_requires_project_and_run_labels() {
+        let project = ComposeProjectId::new("aiperf-fixture");
+        let filters = compose_ownership_filters(&project);
+
+        assert_eq!(
+            filters[0],
+            "label=com.docker.compose.project=aiperf-fixture"
+        );
+        assert!(filters.contains(&"label=aiperf.project=aiperf-fixture".to_owned()));
+        assert!(filters.iter().any(|filter| {
+            filter.starts_with("label=aiperf.run=") && filter != "label=aiperf.run=aiperf-fixture"
+        }));
     }
 
     #[test]

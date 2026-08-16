@@ -27,6 +27,7 @@ const DEFAULT_WORKDIR: &str = "/work";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ValidatedComposeProject {
     pub(crate) services: BTreeSet<ComposeServiceName>,
+    volumes: BTreeSet<String>,
     pub(crate) main_dependencies: Vec<ComposeServiceName>,
     main_dependency_contract: MainDependencyContract,
 }
@@ -35,6 +36,10 @@ impl ValidatedComposeProject {
     /// Returns the static main dependency contract for canonical validation.
     pub(crate) fn main_dependency_contract(&self) -> &MainDependencyContract {
         &self.main_dependency_contract
+    }
+
+    fn volumes(&self) -> &BTreeSet<String> {
+        &self.volumes
     }
 }
 
@@ -128,6 +133,7 @@ pub(crate) fn validate_canonical_compose_json(
         environment_root,
         expected_main,
         expected_main_dependencies,
+        None,
     )
 }
 
@@ -142,12 +148,17 @@ pub(crate) fn validate_provider_compose_config(
     rendered: &RenderedGeneratedMainCompose,
     authored: &ValidatedComposeProject,
 ) -> Result<ValidatedComposeProject, EvalExecutionError> {
-    validate_canonical_compose_json(
-        json,
+    reject_dotenv_files(environment_root)?;
+    let document = serde_json::from_slice::<CanonicalCompose>(json)
+        .map_err(|error| decode_error("compose", &error.to_string()))?;
+    reject_interpolation_in(&document)?;
+    validate_canonical_document(
+        document,
         plan,
         environment_root,
         rendered.expected_main(),
         authored.main_dependency_contract(),
+        Some(&rendered.expected_main().labels),
     )
 }
 
@@ -232,6 +243,86 @@ pub(crate) fn render_generated_main_compose(
         bytes,
         expected_main,
     })
+}
+
+/// Renders the controlled base file and stamps every Compose-created resource
+/// with the exact project and run ownership labels.
+pub(crate) fn render_generated_project_compose(
+    image_tag: &str,
+    project_labels: &BTreeMap<String, String>,
+    environment: &EnvironmentPlan,
+    workspace: &Path,
+    authored: &ValidatedComposeProject,
+) -> Result<RenderedGeneratedMainCompose, EvalExecutionError> {
+    let mut rendered =
+        render_generated_main_compose(image_tag, project_labels, environment, workspace)?;
+    let mut document =
+        serde_yaml::from_slice::<serde_yaml::Value>(rendered.bytes()).map_err(|error| {
+            policy_error("compose", format!("cannot decode generated base: {error}"))
+        })?;
+    let labels = serde_yaml::to_value(project_labels).map_err(|error| {
+        policy_error(
+            "compose",
+            format!("cannot encode ownership labels: {error}"),
+        )
+    })?;
+    let root = document
+        .as_mapping_mut()
+        .ok_or_else(|| policy_error("compose", "generated base must be a mapping"))?;
+    for service in &authored.services {
+        let service = root
+            .get_mut(serde_yaml::Value::String("services".to_owned()))
+            .and_then(serde_yaml::Value::as_mapping_mut)
+            .and_then(|services| {
+                services
+                    .entry(serde_yaml::Value::String(service.as_str().to_owned()))
+                    .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+                    .as_mapping_mut()
+            })
+            .ok_or_else(|| policy_error("services", "generated services must be mappings"))?;
+        service.insert(
+            serde_yaml::Value::String("labels".to_owned()),
+            labels.clone(),
+        );
+    }
+    let network = root
+        .get_mut(serde_yaml::Value::String("networks".to_owned()))
+        .and_then(serde_yaml::Value::as_mapping_mut)
+        .and_then(|networks| {
+            networks
+                .entry(serde_yaml::Value::String(DEFAULT_NETWORK.to_owned()))
+                .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+                .as_mapping_mut()
+        })
+        .ok_or_else(|| policy_error("networks", "generated network must be a mapping"))?;
+    network.insert(
+        serde_yaml::Value::String("labels".to_owned()),
+        labels.clone(),
+    );
+    if !authored.volumes().is_empty() {
+        let volumes = root
+            .entry(serde_yaml::Value::String("volumes".to_owned()))
+            .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+            .as_mapping_mut()
+            .ok_or_else(|| policy_error("volumes", "generated volumes must be mappings"))?;
+        for volume in authored.volumes() {
+            let volume = volumes
+                .entry(serde_yaml::Value::String(volume.clone()))
+                .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+                .as_mapping_mut()
+                .ok_or_else(|| policy_error("volumes", "generated volume must be a mapping"))?;
+            volume.insert(
+                serde_yaml::Value::String("labels".to_owned()),
+                labels.clone(),
+            );
+        }
+    }
+    rendered.bytes = serde_yaml::to_string(&document)
+        .map(String::into_bytes)
+        .map_err(|error| {
+            policy_error("compose", format!("cannot render generated base: {error}"))
+        })?;
+    Ok(rendered)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -542,6 +633,8 @@ struct CanonicalCompose {
 struct CanonicalNetworkDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    labels: Option<Labels>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -549,6 +642,8 @@ struct CanonicalNetworkDefinition {
 struct CanonicalVolumeDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    labels: Option<Labels>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -688,6 +783,7 @@ fn validate_authored_document(
     validate_service_set(&services, plan.services())?;
     Ok(ValidatedComposeProject {
         services,
+        volumes: declared_volumes,
         main_dependencies,
         main_dependency_contract,
     })
@@ -699,6 +795,7 @@ fn validate_canonical_document(
     environment_root: &Path,
     expected_main: &ExpectedGeneratedMain,
     expected_main_dependencies: &MainDependencyContract,
+    ownership_labels: Option<&BTreeMap<String, String>>,
 ) -> Result<ValidatedComposeProject, EvalExecutionError> {
     if document.services.is_empty() {
         return Err(policy_error("services", "must be a nonempty mapping"));
@@ -715,6 +812,24 @@ fn validate_canonical_document(
         ));
     }
     validate_volume_definitions(document.volumes.keys())?;
+    if let Some(labels) = ownership_labels {
+        let network = document
+            .networks
+            .get(DEFAULT_NETWORK)
+            .ok_or_else(|| policy_error("networks.default", "generated network is absent"))?;
+        validate_runtime_ownership_labels(
+            network.labels.as_ref(),
+            "networks.default.labels",
+            labels,
+        )?;
+        for (name, volume) in &document.volumes {
+            validate_runtime_ownership_labels(
+                volume.labels.as_ref(),
+                &format!("volumes.{name}.labels"),
+                labels,
+            )?;
+        }
+    }
     let declared_volumes = document.volumes.keys().cloned().collect::<BTreeSet<_>>();
     let mut services = BTreeSet::new();
     let mut main_dependencies = Vec::new();
@@ -737,6 +852,7 @@ fn validate_canonical_document(
                 environment_root,
                 &declared_volumes,
                 plan.services(),
+                ownership_labels,
             )?;
         }
         services.insert(service_name);
@@ -744,6 +860,7 @@ fn validate_canonical_document(
     validate_service_set(&services, plan.services())?;
     Ok(ValidatedComposeProject {
         services,
+        volumes: declared_volumes,
         main_dependencies,
         main_dependency_contract: expected_main_dependencies.clone(),
     })
@@ -824,6 +941,7 @@ fn validate_canonical_sidecar(
     environment_root: &Path,
     declared_volumes: &BTreeSet<String>,
     services: &BTreeSet<ComposeServiceName>,
+    ownership_labels: Option<&BTreeMap<String, String>>,
 ) -> Result<(), EvalExecutionError> {
     if service.restart.is_some() {
         return Err(policy_error(
@@ -840,7 +958,7 @@ fn validate_canonical_sidecar(
     if let Some(build) = &service.build {
         validate_build(build, &format!("{path}.build"), environment_root)?;
     }
-    validate_common_canonical_service(service, path, declared_volumes, services)
+    validate_common_canonical_service(service, path, declared_volumes, services, ownership_labels)
 }
 
 fn validate_canonical_main(
@@ -1010,6 +1128,7 @@ fn validate_common_canonical_service(
     path: &str,
     declared_volumes: &BTreeSet<String>,
     services: &BTreeSet<ComposeServiceName>,
+    ownership_labels: Option<&BTreeMap<String, String>>,
 ) -> Result<(), EvalExecutionError> {
     validate_command(service.command.as_ref(), &format!("{path}.command"))?;
     validate_command(service.entrypoint.as_ref(), &format!("{path}.entrypoint"))?;
@@ -1028,7 +1147,15 @@ fn validate_common_canonical_service(
         }
     }
     validate_tmpfs(service.tmpfs.as_ref(), &format!("{path}.tmpfs"))?;
-    validate_labels(service.labels.as_ref(), &format!("{path}.labels"), false)?;
+    if let Some(labels) = ownership_labels {
+        validate_runtime_ownership_labels(
+            service.labels.as_ref(),
+            &format!("{path}.labels"),
+            labels,
+        )?;
+    } else {
+        validate_labels(service.labels.as_ref(), &format!("{path}.labels"), false)?;
+    }
     validate_positive_scalar(service.cpus.as_ref(), &format!("{path}.cpus"))?;
     validate_positive_scalar(service.mem_limit.as_ref(), &format!("{path}.mem_limit"))
 }
@@ -1540,6 +1667,32 @@ fn validate_labels(
     Ok(())
 }
 
+fn validate_runtime_ownership_labels(
+    labels: Option<&Labels>,
+    path: &str,
+    expected: &BTreeMap<String, String>,
+) -> Result<(), EvalExecutionError> {
+    let actual = canonical_label_map(labels)
+        .ok_or_else(|| policy_error(path, "runtime ownership labels are absent"))?;
+    for (name, value) in expected {
+        if actual.get(name) != Some(value) {
+            return Err(policy_error(
+                format!("{path}.{name}"),
+                "runtime ownership label differs from the reserved run identity",
+            ));
+        }
+    }
+    for name in actual.keys() {
+        if is_reserved_label(name) && !expected.contains_key(name) {
+            return Err(policy_error(
+                format!("{path}.{name}"),
+                "unexpected reserved ownership label",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn is_reserved_label(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name.starts_with("aiperf.") || name.starts_with("com.nvidia.aiperf.")
@@ -1735,8 +1888,8 @@ mod tests {
     use serde_yaml::Value;
 
     use super::{
-        render_generated_main_compose, validate_authored_compose, validate_canonical_compose_json,
-        validate_provider_compose_config,
+        render_generated_main_compose, render_generated_project_compose, validate_authored_compose,
+        validate_canonical_compose_json, validate_provider_compose_config,
     };
     use crate::eval::{
         ArtifactDigest, ComposeProjectPlan, ComposeServiceName, ContainerResources, EnvBinding,
@@ -1817,13 +1970,6 @@ volumes:
             ("aiperf.project".to_owned(), "compose-fixture".to_owned()),
             ("aiperf.run".to_owned(), "run-17".to_owned()),
         ]);
-        let generated = render_generated_main_compose(
-            "aiperf-main:abc",
-            &labels,
-            &environment_plan(),
-            &workspace,
-        )
-        .unwrap();
         let authored = validate_authored_compose(
             br#"
 services:
@@ -1840,6 +1986,14 @@ volumes:
 "#,
             &plan,
             &environment_root,
+        )
+        .unwrap();
+        let generated = render_generated_project_compose(
+            "aiperf-main:abc",
+            &labels,
+            &environment_plan(),
+            &workspace,
+            &authored,
         )
         .unwrap();
         let canonical = format!(
@@ -1859,15 +2013,16 @@ volumes:
       "volumes": [{{"type": "bind", "source": {}, "target": "/workspace"}}],
       "restart": "no"
     }},
-    "api": {{"image": "example/api:fixture", "networks": {{"default": null}}}},
+    "api": {{"image": "example/api:fixture", "labels": {{"aiperf.project": "compose-fixture", "aiperf.run": "run-17"}}, "networks": {{"default": null}}}},
     "worker": {{
       "build": {{"context": {}, "dockerfile": "Dockerfile.worker", "args": {{"MODE": "fixture"}}}},
+      "labels": {{"aiperf.project": "compose-fixture", "aiperf.run": "run-17"}},
       "networks": {{"default": null}},
       "volumes": [{{"type": "volume", "source": "data", "target": "/var/lib/worker", "read_only": true}}]
     }}
   }},
-  "networks": {{"default": {{"name": "fixture_default"}}}},
-  "volumes": {{"data": {{"name": "fixture_data"}}}}
+  "networks": {{"default": {{"name": "fixture_default", "labels": {{"aiperf.project": "compose-fixture", "aiperf.run": "run-17"}}}}}},
+  "volumes": {{"data": {{"name": "fixture_data", "labels": {{"aiperf.project": "compose-fixture", "aiperf.run": "run-17"}}}}}}
 }}"#,
             serde_json::to_string(&workspace).unwrap(),
             serde_json::to_string(&context).unwrap(),
@@ -2173,6 +2328,53 @@ volumes:
         let rendered = String::from_utf8(rendered.into_bytes()).unwrap();
         assert!(!rendered.contains("HOST_TOKEN"));
         assert!(!rendered.contains("agent-secret-value"));
+    }
+
+    #[test]
+    fn compose_policy_injects_exact_ownership_labels_into_every_project_resource() {
+        let temporary = tempfile::tempdir().unwrap();
+        let workspace = temporary.path().join("agent-workspace");
+        fs::create_dir(&workspace).unwrap();
+        let labels = BTreeMap::from([
+            ("aiperf.project".to_owned(), "project-17".to_owned()),
+            ("aiperf.run".to_owned(), "run-29".to_owned()),
+        ]);
+        let plan = compose_plan(&["api", "main"]);
+        let authored = validate_authored_compose(
+            br#"
+services:
+  api:
+    image: alpine:3.20
+volumes:
+  data: {}
+"#,
+            &plan,
+            temporary.path(),
+        )
+        .unwrap();
+
+        let rendered = render_generated_project_compose(
+            "aiperf-main:abc",
+            &labels,
+            &environment_plan(),
+            &workspace,
+            &authored,
+        )
+        .unwrap();
+        let document: Value = serde_yaml::from_slice(rendered.bytes()).unwrap();
+
+        for resource in [
+            &document["services"]["main"],
+            &document["services"]["api"],
+            &document["networks"]["default"],
+            &document["volumes"]["data"],
+        ] {
+            assert_eq!(
+                resource["labels"]["aiperf.project"].as_str(),
+                Some("project-17")
+            );
+            assert_eq!(resource["labels"]["aiperf.run"].as_str(), Some("run-29"));
+        }
     }
 
     #[test]

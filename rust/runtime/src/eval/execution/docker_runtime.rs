@@ -44,7 +44,7 @@ pub(crate) fn preflight_compose_configuration(
     project_labels: &BTreeMap<String, String>,
     workspace: &Path,
     authored_overlay: &[u8],
-) -> Result<(), EvalExecutionError> {
+) -> Result<super::compose_policy::RenderedGeneratedMainCompose, EvalExecutionError> {
     preflight_docker(runtime, plan)?;
     let compose_plan = plan
         .compose()
@@ -54,11 +54,12 @@ pub(crate) fn preflight_compose_configuration(
         compose_plan,
         environment_root,
     )?;
-    let rendered = super::compose_policy::render_generated_main_compose(
+    let rendered = super::compose_policy::render_generated_project_compose(
         image_tag,
         project_labels,
         environment,
         workspace,
+        &authored,
     )?;
     let request = DockerComposeConfigRequest::new(
         project,
@@ -79,30 +80,36 @@ pub(crate) fn preflight_compose_configuration(
         environment_root,
         &rendered,
         &authored,
-    )
-    .map(|_| ())
+    )?;
+    Ok(rendered)
 }
 
 /// An opaque task-owned Docker Compose project identifier.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ComposeProjectId(String);
+pub struct ComposeProjectId {
+    project: String,
+    run: String,
+}
 
 impl ComposeProjectId {
     /// Creates an opaque project identifier selected by the evaluation runtime.
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self {
+            project: value.into(),
+            run: uuid::Uuid::new_v4().simple().to_string(),
+        }
     }
 
     /// Returns the project identifier for provider argument construction.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.project
     }
 
     /// Returns the exact labels used to select resources owned by this run.
     pub fn ownership_labels(&self) -> BTreeMap<String, String> {
         BTreeMap::from([
-            ("aiperf.project".to_owned(), self.0.clone()),
-            ("aiperf.run".to_owned(), self.0.clone()),
+            ("aiperf.project".to_owned(), self.project.clone()),
+            ("aiperf.run".to_owned(), self.run.clone()),
         ])
     }
 }
@@ -1016,6 +1023,10 @@ mod compose_lease_tests {
                 request.labels().get("aiperf.project"),
                 Some(&request.project().as_str().to_owned())
             );
+            assert_ne!(
+                request.labels().get("aiperf.project"),
+                request.labels().get("aiperf.run")
+            );
             assert_eq!(request.deadline(), Some(std::time::Duration::from_secs(1)));
             self.events
                 .borrow_mut()
@@ -1025,9 +1036,9 @@ mod compose_lease_tests {
         fn compose_up(&self, request: &DockerComposeUpRequest) -> Result<(), EvalExecutionError> {
             assert!(request.detached());
             assert!(request.wait_for_readiness());
-            assert_eq!(
-                request.labels().get("aiperf.run"),
-                Some(&request.project().as_str().to_owned())
+            assert_ne!(
+                request.labels().get("aiperf.project"),
+                request.labels().get("aiperf.run")
             );
             self.events
                 .borrow_mut()
@@ -1122,6 +1133,18 @@ mod compose_lease_tests {
                 ))
             }
         }
+    }
+
+    #[test]
+    fn compose_project_ownership_separates_stable_project_and_unique_run_labels() {
+        let project = ComposeProjectId::new("aiperf-fixture");
+        let labels = project.ownership_labels();
+
+        assert_eq!(
+            labels.get("aiperf.project"),
+            Some(&"aiperf-fixture".to_owned())
+        );
+        assert_ne!(labels.get("aiperf.project"), labels.get("aiperf.run"));
     }
 
     #[test]
