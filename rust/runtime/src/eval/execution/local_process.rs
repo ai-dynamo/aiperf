@@ -11,7 +11,7 @@ use std::{
 
 use tempfile::TempDir;
 
-use crate::eval::HarborTaskPackage;
+use crate::eval::{ArtifactDigest, HarborTaskPackage, RewardDocument, VerifierMode};
 
 use super::{EvalExecutionError, HarborSandboxRecipe};
 
@@ -51,6 +51,35 @@ impl LocalProcessSandbox {
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
         Ok(MaterializedSandbox { lease })
     }
+
+    /// Runs the package agent then its verifier, transferring only declared artifacts.
+    pub fn execute(
+        &self,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        verifier_mode: VerifierMode,
+    ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        let agent = self.materialize(recipe, package, SandboxRole::Agent)?;
+        let environment = vec![(
+            "AIPERF_EVAL_INSTRUCTION".to_owned(),
+            package.instruction().to_owned(),
+        )];
+        agent.run(package.agent_command(), &environment)?;
+        let artifacts = collect_declared_artifacts(&agent, package)?;
+        let reward = match verifier_mode {
+            VerifierMode::Shared => {
+                agent.run(package.verifier_command(), &environment)?;
+                parse_reward(&agent)?
+            }
+            VerifierMode::Separate => {
+                let verifier = self.materialize(recipe, package, SandboxRole::SeparateVerifier)?;
+                copy_declared_artifacts(&agent, &verifier, package)?;
+                verifier.run(package.verifier_command(), &environment)?;
+                parse_reward(&verifier)?
+            }
+        };
+        Ok(LocalExecutionResult { artifacts, reward })
+    }
 }
 
 /// A live local sandbox root whose lease removes it when evaluation finishes.
@@ -69,8 +98,12 @@ impl MaterializedSandbox {
     pub fn artifact_path(&self, declared_path: &str) -> Result<PathBuf, EvalExecutionError> {
         let relative = declared_path
             .strip_prefix('/')
-            .filter(|path| !path.is_empty() && !path.split('/').any(|part| part == "." || part == ".."))
-            .ok_or_else(|| EvalExecutionError::Materialization("invalid declared artifact path".to_owned()))?;
+            .filter(|path| {
+                !path.is_empty() && !path.split('/').any(|part| part == "." || part == "..")
+            })
+            .ok_or_else(|| {
+                EvalExecutionError::Materialization("invalid declared artifact path".to_owned())
+            })?;
         Ok(self.root().join(relative))
     }
 
@@ -80,8 +113,11 @@ impl MaterializedSandbox {
         argv: &[String],
         environment: &[(String, String)],
     ) -> Result<ProcessOutput, EvalExecutionError> {
-        let (program, arguments) = argv.split_first().ok_or(EvalExecutionError::InvalidCommand)?;
-        if program.trim().is_empty() || arguments.iter().any(|argument| argument.trim().is_empty()) {
+        let (program, arguments) = argv
+            .split_first()
+            .ok_or(EvalExecutionError::InvalidCommand)?;
+        if program.trim().is_empty() || arguments.iter().any(|argument| argument.trim().is_empty())
+        {
             return Err(EvalExecutionError::InvalidCommand);
         }
         let output = Command::new(program)
@@ -113,4 +149,55 @@ pub struct ProcessOutput {
     pub stdout: Vec<u8>,
     /// Captured standard error bytes.
     pub stderr: Vec<u8>,
+}
+
+/// Immutable artifacts and reward emitted by one completed native local evaluation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalExecutionResult {
+    /// Declared artifact paths paired with content digests.
+    pub artifacts: Vec<(String, ArtifactDigest)>,
+    /// Finite verifier reward metrics.
+    pub reward: RewardDocument,
+}
+
+fn collect_declared_artifacts(
+    sandbox: &MaterializedSandbox,
+    package: &HarborTaskPackage,
+) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
+    package
+        .declared_artifacts()
+        .iter()
+        .map(|path| {
+            let bytes = fs::read(sandbox.artifact_path(path)?)
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            Ok((path.clone(), ArtifactDigest::from_bytes(&bytes)))
+        })
+        .collect()
+}
+
+fn copy_declared_artifacts(
+    source: &MaterializedSandbox,
+    destination: &MaterializedSandbox,
+    package: &HarborTaskPackage,
+) -> Result<(), EvalExecutionError> {
+    for path in package.declared_artifacts() {
+        let source_path = source.artifact_path(path)?;
+        let destination_path = destination.artifact_path(path)?;
+        let bytes = fs::read(source_path)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        }
+        fs::write(destination_path, bytes)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn parse_reward(sandbox: &MaterializedSandbox) -> Result<RewardDocument, EvalExecutionError> {
+    let reward_json = fs::read(sandbox.root().join("reward.json")).ok();
+    let reward_txt = fs::read(sandbox.root().join("reward.txt")).ok();
+    RewardDocument::parse(reward_json.as_deref(), reward_txt.as_deref())
+        .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
 }

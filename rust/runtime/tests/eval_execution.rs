@@ -8,8 +8,7 @@ use aiperf_runtime::eval::{
     AgentCapability, ArtifactDigest, DeclaredArtifactTransfer, EvalExecutionError,
     EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborImportError,
     HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox, SandboxRole,
-    SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory,
-    WorkspaceOverlay,
+    SourceAcquirer, VerifierExecutionError, VerifierMode, VerifierSandboxFactory, WorkspaceOverlay,
 };
 
 struct RecordingFactory {
@@ -158,7 +157,12 @@ fn local_process_sandbox_materializes_package_clears_environment_and_isolates_ve
     unsafe { std::env::set_var("AIPERF_EVAL_AMBIENT_SECRET", "do-not-leak") };
     let output = agent
         .run(
-            &["sh".to_owned(), "-c".to_owned(), "test -z \"$AIPERF_EVAL_AMBIENT_SECRET\" && test \"$AIPERF_EVAL_MARKER\" = set".to_owned()],
+            &[
+                "sh".to_owned(),
+                "-c".to_owned(),
+                "test -z \"$AIPERF_EVAL_AMBIENT_SECRET\" && test \"$AIPERF_EVAL_MARKER\" = set"
+                    .to_owned(),
+            ],
             &[("AIPERF_EVAL_MARKER".to_owned(), "set".to_owned())],
         )
         .unwrap();
@@ -169,4 +173,26 @@ fn local_process_sandbox_materializes_package_clears_environment_and_isolates_ve
     assert_eq!(fs::read(agent.root().join("task.json")).unwrap(), package);
     assert_ne!(agent.root(), verifier.root());
     assert!(!verifier.root().join("agent-only.txt").exists());
+}
+
+#[test]
+fn local_process_sandbox_runs_agent_transfers_declared_artifacts_and_parses_verifier_reward() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","printf patch > \"$AIPERF_EVAL_ROOT/results/patch.diff\""],"verifier_command":["sh","-c","test -f results/patch.diff && printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":["/results/patch.diff"]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    let result = LocalProcessSandbox::new()
+        .execute(&recipe, &imported.package, VerifierMode::Separate)
+        .unwrap();
+
+    assert_eq!(result.artifacts.len(), 1);
+    assert_eq!(result.reward.metrics["reward"], 1.0);
 }
