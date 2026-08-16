@@ -104,8 +104,6 @@ fn native_eval_command_runs_a_pinned_standard_task_directory_in_docker() {
         revision,
         "--git-path".to_owned(),
         "task/task.toml".to_owned(),
-        "--image".to_owned(),
-        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         "--agent-command".to_owned(),
         "printf result > result.txt".to_owned(),
     ])

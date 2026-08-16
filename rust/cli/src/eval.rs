@@ -32,7 +32,7 @@ struct EvalFlags {
     git_path: Option<String>,
     /// Immutable image identity used by the sandbox recipe.
     #[arg(long)]
-    image: String,
+    image: Option<String>,
     /// Absolute working directory inside the selected sandbox recipe.
     #[arg(long, default_value = "/work")]
     workdir: String,
@@ -95,7 +95,19 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     )?;
     let (_pinned_tree, source) = materialize_pinned_directory(&source)?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
-    let recipe = HarborSandboxRecipe::new(flags.image, flags.workdir)?;
+    let use_docker = match flags.sandbox {
+        SandboxFlag::Auto => imported.package.is_standard_directory(),
+        SandboxFlag::Local => false,
+        SandboxFlag::Docker => true,
+    };
+    let image = match flags.image {
+        Some(image) => image,
+        None if use_docker => {
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_owned()
+        }
+        None => anyhow::bail!("--image is required for the local sandbox backend"),
+    };
+    let recipe = HarborSandboxRecipe::new(image, flags.workdir)?;
     let agent_command = flags
         .agent_command
         .as_deref()
@@ -105,11 +117,6 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .verifier_mode
         .map(VerifierMode::from)
         .unwrap_or_else(|| imported.package.verifier_mode());
-    let use_docker = match flags.sandbox {
-        SandboxFlag::Auto => imported.package.is_standard_directory(),
-        SandboxFlag::Local => false,
-        SandboxFlag::Docker => true,
-    };
     let result = if use_docker {
         DockerProcessSandbox::new().execute(
             &recipe,
