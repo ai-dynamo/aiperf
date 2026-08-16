@@ -63,6 +63,57 @@ fn native_eval_command_runs_a_pinned_git_harbor_package() {
 }
 
 #[test]
+#[ignore = "requires a Docker daemon and the local openclaw sandbox image"]
+fn native_eval_command_runs_a_pinned_standard_task_directory_in_docker() {
+    let temporary = tempfile::tempdir().unwrap();
+    let repository = temporary.path().join("tasks");
+    fs::create_dir(&repository).unwrap();
+    run_git(&repository, ["init"]);
+    run_git(
+        &repository,
+        ["config", "user.email", "eval@example.invalid"],
+    );
+    run_git(&repository, ["config", "user.name", "Native Eval"]);
+    fs::create_dir_all(repository.join("task/environment")).unwrap();
+    fs::create_dir_all(repository.join("task/tests")).unwrap();
+    fs::write(
+        repository.join("task/task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/pinned-standard\"\n",
+    )
+    .unwrap();
+    fs::write(repository.join("task/instruction.md"), "Write a result.\n").unwrap();
+    fs::write(
+        repository.join("task/environment/Dockerfile"),
+        "FROM openclaw-sandbox:bookworm-slim\n",
+    )
+    .unwrap();
+    fs::write(
+        repository.join("task/tests/test.sh"),
+        "test -f /work/result.txt\nmkdir -p /logs/verifier\nprintf 1 > /logs/verifier/reward.txt\n",
+    )
+    .unwrap();
+    run_git(&repository, ["add", "."]);
+    run_git(&repository, ["commit", "-m", "standard task"]);
+    let revision = git_output(&repository, ["rev-parse", "HEAD"]);
+
+    let exit = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--git-repository".to_owned(),
+        repository.to_string_lossy().into_owned(),
+        "--git-revision".to_owned(),
+        revision,
+        "--git-path".to_owned(),
+        "task/task.toml".to_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--agent-command".to_owned(),
+        "printf result > result.txt".to_owned(),
+    ])
+    .unwrap();
+    assert_eq!(exit, 0);
+}
+
+#[test]
 fn native_eval_command_runs_a_standard_task_directory() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("repair-1");
