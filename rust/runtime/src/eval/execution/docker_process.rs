@@ -358,17 +358,39 @@ impl DockerProcessSandbox {
                 let name = format!("{container}-verifier");
                 let verifier_network = network_lease(verifier.environment().network())?;
                 let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
+                if !plan.artifacts().is_empty()
+                    && let Some(workdir) = verifier_workdir
+                {
+                    validate_verifier_artifact_staging(workdir, plan.artifacts())?;
+                }
                 create_planned_container(
                     runtime,
                     &name,
                     &image,
-                    ContainerWorkspace::at_workdir(verifier_workspace.path(), verifier_workdir),
+                    ContainerWorkspace::at_workdir(verifier_workspace.path(), None),
                     verifier.environment(),
                     verifier_network,
                     None,
                 )?;
                 containers.push(name.clone());
                 runtime.start(&DockerStartRequest::new(&name))?;
+                if !plan.artifacts().is_empty() {
+                    let effective_verifier_workdir = match verifier_workdir {
+                        Some(workdir) => workdir.to_owned(),
+                        None => runtime.container_workdir(&name)?,
+                    };
+                    validate_verifier_artifact_staging(
+                        &effective_verifier_workdir,
+                        plan.artifacts(),
+                    )?;
+                    transfer_verifier_artifacts(
+                        runtime,
+                        &name,
+                        verifier_workspace.path(),
+                        Some(&effective_verifier_workdir),
+                        verifier_network,
+                    )?;
+                }
                 if let Some(healthcheck) = verifier.environment().healthcheck() {
                     run_healthcheck(
                         self.clock.clone(),

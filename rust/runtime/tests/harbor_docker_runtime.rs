@@ -1383,6 +1383,138 @@ fn separate_verifiers_use_fresh_staging_and_artifact_snapshots() {
 }
 
 #[test]
+fn single_step_separate_verifier_stages_artifacts_at_implicit_image_workdir() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_with_artifacts(
+        &temporary,
+        "[\"/work/result.txt\"]",
+        "[verifier]\nenvironment_mode = \"separate\"\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let result = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    assert_eq!(result.artifacts.len(), 1);
+    let creates = runtime.creates.into_inner();
+    assert_eq!(creates.len(), 2);
+    assert_eq!(creates[0].workspace, None);
+    assert_eq!(creates[1].workspace, None);
+    assert_eq!(runtime.inspected_workdirs.borrow().len(), 1);
+    let transfers = runtime.artifact_transfers.into_inner();
+    assert_eq!(transfers.len(), 1);
+    assert_eq!(
+        transfers[0].1,
+        format!("{}:/image-workdir", creates[1].container)
+    );
+    assert_eq!(runtime.verifier_workdirs.into_inner(), vec![None]);
+}
+
+#[test]
+fn single_step_separate_verifier_copies_artifacts_to_explicit_workdir_without_mounting_it() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_with_artifacts(
+        &temporary,
+        "[\"/work/result.txt\"]",
+        "[verifier]\nenvironment_mode = \"separate\"\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/work".to_owned()),
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    let creates = runtime.creates.into_inner();
+    assert_eq!(creates.len(), 2);
+    assert!(creates[0].workspace.is_some());
+    assert_eq!(creates[1].workspace, None);
+    assert!(runtime.inspected_workdirs.borrow().is_empty());
+    let transfers = runtime.artifact_transfers.into_inner();
+    assert_eq!(transfers.len(), 1);
+    assert_eq!(transfers[0].1, format!("{}:/work", creates[1].container));
+    assert_eq!(
+        runtime.verifier_workdirs.into_inner(),
+        vec![Some("/work".to_owned())]
+    );
+}
+
+#[test]
+fn single_step_separate_verifier_rejects_reserved_workdir_before_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_with_artifacts(
+        &temporary,
+        "[\"/work/result.txt\"]",
+        "[verifier]\nenvironment_mode = \"separate\"\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/tests".to_owned()),
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("artifact staging cannot occupy the verifier test namespace");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidWorkspace(reason)
+            if reason.contains("reserved verifier path")
+    ));
+    assert_eq!(runtime.creates.borrow().len(), 1);
+    assert_eq!(runtime.starts.get(), 1);
+    assert!(runtime.events.into_inner().iter().all(|event| {
+        !event.starts_with("inspect-workdir:")
+            && !event.starts_with("copy-artifacts:")
+            && !event.starts_with("reset-tests:")
+            && !event.starts_with("copy-tests:")
+            && !event.starts_with("verifier:")
+    }));
+}
+
+#[test]
 fn separate_verifier_stages_artifacts_without_overriding_image_workdir() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = multi_step_task_root(&temporary, true);
