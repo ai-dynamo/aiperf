@@ -26,12 +26,15 @@ pub use artifact_manifest::{
 };
 pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
 pub use execution::{
-    AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, ContainerResources,
-    DockerProcessSandbox, EnvBinding, EnvironmentPlan, EvalExecutionError, EvalExecutionPhase,
-    EvalSandboxFactory, HarborAgentContract, HarborEvaluationCoordinator, HarborEvaluationError,
-    HarborSandboxRecipe, HealthcheckPlan, ImageSource, ImageSourceKind, ImmutablePatch,
-    LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, NetworkPolicy, PhasePlan,
-    ProcessOutput, ProviderCapabilities, SandboxRole, VerifierPlan, WorkspaceOverlay,
+    AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, ContainerResources, DockerBuildRequest,
+    DockerCopyRequest, DockerCreateRequest, DockerEnvironment, DockerExecRequest,
+    DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding,
+    EnvName, EnvironmentPlan, EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory,
+    HarborAgentContract, HarborEvaluationCoordinator, HarborEvaluationError, HarborSandboxRecipe,
+    HealthcheckPlan, ImageSource, ImageSourceKind, ImmutablePatch, LocalExecutionResult,
+    LocalProcessSandbox, MaterializedSandbox, NetworkPolicy, PhasePlan, ProcessOutput,
+    ProviderCapabilities, SandboxRole, SecretProvider, SecretValue, VerifierPlan, WorkspaceOverlay,
+    preflight_docker, resolve_phase_environment,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

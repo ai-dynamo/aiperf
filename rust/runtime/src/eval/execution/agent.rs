@@ -10,6 +10,42 @@ use std::{
 
 use super::HarborSandboxRecipe;
 
+/// A validated environment-variable name.
+pub type EnvName = String;
+
+/// A host secret resolved immediately before a command is executed.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretValue(String);
+
+impl SecretValue {
+    /// Creates a secret value that redacts itself in diagnostics.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn exposed(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecretValue {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SecretValue([REDACTED])")
+    }
+}
+
+impl Display for SecretValue {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
+}
+
+/// Resolves named host secrets for the command phase that requires them.
+pub trait SecretProvider {
+    /// Resolves one declared secret reference without exposing it in diagnostics.
+    fn resolve(&self, name: &EnvName) -> Result<SecretValue, EvalExecutionError>;
+}
+
 /// A capability that an agent contract requires from its sandbox provider.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentCapability {
@@ -33,6 +69,8 @@ pub enum HarborAgentContract {
 /// An evaluation phase that owns a sandbox command timeout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvalExecutionPhase {
+    /// Readiness validation before the task agent is allowed to run.
+    Healthcheck,
     /// The externally supplied agent command.
     Agent,
     /// The task-supplied verifier command.
@@ -42,6 +80,7 @@ pub enum EvalExecutionPhase {
 impl Display for EvalExecutionPhase {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Healthcheck => formatter.write_str("healthcheck"),
             Self::Agent => formatter.write_str("agent"),
             Self::Verifier => formatter.write_str("verifier"),
         }
@@ -98,6 +137,12 @@ pub enum EvalExecutionError {
     MissingCapability(AgentCapability),
     /// The selected provider cannot enforce an authored benchmark requirement.
     UnsupportedEnforcement(&'static str),
+    /// A declared host-secret reference could not be resolved for the active phase.
+    MissingSecret(String),
+    /// The task environment did not become ready before its agent phase.
+    Unhealthy(String),
+    /// Declared task artifacts could not be collected safely.
+    ArtifactCollection(String),
     /// An immutable workspace or artifact identity was invalid.
     InvalidWorkspace(String),
     /// The requested local process command was not a nonempty argv.
@@ -148,6 +193,11 @@ impl Display for EvalExecutionError {
                     formatter,
                     "provider cannot enforce benchmark requirement {requirement}"
                 )
+            }
+            Self::MissingSecret(name) => write!(formatter, "missing required secret {name}"),
+            Self::Unhealthy(reason) => write!(formatter, "task environment is unhealthy: {reason}"),
+            Self::ArtifactCollection(reason) => {
+                write!(formatter, "artifact collection failed: {reason}")
             }
             Self::InvalidWorkspace(reason) => write!(formatter, "invalid workspace {reason}"),
             Self::InvalidCommand => formatter.write_str("sandbox command must be a nonempty argv"),

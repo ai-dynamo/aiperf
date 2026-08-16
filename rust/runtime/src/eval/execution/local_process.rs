@@ -16,7 +16,7 @@ use crate::eval::{
     VerifierMode,
 };
 
-use super::{EvalExecutionError, HarborSandboxRecipe};
+use super::{EvalExecutionError, HarborSandboxRecipe, ProviderCapabilities};
 
 /// Selects the isolated root materialized for one evaluation participant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +76,11 @@ impl LocalProcessSandbox {
         agent_command: &[String],
         verifier_mode: VerifierMode,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        if package.is_standard_directory() {
+            package
+                .execution_plan()
+                .validate_for(ProviderCapabilities::none())?;
+        }
         let agent = self.materialize(recipe, package, SandboxRole::Agent)?;
         let environment = vec![(
             "AIPERF_EVAL_INSTRUCTION".to_owned(),

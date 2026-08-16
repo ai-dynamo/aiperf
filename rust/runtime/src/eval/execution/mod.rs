@@ -6,17 +6,23 @@
 mod agent;
 mod coordinator;
 mod docker_process;
+mod docker_runtime;
 mod local_process;
 mod plan;
 mod recipe;
 mod workspace;
 
 pub use agent::{
-    AgentCapability, EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory,
-    HarborAgentContract,
+    AgentCapability, EnvName, EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory,
+    HarborAgentContract, SecretProvider, SecretValue,
 };
 pub use coordinator::{HarborEvaluationCoordinator, HarborEvaluationError};
 pub use docker_process::DockerProcessSandbox;
+pub use docker_runtime::{
+    DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerEnvironment,
+    DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest, preflight_docker,
+    resolve_phase_environment,
+};
 pub use local_process::{
     LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox, ProcessOutput, SandboxRole,
 };
