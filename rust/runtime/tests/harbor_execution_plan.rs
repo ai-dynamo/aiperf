@@ -580,8 +580,8 @@ fn local_legacy_execution_rejects_a_declared_artifact_symlink() {
     .unwrap();
 
     let error = LocalProcessSandbox::new()
-        .execute(&recipe, &imported.package, VerifierMode::Separate)
-        .expect_err("artifact symlinks must not be copied into a verifier sandbox");
+        .execute(&recipe, &imported.package, VerifierMode::Shared)
+        .expect_err("artifact symlinks must not be accepted from the agent workspace");
 
     assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
 }
