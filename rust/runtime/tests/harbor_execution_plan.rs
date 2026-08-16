@@ -15,9 +15,10 @@ use std::{
 use aiperf_runtime::eval::{
     DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
     DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding,
-    EnvName, EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource,
-    LocalProcessSandbox, NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities, SecretProvider,
-    SecretValue, VerifierMode, collect_artifacts, resolve_phase_environment, transfer_artifacts,
+    EnvName, EvalExecutionError, HarborImportError, HarborImporter, HarborSandboxRecipe,
+    HarborSource, LocalProcessSandbox, NativeSourceAcquirer, NetworkPolicy, ProviderCapabilities,
+    SecretProvider, SecretValue, VerifierMode, collect_artifacts, resolve_phase_environment,
+    transfer_artifacts,
 };
 
 static UMASK_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -314,22 +315,10 @@ fn collection_rejects_missing_sources_and_duplicate_destinations() {
         &temporary,
         "[{ source = \"/work/one\", destination = \"same\" }, { source = \"/work/two\", destination = \"same\" }]",
     );
-    let imported = HarborImporter::new(&NativeSourceAcquirer)
+    let error = HarborImporter::new(&NativeSourceAcquirer)
         .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
-        .unwrap();
-    let duplicate = ArchiveRuntime::new([
-        ("/work/one", tar_archive(&[("one/result.txt", b"one")])),
-        ("/work/two", tar_archive(&[("two/result.txt", b"two")])),
-    ]);
-    assert!(matches!(
-        collect_artifacts(
-            &duplicate,
-            "agent-container",
-            imported.package.execution_plan().artifacts(),
-            &temporary.path().join("duplicate"),
-        ),
-        Err(EvalExecutionError::ArtifactCollection(_))
-    ));
+        .expect_err("duplicate destinations must be rejected before execution");
+    assert!(matches!(error, HarborImportError::InvalidPackage(_)));
 }
 
 #[test]
