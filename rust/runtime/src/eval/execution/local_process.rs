@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Temporary-root local process sandboxing for native P0 evaluation.
+//! Temporary-root local process execution for shared-verifier compatibility.
 
 use std::{
     fs,
@@ -54,7 +54,7 @@ impl LocalProcessSandbox {
         Ok(MaterializedSandbox { lease })
     }
 
-    /// Runs the package agent then its verifier, transferring only declared artifacts.
+    /// Runs the package agent and an explicitly shared verifier in one temporary root.
     pub fn execute(
         &self,
         recipe: &HarborSandboxRecipe,
@@ -72,6 +72,11 @@ impl LocalProcessSandbox {
         agent_command: &[String],
         verifier_mode: VerifierMode,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        if verifier_mode == VerifierMode::Separate {
+            return Err(EvalExecutionError::UnsupportedEnforcement(
+                "separate verifier isolation",
+            ));
+        }
         if package.execution_plan().is_multi_step() {
             return Err(EvalExecutionError::UnsupportedMultiStep);
         }
@@ -87,18 +92,8 @@ impl LocalProcessSandbox {
         )];
         agent.run(agent_command, &environment)?;
         let artifacts = collect_declared_artifacts(&agent, package)?;
-        let reward = match verifier_mode {
-            VerifierMode::Shared => {
-                agent.run(package.verifier_command(), &environment)?;
-                parse_reward(&agent)?
-            }
-            VerifierMode::Separate => {
-                let verifier = self.materialize(recipe, package, SandboxRole::SeparateVerifier)?;
-                copy_declared_artifacts(&agent, &verifier, package)?;
-                verifier.run(package.verifier_command(), &environment)?;
-                parse_reward(&verifier)?
-            }
-        };
+        agent.run(package.verifier_command(), &environment)?;
+        let reward = parse_reward(&agent)?;
         let verifier = ArtifactDigest::parse(package.verifier())
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
         Ok(LocalExecutionResult {
@@ -241,34 +236,6 @@ fn collect_declared_artifacts(
             Ok((path.clone(), ArtifactDigest::from_bytes(&bytes)))
         })
         .collect()
-}
-
-fn copy_declared_artifacts(
-    source: &MaterializedSandbox,
-    destination: &MaterializedSandbox,
-    package: &HarborTaskPackage,
-) -> Result<(), EvalExecutionError> {
-    for path in package.declared_artifacts() {
-        let source_path = source.artifact_path(path)?;
-        let destination_path = destination.artifact_path(path)?;
-        let metadata = fs::symlink_metadata(&source_path)
-            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-            return Err(EvalExecutionError::ArtifactCollection(format!(
-                "declared artifact is not a regular file: {}",
-                path
-            )));
-        }
-        let bytes = fs::read(source_path)
-            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-        if let Some(parent) = destination_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        }
-        fs::write(destination_path, bytes)
-            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-    }
-    Ok(())
 }
 
 fn parse_reward(sandbox: &MaterializedSandbox) -> Result<RewardDocument, EvalExecutionError> {

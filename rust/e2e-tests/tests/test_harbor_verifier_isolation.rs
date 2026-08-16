@@ -41,14 +41,13 @@ impl VerifierSandboxFactory for UnusedVerifier {
 }
 
 #[test]
-fn separate_local_verifier_receives_only_declared_artifacts_and_no_ambient_secret() {
+fn local_process_provider_rejects_separate_verifier_isolation_before_opening() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/harbor_p0/isolation");
     let factory = LocalFactory {
         opened: Cell::new(false),
     };
     let verifier = UnusedVerifier;
     let coordinator = HarborEvaluationCoordinator::new(&NativeSourceAcquirer, &factory, &verifier);
-    unsafe { std::env::set_var("AIPERF_EVAL_AMBIENT_SECRET", "host-secret") };
     let result = coordinator.execute_local(
         &LocalProcessSandbox::new(),
         HarborLocalEvaluationRequest {
@@ -74,10 +73,11 @@ fn separate_local_verifier_receives_only_declared_artifacts_and_no_ambient_secre
             regrade_rationale: ArtifactDigest::from_bytes(b"regrade"),
         },
     );
-    unsafe { std::env::remove_var("AIPERF_EVAL_AMBIENT_SECRET") };
-    let result = result.unwrap();
+    let error = result.expect_err("local process execution cannot isolate a separate verifier");
 
-    assert!(factory.opened.get());
-    assert_eq!(result.verifier_result.evidence.len(), 1);
-    assert_eq!(result.initial_score.value, 1.0);
+    assert_eq!(
+        error.to_string(),
+        "local process execution cannot provide separate verifier isolation"
+    );
+    assert!(!factory.opened.get());
 }

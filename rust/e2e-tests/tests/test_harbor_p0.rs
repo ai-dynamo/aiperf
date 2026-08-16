@@ -68,7 +68,7 @@ fn request(
         runtime: RuntimeIdentity::new("native-local").unwrap(),
         budget: TrialBudget::new(30.0, 30.0).unwrap(),
         attempt: AttemptId::new(attempt).unwrap(),
-        verifier_mode: VerifierMode::Separate,
+        verifier_mode: VerifierMode::Shared,
         agent_command: command,
         score_metric: "reward".to_owned(),
         initial_rationale: ArtifactDigest::from_bytes(b"initial score rationale"),

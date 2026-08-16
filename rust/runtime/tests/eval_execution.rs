@@ -192,7 +192,7 @@ fn local_process_sandbox_runs_agent_transfers_declared_artifacts_and_parses_veri
     .unwrap();
 
     let result = LocalProcessSandbox::new()
-        .execute(&recipe, &imported.package, VerifierMode::Separate)
+        .execute(&recipe, &imported.package, VerifierMode::Shared)
         .unwrap();
 
     assert_eq!(result.artifacts.len(), 1);
@@ -209,7 +209,29 @@ fn local_process_sandbox_runs_agent_transfers_declared_artifacts_and_parses_veri
 }
 
 #[test]
-fn separate_local_verifier_cannot_read_an_undeclared_agent_file() {
+fn local_process_sandbox_refuses_a_separate_verifier_before_running_the_agent() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","exit 91"],"verifier_command":["sh","-c","true"],"declared_artifacts":[]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    assert_eq!(
+        LocalProcessSandbox::new().execute(&recipe, &imported.package, VerifierMode::Separate),
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "separate verifier isolation"
+        ))
+    );
+}
+
+#[test]
+fn local_process_sandbox_refuses_separate_verifier_isolation() {
     let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","printf secret > \"$AIPERF_EVAL_ROOT/agent-secret\"; printf patch > \"$AIPERF_EVAL_ROOT/results/patch.diff\""],"verifier_command":["sh","-c","test ! -e agent-secret && test -f results/patch.diff && printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":["/results/patch.diff"]}"#;
     let imported = HarborImporter::new(&StaticAcquirer {
         bytes: package.to_vec(),
@@ -222,11 +244,14 @@ fn separate_local_verifier_cannot_read_an_undeclared_agent_file() {
     )
     .unwrap();
 
-    let result = LocalProcessSandbox::new()
+    let error = LocalProcessSandbox::new()
         .execute(&recipe, &imported.package, VerifierMode::Separate)
-        .unwrap();
+        .expect_err("a local process root is not a secure separate verifier provider");
 
-    assert_eq!(result.reward.metrics["reward"], 1.0);
+    assert_eq!(
+        error,
+        EvalExecutionError::UnsupportedEnforcement("separate verifier isolation")
+    );
 }
 
 #[test]
@@ -254,7 +279,7 @@ fn local_process_sandbox_materializes_the_imported_directory_package_after_origi
     .unwrap();
 
     let result = LocalProcessSandbox::new()
-        .execute(&recipe, &imported.package, VerifierMode::Separate)
+        .execute(&recipe, &imported.package, VerifierMode::Shared)
         .unwrap();
 
     assert_eq!(result.reward.metrics["reward"], 1.0);
@@ -288,7 +313,7 @@ fn coordinator_completed_local_execution_constructs_trial_scores_and_ordered_evi
         runtime: RuntimeIdentity::new("native-local").unwrap(),
         budget: TrialBudget::new(30.0, 30.0).unwrap(),
         attempt: AttemptId::new("completed-local").unwrap(),
-        verifier_mode: VerifierMode::Separate,
+        verifier_mode: VerifierMode::Shared,
         agent_command: None,
         score_metric: "reward".to_owned(),
         initial_rationale: ArtifactDigest::from_bytes(b"initial"),

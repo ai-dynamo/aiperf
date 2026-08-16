@@ -92,7 +92,7 @@ fn evaluate(
                 runtime: RuntimeIdentity::new("native-local").unwrap(),
                 budget: TrialBudget::new(10.0, 10.0).unwrap(),
                 attempt: AttemptId::new(attempt).unwrap(),
-                verifier_mode: VerifierMode::Separate,
+                verifier_mode: VerifierMode::Shared,
                 agent_command: None,
                 score_metric: "reward".to_owned(),
                 initial_rationale: ArtifactDigest::from_bytes(b"initial"),

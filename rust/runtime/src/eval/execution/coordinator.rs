@@ -206,6 +206,11 @@ impl<'a> HarborEvaluationCoordinator<'a> {
 fn validate_local_request(
     request: &HarborLocalEvaluationRequest,
 ) -> Result<(), HarborEvaluationError> {
+    if request.verifier_mode == VerifierMode::Separate {
+        return Err(HarborEvaluationError::InvalidRequest(
+            "local process execution cannot provide separate verifier isolation".to_owned(),
+        ));
+    }
     if request.score_metric.trim().is_empty() || request.regrade_metric.trim().is_empty() {
         return Err(HarborEvaluationError::InvalidRequest(
             "score metrics must not be empty".to_owned(),

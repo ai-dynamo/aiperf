@@ -213,10 +213,46 @@ fn native_eval_command_runs_a_local_harbor_package() {
         package_path.to_string_lossy().into_owned(),
         "--image".to_owned(),
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--verifier-mode".to_owned(),
+        "shared".to_owned(),
     ])
     .unwrap();
 
     assert_eq!(exit, 0);
+}
+
+#[test]
+fn native_eval_refuses_a_local_separate_verifier_before_running_the_agent() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package_path = temporary.path().join("task.json");
+    let started = temporary.path().join("agent-started");
+    fs::write(
+        &package_path,
+        format!(
+            r#"{{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","touch {}"],"verifier_command":["sh","-c","true"],"declared_artifacts":[]}}"#,
+            started.display(),
+        ),
+    )
+    .unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        package_path.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+    ])
+    .expect_err("local execution must not claim separate verifier isolation");
+
+    assert!(matches!(
+        error.downcast_ref::<aiperf_runtime::eval::EvalExecutionError>(),
+        Some(
+            aiperf_runtime::eval::EvalExecutionError::UnsupportedEnforcement(
+                "separate verifier isolation"
+            )
+        )
+    ));
+    assert!(!started.exists());
 }
 
 #[test]
@@ -249,6 +285,8 @@ fn native_eval_command_runs_a_pinned_git_harbor_package() {
         "task.json".to_owned(),
         "--image".to_owned(),
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--verifier-mode".to_owned(),
+        "shared".to_owned(),
     ])
     .unwrap();
 
@@ -293,6 +331,8 @@ fn native_eval_command_runs_a_pinned_git_package_from_a_remote_repository() {
         "task.json".to_owned(),
         "--image".to_owned(),
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "--verifier-mode".to_owned(),
+        "shared".to_owned(),
     ])
     .unwrap();
 

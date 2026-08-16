@@ -256,10 +256,14 @@ traffic into Python.
 
 Native `aiperf eval` imports one local task directory/package or one pinned Git
 task path into an owned source snapshot, then executes the supported standard or
-JSON package with native local or Docker sandboxing. It records immutable source,
-trial, artifact, verifier, and score/regrade identities. Harbor-style registry
-references are syntax only in this release: native acquisition refuses them as
-unavailable rather than falling back to a Harbor or Python runtime.
+JSON package with native local or Docker sandboxing. Docker provides separate
+verifier isolation; the local temporary-root backend accepts only an explicit
+shared verifier and rejects separate-verifier requests before an agent starts.
+The runtime evaluation domain records immutable source, trial, artifact,
+verifier, and score/regrade identities; exposing a complete product trial record
+requires the CLI lifecycle request schema. Harbor-style registry references are
+syntax only in this release: native acquisition refuses them as unavailable
+rather than falling back to a Harbor or Python runtime.
 
 AgentLab 0.4.2 plus BrowserGym 0.14.3 is the canonical browser provider. It
 directly runs `DEFAULT_BENCHMARKS`, `GenericAgent`, and `ExpArgs`; its sync model
