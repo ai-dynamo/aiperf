@@ -30,6 +30,58 @@ pub(crate) struct ValidatedComposeProject {
     pub(crate) main_dependencies: Vec<ComposeServiceName>,
 }
 
+/// Private base bytes paired with the exact generated-main authority they encode.
+pub(crate) struct RenderedGeneratedMainCompose {
+    bytes: Vec<u8>,
+    expected_main: ExpectedGeneratedMain,
+}
+
+impl RenderedGeneratedMainCompose {
+    /// Returns the generated base file bytes for materialization.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consumes the rendering and returns its generated base file bytes.
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Returns the trusted main authority required for canonical validation.
+    pub(crate) fn expected_main(&self) -> &ExpectedGeneratedMain {
+        &self.expected_main
+    }
+}
+
+/// Exact runtime-owned fields expected after Compose canonicalization.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ExpectedGeneratedMain {
+    image: String,
+    command: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    working_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    environment: BTreeMap<String, String>,
+    labels: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cpus: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mem_limit: Option<String>,
+    volumes: Vec<ExpectedGeneratedMount>,
+    networks: Vec<String>,
+    restart: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+struct ExpectedGeneratedMount {
+    #[serde(rename = "type")]
+    mount_type: String,
+    source: String,
+    target: String,
+}
+
 /// Strictly validates the task-authored sidecar overlay without consulting Docker.
 pub(crate) fn validate_authored_compose(
     yaml: &[u8],
@@ -48,12 +100,13 @@ pub(crate) fn validate_canonical_compose_json(
     json: &[u8],
     plan: &ComposeProjectPlan,
     environment_root: &Path,
+    expected_main: &ExpectedGeneratedMain,
 ) -> Result<ValidatedComposeProject, EvalExecutionError> {
     reject_dotenv_files(environment_root)?;
     let document = serde_json::from_slice::<CanonicalCompose>(json)
         .map_err(|error| decode_error("compose", &error.to_string()))?;
     reject_interpolation_in(&document)?;
-    validate_canonical_document(document, plan, environment_root)
+    validate_canonical_document(document, plan, environment_root, expected_main)
 }
 
 /// Renders the private base file whose `main` service is controlled only by AIPerf.
@@ -62,7 +115,7 @@ pub(crate) fn render_generated_main_compose(
     project_labels: &BTreeMap<String, String>,
     environment: &EnvironmentPlan,
     workspace: &Path,
-) -> Result<Vec<u8>, EvalExecutionError> {
+) -> Result<RenderedGeneratedMainCompose, EvalExecutionError> {
     if image_tag.trim().is_empty() {
         return Err(policy_error(
             "services.main.image",
@@ -110,7 +163,7 @@ pub(crate) fn render_generated_main_compose(
         })
         .collect();
     let resources = environment.resources();
-    let main = GeneratedMain {
+    let expected_main = ExpectedGeneratedMain {
         image: escape_compose_dollars(image_tag),
         command: vec!["sleep".to_owned(), "infinity".to_owned()],
         working_dir: environment.workdir().map(escape_compose_dollars),
@@ -119,20 +172,24 @@ pub(crate) fn render_generated_main_compose(
         labels,
         cpus: resources.map(|limits| limits.cpus()),
         mem_limit: resources.map(|limits| format!("{}m", limits.memory_mb())),
-        volumes: vec![GeneratedMount {
-            mount_type: "bind",
+        volumes: vec![ExpectedGeneratedMount {
+            mount_type: "bind".to_owned(),
             source: escape_compose_dollars(workspace.to_string_lossy().as_ref()),
             target: escape_compose_dollars(target),
         }],
-        networks: vec![DEFAULT_NETWORK],
-        restart: "no",
+        networks: vec![DEFAULT_NETWORK.to_owned()],
+        restart: "no".to_owned(),
     };
-    serde_yaml::to_string(&GeneratedCompose {
-        services: BTreeMap::from([("main", main)]),
+    let bytes = serde_yaml::to_string(&GeneratedCompose {
+        services: BTreeMap::from([("main", &expected_main)]),
         networks: BTreeMap::from([(DEFAULT_NETWORK, GeneratedNetwork {})]),
     })
     .map(String::into_bytes)
-    .map_err(|error| policy_error("compose", format!("cannot render generated main: {error}")))
+    .map_err(|error| policy_error("compose", format!("cannot render generated main: {error}")))?;
+    Ok(RenderedGeneratedMainCompose {
+        bytes,
+        expected_main,
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -540,36 +597,8 @@ struct CanonicalVolumeOptions {
 
 #[derive(Serialize)]
 struct GeneratedCompose<'a> {
-    services: BTreeMap<&'a str, GeneratedMain<'a>>,
+    services: BTreeMap<&'a str, &'a ExpectedGeneratedMain>,
     networks: BTreeMap<&'a str, GeneratedNetwork>,
-}
-
-#[derive(Serialize)]
-struct GeneratedMain<'a> {
-    image: String,
-    command: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    working_dir: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    user: Option<String>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    environment: BTreeMap<String, String>,
-    labels: BTreeMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    cpus: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mem_limit: Option<String>,
-    volumes: Vec<GeneratedMount<'a>>,
-    networks: Vec<&'a str>,
-    restart: &'a str,
-}
-
-#[derive(Serialize)]
-struct GeneratedMount<'a> {
-    #[serde(rename = "type")]
-    mount_type: &'a str,
-    source: String,
-    target: String,
 }
 
 #[derive(Serialize)]
@@ -617,6 +646,7 @@ fn validate_canonical_document(
     document: CanonicalCompose,
     plan: &ComposeProjectPlan,
     environment_root: &Path,
+    expected_main: &ExpectedGeneratedMain,
 ) -> Result<ValidatedComposeProject, EvalExecutionError> {
     if document.services.is_empty() {
         return Err(policy_error("services", "must be a nonempty mapping"));
@@ -642,7 +672,8 @@ fn validate_canonical_document(
         let path = format!("services.{name}");
         validate_default_networks(service.networks.as_ref(), &path)?;
         if name == "main" {
-            main_dependencies = validate_canonical_main(&service, &path, plan.services())?;
+            main_dependencies =
+                validate_canonical_main(&service, &path, plan.services(), expected_main)?;
         } else {
             validate_canonical_sidecar(
                 &service,
@@ -759,11 +790,12 @@ fn validate_canonical_main(
     service: &CanonicalService,
     path: &str,
     services: &BTreeSet<ComposeServiceName>,
+    expected: &ExpectedGeneratedMain,
 ) -> Result<Vec<ComposeServiceName>, EvalExecutionError> {
-    if service.image.as_deref().is_none_or(str::is_empty) {
+    if service.image.as_ref() != Some(&expected.image) {
         return Err(policy_error(
             format!("{path}.image"),
-            "generated main must have an image",
+            "generated main image differs from runtime authority",
         ));
     }
     if service.build.is_some() {
@@ -773,12 +805,11 @@ fn validate_canonical_main(
         ));
     }
     match &service.command {
-        Some(CommandSpec::List(command))
-            if command == &["sleep".to_owned(), "infinity".to_owned()] => {}
+        Some(CommandSpec::List(command)) if command == &expected.command => {}
         _ => {
             return Err(policy_error(
                 format!("{path}.command"),
-                "generated main command was replaced",
+                "generated main command differs from runtime authority",
             ));
         }
     }
@@ -798,31 +829,70 @@ fn validate_canonical_main(
             ));
         }
     }
-    if service.restart.as_deref() != Some("no") {
+    if service.working_dir != expected.working_dir {
         return Err(policy_error(
-            format!("{path}.restart"),
-            "generated main must disable restart",
+            format!("{path}.working_dir"),
+            "generated main workdir differs from runtime authority",
         ));
     }
-    validate_environment(service.environment.as_ref(), &format!("{path}.environment"))?;
-    validate_labels(service.labels.as_ref(), &format!("{path}.labels"), true)?;
-    validate_positive_scalar(service.cpus.as_ref(), &format!("{path}.cpus"))?;
-    validate_positive_scalar(service.mem_limit.as_ref(), &format!("{path}.mem_limit"))?;
-    if let Some(workdir) = service.working_dir.as_deref() {
-        validate_container_path(workdir, &format!("{path}.working_dir"))?;
+    if service.user != expected.user {
+        return Err(policy_error(
+            format!("{path}.user"),
+            "generated main user differs from runtime authority",
+        ));
+    }
+    if service.restart.as_ref() != Some(&expected.restart) {
+        return Err(policy_error(
+            format!("{path}.restart"),
+            "generated main restart policy differs from runtime authority",
+        ));
+    }
+    if !canonical_environment_matches(service.environment.as_ref(), &expected.environment) {
+        return Err(policy_error(
+            format!("{path}.environment"),
+            "generated main environment differs from runtime authority",
+        ));
+    }
+    if canonical_label_map(service.labels.as_ref()).as_ref() != Some(&expected.labels) {
+        return Err(policy_error(
+            format!("{path}.labels"),
+            "generated main labels differ from runtime authority",
+        ));
+    }
+    if canonical_u64(service.cpus.as_ref()) != expected.cpus {
+        return Err(policy_error(
+            format!("{path}.cpus"),
+            "generated main CPU limit differs from runtime authority",
+        ));
+    }
+    if canonical_string(service.mem_limit.as_ref()) != expected.mem_limit.as_deref() {
+        return Err(policy_error(
+            format!("{path}.mem_limit"),
+            "generated main memory limit differs from runtime authority",
+        ));
     }
     if let Some(mounts) = service.volumes.as_deref() {
-        if mounts.len() != 1 {
+        if mounts.len() != expected.volumes.len() {
             return Err(policy_error(
                 format!("{path}.volumes"),
-                "generated main must contain exactly one workspace mount",
+                "generated main mounts differ from runtime authority",
             ));
         }
-        validate_generated_main_mount(&mounts[0], &format!("{path}.volumes[0]"))?;
+        validate_generated_main_mount(
+            &mounts[0],
+            &expected.volumes[0],
+            &format!("{path}.volumes[0]"),
+        )?;
     } else {
         return Err(policy_error(
             format!("{path}.volumes"),
             "generated main is missing its workspace mount",
+        ));
+    }
+    if !canonical_networks_match(service.networks.as_ref(), &expected.networks) {
+        return Err(policy_error(
+            format!("{path}.networks"),
+            "generated main networks differ from runtime authority",
         ));
     }
     validate_dependencies(service.depends_on.as_ref(), path, services)
@@ -1136,6 +1206,7 @@ fn validate_canonical_sidecar_mount(
 
 fn validate_generated_main_mount(
     mount: &CanonicalVolumeMount,
+    expected: &ExpectedGeneratedMount,
     path: &str,
 ) -> Result<(), EvalExecutionError> {
     let CanonicalVolumeMount::Long(mount) = mount else {
@@ -1144,17 +1215,106 @@ fn validate_generated_main_mount(
             "generated workspace mount must use long syntax",
         ));
     };
-    if mount.mount_type != "bind" || mount.volume.is_some() {
+    if mount.mount_type != expected.mount_type {
         return Err(policy_error(
-            path,
-            "generated workspace mount must be a bind",
+            format!("{path}.type"),
+            "generated workspace mount type differs from runtime authority",
         ));
     }
-    let source = mount.source.as_deref().unwrap_or_default();
-    if !Path::new(source).is_absolute() {
-        return Err(policy_error(format!("{path}.source"), "must be absolute"));
+    if mount.source.as_ref() != Some(&expected.source) {
+        return Err(policy_error(
+            format!("{path}.source"),
+            "generated workspace source differs from runtime authority",
+        ));
     }
-    validate_container_path(&mount.target, &format!("{path}.target"))
+    if mount.target != expected.target {
+        return Err(policy_error(
+            format!("{path}.target"),
+            "generated workspace target differs from runtime authority",
+        ));
+    }
+    if mount.read_only.is_some() {
+        return Err(policy_error(
+            format!("{path}.read_only"),
+            "generated workspace mode differs from runtime authority",
+        ));
+    }
+    if mount.bind.is_some() {
+        return Err(policy_error(
+            format!("{path}.bind"),
+            "generated workspace bind options differ from runtime authority",
+        ));
+    }
+    if mount.volume.is_some() {
+        return Err(policy_error(
+            format!("{path}.volume"),
+            "generated workspace volume options differ from runtime authority",
+        ));
+    }
+    Ok(())
+}
+
+fn canonical_environment_matches(
+    actual: Option<&EnvironmentSpec>,
+    expected: &BTreeMap<String, String>,
+) -> bool {
+    if expected.is_empty() {
+        return actual.is_none();
+    }
+    canonical_string_map(actual).as_ref() == Some(expected)
+}
+
+fn canonical_string_map(values: Option<&EnvironmentSpec>) -> Option<BTreeMap<String, String>> {
+    let EnvironmentSpec::Map(values) = values? else {
+        return None;
+    };
+    values
+        .iter()
+        .map(|(name, value)| Some((name.clone(), canonical_string(Some(value))?.to_owned())))
+        .collect()
+}
+
+fn canonical_label_map(values: Option<&Labels>) -> Option<BTreeMap<String, String>> {
+    let Labels::Map(values) = values? else {
+        return None;
+    };
+    values
+        .iter()
+        .map(|(name, value)| Some((name.clone(), canonical_string(Some(value))?.to_owned())))
+        .collect()
+}
+
+fn canonical_string(value: Option<&LiteralScalar>) -> Option<&str> {
+    match value? {
+        LiteralScalar::String(value) => Some(value),
+        _ => None,
+    }
+}
+
+fn canonical_u64(value: Option<&LiteralScalar>) -> Option<u64> {
+    match value? {
+        LiteralScalar::Signed(value) => u64::try_from(*value).ok(),
+        LiteralScalar::Unsigned(value) => Some(*value),
+        LiteralScalar::Float(value)
+            if value.is_finite() && value.fract() == 0.0 && *value >= 0.0 =>
+        {
+            Some(*value as u64)
+        }
+        _ => None,
+    }
+}
+
+fn canonical_networks_match(
+    actual: Option<&BTreeMap<String, Option<CanonicalServiceNetwork>>>,
+    expected: &[String],
+) -> bool {
+    let Some(actual) = actual else {
+        return false;
+    };
+    actual.len() == expected.len()
+        && expected
+            .iter()
+            .all(|name| matches!(actual.get(name), Some(None)))
 }
 
 fn validate_named_volume(
@@ -1518,7 +1678,9 @@ volumes:
     fn compose_policy_accepts_equivalent_canonical_json_and_rejects_service_drift() {
         let temporary = tempfile::tempdir().unwrap();
         let environment_root = temporary.path().join("environment");
+        let workspace = temporary.path().join("agent-workspace");
         fs::create_dir_all(environment_root.join("worker")).unwrap();
+        fs::create_dir(&workspace).unwrap();
         fs::write(
             environment_root.join("worker/Dockerfile.worker"),
             "FROM scratch\n",
@@ -1526,6 +1688,17 @@ volumes:
         .unwrap();
         let plan = compose_plan(&["api", "main", "worker"]);
         let context = environment_root.join("worker");
+        let labels = BTreeMap::from([
+            ("aiperf.project".to_owned(), "compose-fixture".to_owned()),
+            ("aiperf.run".to_owned(), "run-17".to_owned()),
+        ]);
+        let generated = render_generated_main_compose(
+            "aiperf-main:abc",
+            &labels,
+            &environment_plan(),
+            &workspace,
+        )
+        .unwrap();
         let canonical = format!(
             r#"{{
   "services": {{
@@ -1533,9 +1706,14 @@ volumes:
       "image": "aiperf-main:abc",
       "command": ["sleep", "infinity"],
       "depends_on": {{"api": {{"condition": "service_started", "required": true}}}},
-      "labels": {{"aiperf.project": "fixture"}},
+      "working_dir": "/workspace",
+      "user": "1000:1000",
+      "environment": {{"PUBLIC": "fixture"}},
+      "labels": {{"aiperf.project": "compose-fixture", "aiperf.run": "run-17"}},
+      "cpus": 2,
+      "mem_limit": "512m",
       "networks": {{"default": null}},
-      "volumes": [{{"type": "bind", "source": "/tmp/aiperf-workspace", "target": "/work", "bind": {{"create_host_path": true}}}}],
+      "volumes": [{{"type": "bind", "source": {}, "target": "/workspace"}}],
       "restart": "no"
     }},
     "api": {{"image": "example/api:fixture", "networks": {{"default": null}}}},
@@ -1548,19 +1726,167 @@ volumes:
   "networks": {{"default": {{"name": "fixture_default"}}}},
   "volumes": {{"data": {{"name": "fixture_data"}}}}
 }}"#,
-            serde_json::to_string(&context).unwrap()
+            serde_json::to_string(&workspace).unwrap(),
+            serde_json::to_string(&context).unwrap(),
         );
 
-        let validated =
-            validate_canonical_compose_json(canonical.as_bytes(), &plan, &environment_root)
-                .unwrap();
+        let validated = validate_canonical_compose_json(
+            canonical.as_bytes(),
+            &plan,
+            &environment_root,
+            generated.expected_main(),
+        )
+        .unwrap();
         assert_eq!(validated.services, plan.services().clone());
         assert_eq!(validated.main_dependencies[0].as_str(), "api");
 
         let drifted = canonical.replace("\"api\": {\"image\"", "\"unexpected\": {\"image\"");
-        let error = validate_canonical_compose_json(drifted.as_bytes(), &plan, &environment_root)
-            .unwrap_err();
+        let error = validate_canonical_compose_json(
+            drifted.as_bytes(),
+            &plan,
+            &environment_root,
+            generated.expected_main(),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("services"), "{error}");
+    }
+
+    #[test]
+    fn compose_policy_rejects_each_generated_main_authority_drift() {
+        let temporary = tempfile::tempdir().unwrap();
+        let environment_root = temporary.path().join("environment");
+        let workspace = temporary.path().join("agent-workspace");
+        fs::create_dir(&environment_root).unwrap();
+        fs::create_dir(&workspace).unwrap();
+        let plan = compose_plan(&["api", "main"]);
+        let labels = BTreeMap::from([
+            ("aiperf.project".to_owned(), "compose-fixture".to_owned()),
+            ("aiperf.run".to_owned(), "run-17".to_owned()),
+        ]);
+        let generated = render_generated_main_compose(
+            "aiperf-main:abc",
+            &labels,
+            &environment_plan(),
+            &workspace,
+        )
+        .unwrap();
+        let canonical = serde_json::json!({
+            "services": {
+                "main": {
+                    "image": "aiperf-main:abc",
+                    "command": ["sleep", "infinity"],
+                    "working_dir": "/workspace",
+                    "user": "1000:1000",
+                    "environment": {"PUBLIC": "fixture"},
+                    "labels": {
+                        "aiperf.project": "compose-fixture",
+                        "aiperf.run": "run-17"
+                    },
+                    "cpus": 2,
+                    "mem_limit": "512m",
+                    "networks": {"default": null},
+                    "volumes": [{
+                        "type": "bind",
+                        "source": workspace,
+                        "target": "/workspace"
+                    }],
+                    "restart": "no"
+                },
+                "api": {
+                    "image": "example/api:fixture",
+                    "networks": {"default": null}
+                }
+            },
+            "networks": {"default": {"name": "fixture_default"}}
+        });
+        let drifts = [
+            (
+                "services.main.image",
+                "/services/main/image",
+                serde_json::json!("attacker:latest"),
+            ),
+            (
+                "services.main.command",
+                "/services/main/command",
+                serde_json::json!(["mine"]),
+            ),
+            (
+                "services.main.user",
+                "/services/main/user",
+                serde_json::json!("root"),
+            ),
+            (
+                "services.main.working_dir",
+                "/services/main/working_dir",
+                serde_json::Value::Null,
+            ),
+            (
+                "services.main.environment",
+                "/services/main/environment",
+                serde_json::json!({"PUBLIC": "changed"}),
+            ),
+            (
+                "services.main.labels",
+                "/services/main/labels",
+                serde_json::json!({"aiperf.project": "attacker", "aiperf.run": "run-17"}),
+            ),
+            (
+                "services.main.cpus",
+                "/services/main/cpus",
+                serde_json::json!(8),
+            ),
+            (
+                "services.main.mem_limit",
+                "/services/main/mem_limit",
+                serde_json::json!("8g"),
+            ),
+            (
+                "services.main.volumes[0].source",
+                "/services/main/volumes/0/source",
+                serde_json::json!("/"),
+            ),
+            (
+                "services.main.volumes[0].target",
+                "/services/main/volumes/0/target",
+                serde_json::json!("/attacker"),
+            ),
+            (
+                "services.main.volumes[0].read_only",
+                "/services/main/volumes",
+                serde_json::json!([{
+                    "type": "bind",
+                    "source": workspace,
+                    "target": "/workspace",
+                    "read_only": true
+                }]),
+            ),
+            (
+                "services.main.networks",
+                "/services/main/networks",
+                serde_json::json!({"other": null}),
+            ),
+            (
+                "services.main.restart",
+                "/services/main/restart",
+                serde_json::json!("always"),
+            ),
+        ];
+
+        for (path, pointer, replacement) in drifts {
+            let mut drifted = canonical.clone();
+            *drifted.pointer_mut(pointer).unwrap() = replacement;
+            let error = validate_canonical_compose_json(
+                &serde_json::to_vec(&drifted).unwrap(),
+                &plan,
+                &environment_root,
+                generated.expected_main(),
+            )
+            .expect_err("generated main authority drift must be rejected");
+            assert!(
+                error.to_string().contains(path),
+                "expected {path:?} in {error} for {pointer}"
+            );
+        }
     }
 
     #[test]
@@ -1577,7 +1903,7 @@ volumes:
         let rendered =
             render_generated_main_compose("aiperf-main:abc", &labels, &environment, &workspace)
                 .unwrap();
-        let document: Value = serde_yaml::from_slice(&rendered).unwrap();
+        let document: Value = serde_yaml::from_slice(rendered.bytes()).unwrap();
         let main = &document["services"]["main"];
 
         assert_eq!(main["image"].as_str(), Some("aiperf-main:abc"));
@@ -1598,7 +1924,7 @@ volumes:
             main["labels"]["aiperf.project"].as_str(),
             Some("compose-fixture")
         );
-        let rendered = String::from_utf8(rendered).unwrap();
+        let rendered = String::from_utf8(rendered.into_bytes()).unwrap();
         assert!(!rendered.contains("HOST_TOKEN"));
         assert!(!rendered.contains("agent-secret-value"));
     }
