@@ -13,6 +13,8 @@ Native commands also include `controller`, `cell`, `aggregator`, `results-sideca
 
 `aiperf-mock-server` is a separately launched benchmark and test target. It is not supervised by a profile run. Its HTTP router also provides in-memory OTLP/HTTP, MLflow REST/artifact-proxy, and AIPerf W&B datastore receiver seams for exporter end-to-end tests; `--wandb-sync-url` opts a profile into the latter while the offline `.wandb` file remains canonical.
 
+Native evaluation import acquires each package once into an owned canonical source snapshot; normalization and execution never reread the caller's origin. The source digest covers the complete artifact for provenance. The v2 package digest combines a canonical normalized plan, including sorted unique artifact exclusions, with an executable-source projection: standard directories bind the complete `environment/` tree and every resolved test tree, directory-backed `task.json` binds its complete tree, and standalone `task.json` binds its primary file. Tree identity includes entry kind, canonical mode, bytes, and empty directories. Docker and local execution materialize only the retained snapshot. When any resolved step uses a shared verifier, an authored, CLI, or image workdir equal to or below `/tests` or `/logs/verifier` is rejected; ancestors such as `/` and `/logs` remain valid.
+
 Source-of-truth locations:
 
 - Native CLI and process entry: `rust/cli/`.

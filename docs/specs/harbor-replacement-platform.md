@@ -72,7 +72,10 @@ until a universal semantic agent ontology exists.
 
 ### P0: normal single-step evaluation
 
-The importer shall preserve the original package byte-for-byte and normalize:
+The importer shall acquire one owned canonical source snapshot and normalize
+from that snapshot only. Standalone package files are preserved byte-for-byte;
+directory snapshots preserve canonical entry paths, kinds, modes, bytes, and
+empty directories:
 
 - task instruction, task metadata, dataset manifest, environment build/image,
   test/verifier scripts, optional solution, and task artifacts;
@@ -99,6 +102,21 @@ overrides it. `mean` and `final` reward strategies produce an aggregate reward,
 and the CLI adds ordered per-step reward/artifact data without changing the
 implicit single-step JSON contract. A terminal step failure prevents successor
 work and cleanup attempts every acquired container.
+
+The complete captured artifact is provenance. Normalized package identity is a
+versioned digest of the canonical resolved plan and exact executable-source
+projection: the full standard-task `environment/` tree plus selected test
+trees, the full directory-backed JSON tree, or the standalone JSON file.
+Artifact-exclusion lists are sorted and deduplicated because their execution is
+an unordered disjunction. Docker and local execution materialize only the
+retained snapshot, so mutation or removal of the import origin cannot alter an
+execution.
+
+When any resolved step uses a shared verifier, the persistent agent workdir
+cannot equal or descend from `/tests` or `/logs/verifier`. Authored manifests,
+CLI overrides, and implicit image workdirs all enforce the same directional
+rule; ancestors such as `/` and `/logs` remain valid, and separate-only plans
+retain separate artifact-staging checks.
 
 This is a benchmark-execution subset, not general service orchestration. Docker
 Compose definitions and task sidecars remain unsupported.
@@ -137,8 +155,10 @@ produce independent typed findings rather than a gold-patch-only verdict.
 
 ## Import, evidence, and regrade
 
-Every imported package has an immutable source artifact, normalized digest, and
-machine-readable report:
+Every imported package has an immutable source artifact, normalized package
+digest, and machine-readable report. The source digest covers the complete
+captured artifact, while the normalized digest binds the canonical execution
+plan and exact executable-source projection:
 
 ```text
 native | lossless_normalized | lossy_normalized | unsupported
@@ -181,12 +201,14 @@ or system performance.
 4. Declared artifacts materialize at exact verifier paths.
 5. Reward parsing matches `reward.json`/`reward.txt` semantics.
 6. Unsupported import semantics fail with a report before environment spend.
-7. Same source digest and resolved config reproduce trial identity and artifact
-   manifest.
+7. The same canonical plan and executable-source projection reproduce package
+   identity; full-source provenance remains independently reproducible.
 8. A pinned verifier can regrade preserved attempt evidence without overwriting
    the original score.
 9. A native graph variant report presents paired quality, cost, latency, and
    critical-path deltas against a fixed baseline.
+10. Import followed by caller mutation or removal executes the retained build
+    context and verifier trees, including empty directories and executable modes.
 
 ## Source anchors
 

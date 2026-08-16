@@ -109,6 +109,8 @@ native segments and HTTP bodies under that canonical stream.
 | `aiperf-e2e-tests` (`rust/e2e-tests`) | the end-to-end harness: drives the Python `aiperf profile` entry point against `aiperf-mock-server` and verifies the raw per-record JSONL (`profile_export_raw.jsonl`) for timing + data. Builds without the `engine` layer | `rust/e2e-tests/tests/`, `rust/e2e-tests/tests/common/` |
 | `aiperf-dry-run-tests` (`rust/dry-run-tests`) | standalone socket-free end-to-end suite for native `aiperf --dry-run`, with exact analytic timing and artifact checks | `rust/dry-run-tests/tests/` |
 
+Native evaluation import acquires one owned canonical source snapshot and never rereads the caller origin during normalization or execution. The full source digest is provenance; the v2 normalized package digest combines the canonical resolved plan, including sorted unique exclusions, with its executable-source projection. Standard tasks bind the complete `environment/` context and selected verifier trees, directory-backed JSON packages bind the complete tree, and standalone JSON packages bind their primary file; tree identity includes entry kind, canonical mode, bytes, and empty directories. Docker and local execution materialize only this retained snapshot. Any plan with a shared verifier rejects an authored, CLI, or image workdir equal to or below `/tests` or `/logs/verifier`, while directional ancestors remain valid.
+
 The workspace crates are `aiperf-runtime`, `aiperf-cli`, `aiperf-mock-server`, `aiperf-e2e-tests`, `aiperf-dry-run-tests`, and `aiperf-bench-tools`. Fifteen former `aiperf-*` library crates are now modules of `aiperf-runtime` (`aiperf_runtime::<m>`): `clock`, `rng`, `metrics_core`, `timing`, `adaptive_core`, `accuracy_core`, `endpoints`, `dataset`, `content_server`, `extensions`, `transport` (with `transport::core` vocabulary + `transport::http`/`transport::grpc` wire impls), `graph`, `gpu_telemetry`, `server_metrics`, `network_latency`, plus `dispatch` (from the retired `loadgen-core` crate, never one of the sixteen `aiperf-*` crates) and the feature-gated `engine`. Per-module purpose + key files: [`docs/module-organization.md`](docs/module-organization.md).
 
 Deps: `aiperf-cli` → {`aiperf-runtime` (with the `engine` feature)} and re-execs ITSELF (`aiperf --execute`) at runtime (a launched process, not a second binary); `aiperf-runtime` → optional `dynamo-mocker` only under `dynosim`; `aiperf-mock-server` → {`aiperf-runtime`}. Within `aiperf-runtime` the modules compose through `crate::<module>::` imports: `metrics_core` stays IO-free and runtime-neutral, and the `gpu_telemetry`/`server_metrics`/`network_latency` telemetry producers feed the shared side-channel accumulator seam without core metrics ever depending back on a producer. `aiperf-cli` and `aiperf-mock-server` do not depend on each other; real-network tests spawn the mock binary as an ordinary target.
@@ -601,13 +603,13 @@ Inputs, endpoints, and graph:
   native Rust semantic graph, lowering, transform-closure, and source-fidelity
   contract for captured and live agent/application workflows.
 - [`docs/specs/harbor-replacement-platform.md`](docs/specs/harbor-replacement-platform.md) —
-  pure native-Rust Harbor replacement bar: compatibility import tiers,
-  task/agent/verifier contracts, the built ordered benchmark-step subset,
-  re-evaluation, and graph-aware differentiators.
+  pure native-Rust Harbor replacement bar: owned source snapshots, v2 executable
+  package identity, compatibility tiers, the built ordered benchmark-step subset,
+  and graph-aware differentiators.
 - [`docs/specs/harbor-native-rust-implementation.md`](docs/specs/harbor-native-rust-implementation.md) —
-  native-Rust Harbor delivery architecture: source import, single- and multi-step
-  Docker agent/verifier execution, additive step results, isolated `eval`
-  identities/evidence, and future P1/P2 tracks.
+  native-Rust Harbor delivery architecture: canonical source capture,
+  normalized-plan plus executable-source identity, snapshot-only local/Docker
+  execution, directional verifier workdir safety, and step evidence.
 - [`docs/specs/graph-ir-system-idle-gap.md`](docs/specs/graph-ir-system-idle-gap.md) — Graph-IR system idle-gap cap at the centralized node firing gate.
 - [`docs/specs/conditional-graph-lowering.md`](docs/specs/conditional-graph-lowering.md) —
   the model-independent-branching contract: pinned/recorded/weighted conditional

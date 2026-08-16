@@ -20,12 +20,120 @@ use std::{
     time::Duration,
 };
 
+use aiperf_runtime::eval::{
+    DockerProcessSandbox, HarborImporter, HarborSandboxRecipe, HarborSource, NativeSourceAcquirer,
+};
 use common::exec_binary;
 
 const IMAGE_DIGEST: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 static DOCKER_E2E_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn imported_multi_step_snapshot_survives_origin_mutation_and_removal() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _docker_lock = DOCKER_E2E_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("owned-source-snapshot");
+    for directory in [
+        "environment/context-empty",
+        "tests/empty",
+        "steps/one",
+        "steps/two/tests/empty",
+    ] {
+        fs::create_dir_all(task_root.join(directory)).unwrap();
+    }
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.0"
+multi_step_reward_strategy = "mean"
+[task]
+name = "example/owned-source-snapshot"
+[environment]
+workdir = "/work"
+[[steps]]
+name = "one"
+[[steps]]
+name = "two"
+[steps.verifier]
+environment_mode = "separate"
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Unused instruction.\n").unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        r#"FROM alpine:3.20
+COPY context.txt /snapshot/context.txt
+COPY context-empty /snapshot/context-empty
+COPY helper.sh /snapshot/helper.sh
+RUN test "$(cat /snapshot/context.txt)" = original-context && test -d /snapshot/context-empty && test -x /snapshot/helper.sh && mkdir -p /work /logs/verifier && chmod 0777 /logs/verifier
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/context.txt"),
+        "original-context\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("environment/helper.sh"),
+        "#!/bin/sh\nexit 0\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "test \"$(cat /snapshot/context.txt)\" = original-context\ntest -d /snapshot/context-empty\ntest -x /snapshot/helper.sh\ntest -d /tests/empty\ntest -x /tests/helper.sh\ntest \"$(cat /tests/helper.sh)\" = original-root-helper\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("tests/helper.sh"), "original-root-helper\n").unwrap();
+    fs::write(
+        task_root.join("steps/one/instruction.md"),
+        "Run step one.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/two/instruction.md"),
+        "Run step two.\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/two/tests/test.sh"),
+        "test \"$(cat /snapshot/context.txt)\" = original-context\ntest -d /snapshot/context-empty\ntest -x /snapshot/helper.sh\ntest -d /tests/empty\ntest -x /tests/helper.sh\ntest \"$(cat /tests/helper.sh)\" = original-step-helper\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("steps/two/tests/helper.sh"),
+        "original-step-helper\n",
+    )
+    .unwrap();
+    for helper in [
+        "environment/helper.sh",
+        "tests/helper.sh",
+        "steps/two/tests/helper.sh",
+    ] {
+        fs::set_permissions(task_root.join(helper), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    fs::write(task_root.join("environment/context.txt"), "mutated\n").unwrap();
+    fs::write(task_root.join("tests/helper.sh"), "mutated\n").unwrap();
+    fs::remove_dir_all(&task_root).unwrap();
+
+    let recipe = HarborSandboxRecipe::for_standard_task(IMAGE_DIGEST, None).unwrap();
+    let result = DockerProcessSandbox::new()
+        .execute_multi_step(&recipe, &imported.package, &["true".to_owned()])
+        .unwrap();
+
+    assert_eq!(result.steps.len(), 2);
+    assert_eq!(result.steps[0].reward.metrics["reward"], 1.0);
+    assert_eq!(result.steps[1].reward.metrics["reward"], 1.0);
+}
 
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
