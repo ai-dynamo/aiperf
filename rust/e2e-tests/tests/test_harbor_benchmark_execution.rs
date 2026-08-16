@@ -1119,7 +1119,10 @@ timeout_sec = 10
     assert_summary(&summary, "example/compose-boundaries");
     assert_eq!(
         summary["artifacts"],
-        serde_json::json!([["sidecar-evidence/result.txt", artifact_digest(b"collected"),]])
+        serde_json::json!([[
+            "sidecar-evidence/result.txt",
+            artifact_digest(b"collected"),
+        ]])
     );
     assert!(!String::from_utf8_lossy(&output.stdout).contains("agent-secret-value"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("agent-secret-value"));
@@ -1256,12 +1259,12 @@ fn compose_agent_and_separate_verifier_failures_cleanup_the_project() {
         &format!("wget -qO /dev/null {}/agent && sleep 300", recorder.url()),
     );
     assert_eq!(
-        next_request_from_child(
-            &recorder,
-            &mut child,
-            "timed agent phase must start before its deadline",
-            Duration::from_secs(60)
-        ),
+            next_request_from_child(
+                &recorder,
+                &mut child,
+                "timed agent phase must start before its deadline",
+                Duration::from_secs(60)
+            ),
         "/agent"
     );
     let run = asserted_new_compose_run(&before_runs);
@@ -1616,10 +1619,7 @@ fn next_request_from_child(
                 String::from_utf8_lossy(&stderr)
             );
         }
-        assert!(
-            Instant::now() < deadline,
-            "{context}: timed out waiting for request"
-        );
+        assert!(Instant::now() < deadline, "{context}: timed out waiting for request");
         thread::sleep(Duration::from_millis(10));
     }
 }
