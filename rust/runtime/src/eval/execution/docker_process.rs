@@ -6,7 +6,7 @@
 use std::{
     cell::{Cell, RefCell},
     fs,
-    io::{self, Read},
+    io::{self, Read, Seek, SeekFrom},
     os::unix::fs::PermissionsExt,
     process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
@@ -1112,10 +1112,21 @@ fn docker_remove_bounded(
     timeout: Duration,
 ) -> Result<(), EvalExecutionError> {
     let target = arguments.last().copied().unwrap_or("Docker lease");
+    let stderr = tempfile::tempfile().map_err(|_| EvalExecutionError::ContainerTeardown {
+        container: target.to_owned(),
+        reason: "could not allocate bounded Docker removal diagnostics".to_owned(),
+    })?;
+    let mut stderr_reader =
+        stderr
+            .try_clone()
+            .map_err(|_| EvalExecutionError::ContainerTeardown {
+                container: target.to_owned(),
+                reason: "could not retain bounded Docker removal diagnostics".to_owned(),
+            })?;
     let child = Command::new("docker")
         .args(&arguments)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(stderr))
         .spawn()
         .map_err(|_| EvalExecutionError::ContainerTeardown {
             container: target.to_owned(),
@@ -1123,23 +1134,45 @@ fn docker_remove_bounded(
         })?;
     let mut process = DockerExecChild { child };
     let mut no_remove = |_target: &str| Ok(());
-    match drive_docker_exec(
+    let outcome = drive_docker_exec(
         clock,
         &mut process,
         target,
         EvalExecutionPhase::CollectionHook,
         timeout,
         &mut no_remove,
-    ) {
-        Err(
-            EvalExecutionError::Timeout { .. }
-            | EvalExecutionError::TerminalUncertainty { .. }
-            | EvalExecutionError::ProcessFailure(_),
-        ) => Err(EvalExecutionError::ContainerTeardown {
+    );
+    let mut diagnostics = Vec::new();
+    stderr_reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|_| EvalExecutionError::ContainerTeardown {
+            container: target.to_owned(),
+            reason: "could not read bounded Docker removal diagnostics".to_owned(),
+        })?;
+    stderr_reader
+        .take(8192)
+        .read_to_end(&mut diagnostics)
+        .map_err(|_| EvalExecutionError::ContainerTeardown {
+            container: target.to_owned(),
+            reason: "could not read bounded Docker removal diagnostics".to_owned(),
+        })?;
+    classify_bounded_remove_result(target, outcome, &diagnostics)
+}
+
+fn classify_bounded_remove_result(
+    target: &str,
+    outcome: Result<(), EvalExecutionError>,
+    diagnostics: &[u8],
+) -> Result<(), EvalExecutionError> {
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(EvalExecutionError::ProcessFailure(_)) if reports_absent_container(diagnostics) => {
+            Ok(())
+        }
+        Err(_) => Err(EvalExecutionError::ContainerTeardown {
             container: target.to_owned(),
             reason: "bounded Docker removal did not complete cleanly".to_owned(),
         }),
-        other => other,
     }
 }
 
@@ -1788,8 +1821,9 @@ mod tests {
 
     use super::{
         DockerCliRuntime, DockerExecProcess, DockerExecState, DockerProcessSandbox, DockerRuntime,
-        EvalExecutionError, EvalExecutionPhase, docker_container_name, docker_image_name,
-        drive_docker_exec, ensure_network_exists, redact_secret_values, reports_absent_container,
+        EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
+        docker_container_name, docker_image_name, drive_docker_exec, ensure_network_exists,
+        redact_secret_values, reports_absent_container,
     };
     use crate::clock::SimClock;
     use crate::eval::{
@@ -1812,6 +1846,25 @@ mod tests {
                 "bounded Docker lease cleanup"
             ))
         );
+    }
+
+    #[test]
+    fn bounded_remove_treats_concurrently_absent_resource_as_success() {
+        let result = classify_bounded_remove_result(
+            "exact-id",
+            Err(EvalExecutionError::ProcessFailure("status".to_owned())),
+            b"Error response from daemon: No such object: exact-id",
+        );
+        assert_eq!(result, Ok(()));
+        let failed = classify_bounded_remove_result(
+            "exact-id",
+            Err(EvalExecutionError::ProcessFailure("status".to_owned())),
+            b"permission denied",
+        );
+        assert!(matches!(
+            failed,
+            Err(EvalExecutionError::ContainerTeardown { .. })
+        ));
     }
 
     #[test]
