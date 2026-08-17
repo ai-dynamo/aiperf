@@ -27,6 +27,7 @@ from aiperf.timing.strategies.adaptive_scale import (
 from aiperf.timing.strategies.adaptive_scale_artifacts import (
     AdaptiveScaleArtifactWriter,
 )
+from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
 from aiperf.timing.strategies.adaptive_scale_types import (
     WindowRequestSample,
     WindowStats,
@@ -1195,9 +1196,12 @@ async def test_cancellation_only_window_fails_and_reports_cancelled(tmp_path) ->
 
 
 @pytest.mark.asyncio
-async def test_all_error_rate_sla_window_evaluates_without_successes(tmp_path) -> None:
+@pytest.mark.parametrize("metric_tag", ["request_error_rate", "error_rate"])
+async def test_all_error_rate_sla_window_evaluates_without_successes(
+    tmp_path, metric_tag: str
+) -> None:
     error_sla = SLAFilter(
-        metric_tag="error_rate",
+        metric_tag=metric_tag,
         stat="avg",
         op="le",
         threshold=100.0,
@@ -1216,14 +1220,14 @@ async def test_all_error_rate_sla_window_evaluates_without_successes(tmp_path) -
     window = next(event for event in events if event["event"] == "adaptive_window")
     assert window["reason"] == "SLA window evaluated"
     assert window["sla_passed"] is True
-    assert window["sla_values"] == {"error_rate:avg:le:100": 100.0}
+    assert window["sla_values"] == {f"{metric_tag}:avg:le:100": 100.0}
     assert events[-1]["event"] == "adaptive_decision"
 
 
 @pytest.mark.asyncio
-async def test_cancelled_window_does_not_pass_error_rate_only_sla(tmp_path) -> None:
+async def test_cancelled_window_does_not_pass_request_error_rate_only_sla(tmp_path) -> None:
     error_sla = SLAFilter(
-        metric_tag="error_rate",
+        metric_tag="request_error_rate",
         stat="avg",
         op="le",
         threshold=0.0,
@@ -1249,10 +1253,10 @@ async def test_mixed_error_cancel_window_does_not_pass_terminal_rate_slas(
     tmp_path,
 ) -> None:
     error_sla = SLAFilter(
-        metric_tag="error_rate",
+        metric_tag="request_error_rate",
         stat="avg",
         op="le",
-        threshold=0.5,
+        threshold=50.0,
     )
     cancellation_sla = SLAFilter(
         metric_tag="cancellation_rate",
@@ -1306,14 +1310,14 @@ async def test_error_window_does_not_pass_cancellation_rate_only_sla(tmp_path) -
 
 
 @pytest.mark.asyncio
-async def test_error_window_does_not_pass_error_rate_plus_throughput_cap(
+async def test_error_window_does_not_pass_request_error_rate_plus_throughput_cap(
     tmp_path,
 ) -> None:
     error_sla = SLAFilter(
-        metric_tag="error_rate",
+        metric_tag="request_error_rate",
         stat="avg",
         op="le",
-        threshold=1.0,
+        threshold=100.0,
     )
     throughput_sla = SLAFilter(
         metric_tag="throughput",
@@ -1842,9 +1846,7 @@ def test_build_backend_rejects_invalid_construction(tmp_path) -> None:
         )
 
 
-def test_sla_evaluator_rate_metric_aliases_and_failures() -> None:
-    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
-
+def test_sla_evaluator_rate_metrics_and_failures() -> None:
     evaluator = AdaptiveScaleSLAEvaluator()
     stats = WindowStats(
         samples=[100_000_000, 200_000_000],
@@ -1857,10 +1859,15 @@ def test_sla_evaluator_rate_metric_aliases_and_failures() -> None:
         SLAFilter(metric_tag="request_throughput", stat="min", op="ge", threshold=1),
         stats,
     ) == pytest.approx(1.0)
-    assert evaluator.value(
-        SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=1),
+    request_error_rate = evaluator.value(
+        SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=34),
         stats,
-    ) == pytest.approx(100.0 / 3.0)
+    )
+    assert request_error_rate == pytest.approx(100.0 / 3.0)
+    assert evaluator.value(
+        SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=34),
+        stats,
+    ) == pytest.approx(request_error_rate)
     assert evaluator.value(
         SLAFilter(
             metric_tag="request_cancellation_rate", stat="max", op="le", threshold=1
@@ -1887,12 +1894,30 @@ def test_sla_evaluator_rate_metric_aliases_and_failures() -> None:
             ),
             1.0,
         )
+    for metric_tag in ("request_error_rate", "error_rate"):
+        for boundary in (0.0, 100.0):
+            evaluator.validate_single_filter(
+                SLAFilter(
+                    metric_tag=metric_tag,
+                    stat="avg",
+                    op="le",
+                    threshold=boundary,
+                )
+            )
+
+        for threshold in (-0.1, 100.1):
+            with pytest.raises(ValueError, match=r"within \[0, 100\]"):
+                evaluator.validate_single_filter(
+                    SLAFilter(
+                        metric_tag=metric_tag,
+                        stat="avg",
+                        op="le",
+                        threshold=threshold,
+                    )
+                )
 
 
-def test_sla_evaluator_supports_ttft_error_and_cancellation_rate() -> None:
-    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
-    from aiperf.timing.strategies.adaptive_scale_types import WindowStats
-
+def test_sla_evaluator_supports_ttft_request_error_and_cancellation_rate() -> None:
     evaluator = AdaptiveScaleSLAEvaluator()
     stats = WindowStats(
         samples=[100_000_000, 200_000_000],
@@ -1907,7 +1932,7 @@ def test_sla_evaluator_supports_ttft_error_and_cancellation_rate() -> None:
         stats,
     ) == pytest.approx(19.5)
     assert evaluator.value(
-        SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=0.5),
+        SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=34.0),
         stats,
     ) == pytest.approx(100.0 / 3.0)
     assert evaluator.value(
@@ -1924,9 +1949,6 @@ def test_error_rate_sla_matches_exported_metric_unit_and_denominator() -> None:
     ratio whose denominator also included cancelled requests), so
     ``request_error_rate:avg:le:1`` allowed a 100% error rate instead of 1%.
     """
-    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
-    from aiperf.timing.strategies.adaptive_scale_types import WindowStats
-
     evaluator = AdaptiveScaleSLAEvaluator()
     stats = WindowStats(
         samples=[100_000_000, 200_000_000],
@@ -1935,18 +1957,16 @@ def test_error_rate_sla_matches_exported_metric_unit_and_denominator() -> None:
         elapsed_sec=2.0,
     )
 
-    sla = SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=1)
-    value = evaluator.value(sla, stats)
+    for metric_tag in ("request_error_rate", "error_rate"):
+        sla = SLAFilter(metric_tag=metric_tag, stat="avg", op="le", threshold=1)
+        value = evaluator.value(sla, stats)
 
-    # 100 * 1 / (2 successes + 1 error); the cancellation is excluded.
-    assert value == pytest.approx(100.0 / 3.0)
-    assert not evaluator.passes([sla], {evaluator.key(sla): value})
+        # 100 * 1 / (2 successes + 1 error); the cancellation is excluded.
+        assert value == pytest.approx(100.0 / 3.0)
+        assert not evaluator.passes([sla], {evaluator.key(sla): value})
 
 
 def test_missing_ttft_sample_fails_lower_is_better_sla() -> None:
-    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
-    from aiperf.timing.strategies.adaptive_scale_types import WindowStats
-
     evaluator = AdaptiveScaleSLAEvaluator()
     sla = SLAFilter(
         metric_tag="time_to_first_token", stat="p95", op="le", threshold=25.0
@@ -1959,8 +1979,6 @@ def test_missing_ttft_sample_fails_lower_is_better_sla() -> None:
 
 
 def test_sla_evaluator_zero_total_rates_and_output_token_stat_errors() -> None:
-    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
-
     evaluator = AdaptiveScaleSLAEvaluator()
     empty_stats = WindowStats(samples=[], errors=0, cancelled=0, elapsed_sec=1.0)
 
@@ -1973,7 +1991,7 @@ def test_sla_evaluator_zero_total_rates_and_output_token_stat_errors() -> None:
     )
     assert (
         evaluator.value(
-            SLAFilter(metric_tag="error_rate", stat="min", op="le", threshold=1),
+            SLAFilter(metric_tag="request_error_rate", stat="min", op="le", threshold=1),
             empty_stats,
         )
         == 0.0

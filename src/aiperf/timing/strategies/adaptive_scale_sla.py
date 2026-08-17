@@ -41,6 +41,7 @@ GOODPUT_METRICS = {"goodput"}
 OUTPUT_TOKEN_THROUGHPUT_METRICS = {"output_token_throughput"}
 GOODPUT_RATIO_METRICS = {"goodput_ratio"}
 SUCCESS_RATE_METRICS = {"success_rate", "request_success_rate"}
+ERROR_RATE_METRICS = {"error_rate", "request_error_rate"}
 RATE_METRICS = {
     "throughput",
     "request_throughput",
@@ -49,14 +50,12 @@ RATE_METRICS = {
     *OUTPUT_TOKEN_THROUGHPUT_METRICS,
     *GOODPUT_RATIO_METRICS,
     *SUCCESS_RATE_METRICS,
-    "error_rate",
-    "request_error_rate",
+    *ERROR_RATE_METRICS,
     "cancellation_rate",
     "request_cancellation_rate",
 }
 ZERO_SUCCESS_WINDOW_METRICS = {
-    "error_rate",
-    "request_error_rate",
+    *ERROR_RATE_METRICS,
     "cancellation_rate",
     "request_cancellation_rate",
 }
@@ -65,7 +64,7 @@ SUPPORTED_METRICS_MESSAGE = (
     "adaptive_scale supports request_latency, time_to_first_token, "
     "inter_token_latency, request throughput, output_token_throughput, "
     "goodput, goodput_ratio, "
-    "success_rate, error_rate, and cancellation_rate SLA metrics in this release"
+    "success_rate, request_error_rate, error_rate, and cancellation_rate SLA metrics in this release"
 )
 
 
@@ -78,8 +77,8 @@ def _rate_metric_name(metric_tag: str) -> str:
         return "goodput_ratio"
     if metric_tag in SUCCESS_RATE_METRICS:
         return "success_rate"
-    if metric_tag in {"error_rate", "request_error_rate"}:
-        return "error_rate"
+    if metric_tag in ERROR_RATE_METRICS:
+        return "request_error_rate"
     if metric_tag in {"cancellation_rate", "request_cancellation_rate"}:
         return "cancellation_rate"
     return "throughput"
@@ -225,12 +224,13 @@ class AdaptiveScaleSLAEvaluator:
 
     @staticmethod
     def error_rate_value(stats: WindowStats, stat: str) -> float:
-        """Window error rate in percentage points, matching the exported metric.
+        """Window error rate in percentage points.
 
         The exported ``request_error_rate`` metric is ``100 * errors /
         (successes + errors)``, so the adaptive-scale evaluator uses the same
         unit, and the same successes+errors denominator shape: a threshold of
-        ``1`` means 1%, and cancellations are excluded.
+        ``1`` means 1%, and cancellations are excluded. The shorter
+        ``error_rate`` metric tag is an alias for this same value.
 
         The counts are window-local and not identical to the exported metric's
         inputs: ``WindowStats.errors`` also counts requests that completed
@@ -245,7 +245,7 @@ class AdaptiveScaleSLAEvaluator:
                 if completed == 0:
                     return 0.0
                 return 100.0 * stats.errors / completed
-        raise ValueError(f"Unsupported error_rate SLA stat: {stat}")
+        raise ValueError(f"Unsupported request_error_rate SLA stat: {stat}")
 
     @staticmethod
     def cancellation_rate_value(stats: WindowStats, stat: str) -> float:
@@ -282,7 +282,7 @@ class AdaptiveScaleSLAEvaluator:
                 return self.goodput_ratio_value(stats, sla.stat, sla_filters or [])
             case metric if metric in SUCCESS_RATE_METRICS:
                 return self.success_rate_value(stats, sla.stat)
-            case "error_rate" | "request_error_rate":
+            case metric if metric in ERROR_RATE_METRICS:
                 return self.error_rate_value(stats, sla.stat)
             case "cancellation_rate" | "request_cancellation_rate":
                 return self.cancellation_rate_value(stats, sla.stat)
@@ -325,7 +325,7 @@ class AdaptiveScaleSLAEvaluator:
             return False
 
         metric_tags = {sla.metric_tag for sla in sla_filters}
-        has_error_rate_filter = bool(metric_tags & {"error_rate", "request_error_rate"})
+        has_error_rate_filter = bool(metric_tags & ERROR_RATE_METRICS)
         if stats.errors and not has_error_rate_filter:
             return False
 
@@ -343,18 +343,21 @@ class AdaptiveScaleSLAEvaluator:
         )
         if sla.stat not in allowed_stats:
             raise ValueError(f"Unsupported {metric_name} SLA stat: {sla.stat}")
-        if sla.metric_tag in {"error_rate", "request_error_rate"}:
+        if sla.metric_tag in ERROR_RATE_METRICS:
             if not 0.0 <= sla.threshold <= 100.0:
                 raise ValueError(
-                    "error_rate SLA threshold is in percentage points and must be "
+                    "request_error_rate/error_rate SLA thresholds are in "
+                    "percentage points and must be "
                     f"within [0, 100], got {sla.threshold}"
                 )
             if 0.0 < sla.threshold < 1.0:
                 _LOGGER.warning(
-                    "error_rate SLA threshold %s is below 1 percentage point. "
-                    "Adaptive-scale error_rate thresholds are percentage points "
-                    "(1 means 1%%), not fractions; a config written for the old "
-                    "0-1 fraction scale should be multiplied by 100.",
+                    "%s SLA threshold %s is below 1 percentage point. "
+                    "Adaptive-scale request_error_rate/error_rate thresholds "
+                    "are percentage points (1 means 1%%), not fractions; a "
+                    "config written for the old 0-1 fraction scale should be "
+                    "multiplied by 100.",
+                    sla.metric_tag,
                     sla.threshold,
                 )
 
