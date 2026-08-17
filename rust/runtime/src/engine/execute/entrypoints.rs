@@ -28,6 +28,20 @@ struct PreparedNativeExecution<'a> {
     )>,
 }
 
+pub(crate) struct NativeExecutionDependencies<'a> {
+    pub(crate) transport_factory: Arc<dyn RequestExecutorFactory>,
+    pub(crate) graph_placement: &'a dyn GraphPlacementFactory,
+    pub(crate) trace_driver: Arc<dyn TraceProgramDriverFactory>,
+    pub(crate) control_plane_http:
+        Arc<dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory>,
+    pub(crate) registry: &'a AIPerfRegistry,
+    pub(crate) sidecar_factory: &'a dyn NativeSidecarResourceFactory,
+    pub(crate) readiness: Option<(
+        Box<dyn PreparedOnlineReadiness>,
+        &'a dyn ReadinessTransportFactory,
+    )>,
+}
+
 /// The single native driver layer: construct the run clock once, then let the
 /// clock drive itself.
 ///
@@ -42,17 +56,17 @@ struct PreparedNativeExecution<'a> {
 /// own private reactors the pump cannot reach.
 pub(crate) fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     mut plan: NativeRunSpec,
-    transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn GraphPlacementFactory,
-    trace_driver: Arc<dyn TraceProgramDriverFactory>,
-    control_plane_http: Arc<dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory>,
-    registry: &AIPerfRegistry,
-    sidecar_factory: &dyn NativeSidecarResourceFactory,
-    readiness: Option<(
-        Box<dyn PreparedOnlineReadiness>,
-        &dyn ReadinessTransportFactory,
-    )>,
+    dependencies: NativeExecutionDependencies<'_>,
 ) -> Result<NativeReport> {
+    let NativeExecutionDependencies {
+        transport_factory,
+        graph_placement,
+        trace_driver,
+        control_plane_http,
+        registry,
+        sidecar_factory,
+        readiness,
+    } = dependencies;
     validate_plan(&plan)?;
     // Thread-per-core sharding hands each worker a disjoint conversation subset via a
     // modulo partition (`two_level_partition`). Its modulus is the GLOBAL sub-cell

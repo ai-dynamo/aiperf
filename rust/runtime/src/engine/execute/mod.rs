@@ -192,13 +192,15 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_selected(
 ) -> Result<NativeReport> {
     execute_prepared_native_plan_uncommitted_with_runtime_factories(
         plan,
-        request_executor,
-        factories.graph(),
-        factories.trace_driver_handle(),
-        factories.control_plane_http_handle(),
-        registry,
-        &BuiltinNativeSidecarResourceFactory,
-        readiness.map(|readiness| (readiness, factories.readiness_transport())),
+        NativeExecutionDependencies {
+            transport_factory: request_executor,
+            graph_placement: factories.graph(),
+            trace_driver: factories.trace_driver_handle(),
+            control_plane_http: factories.control_plane_http_handle(),
+            registry,
+            sidecar_factory: &BuiltinNativeSidecarResourceFactory,
+            readiness: readiness.map(|readiness| (readiness, factories.readiness_transport())),
+        },
     )
 }
 
