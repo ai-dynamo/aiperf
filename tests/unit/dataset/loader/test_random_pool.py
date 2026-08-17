@@ -1224,3 +1224,47 @@ class TestRandomPoolBatchSizeWithFileDataset:
             turn = conv.turns[0]
             assert turn.texts == []
             assert len(turn.images) == 1
+
+
+def _extract_heredoc_lines(doc: str, heredoc_target: str) -> list[str]:
+    """Return the body lines of a `cat > <heredoc_target> << 'EOF' ... EOF` block."""
+    marker = f"cat > {heredoc_target} << 'EOF'\n"
+    body = doc.split(marker, 1)[1].split("\nEOF", 1)[0]
+    return [line for line in body.splitlines() if line.strip()]
+
+
+def test_custom_dataset_docs_multimodal_example_pool_has_images() -> None:
+    """The "Multimodal batch sizes" tutorial example must use a pool that actually
+    contains images -- otherwise `--image-batch-size 2` silently samples nothing.
+
+    Regression test for a doc bug where the example reused the text-only
+    `pool.jsonl` from the "Basic Single-File Sampling" section above it.
+    """
+    doc = Path("docs/tutorials/custom-dataset.md").read_text()
+    lines = _extract_heredoc_lines(doc, "multimodal_pool.jsonl")
+    assert lines, "expected a multimodal_pool.jsonl heredoc in the tutorial"
+
+    records = [RandomPool.model_validate_json(line) for line in lines]
+    assert all(record.image is not None for record in records), (
+        "every entry in the multimodal random_pool example must carry an image "
+        "field, or --image-batch-size in the example command samples nothing"
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pool_path = Path(tmp_dir) / "multimodal_pool.jsonl"
+        pool_path.write_text("\n".join(lines) + "\n")
+        cli = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(pool_path),
+            custom_dataset_type="random_pool",
+            image_batch_size=2,
+        )
+        run = make_run_from_cli(cli)
+        loader = RandomPoolDatasetLoader(
+            filename=str(pool_path), run=run, num_conversations=3
+        )
+        conversations = loader.convert_to_conversations(
+            {"multimodal_pool.jsonl": records}
+        )
+        for conv in conversations:
+            assert len(conv.turns[0].images[0].contents) == 2

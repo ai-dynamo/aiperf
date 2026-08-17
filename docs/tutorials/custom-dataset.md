@@ -452,11 +452,19 @@ For multimodal workloads, `random_pool` supports per-modality batch-size flags t
 
 These flags are only valid with `--custom-dataset-type random_pool`. Using them with other file dataset types (e.g. `mooncake_trace`) is an error.
 
+The `pool.jsonl` file above is text-only, so `--image-batch-size` would have no images to sample. A multimodal `random_pool` needs an `image` field in the pool entries:
+
 ```bash
+cat > multimodal_pool.jsonl << 'EOF'
+{"text": "Describe what you see in this image.", "image": "https://example.com/img1.png"}
+{"text": "What objects are visible here?", "image": "https://example.com/img2.png"}
+{"text": "Summarize the scene.", "image": "https://example.com/img3.png"}
+EOF
+
 aiperf profile \
     --model Qwen/Qwen3-VL-7B \
     --endpoint-type chat \
-    --input-file pool.jsonl \
+    --input-file multimodal_pool.jsonl \
     --custom-dataset-type random_pool \
     --image-batch-size 2 \
     --num-conversations 50 \
