@@ -265,10 +265,17 @@ A synthetic system message is created and shared identically across all sessions
 ### Verbatim system prompt (`--system-prompt` / `--system-prompt-file`)
 
 A user-supplied system message, identical across all sessions, works with synthetic **and**
-file/public datasets. For marker routing it behaves exactly like
+file/public datasets.
+
+It is **mutually exclusive** with `--shared-system-prompt-length`: both fill the same
+system-message slot, so setting both is rejected at config-validation time rather than one
+silently taking precedence. There is no ordering between them — the run fails before any
+request is sent. The same exclusivity applies to
+`--num-prefix-prompts`/`--prefix-prompt-length`.
+
+For marker routing the verbatim prompt behaves exactly like
 `--shared-system-prompt-length`: the `system_*` and `warmup_isolation_system` targets land
-on it rather than falling through to the first user turn. The two options are mutually
-exclusive, so only one can fill the system slot.
+on it rather than falling through to the first user turn.
 
 One difference in token accounting: the synthetic system prompt is shrunk by the marker's
 token cost so its wire length still matches the configured `--shared-system-prompt-length`.

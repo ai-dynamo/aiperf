@@ -510,8 +510,10 @@ Behavior worth knowing:
   system role (`completions`, `embeddings`, the rankings endpoints) reject the option at
   startup rather than silently dropping it.
 - **Mutually exclusive** with `--shared-system-prompt-length` and with
-  `--num-prefix-prompts`/`--prefix-prompt-length`, all of which fill the same slot. It does
-  combine with `--user-context-prompt-length` for a two-tier shared/per-session structure.
+  `--num-prefix-prompts`/`--prefix-prompt-length`, all of which fill the same slot. Setting
+  two of them is rejected at startup rather than one taking precedence, so a misconfigured
+  run fails before sending any requests. It does combine with
+  `--user-context-prompt-length` for a two-tier shared/per-session structure.
 
 > **Note:** `--num-prefix-prompts` and `--prefix-prompt-length` apply only to synthetic
 > datasets — they are dropped for file and public datasets. `--system-prompt` is not.
