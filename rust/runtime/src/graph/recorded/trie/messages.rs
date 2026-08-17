@@ -119,35 +119,42 @@ fn geometry_from_hashes(
 /// carries no user context (context-loss branch); the remainder is user. A turn
 /// whose new region is all-assistant flips its OWN last new block to user so the
 /// frozen boundary lands on a user block (inherited verbatim by every descendant).
-fn block_role_split(
-    prev_hash_ids: &[crate::graph::recorded::BlockHash],
-    curr_hash_ids: &[crate::graph::recorded::BlockHash],
+struct BlockRoleSplitArgs<'a> {
+    prev_hash_ids: &'a [crate::graph::recorded::BlockHash],
+    curr_hash_ids: &'a [crate::graph::recorded::BlockHash],
     curr_in_tokens: usize,
     prev_out_tokens: usize,
     block_size: usize,
     max_asst_blocks: Option<usize>,
     parent_has_user: bool,
     parent_covered_blocks: usize,
-) -> (usize, Vec<Role>) {
-    let geo = geometry_from_hashes(prev_hash_ids, curr_hash_ids, curr_in_tokens, block_size);
+}
+
+fn block_role_split(args: BlockRoleSplitArgs<'_>) -> (usize, Vec<Role>) {
+    let geo = geometry_from_hashes(
+        args.prev_hash_ids,
+        args.curr_hash_ids,
+        args.curr_in_tokens,
+        args.block_size,
+    );
     let inherited = geo
         .lcp
-        .min(prev_hash_ids.len())
+        .min(args.prev_hash_ids.len())
         .min(geo.covered)
-        .min(parent_covered_blocks);
+        .min(args.parent_covered_blocks);
     let new_n = geo.covered.saturating_sub(inherited);
-    let mut asst = if prev_out_tokens > 0 {
-        prev_out_tokens.div_ceil(block_size)
+    let mut asst = if args.prev_out_tokens > 0 {
+        args.prev_out_tokens.div_ceil(args.block_size)
     } else {
         0
     };
-    if !parent_has_user {
+    if !args.parent_has_user {
         // Context-loss branch: the parent holds no user context, so the wire
         // cannot present assistant output before any user input.
         asst = 0;
     }
     asst = asst.min(new_n);
-    if let Some(cap) = max_asst_blocks {
+    if let Some(cap) = args.max_asst_blocks {
         asst = asst.min(cap);
     }
     if asst == new_n && asst > 0 {
@@ -276,16 +283,16 @@ pub(super) fn assign_block_tags(
         let parent_has_user = parent_tags[..inherited]
             .iter()
             .any(|tag| tag.role == Role::User);
-        let (inh2, new_roles) = block_role_split(
-            prev_hash,
-            curr,
-            input_tokens,
-            prev_out,
+        let (inh2, new_roles) = block_role_split(BlockRoleSplitArgs {
+            prev_hash_ids: prev_hash,
+            curr_hash_ids: curr,
+            curr_in_tokens: input_tokens,
+            prev_out_tokens: prev_out,
             block_size,
-            caps[index],
+            max_asst_blocks: caps[index],
             parent_has_user,
-            parent_tags.len(),
-        );
+            parent_covered_blocks: parent_tags.len(),
+        });
         debug_assert_eq!(inh2, inherited, "block-tag/geometry inherited disagreement");
         let mut tags: Vec<BlockTag> = parent_tags[..inherited].to_vec();
         for (j, role) in new_roles.iter().copied().enumerate() {
