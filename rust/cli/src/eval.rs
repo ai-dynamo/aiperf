@@ -5,9 +5,11 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 use aiperf_runtime::eval::{
@@ -457,30 +459,64 @@ fn materialize_pinned_directory(
     };
     let root = tempfile::tempdir()?;
     let checkout = root.path().join("repository");
-    let clone = Command::new("git")
-        .args(["clone", "--no-checkout", repository])
-        .arg(&checkout)
-        .output()?;
-    if !clone.status.success() {
+    let initialize =
+        git_output_bounded(Command::new("git").args(["init", "--quiet"]).arg(&checkout))?;
+    if !initialize.status.success() {
         anyhow::bail!(
-            "unable to clone pinned Git repository: {}",
-            String::from_utf8_lossy(&clone.stderr).trim()
+            "unable to initialize pinned Git repository: {}",
+            String::from_utf8_lossy(&initialize.stderr).trim()
         );
     }
-    let checkout_result = Command::new("git")
-        .args([
-            "-C",
-            checkout.to_string_lossy().as_ref(),
-            "checkout",
-            "--detach",
-            revision,
-        ])
-        .output()?;
+    let fetch = git_output_bounded(Command::new("git").args([
+        "-C",
+        checkout.to_string_lossy().as_ref(),
+        "-c",
+        "protocol.version=2",
+        "fetch",
+        "--depth=1",
+        "--filter=blob:none",
+        "--no-tags",
+        repository,
+        revision,
+    ]))?;
+    if !fetch.status.success() {
+        anyhow::bail!(
+            "unable to fetch pinned Git revision: {}",
+            String::from_utf8_lossy(&fetch.stderr).trim()
+        );
+    }
+    let object_type = git_output_bounded(Command::new("git").args([
+        "-C",
+        checkout.to_string_lossy().as_ref(),
+        "cat-file",
+        "-t",
+        revision,
+    ]))?;
+    if !object_type.status.success() || object_type.stdout.trim_ascii() != b"commit" {
+        anyhow::bail!("pinned Git revision must identify a commit");
+    }
+    let checkout_result = git_output_bounded(Command::new("git").args([
+        "-C",
+        checkout.to_string_lossy().as_ref(),
+        "checkout",
+        "--detach",
+        revision,
+    ]))?;
     if !checkout_result.status.success() {
         anyhow::bail!(
             "unable to check out pinned Git revision: {}",
             String::from_utf8_lossy(&checkout_result.stderr).trim()
         );
+    }
+    let head = git_output_bounded(Command::new("git").args([
+        "-C",
+        checkout.to_string_lossy().as_ref(),
+        "rev-parse",
+        "--verify",
+        "HEAD",
+    ]))?;
+    if !head.status.success() || head.stdout.trim_ascii() != revision.as_bytes() {
+        anyhow::bail!("checked out Git revision does not match the requested commit");
     }
     fs::remove_dir_all(checkout.join(".git"))?;
     let package = checkout.join(package_path);
@@ -496,6 +532,64 @@ fn materialize_pinned_directory(
         package
     };
     Ok((Some(root), HarborSource::local(location.to_string_lossy())?))
+}
+
+const MAX_GIT_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
+const GIT_MATERIALIZATION_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn git_output_bounded(command: &mut Command) -> anyhow::Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("could not capture Git command stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("could not capture Git command stderr"))?;
+    let stdout = thread::spawn(move || read_git_output(stdout));
+    let stderr = thread::spawn(move || read_git_output(stderr));
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= GIT_MATERIALIZATION_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout.join();
+            let _ = stderr.join();
+            anyhow::bail!("pinned Git materialization exceeded its time limit");
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout
+        .join()
+        .map_err(|_| anyhow::anyhow!("Git stdout reader panicked"))??;
+    let stderr = stderr
+        .join()
+        .map_err(|_| anyhow::anyhow!("Git stderr reader panicked"))??;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn read_git_output(mut source: impl Read) -> io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let count = source.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(output);
+        }
+        if output.len().saturating_add(count) > MAX_GIT_COMMAND_OUTPUT_BYTES {
+            return Err(io::Error::other("Git command output exceeded its limit"));
+        }
+        output.extend_from_slice(&buffer[..count]);
+    }
 }
 
 fn agent_command_argv(command: &str) -> Vec<String> {
@@ -524,8 +618,9 @@ mod tests {
     use std::{fs, process::Command};
 
     use super::{
-        LifecycleSourceProvenance, SandboxFlag, agent_command_argv, materialize_pinned_directory,
-        persist_lifecycle_record, read_lifecycle_request, source_from_flags, uses_docker,
+        LifecycleSourceProvenance, SandboxFlag, agent_command_argv, git_output_bounded,
+        materialize_pinned_directory, persist_lifecycle_record, read_lifecycle_request,
+        source_from_flags, uses_docker,
     };
     use aiperf_runtime::eval::{
         HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
@@ -690,6 +785,86 @@ mod tests {
                 .is_file()
         );
         assert!(matches!(source, HarborSource::Local(_)));
+    }
+
+    #[test]
+    fn pinned_git_materialization_rejects_an_annotated_tag_object_id() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("tasks");
+        fs::create_dir(&repository).unwrap();
+        for arguments in [
+            ["init"].as_slice(),
+            ["config", "user.email", "eval@example.invalid"].as_slice(),
+            ["config", "user.name", "Eval"].as_slice(),
+        ] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&repository)
+                    .args(arguments)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        fs::write(repository.join("task.json"), "{\"id\":\"pinned\"}").unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["add", "task.json"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-c")
+                .arg("commit.gpgsign=false")
+                .arg("-C")
+                .arg(&repository)
+                .args(["commit", "-m", "task"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["tag", "-a", "release", "-m", "release"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let tag = String::from_utf8(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["rev-parse", "release^{tag}"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+
+        let error = materialize_pinned_directory(
+            &HarborSource::pinned_git(repository.to_string_lossy(), tag, "task.json").unwrap(),
+        )
+        .expect_err("annotated tags are not immutable commit pins");
+
+        assert!(error.to_string().contains("commit"));
+    }
+
+    #[test]
+    fn git_materialization_bounds_command_output() {
+        let error =
+            git_output_bounded(Command::new("sh").args(["-c", "head -c 1048577 /dev/zero"]))
+                .expect_err("Git command output must be bounded");
+
+        assert!(error.to_string().contains("output exceeded"));
     }
 
     #[test]
