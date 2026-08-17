@@ -1381,7 +1381,7 @@ mod tests {
             .iter()
             .map(|row| row.provided_session_id.as_deref().unwrap())
             .collect();
-        assert!(sessions.len() >= 1);
+        assert!(!sessions.is_empty());
         for session in &sessions {
             let count = rows
                 .iter()

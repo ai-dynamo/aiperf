@@ -259,6 +259,6 @@ mod tests {
         assert_eq!(records[1]["dispatch_offset_ms"], serde_json::json!(500.0));
         // Content + timing present on the export records.
         assert_eq!(records[1]["delay_ms"], serde_json::json!(900.0));
-        assert!(records[0]["raw_messages"].as_array().unwrap().len() >= 1);
+        assert!(!records[0]["raw_messages"].as_array().unwrap().is_empty());
     }
 }
