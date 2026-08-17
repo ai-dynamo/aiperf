@@ -76,6 +76,7 @@ impl DockerRuntime for RecordingRuntime {
 #[derive(Default)]
 struct ComposePreflightRuntime {
     config_calls: Cell<usize>,
+    config_deadline: Cell<Duration>,
     build_calls: Cell<usize>,
     up_calls: Cell<usize>,
 }
@@ -124,6 +125,11 @@ impl DockerComposeRuntime for ComposePreflightRuntime {
     ) -> Result<Vec<u8>, EvalExecutionError> {
         assert!(request.interpolation_disabled());
         assert!(request.env_file_disabled());
+        let deadline = request
+            .deadline()
+            .filter(|deadline| !deadline.is_zero())
+            .expect("Compose config request must be deadline-bounded");
+        self.config_deadline.set(deadline);
         self.config_calls.set(self.config_calls.get() + 1);
         Ok(b"{}".to_vec())
     }
@@ -1239,7 +1245,14 @@ fn compose_verifier_deadline_exhausted_by_workdir_inspection_skips_transfer_and_
 #[test]
 fn compose_preflight_runs_only_read_only_configuration_before_lifecycle() {
     let temporary = tempfile::tempdir().unwrap();
-    let task_root = standard_task_root(&temporary, "");
+    let task_root = standard_task_root(
+        &temporary,
+        r#"
+[environment]
+build_timeout_sec = 3
+startup_timeout_sec = 2
+"#,
+    );
     fs::write(
         task_root.join("environment/docker-compose.yaml"),
         "services:\n  api:\n    image: api:fixture\n",
@@ -1263,6 +1276,7 @@ fn compose_preflight_runs_only_read_only_configuration_before_lifecycle() {
     );
     assert!(result.is_err(), "{result:?}");
     assert_eq!(runtime.config_calls.get(), 1);
+    assert_eq!(runtime.config_deadline.get(), Duration::from_secs(2));
     assert_eq!(runtime.build_calls.get(), 0);
     assert_eq!(runtime.up_calls.get(), 0);
 }

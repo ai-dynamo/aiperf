@@ -146,14 +146,22 @@ impl<'a> ComposeProjectLease<'a> {
         // Startup is one provider window: discovery is part of proving that
         // `compose up --wait` created only this project, not a fresh timeout.
         let startup_deadline = CleanupDeadline::new(self.clock.clone(), self.startup_timeout);
+        let up_deadline = match startup_deadline.remaining() {
+            Ok(deadline) => deadline,
+            Err(error) => return self.finish_start_failure(error),
+        };
         let up = DockerComposeUpRequest::new(self.project.clone(), &self.project_directory)
-            .with_deadline(startup_deadline.remaining()?);
+            .with_deadline(up_deadline);
         if let Err(error) = self.runtime.compose_up(&up) {
             return self.finish_start_failure(error);
         }
+        let discovery_deadline = match startup_deadline.remaining() {
+            Ok(deadline) => deadline,
+            Err(error) => return self.finish_start_failure(error),
+        };
         match self
             .runtime
-            .compose_owned_resources(&self.project, startup_deadline.remaining()?)
+            .compose_owned_resources(&self.project, discovery_deadline)
         {
             Ok(resources) => {
                 self.recorded = resources;

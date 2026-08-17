@@ -6,7 +6,7 @@
 use std::{
     cell::{Cell, RefCell},
     fs,
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom, Write},
     os::unix::fs::PermissionsExt,
     process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
@@ -32,6 +32,8 @@ use super::{
     resolve_phase_environment, shared_workdir_conflicts_reserved_verifier_path,
     verifier_artifact_target_collision,
 };
+
+const MAX_DOCKER_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 
 use super::docker_runtime::preflight_compose_configuration;
 use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
@@ -686,6 +688,7 @@ impl DockerProcessSandbox {
             &labels,
             workspace.path(),
             &overlay,
+            compose.build_timeout().min(compose.startup_timeout()),
         )?;
         fs::write(
             source_root.join("aiperf.generated.compose.yaml"),
@@ -1970,12 +1973,17 @@ impl DockerComposeRuntime for DockerCliRuntime {
             &generated,
             request.overlay_definition(),
         );
-        compose_command(arguments.into_iter().chain([
-            "config".to_owned(),
-            "--format".to_owned(),
-            "json".to_owned(),
-            "--no-interpolate".to_owned(),
-        ]))
+        compose_config_command_bounded(
+            self.clock.clone(),
+            arguments.into_iter().chain([
+                "config".to_owned(),
+                "--format".to_owned(),
+                "json".to_owned(),
+                "--no-interpolate".to_owned(),
+            ]),
+            request.project().as_str(),
+            request.deadline(),
+        )
     }
 
     fn compose_build(&self, request: &DockerComposeBuildRequest) -> Result<(), EvalExecutionError> {
@@ -2259,6 +2267,41 @@ fn compose_command(
     }
 }
 
+fn compose_config_command_bounded(
+    clock: Rc<dyn Clock>,
+    arguments: impl IntoIterator<Item = String>,
+    target: &str,
+    deadline: Option<Duration>,
+) -> Result<Vec<u8>, EvalExecutionError> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    let Some(deadline) = deadline else {
+        return compose_command(arguments);
+    };
+    let output = tempfile::NamedTempFile::new()
+        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    let output_writer = output
+        .reopen()
+        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    let child = Command::new("docker")
+        .env("COMPOSE_DISABLE_ENV_FILE", "1")
+        .args(&arguments)
+        .stdout(Stdio::from(output_writer))
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose config".to_owned()))?;
+    let mut process = DockerExecChild { child };
+    let mut no_remove = |_target: &str, _: Duration| Ok(());
+    drive_docker_exec(
+        clock,
+        &mut process,
+        target,
+        EvalExecutionPhase::CollectionHook,
+        deadline,
+        &mut no_remove,
+    )?;
+    fs::read(output.path()).map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))
+}
+
 fn compose_command_bounded(
     clock: Rc<dyn Clock>,
     arguments: impl IntoIterator<Item = String>,
@@ -2450,19 +2493,30 @@ impl DockerCliRuntime {
                 "could not allocate bounded artifact archive: {error}"
             ))
         })?;
-        let output = archive.as_file().try_clone().map_err(|error| {
-            EvalExecutionError::ArtifactCollection(format!(
-                "could not retain bounded artifact archive: {error}"
-            ))
-        })?;
-        let child = Command::new("docker")
+        let mut child = Command::new("docker")
             .args(["cp", &format!("{container}:{source}"), "-"])
-            .stdout(Stdio::from(output))
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| {
                 EvalExecutionError::ProcessSpawn("docker collect artifact archive".to_owned())
             })?;
+        let copy = child
+            .stdout
+            .as_mut()
+            .ok_or_else(|| {
+                EvalExecutionError::ArtifactCollection(
+                    "docker collect artifact archive did not provide stdout".to_owned(),
+                )
+            })
+            .and_then(|stdout| {
+                copy_archive_stream_bounded(stdout, archive.as_file_mut(), MAX_DOCKER_ARCHIVE_BYTES)
+            });
+        if let Err(error) = copy {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
         let mut process = DockerExecChild { child };
         let mut no_remove = |_target: &str, _: Duration| Ok(());
         drive_docker_exec(
@@ -2478,6 +2532,38 @@ impl DockerCliRuntime {
             .seek(SeekFrom::Start(0))
             .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
         Ok(Box::new(BoundedArchiveReader { archive }))
+    }
+}
+
+fn copy_archive_stream_bounded(
+    source: &mut dyn Read,
+    destination: &mut dyn Write,
+    maximum_bytes: usize,
+) -> Result<(), EvalExecutionError> {
+    let mut buffer = [0_u8; 8192];
+    let mut copied = 0_usize;
+    loop {
+        let remaining = maximum_bytes.saturating_sub(copied);
+        let read_size = if remaining == 0 {
+            1
+        } else {
+            remaining.min(buffer.len())
+        };
+        let read = source
+            .read(&mut buffer[..read_size])
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        if read == 0 {
+            return Ok(());
+        }
+        if read > remaining {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "Docker artifact archive exceeds {maximum_bytes} bytes"
+            )));
+        }
+        destination
+            .write_all(&buffer[..read])
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        copied += read;
     }
 }
 
@@ -3557,13 +3643,19 @@ fn reports_absent_container(stderr: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, collections::VecDeque, rc::Rc, time::Duration};
+    use std::{
+        cell::Cell,
+        collections::VecDeque,
+        io::{self, Read},
+        rc::Rc,
+        time::Duration,
+    };
 
     use super::{
         DockerExecProcess, DockerExecState, EvalExecutionError, EvalExecutionPhase,
         classify_bounded_remove_result, compose_ownership_filters, compose_stop_arguments,
-        docker_container_name, docker_image_name, drive_docker_exec, ensure_network_exists,
-        redact_secret_values, reports_absent_container,
+        copy_archive_stream_bounded, docker_container_name, docker_image_name, drive_docker_exec,
+        ensure_network_exists, redact_secret_values, reports_absent_container,
     };
     use crate::clock::SimClock;
     use crate::eval::ComposeProjectId;
@@ -3661,6 +3753,30 @@ mod tests {
             failed,
             Err(EvalExecutionError::ContainerTeardown { .. })
         ));
+    }
+
+    #[test]
+    fn bounded_archive_copy_rejects_bytes_before_the_temporary_file_exceeds_its_cap() {
+        struct EndlessArchive;
+
+        impl Read for EndlessArchive {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                buffer.fill(b'x');
+                Ok(buffer.len())
+            }
+        }
+
+        let cap = 16 * 1024;
+        let mut archive = EndlessArchive;
+        let mut temporary = Vec::new();
+
+        let error = copy_archive_stream_bounded(&mut archive, &mut temporary, cap)
+            .expect_err("the Docker archive must be capped before it can exhaust temporary disk");
+
+        assert!(
+            matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("exceeds"))
+        );
+        assert!(temporary.len() <= cap);
     }
 
     #[test]

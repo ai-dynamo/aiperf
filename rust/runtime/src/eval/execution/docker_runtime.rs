@@ -44,6 +44,7 @@ pub(crate) fn preflight_compose_configuration(
     project_labels: &BTreeMap<String, String>,
     workspace: &Path,
     authored_overlay: &[u8],
+    deadline: Duration,
 ) -> Result<super::compose_policy::RenderedGeneratedMainCompose, EvalExecutionError> {
     preflight_docker(runtime, plan)?;
     let compose_plan = plan
@@ -66,7 +67,8 @@ pub(crate) fn preflight_compose_configuration(
         project_directory,
         rendered.bytes().to_vec(),
         project_directory.join(compose_plan.definition_path()),
-    );
+    )
+    .with_deadline(deadline);
     let compose_runtime =
         runtime
             .compose_runtime()
@@ -121,6 +123,7 @@ pub struct DockerComposeConfigRequest {
     project_directory: PathBuf,
     generated_definition: Vec<u8>,
     overlay_definition: PathBuf,
+    deadline: Option<Duration>,
 }
 
 impl DockerComposeConfigRequest {
@@ -136,6 +139,7 @@ impl DockerComposeConfigRequest {
             project_directory: project_directory.into(),
             generated_definition,
             overlay_definition: overlay_definition.into(),
+            deadline: None,
         }
     }
 
@@ -157,6 +161,17 @@ impl DockerComposeConfigRequest {
     /// Returns the materialized authored overlay path.
     pub fn overlay_definition(&self) -> &Path {
         &self.overlay_definition
+    }
+
+    /// Bounds the host-side provider configuration operation.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Returns the host-side provider configuration deadline, if configured.
+    pub const fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 
     /// Reports that Compose interpolation is prohibited for this request.
@@ -1055,6 +1070,7 @@ mod compose_lease_tests {
     };
 
     use super::*;
+    use crate::clock::SimClock;
     use crate::eval::execution::{
         compose_project::ComposeProjectLease,
         plan::ComposeProjectPlan,
@@ -1063,6 +1079,8 @@ mod compose_lease_tests {
 
     struct Runtime {
         events: Rc<RefCell<Vec<String>>>,
+        down_graces: Rc<RefCell<Vec<Duration>>>,
+        advance_after_up: Option<(Rc<SimClock>, i64)>,
     }
 
     #[test]
@@ -1137,6 +1155,9 @@ mod compose_lease_tests {
             self.events
                 .borrow_mut()
                 .push(format!("up:{}", request.project().as_str()));
+            if let Some((clock, time_ns)) = &self.advance_after_up {
+                clock.advance_to(*time_ns);
+            }
             Ok(())
         }
         fn compose_exec(&self, _: &DockerComposeExecRequest) -> Result<(), EvalExecutionError> {
@@ -1197,13 +1218,14 @@ mod compose_lease_tests {
             &self,
             request: &DockerComposeDownRequest,
         ) -> Result<(), EvalExecutionError> {
-            assert_eq!(
-                request.container_grace(),
-                std::time::Duration::from_secs(10)
-            );
+            self.down_graces
+                .borrow_mut()
+                .push(request.container_grace());
             assert!(request.removes_volumes());
             assert!(request.removes_orphans());
-            assert_eq!(request.deadline(), Some(std::time::Duration::from_secs(60)));
+            assert!(request.deadline().is_some_and(|deadline| {
+                !deadline.is_zero() && deadline <= std::time::Duration::from_secs(60)
+            }));
             self.events
                 .borrow_mut()
                 .push(format!("down:{}", request.project().as_str()));
@@ -1248,6 +1270,8 @@ mod compose_lease_tests {
         let events = Rc::new(RefCell::new(Vec::new()));
         let runtime: Rc<dyn DockerComposeRuntime> = Rc::new(Runtime {
             events: Rc::clone(&events),
+            down_graces: Rc::new(RefCell::new(Vec::new())),
+            advance_after_up: None,
         });
         let plan = ComposeProjectPlan {
             definition_path: "environment/docker-compose.yaml".to_owned(),
@@ -1283,10 +1307,55 @@ mod compose_lease_tests {
     }
 
     #[test]
+    fn compose_lease_up_that_returns_after_startup_deadline_uses_terminal_cleanup() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let down_graces = Rc::new(RefCell::new(Vec::new()));
+        let clock = Rc::new(SimClock::new());
+        let runtime = Runtime {
+            events: Rc::clone(&events),
+            down_graces: Rc::clone(&down_graces),
+            advance_after_up: Some((clock.clone(), Duration::from_secs(1).as_nanos() as i64)),
+        };
+        let plan = ComposeProjectPlan {
+            definition_path: "environment/docker-compose.yaml".to_owned(),
+            services: BTreeSet::from([ComposeServiceName::main()]),
+            build_timeout: Duration::from_secs(1),
+            startup_timeout: Duration::from_secs(1),
+        };
+        let mut lease = ComposeProjectLease::reserve_with_clock(
+            &runtime,
+            clock,
+            &plan,
+            "abcdef0123456789",
+            "/tmp",
+            "main:image",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            lease.start(),
+            Err(EvalExecutionError::ContainerTeardown { .. })
+        ));
+        assert_eq!(
+            lease.state(),
+            super::super::compose_project::ComposeLeaseState::Down
+        );
+        assert!(
+            events
+                .borrow()
+                .iter()
+                .any(|event| event.starts_with("down:"))
+        );
+        assert_eq!(&*down_graces.borrow(), &[Duration::ZERO]);
+    }
+
+    #[test]
     fn compose_leases_with_the_same_step_input_keep_project_cleanup_disjoint() {
         let events = Rc::new(RefCell::new(Vec::new()));
         let runtime: Rc<dyn DockerComposeRuntime> = Rc::new(Runtime {
             events: Rc::clone(&events),
+            down_graces: Rc::new(RefCell::new(Vec::new())),
+            advance_after_up: None,
         });
         let plan = ComposeProjectPlan {
             definition_path: "environment/docker-compose.yaml".to_owned(),
@@ -1340,6 +1409,8 @@ mod compose_lease_tests {
         let events = Rc::new(RefCell::new(Vec::new()));
         let runtime: Rc<dyn DockerComposeRuntime> = Rc::new(Runtime {
             events: Rc::clone(&events),
+            down_graces: Rc::new(RefCell::new(Vec::new())),
+            advance_after_up: None,
         });
         let plan = ComposeProjectPlan {
             definition_path: "environment/docker-compose.yaml".to_owned(),

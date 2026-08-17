@@ -3,7 +3,16 @@
 
 //! Immutable source locations and native source acquisition.
 
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs::{self, OpenOptions},
+    io::{self, Cursor},
+    os::unix::fs::PermissionsExt,
+    path::{Component, Path},
+    process::Command,
+};
+
+use tar::Archive;
+use tempfile::tempdir;
 
 use super::{AcquiredSource, HarborImportError, source_snapshot::SourceTreeSnapshot};
 
@@ -136,6 +145,15 @@ impl SourceAcquirer for NativeSourceAcquirer {
                 return AcquiredSource::tree(primary_path, tree);
             }
         }
+        if let HarborSource::PinnedGit {
+            repository,
+            revision,
+            package_path,
+        } = source
+            && (package_path.ends_with("/task.toml") || package_path == "task.toml")
+        {
+            return acquire_git_task_tree(repository, revision, package_path);
+        }
         self.acquire(source).map(AcquiredSource::file)
     }
 }
@@ -161,4 +179,84 @@ fn acquire_git_file(
             String::from_utf8_lossy(&output.stderr).trim()
         )))
     }
+}
+
+fn acquire_git_task_tree(
+    repository: &str,
+    revision: &str,
+    package_path: &str,
+) -> Result<AcquiredSource, HarborImportError> {
+    let task_root = package_path.strip_suffix("/task.toml").unwrap_or_default();
+    let object = if task_root.is_empty() {
+        revision.to_owned()
+    } else {
+        format!("{revision}:{task_root}")
+    };
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(["archive", "--format=tar", &object])
+        .output()
+        .map_err(|error| HarborImportError::Unavailable(format!("{repository}: {error}")))?;
+    if !output.status.success() {
+        return Err(HarborImportError::Unavailable(format!(
+            "{repository}@{revision}:{package_path}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let directory = tempdir().map_err(|error| {
+        HarborImportError::Unavailable(format!("could not retain pinned Git task tree: {error}"))
+    })?;
+    extract_git_tree(&output.stdout, directory.path())?;
+    let tree = SourceTreeSnapshot::capture(directory.path())?;
+    AcquiredSource::tree("task.toml", tree)
+}
+
+fn extract_git_tree(archive: &[u8], destination: &Path) -> Result<(), HarborImportError> {
+    let mut archive = Archive::new(Cursor::new(archive));
+    for entry in archive.entries().map_err(git_tree_error)? {
+        let mut entry = entry.map_err(git_tree_error)?;
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            return Err(HarborImportError::InvalidPackage(
+                "pinned Git task tree contains a link or special entry".to_owned(),
+            ));
+        }
+        let path = entry.path().map_err(git_tree_error)?;
+        if path.as_os_str().is_empty()
+            || path
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(HarborImportError::InvalidPackage(
+                "pinned Git task tree contains an invalid entry path".to_owned(),
+            ));
+        }
+        let target = destination.join(path.as_ref());
+        if entry_type.is_dir() {
+            fs::create_dir_all(&target).map_err(git_tree_error)?;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
+                .map_err(git_tree_error)?;
+            continue;
+        }
+        let parent = target.parent().ok_or_else(|| {
+            HarborImportError::InvalidPackage(
+                "pinned Git task tree contains a file without a parent".to_owned(),
+            )
+        })?;
+        fs::create_dir_all(parent).map_err(git_tree_error)?;
+        let mut output = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&target)
+            .map_err(git_tree_error)?;
+        io::copy(&mut entry, &mut output).map_err(git_tree_error)?;
+        let mode = entry.header().mode().map_err(git_tree_error)? & 0o777;
+        fs::set_permissions(&target, fs::Permissions::from_mode(mode)).map_err(git_tree_error)?;
+    }
+    Ok(())
+}
+
+fn git_tree_error(error: impl std::fmt::Display) -> HarborImportError {
+    HarborImportError::Unavailable(format!("could not retain pinned Git task tree: {error}"))
 }
