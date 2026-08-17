@@ -87,12 +87,9 @@ impl DockerProcessSandbox {
         if package.execution_plan().is_multi_step() {
             return Err(EvalExecutionError::UnsupportedMultiStep);
         }
-        if !package.is_standard_directory() {
-            return Err(EvalExecutionError::Materialization(
-                "Docker execution requires a standard task directory".to_owned(),
-            ));
+        if verifier_mode != package.execution_plan().verifier().mode() {
+            return Err(EvalExecutionError::InvalidRecipe("verifier mode"));
         }
-        let _ = verifier_mode;
         let runtime = DockerCliRuntime {
             clock: self.clock.clone(),
         };
@@ -256,9 +253,14 @@ impl DockerProcessSandbox {
             return Err(EvalExecutionError::UnsupportedMultiStep);
         }
         if !package.is_standard_directory() {
-            return Err(EvalExecutionError::Materialization(
-                "Docker execution requires a standard task directory".to_owned(),
-            ));
+            return self.execute_legacy_with_runtime(
+                runtime,
+                recipe,
+                package,
+                plan,
+                agent_command,
+                secrets,
+            );
         }
         preflight_docker(runtime, plan)?;
         if plan.compose().is_some() {
@@ -542,6 +544,144 @@ impl DockerProcessSandbox {
                 artifacts,
                 reward,
                 verifier: package.source_digest(),
+            })
+        })();
+        let cleanup = remove_containers_with_deadline(self.clock.clone(), runtime, containers);
+        combine_primary_and_cleanup(
+            outcome,
+            cleanup.map_or(Ok(()), Err),
+            "Docker evaluation containers",
+        )
+    }
+
+    fn execute_legacy_with_runtime(
+        &self,
+        runtime: &dyn DockerRuntime,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        plan: &BenchmarkExecutionPlan,
+        agent_command: &[String],
+        secrets: &dyn SecretProvider,
+    ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        preflight_docker(runtime, plan)?;
+        let environment = plan.environment();
+        let verifier = plan.verifier();
+        let environment_workdir = recipe.resolve_workdir(environment.workdir());
+        let workspace = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let (_, container) = docker_run_names(package);
+        let mut containers = vec![container.clone()];
+        let outcome = (|| {
+            let agent_network = network_lease(environment.network())?;
+            create_planned_container(
+                runtime,
+                &container,
+                &recipe.image,
+                ContainerWorkspace::at_workdir(workspace.path(), environment_workdir),
+                environment,
+                agent_network,
+                Some(package.instruction()),
+                None,
+            )?;
+            runtime.start(&DockerStartRequest::new(&container))?;
+            execute_planned_phase_with_deadline(
+                runtime,
+                &container,
+                EvalExecutionPhase::Agent,
+                agent_command,
+                environment,
+                plan.agent(),
+                environment_workdir,
+                secrets,
+                plan.agent().timeout(),
+            )?;
+            let artifact_workspace = tempfile::tempdir()
+                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+            let collection_timeout = plan
+                .steps()
+                .first()
+                .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?
+                .collection_timeout();
+            let artifacts = collect_artifacts_bounded(
+                runtime,
+                &container,
+                plan.artifacts(),
+                artifact_workspace.path(),
+                Deadline::from_timeout(self.clock.clone(), collection_timeout),
+            )?;
+            let verifier_timeout = verifier.phase().timeout();
+            let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
+            let verifier_network = network_lease(verifier.phase().network())?;
+            let verifier_container = if verifier.mode() == VerifierMode::Separate {
+                let verifier_workspace = tempfile::tempdir()
+                    .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                fs::set_permissions(verifier_workspace.path(), fs::Permissions::from_mode(0o755))
+                    .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+                super::transfer_artifacts(
+                    artifact_workspace.path(),
+                    verifier_workspace.path(),
+                    &artifacts,
+                )?;
+                let name = format!("{container}-verifier");
+                create_planned_container(
+                    runtime,
+                    &name,
+                    &recipe.image,
+                    ContainerWorkspace::at_workdir(verifier_workspace.path(), verifier_workdir),
+                    verifier.environment(),
+                    network_lease(verifier.environment().network())?,
+                    None,
+                    verifier_timeout,
+                )?;
+                containers.push(name.clone());
+                let start = match verifier_timeout {
+                    Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
+                    None => DockerStartRequest::new(&name),
+                };
+                runtime.start(&start)?;
+                if !plan.artifacts().is_empty() {
+                    transfer_verifier_artifacts(
+                        runtime,
+                        &name,
+                        verifier_workspace.path(),
+                        verifier_workdir,
+                        verifier_network,
+                        None,
+                    )?;
+                }
+                Some((name, verifier_workspace))
+            } else {
+                None
+            };
+            let verifier_name = verifier_container
+                .as_ref()
+                .map_or(container.as_str(), |(name, _)| name.as_str());
+            prepare_verifier_files_with_deadline(
+                runtime,
+                verifier_name,
+                verifier_network,
+                verifier_timeout,
+            )?;
+            execute_planned_phase_with_deadline(
+                runtime,
+                verifier_name,
+                EvalExecutionPhase::Verifier,
+                package.verifier_command(),
+                verifier.environment(),
+                verifier.phase(),
+                verifier_workdir,
+                secrets,
+                verifier_timeout,
+            )?;
+            let reward_workspace = tempfile::tempdir()
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            let reward = read_reward_with_runtime(runtime, verifier_name, &reward_workspace, None)?;
+            let verifier = ArtifactDigest::parse(package.verifier())
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            Ok(LocalExecutionResult {
+                artifacts,
+                reward,
+                verifier,
             })
         })();
         let cleanup = remove_containers_with_deadline(self.clock.clone(), runtime, containers);

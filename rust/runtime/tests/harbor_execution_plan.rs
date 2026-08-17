@@ -851,6 +851,30 @@ fn legacy_tasks_synthesize_one_logical_step() {
 }
 
 #[test]
+fn docker_single_step_rejects_a_verifier_mode_that_disagrees_with_the_plan() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "[verifier]\nenvironment_mode = \"separate\"\n");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    assert_eq!(
+        DockerProcessSandbox::new().execute(
+            &recipe,
+            &imported.package,
+            &["true".to_owned()],
+            VerifierMode::Shared,
+        ),
+        Err(EvalExecutionError::InvalidRecipe("verifier mode"))
+    );
+}
+
+#[test]
 fn existing_sandbox_entry_points_refuse_every_explicit_step_layout() {
     for steps in [
         [("one", "Only step.\n")].as_slice(),

@@ -35,6 +35,67 @@ struct RecordingRuntime {
     events: RefCell<Vec<String>>,
 }
 
+#[derive(Default)]
+struct LegacyRuntime {
+    events: RefCell<Vec<String>>,
+    images: RefCell<Vec<String>>,
+}
+
+impl DockerRuntime for LegacyRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_public_network()
+    }
+
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("build".to_owned());
+        Ok(())
+    }
+
+    fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        self.images.borrow_mut().push(
+            request
+                .public_arguments()
+                .iter()
+                .rev()
+                .nth(2)
+                .expect("container image")
+                .clone(),
+        );
+        self.events.borrow_mut().push("create".to_owned());
+        Ok(())
+    }
+
+    fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("start".to_owned());
+        Ok(())
+    }
+
+    fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push(request.phase().to_string());
+        Ok(())
+    }
+
+    fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        if request
+            .public_arguments()
+            .last()
+            .is_some_and(|destination| destination.ends_with("reward.txt"))
+        {
+            fs::write(request.public_arguments().last().unwrap(), "1\n")
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        self.events.borrow_mut().push("remove".to_owned());
+        Ok(())
+    }
+}
+
 impl DockerRuntime for RecordingRuntime {
     fn capabilities(&self) -> ProviderCapabilities {
         self.events.borrow_mut().push("preflight".to_owned());
@@ -2400,6 +2461,48 @@ fn unsupported_plan_is_rejected_before_a_docker_build_is_possible() {
         Err(EvalExecutionError::UnsupportedEnforcement("docker"))
     );
     assert_eq!(runtime.build_calls.get(), 0);
+}
+
+#[test]
+fn legacy_json_package_runs_in_the_recipe_image_without_a_docker_build() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package_path = temporary.path().join("task.json");
+    fs::write(
+        &package_path,
+        br#"{"id":"legacy","instruction":"Fix it","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["agent"],"verifier_command":["verify"],"declared_artifacts":[]}"#,
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(package_path.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "/work",
+    )
+    .unwrap();
+    let runtime = LegacyRuntime::default();
+
+    let result = DockerProcessSandbox::new().execute_with_runtime(
+        &runtime,
+        &recipe,
+        &imported.package,
+        imported.package.execution_plan(),
+        &["agent".to_owned()],
+        &FixedSecret,
+    );
+
+    assert!(result.is_ok(), "legacy Docker execution: {result:?}");
+    assert_eq!(
+        runtime.images.into_inner(),
+        vec![
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
+        ]
+    );
+    let events = runtime.events.into_inner();
+    assert!(!events.contains(&"build".to_owned()));
+    assert!(events.iter().filter(|event| *event == "agent").count() == 1);
+    assert!(events.iter().filter(|event| *event == "verifier").count() >= 2);
 }
 
 struct FixedSecret;
