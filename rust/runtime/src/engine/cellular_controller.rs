@@ -1394,6 +1394,7 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
 ///   "expect, don't spawn" launchers do not inject it).
 /// - **local**: pre-bind a loopback TCP listener so the actual port is known before
 ///   build; cells connect to `tcp://127.0.0.1:<port>`.
+///
 /// Whether the controller's cell coordinate (`AIPERF_CELL_CONTROLLER_ADDR`, a
 /// `tcp://HOST:PORT` velo endpoint) resolves to a LOOPBACK host — i.e. a co-located
 /// deployment where cells write to a shared filesystem instead of shipping over HTTP.

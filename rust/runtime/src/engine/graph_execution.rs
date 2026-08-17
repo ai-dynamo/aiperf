@@ -764,9 +764,9 @@ struct GraphWorkerBackend {
     /// One measurement observer for the worker's whole run, shared by every
     /// trace's sink. Records are uuid-keyed and drained on terminal, so concurrent
     /// traces stay isolated; this avoids constructing a fresh `MetricsAccumulator`
-    /// + `ColumnStore` (and cloning `MetricsConfig`) per trace, which dominated
-    /// per-trace allocation on the graph hot path. Mirrors the scheduled path's
-    /// per-worker `WorkerMeasurement`.
+    ///   + `ColumnStore` (and cloning `MetricsConfig`) per trace, which dominated
+    ///   per-trace allocation on the graph hot path. Mirrors the scheduled path's
+    ///   per-worker `WorkerMeasurement`.
     observer: Rc<NativeMetricsObserver>,
     phase: Phase,
     worker_id: usize,

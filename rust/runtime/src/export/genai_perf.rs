@@ -9,9 +9,9 @@
 //! are ordered `unit, avg, p1, p5, p10, p25, p50, p75, p90, p95, p99, min, max,
 //! std, count, sum`; scalar `count` is omitted.
 //! - Value shapes per native metric type: distribution →
-//!   count/avg/min/max/std/percentiles;
-//!   scalar → avg=min=max=value; counter → avg=min=max=sum=total; histogram →
-//!   count/sum/avg/percentiles.
+//!     count/avg/min/max/std/percentiles;
+//!     scalar → avg=min=max=value; counter → avg=min=max=sum=total; histogram →
+//!     count/sum/avg/percentiles.
 //! Non-finite values are absent in JSON and empty in CSV. Configured internal and
 //! experimental tags are omitted. CSV separates metrics with percentiles from
 //! scalar system metrics, sorts rows by tag, inserts one blank record between
