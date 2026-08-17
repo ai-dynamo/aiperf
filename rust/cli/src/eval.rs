@@ -523,12 +523,12 @@ mod tests {
     use std::{fs, process::Command};
 
     use super::{
-        LifecycleSourceProvenance, agent_command_argv, materialize_pinned_directory,
-        persist_lifecycle_record, read_lifecycle_request, source_from_flags,
+        LifecycleSourceProvenance, SandboxFlag, agent_command_argv, materialize_pinned_directory,
+        persist_lifecycle_record, read_lifecycle_request, source_from_flags, uses_docker,
     };
     use aiperf_runtime::eval::{
         HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
-        NativeSourceAcquirer, SandboxRole,
+        NativeSourceAcquirer, SandboxRole, VerifierMode,
     };
 
     #[test]
