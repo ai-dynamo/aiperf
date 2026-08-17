@@ -141,10 +141,11 @@ pub fn next_turn_index_at_or_after(
     t_star_ms: f64,
 ) -> Option<i64> {
     for (idx, ts) in turn_timestamps_ms.iter().enumerate() {
-        if let Some(t) = ts {
-            if t.is_finite() && *t >= t_star_ms {
-                return Some(idx as i64);
-            }
+        if let Some(t) = ts
+            && t.is_finite()
+            && *t >= t_star_ms
+        {
+            return Some(idx as i64);
         }
     }
     None

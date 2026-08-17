@@ -89,6 +89,46 @@ pub(crate) fn execute_benchmark_steps(
     })
 }
 
+fn aggregate_rewards(
+    strategy: MultiStepRewardStrategy,
+    steps: &[StepExecutionResult],
+) -> Result<RewardDocument, EvalExecutionError> {
+    let last = steps
+        .last()
+        .ok_or(EvalExecutionError::InvalidRecipe("benchmark steps"))?;
+    match strategy {
+        MultiStepRewardStrategy::Final => Ok(last.reward.clone()),
+        MultiStepRewardStrategy::Mean => {
+            let mut metrics = BTreeMap::new();
+            for (index, step) in steps.iter().enumerate() {
+                let divisor = (index + 1) as f64;
+                let retained_weight = index as f64 / divisor;
+                for value in metrics.values_mut() {
+                    *value *= retained_weight;
+                }
+                for (name, value) in &step.reward.metrics {
+                    *metrics.entry(name.clone()).or_insert(0.0) += value / divisor;
+                }
+            }
+            for (name, mean) in &mut metrics {
+                let Some(value) = steps[0].reward.metrics.get(name) else {
+                    continue;
+                };
+                if steps.iter().all(|step| {
+                    step.reward
+                        .metrics
+                        .get(name)
+                        .is_some_and(|candidate| candidate.to_bits() == value.to_bits())
+                }) {
+                    *mean = *value;
+                }
+            }
+            RewardDocument::new(metrics)
+                .map_err(|_| EvalExecutionError::InvalidRecipe("aggregated benchmark reward"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, VecDeque};
@@ -411,45 +451,5 @@ mod tests {
                 .collect(),
         )
         .unwrap()
-    }
-}
-
-fn aggregate_rewards(
-    strategy: MultiStepRewardStrategy,
-    steps: &[StepExecutionResult],
-) -> Result<RewardDocument, EvalExecutionError> {
-    let last = steps
-        .last()
-        .ok_or(EvalExecutionError::InvalidRecipe("benchmark steps"))?;
-    match strategy {
-        MultiStepRewardStrategy::Final => Ok(last.reward.clone()),
-        MultiStepRewardStrategy::Mean => {
-            let mut metrics = BTreeMap::new();
-            for (index, step) in steps.iter().enumerate() {
-                let divisor = (index + 1) as f64;
-                let retained_weight = index as f64 / divisor;
-                for value in metrics.values_mut() {
-                    *value *= retained_weight;
-                }
-                for (name, value) in &step.reward.metrics {
-                    *metrics.entry(name.clone()).or_insert(0.0) += value / divisor;
-                }
-            }
-            for (name, mean) in &mut metrics {
-                let Some(value) = steps[0].reward.metrics.get(name) else {
-                    continue;
-                };
-                if steps.iter().all(|step| {
-                    step.reward
-                        .metrics
-                        .get(name)
-                        .is_some_and(|candidate| candidate.to_bits() == value.to_bits())
-                }) {
-                    *mean = *value;
-                }
-            }
-            RewardDocument::new(metrics)
-                .map_err(|_| EvalExecutionError::InvalidRecipe("aggregated benchmark reward"))
-        }
     }
 }

@@ -483,30 +483,6 @@ impl EnvironmentToolDispatcher {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::ToolBackendIdentity;
-
-    #[test]
-    fn backend_identity_accepts_only_concrete_local_or_docker_labels() {
-        assert_eq!(
-            ToolBackendIdentity::parse("local")
-                .unwrap()
-                .artifact_label(),
-            "local"
-        );
-        assert_eq!(
-            ToolBackendIdentity::parse("docker:registry/pinch:latest")
-                .unwrap()
-                .artifact_label(),
-            "docker:registry/pinch:latest"
-        );
-        for invalid in ["mixed", "docker:", "remote", "docker:has space"] {
-            assert!(ToolBackendIdentity::parse(invalid).is_err(), "{invalid}");
-        }
-    }
-}
-
 #[async_trait(?Send)]
 impl ToolDispatcher for EnvironmentToolDispatcher {
     fn backend_identity(&self) -> ToolBackendIdentity {
@@ -543,5 +519,29 @@ impl ToolDispatcher for EnvironmentToolDispatcher {
     async fn close_trace(&self, _trace: &TraceIdentity) -> Result<(), ToolDispatchError> {
         let _command_turn = self.command_gate.lock().await;
         self.sandbox.close().await.map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolBackendIdentity;
+
+    #[test]
+    fn backend_identity_accepts_only_concrete_local_or_docker_labels() {
+        assert_eq!(
+            ToolBackendIdentity::parse("local")
+                .unwrap()
+                .artifact_label(),
+            "local"
+        );
+        assert_eq!(
+            ToolBackendIdentity::parse("docker:registry/pinch:latest")
+                .unwrap()
+                .artifact_label(),
+            "docker:registry/pinch:latest"
+        );
+        for invalid in ["mixed", "docker:", "remote", "docker:has space"] {
+            assert!(ToolBackendIdentity::parse(invalid).is_err(), "{invalid}");
+        }
     }
 }

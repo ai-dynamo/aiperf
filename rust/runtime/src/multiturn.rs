@@ -1232,7 +1232,7 @@ impl NativeSessionBackend {
             } => {
                 let selected = endpoint_resolver.resolve(endpoint_name.as_deref())?;
                 let materialized = self.materializer.materialize_prepared(
-                    &session,
+                    session,
                     selected.endpoint,
                     primary_model_name,
                     CreditPhase::Profiling,

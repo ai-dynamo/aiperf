@@ -449,10 +449,10 @@ impl Hierarchy {
                     && let Some(series) = &entry.scalar
                 {
                     series.collect_rows(endpoint_url, key, entry, start_ns, end_ns, &mut rows);
-                } else if entry.metric_type == MetricType::Histogram {
-                    if let Some(series) = &entry.histogram {
-                        series.collect_rows(endpoint_url, key, entry, start_ns, end_ns, &mut rows);
-                    }
+                } else if entry.metric_type == MetricType::Histogram
+                    && let Some(series) = &entry.histogram
+                {
+                    series.collect_rows(endpoint_url, key, entry, start_ns, end_ns, &mut rows);
                 }
             }
         }
