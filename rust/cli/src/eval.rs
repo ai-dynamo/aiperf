@@ -47,7 +47,7 @@ struct EvalFlags {
     /// Shell command for an external agent; required by standard task directories.
     #[arg(long)]
     agent_command: Option<String>,
-    /// Sandbox backend; `auto` uses Docker for standard task directories.
+    /// Sandbox backend; `auto` uses Docker for standard directories and separate verification.
     #[arg(long, value_enum, default_value_t = SandboxFlag::Auto)]
     sandbox: SandboxFlag,
     /// Strict versioned JSON request that persists the full immutable evaluation lifecycle.
@@ -219,11 +219,13 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     )?;
     let (_pinned_tree, source) = materialize_pinned_directory(&requested_source)?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
-    let use_docker = match flags.sandbox {
-        SandboxFlag::Auto => imported.package.is_standard_directory(),
-        SandboxFlag::Local => false,
-        SandboxFlag::Docker => true,
-    };
+    let requested_verifier_mode = flags.verifier_mode.map(VerifierMode::from);
+    let verifier_mode = requested_verifier_mode.unwrap_or_else(|| imported.package.verifier_mode());
+    let use_docker = uses_docker(
+        flags.sandbox,
+        imported.package.is_standard_directory(),
+        verifier_mode,
+    );
     let image = match flags.image {
         Some(image) => image,
         None if use_docker => {
@@ -241,8 +243,6 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .as_deref()
         .map(agent_command_argv)
         .unwrap_or_else(|| imported.package.agent_command().to_vec());
-    let requested_verifier_mode = flags.verifier_mode.map(VerifierMode::from);
-    let verifier_mode = requested_verifier_mode.unwrap_or_else(|| imported.package.verifier_mode());
     let lifecycle_trial = if let Some(lifecycle) = &lifecycle {
         validate_lifecycle_execution(
             lifecycle,
@@ -344,6 +344,18 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         println!("{}", serde_json::to_string(&output)?);
     }
     Ok(0)
+}
+
+fn uses_docker(
+    sandbox: SandboxFlag,
+    is_standard_directory: bool,
+    verifier_mode: VerifierMode,
+) -> bool {
+    match sandbox {
+        SandboxFlag::Auto => is_standard_directory || verifier_mode == VerifierMode::Separate,
+        SandboxFlag::Local => false,
+        SandboxFlag::Docker => true,
+    }
 }
 
 fn read_lifecycle_request(path: &Path) -> anyhow::Result<HarborLifecycleRequest> {
@@ -767,5 +779,11 @@ mod tests {
             fs::read(sandbox.root().join("sibling.txt")).unwrap(),
             b"pinned sibling\n"
         );
+    }
+
+    #[test]
+    fn auto_sandbox_uses_docker_for_separate_legacy_verification() {
+        assert!(uses_docker(SandboxFlag::Auto, false, VerifierMode::Separate));
+        assert!(!uses_docker(SandboxFlag::Auto, false, VerifierMode::Shared));
     }
 }
