@@ -426,6 +426,7 @@ impl DockerProcessSandbox {
                 {
                     validate_verifier_artifact_staging(workdir, plan.artifacts())?;
                 }
+                containers.push(name.clone());
                 create_planned_container(
                     runtime,
                     &name,
@@ -436,7 +437,6 @@ impl DockerProcessSandbox {
                     None,
                     remaining(&verifier_deadline)?,
                 )?;
-                containers.push(name.clone());
                 let start = match remaining(&verifier_deadline)? {
                     Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
                     None => DockerStartRequest::new(&name),
@@ -643,6 +643,7 @@ impl DockerProcessSandbox {
                     )?;
                 }
                 let name = format!("{container}-verifier");
+                containers.push(name.clone());
                 create_planned_container(
                     runtime,
                     &name,
@@ -653,7 +654,6 @@ impl DockerProcessSandbox {
                     None,
                     remaining(&verifier_deadline)?,
                 )?;
-                containers.push(name.clone());
                 let start = match remaining(&verifier_deadline)? {
                     Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
                     None => DockerStartRequest::new(&name),
@@ -1396,6 +1396,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             if let Some(workdir) = verifier_workdir {
                 validate_verifier_artifact_staging(workdir, step.artifacts())?;
             }
+            self.containers.push(name.clone());
             create_planned_container(
                 self.runtime,
                 &name,
@@ -1406,7 +1407,6 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 None,
                 remaining(&deadline)?,
             )?;
-            self.containers.push(name.clone());
             let start = match remaining(&deadline)? {
                 Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
                 None => DockerStartRequest::new(&name),

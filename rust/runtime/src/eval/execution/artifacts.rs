@@ -237,12 +237,22 @@ fn collect_one_service_artifact(
     collected: &mut Vec<(String, ArtifactDigest)>,
 ) -> Result<(), EvalExecutionError> {
     deadline.remaining()?;
-    let archive = lease.archive(ServiceArchiveRequest {
+    let archive = match lease.archive(ServiceArchiveRequest {
         service: artifact.service_name(),
         source: artifact.source(),
         deadline: deadline.remaining()?,
         phase: EvalExecutionPhase::CollectionHook,
-    })?;
+    }) {
+        Ok(archive) => archive,
+        Err(error @ EvalExecutionError::Timeout { .. }) => return Err(error),
+        Err(error) => {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "failed to archive artifact {:?} from service {:?}: {error}",
+                artifact.source(),
+                artifact.service_name().as_str(),
+            )));
+        }
+    };
     collect_archive_bounded(
         artifact,
         archive,

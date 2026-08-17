@@ -293,6 +293,7 @@ enum ComposeSessionFailure {
     Healthcheck,
     Hook,
     Archive,
+    ArchiveTimeout,
     Stop,
     VerifierTimeout,
 }
@@ -620,9 +621,15 @@ impl DockerComposeRuntime for ComposeSessionRecordingRuntime {
             .borrow_mut()
             .push(format!("archive:{}", request.service().as_str()));
         if self.failure == Some(ComposeSessionFailure::Archive) {
-            return Err(EvalExecutionError::ArtifactCollection(
+            return Err(EvalExecutionError::ProcessFailure(
                 "archive failed".to_owned(),
             ));
+        }
+        if self.failure == Some(ComposeSessionFailure::ArchiveTimeout) {
+            return Err(EvalExecutionError::Timeout {
+                phase: aiperf_runtime::eval::EvalExecutionPhase::CollectionHook,
+                timeout: Duration::from_secs(1),
+            });
         }
         let path = if request.source().starts_with("/work/") {
             "result.txt"
@@ -1197,6 +1204,68 @@ fn compose_evidence_failures_never_create_a_verifier_and_always_teardown() {
         assert!(events.iter().any(|event| event == "compose-down"));
         assert!(events.iter().all(|event| !event.starts_with("create:")));
     }
+}
+
+#[test]
+fn compose_archive_process_failure_is_an_artifact_collection_error_with_context() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_terminal_evidence_task_root(&temporary, false, false);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(Some(ComposeSessionFailure::Archive));
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("a missing Compose archive must prevent verifier provisioning");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ArtifactCollection(ref reason)
+            if reason.contains("api")
+                && reason.contains("/var/lib/api/result.txt")
+                && reason.contains("archive failed")
+    ));
+    let events = runtime.events.borrow();
+    assert!(events.iter().any(|event| event == "archive:api"));
+    assert!(events.iter().any(|event| event == "compose-down"));
+    assert!(events.iter().all(|event| !event.starts_with("create:")));
+}
+
+#[test]
+fn compose_archive_timeout_keeps_the_collection_hook_phase() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_terminal_evidence_task_root(&temporary, false, false);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = ComposeSessionRecordingRuntime::new(Some(ComposeSessionFailure::ArchiveTimeout));
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("a Compose archive timeout must prevent verifier provisioning");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::CollectionHook,
+            timeout,
+        } if timeout == Duration::from_secs(1)
+    ));
 }
 
 #[test]
@@ -2894,6 +2963,59 @@ fn single_step_separate_verifier_uses_one_absolute_deadline_for_setup_and_reward
 }
 
 #[test]
+fn single_step_verifier_created_at_its_deadline_is_removed() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_with_artifacts(
+        &temporary,
+        "[\"/work/result.txt\"]",
+        "[agent]\ntimeout_sec = 1\n\n[verifier]\nenvironment_mode = \"separate\"\ntimeout_sec = 1\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/work".to_owned()),
+    )
+    .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime = StepRecordingRuntime::default()
+        .timeout_after_verifier_create(clock.clone(), Duration::from_secs(1));
+
+    let error = DockerProcessSandbox::with_clock(clock)
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("the exhausted verifier deadline must stop startup");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+            ..
+        }
+    ));
+    let verifier = runtime
+        .creates
+        .borrow()
+        .iter()
+        .find(|create| create.container.contains("-verifier"))
+        .expect("verifier create side effect")
+        .container
+        .clone();
+    assert!(runtime.removal_arguments.borrow().iter().any(|arguments| {
+        arguments
+            .last()
+            .is_some_and(|container| container == &verifier)
+    }));
+}
+
+#[test]
 fn single_step_separate_verifier_copies_artifacts_to_explicit_workdir_without_mounting_it() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = standard_task_with_artifacts(
@@ -3376,6 +3498,7 @@ struct StepRecordingRuntime {
     deadline_events: RefCell<Vec<(String, Duration)>>,
     deadline_clock: Option<Rc<SimClock>>,
     advance_agent_workdir_prepare_to: Option<(Rc<SimClock>, i64)>,
+    verifier_create_timeout: Option<(Rc<SimClock>, Duration)>,
 }
 
 impl StepRecordingRuntime {
@@ -3419,6 +3542,11 @@ impl StepRecordingRuntime {
 
     fn advance_after_agent_workdir_prepare(mut self, clock: Rc<SimClock>, time_ns: i64) -> Self {
         self.advance_agent_workdir_prepare_to = Some((clock, time_ns));
+        self
+    }
+
+    fn timeout_after_verifier_create(mut self, clock: Rc<SimClock>, timeout: Duration) -> Self {
+        self.verifier_create_timeout = Some((clock, timeout));
         self
     }
 
@@ -3489,10 +3617,19 @@ impl DockerRuntime for StepRecordingRuntime {
             .map(|(host, _)| host.to_owned());
         self.events.borrow_mut().push(format!("create:{container}"));
         self.creates.borrow_mut().push(RecordedCreate {
-            container,
+            container: container.clone(),
             workspace,
             arguments: arguments.to_vec(),
         });
+        if container.contains("-verifier")
+            && let Some((clock, timeout)) = &self.verifier_create_timeout
+        {
+            clock.advance_to(timeout.as_nanos() as i64);
+            return Err(EvalExecutionError::Timeout {
+                phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+                timeout: *timeout,
+            });
+        }
         Ok(())
     }
 
