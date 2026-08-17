@@ -16,6 +16,7 @@ pub(crate) enum IdleWarpMode {
     /// Gap between a request start and the running max end of all prior requests
     /// (busy-period aware). Default for dynamo/aiperf recorded traces.
     BusyPeriod,
+    #[cfg(test)]
     /// Gap between consecutive request *starts*, ignoring durations. Byte-exact
     /// match for the Python WEKA oracle's `_IdleGapTimeWarp`.
     StartToStart,
@@ -37,11 +38,13 @@ pub(super) fn apply_idle_warp(nodes: &mut [TrieNode], cap: Option<f64>, mode: Id
     let mut cuts = Vec::new();
     if let Some(first) = intervals.first().copied() {
         let mut running_end = first.1;
+        #[cfg(test)]
         let mut prev_start = first.0;
         let mut cumulative = 0.0;
         for (start, end) in intervals.into_iter().skip(1) {
             let idle = match mode {
                 IdleWarpMode::BusyPeriod => start - running_end,
+                #[cfg(test)]
                 IdleWarpMode::StartToStart => start - prev_start,
             };
             if idle > cap {
@@ -49,7 +52,10 @@ pub(super) fn apply_idle_warp(nodes: &mut [TrieNode], cap: Option<f64>, mode: Id
                 cuts.push((start, cumulative));
             }
             running_end = running_end.max(end);
-            prev_start = start;
+            #[cfg(test)]
+            let () = {
+                prev_start = start;
+            };
         }
     }
     for node in nodes {
