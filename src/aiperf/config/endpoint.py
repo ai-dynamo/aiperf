@@ -26,7 +26,7 @@ from aiperf.common.enums import (
     ModelSelectionStrategy,
     RequestContentType,
 )
-from aiperf.config.base import BaseConfig
+from aiperf.config.base import BaseConfig, hide_from_unset_dumps
 from aiperf.config.control_hooks import (
     ResetKvCacheConfig,
     ServerProfilerConfig,
@@ -206,7 +206,25 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
-    _streaming_explicitly_set: bool = False
+    streaming_explicitly_set: Annotated[
+        bool,
+        Field(
+            default=False,
+            alias="_streaming_explicitly_set",
+            description="Internal provenance flag: True when the author explicitly "
+            "chose a value for ``streaming`` (rather than inheriting the default). "
+            "Serialized on purpose: the sweep orchestrator round-trips each run "
+            "through model_dump/model_validate, which marks every dumped key as "
+            "'set' and would otherwise make an unset ``streaming`` look explicit "
+            "to scenario validation. Read via the ``_streaming_explicitly_set`` "
+            "property.",
+        ),
+    ]
+
+    @property
+    def _streaming_explicitly_set(self) -> bool:
+        """Back-compat alias for the serialized ``streaming_explicitly_set`` flag."""
+        return self.streaming_explicitly_set
 
     transport: Annotated[
         TransportType | None,
@@ -462,8 +480,15 @@ class EndpointConfig(BaseConfig):
         --streaming/--no-streaming" (raise on conflict) from "streaming is at
         default; auto-fill from the scenario spec" (info log). Surface a stable
         underscore flag for the scenario resolver's defensive ``getattr``.
+
+        An incoming ``streaming_explicitly_set`` key wins: it carries the
+        original provenance across the sweep orchestrator's dump/validate
+        boundary, where ``model_fields_set`` is uninformative because every
+        dumped key reads as explicitly set.
         """
-        self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        if "streaming_explicitly_set" not in self.model_fields_set:
+            self.streaming_explicitly_set = "streaming" in self.model_fields_set
+        hide_from_unset_dumps(self, "streaming_explicitly_set")
         return self
 
     @model_validator(mode="after")

@@ -117,6 +117,27 @@ public_dataset_loader:
     Supports HTTP-downloaded and HuggingFace-hosted datasets.
     One-to-one mapping: selected based on --public-dataset configuration.
 
+graph_adapter:
+  protocol: aiperf.dataset.graph.adapters.protocols:GraphAdapterProtocol
+  metadata_class: aiperf.plugin.schema.schemas:GraphAdapterMetadata
+  enum: GraphAdapterType
+  description: |
+    Graph adapters convert third-party trace/log files into the canonical
+    ParsedGraph used by the graph benchmark mode. Each adapter exposes
+    can_load(path) for format detection and parse(path, ctx) for full
+    conversion, where ctx is an optional GraphParseContext of run-derived
+    knobs; adapters forward a ctx field only when it is set, so a ctx-less
+    parse keeps the protocol-default entry behavior. parse_graph also forwards
+    any extra keyword arguments verbatim as parse(path, ctx, **adapter_kwargs)
+    -- adapter-specific live objects the frozen ctx cannot carry (currently
+    only the dynamo direct route's direct_store). Declare each such kwarg
+    keyword-only; an unrecognized one raises TypeError, which the parser
+    deliberately does not catch. Selected by
+    `--graph-format` or auto-detected from file extension + content sniff.
+    Detection ordering (when multiple adapters' can_load() return True for
+    the same file) comes from each plugin's metadata `detection_priority`
+    field.
+
 
 # =============================================================================
 # Endpoint and Transport Categories

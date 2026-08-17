@@ -26,7 +26,7 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
           reasoning tokens. For models without reasoning, TTFO and TTFT are equivalent.
         - Non-reasoning tokens: Includes TextResponseData with non-empty text,
           ReasoningResponseData with non-empty content field (regardless of reasoning field),
-          or ToolCallResponseData with non-empty text.
+          or ToolCallResponseData with non-empty tool_call_text.
 
     Formula:
         Time to First Output = First Non-Reasoning Token Timestamp - Request Start Timestamp

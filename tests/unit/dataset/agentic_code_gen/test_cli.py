@@ -50,3 +50,30 @@ class TestValidateCommand:
 
         assert exc.value.code == 1
         assert "is not a file" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("columns", [40, 80, 200])
+    def test_validate_failure_survives_a_narrow_console(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        columns: int,
+    ) -> None:
+        """The failure line stays intact at any console width.
+
+        Rich word-wraps at the console width by default, which split this
+        message as ``"... is \\nnot a file."`` and broke the PATH across lines
+        whenever ``tmp_path`` was long enough -- both un-copy-pasteable for the
+        user and a width-dependent flake for the assertion above. The CLI's
+        Console is built with ``soft_wrap=True`` to prevent that, and this pins
+        it: the path must survive as ONE unbroken run of characters.
+        """
+        monkeypatch.setenv("COLUMNS", str(columns))
+        missing = tmp_path / "deeply" / "nested" / "path" / "missing.jsonl"
+
+        with pytest.raises(SystemExit):
+            validate(missing)
+
+        out = capsys.readouterr().out
+        assert "is not a file" in out
+        assert str(missing) in out

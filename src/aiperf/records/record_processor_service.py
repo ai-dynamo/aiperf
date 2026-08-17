@@ -3,6 +3,7 @@
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.enums import (
     CommAddress,
@@ -13,7 +14,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import on_command, on_message, on_pull_message
+from aiperf.common.hooks import on_command, on_init, on_message, on_pull_message
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
     InferenceResultsMessage,
@@ -47,6 +48,9 @@ from aiperf.records.inference_result_parser import InferenceResultParser
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+_logger = AIPerfLogger(__name__)
 
 
 class RecordProcessor(PullClientMixin, BaseComponentService):
@@ -96,6 +100,15 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 # Unknown scenario names are validated elsewhere; record
                 # processing degrades to default error-emission behavior here.
                 self._drop_agentic_overflow_records = False
+
+        # Same tolerance for agent-graph (dynamo trace) runs: AgentGraphReplayStrategy
+        # already terminates the overflowed trajectory early via CreditReturn, so
+        # the overflow event is expected and must stay out of user-facing metrics
+        # while still counting toward ``total_records``.
+        # Resolved in ``_resolve_graph_workload_flag`` at init, not here:
+        # detection reads (and may sniff) the dataset file, which is blocking
+        # I/O and must not run on the constructor's event-loop thread.
+        self._drop_graph_overflow_records: bool = False
 
         # DatasetConfiguredNotification (SUB) and inference results (PULL) arrive on
         # independent channels with no ordering guarantee. Gate record processing on
@@ -154,6 +167,25 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Error creating record observer: {e!r}")
                 raise
+
+    @on_init
+    async def _resolve_graph_workload_flag(self) -> None:
+        """Detect an agent-graph run off-thread; the sniff touches the dataset file."""
+        from aiperf.dataset.graph.workload_detect import resolve_graph_workload
+
+        try:
+            result = await asyncio.to_thread(
+                lambda: resolve_graph_workload(self.run) is not None
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve record-service startup
+            _logger.warning(
+                lambda exc=exc: f"Graph workload resolution failed; using default "
+                f"record emission behavior: {exc!r}"
+            )
+            self._drop_graph_overflow_records = False
+            return
+
+        self._drop_graph_overflow_records = result
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
@@ -345,14 +377,22 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # end-of-phase) but skip the error tracker, accumulators, and stream
         # exporters so the overflow event doesn't show up in any user-facing
         # metric.
-        if self._drop_agentic_overflow_records and getattr(
-            record, "context_overflow", False
-        ):
+        if self._drop_agentic_overflow_records and record.context_overflow:
             metadata = metadata.model_copy(update={"context_overflow_skip": True})
             self.debug(
                 lambda r=record: (
                     f"AGENTIC_REPLAY: flagging context-overflow record as "
                     f"metrics-skip (credit={r.request_info.credit_num} "
+                    f"conv={r.request_info.conversation_id} "
+                    f"turn={r.request_info.turn_index})"
+                )
+            )
+        elif self._drop_graph_overflow_records and record.context_overflow:
+            metadata = metadata.model_copy(update={"context_overflow_skip": True})
+            self.debug(
+                lambda r=record: (
+                    "agent-graph: flagging context-overflow record as metrics-skip "
+                    f"(credit={r.request_info.credit_num} "
                     f"conv={r.request_info.conversation_id} "
                     f"turn={r.request_info.turn_index})"
                 )
@@ -487,7 +527,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     ) -> tuple[BaseTraceData | None, ErrorDetails | None]:
         """Free large data structures from the record after all processors have run.
 
-        All metrics and post-processors consume these fields during _process_record().
+        All producers and observers consume these fields during
+        _process_and_forward_record().
         The only data sent downstream is the typed records produced for this request
         (metadata, metrics, trace_data, error) -- so everything else can be released here.
 

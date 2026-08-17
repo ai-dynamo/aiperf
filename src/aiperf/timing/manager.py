@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_hooks import prepare_endpoint_control_hooks
 from aiperf.common.endpoint_auth import auth_headers_for_endpoint
@@ -27,6 +29,7 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
 )
 from aiperf.common.models import DatasetMetadata
+from aiperf.common.models.dataset_models import GraphSegmentClientMetadata
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase.publisher import PhasePublisher
@@ -34,14 +37,21 @@ from aiperf.timing.phase_orchestrator import PhaseOrchestrator
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.dataset.graph.models import ParsedGraph
+
+# Module logger for run-once configure-time advisories (a stable logger name the
+# tests capture via caplog; the service's per-instance ``self.warning`` logger
+# name is derived from the runtime service id and is not test-stable).
+_logger = AIPerfLogger(__name__)
 
 
 class TimingManager(BaseComponentService):
     """Service orchestrating credit issuance and request timing.
 
     Central Service for the credit system. Creates a PhaseOrchestrator
-    which internally instantiates the appropriate TimingMode based on mode
-    (REQUEST_RATE, FIXED_SCHEDULE, or USER_CENTRIC_RATE).
+    which internally instantiates the appropriate timing strategy per phase
+    based on the phase's timing mode (REQUEST_RATE, FIXED_SCHEDULE,
+    USER_CENTRIC_RATE, ADAPTIVE_SCALE, AGENT_GRAPH, or AGENTIC_REPLAY).
 
     Handles commands: PROFILE_CONFIGURE (create orchestrator),
                       PROFILE_START (begin credit issuance),
@@ -71,6 +81,7 @@ class TimingManager(BaseComponentService):
         self._dataset_failed_event = asyncio.Event()
         self._dataset_failure_reason: str | None = None
         self._dataset_metadata: DatasetMetadata | None = None
+        self._graph_client_metadata: GraphSegmentClientMetadata | None = None
 
         # StickyCreditRouter handles everything: routing, sending, returns,
         # worker lifecycle. Created early to handle worker connections
@@ -98,6 +109,11 @@ class TimingManager(BaseComponentService):
         )
 
         self._dataset_metadata = message.metadata
+        self._graph_client_metadata = (
+            message.client_metadata
+            if isinstance(message.client_metadata, GraphSegmentClientMetadata)
+            else None
+        )
         self._dataset_configured_event.set()
 
     @on_message(MessageType.DATASET_CONFIGURATION_FAILED)
@@ -136,6 +152,15 @@ class TimingManager(BaseComponentService):
 
         self.debug(f"Configuring phase orchestrator for {self.service_id}")
 
+        # Agent graph workloads need the structural conversation DAG handed to
+        # the graph timing strategy. Load the mandatory graph_meta sidecar
+        # from the path the graph-typed dataset broadcast advertised (hard
+        # fail if unadvertised or unloadable); runs after
+        # _wait_for_dataset_or_failure, so the broadcast has been consumed.
+        parsed_graph = self._load_graph_sidecar()
+        if parsed_graph is not None:
+            self._advise_non_streaming_first_token_sources(parsed_graph)
+
         endpoint = self.run.cfg.endpoint
         control_hooks = prepare_endpoint_control_hooks(endpoint)
         control_headers = auth_headers_for_endpoint(endpoint)
@@ -149,8 +174,172 @@ class TimingManager(BaseComponentService):
             control_hooks=control_hooks,
             control_headers=control_headers,
             run=self.run,
+            parsed_graph=parsed_graph,
         )
         await self._phase_orchestrator.initialize()
+
+    def _load_graph_sidecar(self) -> ParsedGraph | None:
+        """Load the mandatory structural sidecar iff this run is a graph workload.
+
+        The DatasetManager writes ``graph_meta.msgpack`` on EVERY graph build
+        route and advertises its exact path on the graph-typed
+        ``DatasetConfiguredNotification.client_metadata``; the schedule plane
+        ingests the sidecar from that path only. A graph run whose broadcast
+        is not graph-typed, or whose advertised file is missing, undecodable,
+        or store-divergent, is a hard configure-time failure. No re-parse
+        fallback, no env-convention path re-derivation.
+        """
+        from aiperf.dataset.graph.codecs import decode_graph_meta_sidecar
+        from aiperf.dataset.graph.workload_detect import resolve_graph_workload
+
+        if resolve_graph_workload(self.run) is None:
+            return None
+
+        meta = self._graph_client_metadata
+        if meta is None:
+            raise InvalidStateError(
+                "graph workload run, but the DatasetConfiguredNotification "
+                "did not carry GraphSegmentClientMetadata: every graph build "
+                "must broadcast the graph store and sidecar locations"
+            )
+        sidecar = meta.sidecar_path
+        if not sidecar.exists():
+            raise InvalidStateError(
+                f"graph_meta sidecar missing at {sidecar} (the path the "
+                "DatasetManager advertised): if the DatasetManager runs on a "
+                "different host or filesystem, set "
+                "AIPERF_DATASET_MMAP_BASE_PATH to a location shared with the "
+                "TimingManager."
+            )
+        try:
+            graph, _fp, _version = decode_graph_meta_sidecar(sidecar.read_bytes())
+        except Exception as e:
+            raise InvalidStateError(
+                f"graph_meta sidecar at {sidecar} is unreadable: {e!r}; "
+                "rebuild the run so the DatasetManager rewrites it"
+            ) from e
+        if not self._sidecar_passes_index_check(graph, sidecar):
+            raise InvalidStateError(
+                f"graph_meta sidecar at {sidecar} failed the unified-store "
+                "index cross-check: the sidecar topology diverged from the "
+                "stored envelopes the workers read"
+            )
+        self.info(f"Loaded structural graph sidecar for timing: {sidecar}")
+        return graph
+
+    def _advise_non_streaming_first_token_sources(
+        self, parsed_graph: ParsedGraph
+    ) -> None:
+        """Warn once if a post-TTFT edge's SOURCE node does not stream.
+
+        A first-token-anchored ``StaticEdge``
+        (``delay_after_predecessor_first_token_us`` set, post-TTFT anchoring)
+        releases its successor at the SOURCE node's OBSERVED
+        first token + the refined delay. That observation only exists when the
+        source node itself streams. The wire mode is RUN-level, not per node:
+        ``worker_materialize.apply_run_level_payload_options`` stamps
+        ``payload["stream"]`` unconditionally from ``endpoint.streaming``,
+        overwriting any recorded per-node value, so the global ``--streaming``
+        flag governs whether a first-token event is emitted at all.
+        The failure this warns about is a first-token edge whose source
+        ``LlmNode`` carries ``streaming=False``: it emits no SSE first-token
+        event, so its post-TTFT-anchored children SILENTLY fall back to waiting
+        on the source's COMPLETION latch (dispatch-time delay) instead of its
+        observed first token -- a replay-fidelity degradation with no other
+        signal. A ``--streaming`` run is self-consistent by construction (the
+        same recorded ttft drives both the edge refinement and the source node's
+        streaming mode), but a global ``--no-streaming`` overrides that per-node
+        mode at BUILD time (``ctx.run_streaming`` -> ``build_dynamo_llm_node``)
+        while leaving the first-token anchors
+        ``interval_order.build_interval_edges`` already stamped in
+        place, so the mismatch is reachable corpus-wide on an ordinary dynamo
+        run. Runs once per run
+        (``_profile_configure_command`` fires once) and is a no-op when every
+        first-token source streams (or the corpus carries no first-token edges).
+        """
+        from aiperf.timing.strategies.agent_graph_replay import first_token_sources
+
+        graphs = [
+            parsed_graph.graph,
+            *parsed_graph.graphs.values(),
+        ]
+        for graph in graphs:
+            for source_id in first_token_sources(graph):
+                source = graph.nodes.get(source_id)
+                if source is not None and source.streaming is False:
+                    _logger.warning(
+                        "graph corpus contains first-token-anchored edges "
+                        "(post-TTFT anchoring) whose SOURCE "
+                        f"node ({source_id!r}) has streaming=False: a "
+                        "non-streaming source emits no SSE first-token event, so "
+                        "its post-TTFT-anchored children silently wait on the "
+                        "source's COMPLETION latch (dispatch-time delay) instead "
+                        "of its observed first token -- a replay-fidelity "
+                        "degradation. A recorded corpus is self-consistent, but "
+                        "a global --no-streaming overrides the recorded per-node "
+                        "streaming mode while leaving the first-token anchors in "
+                        "place. Drop --no-streaming, or set streaming=True on the "
+                        "source node, to restore post-TTFT anchoring."
+                    )
+                    return
+
+    def _sidecar_passes_index_check(self, graph: ParsedGraph, sidecar: Path) -> bool:
+        """Return True when the index cross-check passes or is not reachable.
+
+        Cross-checks the sidecar's per-trace ordinals against the unified
+        store's manifest index (the STORE the worker will actually read). Any
+        open/read failure -- including a missing store -- is treated as "not
+        reachable" so the sidecar is accepted as-is (best-effort, additive).
+
+        The store location comes from the broadcast
+        ``GraphSegmentClientMetadata`` typed fields (``store_base_path`` /
+        ``benchmark_id``), the same source the workers open, not from
+        string-parsing the ``sidecar`` path.
+        """
+        from aiperf.dataset.graph.graph_meta_sidecar import sidecar_matches_index
+
+        def _matches(offsets: dict) -> bool:
+            return sidecar_matches_index(graph, offsets)
+
+        meta = self._graph_client_metadata
+        if meta is None:  # no graph broadcast -> store not reachable
+            return True
+        base_path = meta.store_base_path
+        benchmark_id = meta.benchmark_id
+
+        # The unified store is the sole store shape; absent means not reachable.
+        # Only the OPEN is guarded: a store that opens but whose keys do not
+        # decode, or whose ordinals do not match, IS a divergence -- swallowing
+        # that into "not reachable" turned every real mismatch into a silent
+        # pass, which is exactly what this check exists to catch.
+        try:
+            from aiperf.dataset.graph_segment_unified_store import (
+                GraphSegmentUnifiedClient,
+                _unified_dir,
+            )
+
+            if not _unified_dir(base_path, benchmark_id).exists():
+                return True
+            client = GraphSegmentUnifiedClient(
+                base_path=base_path, benchmark_id=benchmark_id
+            ).open()
+        except Exception:  # store unreachable -> accept the sidecar as-is
+            return True
+
+        try:
+            # store inner keys are the node ordinal as a string;
+            # sidecar_matches_index wants {ordinal: _} per trace.
+            offsets: dict[str, dict[int, object]] = {}
+            for trace_id, inner in client._node_offsets.items():
+                decoded: dict[int, object] = {}
+                for key, value in inner.items():
+                    if not key.isdigit():
+                        return False
+                    decoded[int(key)] = value
+                offsets[trace_id] = decoded
+        finally:
+            client.close()
+        return _matches(offsets)
 
     async def _wait_for_dataset_or_failure(self) -> None:
         """Wait for either the dataset-configured or dataset-failed event.

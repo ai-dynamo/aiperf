@@ -384,6 +384,15 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                 except OSError as e:
                     self.warning(f"Error removing file {path}: {e}")
 
+        # Unlinking the files is not enough: the run dir itself would survive
+        # every clean exit and accumulate forever under the mmap base path,
+        # which is usually the system temp dir. rmdir (not rmtree) so anything
+        # unexpected still in there keeps the dir alive rather than being
+        # deleted by a cleanup that only owns those four files.
+        with suppress(OSError):
+            self._data_path.parent.rmdir()
+            self.debug(lambda: f"Removed run dir: {self._data_path.parent}")
+
         self.debug("Memory-mapped backing store cleanup complete")
 
 

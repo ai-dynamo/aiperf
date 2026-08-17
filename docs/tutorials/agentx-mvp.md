@@ -376,7 +376,7 @@ trace can back multiple lanes, each with a deterministic per-lane start
 position. For each lane, it samples a random starting instant `t*` somewhere
 between 0% and 100% of that trace's recorded duration (the
 `--trajectory-start-min-ratio` / `--trajectory-start-max-ratio` window the
-scenario auto-fills, widening the generic 25%–75% default) and
+scenario explicitly pins to the generic 0%–100% default) and
 derives the "starting turn" `k_i` from it, always leaving at least one
 profiling turn after warmup. Then it dispatches the warmup turn(s) per lane:
 turn `k_i` for simple (non-subagent) trajectories, with the full prefix

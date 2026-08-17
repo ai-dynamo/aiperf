@@ -99,10 +99,9 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         error_metrics_only: bool = False,
         exclude_error_metrics: bool = False,
     ) -> list[BaseMetric]:
-        """Get an ordered list of metrics that are applicable to the endpoint type and run config.
-        The metrics are ordered based on their dependencies, ensuring proper computation order.
+        """Get the applicable metrics in dependency order.
 
-        Be sure to compute the metrics sequentially versus in parallel, as some metrics may depend on the results of previous metrics.
+        Error records receive only ``ERROR_ONLY`` metrics.
         """
         required_flags, disallowed_flags = self.get_filters()
         if error_metrics_only:
@@ -119,19 +118,11 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             # so metrics that assume otherwise (OSL-mismatch) are just noise.
             disallowed_flags |= MetricFlags.DISABLE_ON_ACCURACY
 
-        metrics: list[BaseMetric] = []
         applicable_tags = MetricRegistry.tags_applicable_to(
             required_flags,
             disallowed_flags,
             *metric_types,
         )
         self._configure_goodput(applicable_tags)
-
-        ordered_tags = MetricRegistry.create_dependency_order_for(
-            applicable_tags,
-        )
-        for metric_tag in ordered_tags:
-            metric = MetricRegistry.get_instance(metric_tag)
-            metrics.append(metric)
-
-        return metrics
+        ordered_tags = MetricRegistry.create_dependency_order_for(applicable_tags)
+        return [MetricRegistry.get_instance(metric_tag) for metric_tag in ordered_tags]

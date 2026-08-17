@@ -133,11 +133,14 @@ class CreditReturn(
     worker_id: str | None = None
 
 
-class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
+class FirstToken(
+    Struct, omit_defaults=True, frozen=True, kw_only=True, tag_field="t", tag="ft"
+):
     """Worker reports first token received (TTFT event).
 
     Sent by worker to router when first valid token is received from inference server.
-    Router forwards to timing manager to release prefill concurrency slot.
+    Router forwards to timing manager to release prefill concurrency slot AND to the
+    graph first-token observer (post-TTFT first-token anchoring).
 
     Attributes:
         credit_id: ID of the credit this TTFT is for.
@@ -145,12 +148,22 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
         ttft_ns: Time to first token in nanoseconds (duration from request start).
         phase_index: Concrete phase instance index used with ``phase`` to build the
             runtime key that locates the registered phase handler and prefill slot.
+        trace_id: Agent-graph trace instance this event addresses
+            (``{template}::{nonce}``, e.g. ``t-1::3f2a...``);
+            None for non-graph (template/DAG) dispatch. The graph first-token
+            observer keys off this to identify the emitting node's trace.
+        x_correlation_id: Conversation instance ID of the emitting credit; None
+            when the worker did not stamp it (non-graph fast path).
+        turn_index: 0-based turn index of the emitting credit; None when unset.
     """
 
     credit_id: int
     phase: CreditPhase
     ttft_ns: int
     phase_index: int | None = None
+    trace_id: str | None = None
+    x_correlation_id: str | None = None
+    turn_index: int | None = None
 
 
 # Union type for decoding worker -> router messages
@@ -175,6 +188,30 @@ class CancelCredits(Struct, frozen=True, kw_only=True, tag_field="t", tag="cc"):
     credit_ids: set[int]
 
 
-# Union type for decoding router -> worker messages
-# Credit is sent directly (no wrapper), CancelCredits for cancellation
-RouterToWorkerMessage: TypeAlias = Credit | CancelCredits
+class GraphTraceEnd(
+    Struct,
+    frozen=True,
+    kw_only=True,
+    tag_field="t",
+    tag="te",  # codespell:ignore te
+):
+    """Router notifies the sticky worker that a graph trace execution ended.
+
+    Sent ONCE per instance when the strategy reaps a trace instance's
+    dispatch adapter (all in-flight dispatches drained) or at phase teardown
+    for retained adapters. The router closes the instance's sticky session
+    (graph sessions key on ``trace_id``) before forwarding; the worker uses
+    it to evict the trace's dynamic-content pool entries. Ids only -- no
+    content.
+
+    Attributes:
+        trace_id: Agent-graph trace instance id (``{template}::{nonce}``).
+    """
+
+    trace_id: str
+
+
+# Union type for decoding router -> worker messages: Credit is sent directly
+# (no wrapper); CancelCredits for cancellation; GraphTraceEnd for graph trace
+# lifecycle.
+RouterToWorkerMessage: TypeAlias = Credit | CancelCredits | GraphTraceEnd

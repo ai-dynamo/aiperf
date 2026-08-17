@@ -1016,7 +1016,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         )
         # Only synthetic datasets carry prompts.block_size; FileDataset (the
         # weka home) has none, so the user override is None and the precedence
-        # collapses to trace-declared > 64.
+        # collapses to the trace-declared value.
         prompts = getattr(dataset, "prompts", None)
         user_block_size = getattr(prompts, "block_size", None) if prompts else None
         if user_block_size is not None:
@@ -1028,7 +1028,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         # ``self._block_size`` is preserved for callbacks (``_decode_block_tokens``
         # closes over it) and for tests that set it directly. It is overwritten
         # per-trace in the reconstruction loop with the result of
-        # ``_block_size_for_trace`` so the user-override > trace-declared > 64
+        # ``_block_size_for_trace`` so the user-override > trace-declared
         # precedence is honored without changing the callback signature.
         self._block_size = self._user_block_size_override or 64
         self._delay_cap_tracker = DelayCapTracker(
@@ -1041,12 +1041,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._tool_shaped_messages = Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES
 
     def _block_size_for_trace(self, trace: WekaTrace) -> int:
-        """Resolve block_size with precedence: user-override > trace-declared > 64.
+        """Resolve block_size with precedence: user-override > trace-declared.
 
         Real Weka captures declare their own ``block_size`` per file (see
-        :class:`WekaTrace.block_size`). When no per-dataset block_size override
-        is set (FileDataset carries none) we honor that per-file value instead
-        of silently using the historical default of 64.
+        :class:`WekaTrace.block_size`, a required field). When no per-dataset
+        block_size override is set (FileDataset carries none) we honor that
+        per-file value instead of silently using the historical default of 64.
         """
         if self._user_block_size_override is not None:
             return self._user_block_size_override
@@ -1171,7 +1171,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             ) from e
 
     def _request_passes_filters(self, req: _NormalRequestT) -> bool:
-        # fixed_schedule_*_offset are in milliseconds (per input_config.py);
+        # fixed_schedule_*_offset are in milliseconds (per
+        # FixedSchedulePhase.start_offset/end_offset in aiperf/config/phases.py);
         # weka traces record req.t in seconds. Compare in ms.
         start = self._fixed_schedule_start_offset
         end = self._fixed_schedule_end_offset
@@ -1506,6 +1507,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                         session_id=plan.trace_id,
                         k=k,
                         hash_ids=list(req.hash_ids),
+                        api_time=req.api_time or 0.0,
                     )
                 )
             for fp in flat_by_trace.get(plan.trace_id, []):
@@ -1516,6 +1518,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             session_id=fp.session_id,
                             k=k,
                             hash_ids=list(req.hash_ids),
+                            api_time=req.api_time or 0.0,
                         )
                     )
             sa_outer_by_index = {
@@ -1535,6 +1538,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                             session_id=cp.session_id,
                             k=k,
                             hash_ids=list(creq.hash_ids),
+                            api_time=creq.api_time or 0.0,
                         )
                     )
             out[plan.trace_id] = compute_shared_prefix_cache_metrics(records)
@@ -2313,11 +2317,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
     ) -> Conversation:
         """Reconstruct one detected flat chain as a child Conversation.
 
-        Mirrors the subagent-child emission with three differences: the
-        decode scope is the parent trace (shared namespace), turn 0's system
-        segment comes from the chain's effective namespace-group prefix, and
-        ``max_tokens`` honors ``--synthesis-max-osl`` like the top-level requests these
-        rows used to be.
+        Mirrors the subagent-child emission (same parent-trace decode scope)
+        with two differences: ``max_tokens`` honors ``--synthesis-max-osl``
+        like the top-level requests these rows used to be, and the turns are
+        tagged ``source_kind="weka_flat"``. Turn 0's tool/system attribution
+        comes from the chain plan's gated ``init_tool_tokens`` /
+        ``init_system_tokens`` (see :func:`_chain_init_tokens`).
         """
         pg = self.prompt_generator
         pg._cache.clear()
@@ -2463,7 +2468,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         for fp in flat_plans or []:
             flat_plans_by_trace[fp.parent_trace_id].append(fp)
 
-        # Drop the same child_plans the serial path drops at line ~1172.
+        # Drop the same child_plans the serial path drops (the
+        # ``cp.subagent_index in dropped_per_trace`` skip in the child_units
+        # loop of _reconstruct_serial).
         # _build_trace_idle_timing only populates timing for active subagents
         # (via _child_plans_for_active_subagents), so without this skip the
         # lookup below KeyErrors on any subagent that appears before the

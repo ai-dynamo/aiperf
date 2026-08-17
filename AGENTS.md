@@ -21,7 +21,7 @@ Python 3.11+ async AI benchmarking tool for measuring LLM inference server perfo
 - `Field(description="...")` on EVERY Pydantic field. Docstrings on dataclass fields.
 - Type hints on ALL functions (params and return).
 - KISS + DRY: minimal code, optimize for reader.
-- `AIPerfBaseModel` for data, `BaseConfig` for configuration. `@dataclass(slots=True)` for hot-path inner models created at high volume (e.g. SSE chunks, parsed responses) where Pydantic overhead matters. Use `__pydantic_config__ = ConfigDict(extra="forbid")` on dataclasses that participate in Pydantic union discrimination.
+- `AIPerfBaseModel` for data, `BaseConfig` for configuration. `@dataclass(slots=True)` for hot-path inner models created at high volume (e.g. SSE chunks, parsed responses) where Pydantic overhead matters. `msgspec.Struct` for models that cross an encode/decode boundary (the graph IR in `dataset/graph/models.py`, encoded by `dataset/graph/codecs.py`) — document their fields with trailing `#` comments, not `Field(description=...)`. Bare `pydantic.BaseModel` with `ConfigDict(extra="ignore")` for third-party wire schemas decoded at corpus scale (e.g. `dataset/graph/adapters/dynamo/trace_reader.py`): `AIPerfBaseModel` is `extra="allow"` and would retain every unknown key of every record. Use `__pydantic_config__ = ConfigDict(extra="forbid")` on dataclasses that participate in Pydantic union discrimination.
 - `BaseComponentService` for services, `BaseService` for SystemController only.
 - Message bus for inter-service communication - no shared mutable state.
 - CLI commands: one file per command in `cli_commands/`, lazily loaded via import strings in `cli.py`. See `docs/dev/patterns.md`.
@@ -130,6 +130,7 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 - Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
 - `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
 - `dag_jsonl` input type: conversation DAG benchmarks (fork + spawn modes). See `docs/benchmark-modes/dag.md` for abstractions and authoring.
+- Agent graph mode: recorded agent-trace replay as a DAG (`TimingMode.AGENT_GRAPH`, `--graph-format`, `graph_adapter` plugin category). Build plane is `src/aiperf/dataset/graph/` (parse -> lower -> unified segment store); runtime plane is `src/aiperf/graph/` (scheduler, executor, channel store, dispatch adapter). Three mandatory conventions — graph-id parsing, `GraphErrorCode` signalling, and the `Worker._fail_graph_credit` exit — are in `docs/dev/patterns.md` § "Agent Graph Conventions". See `docs/reference/graph-*.md` for the subsystem references.
 - Validator gate convention: unsupported constructs raise `NotImplementedError` with a leading `"<loc>: <reason>"` prefix where `<loc>` identifies the conversation/turn (e.g. `"conversation 'foo' turn 3: ..."`). New validators must follow this shape.
 - Per-turn payload contract: `extra_body` / `max_tokens` / `model` are dispatch-turn only; `raw_tools` is the lone field that walks history (system-prompt-like). Dataset rows author `extra`, not `extra_body`. See `docs/dev/patterns.md` "Per-turn dataset `extra`".
 

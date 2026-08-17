@@ -67,14 +67,26 @@ class PhaseProgressTracker:
         return self._fatal_error
 
     def record_fatal_error(self, error: BaseException) -> None:
-        """Record a fatal control-node error and unblock the drain wait.
+        """Record a fatal control-node error and unblock BOTH phase waits.
 
-        Keeps only the first error. Sets ``all_credits_returned_event`` so the
-        runner's completion wait returns promptly; the runner then re-raises the
-        recorded error so the phase exits visibly rather than hanging.
+        Keeps only the first error. The runner re-raises it after the waits
+        return, so the phase exits visibly rather than hanging.
+
+        Both events are set, not just the returned one. A phase parked in
+        ``_wait_for_sending_complete`` is waiting on ``all_credits_sent_event``
+        with ``lifecycle.time_left_in_seconds()`` as its timeout -- which is
+        ``None`` for any run without an explicit duration. Setting only the
+        returned event leaves such a phase blocked forever on a wait the
+        recorded error was supposed to break, with the error sitting unread.
+
+        On the linear plane this was masked: the issuer sets
+        ``all_credits_sent_event`` itself once ``is_final_credit`` trips. On the
+        graph plane the strategy owns that signal, so a dead executor simply
+        never sets it.
         """
         if self._fatal_error is None:
             self._fatal_error = error
+        self.all_credits_sent_event.set()
         self.all_credits_returned_event.set()
 
     # =========================================================================

@@ -249,7 +249,7 @@ class _WekaTraceTask:
 
     ``block_size`` is per-trace (real Weka captures declare their own
     ``block_size`` per file; the parent process resolves
-    user-override > trace-declared > 64 before shipping the task here).
+    user-override > trace-declared before shipping the task here).
     """
 
     trace_id: str
@@ -303,7 +303,10 @@ def _init_worker(args: _WekaWorkerInitArgs) -> None:
             args.tokenizer_name,
             trust_remote_code=args.trust_remote_code,
             revision=args.revision,
-            resolve_alias=False,
+            # Must match _tokenizer_preload's resolve_alias=True: a preload hit
+            # and this fallback miss have to load the SAME tokenizer for an
+            # aliased name, or the two paths tokenize the corpus differently.
+            resolve_alias=True,
         )
 
     _worker_state = _WekaWorkerState(
@@ -325,7 +328,7 @@ def _make_scope_helpers(
     bound to a fresh per-scope cache + RNG.
 
     ``block_size`` is per-trace (the parent process resolves
-    user-override > trace-declared > 64 before shipping the task to the
+    user-override > trace-declared before shipping the task to the
     worker; see ``WekaTraceLoader._block_size_for_trace``). The closure
     captures it so multiple traces processed by the same worker can use
     different block sizes.
@@ -715,7 +718,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                     "source_kind": creq.get("source_kind", "weka_subagent"),
                     "model": task.model_map.get(creq["model"], creq["model"]),
                     # Flat-chain children carry capped_output_length (their
-                    # rows were top-level and honor --max-osl); subagent
+                    # rows were top-level and honor --synthesis-max-osl); subagent
                     # children keep the recorded output_length. Clamp 0→1
                     # so Turn.max_tokens (ge=1) accepts aborted captures.
                     "max_tokens": max(

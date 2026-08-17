@@ -261,33 +261,33 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
 def extract_commands(app: Any) -> list[tuple[str, str]]:
     """Extract command names and descriptions.
 
-    Recurses one level into subcommand-only apps (parent App that has no
-    ``@app.default``, only registered subcommands) so that ``aiperf config init``
-    and similar two-token commands are documented as their own sections.
+    Recurses through command apps at any depth. Apps with a default command are
+    documented both as executable parents and as namespaces for their children;
+    namespace-only parents are omitted.
     """
     skip = {"--help", "-h", "--version"}
     commands: list[tuple[str, str]] = []
-    for name, cmd in app._commands.items():
-        if name in skip:
-            continue
-        # If this is a subcommand-only app (no default), recurse one level.
-        if hasattr(cmd, "_commands") and getattr(cmd, "default_command", None) is None:
-            for sub_name, sub_cmd in cmd._commands.items():
-                if sub_name in skip:
-                    continue
-                help_text = sub_cmd.help if hasattr(sub_cmd, "help") else ""
-                if callable(help_text):
-                    help_text = help_text()
-                if help_text:
-                    help_text = _extract_text(help_text).split("\n")[0].strip()
-                commands.append((f"{name} {sub_name}", help_text or ""))
-            continue
+
+    def _help_text(cmd: Any) -> str:
         help_text = cmd.help if hasattr(cmd, "help") else ""
         if callable(help_text):
             help_text = help_text()
         if help_text:
             help_text = _extract_text(help_text).split("\n")[0].strip()
-        commands.append((name, help_text or ""))
+        return help_text or ""
+
+    def _walk(parent: Any, prefix: str = "") -> None:
+        for name, cmd in parent._commands.items():
+            if name in skip:
+                continue
+            command_path = f"{prefix} {name}".strip()
+            nested = hasattr(cmd, "_commands")
+            if not nested or getattr(cmd, "default_command", None) is not None:
+                commands.append((command_path, _help_text(cmd)))
+            if nested:
+                _walk(cmd, command_path)
+
+    _walk(app)
     return commands
 
 
@@ -418,10 +418,14 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
                     ]
                 )
                 groups = data[name]
-                if len(groups) > 1 or list(groups.keys())[0] not in (
-                    "Parameters",
-                    "Options",
-                    "General",
+                if groups and (
+                    len(groups) > 1
+                    or list(groups.keys())[0]
+                    not in (
+                        "Parameters",
+                        "Options",
+                        "General",
+                    )
                 ):
                     links = [
                         f"[{g}](#{g.lower().replace(' ', '-').replace('(', '').replace(')', '')})"
@@ -518,7 +522,10 @@ def _resolve_lazy_commands(app: Any) -> None:
 
     for name, cmd in list(app._commands.items()):
         if isinstance(cmd, CommandSpec):
-            app._commands[name] = cmd.resolve(app)
+            cmd = cmd.resolve(app)
+            app._commands[name] = cmd
+        if hasattr(cmd, "_commands"):
+            _resolve_lazy_commands(cmd)
 
 
 class CLIDocsGenerator(Generator):

@@ -81,6 +81,7 @@ from aiperf.plugin.enums import (
     DatasetSamplingStrategy,
     EndpointType,
     GPUTelemetryCollectorType,
+    GraphAdapterType,
     PublicDatasetType,
     SearchPlannerType,
     TransportType,
@@ -645,7 +646,9 @@ class CLIConfig(BaseConfig):
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
             "per-entry associations - use `single_turn` if paired modalities must stay together). "
-            "Requires `--input-file`. Mutually exclusive with `--public-dataset`.",
+            "Requires `--input-file`. Mutually exclusive with `--public-dataset` and "
+            "`--graph-format`. Explicitly selects the custom loader and bypasses graph "
+            "auto-detection.",
         ),
         CLIParameter(
             name=("--custom-dataset-type",),
@@ -691,12 +694,28 @@ class CLIConfig(BaseConfig):
                 "trace. Weka loaders (--custom-dataset-type weka_trace or a weka "
                 "--public-dataset) drop whole traces whose *recorded* peak exceeds "
                 "this ceiling at load time (filter-then-cap before "
-                "--num-dataset-entries). Not a DatasetManager tokenize filter; "
-                "rejected for non-Weka formats."
+                "--num-dataset-entries). Recorded graph (`dynamo_trace`) replay "
+                "also forwards this into synthesis as a peak-context filter. "
+                "Not a DatasetManager tokenize filter; rejected for explicit "
+                "non-Weka trace/pool formats."
             ),
         ),
         CLIParameter(
             name=("--max-context-length",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
+    graph_format: Annotated[
+        GraphAdapterType | None,
+        Field(
+            description="Select the recorded-graph format for `--input-file`, "
+            "overriding graph-adapter auto-detection. Registered names: "
+            "`dynamo_trace`. Requires `--input-file`. Mutually exclusive with "
+            "--custom-dataset-type.",
+        ),
+        CLIParameter(
+            name=("--graph-format",),
             group=Groups.INPUT,
         ),
     ] = None
@@ -717,20 +736,34 @@ class CLIConfig(BaseConfig):
     ] = None
 
     allow_dataset_wrap: Annotated[
-        bool,
+        bool | None,
         Field(
-            description="Allow weka/agentic replay to wrap (reuse distinct eligible "
-            "traces across concurrency lanes) when concurrency exceeds the loaded "
-            "pool. Defaults to False: over-subscription fails unless wrapping is "
-            "explicitly enabled or an active --cache-bust target already keeps "
-            "repeated-trace traffic distinct.",
+            description="PERMIT trace-replay dataset selection to wrap (reuse the finite "
+            "trace pool) when the requested load exceeds the number of eligible traces. "
+            "This is a permission, NOT an instruction: on its own it never duplicates "
+            "traffic. What it does is stop `--concurrency` exceeding the distinct loaded "
+            "trace count from being a hard configuration error. Actual reuse happens only "
+            "when a stop condition (`--request-count` / `--benchmark-duration` / "
+            "`--num-conversations`) keeps asking for work after the corpus is exhausted, "
+            "at which point lanes recycle the pool. "
+            "`--allow-dataset-wrap` permits it; `--no-allow-dataset-wrap` forbids it. "
+            "Unset (the default, None) defers to a derived default computed at "
+            "resolution time and surfaced on `run.resolved.allow_dataset_wrap`: permitted "
+            "when a cache-bust target is active (distinct markers keep replayed traffic "
+            "from colliding in the server KV cache), forbidden otherwise. "
+            "Consumed by the agentic-replay trajectory source, and by the agent-graph "
+            "replay strategy ONLY on its closed-loop path (`--no-open-loop-replay`) -- "
+            "under the DEFAULT open-loop replay every trace runs exactly once at its "
+            "recorded start, so there are no lanes to fill, over-subscription is a "
+            "harmless unused ceiling, and this flag has no effect. "
+            "Ignored by synthetic/public datasets.",
         ),
         CLIParameter(
             name=("--allow-dataset-wrap",),
             group=Groups.INPUT,
             negative="--no-allow-dataset-wrap",
         ),
-    ] = False
+    ] = None
 
     random_seed: Annotated[
         int | None,
@@ -1051,8 +1084,8 @@ class CLIConfig(BaseConfig):
             description="Trace replay wall-clock compression (10 = 10x faster "
             "than recorded): divides normalized timestamps and inter-turn delays; "
             "``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay "
-            "untouched (KV-cache fidelity). Only supported by the baseten_trace "
-            "loader. Maps to FileDataset ``replay_speedup``.",
+            "untouched (KV-cache fidelity). Supported by Baseten and Dynamo graph "
+            "trace loaders. Maps to FileDataset ``replay_speedup``.",
         ),
         CLIParameter(
             name=("--replay-speedup",),
@@ -1071,7 +1104,7 @@ class CLIConfig(BaseConfig):
             "turns fire a think-time (recorded start-to-start gap minus recorded "
             "e2e duration) after the prior turn completes, keeping sessions "
             "causally ordered when replayed service times differ from recorded "
-            "(e.g. A/A comparisons). Only honored by the baseten_trace loader. "
+            "(e.g. A/A comparisons). Also honored by Dynamo graph trace replay. "
             "Maps to FileDataset ``open_loop_replay``.",
         ),
         CLIParameter(
@@ -1087,8 +1120,8 @@ class CLIConfig(BaseConfig):
             default=False,
             description="In open-loop replay, fire every trace row at its "
             "absolute recorded timestamp as an independent single-turn session, "
-            "trading away multi-turn grouping and session metrics. Only honored "
-            "by the baseten_trace loader. Maps to FileDataset "
+            "trading away multi-turn grouping and session metrics. Also honored "
+            "by Dynamo graph trace replay. Maps to FileDataset "
             "``open_loop_strict``.",
         ),
         CLIParameter(
@@ -1185,7 +1218,8 @@ class CLIConfig(BaseConfig):
                 "(2) Warmup-isolation targets (warmup_isolation_system, "
                 "warmup_isolation_first_turn) — inject a constant '[warmup]' marker only "
                 "during the WARMUP phase; profiling sees no marker (fully cold start or "
-                "system-pre-warmed). Incompatible with agentic_replay timing mode. "
+                "system-pre-warmed). Incompatible with agentic_replay and agent_graph "
+                "timing modes. "
                 "'none' disables the feature (default). "
                 "See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples."
             ),
@@ -1262,8 +1296,8 @@ class CLIConfig(BaseConfig):
             ge=1,
             description=(
                 "Length of per-session user context prompt in tokens.\n"
-                "Each dataset entry gets a unique user context prompt.\n"
-                "Requires --num-dataset-entries to be specified.\n"
+                "Each dataset entry gets a unique user context prompt, generated on demand "
+                "per session (the pool size follows --num-dataset-entries, default 100).\n"
                 "Mutually exclusive with --prefix-prompt-length/--prefix-prompt-pool-size."
             ),
         ),
@@ -2100,7 +2134,9 @@ class CLIConfig(BaseConfig):
         Any,
         Field(
             description="The maximum number of requests to send. If not set, will be automatically determined based "
-            "on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. "
+            "on the timing mode and dataset size: fixed-schedule runs use the number of records in the trace, "
+            "graph workloads stay unbounded (a single corpus pass), and every other unbounded run falls back to "
+            "`10` requests. "
             "Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple "
             "request counts; the converter promotes the list to a sweep on phases.profiling.requests "
             "before AIPerfConfig validation.",
@@ -2191,38 +2227,48 @@ class CLIConfig(BaseConfig):
         Field(
             ge=0.0,
             le=1.0,
-            description="AGENTIC_REPLAY only: lower bound (inclusive) on the random start "
-            "position within each trajectory, expressed as a fraction of the "
-            "trace's total turn count. Sampled per trajectory at trajectory-build "
-            "time; deterministic given --random-seed.",
+            description="Lower bound (inclusive) on the random start position within each "
+            "trajectory, as a fraction of the trace's total turn count. The two "
+            "timing modes read this default DIFFERENTLY. AGENTIC_REPLAY: the "
+            "0.0/1.0 defaults apply and open the full trace. AGENT_GRAPH: these "
+            "defaults do NOT apply -- the t* window is OFF (every trace replays "
+            "in full from t*=0) unless you name the flag explicitly, because the "
+            "graph path resolves an unset phase value as a closed window (see "
+            "config.phases.resolve_graph_tstar_window). Sampled per trajectory at "
+            "trajectory-build time; deterministic given --random-seed.",
         ),
         CLIParameter(
             name=("--trajectory-start-min-ratio",),
             group=Groups.LOAD_GENERATOR,
         ),
-    ] = 0.25
+    ] = 0.0
 
     trajectory_start_max_ratio: Annotated[
         float,
         Field(
             ge=0.0,
             le=1.0,
-            description="AGENTIC_REPLAY only: upper bound (inclusive) on the random start "
-            "position within each trajectory, expressed as a fraction of the "
-            "trace's total turn count. The effective per-trace ceiling is "
-            "min(int(max_ratio * n), n - 2) so at least one profile turn remains "
-            "after warmup.",
+            description="Upper bound (inclusive) on the random start position within each "
+            "trajectory, as a fraction of the trace's total turn count. The "
+            "effective per-trace ceiling is min(int(max_ratio * n), n - 2) so at "
+            "least one profile turn remains after warmup. The two timing modes "
+            "read this default DIFFERENTLY. AGENTIC_REPLAY: the 0.0/1.0 defaults "
+            "apply and open the full trace. AGENT_GRAPH: these defaults do NOT "
+            "apply -- the t* window is OFF (every trace replays in full from "
+            "t*=0) unless you name the flag explicitly, because the graph path "
+            "resolves an unset phase value as a closed window (see "
+            "config.phases.resolve_graph_tstar_window).",
         ),
         CLIParameter(
             name=("--trajectory-start-max-ratio",),
             group=Groups.LOAD_GENERATOR,
         ),
-    ] = 0.75
+    ] = 1.0
 
     burst_phase_starts: Annotated[
         bool,
         Field(
-            description="AGENTIC_REPLAY only: collapse the WARMUP-start and "
+            description="AGENTIC_REPLAY and AGENT_GRAPH: collapse the WARMUP-start and "
             "PROFILING-start dispatches into synchronized bursts instead of "
             "spreading them by each request's recorded offset from t*. By "
             "default (False) the phase starts are SPREAD: WARMUP requests are "
@@ -2233,8 +2279,12 @@ class CLIConfig(BaseConfig):
             "(inter-turn delays) is timing-faithful regardless of this flag; "
             "it governs ONLY the burst-vs-spread of the two phase starts. Pass "
             "--burst-phase-starts to fire each phase's first requests together "
-            "(faster concurrency ramp, synchronized start), e.g. for a "
-            "throughput-oriented run rather than a faithful arrival replay.",
+            "(faster concurrency ramp), e.g. for a throughput-oriented run "
+            "rather than a faithful arrival replay. SCOPE on AGENT_GRAPH: this "
+            "collapses the per-trace LEADING offsets only. It does NOT "
+            "synchronize traces with each other under the default "
+            "--open-loop-replay, where each trace is still held to its own "
+            "recorded start timestamp; pass --no-open-loop-replay for that.",
         ),
         CLIParameter(
             name=("--burst-phase-starts",),
@@ -2316,7 +2366,8 @@ class CLIConfig(BaseConfig):
         Field(
             gt=0,
             description="The maximum number of warmup requests to send before benchmarking. "
-            "If not set and no --warmup-duration is set, then no warmup phase will be used.",
+            "If none of --warmup-request-count, --num-warmup-sessions, or --warmup-duration is set, "
+            "then no warmup phase will be used.",
         ),
         CLIParameter(
             name=(
@@ -2331,8 +2382,10 @@ class CLIConfig(BaseConfig):
         float | None,
         Field(
             gt=0,
-            description="The maximum duration in seconds for the warmup phase. If not set, it will use the `--warmup-request-count` value. "
-            "If neither are set, no warmup phase will be used.",
+            description="The maximum duration in seconds for the warmup phase. Every warmup cap that is set "
+            "(--warmup-request-count, --num-warmup-sessions, --warmup-duration) applies independently, and the "
+            "warmup phase ends as soon as the first one is reached. If none of them are set, no warmup phase "
+            "will be used.",
         ),
         CLIParameter(
             name=("--warmup-duration",),
@@ -2378,7 +2431,8 @@ class CLIConfig(BaseConfig):
         int | None,
         Field(
             ge=1,
-            description="The number of sessions to use for the warmup phase. If not set, it will use the `--warmup-request-count` value.",
+            description="The number of sessions to use for the warmup phase. Applies independently of "
+            "`--warmup-request-count` and `--warmup-duration`; the warmup phase ends at whichever cap is reached first.",
         ),
         CLIParameter(
             name=("--num-warmup-sessions",),
@@ -2443,7 +2497,9 @@ class CLIConfig(BaseConfig):
         Field(
             ge=0,
             description="The grace period in seconds to wait for responses after warmup phase ends. "
-            "Only applies when warmup is enabled. Responses received within this period "
+            "Requires `--warmup-duration`: grace_period applies only to duration-bounded warmup phases, and "
+            "is rejected when warmup is triggered solely by `--warmup-request-count` / `--num-warmup-sessions`. "
+            "Responses received within this period "
             "are included in warmup completion. If not set, waits indefinitely for all warmup responses.",
         ),
         CLIParameter(
@@ -3461,8 +3517,9 @@ class CLIConfig(BaseConfig):
                 "https://proceedings.mlr.press/v206/ishibashi23a.html). Both are "
                 "in the same family as Wilson 2024's PRB stopping rule and ship "
                 "in Optuna core (no extra dep). ``none`` (default) disables; "
-                "convergence is then driven by --search-max-iterations / "
-                "--improvement-patience / --plateau-cv only."
+                "convergence is then driven by --search-max-iterations and the "
+                "YAML-only ``improvement_patience`` / ``plateau_threshold`` "
+                "sweep settings only."
             ),
         ),
         CLIParameter(
@@ -3591,7 +3648,12 @@ class CLIConfig(BaseConfig):
             default=None,
             description=(
                 "Named search-recipe preset that expands to an adaptive-search or "
-                "sweep block. Mutually exclusive with explicit --search-* flags. "
+                "sweep block. Mutually exclusive with the recipe-defining --search-* "
+                "flags (--search-space, --search-metric, --search-stat, "
+                "--search-direction, --search-planner, --optuna-*, "
+                "--search-percentile-pooling, --bo-constraint-mode); the tunable "
+                "budget/seed knobs (--search-max-iterations, --search-initial-points, "
+                "--search-random-seed) are accepted alongside a BO recipe. "
                 "Recipes are registered under the search_recipe plugin category. "
                 "Example: --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200."
             ),

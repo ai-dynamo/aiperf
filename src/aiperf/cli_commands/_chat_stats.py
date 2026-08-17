@@ -116,6 +116,9 @@ def build_record(
         start_perf_ns=start_ns,
         timestamp_ns=timestamp_ns,
         end_perf_ns=end_ns,
+        # chat always requests SSE streaming (the payload hardcodes
+        # stream=True), and streaming-only metrics (TTFT/ITL) gate on this.
+        streamed=True,
     )
     return ParsedResponseRecord(
         request=request,

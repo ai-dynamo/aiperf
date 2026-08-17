@@ -75,8 +75,12 @@ _RID_CACHE_BUST_TARGETS: list[CacheBustTarget] = [
     t for t in _NON_NONE_CACHE_BUST_TARGETS if t not in _WARMUP_ISOLATION_TARGETS
 ]
 _TIMING_MODES: list[TimingMode] = list(TimingMode)
-_NON_AGENTIC_TIMING_MODES: list[TimingMode] = [
-    t for t in TimingMode if t != TimingMode.AGENTIC_REPLAY
+_WARMUP_ISOLATION_INCOMPATIBLE_TIMING_MODES: list[TimingMode] = [
+    TimingMode.AGENTIC_REPLAY,
+    TimingMode.AGENT_GRAPH,
+]
+_WARMUP_ISOLATION_COMPATIBLE_TIMING_MODES: list[TimingMode] = [
+    t for t in TimingMode if t not in _WARMUP_ISOLATION_INCOMPATIBLE_TIMING_MODES
 ]
 _INCOMPATIBLE_ENDPOINT_TYPES: list[EndpointType] = [
     e
@@ -85,12 +89,12 @@ _INCOMPATIBLE_ENDPOINT_TYPES: list[EndpointType] = [
 ]
 
 
-@pytest.mark.parametrize("timing_mode", _NON_AGENTIC_TIMING_MODES)
-@pytest.mark.parametrize("target", _NON_NONE_CACHE_BUST_TARGETS)
-def test_cache_bust_accepted_with_non_agentic_timing_mode(
+@pytest.mark.parametrize("timing_mode", _WARMUP_ISOLATION_COMPATIBLE_TIMING_MODES)
+@pytest.mark.parametrize("target", _WARMUP_ISOLATION_TARGETS)
+def test_warmup_isolation_accepted_with_compatible_timing_mode(
     timing_mode: TimingMode, target: CacheBustTarget
 ) -> None:
-    """Every non-agentic-replay timing mode accepts cache-bust with a structured chat endpoint."""
+    """Session-isolated timing modes accept warmup-isolation targets."""
     cfg = _build(
         target=target, endpoint_type=EndpointType.CHAT, timing_mode=timing_mode
     )
@@ -109,16 +113,17 @@ def test_rid_cache_bust_accepted_with_every_timing_mode(
     assert cfg.get_cache_bust_target() == target
 
 
+@pytest.mark.parametrize("timing_mode", _WARMUP_ISOLATION_INCOMPATIBLE_TIMING_MODES)
 @pytest.mark.parametrize("target", _WARMUP_ISOLATION_TARGETS)
-def test_warmup_isolation_rejected_with_agentic_replay(
-    target: CacheBustTarget,
+def test_warmup_isolation_rejected_with_incompatible_replay_mode(
+    target: CacheBustTarget, timing_mode: TimingMode
 ) -> None:
-    """WARMUP_ISOLATION_* targets are rejected when timing_mode=agentic_replay."""
-    with pytest.raises(ValueError, match="not compatible with agentic_replay"):
+    """Replay modes that cannot isolate warmup payloads reject these targets."""
+    with pytest.raises(ValueError, match="not compatible with"):
         _build(
             target=target,
             endpoint_type=EndpointType.CHAT,
-            timing_mode=TimingMode.AGENTIC_REPLAY,
+            timing_mode=timing_mode,
         )
 
 

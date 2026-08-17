@@ -16,6 +16,7 @@ from aiperf.dataset.loader import (
 )
 from aiperf.dataset.loader.speed_bench import SpeedBenchLoader
 from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
+from tests.unit.conftest import make_benchmark_run
 from tests.unit.dataset.composer.conftest import make_run
 
 
@@ -561,3 +562,44 @@ class TestExplicitCustomDatasetType:
             run=make_run(cli_config), tokenizer=mock_tokenizer
         )
         assert composer._explicit_format() is None
+
+
+class TestInlineRecordsFormatDefault:
+    """Inline ``records:`` datasets must work without an explicit ``format:``.
+
+    ``FileDataset.format`` is optional and defaults to ``None``. Every other
+    test in this file (and every example in the inline-datasets tutorial)
+    passes ``format`` explicitly, which is why a ``None`` dereference in the
+    inline branch went unnoticed.
+    """
+
+    @staticmethod
+    def _run_with_inline_dataset(dataset: dict):
+        return make_benchmark_run(
+            extra={"datasets": [{"name": "default", "type": "file", **dataset}]}
+        )
+
+    def test_inline_records_without_format_defaults_to_single_turn(
+        self, mock_tokenizer
+    ):
+        """No ``format:`` key at all -- the documented minimal inline shape."""
+        run = self._run_with_inline_dataset({"records": [{"text": "hello"}]})
+        composer = CustomDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        conversations = composer.create_dataset()
+
+        assert composer.detected_dataset_type == CustomDatasetType.SINGLE_TURN
+        assert len(conversations) == 1
+
+    def test_inline_records_with_explicit_null_format_defaults_to_single_turn(
+        self, mock_tokenizer
+    ):
+        """Explicit ``format: null`` sets ``model_fields_set``, so it takes the
+        ``_explicit_format`` path rather than the inline default path."""
+        run = self._run_with_inline_dataset(
+            {"records": [{"text": "hello"}], "format": None}
+        )
+        composer = CustomDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        assert composer._explicit_format() is None
+        assert composer.create_dataset()

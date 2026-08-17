@@ -236,8 +236,8 @@ class TrajectorySource(ConversationSource):
         dataset_sampler: DatasetSamplingStrategyProtocol,
         concurrency: int,
         random_seed: int,
-        start_min_ratio: float = 0.25,
-        start_max_ratio: float = 0.75,
+        start_min_ratio: float = 0.0,
+        start_max_ratio: float = 1.0,
         allow_dataset_wrap: bool = False,
         expected_num_sessions: int | None = None,
         total_expected_requests: int | None = None,
@@ -340,7 +340,7 @@ class TrajectorySource(ConversationSource):
         Format::
 
             TrajectorySource: built 14 trajectories from 949 traces
-              range cfg=[0.25, 0.75]  observed pct: min=27% median=51% max=72%
+              range cfg=[0.00, 1.00]  observed pct: min=0% median=51% max=92%
                 lane=00  start_turn= 6/24 (25%)  trace_id=abc123
                 lane=01  start_turn=15/22 (68%)  trace_id=def456
                 ...

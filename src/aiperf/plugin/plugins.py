@@ -121,9 +121,8 @@ class _PluginRegistry:
             dist: Optional distribution for metadata lookup.
 
         Raises:
-            FileNotFoundError: If the manifest file doesn't exist.
             ValueError: If the path is a directory or schema is invalid.
-            RuntimeError: If the file cannot be read.
+            RuntimeError: If the manifest file doesn't exist or cannot be read.
         """
         if isinstance(manifest_path, str) and ":" in manifest_path:
             package, _, path = manifest_path.rpartition(":")
@@ -932,6 +931,7 @@ if TYPE_CHECKING:
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
     from aiperf.dataset.composer.base import BaseDatasetComposer
+    from aiperf.dataset.graph.adapters.protocols import GraphAdapterProtocol
     from aiperf.dataset.protocols import CustomDatasetLoaderProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol, PublicDatasetLoaderProtocol
     from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
@@ -939,7 +939,7 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordObserverType, RecordProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServiceRunType, ServiceType, SpecDecodeAdapterType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, GraphAdapterType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordObserverType, RecordProcessorType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServiceRunType, ServiceType, SpecDecodeAdapterType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.protocols import RecordObserverProtocol, RecordProcessorProtocol
     from aiperf.search_recipes._base import SearchRecipe
     from aiperf.search_recipes.post_process import PostProcessHandler
@@ -994,6 +994,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.PUBLIC_DATASET_LOADER, "public_dataset_loader"], name_or_class_path: PublicDatasetType | str) -> type[PublicDatasetLoaderProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.PUBLIC_DATASET_LOADER, "public_dataset_loader"]) -> Iterator[tuple[PluginEntry, type[PublicDatasetLoaderProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.GRAPH_ADAPTER, "graph_adapter"], name_or_class_path: GraphAdapterType | str) -> type[GraphAdapterProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.GRAPH_ADAPTER, "graph_adapter"]) -> Iterator[tuple[PluginEntry, type[GraphAdapterProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.ENDPOINT, "endpoint"], name_or_class_path: EndpointType | str) -> type[EndpointProtocol]: ...
     @overload
@@ -1297,17 +1301,49 @@ def get_search_planner_metadata(name: str) -> SearchPlannerMetadata:
     return get_entry("search_planner", name).get_typed_metadata(SearchPlannerMetadata)
 
 
-# Mapping of categories to their metadata classes (for categories with typed metadata)
-_CATEGORY_METADATA_CLASSES: dict[str, type] = {
-    "endpoint": EndpointMetadata,
-    "transport": TransportMetadata,
-    "plot": PlotMetadata,
-    "service": ServiceMetadata,
-    "custom_dataset_loader": CustomDatasetLoaderMetadata,
-    "convergence_criterion": ConvergenceCriterionMetadata,
-    "search_planner": SearchPlannerMetadata,
-    "gpu_telemetry_collector": GPUTelemetryCollectorMetadata,
-}
+# Resolved metadata classes, keyed by normalized category. Populated lazily from
+# the `metadata_class` field in categories.yaml — never hand-maintained, since a
+# hand-written duplicate of that mapping silently drifts as categories are added.
+_CATEGORY_METADATA_CLASSES: dict[str, type] = {}
+
+
+def _get_category_metadata_class(category: str) -> type | None:
+    """Resolve the metadata class declared by a category in categories.yaml.
+
+    Args:
+        category: Normalized category name.
+
+    Returns:
+        The imported metadata class, or None when the category declares no
+        `metadata_class` (or its class path cannot be imported).
+    """
+    if (cached := _CATEGORY_METADATA_CLASSES.get(category)) is not None:
+        return cached
+
+    category_metadata = get_category_metadata(category) or {}
+    class_path = category_metadata.get("metadata_class")
+    if not class_path:
+        return None
+
+    module_path, _, class_name = str(class_path).rpartition(":")
+    if not module_path or not class_name:
+        _logger.warning(
+            f"Invalid metadata_class for category '{category}': {class_path!r} "
+            "(expected 'module.path:ClassName')"
+        )
+        return None
+
+    try:
+        metadata_cls = getattr(importlib.import_module(module_path), class_name)
+    except (ImportError, AttributeError) as e:
+        _logger.warning(
+            f"Failed to import metadata_class '{class_path}' for category "
+            f"'{category}': {e!r}"
+        )
+        return None
+
+    _CATEGORY_METADATA_CLASSES[category] = metadata_cls
+    return metadata_cls
 
 
 def get_typed_metadata(category: CategoryT, name: str) -> Any:
@@ -1328,12 +1364,12 @@ def get_typed_metadata(category: CategoryT, name: str) -> Any:
 
     Example:
         >>> endpoint_meta = get_typed_metadata(PluginType.ENDPOINT, "chat")
-        >>> print(endpoint_meta.streaming)  # Typed access
+        >>> print(endpoint_meta.supports_streaming)  # Typed access
         True
     """
     category = _normalize_category(category)
     entry = get_entry(category, name)
-    if metadata_cls := _CATEGORY_METADATA_CLASSES.get(category):
+    if metadata_cls := _get_category_metadata_class(category):
         return entry.get_typed_metadata(metadata_cls)
 
     # Fall back to raw metadata dict

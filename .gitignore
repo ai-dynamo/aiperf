@@ -42,6 +42,15 @@ src/aiperf/_build_info.py
 .agents/*
 !.agents/skills/
 
+# Vendored skills synced in by rix; re-synced on demand, never committed.
+# Listed individually so a NEW project-owned skill still shows up as untracked.
+.agents/skills/.rix-skills-version
+.agents/skills/docx/
+.agents/skills/pdf/
+.agents/skills/pdf-reading/
+.agents/skills/pptx/
+.agents/skills/xlsx/
+
 # Claude Code - ignore user settings, keep agents and the skills symlink
 .claude/*
 !.claude/agents/

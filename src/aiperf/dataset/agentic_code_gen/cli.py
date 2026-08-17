@@ -50,7 +50,10 @@ def synthesize(
         max_isl: Maximum input sequence length — overrides max_prompt_tokens to clip context.
         max_osl: Maximum output sequence length — overrides generation_length.max.
     """
-    console = Console()
+    # soft_wrap: every line here carries a filesystem path. Rich's default
+    # width-based word wrap breaks a long path across lines, which makes it
+    # un-copy-pasteable and can split the surrounding sentence mid-phrase.
+    console = Console(soft_wrap=True)
 
     if config:
         dist_config = load_config(config)
@@ -113,7 +116,10 @@ def validate(
     Args:
         input_path: Path to JSONL dataset file.
     """
-    console = Console()
+    # soft_wrap: see the note in ``generate`` -- the failure line below is
+    # mostly a path, and wrapping it at the console width both mangles the path
+    # and splits "is not a file" across a line break.
+    console = Console(soft_wrap=True)
     if not input_path.is_file():
         console.print(f"[red]Validation failed: {input_path} is not a file.[/red]")
         raise SystemExit(1)

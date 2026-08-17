@@ -20,6 +20,7 @@ from aiperf.config.dataset.content import (
     PromptSelectionConfig,
     RankingsConfig,
 )
+from aiperf.config.dataset.narrow import as_file_dataset, as_trace_replay_dataset
 from aiperf.config.dataset.resolver import DatasetResolver
 from aiperf.config.dataset.trace import SynthesisConfig
 from aiperf.config.dataset.video import (
@@ -44,4 +45,6 @@ __all__ = [
     "SyntheticDataset",
     "VideoAudioConfig",
     "VideoConfig",
+    "as_file_dataset",
+    "as_trace_replay_dataset",
 ]

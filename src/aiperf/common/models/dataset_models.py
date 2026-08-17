@@ -69,10 +69,10 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
         ge=0,
         description="Total (uncompressed) size of the data file in bytes.",
     )
-    # Pre-compressed files for Kubernetes HTTP transfer (optional). main's mmap
-    # writer (memory_map_utils.MemoryMapWriter) populates the explicit path
-    # fields; agentx's compress-only mode keys off the ``compressed`` flag.
-    # Both are kept so neither writer/reader breaks during the staged port.
+    # Pre-compressed files for Kubernetes HTTP transfer (optional). The mmap
+    # writer (memory_map_utils.MemoryMapDatasetBackingStore.get_client_metadata)
+    # sets the ``compressed`` flag and the explicit path fields together, only
+    # in compress-only mode; readers may key off either.
     compressed: bool = Field(
         default=False,
         description="Whether the data/index files referenced here are themselves "
@@ -90,6 +90,54 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
         default=0,
         ge=0,
         description="Total size of the compressed data file in bytes. 0 when not compressed.",
+    )
+
+
+class GraphSegmentClientMetadata(DatasetClientMetadata):
+    """Client metadata for graph unified segment-store access.
+
+    Graph runs have no conversation store: workers materialize per-node
+    payloads from the unified segment store addressed by
+    ``(trace_id, node_ordinal)``, and the TimingManager plans from the
+    graph_meta structural sidecar. Both locations travel here so no service
+    re-derives them from env conventions.
+    """
+
+    client_type: DatasetClientStoreType = DatasetClientStoreType.GRAPH_SEGMENT
+
+    store_base_path: Path = Field(
+        ...,
+        description="Base directory containing the per-benchmark "
+        "aiperf_graph_segments_<benchmark_id>/ unified store the workers open.",
+    )
+    benchmark_id: str = Field(
+        ...,
+        description="Benchmark id keying the per-run store and sidecar directories.",
+    )
+    sidecar_path: Path = Field(
+        ...,
+        description="Exact path of the graph_meta.msgpack structural sidecar "
+        "the TimingManager ingests for scheduling. Mandatory for graph runs.",
+    )
+
+
+class GraphDatasetMetadata(AIPerfBaseModel):
+    """Graph facet of the dataset structure for agent graph workloads.
+
+    Replaces the former per-trace stub conversations: the trace universe and
+    the per-node theoretical prefix-cache map are first-class here instead of
+    riding fabricated ConversationMetadata.
+    """
+
+    trace_ids: list[str] = Field(
+        default_factory=list,
+        description="Every trace id in the built graph store, in catalog order.",
+    )
+    prefix_cache_by_trace: dict[str, dict[str, list[int]]] = Field(
+        default_factory=dict,
+        description="Per-trace {node_id: [theoretical_hit_blocks, total_blocks]} "
+        "map stamped by the trie build; consumed by the records-plane "
+        "theoretical prefix-cache accumulator.",
     )
 
 
@@ -398,6 +446,15 @@ class Turn(AIPerfBaseModel):
         "Mutually exclusive with normal turn-content fields in spirit, but no "
         "validator enforces that — loaders construct one or the other.",
     )
+    raw_payload_bytes: bytes | None = Field(
+        default=None,
+        description="Pre-serialized API request body bytes for verbatim replay. "
+        "When set, takes precedence over raw_payload: the bytes are sent to the "
+        "transport unchanged (no orjson.dumps re-encode) and recorded verbatim as "
+        "payload_bytes for ISL/raw-export. Set by the agent-graph worker bytes path "
+        "(GraphSegmentUnifiedClient.build_request_body_handles) when no content "
+        "mutation is needed; None on every other path.",
+    )
     extra_body: dict[str, Any] | None = Field(
         default=None,
         description="Non-native per-turn request-body fields (temperature, "
@@ -643,6 +700,11 @@ class DatasetMetadata(AIPerfBaseModel):
         description="Dataset-level default for how prior turns are accumulated. "
         "Set by the loader based on dataset format semantics. "
         "Individual conversations can override this via their own context_mode field.",
+    )
+    graph: GraphDatasetMetadata | None = Field(
+        default=None,
+        description="Graph facet for agent graph workloads (trace universe + "
+        "prefix-cache map); None for conversation datasets.",
     )
 
     @field_validator("default_context_mode")

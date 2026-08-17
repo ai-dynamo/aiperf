@@ -51,7 +51,7 @@ class InterChunkLatencyMetric(BaseRecordMetric[list[int]]):
 
         Raises:
             NoMetricValue: If the record does not have at least two content responses
-            ValueError: If any of the inter chunk latencies are not positive.
+            ValueError: If any of the inter chunk latencies are negative.
         """
         content_responses = record.content_responses
 

@@ -22,7 +22,7 @@ from pydantic import (
 from aiperf.common.phase import infer_legacy_phase_kind
 from aiperf.common.types import PhaseKind
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
-from aiperf.config.base import BaseConfig
+from aiperf.config.base import BaseConfig, hide_from_unset_dumps
 from aiperf.config.cancellation import CancellationConfig
 from aiperf.config.loader.duration import (
     DurationSpec,
@@ -65,7 +65,56 @@ __all__ = [
 # =============================================================================
 
 
-class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
+class _ConcurrencyProvenanceMixin(BaseConfig):
+    """Persists whether the author explicitly chose ``concurrency``.
+
+    ``ConcurrencyPhase.concurrency`` defaults to a NON-None ``1``, and
+    ``concurrency`` is the DEFAULT profiling phase type, so every bare run
+    carries a positive value that survives ``model_dump(exclude_none=True)``.
+    Any consumer reading provenance from the VALUE therefore cannot tell an
+    inherited ``1`` from an operator asking for a ceiling of one -- which
+    serialized the graph open-loop replay path to a single trace at a time.
+    ``model_fields_set`` cannot carry it either: the sweep orchestrator
+    round-trips each run through model_dump/model_validate, which marks every
+    dumped key as "set".
+
+    Mirrors ``ContentConfig.target_explicitly_set`` and
+    ``EndpointConfig.streaming_explicitly_set``.
+    """
+
+    concurrency_explicitly_set: Annotated[
+        bool,
+        Field(
+            default=False,
+            alias="_concurrency_explicitly_set",
+            description="Internal provenance flag: True when the author explicitly "
+            "chose a value for ``concurrency`` (rather than inheriting the phase "
+            "default). Serialized on purpose (NOT ``exclude=True``) so it survives "
+            "the sweep orchestrator's model_dump/model_validate round trip. Read "
+            "via the ``_concurrency_explicitly_set`` property.",
+        ),
+    ]
+
+    @property
+    def _concurrency_explicitly_set(self) -> bool:
+        """Back-compat alias for the serialized ``concurrency_explicitly_set`` flag."""
+        return self.concurrency_explicitly_set
+
+    @model_validator(mode="after")
+    def _record_concurrency_provenance(self) -> Self:
+        """Snapshot ``concurrency`` provenance on FIRST validation only.
+
+        An incoming ``concurrency_explicitly_set`` key wins, carrying the
+        original intent across the sweep round trip where ``model_fields_set``
+        is uninformative.
+        """
+        if "concurrency_explicitly_set" not in self.model_fields_set:
+            self.concurrency_explicitly_set = "concurrency" in self.model_fields_set
+        hide_from_unset_dumps(self, "concurrency_explicitly_set")
+        return self
+
+
+class BasePhaseConfig(_ConcurrencyProvenanceMixin, AdaptiveScalePhaseMixin, BaseConfig):
     """Base configuration shared by all phase types.
 
     Not instantiated directly -- use a concrete type via the
@@ -285,33 +334,37 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     ]
 
     trajectory_start_min_ratio: Annotated[
-        float,
+        float | None,
         Field(
-            default=0.25,
+            default=None,
             ge=0.0,
             le=1.0,
-            description="AGENTIC_REPLAY only: lower bound (inclusive) on the random start "
+            description="AGENTIC_REPLAY and AGENT_GRAPH: lower bound (inclusive) on the random start "
             "position within each trajectory, expressed as a fraction of the "
             "trace's recorded wall-clock duration (timestamped traces) or its "
             "total turn count (legacy timestamp-less traces). Sampled per "
             "trajectory at trajectory-build "
-            "time; deterministic given --random-seed.",
+            "time; deterministic given --random-seed. None means UNSET, which "
+            "AGENTIC_REPLAY resolves to 0.0 (the full trace) and AGENT_GRAPH "
+            "resolves to a window that is OFF (see resolve_graph_tstar_window).",
         ),
     ]
 
     trajectory_start_max_ratio: Annotated[
-        float,
+        float | None,
         Field(
-            default=0.75,
+            default=None,
             ge=0.0,
             le=1.0,
-            description="AGENTIC_REPLAY only: upper bound (inclusive) on the random start "
+            description="AGENTIC_REPLAY and AGENT_GRAPH: upper bound (inclusive) on the random start "
             "position within each trajectory, expressed as a fraction of the "
             "trace's recorded wall-clock duration (timestamped traces) or its "
             "total turn count (legacy timestamp-less traces). For the "
             "timestamp-less path the effective per-trace ceiling is "
             "min(int(max_ratio * n), n - 2) so at least one profile turn remains "
-            "after warmup.",
+            "after warmup. None means UNSET, which AGENTIC_REPLAY resolves to "
+            "1.0 (the full trace) and AGENT_GRAPH resolves to a window that is "
+            "OFF (see resolve_graph_tstar_window).",
         ),
     ]
 
@@ -319,7 +372,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         bool,
         Field(
             default=False,
-            description="AGENTIC_REPLAY only: collapse the WARMUP-start and "
+            description="AGENTIC_REPLAY and AGENT_GRAPH: collapse the WARMUP-start and "
             "PROFILING-start dispatches into synchronized bursts instead of "
             "spreading them by each request's recorded offset from t*. By "
             "default (False) the phase starts are SPREAD: WARMUP requests are "
@@ -380,17 +433,18 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
-    _failed_request_threshold_explicitly_set: bool = False
     _trajectory_start_min_ratio_explicitly_set: bool = False
     _trajectory_start_max_ratio_explicitly_set: bool = False
-    _burst_phase_starts_explicitly_set: bool = False
     _system_idle_gap_cap_seconds_explicitly_set: bool = False
 
-    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
-    # stop condition is inferred from the dataset). Otherwise CLI users
-    # get autodefaults applied in the CLI->YAML converter (see
-    # ``aiperf.config.flags._converter_profiling``); YAML users must be
-    # explicit.
+    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the stop
+    # condition is inferred from the trace dataset). The required-stop check
+    # itself is NOT enforced here -- a phase alone cannot see its dataset's
+    # graph-ness. It lives in
+    # ``aiperf.config.resolution.predicates.check_phase_dataset_compatibility``
+    # (run from ``BenchmarkConfig``), which exempts graph workloads: a bare
+    # graph run infers a single-corpus-pass stop from the loaded corpus, just
+    # as FixedSchedulePhase infers its stop from the trace.
     _stop_condition_required: ClassVar[bool] = True
     _windows_reserved_phase_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL"}
@@ -437,16 +491,6 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         if self.exclude_from_results != required:
             self.exclude_from_results = required
         if (
-            self._stop_condition_required
-            and self.requests is None
-            and self.duration is None
-            and self.sessions is None
-        ):
-            raise ValueError(
-                f"Phase '{self.name}': at least one of "
-                "'requests', 'duration', or 'sessions' must be specified"
-            )
-        if (
             self.prefill_concurrency is not None
             and self.concurrency is not None
             and self.prefill_concurrency > self.concurrency
@@ -469,17 +513,11 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         scenario spec" (info log). Surface stable underscore flags for the
         validator's defensive `getattr`.
         """
-        self._failed_request_threshold_explicitly_set = (
-            "failed_request_threshold" in self.model_fields_set
-        )
         self._trajectory_start_min_ratio_explicitly_set = (
             "trajectory_start_min_ratio" in self.model_fields_set
         )
         self._trajectory_start_max_ratio_explicitly_set = (
             "trajectory_start_max_ratio" in self.model_fields_set
-        )
-        self._burst_phase_starts_explicitly_set = (
-            "burst_phase_starts" in self.model_fields_set
         )
         self._system_idle_gap_cap_seconds_explicitly_set = (
             "system_idle_gap_cap_seconds" in self.model_fields_set
@@ -488,7 +526,18 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
 
     @model_validator(mode="after")
     def validate_trajectory_start_range(self) -> Self:
-        """Ensure trajectory_start_min_ratio <= trajectory_start_max_ratio."""
+        """Ensure trajectory_start_min_ratio <= trajectory_start_max_ratio.
+
+        Only when BOTH are authored. Either being ``None`` means that bound is
+        unset, and the two consumers resolve unset differently (AGENTIC_REPLAY
+        to the full trace, AGENT_GRAPH to a closed window), so there is no
+        single pair to compare here -- each resolver produces an ordered pair
+        by construction.
+        """
+        if self.trajectory_start_min_ratio is None:
+            return self
+        if self.trajectory_start_max_ratio is None:
+            return self
         if self.trajectory_start_min_ratio > self.trajectory_start_max_ratio:
             raise ValueError(
                 f"--trajectory-start-min-ratio ({self.trajectory_start_min_ratio}) "
@@ -716,6 +765,62 @@ PhaseConfig = Annotated[
     | FixedSchedulePhase,
     Discriminator("type"),
 ]
+
+
+def resolve_graph_tstar_window(phase: BasePhaseConfig | None) -> tuple[float, float]:
+    """Resolve the (min, max) t* bounds for the agent-graph path, unset being 0.0.
+
+    ``trajectory_start_{min,max}_ratio`` are ``float | None``: ``None`` IS the
+    unset state. The agent-graph path reads it as a window that is OFF (full
+    native replay), so only a deliberately supplied value counts -- a user flag,
+    a YAML phase, or a scenario auto-fill, each of which writes a non-``None``
+    value. AGENTIC_REPLAY resolves the same ``None`` to its own full-trace
+    defaults instead (``timing.config.from_run``). A ``None`` phase (a run with
+    no profiling phase) resolves to a closed window.
+
+    Both bounds are returned together because both planes need the pair
+    consistent; the fields live on :class:`BasePhaseConfig`, so every phase type
+    in the :data:`PhaseConfig` union carries them and they are read directly
+    rather than by name.
+
+    ``None`` rather than a provenance flag because it survives serialization:
+    ``model_fields_set`` is per-instance and does NOT survive ``model_dump`` ->
+    ``model_validate``, which the sweep orchestrator crosses per cell
+    (``local_executor._prepare_run_artifacts`` -> ``subprocess_runner``). Every
+    dumped default comes back marked "set", so a "was this authored?" question
+    answered from ``model_fields_set`` would make a run that never asked for a
+    t* window replay chopped-and-warmed in a sweep cell but full-native
+    standalone. ``None`` round-trips as ``None``.
+
+    NOT the ``_..._explicitly_set`` flags: those are construction-time
+    snapshots taken by
+    :meth:`BasePhaseConfig._record_agentic_explicit_set_flags` and answer a
+    DIFFERENT question -- the scenario validator needs "did the user set this
+    BEFORE I ran?", which must stay frozen so its conflict check does not fire
+    against its own auto-fills. This asks "is there a value at all?", so the two
+    subsystems do not share one signal.
+
+    Lives here, next to the field, because BOTH graph planes must resolve it by
+    the SAME rule: the build-side slot gate
+    (``dataset.graph.workload_detect._resolve_graph_tstar_max_ratio``) and the
+    dispatch-side strategy (``timing.config.from_run``). Reading the raw value
+    on one side and this helper on the other makes the two planes disagree on
+    whether the window is engaged -- the gate arms while dispatch replays cold.
+    """
+    if phase is None:
+        return (0.0, 0.0)
+    low = phase.trajectory_start_min_ratio
+    high = phase.trajectory_start_max_ratio
+    if low is None:
+        # Unset min means "from the trace start"; an authored max still bounds it.
+        return (0.0, 0.0 if high is None else high)
+    if high is None:
+        # Min alone is a point window at the authored start. Defaulting the
+        # missing bound to 0.0 independently would emit an inverted pair that
+        # validate_trajectory_start_range cannot catch (it skips half-set pairs),
+        # crashing later in AgentGraphConversationSource.
+        return (low, low)
+    return (low, high)
 
 
 def get_phase_rate(phase: BasePhaseConfig) -> float | None:

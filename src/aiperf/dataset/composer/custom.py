@@ -54,11 +54,11 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
         # Honor an explicit ``FileDataset.format`` (set via ``--custom-dataset-type``)
         # before falling back to structural inference. ``format`` defaults to
-        # ``SINGLE_TURN``, so we use ``model_fields_set`` to distinguish "user
-        # picked single_turn" from "default applied". This is required for
-        # ``random_pool`` on JSONL files, whose schema overlaps with
-        # ``single_turn``: structural inference always picks single_turn,
-        # silently dropping the random-with-replacement sampling semantics.
+        # ``None``, and we use ``model_fields_set`` to distinguish "user picked
+        # a format" from "default applied". This is required for ``random_pool``
+        # on JSONL files, whose schema overlaps with ``single_turn``: structural
+        # inference always picks single_turn, silently dropping the
+        # random-with-replacement sampling semantics.
         explicit_format = self._explicit_format()
         if explicit_format is not None:
             dataset_type = explicit_format
@@ -66,7 +66,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
         elif is_inline:
             # Inline mode has no file to peek at for structural inference, so
             # we trust the (defaulted-or-set) FileDataset.format directly.
-            dataset_type = self._format_to_loader_type(self._file_dataset.format)
+            # ``format`` is optional and defaults to None, so fall back to
+            # SINGLE_TURN here -- inline ``records:`` without an explicit
+            # ``format:`` is the documented shape and must not fail.
+            dataset_type = self._format_to_loader_type(
+                self._file_dataset.format or DatasetFormat.SINGLE_TURN
+            )
             self.info(f"Using inline dataset format: {dataset_type}")
         else:
             dataset_type = self._infer_dataset_type(self._file_path)
@@ -105,7 +110,13 @@ class CustomDatasetComposer(BaseDatasetComposer):
         """
         if "format" not in self._file_dataset.model_fields_set:
             return None
-        return self._format_to_loader_type(self._file_dataset.format)
+        fmt = self._file_dataset.format
+        if fmt is None:
+            # Explicit ``format: null`` carries no selection; treat it the same
+            # as an unset field so structural inference runs instead of
+            # dereferencing None.
+            return None
+        return self._format_to_loader_type(fmt)
 
     @staticmethod
     def _format_to_loader_type(fmt: DatasetFormat) -> CustomDatasetType:

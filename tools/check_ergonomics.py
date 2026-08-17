@@ -80,6 +80,12 @@ INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS: dict[str, str] = {
         "flag as a top-level field by design (v1 flatten, Tasks 1-13). "
         "Splitting into sub-models would re-nest the v1 layer."
     ),
+    "src/aiperf/timing/config.py::CreditPhaseConfig": (
+        "CreditPhaseConfig is the frozen flat per-phase credit contract read "
+        "by every timing strategy, phase runner, and credit issuer via direct "
+        "attribute access. Nesting subsets of it would rewrite hundreds of "
+        "call sites for no reader benefit; the flat shape IS the contract."
+    ),
 }
 
 CHECKS = [

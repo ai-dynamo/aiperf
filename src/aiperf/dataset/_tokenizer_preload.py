@@ -82,11 +82,15 @@ def _preload() -> None:
     revision = _env_revision()
 
     try:
+        # resolve_alias=True matches the worker/parent fallback in
+        # aiperf.dataset.graph.adapters.shared.content._build_generator, so a
+        # preload hit and a fallback miss load the SAME tokenizer for an
+        # aliased name.
         tok = Tokenizer.from_pretrained(
             name,
             trust_remote_code=trust,
             revision=revision,
-            resolve_alias=False,
+            resolve_alias=True,
         )
         _LOADED[(name, trust, revision)] = tok
         print(

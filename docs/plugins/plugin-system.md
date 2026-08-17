@@ -56,15 +56,15 @@ Registry (singleton)
 
 ### Key Components
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| Plugin Registry | `src/aiperf/plugin/plugins.py` | Singleton managing discovery and loading |
-| Plugin Entry | `src/aiperf/plugin/types.py` | Lazy-loading entry with metadata |
-| Categories | `src/aiperf/plugin/categories.yaml` | Category definitions with protocols |
-| Built-in Plugins | `src/aiperf/plugin/plugins.yaml` | Built-in plugin registrations |
-| Schemas | `src/aiperf/plugin/schema/schemas.py` | Pydantic models for validation |
-| Enums | `src/aiperf/plugin/enums.py` | Auto-generated enums from registry |
-| CLI | `src/aiperf/cli_commands/plugins.py` | Plugin exploration commands |
+| Component | Where | Purpose |
+|-----------|-------|---------|
+| Plugin Registry | `_PluginRegistry` (exposed as the `plugins` module singleton) | Singleton managing discovery and loading |
+| Plugin Entry | `PluginEntry` | Lazy-loading entry with metadata |
+| Categories | `categories.yaml` | Category definitions with protocols |
+| Built-in Plugins | `plugins.yaml` | Built-in plugin registrations |
+| Schemas | `PluginsManifest`, `PluginSpec`, `CategoriesManifest`, `CategorySpec` | Pydantic models for validation |
+| Enums | `PluginType` and the per-category enums | Auto-generated enums from registry |
+| CLI | `aiperf plugins` command | Plugin exploration commands |
 
 ## Architecture
 
@@ -100,13 +100,13 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 34 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
+AIPerf supports 36 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
 
 ### Timing Categories
 
 | Category | Enum | Description |
 |----------|------|-------------|
-| `timing_strategy` | `TimingMode` | Request scheduling strategies (fixed schedule, request rate, user-centric) |
+| `timing_strategy` | `TimingMode` | Request scheduling strategies (`fixed_schedule`, `request_rate`, `adaptive_scale`, `user_centric_rate`, `agent_graph`, `agentic_replay`) |
 | `arrival_pattern` | `ArrivalPattern` | Inter-arrival time distributions (constant, Poisson, gamma, concurrency burst) |
 | `ramp` | `RampType` | Value ramping strategies (linear, exponential, Poisson) |
 
@@ -120,6 +120,18 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 | `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, rankings) |
 | `custom_dataset_loader` | `CustomDatasetType` | JSONL format loaders |
 | `public_dataset_loader` | `PublicDatasetType` | Shared benchmark dataset fetchers (HTTP, HuggingFace) |
+| `graph_adapter` | `GraphAdapterType` | Trace/log-to-`ParsedGraph` converters for agent graph benchmarks; today one key, `dynamo_trace` (forced with `--graph-format dynamo_trace`) |
+
+Graph adapters implement `GraphAdapterProtocol`: `can_load(path)` is a cheap
+extension + content sniff for auto-detection (ties broken by the metadata
+`detection_priority`, higher wins), and `parse(path, ctx)` does the full
+conversion. `ctx` is an optional `GraphParseContext` carrying run-derived parse
+knobs (content seed, tokenizer, corpus, idle-gap cap, dispatch defaults, ...);
+each adapter maps only the fields it consumes and forwards a field ONLY when it
+is set, so a ctx-less `parse(path)` stays byte-equal to the protocol-default
+entry and a partial ctx never clobbers a non-`None` entry default. Adapters may
+raise adapter-specific `ValueError` subclasses; the parser layer wraps them
+into `GraphParseError`.
 
 ### Endpoint and Transport Categories
 
@@ -168,6 +180,7 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 |----------|------|-------------|
 | `plot` | `PlotType` | Chart types (scatter, histogram, timeline, etc.) |
 | `gpu_telemetry_collector` | `GPUTelemetryCollectorType` | GPU metric collection (DCGM, pynvml) |
+| `spec_decode_adapter` | `SpecDecodeAdapterType` | Engine-specific speculative-decoding stats extraction (vLLM) |
 
 ### Infrastructure Categories (Internal)
 
@@ -228,9 +241,9 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 
 **Quick Start** (4 steps):
 
-| Step | File | Action |
-|------|------|--------|
-| 1 | `my_endpoint.py` | Create class extending `BaseEndpoint` |
+| Step | Where | Action |
+|------|-------|--------|
+| 1 | Your Python module | Create class extending `BaseEndpoint` |
 | 2 | `plugins.yaml` | Register with class path, description, and metadata |
 | 3 | `pyproject.toml` | Add entry point: `my-package = "my_package:plugins.yaml"` |
 | 4 | Terminal | `uv pip install -e . && aiperf plugins endpoint my_custom` |
@@ -238,7 +251,6 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 ### Minimal Endpoint Example
 
 ```python
-# my_package/endpoints/custom_endpoint.py
 class MyCustomEndpoint(BaseEndpoint):
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         turn = request_info.turns[-1]
@@ -316,6 +328,7 @@ Category-specific metadata is validated against Pydantic models in `aiperf.plugi
 | `PlotMetadata` | `display_name`, `category` |
 | `ServiceMetadata` | `required`, `auto_start`, `disable_gc`, `replicable` |
 | `GPUTelemetryCollectorMetadata` | `is_local` |
+| `GraphAdapterMetadata` | `detection_priority` |
 
 ## CLI Commands
 

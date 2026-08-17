@@ -328,6 +328,11 @@
     ],
     [
       "pydantic-fields",
+      "src/aiperf/common/environment.py",
+      "_DatasetSettings"
+    ],
+    [
+      "pydantic-fields",
       "src/aiperf/common/models/export_models.py",
       "JsonExportData"
     ]

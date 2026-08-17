@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.session_tree import SessionTreeRegistry
 
 
@@ -203,3 +204,75 @@ def test_release_uses_the_trees_own_phase(cm, registry):
     registry.register_descendants("w-root", 1)
     registry.on_descendant_done("w-root")
     assert cm.released == [WARMUP]
+
+
+class TestResurrectedTreeSlotAccounting:
+    """A tree RESURRECTED after retirement must not hand back a second slot.
+
+    ``register_descendants`` recreates a retired tree so a descendant's
+    final-turn SPAWN can register grandchildren (see ``_retired_roots``). That
+    tree never re-acquired a session slot -- its slot was released when it first
+    drained -- so releasing again on the second drain permanently raises the
+    session concurrency ceiling: ``asyncio.Semaphore.release`` has no upper
+    bound, so the limiter simply forgets its limit.
+    """
+
+    @staticmethod
+    def _ceiling(manager: ConcurrencyManager, phase: CreditPhase) -> int:
+        """Number of session slots acquirable right now."""
+        acquired = 0
+        while manager.try_acquire_session_slot(phase, lambda: True):
+            acquired += 1
+            if acquired > 32:  # safety net; a correct limiter stops at 2 here
+                break
+        for _ in range(acquired):
+            manager.release_session_slot(phase)
+        return acquired
+
+    def test_resurrected_tree_does_not_release_a_second_slot(self) -> None:
+        phase = CreditPhase.PROFILING
+        manager = ConcurrencyManager()
+        manager.configure_for_phase(phase, 2, None)
+        registry = SessionTreeRegistry(concurrency_manager=manager)
+
+        assert self._ceiling(manager, phase) == 2
+
+        # One session occupies a slot, spawns a descendant, and goes terminal.
+        assert manager.try_acquire_session_slot(phase, lambda: True)
+        registry.open_tree("root-1", phase=phase, root_pending=True)
+        registry.register_descendants("root-1", n=1)
+        registry.on_root_terminal("root-1")
+
+        # Drain #1: the descendant finishes, tree retires, slot handed back.
+        assert registry.on_descendant_done("root-1") is True
+        assert self._ceiling(manager, phase) == 2
+
+        # That descendant's final-turn SPAWN registers a grandchild AFTER the
+        # drain -- the resurrect path.
+        registry.register_descendants("root-1", n=1)
+
+        # Drain #2 retires the resurrected tree, but must NOT release a slot.
+        registry.on_descendant_done("root-1")
+        assert self._ceiling(manager, phase) == 2, (
+            "resurrected tree released a slot it never held; "
+            "session concurrency ceiling grew"
+        )
+
+    def test_resurrected_tree_does_not_release_at_teardown(self) -> None:
+        """``release_all`` must apply the same rule for a still-open resurrect."""
+        phase = CreditPhase.PROFILING
+        manager = ConcurrencyManager()
+        manager.configure_for_phase(phase, 2, None)
+        registry = SessionTreeRegistry(concurrency_manager=manager)
+
+        assert manager.try_acquire_session_slot(phase, lambda: True)
+        registry.open_tree("root-1", phase=phase, root_pending=True)
+        registry.register_descendants("root-1", n=1)
+        registry.on_root_terminal("root-1")
+        registry.on_descendant_done("root-1")  # drain #1 releases the real slot
+
+        # Resurrect, then tear down while the grandchild is still outstanding.
+        registry.register_descendants("root-1", n=1)
+        registry.release_all(phase)
+
+        assert self._ceiling(manager, phase) == 2

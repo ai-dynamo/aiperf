@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gc
+import shutil
 import tempfile
 import time
 from io import BytesIO
@@ -49,10 +50,19 @@ from aiperf.common.models import (
     SessionPayloads,
     Turn,
 )
+from aiperf.common.models.dataset_models import (
+    GraphDatasetMetadata,
+    GraphSegmentClientMetadata,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset import mmap_cache
+from aiperf.dataset.graph.artifact_gc import (
+    acquire_owner_lock,
+    sweep_orphaned_graph_artifacts,
+)
+from aiperf.dataset.graph_segment_unified_store import unified_store_dir
 from aiperf.dataset.memory_map_utils import turn_from_payload_turn
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
@@ -68,7 +78,10 @@ from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
 
 if TYPE_CHECKING:
+    from filelock import FileLock
+
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.dataset.graph.store_build import GraphStoreBuildResult
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
@@ -120,6 +133,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # _configure_from_cache_hit when adopting cached files.
         self._backing_store: DatasetBackingStoreProtocol | None = None
         self._dataset_client: DatasetClientStoreProtocol | None = None
+        # Per-benchmark graph build artifacts (unified segment store + graph_meta
+        # sidecar). They are multi-GB on a real corpus and live under the system
+        # temp dir, which is tmpfs on many hosts; store_build only removes them
+        # when a build FAILS, so a successful run reclaims them here at stop.
+        self._graph_artifact_dirs: list[Path] = []
+        # Owner locks held for the run's lifetime so a concurrent run's sweep
+        # can tell "in use" from "orphaned by a process that died abruptly".
+        self._graph_artifact_locks: list[FileLock] = []
         self._default_context_mode: ConversationContextMode | None = None
         # The CustomDatasetComposer's resolved dataset type (set after compose),
         # used by the inputs.json skip decision for weka/raw/payload loaders.
@@ -250,7 +271,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
         await self._configure_dataset()
-        if self._should_skip_inputs_json():
+        # Skip inputs.json for graph runs: the worker materializes real
+        # per-node payloads from the unified store, so there is no
+        # conversation payload to dump -- entries would be empty placeholders.
+        if self._should_skip_inputs_json() or self._graph_workload_path() is not None:
             self.info("Skipping inputs.json generation")
         else:
             await self._generate_inputs_json_file()
@@ -307,7 +331,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Configure the dataset client for serving fallback requests, then free memory."""
         conversation_count = len(self.dataset)
 
-        if not self._compress_only:
+        # Graph runs never initialize the conversation backing store (they serve
+        # no conversation requests -- workers read the unified segment store), so
+        # building the fallback client from it would fail.
+        if not self._compress_only and self._graph_workload_path() is None:
             client_metadata = self._backing_store.get_client_metadata()
             ClientStoreClass = plugins.get_class(
                 PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
@@ -565,6 +592,83 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._default_context_mode = composer.get_default_context_mode()
         return conversations
 
+    def _graph_workload_path(self) -> Path | None:
+        """Return the input path iff this run is an agent graph workload, else None."""
+        from aiperf.dataset.graph.workload_detect import resolve_graph_workload
+
+        ref = resolve_graph_workload(self.run)
+        return ref.path if ref is not None else None
+
+    async def _build_graph_store(self, graph_path: Path) -> GraphStoreBuildResult:
+        """Gate the endpoint type, then run the ONE graph store build.
+
+        The shared seam for :meth:`_configure_graph_dataset` (production, which
+        broadcasts the result's store/sidecar locations) and
+        :meth:`_configure_graph_workload` (facet-only callers): validate the
+        run's endpoint up front
+        (:func:`~aiperf.dataset.graph.workload_detect.validate_graph_endpoint_type`
+        -- the graph dispatch path emits a chat-completions body verbatim, so a
+        non-chat endpoint would 422 on every request), then hand the build to
+        :class:`~aiperf.dataset.graph.store_build.GraphStoreBuilder`.
+        """
+        from aiperf.dataset.graph.store_build import GraphStoreBuilder
+        from aiperf.dataset.graph.workload_detect import validate_graph_endpoint_type
+
+        validate_graph_endpoint_type(self.run)
+        self._claim_and_sweep_graph_artifacts()
+        return await GraphStoreBuilder(self.run).build(graph_path)
+
+    def _claim_and_sweep_graph_artifacts(self) -> None:
+        """Take ownership of this run's artifact dirs, then reclaim dead ones.
+
+        Ordering is the whole point and both halves must precede the build:
+
+        - Claiming FIRST closes the window in which this run's dirs exist
+          unlocked. The dirs are created during the build, so claiming
+          afterwards would leave them lock-less for the build's whole duration
+          (26-70s on single-file production corpora, growing with corpus size
+          while the grace stays constant) -- long enough for a concurrent run's
+          sweep to delete a live store.
+        - Sweeping BEFORE the build is what actually frees the device for it.
+          Sweeping afterwards cannot prevent the ``OSError(28)`` mid-build that
+          motivated reclamation in the first place.
+        """
+        from aiperf.dataset.graph.graph_meta_sidecar import sidecar_path_for
+        from aiperf.dataset.graph.store_build import resolve_graph_store_base_path
+
+        base_path = resolve_graph_store_base_path()
+        self._graph_artifact_dirs = [
+            unified_store_dir(base_path, self.run.benchmark_id),
+            sidecar_path_for(base_path, self.run.benchmark_id).parent,
+        ]
+        for artifact_dir in self._graph_artifact_dirs:
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+        # The lock is what tells a concurrent or later run's sweep that these
+        # dirs are in use -- and, because the kernel drops it on any death,
+        # what tells that sweep when they are not.
+        self._graph_artifact_locks = [
+            lock
+            for lock in (acquire_owner_lock(d) for d in self._graph_artifact_dirs)
+            if lock is not None
+        ]
+        # Reclaim dirs left by runs that died before their stop path could run
+        # (os._exit force-kill, SIGKILL, hard crash). This run's own dirs are
+        # locked above, so the sweep cannot consider them.
+        sweep_orphaned_graph_artifacts(base_path)
+
+    async def _configure_graph_workload(self, graph_path: Path) -> GraphDatasetMetadata:
+        """Build the graph store for a graph workload and return the graph facet.
+
+        The build itself lives in
+        :class:`~aiperf.dataset.graph.store_build.GraphStoreBuilder` (the ONE
+        streaming store build for every graph workload); this wrapper keeps the
+        facet-returning contract (:class:`GraphDatasetMetadata`: the trace
+        universe plus the per-node theoretical prefix-cache map) for direct
+        callers and runs the same endpoint gate as production via
+        :meth:`_build_graph_store`.
+        """
+        return (await self._build_graph_store(graph_path)).facet
+
     async def _load_accuracy_dataset(self) -> list[Conversation]:
         from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
 
@@ -777,6 +881,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """
         if not mmap_cache.cache_enabled():
             return None
+        if self._graph_workload_path() is not None:
+            # The mmap cache stores CONVERSATION datasets; a graph run has no
+            # backing store, so it can never populate one and a HIT would restore
+            # a conversation mmap and return before _configure_graph_dataset ever
+            # runs, leaving workers with neither GraphSegmentClientMetadata nor a
+            # conversation fallback client. The key now carries ``graph_format``
+            # (so the collision is impossible even without this gate), but
+            # skipping outright also avoids sha256-ing a multi-GB trace corpus
+            # for an entry nothing will ever write.
+            return None
         try:
             key = mmap_cache.compute_cache_key_from_run(self.run)
         except Exception as e:
@@ -903,27 +1017,42 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         except Exception as e:
             self.warning(f"Failed to populate mmap cache: {e!r}")
 
-    async def _configure_dataset(self) -> None:
-        self.dataset_configured.clear()
-        self._default_context_mode = None
+    async def _select_conversations(self) -> list[Conversation]:
+        """Load the run's conversations via the appropriate dataset path.
 
+        Precedence: accuracy > public > file-backed custom composer > synthetic.
+
+        Agent graph workloads never reach this method: they are configured natively
+        by :meth:`_configure_graph_dataset` (no conversations), which
+        :meth:`_configure_dataset` routes to before any conversation work.
+        """
         accuracy_cfg = self.run.cfg.accuracy
-        accuracy_enabled = accuracy_cfg.enabled if accuracy_cfg else False
-        default_dataset = self.run.cfg.get_default_dataset()
+        if accuracy_cfg and accuracy_cfg.enabled:
+            return await self._load_accuracy_dataset()
 
-        if accuracy_enabled:
-            conversations = await self._load_accuracy_dataset()
-        elif isinstance(default_dataset, PublicDataset):
-            conversations = await self._load_public_dataset()
-        elif isinstance(default_dataset, FileDataset) or (
+        default_dataset = self.run.cfg.get_default_dataset()
+        if isinstance(default_dataset, PublicDataset):
+            return await self._load_public_dataset()
+        if isinstance(default_dataset, FileDataset) or (
             getattr(default_dataset, "path", None) is not None
         ):
             # Use CUSTOM composer if the dataset is file-backed (FileDataset
             # or any composed/file-source variant exposing a `path`). The
             # composer auto-infers the format.
-            conversations = self._load_custom_dataset()
-        else:
-            conversations = self._load_synthetic_dataset()
+            return self._load_custom_dataset()
+        return self._load_synthetic_dataset()
+
+    async def _configure_dataset(self) -> None:
+        self.dataset_configured.clear()
+        self._default_context_mode = None
+
+        graph_path = self._graph_workload_path()
+        if graph_path is not None:
+            await self._configure_graph_dataset(graph_path)
+            return
+
+        default_dataset = self.run.cfg.get_default_dataset()
+        conversations = await self._select_conversations()
 
         self.dataset = {conv.session_id: conv for conv in conversations}
         self._conversation_ids_cache = [
@@ -1003,6 +1132,44 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 service_id=self.service_id,
                 metadata=self.dataset_metadata,
                 client_metadata=client_metadata,
+            )
+        )
+
+    async def _configure_graph_dataset(self, graph_path: Path) -> None:
+        """Graph-native configure: unified store + sidecar + graph broadcast.
+
+        No stub conversations, no conversation mmap store, no inputs.json:
+        graph payloads live in the unified segment store keyed by
+        ``(trace_id, node_ordinal)`` and the schedule plane plans from the
+        graph_meta sidecar, so the conversation-shaped plumbing has nothing
+        to carry for a graph run. The broadcast's graph-typed client metadata
+        is the single source of truth for the store and sidecar locations --
+        both come off the build's :class:`GraphStoreBuildResult` (the builder
+        hard-fails a build that never landed the mandatory sidecar).
+        """
+        result = await self._build_graph_store(graph_path)
+        graph_meta = result.facet
+        self.dataset = {}
+        self._conversation_ids_cache = []
+        default_dataset = self.run.cfg.get_default_dataset()
+        self.dataset_metadata = DatasetMetadata(
+            conversations=[],
+            sampling_strategy=default_dataset.sampling,
+            graph=graph_meta,
+        )
+        self.info(
+            f"graph dataset configured: {len(graph_meta.trace_ids)} traces, "
+            f"sidecar {result.sidecar_path}"
+        )
+        await self.publish(
+            DatasetConfiguredNotification(
+                service_id=self.service_id,
+                metadata=self.dataset_metadata,
+                client_metadata=GraphSegmentClientMetadata(
+                    store_base_path=result.base_path,
+                    benchmark_id=self.run.benchmark_id,
+                    sidecar_path=result.sidecar_path,
+                ),
             )
         )
 
@@ -1169,6 +1336,27 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if self._backing_store is not None:
             await self._backing_store.stop()
             self.debug("Backing store cleanup complete")
+        self._reclaim_graph_artifacts()
+
+    def _reclaim_graph_artifacts(self) -> None:
+        """Remove this run's graph store and sidecar dirs. Idempotent, non-raising.
+
+        Workers hold the store open for the whole run and are torn down before
+        the DatasetManager stops, so nothing is reading by the time this runs.
+        A crash that skips the stop path still orphans the dirs -- they are
+        keyed by ``benchmark_id`` under the temp root, so a stale one is safe
+        to delete by hand.
+        """
+        for path in self._graph_artifact_dirs:
+            shutil.rmtree(path, ignore_errors=True)
+            self.debug(lambda p=path: f"Reclaimed graph build artifacts at {p}")
+        self._graph_artifact_dirs = []
+        # Released only after the dirs are gone, so a concurrent sweep never
+        # sees a free lock on a dir that still has bytes in it.
+        for lock in self._graph_artifact_locks:
+            with contextlib.suppress(OSError, RuntimeError):
+                lock.release()
+        self._graph_artifact_locks = []
 
 
 def main() -> None:

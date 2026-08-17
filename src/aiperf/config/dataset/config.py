@@ -49,7 +49,11 @@ from aiperf.config.dataset.video import (
 )
 from aiperf.config.loader.normalizers import _hoist_synthetic_prompt_fields
 from aiperf.config.types import SamplingDistribution
-from aiperf.plugin.enums import DatasetSamplingStrategy, PublicDatasetType
+from aiperf.plugin.enums import (
+    DatasetSamplingStrategy,
+    GraphAdapterType,
+    PublicDatasetType,
+)
 
 _logger = AIPerfLogger(__name__)
 
@@ -307,7 +311,10 @@ class FileDataset(BaseConfig):
             "Supported formats depend on the format field: "
             "JSONL for single_turn/multi_turn, JSONL (optionally gzipped) for "
             "tracelab, JSONL trace files for mooncake_trace/bailian_trace, "
-            "Parquet for baseten_trace, directories for random_pool.",
+            "Parquet or Arrow IPC for baseten_trace, directories for random_pool."
+            " Graph trace inputs (`.jsonl` / `.jsonl.gz` / segmented `.gz` directories) "
+            "are recognized as graph workloads independently of `format` -- auto-detected, "
+            "or forced with `graph_format`.",
         ),
     ]
 
@@ -325,9 +332,9 @@ class FileDataset(BaseConfig):
     ]
 
     format: Annotated[
-        DatasetFormat,
+        DatasetFormat | None,
         Field(
-            default=DatasetFormat.SINGLE_TURN,
+            default=None,
             description="Dataset file format determining parsing logic and expected file structure. "
             "single_turn: JSONL with single prompt-response exchanges. "
             "multi_turn: JSONL with conversation history. "
@@ -335,9 +342,25 @@ class FileDataset(BaseConfig):
             "mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: "
             "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
-            "random_pool: directory of reusable prompts.",
+            "random_pool: directory of reusable prompts."
+            " This explicitly selects a *custom dataset loader* (conversation-style "
+            "inputs) and bypasses graph auto-detection. Mutually exclusive with "
+            "`graph_format`.",
         ),
     ]
+
+    graph_format: Annotated[
+        GraphAdapterType | None,
+        Field(
+            default=None,
+            description="Force a graph-adapter format for this `--input-file`, "
+            "overriding workload auto-detection. Accepts a registered graph "
+            "adapter name (e.g. `dynamo_trace`). When set, the file is treated "
+            "as a graph workload and parsed by the named adapter. "
+            "Mutually exclusive with an explicit custom dataset `format`. "
+            "None = auto-detect.",
+        ),
+    ] = None
 
     sampling: Annotated[
         DatasetSamplingStrategy,
@@ -416,8 +439,9 @@ class FileDataset(BaseConfig):
             "session-sampled trace does not replay dead air; ``None`` disables "
             "the cap. The cap is in replay wall-clock seconds, applied after "
             "replay_speedup compression, so it bounds actual benchmark idle "
-            "time regardless of speedup. Only supported by the baseten_trace "
-            "loader.",
+            "time regardless of speedup. Baseten loader ONLY -- no consumer "
+            "exists on the dynamo graph plane, where the equivalent knob is "
+            "``--trace-idle-gap-cap-seconds``.",
         ),
     ]
 
@@ -429,8 +453,8 @@ class FileDataset(BaseConfig):
             description="Trace replay wall-clock compression (10 = 10x faster "
             "than recorded): divides normalized timestamps and inter-turn delays; "
             "``None`` = real time. Unlike synthesis speedup_ratio, hash_ids stay "
-            "untouched (KV-cache fidelity). Only supported by the baseten_trace "
-            "loader.",
+            "untouched (KV-cache fidelity). Supported by Baseten and Dynamo "
+            "graph trace loaders.",
         ),
     ]
 
@@ -445,7 +469,7 @@ class FileDataset(BaseConfig):
             "think-time (recorded start-to-start gap minus recorded e2e duration) "
             "after the prior turn completes, keeping sessions causally ordered "
             "when replayed service times differ from recorded (e.g. A/A "
-            "comparisons). Only honored by the baseten_trace loader.",
+            "comparisons). Also honored by Dynamo graph trace replay.",
         ),
     ]
 
@@ -455,8 +479,8 @@ class FileDataset(BaseConfig):
             default=False,
             description="In open-loop replay, fire every trace row at its "
             "absolute recorded timestamp as an independent single-turn session, "
-            "trading away multi-turn grouping and session metrics. Only honored "
-            "by the baseten_trace loader.",
+            "trading away multi-turn grouping and session metrics. Also honored "
+            "by Dynamo graph trace replay.",
         ),
     ]
 
@@ -538,15 +562,19 @@ class FileDataset(BaseConfig):
     ]
 
     use_think_time_only: Annotated[
-        bool,
+        bool | None,
         Field(
-            default=False,
+            default=None,
             description="For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` "
             "(client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. "
             "Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of "
             "each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to "
             "the full delta for turns whose recorded `think_time` is null. Mutually exclusive with "
-            "ignore_trace_delays. No effect on non-weka trace loaders.",
+            "ignore_trace_delays. No effect on non-weka trace loaders. `None` (default) means "
+            "unset, which is distinct from an authored `false`: scenario validation must tell a "
+            "user's explicit opt-out from a mere default, and `None` is the only encoding of "
+            "'unset' that survives the sweep orchestrator's model_dump -> model_validate round "
+            "trip (model_fields_set does not).",
         ),
     ]
 
@@ -590,14 +618,27 @@ class FileDataset(BaseConfig):
     _use_think_time_only_explicitly_set: bool = False
 
     @model_validator(mode="after")
+    def _validate_graph_format_exclusivity(self) -> FileDataset:
+        """Reject a graph-adapter override plus an explicit custom loader."""
+        if self.graph_format is not None and self.format is not None:
+            raise ValueError(
+                "graph_format (--graph-format) and format "
+                "(--custom-dataset-type) are mutually exclusive; remove one "
+                "dataset loader selection."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_trace_delay_exclusivity(self) -> FileDataset:
         """Reject the mutually-exclusive trace-delay flags and snapshot intent."""
-        self._use_think_time_only_explicitly_set = (
-            "use_think_time_only" in self.model_fields_set
-        )
+        # Intent lives in the VALUE (None = unset), not in model_fields_set:
+        # the sweep orchestrator's model_dump -> model_validate round trip marks
+        # every dumped key as "set", which would forge explicit intent here.
+        self._use_think_time_only_explicitly_set = self.use_think_time_only is not None
         # Both flags set Turn.delay differently (None / recorded think_time), so
-        # at most one may be active.
-        if self.ignore_trace_delays and self.use_think_time_only:
+        # at most one may be active. ``is True`` because None (unset) is falsy
+        # but must not be conflated with an authored ``false``.
+        if self.ignore_trace_delays and self.use_think_time_only is True:
             raise ValueError(
                 "--ignore-trace-delays and --use-think-time-only are mutually "
                 "exclusive (each sets Turn.delay differently)."
@@ -619,7 +660,12 @@ class FileDataset(BaseConfig):
         """
         if self.max_context_length is None:
             return self
-        if self.format not in (DatasetFormat.WEKA_TRACE, DatasetFormat.SINGLE_TURN):
+        # None = unset (auto-detected at resolve time, possibly to weka_trace),
+        # so it is permitted here exactly as the old SINGLE_TURN default was.
+        if self.format is not None and self.format not in (
+            DatasetFormat.WEKA_TRACE,
+            DatasetFormat.SINGLE_TURN,
+        ):
             raise ValueError(
                 "max_context_length (--max-context-length) only applies to "
                 f"format weka_trace; got format {self.format}. It filters by "
@@ -816,13 +862,15 @@ class PublicDataset(BaseConfig):
     ]
 
     use_think_time_only: Annotated[
-        bool,
+        bool | None,
         Field(
-            default=False,
+            default=None,
             description="For HF-backed Weka replay, emit Turn.delay using only "
             "the recorded per-request ``think_time`` instead of the full "
             "inter-request delta (mirror of ``FileDataset.use_think_time_only``). "
-            "Mutually exclusive with ignore_trace_delays.",
+            "Mutually exclusive with ignore_trace_delays. ``None`` (default) means "
+            "unset and is distinct from an authored ``false``; see "
+            "``FileDataset.use_think_time_only``.",
         ),
     ]
 
@@ -867,9 +915,9 @@ class PublicDataset(BaseConfig):
             default=None,
             description="Trace synthesis/transformation configuration for "
             "HF-backed Weka trace replay (mirror of ``FileDataset.synthesis``). "
-            "``--max-isl``/``--max-osl`` cap the per-conversation input/output "
-            "lengths of the replayed HF Weka traces; without this they applied "
-            "only to file-based traces. ``None`` disables synthesis.",
+            "``max_isl`` filters out replayed HF Weka traces whose input length "
+            "exceeds it, and ``max_osl`` caps their output length; without this "
+            "they applied only to file-based traces. ``None`` disables synthesis.",
         ),
     ]
 
@@ -888,7 +936,6 @@ class PublicDataset(BaseConfig):
         bool,
         Field(
             default=False,
-            exclude=True,
             alias="_entries_explicit",
             description=(
                 "Internal provenance flag: True when the user explicitly chose the "
@@ -898,8 +945,12 @@ class PublicDataset(BaseConfig):
                 "otherwise absorbs the --num-conversations / --request-count "
                 "fallback and cannot signal intent). A YAML/programmatic config "
                 "that sets ``entries`` directly (no sentinel) is treated as "
-                "explicit by ``_resolve_entries_explicit``. Excluded from "
-                "serialization."
+                "explicit by ``_resolve_entries_explicit``. Serialized (NOT "
+                "``exclude=True``) so the resolved intent survives the sweep "
+                "orchestrator's model_dump -> model_validate round trip; without "
+                "that, a dropped flag is re-promoted to True by "
+                "``_resolve_entries_explicit`` and silently caps the corpus to "
+                "the --request-count prefix."
             ),
         ),
     ]
@@ -925,12 +976,14 @@ class PublicDataset(BaseConfig):
     @model_validator(mode="after")
     def _validate_trace_delay_exclusivity(self) -> PublicDataset:
         """Reject the mutually-exclusive trace-delay flags and snapshot intent."""
-        self._use_think_time_only_explicitly_set = (
-            "use_think_time_only" in self.model_fields_set
-        )
+        # Intent lives in the VALUE (None = unset), not in model_fields_set:
+        # the sweep orchestrator's model_dump -> model_validate round trip marks
+        # every dumped key as "set", which would forge explicit intent here.
+        self._use_think_time_only_explicitly_set = self.use_think_time_only is not None
         # Both flags set Turn.delay differently (None / recorded think_time), so
-        # at most one may be active.
-        if self.ignore_trace_delays and self.use_think_time_only:
+        # at most one may be active. ``is True`` because None (unset) is falsy
+        # but must not be conflated with an authored ``false``.
+        if self.ignore_trace_delays and self.use_think_time_only is True:
             raise ValueError(
                 "--ignore-trace-delays and --use-think-time-only are mutually "
                 "exclusive (each sets Turn.delay differently)."

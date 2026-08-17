@@ -566,8 +566,8 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
-    def validate_warmup_isolation_not_agentic_replay(self) -> Self:
-        """Reject WARMUP_ISOLATION_* targets when timing mode resolves to AGENTIC_REPLAY.
+    def validate_warmup_isolation_replay_compatibility(self) -> Self:
+        """Reject WARMUP_ISOLATION_* targets on replay paths that cannot isolate them.
 
         ``_inject_marker_at_first_user`` mutates Turn objects in-place inside
         ``session.turn_list``. In agentic replay the same session object spans
@@ -576,9 +576,16 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         that mutation into PROFILING — even though the PROFILING credit has
         ``cache_bust_marker=None`` and ``_apply_cache_bust`` returns early.
 
+        Agent Graph bypasses that session path and stamps the configured target
+        directly on each materialized payload. It currently cannot consume the
+        phase-aware marker from the credit, so it would also stamp ``[warmup]``
+        during profiling.
+
         Resolution logic mirrors ``validate_agentic_cache_warmup``: resolve the
         scenario's declared timing_mode when a scenario is present (scenario
         stamps phases post-construction); otherwise inspect the phases directly.
+        Auto-detected graph workloads are rejected later by GraphDispatchResolver,
+        after graph detection has run.
         """
         from aiperf.common.enums import CacheBustTarget
         from aiperf.plugin.enums import TimingMode
@@ -593,22 +600,26 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             return self
 
         profiling_phases = self.get_profiling_phases()
-        is_agentic = False
+        incompatible_mode: TimingMode | None = None
         if self.scenario is not None:
             from aiperf.common.scenario.registry import get_scenario
 
-            is_agentic = (
-                get_scenario(self.scenario).timing_mode == TimingMode.AGENTIC_REPLAY
-            )
-        else:
-            is_agentic = _is_agentic_replay(profiling_phases)
+            scenario_mode = get_scenario(self.scenario).timing_mode
+            if scenario_mode in (TimingMode.AGENTIC_REPLAY, TimingMode.AGENT_GRAPH):
+                incompatible_mode = scenario_mode
+        elif _is_agentic_replay(profiling_phases):
+            incompatible_mode = TimingMode.AGENTIC_REPLAY
+        elif any(
+            phase.timing_mode == TimingMode.AGENT_GRAPH for phase in profiling_phases
+        ):
+            incompatible_mode = TimingMode.AGENT_GRAPH
 
-        if is_agentic:
+        if incompatible_mode is not None:
             raise ValueError(
                 "cache_bust targets warmup_isolation_system and "
-                "warmup_isolation_first_turn are not compatible with agentic_replay "
-                "timing mode: Turn objects mutated during warmup persist into profiling "
-                "sessions. Use cache_bust=none for agentic_replay workloads or one of "
+                f"warmup_isolation_first_turn are not compatible with {incompatible_mode} "
+                "timing mode because its replay path cannot keep the warmup marker out "
+                "of profiling payloads. Use cache_bust=none for these workloads or one of "
                 "the RID-based targets (system_prefix, first_turn_prefix, etc.) for "
                 "per-trajectory isolation."
             )

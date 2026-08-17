@@ -26,6 +26,7 @@ from aiperf.common.exceptions import (
 from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
+from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.generator.base import BaseGenerator
 from aiperf.dataset.generator.prompt import sample_tokens_from_corpus
 
@@ -721,7 +722,7 @@ class CodingContentGenerator(BaseGenerator):
         self._decoded_cache: dict[tuple[tuple[int, ...], int, int], str] = {}
         # No stable terminator probe for the coding corpus; segment synthesis
         # falls back to no terminator (matches the empty-list contract in
-        # HashIdsSynthesisMixin.bpe_stable_terminator_tokens).
+        # HashIdsPromptSynthesisMixin.bpe_stable_terminator_tokens).
         self._bpe_stable_terminator_tokens: list[int] = []
 
         self._prefix_prompts: list[str] = []
@@ -758,7 +759,10 @@ class CodingContentGenerator(BaseGenerator):
         if hash_ids:
             if mean is None:
                 raise ValueError("mean must be provided when hash_ids is set.")
-            bs = block_size or self.config.block_size
+            # PromptConfig.block_size defaults to None, so fall back to the same
+            # default PromptGenerator.generate uses -- the two must stay
+            # interchangeable for composers that swap this generator in.
+            bs = block_size or self.config.block_size or InputTokensDefaults.BLOCK_SIZE
             return self._generate_cached_prompt(mean, hash_ids, bs)
         num_tokens = self.calculate_num_tokens(mean, stddev)
         return self.generate_prompt(num_tokens)

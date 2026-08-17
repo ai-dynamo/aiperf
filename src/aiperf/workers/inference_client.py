@@ -118,7 +118,12 @@ class InferenceClient(AIPerfLifecycleMixin):
             formatted_payload: dict[str, Any] | bytes = request_info.payload_bytes
         else:
             current_turn = request_info.turns[-1] if request_info.turns else None
-            if current_turn and current_turn.raw_payload is not None:
+            if current_turn and current_turn.raw_payload_bytes is not None:
+                # Graph bytes path: the body was serialized once from mmap
+                # slices at materialize time. Sent verbatim -- re-dumping it
+                # would corrupt payload_bytes for raw-export.
+                formatted_payload = current_turn.raw_payload_bytes
+            elif current_turn and current_turn.raw_payload is not None:
                 formatted_payload = current_turn.raw_payload
             else:
                 formatted_payload = self.endpoint.format_payload(request_info)

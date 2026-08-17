@@ -30,7 +30,7 @@ from aiperf.common.enums import (
     ImageSourceSamplingStrategy,
     PromptCorpus,
 )
-from aiperf.config.base import BaseConfig
+from aiperf.config.base import BaseConfig, hide_from_unset_dumps
 from aiperf.config.types import (
     FixedDistribution,
     SamplingDistribution,
@@ -76,12 +76,11 @@ class CacheBustConfig(BaseConfig):
     ``warmup_isolation_first_turn``): inject a constant ``[warmup]`` marker only
     during the WARMUP phase; during PROFILING the marker is ``None`` so the
     profiling request arrives clean. These targets are phase-aware and do NOT use
-    a per-trajectory digest. Incompatible with ``agentic_replay`` timing mode.
+    a per-trajectory digest. Incompatible with ``agentic_replay`` and
+    ``agent_graph`` timing modes.
     """
 
     model_config = ConfigDict(extra="forbid")
-
-    _target_explicitly_set: bool = False
 
     target: Annotated[
         CacheBustTarget,
@@ -96,6 +95,26 @@ class CacheBustConfig(BaseConfig):
         ),
     ]
 
+    target_explicitly_set: Annotated[
+        bool,
+        Field(
+            default=False,
+            alias="_target_explicitly_set",
+            description="Internal provenance flag: True when the author explicitly "
+            "chose a value for ``target`` (rather than inheriting the 'none' "
+            "default). Serialized on purpose: the sweep orchestrator round-trips "
+            "each run through model_dump/model_validate, which marks every dumped "
+            "key as 'set' and would otherwise make an unset ``target`` look "
+            "explicit to scenario validation. Read via the "
+            "``_target_explicitly_set`` property.",
+        ),
+    ]
+
+    @property
+    def _target_explicitly_set(self) -> bool:
+        """Back-compat alias for the serialized ``target_explicitly_set`` flag."""
+        return self.target_explicitly_set
+
     @model_validator(mode="after")
     def _record_explicit_set_flags(self) -> Self:
         """Snapshot whether the user explicitly set the cache-bust target.
@@ -104,8 +123,15 @@ class CacheBustConfig(BaseConfig):
         non-required value" (raise) from "target is at default; auto-fill from
         scenario spec" (info log). Surface a stable underscore flag for the
         validator's defensive `getattr`.
+
+        An incoming ``target_explicitly_set`` key wins: it carries the original
+        provenance across the sweep orchestrator's dump/validate boundary, where
+        ``model_fields_set`` is uninformative because every dumped key reads as
+        explicitly set.
         """
-        self._target_explicitly_set = "target" in self.model_fields_set
+        if "target_explicitly_set" not in self.model_fields_set:
+            self.target_explicitly_set = "target" in self.model_fields_set
+        hide_from_unset_dumps(self, "target_explicitly_set")
         return self
 
 

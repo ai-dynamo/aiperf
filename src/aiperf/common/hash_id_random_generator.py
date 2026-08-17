@@ -44,8 +44,15 @@ class HashIdRandomGenerator(RandomGenerator):
 
     @classmethod
     def from_base_rng(cls, base_rng: RandomGenerator) -> "HashIdRandomGenerator":
-        """Create from a base RandomGenerator (typically from rng.derive())."""
-        base_seed = base_rng.seed or base_rng.randrange(0, 2**64)
+        """Create from a base RandomGenerator (typically from rng.derive()).
+
+        Reads ``base_rng.seed`` without consuming RNG state; only a seedless
+        (non-deterministic) base falls back to drawing one. Seed 0 is a legal
+        seed and must not trigger the consuming fallback.
+        """
+        base_seed = (
+            base_rng.seed if base_rng.seed is not None else base_rng.randrange(0, 2**64)
+        )
         return cls(base_seed, _internal=True)
 
     def __init__(self, base_seed: int, *, _internal: bool = False):
@@ -62,7 +69,7 @@ class HashIdRandomGenerator(RandomGenerator):
         """
         self._trace_id = trace_id
 
-    def reseed_for_hash_id(self, hash_id: int) -> None:
+    def reseed_for_hash_id(self, hash_id: int, trace_id: str | None = None) -> None:
         """Re-seed RNG deterministically for a specific hash_id.
 
         After calling, all random operations use the derived seed until
@@ -70,8 +77,13 @@ class HashIdRandomGenerator(RandomGenerator):
 
         Args:
             hash_id: KV block hash ID from trace data.
+            trace_id: Explicit trace scope for this reseed. Overrides the
+                instance-level ``set_trace_id`` state without mutating it, so
+                a shared generator can serve interleaved trace scopes. ``None``
+                falls back to the instance state (empty string when unset --
+                the GLOBAL namespace the linear mooncake path and dynamo's
+                content-global recorded hashes rely on).
         """
-        seed_bytes = hashlib.sha256(
-            f"{self.seed}:{self._trace_id}:{hash_id}".encode()
-        ).digest()
+        scope = self._trace_id if trace_id is None else trace_id
+        seed_bytes = hashlib.sha256(f"{self.seed}:{scope}:{hash_id}".encode()).digest()
         self._python_rng.seed(int.from_bytes(seed_bytes[:8], "big"))

@@ -97,7 +97,6 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Replay Schedule Lag p50 / p90 / p99](#replay-schedule-lag-p50--p90--p99)
     - [Replay Schedule Degraded](#replay-schedule-degraded)
   - [Agentic / Trace Metrics](#agentic--trace-metrics)
-    - [Theoretical Prefix Cache Hit](#theoretical-prefix-cache-hit)
     - [Context Overflow Count](#context-overflow-count)
   - [Goodput Metrics](#goodput-metrics)
     - [Good Request Count](#good-request-count)
@@ -132,6 +131,8 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [HTTP Connection Reused](#http-connection-reused)
     - [HTTP Chunks Sent](#http-chunks-sent)
     - [HTTP Chunks Received](#http-chunks-received)
+  - [Trace Replay Metrics](#trace-replay-metrics)
+    - [Theoretical Prefix Cache Hit](#theoretical-prefix-cache-hit)
   - [GPU Power Efficiency Metrics](#gpu-power-efficiency-metrics)
     - [Total GPU Power](#total-gpu-power)
     - [Total GPU Energy](#total-gpu-energy)
@@ -208,7 +209,7 @@ any knowledge of the individual request/response data.
 ## Streaming Metrics
 
 > [!NOTE]
-> All metrics in this section require the `--streaming` flag with a token-producing endpoint and at least one non-empty response chunk.
+> All metrics in this section require the run to be launched with the global `--streaming` flag, and a token-producing endpoint with at least one non-empty response chunk. Applicability is decided once per run: without `--streaming` these metrics are not computed at all.
 
 ### Time to First Token (TTFT)
 
@@ -1510,44 +1511,20 @@ replay_sched_degraded = 1 if percentile(lag_ms, 99) > 500.0 else 0
 ## Agentic / Trace Metrics
 
 > [!NOTE]
-> These metrics appear for agentic/WEKA trace replay workloads. Theoretical
-> prefix-cache accounting requires a loader that stamps per-turn block counts
-> (e.g. `weka_trace`). Context-overflow counting applies whenever the runtime
-> classifier tags an error as context overflow.
-
-### Theoretical Prefix Cache Hit
-
-**Type:** Accumulator summary (not a record/aggregate metric plugin)
-
-Ideal infinite-cache prefix hit rate implied by the trace's hash_id block
-overlap, as stamped by the WEKA loader. Emitted by
-`TheoreticalPrefixCacheAccumulator` on the `metric_records` channel.
-
-**Formula:**
-```python
-theoretical_prefix_cache_hit = 100.0 * sum(hit_blocks) / sum(total_blocks)
-```
-
-**Export fields:**
-- `avg` / `current`: hit rate percent
-- `sum`: cumulative hit blocks (numerator)
-- `count`: cumulative total blocks (denominator)
-
-**Notes:**
-- Phase-scoped via `export_results(ctx)` so warmup blocks do not leak into
-  profiling (and vice versa).
-- Only appears when at least one conversation turn carries both
-  `theoretical_prefix_cache_hit_blocks` and
-  `theoretical_prefix_cache_total_blocks`.
-
----
+> These metrics appear for agentic/trace replay workloads. Context-overflow
+> counting applies whenever the runtime classifier tags an error as context
+> overflow. Theoretical prefix-cache accounting is documented under
+> [Trace Replay Metrics](#trace-replay-metrics) — see
+> [Theoretical Prefix Cache Hit](#theoretical-prefix-cache-hit).
 
 ### Context Overflow Count
 
 **Type:** [Aggregate Metric](#aggregate-metrics)
 
 Number of requests whose error body was classified as a context-length /
-context-overflow rejection. Used by the InferenceX AgentX scenario to flip
+context-overflow rejection. Used by the InferenceX AgentX scenario
+(`--scenario inferencex-agentx-mvp`, the SemiAnalysis AgentX workload — a
+scenario lock, distinct from the Agent Graph timing mode) to flip
 `submission_valid=false` when the overflow rate exceeds 1%.
 
 **Formula:**
@@ -2094,6 +2071,40 @@ http_req_chunks_received = trace.response_chunks_count
 
 **Notes:**
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
+
+---
+
+## Trace Replay Metrics
+
+> [!NOTE]
+> Metrics in this section are produced by a standalone results accumulator (not the standard `MetricRegistry` derivation walk) and are emitted only when a trace loader supplies the underlying per-turn metadata. They are absent on workloads that do not. The tag is still registered as a display-only metric class (following the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern)) so the realtime dashboard and console exporter can resolve its display metadata.
+
+### Theoretical Prefix Cache Hit
+
+**Type:** Standalone results accumulator (`theoretical_prefix_cache`); display-only class `TheoreticalPrefixCacheHitMetric`
+
+**Tag:** `theoretical_prefix_cache_hit` · **Unit:** `%` · **Console group:** [`CACHE`](#group-cache) (rendered as `LLM Metrics: Cache`)
+
+The cumulative infinite-cache prefix-hit rate over the trace's KV-block hash ids (Dynamo: recorded `input_sequence_hashes` whenever a record carries replay metadata, per-session virtual block ids otherwise). Hit accounting happens once at ingest time, not at runtime: each request's blocks are walked in recorded global ARRIVAL order against a single per-trace cache, yielding a leading-prefix hit-block count and a total-block count per request. Availability is CAUSAL — a block counts as a hit only once the request that produced it has FINISHED at or before the consumer's arrival, so a request is never credited against a block that did not physically exist yet. Under concurrency this matters: recorded file order is COMPLETION order, and a request can complete long after a later-arriving one. When a block has several producers, availability is the earliest of their completion times. Traces with no recorded durations degrade to the previous order-only bound. The seen-set is scoped to a single emitted trace — one Dynamo session-tree, or one Weka trace file — never the whole corpus. Even for `hash_id_scope: "global"` corpora (recorded `t` is conversation-relative, so no cross-trace ordering exists) the counts are therefore a lower bound — a block another trace already sent still counts as a miss. The accumulator sums the per-request counts over valid profiling records:
+
+```text
+theoretical_prefix_cache_hit = 100.0 * sum(hit_blocks) / sum(total_blocks)
+```
+
+This is the THEORETICAL ceiling an infinite per-trace prefix cache would achieve for the replayed request mix; it carries no hash ids through the request path at runtime (only a per-node metadata lookup plus two integer adds).
+
+The accumulator has two join keys. Agent graph workloads join per node through the `DatasetMetadata.graph.prefix_cache_by_trace` facet, stamped by the shared segment-trie build (`src/aiperf/dataset/graph/segment_trie/`) for any graph adapter that lowers through it — today `dynamo_trace` — not by a single loader. Linear trace replays join per turn through the `theoretical_prefix_cache_hit_blocks` / `theoretical_prefix_cache_total_blocks` turn fields, as stamped by a trace loader (`weka_trace`).
+
+Emitted for agent graph workloads that lower through the segment trie (Dynamo traces) on every ingest route — local file, segmented prefix, and local directory alike: the streaming store build recovers the per-node counts from the merged content-free structural graph. Absent for graph workloads with no recorded KV-block hash ids to walk, and for all non-graph datasets. A structural-merge failure is not a degradation — it aborts the store build with `DatasetError`, since the `graph_meta` sidecar is mandatory for graph runs.
+
+**Export fields:**
+- `avg` / `current`: hit rate percent
+- `sum`: cumulative hit blocks (numerator)
+- `count`: cumulative total blocks (denominator)
+
+**Notes:**
+- Emitted by `TheoreticalPrefixCacheAccumulator` on the `metric_records` channel.
+- Phase-scoped via `export_results(ctx)` so warmup blocks do not leak into profiling (and vice versa).
 
 ---
 

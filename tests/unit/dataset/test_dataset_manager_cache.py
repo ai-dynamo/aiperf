@@ -190,6 +190,30 @@ class TestDatasetManagerCacheRoundtrip:
         assert not cache_root.exists() or not any(cache_root.iterdir())
 
     @pytest.mark.asyncio
+    async def test_graph_run_skips_cache_lookup_entirely(
+        self, tmp_path: Path, mock_tokenizer
+    ) -> None:
+        """A graph run must never take a conversation cache hit.
+
+        The cache key omits graph-ness and ``graph_format``, so an explicit
+        ``--graph-format`` on an input a conversation loader also accepts would
+        otherwise collide with a prior non-graph run's key. That hit returns
+        before ``_configure_graph_dataset`` runs, stranding workers without
+        ``GraphSegmentClientMetadata``.
+        """
+        trace = _write_trace(tmp_path)
+        run = _make_run(file_path=trace, benchmark_id="graph-skip")
+        dm = DatasetManager(run=run, service_id="dm-test")
+
+        with patch.object(
+            DatasetManager, "_graph_workload_path", return_value=trace
+        ) as graph_path:
+            assert dm._try_cache_lookup() is None
+            assert graph_path.called
+        # The key must stay unset so the post-run populate cannot write either.
+        assert dm._cache_key_for_run is None
+
+    @pytest.mark.asyncio
     async def test_cache_hit_does_not_restore_inputs_json(
         self, tmp_path: Path, mock_tokenizer
     ) -> None:

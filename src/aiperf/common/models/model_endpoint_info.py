@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field, field_serializer
 
 from aiperf.common.enums import (
+    CacheBustTarget,
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
     RequestContentType,
@@ -122,6 +123,15 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.USE_SERVER_TOKEN_COUNT,
         description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
     )
+    cache_bust: CacheBustTarget = Field(
+        default=CacheBustTarget.NONE,
+        description="Where to inject a per-trace-instance cache-bust marker on the "
+        "agent-graph replay path. NONE (default) sends recorded bytes verbatim; "
+        "FIRST_TURN_PREFIX prepends a `[rid:<12hex>]` marker to the first user turn, "
+        "shared across the trace instance's turns but distinct per instance and "
+        "reset on recycle, so the inference server's KV cache sees a distinct prefix "
+        "per trace instance, defeating cross-instance prefix-cache hits.",
+    )
     connection_reuse_strategy: ConnectionReuseStrategy = Field(
         default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
         description="Transport connection reuse strategy.",
@@ -212,6 +222,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 api_key=ep.api_key,
                 use_legacy_max_tokens=ep.use_legacy_max_tokens,
                 use_server_token_count=ep.use_server_token_count,
+                # Cache-bust is authored dataset-side on this branch (synthetic:
+                # prompts.cache_bust, file: cache_bust), so the single resolved
+                # read is the config helper, not an endpoint field.
+                cache_bust=cfg.get_cache_bust_target(),
                 connection_reuse_strategy=ep.connection_reuse,
                 download_video_content=ep.download_video_content,
                 request_content_type=ep.request_content_type,

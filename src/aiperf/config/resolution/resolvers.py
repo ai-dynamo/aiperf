@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset.resolver import DatasetResolver
+from aiperf.config.resolution.graph_dispatch_resolver import GraphDispatchResolver
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -36,6 +37,7 @@ __all__ = [
     "ConfigResolverChain",
     "DatasetResolver",
     "GpuMetricsResolver",
+    "GraphDispatchResolver",
     "ScenarioResolver",
     "TimingResolver",
     "TokenizerResolver",
@@ -419,6 +421,7 @@ def build_default_resolver_chain() -> ConfigResolverChain:
             CommConfigResolver(),
             DatasetResolver(),
             ScenarioResolver(),
+            GraphDispatchResolver(),
             TimingResolver(),
         ]
     )

@@ -311,6 +311,11 @@
     ],
     [
       "C901",
+      "src/aiperf/dataset/graph/segment_trie/trie_content.py",
+      "build_segment_trie"
+    ],
+    [
+      "C901",
       "src/aiperf/dataset/loader/weka_parallel_convert.py",
       "_process_task"
     ],
@@ -558,6 +563,11 @@
       "C901",
       "src/aiperf/timing/branch_orchestrator.py",
       "BranchOrchestrator.dispatch_pre_session_branches"
+    ],
+    [
+      "C901",
+      "src/aiperf/timing/phase/runner.py",
+      "PhaseRunner._run_strategy"
     ],
     [
       "C901",

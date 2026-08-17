@@ -277,11 +277,21 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
     if (
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
+        and not _cli_is_graph_workload(cli)
     ):
-        # Why: when no bound is given for an unbounded run, default to
-        # 10 requests so the run terminates in a reasonable time.
-        # Deliberate override of the PhaseConfig default (which would
-        # leave it unbounded).
+        # Why: when no bound is given for a non-graph unbounded run, default to
+        # 10 requests so the run terminates in a reasonable time. Deliberate
+        # override of the PhaseConfig default (which would leave it unbounded).
+        #
+        # A BARE graph run is deliberately EXCLUDED here so it stays UNBOUNDED
+        # (no auto-10): it does a SINGLE CORPUS PASS -- each loaded trace runs
+        # exactly once, then the lanes stop (the graph strategy's
+        # ``_recycle_has_stop_condition`` is False with no numeric bound). The
+        # corpus size is not knowable here (the max-context-length filter runs
+        # at parse time), so the no-stop concurrency phase validates against the
+        # graph dataset in ``check_phase_dataset_compatibility`` -- mirroring
+        # FixedSchedulePhase inferring its stop from the trace. Injecting
+        # ``requests=10`` would truncate the benchmark to 10 dispatches.
         prof.setdefault("requests", 10)
     delay_set = "request_cancellation_delay" in cli.model_fields_set
     if cli.request_cancellation_rate:
@@ -298,6 +308,36 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
             "Pass --request-cancellation-rate > 0 to enable cancellation, or "
             "drop --request-cancellation-delay."
         )
+
+
+def _cli_is_graph_workload(cli: CLIConfig) -> bool:
+    """True when the CLI invocation targets a graph workload.
+
+    Mirrors graph selection precedence: an explicit ``--graph-format`` forces
+    graph mode, an explicit ``--custom-dataset-type`` selects the custom loader
+    and skips graph auto-detection, otherwise the ``--input-file`` path is
+    sniffed against the graph-adapter registry via
+    :func:`~aiperf.dataset.graph.workload_detect.is_graph_workload_path`. A graph
+    corpus size is NOT knowable at CLI-conversion time, so this only decides
+    whether a bare run stays unbounded (single corpus pass) instead of taking the
+    auto-10 bound. Any detection failure degrades to False (keep the non-graph
+    auto-10).
+    """
+    if cli.graph_format is not None:
+        return True
+    if cli.custom_dataset_type is not None:
+        return False
+    input_file = cli.input_file
+    if input_file is None:
+        return False
+    from pathlib import Path
+
+    from aiperf.dataset.graph.workload_detect import is_graph_workload_path
+
+    try:
+        return is_graph_workload_path(Path(input_file))
+    except Exception:
+        return False
 
 
 def _maybe_auto_promote_trace(

@@ -2,19 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for GPU telemetry collection and reporting."""
 
-import platform
-
 import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.constants import IS_MACOS, IS_WINDOWS
 from aiperf.common.models.telemetry_models import TelemetryRecord
 from aiperf.gpu_telemetry.constants import AMDSMI_SOURCE_IDENTIFIER
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 
 
 @pytest.mark.skipif(
-    platform.system() in ("Darwin", "Windows"),
+    IS_MACOS or IS_WINDOWS,
     reason="Requires NVIDIA GPUs for DCGM telemetry (only available on Linux CI; DCGM is Linux-only).",
 )
 @pytest.mark.integration
@@ -474,7 +473,7 @@ class TestTelemetryVendorIsolation:
             param(
                 "dcgm",
                 marks=pytest.mark.skipif(
-                    platform.system() in ("Darwin", "Windows"),
+                    IS_MACOS or IS_WINDOWS,
                     reason="DCGM telemetry requires Linux",
                 ),
                 id="dcgm",

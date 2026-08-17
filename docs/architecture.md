@@ -54,6 +54,7 @@ The Dataset Manager handles all aspects of input data management during benchmar
 - Parsing and validating input data to ensure it matches the expected format
 - Writing dataset to memory-mapped files, enabling workers to access data directly without message passing
 - Supporting custom dataset types, such as MoonCake traces, for advanced benchmarking scenarios
+- For agent graph workloads, broadcasting a graph-typed `DatasetConfiguredNotification` — `DatasetMetadata.graph` (the trace universe plus per-node prefix-cache map) and `GraphSegmentClientMetadata` (the unified segment store and structural sidecar locations) — instead of conversation entries and a conversation memory-mapped store; the store build itself is owned by `GraphStoreBuilder`, and the schedule plane and workers read those exact broadcast paths (nothing re-parses the workload)
 - Managing the lifecycle of datasets, including initialization, iteration, and cleanup
 
 ### Timing Manager
@@ -61,7 +62,7 @@ The Dataset Manager handles all aspects of input data management during benchmar
 The Timing Manager controls and coordinates the timing of requests during benchmarking runs through a credit-based system.
 
 **Key Responsibilities:**
-- Scheduling when each request should be sent based on the selected timing mode (fixed schedule, request-rate, or user-centric rate)
+- Scheduling when each request should be sent based on the selected timing mode (fixed schedule, request-rate, user-centric rate, or Agent Graph mode for agentic workloads)
 - Managing precise timing to accurately reproduce real-world or synthetic load patterns
 - Supporting advanced timing scenarios, such as replaying traces with specific inter-arrival times or simulating bursty traffic
 - Ensuring that requests are dispatched to workers at the correct intervals for reliable measurement
@@ -194,6 +195,17 @@ The Timing Manager uses a **credit-based flow control system** to control when r
   - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
   - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
   - **User-centric rate mode**: Each session acts as a separate user with calculated gaps between turns
+  - **Agent Graph mode** (`TimingMode.AGENT_GRAPH`, timing-strategy key `agent_graph`): Runs a dataflow executor per recorded agent-graph trace, issuing a node's credit once its dependencies complete (selected automatically for agent graph workloads)
+
+**Agent Graph Supporting Modules:**
+
+| Module | Responsibility |
+|---|---|
+| `aiperf.graph.ids` | The only parser for the two graph ID grammars: node ids (`{scope}:{turn}`) and trace instance ids (`{template}::{nonce}`) |
+| `aiperf.graph.errors` | `GraphErrorCode` plus `format_graph_error`/`parse_graph_error`, the typed pre-dispatch failure taxonomy carried as a leading token on the `CreditReturn.error` string |
+| `aiperf.timing.strategies.graph_trace_planner` | Per-`(trace, lane)` t\* plans, lane-salted sources, and the `--dataset-sampling-strategy` draw |
+| `aiperf.timing.strategies.graph_warmup` | Pure warmup-graph rewriting (`rewrite_for_warmup`) and first-token anchor discovery |
+| `aiperf.timing.strategies.agent_graph_replay` | `AgentGraphReplayStrategy` — owns trace admission, dispatch, and return routing |
 
 **Flow Control Benefits:**
 - Prevents overwhelming the inference server
@@ -284,7 +296,7 @@ Kubernetes is referenced by future-facing code paths, but no Kubernetes service-
 
 The top-level `AIPerfConfig` YAML accepts several optional sibling keys alongside the core `benchmark:` block — `sweep:`, `multi_run:`, `variables:`, `random_seed:`, and `plot:`. Each owns a single concern and is loaded by its own Pydantic model.
 
-The `plot:` envelope describes which plots are rendered after the run. It accepts two forms: a bare-string path reference (e.g. `plot: ./plots/baseline.yaml`, resolved relative to the AIPerf YAML's directory) or an inline mapping mirroring `src/aiperf/plot/default_plot_config.yaml` 1:1. When `plot:` is set it replaces the `~/.aiperf/plot_config.yaml` fallback (the envelope is the spec) and presence implies `artifacts.auto_plot=True` unless the user explicitly sets it to `false`. The auto-plot callback materializes the resolved envelope to `<artifact_dir>/.aiperf-plot-config.yaml` so `aiperf plot <dir>` later reproduces the same plots without the original YAML. See `src/aiperf/config/plot.py` for the Pydantic models.
+The `plot:` envelope describes which plots are rendered after the run. It accepts two forms: a bare-string path reference (e.g. `plot: ./plots/baseline.yaml`, resolved relative to the AIPerf YAML's directory) or an inline mapping mirroring `src/aiperf/plot/default_plot_config.yaml` 1:1. When `plot:` is set it replaces the `~/.aiperf/plot_config.yaml` fallback (the envelope is the spec) and presence implies `artifacts.auto_plot=True` unless the user explicitly sets it to `false`. The auto-plot callback materializes the resolved envelope to `<artifact_dir>/.aiperf-plot-config.yaml` so `aiperf plot <dir>` later reproduces the same plots without the original YAML. `PlotEnvelopeConfig` is the Pydantic model behind it.
 
 ## External Dependencies
 

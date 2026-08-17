@@ -32,6 +32,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
 from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.graph_channel import GraphPhaseChannel
 from aiperf.timing.phase.runner import PhaseRunner
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
 from aiperf.timing.session_tree import SessionTreeRegistry
@@ -42,6 +43,8 @@ if TYPE_CHECKING:
     from aiperf.common.models import DatasetMetadata
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.credit.sticky_router import CreditRouterProtocol
+    from aiperf.dataset.graph.models import ParsedGraph
+    from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
     from aiperf.timing.config import TimingConfig
     from aiperf.timing.phase.publisher import PhasePublisher
 
@@ -108,7 +111,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
     """Orchestrates credit phase execution (warmup → profiling).
 
     The orchestrator handles:
-    - Component composition (ConversationSource, ConcurrencyManager, CancellationPolicy)
+    - Component composition (ConversationSource, ConcurrencyManager, RequestCancellationSimulator)
     - Lifecycle hooks (@on_init, @on_start)
     - Phase execution loop (creates PhaseRunner per phase)
     - Cancellation
@@ -117,7 +120,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
     - Credit callbacks (handled by CreditCallbackHandler, registered directly with router)
     - Per-phase lifecycle (handled by PhaseRunner)
 
-    The TimingMode (created per-phase by PhaseRunner) handles:
+    The timing strategy (created per-phase by PhaseRunner from the phase's
+    ``timing_mode``) handles:
     - Timing logic (execute_phase)
     - Dispatching subsequent turns on credit return (handle_credit_return)
 
@@ -130,12 +134,12 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 │
                 │ owns (long-lived, shared across phases):
                 ├── ConcurrencyManager
-                ├── CancellationPolicy
+                ├── RequestCancellationSimulator
                 ├── ConversationSource
                 └── CreditCallbackHandler ──► registered with CreditRouter
                 │
                 │ creates per phase:
-                └── PhaseRunner ──► TimingMode
+                └── PhaseRunner ──► TimingStrategy
                         │
                         ├── LoopScheduler (SINGLE owner)
                         ├── PhaseLifecycle
@@ -158,6 +162,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         control_hooks: PreparedEndpointControlHooks | None = None,
         control_headers: dict[str, str] | None = None,
         run: BenchmarkRun | None = None,
+        parsed_graph: ParsedGraph | None = None,
         **kwargs,
     ) -> None:
         """Initialize timing strategy and orchestration components.
@@ -174,6 +179,12 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 AgenticReplayStrategy reads ``run.cfg.get_cache_bust_target()``
                 and ``run.benchmark_id``). Optional; strategies that don't need
                 it ignore the value.
+            parsed_graph: For agent graph workloads, the parsed conversation DAG.
+                When set, the orchestrator owns a ``GraphPhaseChannel`` carrying
+                it (and the WARMUP handoff) to every ``PhaseRunner``; the
+                conversation-shaped sampler and source are NOT built because
+                graph runs sample inside the graph strategy over
+                ``parsed_graph.traces``. ``None`` for non-graph workloads.
         """
         super().__init__(**kwargs)
         self._config = config
@@ -184,26 +195,17 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._control_headers = control_headers or {}
         self._run = run
 
-        # Create dataset sampler
-        SamplerClass = plugins.get_class(
-            PluginType.DATASET_SAMPLER,
-            self._dataset_metadata.sampling_strategy,
+        # Graph runs sample inside the graph strategy (AgentGraphConversationSource
+        # over parsed_graph.traces); the conversation-shaped sampler and source
+        # have nothing to sample (conversations is empty) and are not built.
+        self._is_graph = parsed_graph is not None
+        self._graph_channel: GraphPhaseChannel | None = (
+            GraphPhaseChannel(parsed_graph=parsed_graph)
+            if parsed_graph is not None
+            else None
         )
-        # Only root conversations are sampled by the strategy. DAG
-        # children belong to their root's session and are dispatched by
-        # the BranchOrchestrator on credit return — sampling them as
-        # roots would create duplicate root sessions. Filter on
-        # ``is_root`` rather than ``agent_depth == 0`` so SPAWN-mode
-        # children (which keep ``agent_depth == 0`` for fresh-context
-        # semantics but carry ``is_root=False``) are also excluded.
-        root_conv_ids = [
-            c.conversation_id
-            for c in self._dataset_metadata.conversations
-            if getattr(c, "is_root", True)
-        ]
-        self._dataset_sampler = SamplerClass(
-            conversation_ids=root_conv_ids
-            or [c.conversation_id for c in self._dataset_metadata.conversations]
+        self._dataset_sampler: DatasetSamplingStrategyProtocol | None = (
+            None if self._is_graph else self._build_dataset_sampler()
         )
 
         # Long-lived components (shared across phases).
@@ -214,6 +216,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # until the whole tree drains, giving exactly-N concurrency). Other
         # timing modes (including dag_jsonl) keep the plain ConversationSource
         # + legacy per-root-credit slot release (registry stays None).
+        self._conversation_source: ConversationSource | None
         is_agentic_replay = any(
             pc.timing_mode == TimingMode.AGENTIC_REPLAY for pc in config.phase_configs
         )
@@ -221,7 +224,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         cache_bust_target = (
             run.cfg.get_cache_bust_target() if run is not None else CacheBustTarget.NONE
         )
-        if is_agentic_replay:
+        if self._is_graph:
+            self._conversation_source = None
+        elif is_agentic_replay:
             if config.concurrency is None:
                 raise ValueError(
                     "AGENTIC_REPLAY timing mode requires concurrency to be set on "
@@ -330,9 +335,31 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         if self._seamless_phase_error is None:
             self._seamless_phase_error = error
 
+    def _build_dataset_sampler(self) -> DatasetSamplingStrategyProtocol:
+        """Construct the root-conversation sampler for this run.
+
+        Only root conversations are sampled by the strategy. DAG children belong
+        to their root's session and are dispatched by the BranchOrchestrator on
+        credit return -- sampling them as roots would create duplicate root
+        sessions. Filter on ``is_root`` rather than ``agent_depth == 0`` so
+        SPAWN-mode children (which keep ``agent_depth == 0`` for fresh-context
+        semantics but carry ``is_root=False``) are also excluded.
+        """
+        SamplerClass = plugins.get_class(
+            PluginType.DATASET_SAMPLER,
+            self._dataset_metadata.sampling_strategy,
+        )
+        root_conv_ids = [
+            c.conversation_id for c in self._dataset_metadata.conversations if c.is_root
+        ]
+        return SamplerClass(
+            conversation_ids=root_conv_ids
+            or [c.conversation_id for c in self._dataset_metadata.conversations]
+        )
+
     @property
-    def conversation_source(self) -> ConversationSource:
-        """Conversation source for dataset access."""
+    def conversation_source(self) -> ConversationSource | None:
+        """Conversation source for dataset access (``None`` for graph runs)."""
         return self._conversation_source
 
     @on_init
@@ -390,6 +417,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 url_selection_strategy=self._url_sampler,
                 run=self._run,
                 session_tree_registry=self._session_tree_registry,
+                graph_channel=self._graph_channel,
             )
 
             # Seamless non-final profiling: stop after drain (phase-complete
@@ -460,9 +488,17 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 await self.cancel()
                 raise e
 
-            # Remove from active runners when fully complete
-            # For seamless phases, this happens after returns complete (background task)
-            if not is_seamless_non_final:
+            # Remove from active runners when fully complete.
+            # For seamless phases, this happens after returns complete (background
+            # task). A concurrent graceful cancel (PROFILE_CANCEL / Ctrl+C ->
+            # ``cancel`` -> ``_cancel_active_runners``) clears the whole list while
+            # this coroutine is parked in ``runner.run`` (e.g. a graph phase parked
+            # mid idle-gap replay), so the runner may already be gone here.
+            # Discard rather than ``remove`` so the teardown does not raise
+            # ``ValueError: list.remove(x): x not in list`` -- which would fail the
+            # orchestrator and abort the records-manager's in-flight graceful export
+            # (no metrics JSON, ``was_cancelled`` never set).
+            if not is_seamless_non_final and runner in self._active_runners:
                 self._active_runners.remove(runner)
 
         # Barrier: a seamless phase's return-wait runs detached and

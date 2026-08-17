@@ -238,7 +238,7 @@ class AioHttpTransport(BaseTransport):
             endpoint_metadata = plugins.get_endpoint_metadata(endpoint_info.type)
             endpoint_path = endpoint_metadata.endpoint_path
             if (
-                self.model_endpoint.endpoint.streaming
+                request_info.model_endpoint.endpoint.streaming
                 and endpoint_metadata.streaming_path is not None
             ):
                 endpoint_path = endpoint_metadata.streaming_path
@@ -282,7 +282,10 @@ class AioHttpTransport(BaseTransport):
         *,
         first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
-        """Send HTTP POST request with JSON payload.
+        """Send an HTTP POST request.
+
+        Polling endpoints (``requires_polling`` metadata, e.g. video_generation)
+        are routed to the submit/poll implementation instead of a single POST.
 
         Connection behavior depends on the configured connection_reuse_strategy:
         - POOLED: Uses shared connection pool (default aiohttp behavior)
@@ -291,7 +294,9 @@ class AioHttpTransport(BaseTransport):
 
         Args:
             request_info: Request context and metadata (includes cancel_after_ns)
-            payload: JSON-serializable request payload
+            payload: Pre-encoded body bytes sent verbatim, or a dict encoded
+                here as JSON (or as multipart form data when the endpoint's
+                request_content_type is multipart/form-data)
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
 
         Returns:
@@ -325,7 +330,7 @@ class AioHttpTransport(BaseTransport):
             )
             # Pre-encoded bytes (PAYLOAD_BYTES fast path / raw payload replay)
             # are sent verbatim; dicts are encoded here.
-            if isinstance(payload, bytes):
+            if isinstance(payload, bytes | bytearray):
                 body: bytes | aiohttp.FormData = payload
             elif use_form_data:
                 body = self._build_form_data(payload)

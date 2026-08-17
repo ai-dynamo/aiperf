@@ -79,7 +79,7 @@ def test_trajectory_count_matches_min_concurrency_and_pool():
     assert len(src.trajectories) == 2
 
 
-def test_k_i_within_bounds_for_each_trajectory():
+def test_default_start_window_spans_full_eligible_trace():
     md = _make_dataset_metadata({f"t{i}": 10 for i in range(5)})
     sampler = MagicMock()
     sampler.next_conversation_id.side_effect = [
@@ -92,9 +92,10 @@ def test_k_i_within_bounds_for_each_trajectory():
         concurrency=5,
         random_seed=7,
     )
+    assert src._start_min_ratio == 0.0
+    assert src._start_max_ratio == 1.0
     for trajectory in src.trajectories:
-        # defaults: floor(0.25 * 10) = 2, floor(0.75 * 10) = 7
-        assert 2 <= trajectory.start_turn_index <= 7
+        assert 0 <= trajectory.start_turn_index <= 8
 
 
 def test_seed_determinism():

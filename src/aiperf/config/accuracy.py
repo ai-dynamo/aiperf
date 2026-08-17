@@ -101,15 +101,10 @@ class AccuracyConfig(BaseConfig):
             "n_shots": self.n_shots,
             "grader": self.grader,
             "system_prompt": self.system_prompt,
+            "enable_cot": self.enable_cot,
+            "verbose": self.verbose,
         }
-        explicitly_set_boolean_fields = {
-            "enable_cot",
-            "verbose",
-        } & self.model_fields_set
-        set_fields = sorted(
-            [k for k, v in dependent_fields.items() if v is not None]
-            + list(explicitly_set_boolean_fields)
-        )
+        set_fields = sorted(k for k, v in dependent_fields.items() if v is not None)
         if not set_fields:
             return self
         flag_names = ", ".join(f"--accuracy-{k.replace('_', '-')}" for k in set_fields)
@@ -184,11 +179,13 @@ class AccuracyConfig(BaseConfig):
     ]
 
     verbose: Annotated[
-        bool,
+        bool | None,
         Field(
-            default=False,
+            default=None,
             description="Enable verbose output for accuracy evaluation, "
-            "showing per-problem grading details.",
+            "showing per-problem grading details. Unset (None) behaves as "
+            "disabled; the tri-state exists so ``exclude_none`` dumps drop the "
+            "field entirely and provenance survives a dump/validate round-trip.",
         ),
     ]
 

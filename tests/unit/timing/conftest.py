@@ -5,6 +5,7 @@ import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,9 +52,13 @@ async def _async_true(*args, **kwargs) -> bool:
 class MockCreditRouter:
     sent_credits: list[Credit] = field(default_factory=list)
     auto_return: bool = False
+    ended_graph_traces: list[tuple[str, str]] = field(default_factory=list)
     _return_cb: Callable[[str, CreditReturn], Awaitable[None]] | None = None
     _first_token_cb: Callable[[FirstToken], Awaitable[None]] | None = None
     _pending: list[asyncio.Task] = field(default_factory=list)
+
+    async def end_graph_trace(self, trace_id: str) -> None:
+        self.ended_graph_traces.append(trace_id)
 
     async def send_credit(self, credit: Credit) -> None:
         self.sent_credits.append(credit)
@@ -538,10 +543,14 @@ class MockCreditSender:
     def __init__(self) -> None:
         self.sent_credits: list[Credit] = []
         self.cancelled = False
+        self.ended_graph_traces: list[tuple[str, str]] = []
         self._cb: Callable[[str, CreditReturn], Awaitable[None]] | None = None
 
     async def send_credit(self, credit: Credit) -> None:
         self.sent_credits.append(credit)
+
+    async def end_graph_trace(self, trace_id: str) -> None:
+        self.ended_graph_traces.append(trace_id)
 
     async def cancel_all_credits(self) -> None:
         self.cancelled = True
@@ -677,3 +686,113 @@ def mock_orchestrator(create_orchestrator_harness):
         )
 
     return create
+
+
+if TYPE_CHECKING:
+    from aiperf.credit.issuer import CreditIssuer
+    from aiperf.timing.conversation_source import ConversationSource
+    from aiperf.timing.session_tree import SessionTreeRegistry
+
+
+class FakeConcurrency:
+    """Concurrency manager stub that always grants slots and no-ops releases."""
+
+    async def acquire_session_slot(self, phase: CreditPhase, can_proceed) -> bool:
+        return True
+
+    async def acquire_prefill_slot(self, phase: CreditPhase, can_proceed) -> bool:
+        return True
+
+    def release_session_slot(self, phase: CreditPhase) -> None:
+        pass
+
+
+class CapturingRouter:
+    """Credit router stub that records every emitted credit for assertions."""
+
+    def __init__(self) -> None:
+        self.sent: list[Credit] = []
+
+    async def send_credit(self, *, credit: Credit) -> None:
+        self.sent.append(credit)
+
+    def at_depth(self, depth: int) -> list[Credit]:
+        """Credits emitted at the given agent depth, in emission order."""
+        return [c for c in self.sent if c.agent_depth == depth]
+
+
+def make_tree_issuer(
+    registry: "SessionTreeRegistry | None",
+    router: CapturingRouter | None = None,
+    *,
+    registry_enabled: bool | None = None,
+) -> tuple["CreditIssuer", CapturingRouter]:
+    """Real CreditIssuer over a REAL session-tree registry with mocked scalars."""
+    from aiperf.credit.issuer import CreditIssuer
+
+    progress = MagicMock()
+    progress.increment_sent = MagicMock(return_value=(1, False))
+    progress.freeze_sent_counts = MagicMock()
+    progress.all_credits_sent_event = MagicMock()
+
+    stop_checker = MagicMock()
+    stop_checker.can_send_any_turn = MagicMock(return_value=True)
+    stop_checker.can_start_new_session = MagicMock(return_value=True)
+    stop_checker.can_send_dag_child_turn = MagicMock(return_value=True)
+
+    cancellation = MagicMock()
+    cancellation.next_cancellation_delay_ns = MagicMock(return_value=None)
+
+    lifecycle = MagicMock()
+    lifecycle.started_at_ns = time.time_ns()
+    lifecycle.started_at_perf_ns = time.perf_counter_ns()
+
+    router = router if router is not None else CapturingRouter()
+    kwargs = {}
+    if registry_enabled is not None:
+        kwargs["session_tree_registry_enabled"] = registry_enabled
+    issuer = CreditIssuer(
+        phase=CreditPhase.PROFILING,
+        stop_checker=stop_checker,
+        progress=progress,
+        concurrency_manager=FakeConcurrency(),
+        credit_router=router,
+        cancellation_policy=cancellation,
+        lifecycle=lifecycle,
+        session_tree_registry=registry,
+        **kwargs,
+    )
+    return issuer, router
+
+
+def make_registry() -> "SessionTreeRegistry":
+    """Empty finality-bookkeeping registry."""
+    from aiperf.timing.session_tree import SessionTreeRegistry
+
+    return SessionTreeRegistry()
+
+
+def registry_with_tree(
+    root: str = "root-1", descendants: int = 0
+) -> "SessionTreeRegistry":
+    """Registry holding one open, root-pending tree plus N live descendants."""
+    registry = make_registry()
+    registry.open_tree(root, phase=CreditPhase.PROFILING, root_pending=True)
+    if descendants:
+        registry.register_descendants(root, n=descendants)
+    return registry
+
+
+def make_conversation_source(
+    dataset: DatasetMetadata,
+) -> "ConversationSource":
+    """ConversationSource over ``dataset`` with a sampler for its own ids."""
+    from aiperf.timing.conversation_source import ConversationSource
+
+    SamplerClass = plugins.get_class(
+        PluginType.DATASET_SAMPLER, dataset.sampling_strategy
+    )
+    sampler = SamplerClass(
+        conversation_ids=[c.conversation_id for c in dataset.conversations]
+    )
+    return ConversationSource(dataset, sampler)

@@ -40,14 +40,19 @@ class TestIgnoreTraceDelaysField:
 
 
 class TestUseThinkTimeOnlyField:
-    """``--use-think-time-only`` is settable on the dataset configs, defaults False."""
+    """``--use-think-time-only`` is settable on the dataset configs, defaults None.
+
+    ``None`` (not ``False``) is the unset default: scenario validation must
+    distinguish "user never named the flag" from "user opted out", and only a
+    value-level encoding survives the orchestrator's serialization round trip.
+    """
 
     @pytest.mark.parametrize(
         "factory, enabled, expected",
         [
-            param(_file_dataset, False, False, id="default_false_file_dataset"),
+            param(_file_dataset, False, None, id="default_none_file_dataset"),
             param(_file_dataset, True, True, id="can_be_enabled_file_dataset"),
-            param(_public_dataset, False, False, id="default_false_public_dataset"),
+            param(_public_dataset, False, None, id="default_none_public_dataset"),
             param(_public_dataset, True, True, id="can_be_enabled_public_dataset"),
         ],
     )  # fmt: skip

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+import threading
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -56,6 +57,7 @@ def _make_processor_mock(
     mock_self._producers = producers
     mock_self._observers = observers or []
     mock_self._drop_agentic_overflow_records = False
+    mock_self._drop_graph_overflow_records = False
     return mock_self
 
 
@@ -405,3 +407,72 @@ class TestRecordProcessorLockstepGuard:
         await RecordProcessor._on_inference_results(mock_self, MagicMock())
 
         mock_self._forward_failed_record.assert_awaited_once()
+
+
+def test_graph_overflow_flag_is_registered_as_an_init_hook() -> None:
+    """The resolve runs as an ``@on_init`` hook, not from ``__init__``.
+
+    Asserting only on the resolved boolean cannot see this: calling the method
+    directly by name passes just as well when the decorator is dropped and the
+    sniff moves back into the constructor.
+    """
+    from aiperf.common.hooks import AIPerfHook, HookAttrs
+    from aiperf.records.record_processor_service import RecordProcessor
+
+    hook_type = getattr(
+        RecordProcessor._resolve_graph_workload_flag, HookAttrs.HOOK_TYPE, None
+    )
+    assert hook_type == AIPerfHook.ON_INIT
+
+
+@pytest.mark.asyncio
+async def test_graph_overflow_flag_resolves_off_thread() -> None:
+    """The blocking sniff is handed to a worker thread, not run on the event loop.
+
+    ``resolve_graph_workload`` touches the dataset file, so running it inline
+    would block the loop thread that drives init.
+    """
+    from aiperf.records.record_processor_service import RecordProcessor
+
+    rp = RecordProcessor.__new__(RecordProcessor)
+    rp.run = MagicMock()
+    loop_thread_id = threading.get_ident()
+    sniff_thread_ids: list[int] = []
+
+    def _sniff(_run: object) -> object:
+        sniff_thread_ids.append(threading.get_ident())
+        return object()
+
+    with patch(
+        "aiperf.dataset.graph.workload_detect.resolve_graph_workload", new=_sniff
+    ):
+        await rp._resolve_graph_workload_flag()
+
+    assert sniff_thread_ids and sniff_thread_ids[0] != loop_thread_id
+
+
+@pytest.mark.asyncio
+async def test_graph_overflow_flag_resolves_at_init_not_in_constructor() -> None:
+    """Graph detection is blocking I/O, so it must run off-thread during init.
+
+    ``resolve_graph_workload`` sniffs the dataset file. Doing that in
+    ``__init__`` blocks the event-loop thread that constructs the service.
+    """
+    from aiperf.records.record_processor_service import RecordProcessor
+
+    rp = RecordProcessor.__new__(RecordProcessor)
+    rp.run = MagicMock()
+    rp._drop_graph_overflow_records = False
+    with patch(
+        "aiperf.dataset.graph.workload_detect.resolve_graph_workload",
+        return_value=object(),
+    ):
+        await rp._resolve_graph_workload_flag()
+    assert rp._drop_graph_overflow_records is True
+
+    with patch(
+        "aiperf.dataset.graph.workload_detect.resolve_graph_workload",
+        side_effect=RuntimeError("unreadable input"),
+    ):
+        await rp._resolve_graph_workload_flag()
+    assert rp._drop_graph_overflow_records is False

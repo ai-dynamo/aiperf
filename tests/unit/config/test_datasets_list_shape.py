@@ -77,3 +77,21 @@ def test_public_dataset_uses_dataset_field_not_name():
     )
     assert cfg.datasets[0].name == "my_public"
     assert cfg.datasets[0].dataset == "sharegpt"
+
+
+def test_phases_carry_no_per_phase_dataset_selector():
+    """Pins the single-dataset contract that makes per-phase dataset routing dead.
+
+    A phase cannot name its own dataset: there is no ``dataset``/``datasets``
+    field on any phase model, and ``BenchmarkConfig.datasets`` is capped at one
+    entry. Any code branching on "which dataset does this phase use" is
+    therefore unreachable. If a per-phase selector is ever added, this test
+    fails and that branching must be revisited.
+    """
+    from aiperf.config.phases import BasePhaseConfig
+
+    phase_fields = set(BasePhaseConfig.model_fields)
+    assert not phase_fields & {"dataset", "datasets"}
+    datasets_field = BenchmarkConfig.model_fields["datasets"]
+    constraints = [m for m in datasets_field.metadata if hasattr(m, "max_length")]
+    assert any(m.max_length == 1 for m in constraints)

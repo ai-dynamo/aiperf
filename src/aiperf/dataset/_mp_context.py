@@ -4,8 +4,8 @@
 """Dedicated multiprocessing context for trace-loader worker pools.
 
 Trace-loader pools (:mod:`aiperf.dataset.loader.weka_parallel_convert`,
-:mod:`aiperf.dataset.loader.parallel_convert`, and
-:mod:`aiperf.dataset.generator.parallel_decode`) fork worker processes after
+:mod:`aiperf.dataset.loader.parallel_convert`, and the graph adapter pool in
+:mod:`aiperf.dataset.graph.adapters.shared.pool`) fork worker processes after
 the parent has loaded HF tokenizers and exercised their Rust thread pool.
 Under the default ``fork`` start method, that inherits broken rayon state and
 ``transformers`` whose offline-mode flag was cached at parent-import time —
@@ -55,19 +55,50 @@ _loader_ctx_key: tuple[str, bool, str] | None = None
 def _preload_key(
     preload_tokenizer: str | None,
     *,
-    trust_remote_code: bool,
+    trust_remote_code: bool | None,
     revision: str | None,
 ) -> tuple[str, bool, str] | None:
-    """Stable identity for the tokenizer the forkserver helper should CoW-share."""
+    """Stable identity for the tokenizer the forkserver helper should CoW-share.
+
+    ``None`` trust/revision mean "not specified by this caller", so the identity
+    falls back to whatever ``configure_loader_tokenizer_env`` published (the run
+    config) rather than to the parameter defaults -- otherwise a name-only call
+    would key on ``(name, False, "main")`` and spuriously conflict with the run's
+    own trust/revision.
+    """
     if not preload_tokenizer:
         return None
-    return (preload_tokenizer, trust_remote_code, revision or "main")
+    trust = (
+        trust_remote_code
+        if trust_remote_code is not None
+        else os.environ.get(_ENV_PRELOAD_TRUST, "false") == "true"
+    )
+    rev = revision or os.environ.get(_ENV_PRELOAD_REVISION) or "main"
+    return (preload_tokenizer, trust, rev)
+
+
+def configure_loader_tokenizer_env(
+    *,
+    trust_remote_code: bool,
+    revision: str | None,
+) -> None:
+    """Publish the run's tokenizer ``trust_remote_code``/``revision`` for the preload.
+
+    The graph adapter pool threads only the tokenizer NAME into
+    :func:`get_loader_mp_context`; trust/revision travel via env because the
+    forkserver helper snapshots the env once at spawn and every worker (preload
+    hit or on-demand fallback) reads the SAME inherited triple. Must run in the
+    parent before the first loader pool is opened -- the graph parse seam calls
+    it at graph-configure time, before any parse.
+    """
+    os.environ[_ENV_PRELOAD_TRUST] = "true" if trust_remote_code else "false"
+    os.environ[_ENV_PRELOAD_REVISION] = revision or "main"
 
 
 def get_loader_mp_context(
     *,
     preload_tokenizer: str | None = None,
-    trust_remote_code: bool = False,
+    trust_remote_code: bool | None = None,
     revision: str | None = None,
 ) -> multiprocessing.context.BaseContext:
     """Return the trace-loader-specific multiprocessing context.
@@ -104,10 +135,20 @@ def get_loader_mp_context(
     # Env must be set BEFORE the forkserver helper is spawned: it reads
     # these at module-import time and instantiates the tokenizer once in
     # its own heap, where every forked worker CoW-shares it.
+    # Only an EXPLICIT argument overrides what ``configure_loader_tokenizer_env``
+    # already published: production calls this name-only (via
+    # ``_loader_pool_context``), and writing the parameter defaults would clobber
+    # the run config's trust/revision with false/main.
     if preload_tokenizer:
         os.environ[_ENV_PRELOAD_NAME] = preload_tokenizer
-        os.environ[_ENV_PRELOAD_TRUST] = "true" if trust_remote_code else "false"
-        os.environ[_ENV_PRELOAD_REVISION] = revision or "main"
+        if trust_remote_code is not None:
+            os.environ[_ENV_PRELOAD_TRUST] = "true" if trust_remote_code else "false"
+        else:
+            os.environ.setdefault(_ENV_PRELOAD_TRUST, "false")
+        if revision is not None:
+            os.environ[_ENV_PRELOAD_REVISION] = revision
+        else:
+            os.environ.setdefault(_ENV_PRELOAD_REVISION, "main")
 
     method = "forkserver" if IS_LINUX else "spawn"
     ctx = multiprocessing.get_context(method)

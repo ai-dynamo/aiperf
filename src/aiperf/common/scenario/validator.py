@@ -632,6 +632,11 @@ def _apply_trajectory_ratios(
                     spec_default,
                     current,
                 )
+            # Deliberately NOT marking _{ratio_field}_explicitly_set here: that
+            # flag means "the user set this before scenario apply ran", and the
+            # conflict check above depends on it staying frozen. Downstream
+            # readers of deliberateness use ``model_fields_set``, which the
+            # ``setattr`` above already updates.
     if (
         spec.default_trajectory_start_min_ratio is not None
         or spec.default_trajectory_start_max_ratio is not None
