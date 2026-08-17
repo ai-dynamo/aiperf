@@ -1245,15 +1245,15 @@ pub fn run_cellular(
         std::fs::write(report_path, json)
             .with_context(|| format!("writing merged report to {}", report_path.display()))?;
 
-        if kind == CellularRunKind::Graph {
-            if let Some(artifact_dir) = report_path.parent() {
-                write_controller_replay_artifacts(
-                    &artifacts,
-                    artifact_dir,
-                    &expected_replay_traces,
-                    replay_supplements,
-                )?;
-            }
+        if kind == CellularRunKind::Graph
+            && let Some(artifact_dir) = report_path.parent()
+        {
+            write_controller_replay_artifacts(
+                &artifacts,
+                artifact_dir,
+                &expected_replay_traces,
+                replay_supplements,
+            )?;
         }
 
         // Run the native export plane on the merged report, exactly as the

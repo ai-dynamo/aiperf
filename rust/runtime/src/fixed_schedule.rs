@@ -187,10 +187,10 @@ impl Workload for FixedScheduleWorkload {
     async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
         // Prewarm before anchoring so one-time transport setup does not delay
         // the first authored request; the round trip is not recorded.
-        if let Some(entry) = self.schedule.entries.first() {
-            if let Err(error) = runtime.prewarm(entry.turn.clone()).await {
-                tracing::debug!(error = %error, "fixed-schedule prewarm round-trip failed");
-            }
+        if let Some(entry) = self.schedule.entries.first()
+            && let Err(error) = runtime.prewarm(entry.turn.clone()).await
+        {
+            tracing::debug!(error = %error, "fixed-schedule prewarm round-trip failed");
         }
         // Real time needs lead for the O(n) scheduling pass before tasks can
         // fire. Virtual scheduling consumes no clock time, so adding lead there

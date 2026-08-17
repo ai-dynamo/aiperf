@@ -1253,7 +1253,7 @@ impl NativeSessionBackend {
             .ok_or_else(|| anyhow!("missing native turn metadata {turn_index}"))?;
         let static_count_key = (turn_index == 0
             && self.input_token_counter.caches_static_first_turns())
-        .then(|| StaticInputCountKey {
+        .then_some(StaticInputCountKey {
             template_index: self.template_index,
             endpoint: match &turn_endpoint {
                 TurnEndpoint::Prepared(reference) => {

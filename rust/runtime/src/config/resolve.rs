@@ -1380,13 +1380,13 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             slos: inputs.slos.clone(),
             slice_duration_seconds: inputs.slice_duration,
             sketch: sketch_metrics.then_some(true),
-            steady_state: inputs
-                .steady_state
-                .then(|| crate::config::model::metrics::SteadyState {
+            steady_state: inputs.steady_state.then_some(
+                crate::config::model::metrics::SteadyState {
                     enabled: true,
                     fraction: inputs.steady_state_fraction,
                     hybrid_latency: inputs.steady_state_hybrid,
-                }),
+                },
+            ),
         }),
         slos: (!inputs.slos.is_empty()).then(|| inputs.slos.clone()),
         artifacts: Some({

@@ -13,7 +13,7 @@
 //!   3. suffix from the metric name (longest suffix first), then the
 //!      `num_requests_` containment shortcut.
 
-use std::sync::LazyLock;
+use std::{cmp::Reverse, sync::LazyLock};
 
 use regex::Regex;
 
@@ -152,7 +152,7 @@ const SUFFIX_TABLE: &[(&str, Unit)] = &[
 /// Suffixes stably sorted by descending length.
 static SORTED_SUFFIXES: LazyLock<Vec<(&'static str, Unit)>> = LazyLock::new(|| {
     let mut table = SUFFIX_TABLE.to_vec();
-    table.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    table.sort_by_key(|(suffix, _)| Reverse(suffix.len()));
     table
 });
 

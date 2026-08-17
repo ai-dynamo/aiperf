@@ -1191,7 +1191,7 @@ fn prepare_recorded_file(
     // TraceSynthesisSpec still defaults its field to 60s when the key is omitted.
     let idle_gap_cap_seconds = synthesis
         .as_ref()
-        .map_or(None, |value| value.idle_gap_cap_seconds);
+        .and_then(|value| value.idle_gap_cap_seconds);
     // The default window collapses to `t* = 0` and full replay.
     let t_star_window = synthesis
         .as_ref()
@@ -1327,7 +1327,7 @@ fn prepare_recorded_public(
     // TraceSynthesisSpec still defaults its field to 60s when the key is omitted.
     let idle_gap_cap_seconds = synthesis
         .as_ref()
-        .map_or(None, |value| value.idle_gap_cap_seconds);
+        .and_then(|value| value.idle_gap_cap_seconds);
     let t_star_window = synthesis
         .as_ref()
         .map_or_else(TStarWindow::default, |value| TStarWindow {

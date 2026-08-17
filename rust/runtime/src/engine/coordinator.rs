@@ -447,7 +447,7 @@ fn all_requests_failed(outcome: &PreparedRunOutcome) -> Option<u64> {
         .map(|error| error.count)
         .sum();
     let errors = counter_total("error_request_count").unwrap_or(0.0) - cancelled as f64;
-    (errors >= 1.0).then(|| errors as u64)
+    (errors >= 1.0).then_some(errors as u64)
 }
 
 #[derive(Debug)]

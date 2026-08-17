@@ -1044,9 +1044,8 @@ fn schedule_agentic_turn(
                             // Recycle only when the whole tree has drained. A
                             // no-tree gate reports drained immediately, so the
                             // recycle behaves exactly as before.
-                            let drained = gate_c
-                                .as_ref()
-                                .map_or(true, |g| g.on_lane_terminal(&conv_id));
+                            let drained =
+                                gate_c.as_ref().is_none_or(|g| g.on_lane_terminal(&conv_id));
                             // No new recycle issuance once the accelerated-warmup
                             // drain latch is set (Python `mark_sending_complete`).
                             if drained

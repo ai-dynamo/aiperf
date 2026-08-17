@@ -445,10 +445,10 @@ impl Hierarchy {
             let endpoint = &self.endpoints[endpoint_url];
             for key in &endpoint.order {
                 let entry = &endpoint.entries[key];
-                if entry.metric_type.is_scalar_emitted() {
-                    if let Some(series) = &entry.scalar {
-                        series.collect_rows(endpoint_url, key, entry, start_ns, end_ns, &mut rows);
-                    }
+                if entry.metric_type.is_scalar_emitted()
+                    && let Some(series) = &entry.scalar
+                {
+                    series.collect_rows(endpoint_url, key, entry, start_ns, end_ns, &mut rows);
                 } else if entry.metric_type == MetricType::Histogram {
                     if let Some(series) = &entry.histogram {
                         series.collect_rows(endpoint_url, key, entry, start_ns, end_ns, &mut rows);

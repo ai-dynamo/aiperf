@@ -1009,11 +1009,11 @@ impl TracePlacement for GraphWorkerBackend {
                 (Err(primary), _) => Err(primary),
                 (Ok(()), close) => close,
             };
-            if result.is_ok() {
-                if let Some(supplement) = replay_supplement {
-                    self.events
-                        .emit(GraphExecutionEvent::TraceSupplement { supplement })?;
-                }
+            if result.is_ok()
+                && let Some(supplement) = replay_supplement
+            {
+                self.events
+                    .emit(GraphExecutionEvent::TraceSupplement { supplement })?;
             }
             return result;
         }

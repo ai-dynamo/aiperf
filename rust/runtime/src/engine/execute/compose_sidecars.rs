@@ -937,23 +937,20 @@ pub(crate) async fn execute_native_inner(
         // disabled and `captured` holds every clean + errored record here. Sketch mode
         // folds and drops records, leaving only the errored subset, so skip it there
         // (dry-run defaults to exact; T11 gating rejects the sketch combination).
-        if !sketch_mode {
-            if let Some(relative) = &request.artifacts.dataset_analysis_path {
-                let base = artifact_path(&request.artifact_dir, relative, "dataset_analysis_path")?;
-                let analysis_request =
-                    crate::engine::dataset_analysis_writer::DatasetAnalysisRequest {
-                        path: base,
-                        options: crate::dataset::analysis::AnalysisOptions {
-                            block_size: request.artifacts.dataset_analysis_block_size.unwrap_or(16),
-                            explicit_cache_blocks: request.artifacts.dataset_analysis_cache_blocks,
-                            per_conversation: request.artifacts.dataset_analysis_per_conversation,
-                        },
-                    };
-                crate::engine::dataset_analysis_writer::write_dataset_analysis_from_records(
-                    &analysis_request,
-                    &captured,
-                )?;
-            }
+        if !sketch_mode && let Some(relative) = &request.artifacts.dataset_analysis_path {
+            let base = artifact_path(&request.artifact_dir, relative, "dataset_analysis_path")?;
+            let analysis_request = crate::engine::dataset_analysis_writer::DatasetAnalysisRequest {
+                path: base,
+                options: crate::dataset::analysis::AnalysisOptions {
+                    block_size: request.artifacts.dataset_analysis_block_size.unwrap_or(16),
+                    explicit_cache_blocks: request.artifacts.dataset_analysis_cache_blocks,
+                    per_conversation: request.artifacts.dataset_analysis_per_conversation,
+                },
+            };
+            crate::engine::dataset_analysis_writer::write_dataset_analysis_from_records(
+                &analysis_request,
+                &captured,
+            )?;
         }
     }
     if let Some(inputs_path) = &request.artifacts.inputs_path {
