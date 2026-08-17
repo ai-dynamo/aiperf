@@ -425,13 +425,18 @@ def _apply_mlflow_secondary_fields(out: dict[str, Any], cli: CLIConfig) -> None:
         out["parent_run_id"] = cli.mlflow_parent_run_id
 
 
-def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
+def build_mlflow(cli: CLIConfig, *, base_tracking_uri: bool = False) -> dict[str, Any]:
     """Translate MLflow CLI flags into the first-class MLflow config dict.
 
     Ports v1 ``_validate_mlflow_config``: refuses secondary MLflow flags
     without ``--mlflow-tracking-uri``, rejects empty strings on
     tracking_uri/experiment/artifact_glob entries, and normalizes
     whitespace on tracking_uri/experiment/run_name/artifact_globs.
+
+    ``base_tracking_uri`` says a YAML config file already supplies
+    ``mlflow.tracking_uri``. Without it, ``-f base.yaml --mlflow-experiment X``
+    would be rejected for missing a flag whose value the config file already
+    provides -- the same shape as ``build_wandb``'s ``base_enabled``.
     """
     # Normalize artifact-glob entries first so an "empty glob" error
     # surfaces before the missing-tracking-uri error.
@@ -442,13 +447,21 @@ def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
         secondary_present = any(
             key in cli.model_fields_set for key in _MLFLOW_SECONDARY_FIELDS
         )
-        if secondary_present:
+        if not secondary_present:
+            return {}
+        if not base_tracking_uri:
             raise ValueError(
                 "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
                 "--mlflow-artifact-glob, and --mlflow-parent-run-id require "
                 "--mlflow-tracking-uri to be set."
             )
-        return {}
+        # The config file owns tracking_uri; emit only the overrides so the
+        # deep-merge leaves it in place.
+        from_yaml_base: dict[str, Any] = {}
+        _apply_mlflow_secondary_fields(from_yaml_base, cli)
+        if artifact_globs is not None:
+            from_yaml_base["artifact_globs"] = artifact_globs
+        return from_yaml_base
 
     out: dict[str, Any] = {"tracking_uri": tracking_uri}
     _apply_mlflow_secondary_fields(out, cli)
