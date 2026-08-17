@@ -3,6 +3,11 @@
 
 //! Narrow, typed semantic lowering that refuses unsupported operations.
 
+use std::error::Error;
+use std::fmt::{self, Display};
+
+use crate::graph::model::GraphTraceProgram;
+
 /// An executable node emitted from an exactly lowerable semantic operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutableSemanticNode {
@@ -64,6 +69,106 @@ pub enum FidelityOutcome {
     Exact,
     /// The selected semantic operation cannot be executed without substitution.
     Unsupported,
+}
+
+/// Immutable source bytes and declared execution selection for one graph lowerer.
+///
+/// The selected factory owns any source-family-specific bindings. This request
+/// deliberately carries bytes rather than a caller-owned path so lowering never
+/// reopens a mutable package origin.
+#[derive(Clone, Copy, Debug)]
+pub struct GraphLoweringRequest<'a> {
+    /// Versioned source grammar selected by package import.
+    pub source_schema: &'a str,
+    /// Execution profile selected by package import.
+    pub execution_profile: &'a str,
+    /// Exact immutable source bytes retained by package import.
+    pub source: &'a [u8],
+}
+
+/// Capabilities declared by one source-to-Graph-IR lowering factory.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GraphLowererCapabilities {
+    source_schemas: Vec<String>,
+    execution_profiles: Vec<String>,
+}
+
+impl GraphLowererCapabilities {
+    /// Construct one deterministic capability inventory.
+    pub fn new(
+        source_schemas: impl IntoIterator<Item = String>,
+        execution_profiles: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let mut source_schemas = source_schemas.into_iter().collect::<Vec<_>>();
+        source_schemas.sort();
+        source_schemas.dedup();
+        let mut execution_profiles = execution_profiles.into_iter().collect::<Vec<_>>();
+        execution_profiles.sort();
+        execution_profiles.dedup();
+        Self {
+            source_schemas,
+            execution_profiles,
+        }
+    }
+
+    /// Reports whether the factory accepts a source schema identifier.
+    pub fn supports_source_schema(&self, source_schema: &str) -> bool {
+        self.source_schemas
+            .iter()
+            .any(|supported| supported == source_schema)
+    }
+
+    /// Reports whether the factory accepts an execution-profile identifier.
+    pub fn supports_execution_profile(&self, execution_profile: &str) -> bool {
+        self.execution_profiles
+            .iter()
+            .any(|supported| supported == execution_profile)
+    }
+
+    /// Borrows supported source schemas in deterministic order.
+    pub fn source_schemas(&self) -> &[String] {
+        &self.source_schemas
+    }
+
+    /// Borrows supported execution profiles in deterministic order.
+    pub fn execution_profiles(&self) -> &[String] {
+        &self.execution_profiles
+    }
+}
+
+/// Uniform object-safe refusal returned by registered graph lowerers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GraphLoweringError(String);
+
+impl GraphLoweringError {
+    /// Build a source-lowering refusal with its source-family context retained.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl Display for GraphLoweringError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Error for GraphLoweringError {}
+
+/// Object-safe source-to-existing-Graph-IR lowering seam.
+///
+/// Factories are selected and frozen by the runtime extension layer. They may
+/// retain source-family bindings, but every successful call yields the shared
+/// [`GraphTraceProgram`] rather than a parallel execution representation.
+pub trait GraphLowererFactory: Send + Sync {
+    /// Return the source grammars and execution profiles this factory accepts.
+    fn capabilities(&self) -> GraphLowererCapabilities;
+
+    /// Lower exact immutable source bytes into the existing trace program type.
+    fn lower(
+        &self,
+        request: GraphLoweringRequest<'_>,
+    ) -> Result<GraphTraceProgram, GraphLoweringError>;
 }
 
 /// Typed semantic lowering refusal.

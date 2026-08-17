@@ -193,6 +193,46 @@ impl<M: WireMessage> LocalGraphTraceExecutionBackend<M> {
             .retain(|active| active.as_ptr() != Rc::as_ptr(&context));
         context.abort.borrow().clone().map_or_else(|| Ok(()), Err)
     }
+
+    /// Execute one static trace and retain its reduced channel snapshot.
+    ///
+    /// A staged trace driver needs immutable channel facts for its next bounded
+    /// decision. This deliberately uses the canonical executor rather than the
+    /// flat fast path because the latter predates channel-result ownership.
+    pub async fn execute_static_trace_result(
+        &self,
+        plan: crate::graph::model::GraphTracePlan,
+        phase: Phase,
+        trace_subphase: TraceSubphase,
+    ) -> Result<crate::graph::executor::TraceResult, TraceError> {
+        if self.cancelled.get() {
+            return Err(local_cancellation(&plan.trace.id));
+        }
+        let handle = Handle::new(self.clock.clone());
+        let executor = TraceExecutor::new_with_policies_and_dispatch_context(
+            Rc::new(plan.graph),
+            self.materializer.clone(),
+            self.sink.clone(),
+            self.node_policy.clone(),
+            self.node_failure.clone(),
+            handle.clone(),
+            self.flags,
+            phase,
+            trace_subphase,
+        )?;
+        let context = executor.build_context(plan.trace)?;
+        self.active.borrow_mut().push(Rc::downgrade(&context));
+        executor.schedule_entries(&context);
+        handle.wait_idle().await;
+        self.active
+            .borrow_mut()
+            .retain(|active| active.as_ptr() != Rc::as_ptr(&context));
+        context
+            .abort
+            .borrow()
+            .clone()
+            .map_or_else(|| TraceExecutor::<M>::result(&context), Err)
+    }
 }
 
 #[async_trait(?Send)]

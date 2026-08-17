@@ -17,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::clock::Clock;
-use crate::dataset::SegmentStore;
-use crate::graph::model::GraphTraceProgram;
+use crate::dataset::{Handle, SegmentStore};
+use crate::graph::model::{GraphTracePlan, GraphTraceProgram};
 use crate::graph::replay::ReplayRunIdentity;
+use crate::graph::sink::GraphReplyStatus;
 use crate::graph::supplement::TraceTerminalSupplement;
 use crate::graph::{agent, tools};
 
@@ -132,27 +133,51 @@ pub struct TraceDriverSpec {
     /// Whether this trace asks the driver to delegate an invocation.
     #[serde(default)]
     pub delegation: TraceDelegationSpec,
+    /// Lowering-only source identity that cannot be supplied through the wire DTO.
+    #[serde(skip)]
+    provenance: Option<TraceDriverProvenance>,
 }
 
 impl TraceDriverSpec {
-    /// Build the built-in static graph driver specification.
-    pub fn static_graph() -> Self {
+    /// Build one driver specification from validated lowering output.
+    pub fn with_data(kind: String, data: BTreeMap<String, Value>) -> Self {
         Self {
-            kind: "static_graph".into(),
-            data: BTreeMap::new(),
+            kind,
+            data,
             continuation: AgentContinuationSpec::Fresh,
             delegation: TraceDelegationSpec::None,
+            provenance: None,
         }
+    }
+
+    /// Build the built-in static graph driver specification.
+    pub fn static_graph() -> Self {
+        Self::with_data("static_graph".into(), BTreeMap::new())
     }
 
     /// Build the stock strict recorded-replay driver specification.
     pub fn recorded_replay() -> Self {
-        Self {
-            kind: "recorded_replay".into(),
-            data: BTreeMap::new(),
-            continuation: AgentContinuationSpec::Fresh,
-            delegation: TraceDelegationSpec::None,
-        }
+        Self::with_data("recorded_replay".into(), BTreeMap::new())
+    }
+
+    /// Attach the retained source and static projection that authorized this lowered program.
+    pub(crate) fn with_source_provenance(
+        mut self,
+        source_digest: String,
+        source_snapshot: &[u8],
+        static_projection_digest: String,
+    ) -> Self {
+        self.provenance = Some(TraceDriverProvenance {
+            source_digest,
+            source_snapshot: Arc::from(source_snapshot),
+            static_projection_digest,
+        });
+        self
+    }
+
+    /// Borrows the non-wire source provenance attached by trusted lowering.
+    pub(crate) fn source_provenance(&self) -> Option<&TraceDriverProvenance> {
+        self.provenance.as_ref()
     }
 
     /// Replace the authored continuation choice.
@@ -173,6 +198,27 @@ impl TraceDriverSpec {
             && self.data.is_empty()
             && self.continuation == AgentContinuationSpec::Fresh
             && self.delegation == TraceDelegationSpec::None
+            && self.provenance.is_none()
+    }
+}
+
+/// Immutable NativeGraph lowering identity attached only by trusted lowering.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TraceDriverProvenance {
+    source_digest: String,
+    source_snapshot: Arc<[u8]>,
+    static_projection_digest: String,
+}
+
+impl TraceDriverProvenance {
+    /// Confirms that a serializable control contract names this exact source snapshot.
+    pub(crate) fn matches_source_digest(&self, source_digest: &str) -> bool {
+        !self.source_snapshot.is_empty() && self.source_digest == source_digest
+    }
+
+    /// Confirms that a public control contract retains the lowered static projection.
+    pub(crate) fn matches_static_projection_digest(&self, digest: &str) -> bool {
+        !self.source_snapshot.is_empty() && self.static_projection_digest == digest
     }
 }
 
@@ -336,6 +382,28 @@ impl TraceDriverCapabilities {
     }
 }
 
+/// One driver-selected action in a bounded live graph progression.
+#[derive(Clone, Debug)]
+pub enum TraceStageDirective {
+    /// Execute one complete stage through the existing Graph-IR executor.
+    Execute(GraphTracePlan),
+    /// Finish the driver after all bounded stages have been observed.
+    Complete(TraceTerminalSupplement),
+}
+
+/// Immutable terminal facts returned to a driver after one executed stage.
+#[derive(Clone, Debug)]
+pub struct TraceStageResult {
+    /// Driver-visible identity assigned to the executed stage.
+    pub plan_identity: String,
+    /// Terminal classification from the shared graph executor.
+    pub terminal_status: GraphReplyStatus,
+    /// Serialized channel snapshot after all reducers completed.
+    pub channels: BTreeMap<String, Value>,
+    /// Opaque segment handles keyed by their declared channel identifier.
+    pub output_handles: BTreeMap<String, Handle>,
+}
+
 /// Trace-local program driver selected through [`TraceDriverSpec`].
 #[async_trait(?Send)]
 pub trait TraceProgramDriver {
@@ -351,6 +419,28 @@ pub trait TraceProgramDriver {
     /// Borrow the trace-local tool dispatcher after [`Self::open`].
     fn tool_dispatcher(&self) -> Option<Rc<dyn tools::ToolDispatcher>> {
         None
+    }
+
+    /// Return the maximum number of stages this driver may emit for one trace.
+    ///
+    /// Drivers that retain their legacy single-plan execution return `None` and
+    /// continue through [`Self::run`]. A driver that emits stages must provide a
+    /// finite bound so placement can enforce it independently.
+    fn stage_bound(&self) -> Option<std::num::NonZeroU32> {
+        None
+    }
+
+    /// Select the next complete Graph-IR stage after any prior observation.
+    async fn next_stage(
+        &mut self,
+        _context: &TraceDriverContext<'_>,
+    ) -> Result<Option<TraceStageDirective>, TraceDriverError> {
+        Ok(None)
+    }
+
+    /// Observe immutable results of the most recently executed stage.
+    async fn observe_stage(&mut self, _result: TraceStageResult) -> Result<(), TraceDriverError> {
+        Ok(())
     }
 
     /// Release resources after the profiling graph reaches its terminal path.
@@ -378,7 +468,7 @@ pub trait TraceProgramDriverFactory: Send + Sync {
     fn create(
         &self,
         worker: WorkerIdentity,
-        trace: &TraceIdentity,
+        _trace: &TraceIdentity,
         spec: &TraceDriverSpec,
     ) -> Result<Box<dyn TraceProgramDriver>, TraceDriverError>;
 }
@@ -460,13 +550,11 @@ impl RecordedReplayTraceProgramDriverFactory {
     }
 }
 
-/// Stock registry over the built-in static and recorded-replay driver families.
-#[derive(Clone, Default)]
-pub struct NativeTraceProgramDriverFactory {
-    recorded_replay: RecordedReplayTraceProgramDriverFactory,
-}
+/// Factory for the legacy static graph driver family.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StaticGraphTraceProgramDriverFactory;
 
-impl TraceProgramDriverFactory for NativeTraceProgramDriverFactory {
+impl TraceProgramDriverFactory for StaticGraphTraceProgramDriverFactory {
     fn capabilities(
         &self,
         spec: &TraceDriverSpec,
@@ -477,9 +565,8 @@ impl TraceProgramDriverFactory for NativeTraceProgramDriverFactory {
                 capabilities.validate(spec, &spec.kind)?;
                 Ok(capabilities)
             }
-            "recorded_replay" => self.recorded_replay.capabilities(spec),
             _ => Err(TraceDriverError::new(format!(
-                "no linked trace program driver for {:?}",
+                "static graph factory cannot create trace driver {:?}",
                 spec.kind
             ))),
         }
@@ -488,7 +575,7 @@ impl TraceProgramDriverFactory for NativeTraceProgramDriverFactory {
     fn create(
         &self,
         worker: WorkerIdentity,
-        trace: &TraceIdentity,
+        _trace: &TraceIdentity,
         spec: &TraceDriverSpec,
     ) -> Result<Box<dyn TraceProgramDriver>, TraceDriverError> {
         match spec.kind.as_str() {
@@ -496,9 +583,8 @@ impl TraceProgramDriverFactory for NativeTraceProgramDriverFactory {
                 self.capabilities(spec)?;
                 Ok(Box::new(StaticGraphTraceProgramDriver { worker }))
             }
-            "recorded_replay" => self.recorded_replay.create(worker, trace, spec),
             _ => Err(TraceDriverError::new(format!(
-                "no linked trace program driver for {:?}",
+                "static graph factory cannot create trace driver {:?}",
                 spec.kind
             ))),
         }

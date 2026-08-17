@@ -10,6 +10,7 @@ pub use comparison::{
     PairedComparisonError, PairedComparisonReport, PairedComparisonSpec, PairedMeasurements,
 };
 pub use lowering::{
-    ExecutableSemanticNode, FidelityError, FidelityOutcome, LoweredSemanticGraph, SemanticGraph,
-    SemanticNode, lower_semantic_graph,
+    ExecutableSemanticNode, FidelityError, FidelityOutcome, GraphLowererCapabilities,
+    GraphLowererFactory, GraphLoweringError, GraphLoweringRequest, LoweredSemanticGraph,
+    SemanticGraph, SemanticNode, lower_semantic_graph,
 };

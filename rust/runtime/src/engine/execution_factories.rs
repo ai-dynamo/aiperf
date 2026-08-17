@@ -19,7 +19,88 @@ use crate::engine::readiness::{
     OnlineReadinessPlanFactory, ReadinessTransportFactory,
 };
 use crate::engine::turn_execution::{HttpExecutionFactory, RequestExecutorFactory};
-use crate::graph::driver::{NativeTraceProgramDriverFactory, TraceProgramDriverFactory};
+use crate::eval::NativeGraphLiveTraceProgramDriverFactory;
+use crate::extensions::TransactionalRegistry;
+use crate::graph::driver::{
+    RecordedReplayTraceProgramDriverFactory, StaticGraphTraceProgramDriverFactory,
+    TraceDriverCapabilities, TraceDriverError, TraceDriverSpec, TraceIdentity, TraceProgramDriver,
+    TraceProgramDriverFactory, WorkerIdentity,
+};
+
+/// Frozen name-keyed selection over trace-program driver families.
+///
+/// Registration failures remain explicit even though stock names are compiled
+/// into this binary. This keeps application construction on the same
+/// transactional selection boundary used by injected distributions.
+#[derive(Clone)]
+struct RegisteredTraceProgramDrivers {
+    factories: TransactionalRegistry<Arc<dyn TraceProgramDriverFactory>>,
+    registration_error: Option<TraceDriverError>,
+}
+
+impl RegisteredTraceProgramDrivers {
+    fn stock() -> Self {
+        let mut factories = TransactionalRegistry::new();
+        let registration_error = factories
+            .commit(|staged| {
+                staged.insert(
+                    "static_graph",
+                    Arc::new(StaticGraphTraceProgramDriverFactory)
+                        as Arc<dyn TraceProgramDriverFactory>,
+                )?;
+                staged.insert(
+                    "recorded_replay",
+                    Arc::new(RecordedReplayTraceProgramDriverFactory::default())
+                        as Arc<dyn TraceProgramDriverFactory>,
+                )?;
+                staged.insert(
+                    "native_graph_live",
+                    Arc::new(NativeGraphLiveTraceProgramDriverFactory)
+                        as Arc<dyn TraceProgramDriverFactory>,
+                )?;
+                Ok::<(), crate::extensions::DuplicateName>(())
+            })
+            .err()
+            .map(|error| TraceDriverError::new(error.to_string()));
+        Self {
+            factories,
+            registration_error,
+        }
+    }
+
+    fn resolve(
+        &self,
+        spec: &TraceDriverSpec,
+    ) -> Result<&Arc<dyn TraceProgramDriverFactory>, TraceDriverError> {
+        if let Some(error) = &self.registration_error {
+            return Err(error.clone());
+        }
+        self.factories.get(&spec.kind).ok_or_else(|| {
+            TraceDriverError::new(format!(
+                "no linked trace program driver for {:?}",
+                spec.kind
+            ))
+        })
+    }
+}
+
+impl TraceProgramDriverFactory for RegisteredTraceProgramDrivers {
+    fn capabilities(
+        &self,
+        spec: &TraceDriverSpec,
+    ) -> Result<TraceDriverCapabilities, TraceDriverError> {
+        self.resolve(spec)?.capabilities(spec)
+    }
+
+    fn create(
+        &self,
+        worker: WorkerIdentity,
+        trace: &TraceIdentity,
+        spec: &TraceDriverSpec,
+    ) -> Result<Box<dyn TraceProgramDriver>, TraceDriverError> {
+        self.resolve(spec)?.create(worker, trace, spec)
+    }
+}
 
 /// Exact execution-factory universe retained from coordinator construction.
 ///
@@ -52,7 +133,7 @@ impl ExecutionFactories {
         Self {
             http,
             graph,
-            trace_driver: Arc::new(NativeTraceProgramDriverFactory::default()),
+            trace_driver: Arc::new(RegisteredTraceProgramDrivers::stock()),
             readiness_plans,
             readiness_transport,
             control_plane_http: Arc::new(NativeControlPlaneHttpProviderFactory::default()),

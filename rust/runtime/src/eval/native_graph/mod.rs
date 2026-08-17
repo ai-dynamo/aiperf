@@ -5,6 +5,8 @@
 
 mod artifacts;
 mod evaluator;
+mod live_driver;
+mod lowering;
 mod matrix;
 mod package;
 mod protocol;
@@ -20,6 +22,13 @@ pub use artifacts::{
 pub use evaluator::{
     EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, HarborEpisodeEvaluator,
     HarborEpisodeEvaluatorFactory,
+};
+pub use live_driver::NativeGraphLiveTraceProgramDriverFactory;
+pub use lowering::{
+    BoundedControlFlowContract, NativeGraphControlContract, NativeGraphLowererFactory,
+    NativeGraphLoweringError, NativeGraphLoweringReport, NativeGraphNodeFidelity,
+    NativeGraphNodeLowering, ReservedNativeGraphBranch, ReservedNativeGraphJoin,
+    ReservedNativeGraphLoop, lower_native_graph, validate_native_graph_trace_plan,
 };
 pub use matrix::{
     EpisodeAssignment, EpisodeRunner, LocalNativeGraphSuiteScheduler,

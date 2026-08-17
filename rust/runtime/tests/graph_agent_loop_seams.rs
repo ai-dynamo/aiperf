@@ -229,11 +229,12 @@ fn recorded_driver_refuses_load_resume_and_delegation_before_provisioning() {
             checkpoint: "prior-checkpoint".into(),
         }),
         TraceDriverSpec::recorded_replay().with_delegation(),
-        TraceDriverSpec {
-            data: [("unexpected".into(), serde_json::Value::Null)]
+        {
+            let mut spec = TraceDriverSpec::recorded_replay();
+            spec.data = [("unexpected".into(), serde_json::Value::Null)]
                 .into_iter()
-                .collect(),
-            ..TraceDriverSpec::recorded_replay()
+                .collect();
+            spec
         },
     ] {
         let error = RecordedReplayTraceProgramDriverFactory::default()

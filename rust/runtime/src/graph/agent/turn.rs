@@ -12,6 +12,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::dataset::Handle;
 use crate::graph::tools::{
     AgentObservationFormatter, AgentToolCallDecoder, ToolDispatchContext, ToolDispatchError,
 };
@@ -41,6 +42,42 @@ pub enum ResponseSelection {
 pub struct AgentTurn {
     selection: ResponseSelection,
     is_copied_context: bool,
+}
+
+/// One bounded live action selected by an agent turn coordinator.
+#[derive(Clone, Debug)]
+pub enum LiveAgentTurnDirective {
+    /// Dispatch a declared model binding through Rust-owned model authority.
+    DispatchModel {
+        /// Validated model binding identifier.
+        binding: String,
+        /// Opaque prompt segment handle.
+        prompt: Handle,
+    },
+    /// Invoke one declared supervised tool adapter.
+    InvokeTool {
+        /// Validated adapter identifier.
+        adapter: String,
+        /// Opaque tool-input segment handle.
+        input: Handle,
+    },
+    /// Advance one declared supervised environment adapter.
+    StepEnvironment {
+        /// Validated adapter identifier.
+        adapter: String,
+        /// Opaque action segment handle.
+        action: Handle,
+    },
+    /// Select one previously validated conditional edge.
+    SelectBranch {
+        /// Validated graph edge identifier.
+        edge: String,
+    },
+    /// Complete the live turn progression with declared output handles.
+    Complete {
+        /// Opaque output segment handles.
+        outputs: Vec<Handle>,
+    },
 }
 
 impl AgentTurn {
@@ -93,6 +130,16 @@ impl From<ToolDispatchError> for AgentLoopError {
 /// Coordinates predetermined response selections and sequential tool calls.
 #[async_trait(?Send)]
 pub trait AgentTurnCoordinator {
+    /// Select one live agent action after observing prior bounded results.
+    ///
+    /// Existing recorded coordinators remain single-plan implementations and
+    /// return this typed refusal until a live coordinator is explicitly selected.
+    async fn next_live_turn(&mut self) -> Result<LiveAgentTurnDirective, AgentLoopError> {
+        Err(AgentLoopError::new(
+            "agent turn coordinator does not support live progression",
+        ))
+    }
+
     /// Execute the trace-local agent turns through injected worker-local seams.
     async fn run(
         &mut self,

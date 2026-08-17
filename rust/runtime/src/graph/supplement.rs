@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::dataset::Handle;
 use crate::graph::replay::{ReplayCallMeasurement, ToolCallMeasurement};
 
 /// Versioned terminal facts that placement can fold without reading agent state.
@@ -39,6 +40,9 @@ pub struct TraceTerminalSupplement {
     pub calls: Vec<ReplayCallMeasurement>,
     /// Ordered attempted tool measurements; command/output bytes are never retained.
     pub tools: Vec<ToolCallMeasurement>,
+    /// Named opaque outputs selected by the authored terminal declaration.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub terminal_outputs: BTreeMap<String, Handle>,
 }
 
 /// Runtime replay-trace identity retained for measurements and artifacts.
@@ -263,12 +267,19 @@ impl TraceTerminalSupplement {
             trace_wall_ms: 0.0,
             calls: Vec::new(),
             tools: Vec::new(),
+            terminal_outputs: BTreeMap::new(),
         }
     }
 
     /// Attach the controller-authored assignment without replacing runtime facts.
     pub fn with_planned_identity(mut self, identity: PlannedReplayTraceInstance) -> Self {
         self.planned_identity = Some(identity);
+        self
+    }
+
+    /// Attach the declared terminal outputs without inferring an ordering.
+    pub fn with_terminal_outputs(mut self, outputs: BTreeMap<String, Handle>) -> Self {
+        self.terminal_outputs = outputs;
         self
     }
 
