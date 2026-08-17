@@ -3426,10 +3426,11 @@ fn read_optional_reward_archive(
     source: &str,
     deadline: Option<&Deadline>,
 ) -> Result<Option<Vec<u8>>, EvalExecutionError> {
-    let archive = match deadline.map(Deadline::remaining).transpose()? {
-        Some(remaining) => runtime.copy_archive_bounded(container, source, remaining),
-        None => runtime.copy_archive(container, source),
-    };
+    let remaining = deadline
+        .map(Deadline::remaining)
+        .transpose()?
+        .unwrap_or(Duration::from_secs(10));
+    let archive = runtime.copy_archive_bounded(container, source, remaining);
     let archive = match archive {
         Ok(archive) => archive,
         Err(EvalExecutionError::ProcessFailure(_)) => return Ok(None),
@@ -4226,6 +4227,75 @@ mod tests {
         let workspace = tempfile::tempdir().unwrap();
         let reward = read_reward_with_runtime(&ArchiveRuntime, "verifier", &workspace, None)
             .expect("standard verifier rewards must use the bounded archive path");
+
+        assert_eq!(reward.metrics.get("reward"), Some(&1.0));
+    }
+
+    #[test]
+    fn standard_reward_collection_uses_a_bounded_archive_without_an_authored_timeout() {
+        struct BoundedArchiveRuntime;
+
+        impl DockerRuntime for BoundedArchiveRuntime {
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities::none()
+            }
+
+            fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not build")
+            }
+
+            fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not create")
+            }
+
+            fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not start")
+            }
+
+            fn exec(&self, _: &super::DockerExecRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not execute")
+            }
+
+            fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not copy")
+            }
+
+            fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+                panic!("standard verifier rewards must use a bounded archive")
+            }
+
+            fn copy_archive_bounded(
+                &self,
+                _: &str,
+                source: &str,
+                deadline: Duration,
+            ) -> Result<Box<dyn Read>, EvalExecutionError> {
+                assert_eq!(deadline, Duration::from_secs(10));
+                if source.ends_with("reward.txt") {
+                    return Err(EvalExecutionError::ProcessFailure(
+                        "optional reward is absent".to_owned(),
+                    ));
+                }
+                let mut archive = tar::Builder::new(Vec::new());
+                let body = b"{\"reward\":1}";
+                let mut header = tar::Header::new_gnu();
+                header.set_size(body.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                archive
+                    .append_data(&mut header, "reward.json", body.as_slice())
+                    .unwrap();
+                Ok(Box::new(io::Cursor::new(archive.into_inner().unwrap())))
+            }
+
+            fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not remove")
+            }
+        }
+
+        let workspace = tempfile::tempdir().unwrap();
+        let reward = read_reward_with_runtime(&BoundedArchiveRuntime, "verifier", &workspace, None)
+            .expect("an absent optional reward.txt must not reject reward.json");
 
         assert_eq!(reward.metrics.get("reward"), Some(&1.0));
     }
