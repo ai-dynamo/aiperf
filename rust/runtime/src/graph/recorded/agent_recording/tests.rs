@@ -226,7 +226,7 @@ fn canonical_fixture_metadata_pins_exact_order_shape_and_digest_index() {
     assert_eq!(expected.total_osl, 30_883);
     assert_eq!(expected.model_calls, 168);
     assert_eq!(expected.tool_calls, 172);
-    assert!((expected.tool_duration_ms - 35_923.59589).abs() <= 1e-6);
+    assert!((expected.tool_duration_ms - 35_923.595_89).abs() <= 1e-6);
     assert!((expected.max_tool_call_duration_ms - 4_312.283731).abs() <= 1e-6);
     assert_eq!(expected.timed_out_tool_calls, 0);
     assert_eq!(fixture.manifest_digest, fixture.digest_index.manifest);

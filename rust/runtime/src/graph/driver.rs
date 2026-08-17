@@ -461,17 +461,9 @@ impl RecordedReplayTraceProgramDriverFactory {
 }
 
 /// Stock registry over the built-in static and recorded-replay driver families.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct NativeTraceProgramDriverFactory {
     recorded_replay: RecordedReplayTraceProgramDriverFactory,
-}
-
-impl Default for NativeTraceProgramDriverFactory {
-    fn default() -> Self {
-        Self {
-            recorded_replay: RecordedReplayTraceProgramDriverFactory::default(),
-        }
-    }
 }
 
 impl TraceProgramDriverFactory for NativeTraceProgramDriverFactory {

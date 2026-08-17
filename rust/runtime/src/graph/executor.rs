@@ -197,7 +197,7 @@ impl<M: WireMessage> TraceExecutor<M> {
 
     pub fn schedule_entries(self: &Rc<Self>, ctx: &Rc<TraceContext>) {
         for entry_id in self.scheduler.entry_nodes() {
-            self.clone().schedule(&entry_id, ctx);
+            self.clone().schedule(entry_id, ctx);
         }
     }
 
@@ -522,7 +522,7 @@ impl<M: WireMessage> TraceExecutor<M> {
             .borrow_mut()
             .insert(node_id.to_string(), self.loop_wall_us());
         for successor in self.scheduler.start_anchored_successors(node_id) {
-            self.clone().schedule(&successor, ctx);
+            self.clone().schedule(successor, ctx);
         }
     }
 
@@ -541,7 +541,7 @@ impl<M: WireMessage> TraceExecutor<M> {
 
     fn schedule_successors(self: &Rc<Self>, node_id: &str, ctx: &Rc<TraceContext>) {
         for succ_id in self.scheduler.successors_after(node_id) {
-            self.clone().schedule(&succ_id, ctx);
+            self.clone().schedule(succ_id, ctx);
         }
     }
 

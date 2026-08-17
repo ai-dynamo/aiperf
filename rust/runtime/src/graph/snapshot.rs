@@ -412,10 +412,9 @@ pub fn warmup_boundary_nodes(graph: &GraphRecord, t_star_us: f64) -> BTreeMap<St
         let any_post = members.iter().any(|(arrival, _)| *arrival >= t_star_us);
         if let Some(nid) = last_pre
             && any_post
+            && let Some(node) = graph.nodes[nid].as_llm()
         {
-            if let Some(node) = graph.nodes[nid].as_llm() {
-                boundary.insert(nid.to_owned(), node);
-            }
+            boundary.insert(nid.to_owned(), node);
         }
     }
     boundary

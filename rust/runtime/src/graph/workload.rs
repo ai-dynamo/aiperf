@@ -1151,7 +1151,7 @@ mod tests {
         let mut all: Vec<String> = owned.into_iter().flatten().collect();
         for id in &all {
             let (template, _) = id.split_once("::instance-").unwrap();
-            let expected = if instance_ordinal(id) % 2 == 0 {
+            let expected = if instance_ordinal(id).is_multiple_of(2) {
                 "a"
             } else {
                 "b"

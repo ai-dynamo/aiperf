@@ -536,11 +536,11 @@ pub fn timeline_stats(records: &[AnalyzedRecord]) -> Option<TimelineStats> {
         peak = peak.max(inflight);
         let rel_s = (ns - min_start) as f64 / 1e9;
         // Record inflight at this change point, coalescing same-instant events.
-        if let Some(last) = samples.last_mut() {
-            if (last.0 - rel_s).abs() < f64::EPSILON {
-                last.1 = inflight as u64;
-                continue;
-            }
+        if let Some(last) = samples.last_mut()
+            && (last.0 - rel_s).abs() < f64::EPSILON
+        {
+            last.1 = inflight as u64;
+            continue;
         }
         samples.push((rel_s, inflight as u64));
     }

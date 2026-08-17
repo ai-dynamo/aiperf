@@ -192,13 +192,12 @@ pub fn realized_reuse(
                 hits += 1;
             } else {
                 // Miss: evict the LRU block if at capacity, then insert.
-                if resident.len() >= capacity {
-                    if let Some((&lru_id, _)) =
+                if resident.len() >= capacity
+                    && let Some((&lru_id, _)) =
                         resident.iter().min_by_key(|&(_, &last_use)| last_use)
-                    {
-                        resident.remove(&lru_id);
-                        evictions += 1;
-                    }
+                {
+                    resident.remove(&lru_id);
+                    evictions += 1;
                 }
                 resident.insert(id, tick);
             }

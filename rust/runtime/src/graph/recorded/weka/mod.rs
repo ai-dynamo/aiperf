@@ -253,10 +253,11 @@ fn shift_plan_handles(plan: &mut GraphTracePlan, offset: u32) {
             *handle = Value::from(index + bump);
         }
         if let Some(request) = &mut node.request {
-            for handle in [&mut request.tools, &mut request.additional_body] {
-                if let Some(handle) = handle {
-                    *handle = Handle::new(handle.index() + offset);
-                }
+            for handle in [&mut request.tools, &mut request.additional_body]
+                .into_iter()
+                .flatten()
+            {
+                *handle = Handle::new(handle.index() + offset);
             }
         }
     }
