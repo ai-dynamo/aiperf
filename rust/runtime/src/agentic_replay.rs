@@ -322,6 +322,27 @@ impl AgenticReplayWorkload {
     }
 }
 
+/// Clone the accelerated-warmup handoff without extending the carrier lock into
+/// profiling resume.
+fn profiling_warmup_handoff(carrier: &WarmupHandoffCarrier) -> Option<LegacyWarmupHandoff> {
+    carrier.lock().ok().and_then(|handoff| handoff.clone())
+}
+
+#[cfg(test)]
+mod warmup_handoff_tests {
+    use super::*;
+
+    #[test]
+    fn profiling_handoff_clone_releases_carrier_lock_before_resume() {
+        let carrier = new_warmup_handoff_carrier();
+        let handoff = LegacyWarmupHandoff::default();
+        *carrier.lock().unwrap() = Some(handoff.clone());
+
+        assert_eq!(profiling_warmup_handoff(&carrier), Some(handoff));
+        assert!(carrier.try_lock().is_ok());
+    }
+}
+
 #[async_trait(?Send)]
 impl Workload for AgenticReplayWorkload {
     fn name(&self) -> &'static str {
@@ -351,10 +372,8 @@ impl Workload for AgenticReplayWorkload {
         // `setup_phase` prefix-reseed + residual-offset dispatch). An empty carrier
         // leaves the profiling path EXACTLY as the non-accelerated run.
         if cfg.phase == AgenticPhase::Profiling
-            && let Ok(guard) = cfg.warmup_handoff.lock()
-            && let Some(handoff) = guard.clone()
+            && let Some(handoff) = profiling_warmup_handoff(&cfg.warmup_handoff)
         {
-            drop(guard);
             return self.execute_profiling_resume(runtime, handoff).await;
         }
         self.execute_standard(runtime).await
