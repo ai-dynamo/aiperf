@@ -239,6 +239,8 @@ fn native_eval_refuses_a_local_separate_verifier_before_running_the_agent() {
         "eval".to_owned(),
         "--task".to_owned(),
         package_path.to_string_lossy().into_owned(),
+        "--sandbox".to_owned(),
+        "local".to_owned(),
         "--image".to_owned(),
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
     ])
