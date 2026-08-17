@@ -250,11 +250,20 @@ fn parse_reward(sandbox: &MaterializedSandbox) -> Result<RewardDocument, EvalExe
 }
 
 fn read_optional_file_bounded(path: &Path) -> Result<Option<Vec<u8>>, EvalExecutionError> {
-    match fs::File::open(path) {
-        Ok(file) => read_open_file_bounded(file).map(Some),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(EvalExecutionError::ArtifactCollection(error.to_string())),
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(EvalExecutionError::ArtifactCollection(error.to_string())),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(EvalExecutionError::ArtifactCollection(format!(
+            "verifier reward is not a regular file: {}",
+            path.display()
+        )));
     }
+    let file = fs::File::open(path)
+        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+    read_open_file_bounded(file).map(Some)
 }
 
 fn read_file_bounded(path: &Path) -> Result<Vec<u8>, EvalExecutionError> {
