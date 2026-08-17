@@ -149,6 +149,7 @@ impl DockerComposeRuntime for ComposePreflightRuntime {
     fn compose_copy_archive_bounded(
         &self,
         _: &DockerComposeArchiveRequest,
+        _: aiperf_runtime::eval::EvalExecutionPhase,
         _: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
         Err(EvalExecutionError::ArtifactCollection(
@@ -486,12 +487,17 @@ impl DockerComposeRuntime for ComposeSessionRecordingRuntime {
         &self,
         request: &DockerComposeArchiveRequest,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
-        self.compose_copy_archive_bounded(request, Duration::from_secs(1))
+        self.compose_copy_archive_bounded(
+            request,
+            aiperf_runtime::eval::EvalExecutionPhase::CollectionHook,
+            Duration::from_secs(1),
+        )
     }
 
     fn compose_copy_archive_bounded(
         &self,
         request: &DockerComposeArchiveRequest,
+        _: aiperf_runtime::eval::EvalExecutionPhase,
         _: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
         self.events

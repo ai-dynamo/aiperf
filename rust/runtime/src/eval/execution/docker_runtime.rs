@@ -1012,6 +1012,7 @@ pub trait DockerComposeRuntime: DockerRuntime {
     fn compose_copy_archive_bounded(
         &self,
         request: &DockerComposeArchiveRequest,
+        phase: EvalExecutionPhase,
         deadline: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError>;
 
@@ -1150,6 +1151,7 @@ mod compose_lease_tests {
         fn compose_copy_archive_bounded(
             &self,
             request: &DockerComposeArchiveRequest,
+            _: EvalExecutionPhase,
             deadline: Duration,
         ) -> Result<Box<dyn Read>, EvalExecutionError> {
             assert!(!deadline.is_zero());
@@ -1359,6 +1361,7 @@ mod compose_lease_tests {
             service: &main,
             source: "/evidence/result.json",
             deadline: Duration::from_secs(2),
+            phase: EvalExecutionPhase::CollectionHook,
         });
         assert!(archive.is_ok());
         lease.stop_main(Duration::from_secs(3)).unwrap();
@@ -1457,6 +1460,7 @@ mod compose_lease_tests {
         fn compose_copy_archive_bounded(
             &self,
             _: &DockerComposeArchiveRequest,
+            _: EvalExecutionPhase,
             _: Duration,
         ) -> Result<Box<dyn Read>, EvalExecutionError> {
             Ok(Box::new(std::io::Cursor::new(Vec::new())))

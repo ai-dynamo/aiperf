@@ -1916,7 +1916,12 @@ impl DockerRuntime for DockerCliRuntime {
         source: &str,
         deadline: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
-        self.copy_archive_to_file_bounded(container, source, deadline)
+        self.copy_archive_to_file_bounded(
+            container,
+            source,
+            EvalExecutionPhase::CollectionHook,
+            deadline,
+        )
     }
 
     fn remove(&self, request: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
@@ -2040,6 +2045,7 @@ impl DockerComposeRuntime for DockerCliRuntime {
     fn compose_copy_archive_bounded(
         &self,
         request: &DockerComposeArchiveRequest,
+        phase: EvalExecutionPhase,
         deadline: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
         let deadline_ns = provider_deadline_ns(&self.clock, deadline);
@@ -2056,6 +2062,7 @@ impl DockerComposeRuntime for DockerCliRuntime {
         self.copy_archive_to_file_bounded(
             &container,
             request.source(),
+            phase,
             remaining_provider_deadline(&self.clock, deadline_ns, request.project().as_str())?,
         )
     }
@@ -2435,6 +2442,7 @@ impl DockerCliRuntime {
         &self,
         container: &str,
         source: &str,
+        phase: EvalExecutionPhase,
         deadline: Duration,
     ) -> Result<Box<dyn Read>, EvalExecutionError> {
         let mut archive = NamedTempFile::new().map_err(|error| {
@@ -2461,15 +2469,10 @@ impl DockerCliRuntime {
             self.clock.clone(),
             &mut process,
             container,
-            EvalExecutionPhase::CollectionHook,
+            phase,
             deadline,
             &mut no_remove,
-        )
-        .map_err(|error| {
-            EvalExecutionError::ArtifactCollection(format!(
-                "bounded archive {container}:{source}: {error}"
-            ))
-        })?;
+        )?;
         archive
             .as_file_mut()
             .seek(SeekFrom::Start(0))
@@ -2992,8 +2995,7 @@ fn read_reward_with_runtime(
         "reward.txt",
         deadline.map(Deadline::remaining).transpose()?,
     )?;
-    RewardDocument::parse(json.as_deref(), text.as_deref())
-        .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
+    parse_reward(json.as_deref(), text.as_deref(), deadline)
 }
 
 fn read_reward_from_lease(
@@ -3001,32 +3003,41 @@ fn read_reward_from_lease(
     service: &super::ComposeServiceName,
     deadline: Option<&Deadline>,
 ) -> Result<RewardDocument, EvalExecutionError> {
-    let json = read_optional_service_file(
-        lease,
-        service,
-        "/logs/verifier/reward.json",
-        deadline.map(Deadline::remaining).transpose()?,
-    )?;
-    let text = read_optional_service_file(
-        lease,
-        service,
-        "/logs/verifier/reward.txt",
-        deadline.map(Deadline::remaining).transpose()?,
-    )?;
-    RewardDocument::parse(json.as_deref(), text.as_deref())
-        .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
+    let json = read_optional_service_file(lease, service, "/logs/verifier/reward.json", deadline)?;
+    let text = read_optional_service_file(lease, service, "/logs/verifier/reward.txt", deadline)?;
+    parse_reward(json.as_deref(), text.as_deref(), deadline)
+}
+
+const MAX_REWARD_BYTES: u64 = 1024 * 1024;
+
+fn parse_reward(
+    json: Option<&[u8]>,
+    text: Option<&[u8]>,
+    deadline: Option<&Deadline>,
+) -> Result<RewardDocument, EvalExecutionError> {
+    if let Some(deadline) = deadline {
+        deadline.remaining()?;
+    }
+    let reward = RewardDocument::parse(json, text)
+        .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))?;
+    if let Some(deadline) = deadline {
+        deadline.remaining()?;
+    }
+    Ok(reward)
 }
 
 fn read_optional_service_file(
     lease: &mut dyn TaskEnvironmentLease,
     service: &super::ComposeServiceName,
     source: &str,
-    deadline: Option<Duration>,
+    deadline: Option<&Deadline>,
 ) -> Result<Option<Vec<u8>>, EvalExecutionError> {
+    let remaining = deadline.map(Deadline::remaining).transpose()?;
     let archive = match lease.archive(ServiceArchiveRequest {
         service,
         source,
-        deadline: deadline.unwrap_or(Duration::from_secs(10)),
+        deadline: remaining.unwrap_or(Duration::from_secs(10)),
+        phase: EvalExecutionPhase::Verifier,
     }) {
         Ok(archive) => archive,
         Err(EvalExecutionError::ProcessFailure(_))
@@ -3052,10 +3063,13 @@ fn read_optional_service_file(
         if path.file_name().and_then(|name| name.to_str()) == Some(expected)
             && entry.header().entry_type().is_file()
         {
+            if entry.size() > MAX_REWARD_BYTES {
+                return Err(EvalExecutionError::ArtifactCollection(
+                    "verifier reward exceeds the maximum size".to_owned(),
+                ));
+            }
             let mut bytes = Vec::new();
-            entry
-                .read_to_end(&mut bytes)
-                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+            read_reward_bytes(&mut entry, &mut bytes, deadline)?;
             return Ok(Some(bytes));
         }
     }
@@ -3085,10 +3099,48 @@ fn copy_optional_with_runtime(
         Err(EvalExecutionError::ProcessFailure(_)) => return Ok(None),
         Err(error) => return Err(error),
     }
+    let metadata = match fs::metadata(&destination_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(EvalExecutionError::Materialization(error.to_string())),
+    };
+    if metadata.len() > MAX_REWARD_BYTES {
+        return Err(EvalExecutionError::ArtifactCollection(
+            "verifier reward exceeds the maximum size".to_owned(),
+        ));
+    }
     match fs::read(destination_path) {
-        Ok(bytes) => Ok(Some(bytes)),
+        Ok(bytes) => {
+            // Bounded reward files make parsing finite; still charge host I/O to this phase.
+            Ok(Some(bytes))
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(EvalExecutionError::Materialization(error.to_string())),
+    }
+}
+
+fn read_reward_bytes(
+    source: &mut dyn Read,
+    destination: &mut Vec<u8>,
+    deadline: Option<&Deadline>,
+) -> Result<(), EvalExecutionError> {
+    let mut buffer = [0_u8; 8192];
+    loop {
+        if let Some(deadline) = deadline {
+            deadline.remaining()?;
+        }
+        let read = source
+            .read(&mut buffer)
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        if read == 0 {
+            return Ok(());
+        }
+        destination.extend_from_slice(&buffer[..read]);
+        if destination.len() as u64 > MAX_REWARD_BYTES {
+            return Err(EvalExecutionError::ArtifactCollection(
+                "verifier reward exceeds the maximum size".to_owned(),
+            ));
+        }
     }
 }
 

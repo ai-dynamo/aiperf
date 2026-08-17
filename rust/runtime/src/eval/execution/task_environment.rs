@@ -43,6 +43,7 @@ pub(crate) struct ServiceArchiveRequest<'a> {
     pub(crate) service: &'a ComposeServiceName,
     pub(crate) source: &'a str,
     pub(crate) deadline: Duration,
+    pub(crate) phase: EvalExecutionPhase,
 }
 
 /// A live, task-owned environment whose services can be used by benchmark phases.

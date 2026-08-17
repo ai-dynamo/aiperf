@@ -275,7 +275,27 @@ impl<'a> ComposeProjectLease<'a> {
             remaining_after_down
         };
         let result = match (down, forced, remaining) {
+            (Err(down), Err(forced), Err(discovery)) => {
+                Err(EvalExecutionError::ContainerTeardown {
+                    container: self.project.as_str().to_owned(),
+                    reason: format!(
+                        "Compose down: {down}; forced removal: {forced}; discovery: {discovery}"
+                    ),
+                })
+            }
+            (Err(down), Err(forced), _) => Err(EvalExecutionError::ContainerTeardown {
+                container: self.project.as_str().to_owned(),
+                reason: format!("Compose down: {down}; forced removal: {forced}"),
+            }),
+            (Err(down), _, Err(discovery)) => Err(EvalExecutionError::ContainerTeardown {
+                container: self.project.as_str().to_owned(),
+                reason: format!("Compose down: {down}; discovery: {discovery}"),
+            }),
             (Err(error), _, _) => Err(error),
+            (Ok(_), Err(forced), Err(discovery)) => Err(EvalExecutionError::ContainerTeardown {
+                container: self.project.as_str().to_owned(),
+                reason: format!("forced removal: {forced}; discovery: {discovery}"),
+            }),
             (Ok(_), Err(error), _) => Err(error),
             (Ok(_), Ok(_), Ok(resources)) if resources == OwnedComposeResources::default() => {
                 Ok(())
@@ -340,6 +360,7 @@ impl TaskEnvironmentLease for ComposeProjectLease<'_> {
                 request.service.clone(),
                 request.source,
             ),
+            request.phase,
             request.deadline,
         )
     }

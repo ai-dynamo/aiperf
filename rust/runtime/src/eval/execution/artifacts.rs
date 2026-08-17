@@ -214,12 +214,18 @@ pub(crate) fn collect_service_evidence(
         collected.sort_by(|left, right| left.0.cmp(&right.0));
         Ok(collected)
     })();
-    if outcome.is_err() {
-        let _ = lease.teardown_after_terminal_failure(
+    match outcome {
+        Ok(collected) => Ok(collected),
+        Err(error) => match lease.teardown_after_terminal_failure(
             super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
-        );
+        ) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(EvalExecutionError::ContainerTeardown {
+                container: lease.main_service().as_str().to_owned(),
+                reason: format!("{error}; cleanup: {cleanup_error}"),
+            }),
+        },
     }
-    outcome
 }
 
 fn collect_one_service_artifact(
@@ -235,8 +241,16 @@ fn collect_one_service_artifact(
         service: artifact.service_name(),
         source: artifact.source(),
         deadline: deadline.remaining()?,
+        phase: EvalExecutionPhase::CollectionHook,
     })?;
-    collect_archive(artifact, archive, destination, destinations, collected)?;
+    collect_archive_bounded(
+        artifact,
+        archive,
+        destination,
+        destinations,
+        collected,
+        &deadline,
+    )?;
     deadline.remaining()?;
     Ok(())
 }
@@ -1049,6 +1063,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn terminal_collection_cleanup_error_is_reported_with_the_primary_error() {
+        let mut lease = RecordingLease::with_archives([]);
+        lease.timeout_stop = true;
+        lease.fail_terminal_teardown = true;
+        let hooks = [hook("api", ["api-hook"])];
+        let destination = tempdir().unwrap();
+
+        let error = collect_service_evidence(
+            &mut lease,
+            &hooks,
+            &[],
+            destination.path(),
+            Deadline::from_timeout(RealClock::new(), Duration::from_secs(5)),
+        )
+        .expect_err("the cleanup error must remain visible with the stop failure");
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::ContainerTeardown { reason, .. }
+                if reason.contains("timed out") && reason.contains("terminal teardown failed")
+        ));
+    }
+
     fn hook<const N: usize>(service: &str, command: [&str; N]) -> VerifierCollectHook {
         VerifierCollectHook {
             service: ComposeServiceName::parse(service).unwrap(),
@@ -1082,6 +1120,7 @@ mod tests {
         advance_after_hook_to: Option<(Rc<SimClock>, i64)>,
         stop_deadlines: Vec<Duration>,
         timeout_stop: bool,
+        fail_terminal_teardown: bool,
         bytes: BTreeMap<String, Vec<u8>>,
     }
 
@@ -1098,6 +1137,7 @@ mod tests {
                 advance_after_hook_to: None,
                 stop_deadlines: Vec::new(),
                 timeout_stop: false,
+                fail_terminal_teardown: false,
                 bytes: entries
                     .into_iter()
                     .map(|(service, archive)| (service.to_owned(), archive))
@@ -1196,7 +1236,13 @@ mod tests {
         ) -> Result<(), EvalExecutionError> {
             self.events
                 .push(format!("terminal-teardown:{}", deadline.as_nanos()));
-            Ok(())
+            if self.fail_terminal_teardown {
+                Err(EvalExecutionError::ProcessFailure(
+                    "terminal teardown failed".to_owned(),
+                ))
+            } else {
+                Ok(())
+            }
         }
     }
 }
