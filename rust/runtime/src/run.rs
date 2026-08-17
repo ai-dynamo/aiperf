@@ -53,7 +53,9 @@ use crate::scheduled::{
     Workload, run_scheduled_workload_with_ancillary,
 };
 use crate::scheduler::LocalTaskScheduler;
-use crate::transport::http::{HttpRequestDispatcher, TransportSink};
+#[cfg(feature = "dynosim")]
+use crate::transport::http::HttpRequestDispatcher;
+use crate::transport::http::TransportSink;
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use crate::workload::SkeletonWorkload;
 
@@ -230,6 +232,7 @@ pub(crate) fn validate_user_centric_ramps(
 /// Dynamo engine. The caller supplies one clock, one dispatcher, and diagnostic
 /// endpoint names; all scheduling, admission, adaptive control, observations,
 /// and report construction below are identical across backends.
+#[cfg(feature = "dynosim")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_paced_with_backend(
     clock: Rc<dyn Clock>,
@@ -691,6 +694,7 @@ impl IssuanceGate for crate::adaptive_core::AdaptiveScale {
 
 /// Backend-neutral adaptive user-centric runtime. The injected clock and
 /// dispatcher are the only online/offline differences.
+#[cfg(feature = "dynosim")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_user_centric_adaptive_with_backend(
     clock: Rc<dyn Clock>,

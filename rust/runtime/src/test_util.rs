@@ -33,30 +33,6 @@ pub async fn spawn_mock() -> String {
 
 use crate::multiturn::ConversationSource;
 
-/// A prepared-endpoint table holding the builtin streaming `chat` endpoint at
-/// key 0, matching the endpoint the synthetic/native sources bind. Attach it to
-/// a dispatching [`crate::transport::http::TransportSink`] via `with_prepared_endpoints` so
-/// prepared turns resolve their dense endpoint key.
-pub fn chat_dispatch_table() -> std::rc::Rc<crate::endpoints::PreparedEndpointTable> {
-    use crate::endpoints::{
-        EndpointId, EndpointRegistry, PreparedEndpointTable, RawEndpointConfig,
-    };
-    let endpoint = EndpointRegistry::builtin()
-        .unwrap()
-        .prepare(
-            &EndpointId::new("chat").unwrap(),
-            RawEndpointConfig {
-                streaming: true,
-                use_server_token_count: true,
-                ..RawEndpointConfig::default()
-            },
-        )
-        .unwrap();
-    let mut table = PreparedEndpointTable::new();
-    table.push(endpoint).unwrap();
-    std::rc::Rc::new(table)
-}
-
 /// Build a conversation source over the live native dataset + prepared chat
 /// endpoint path from inline `multi_turn` conversation JSON.
 async fn build_prepared_source(

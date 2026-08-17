@@ -880,7 +880,6 @@ fn tag_content_urls(body: Bytes, base: &str, rid: &str, wall_ns: u64) -> (Bytes,
 
 #[cfg(test)]
 mod tests {
-    use crate::dispatch::sink::ObservedUsage;
     use crate::endpoints::chat_request_body;
     use crate::transport::core::Response;
     use crate::transport::http::models::RequestConfig;
@@ -938,35 +937,6 @@ mod tests {
         );
         let (out, _) = tag_content_urls(original.clone(), base, "req", 1);
         assert_eq!(out, original);
-    }
-
-    #[derive(Default)]
-    struct RecordingObserver {
-        tokens: std::sync::Mutex<Vec<f64>>,
-        usage: std::sync::Mutex<Vec<ObservedUsage>>,
-    }
-
-    impl RequestObserver for RecordingObserver {
-        fn on_arrival(
-            &self,
-            _uuid: Uuid,
-            _arrival_ms: f64,
-            _input_length: usize,
-            _requested_output_length: usize,
-        ) {
-        }
-
-        fn on_admit(&self, _uuid: Uuid, _admit_ms: f64, _reused_input_tokens: usize) {}
-
-        fn on_token(&self, _uuid: Uuid, at_ms: f64) {
-            self.tokens.lock().unwrap().push(at_ms);
-        }
-
-        fn on_usage(&self, _uuid: Uuid, usage: ObservedUsage) {
-            self.usage.lock().unwrap().push(usage);
-        }
-
-        fn on_terminal(&self, _uuid: Uuid, _status: ReplayTerminalStatus) {}
     }
 
     #[test]
