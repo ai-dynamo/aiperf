@@ -246,7 +246,7 @@ git commit -m "feat(eval): schedule scored episode matrices"
 
 ---
 
-### Task 3: Frozen evaluator, existing verifier lifecycle, and first real scored episode
+### Task 3: Frozen evaluator and existing verifier lifecycle
 
 **Files:**
 - Create: `rust/runtime/src/eval/native_graph/evaluator.rs`
@@ -259,18 +259,16 @@ git commit -m "feat(eval): schedule scored episode matrices"
 
 **Interfaces:**
 - Consumes Task 2 `EpisodeRunner`, `EpisodeResult`, matrix scheduler, and existing `RewardDocument`, `ScoreVersion`, verifier staging, evidence, and regrade types.
-- Produces `FrozenAttemptBundle`, `EpisodeEvaluator`, `EpisodeEvaluatorFactory`, and `HarborEpisodeRunner`.
+- Produces `FrozenAttemptBundle`, `EpisodeEvaluator`, and `EpisodeEvaluatorFactory`.
 
 - [ ] **Step 1: Write RED tests for frozen handoff, zero-score inclusion, and regrade append-only behavior**
 
 ```rust
-#[tokio::test(flavor = "current_thread")]
-async fn existing_harbor_attempt_is_scored_through_the_matrix_runner() {
-    let results = one_trial_scheduler()
-        .run(one_trial(), harbor_episode_runner(reward_json(0.75)))
-        .await
-        .unwrap();
-    assert_eq!(results[0].verified_reward(), Some(0.75));
+#[test]
+fn frozen_existing_harbor_attempt_preserves_verifier_input_evidence() {
+    let bundle = frozen_harbor_attempt(reward_json(0.75));
+    assert_eq!(bundle.verifier_input_evidence(), declared_artifact_digests());
+    assert_eq!(bundle.lifecycle_evidence_digest(), expected_lifecycle_digest());
 }
 
 #[test]
@@ -302,11 +300,11 @@ pub trait EpisodeEvaluatorFactory: Send + Sync {
 }
 ```
 
-The built-in evaluator delegates verifier provisioning, declared-artifact staging, `RewardDocument`, score versioning, and regrade to current Harbor code. It adds no second scoring authority.
+The built-in evaluator delegates verifier provisioning, declared-artifact staging, `RewardDocument`, score versioning, and regrade to current Harbor code. It adds no second scoring authority. `VerifierResult.evidence` retains its current meaning: the declared artifact digests supplied to the verifier. The bundle separately freezes ordered lifecycle evidence and its identity; score lineage may reference that identity without relabeling post-verifier facts as verifier inputs.
 
-- [ ] **Step 4: Run the first real scored episode through Task 2's scheduler**
+- [ ] **Step 4: Prove frozen existing Harbor authority without claiming a live NativeGraph run**
 
-Wrap the existing single-step Harbor execution as `HarborEpisodeRunner`; its one-element suite proves that real environment, verifier, and score flow through the same matrix shape later NativeGraph uses.
+Use an existing completed Harbor verifier/regrade fixture to prove frozen evidence, zero-score inclusion, and append-only score versions. Do not invoke the local or Docker process executor for a schema-1.1 package here: current local execution intentionally rejects that profile before a native graph driver/model runtime exists. The first actual schema-1.1 NativeGraph episode is Task 7, where its Rust-owned driver and model runtime execute through Task 2's scheduler.
 
 - [ ] **Step 5: Verify and review**
 
