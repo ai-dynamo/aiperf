@@ -28,7 +28,7 @@
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
-		check-agent-files-sync test-e2e-rust
+		check-agent-files-sync test-e2e-rust test-e2e-rust-harbor-docker
 
 
 # Include user-defined environment variables
@@ -332,6 +332,17 @@ test-e2e-rust: native-cli #? run the Rust product e2e suite against a freshly bu
 	@# `aiperf` process, so the default (one thread per core) oversubscribes CI runners.
 	$(activate_venv) && AIPERF_E2E_BIN=$(abspath $(RUST_TARGET)/release/aiperf) \
 		$(CARGO_TEST) -p aiperf-e2e-tests -- --test-threads=$(E2E_TEST_THREADS)
+
+test-e2e-rust-harbor-docker: native-cli #? run Docker-backed Harbor evaluation acceptance tests.
+	@printf "$(bold)$(blue)Running Docker-backed Harbor e2e suite...$(reset)\n"
+	@# These tests are deliberately ignored by the ordinary e2e target because they
+	@# require a Docker daemon and pull alpine. CI runs this explicit target so
+	@# Harbor's daemon-backed lifecycle coverage cannot silently remain local-only.
+	$(activate_venv) && AIPERF_E2E_BIN=$(abspath $(RUST_TARGET)/release/aiperf) \
+		$(CARGO_TEST) -p aiperf-e2e-tests \
+			--test test_harbor_benchmark_execution \
+			--test test_harbor_lifecycle_e2e \
+			-- --ignored --test-threads=1
 
 test-dry-run-rust: native-cli #? run the socket-free Rust dry-run suite against a freshly built native `aiperf`.
 	@printf "$(bold)$(blue)Running Rust dry-run suite (aiperf-dry-run-tests)...$(reset)\n"

@@ -74,6 +74,38 @@ fn request_recorder_drop_does_not_wait_for_a_silent_client() {
     client_thread.join().expect("join silent client thread");
 }
 
+#[cfg(unix)]
+#[test]
+fn eval_child_drop_stops_and_reaps_an_unfinished_evaluation() {
+    let temporary = tempfile::tempdir().expect("create child cleanup temporary directory");
+    let completed = temporary.path().join("completed");
+    let child = Command::new("sh")
+        .args(["-c", &format!("sleep 0.2; touch {}", completed.display())])
+        .spawn()
+        .expect("start controlled evaluation child");
+    let pid = child.id();
+    let child = EvalChild::from_child(child);
+
+    drop(child);
+    assert!(
+        !completed.exists(),
+        "dropping an unfinished evaluation child must stop it before it completes"
+    );
+    assert_eq!(
+        nix::sys::wait::waitpid(
+            nix::unistd::Pid::from_raw(pid as i32),
+            Some(nix::sys::wait::WaitPidFlag::WNOHANG),
+        ),
+        Err(nix::errno::Errno::ECHILD),
+        "dropping an unfinished evaluation child must reap it"
+    );
+    thread::sleep(Duration::from_millis(300));
+    assert!(
+        !completed.exists(),
+        "dropping an unfinished evaluation child must stop it before it completes"
+    );
+}
+
 #[test]
 #[ignore = "requires a Docker daemon and pulls alpine:3.20"]
 fn imported_compose_multi_step_snapshot_survives_origin_mutation_and_removal() {
@@ -936,21 +968,63 @@ fn run_eval(task_root: &std::path::Path, agent_command: &str) -> Output {
         .expect("start native aiperf eval")
 }
 
-fn start_eval(task_root: &std::path::Path, agent_command: &str) -> std::process::Child {
-    Command::new(exec_binary())
-        .args([
-            "eval",
-            "--task",
-            task_root.to_string_lossy().as_ref(),
-            "--image",
-            IMAGE_DIGEST,
-            "--agent-command",
-            agent_command,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start native aiperf eval")
+struct EvalChild {
+    child: Option<std::process::Child>,
+}
+
+impl EvalChild {
+    fn from_child(child: std::process::Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child
+            .as_mut()
+            .map_or(Ok(None), std::process::Child::try_wait)
+    }
+
+    fn wait_with_output(&mut self) -> std::io::Result<Output> {
+        self.child
+            .take()
+            .ok_or_else(|| std::io::Error::other("evaluation child was already reaped"))?
+            .wait_with_output()
+    }
+
+    fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.child.as_mut()?.stdout.take()
+    }
+
+    fn take_stderr(&mut self) -> Option<std::process::ChildStderr> {
+        self.child.as_mut()?.stderr.take()
+    }
+}
+
+impl Drop for EvalChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn start_eval(task_root: &std::path::Path, agent_command: &str) -> EvalChild {
+    EvalChild::from_child(
+        Command::new(exec_binary())
+            .args([
+                "eval",
+                "--task",
+                task_root.to_string_lossy().as_ref(),
+                "--image",
+                IMAGE_DIGEST,
+                "--agent-command",
+                agent_command,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start native aiperf eval"),
+    )
 }
 
 fn compose_standard_task(
@@ -1283,7 +1357,7 @@ fn compose_agent_and_separate_verifier_failures_cleanup_the_project() {
         "exit 37\n",
     );
     let before_runs = compose_run_labels();
-    let child = start_eval(
+    let mut child = start_eval(
         &verifier_failure,
         &format!("wget -qO /dev/null {}/agent", recorder.url()),
     );
@@ -1322,7 +1396,7 @@ fn compose_terminal_evidence_tears_down_the_project_before_the_separate_verifier
         ),
     );
     let before_runs = compose_run_labels();
-    let child = start_eval(
+    let mut child = start_eval(
         &task_root,
         &format!("wget -qO /dev/null {}/agent && sleep 2", recorder.url()),
     );
@@ -1584,7 +1658,7 @@ struct RequestRecorder {
 
 fn next_request_from_child(
     recorder: &RequestRecorder,
-    child: &mut std::process::Child,
+    child: &mut EvalChild,
     context: &str,
     timeout: Duration,
 ) -> String {
@@ -1599,14 +1673,12 @@ fn next_request_from_child(
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
             child
-                .stdout
-                .take()
+                .take_stdout()
                 .expect("native aiperf eval stdout")
                 .read_to_end(&mut stdout)
                 .expect("read native aiperf eval stdout");
             child
-                .stderr
-                .take()
+                .take_stderr()
                 .expect("native aiperf eval stderr")
                 .read_to_end(&mut stderr)
                 .expect("read native aiperf eval stderr");

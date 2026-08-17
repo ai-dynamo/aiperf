@@ -93,6 +93,9 @@ jobs:
       - name: Run Rust e2e suite
         run: make test-e2e-rust
 
+      - name: Run Docker-backed Harbor evaluation acceptance
+        run: make test-e2e-rust-harbor-docker
+
       - name: Upload failing run artifacts
         if: failure()
         uses: actions/upload-artifact@v5
