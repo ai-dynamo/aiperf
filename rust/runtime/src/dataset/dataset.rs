@@ -1172,7 +1172,7 @@ pub(crate) fn report_build_progress(phase: &str, done: usize, total: usize) {
         return;
     }
     let step = (total / 20).max(1);
-    if done == total || done % step == 0 {
+    if done == total || done.is_multiple_of(step) {
         tracing::info!("dataset build: {done}/{total} conversations ({phase})");
     }
 }

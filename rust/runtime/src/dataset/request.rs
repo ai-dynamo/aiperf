@@ -3631,25 +3631,24 @@ mod tests {
     fn ineligible_turns_and_endpoints_are_never_cached() {
         // Token-native dispatch has no reusable message-array body plan to cache
         // (`precomputable_body() == false`).
-        for endpoint_id in ["vllm_generate"] {
-            let mut pool = SegmentPool::new();
-            let turn = text_turn(&mut pool, b"x", true, false);
-            let mut dataset = single_conversation_dataset(
-                ConversationContextMode::MessageArrayWithResponses,
-                vec![turn],
-                pool,
-            );
-            let endpoint = prepare_endpoint(endpoint_id);
+        let endpoint_id = "vllm_generate";
+        let mut pool = SegmentPool::new();
+        let turn = text_turn(&mut pool, b"x", true, false);
+        let mut dataset = single_conversation_dataset(
+            ConversationContextMode::MessageArrayWithResponses,
+            vec![turn],
+            pool,
+        );
+        let endpoint = prepare_endpoint(endpoint_id);
+        dataset
+            .precompute_body_plans(endpoint.as_ref(), "primary-model")
+            .unwrap();
+        assert!(
             dataset
-                .precompute_body_plans(endpoint.as_ref(), "primary-model")
-                .unwrap();
-            assert!(
-                dataset
-                    .cached_body_plan(&SessionId::from("session"), 0)
-                    .is_none(),
-                "endpoint {endpoint_id} must not be cached"
-            );
-        }
+                .cached_body_plan(&SessionId::from("session"), 0)
+                .is_none(),
+            "endpoint {endpoint_id} must not be cached"
+        );
 
         let mut pool = SegmentPool::new();
         let raw = pool
