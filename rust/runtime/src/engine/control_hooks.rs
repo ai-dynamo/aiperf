@@ -31,6 +31,8 @@ const DEFAULT_SERVER_PROFILER_START_PATH: &str = "/start_profile";
 const DEFAULT_SERVER_PROFILER_STOP_PATH: &str = "/stop_profile";
 const CONTROL_RESPONSE_MAX_BYTES: usize = 64 * 1024;
 
+type PreparedControlPlaneHandles = (Vec<Rc<dyn ControlPlaneHttp>>, Vec<String>);
+
 /// Perform restart or signal cleanup for exactly one persisted replay run.
 pub async fn cleanup_recorded_agent_docker_on_shutdown(
     runtime: &dyn ContainerRuntime,
@@ -267,7 +269,7 @@ fn prepare_handles(
     control_plane: &dyn ControlPlaneHttpProvider,
     endpoint_urls: &[String],
     endpoint_client: &ClientConfig,
-) -> Result<(Vec<Rc<dyn ControlPlaneHttp>>, Vec<String>)> {
+) -> Result<PreparedControlPlaneHandles> {
     let mut handles = Vec::with_capacity(endpoint_urls.len());
     let mut target_urls = Vec::with_capacity(endpoint_urls.len());
     for endpoint_url in endpoint_urls {

@@ -29,6 +29,9 @@ use crate::graph::runtime::drive_sim;
 
 const NS_PER_MS: i64 = 1_000_000;
 
+type ReplayRecords = Vec<(i64, Value)>;
+type LegacyReplayRecords = Vec<(String, ReplayRecords)>;
+
 /// Run `dispatches` (each `(dispatch_ns, record)`) under a fresh [`SimClock`]:
 /// each record's future sleeps until `dispatch_ns` then fires. Returns the
 /// records in the order they actually fired, each paired with the virtual-clock
@@ -134,7 +137,7 @@ pub fn execute_legacy_replay<S>(
     t_star_ms: f64,
     burst: bool,
     cap_ms: Option<f64>,
-) -> Result<Vec<(String, Vec<(i64, Value)>)>, crate::agentx::synth::PrefixTooTruncated>
+) -> Result<LegacyReplayRecords, crate::agentx::synth::PrefixTooTruncated>
 where
     S: crate::agentx::synth::TokenSynth,
 {

@@ -32,6 +32,11 @@ use crate::dataset::model::{
 use crate::dataset::segment::{Role, SegmentPool};
 use crate::dataset::tokenizer::TextTokenizer;
 
+type PreparedShareGptPair = (String, Vec<u32>, u32);
+type PreparedShareGptRows = Vec<Option<Vec<PreparedShareGptPair>>>;
+type PreparedHfConversationPair = (String, Option<u32>);
+type PreparedHfConversationRows = Vec<Option<Vec<PreparedHfConversationPair>>>;
+
 /// Accuracy benchmark problem loader.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AccuracyDatasetLoader;
@@ -301,9 +306,9 @@ impl Composer for ShareGptComposer {
         // generator - precompute the whole per-row pair list (or `None` for a
         // row that gets skipped) in parallel, then do the sequential
         // segments/ids pass using the precomputed result.
-        let prepared_rows: Vec<Option<Vec<(String, Vec<u32>, u32)>>> = rows
+        let prepared_rows: PreparedShareGptRows = rows
             .par_iter()
-            .map(|row| -> Result<Option<Vec<(String, Vec<u32>, u32)>>> {
+            .map(|row| -> Result<Option<Vec<PreparedShareGptPair>>> {
                 let Some(messages) = row.value.get("conversations").and_then(Value::as_array)
                 else {
                     return Ok(None);
@@ -670,9 +675,9 @@ impl Composer for HfConversationComposer {
         // check below touches only the row's own JSON, not the shared segment
         // pool or the session-id generator - precompute it in parallel for
         // every row up front (`single_turn` rows are cheap and stay serial).
-        let multi_turn_prompts: Vec<Option<Vec<(String, Option<u32>)>>> = if multi_turn {
+        let multi_turn_prompts: PreparedHfConversationRows = if multi_turn {
             rows.par_iter()
-                .map(|row| -> Result<Option<Vec<(String, Option<u32>)>>> {
+                .map(|row| -> Result<Option<Vec<PreparedHfConversationPair>>> {
                     let Some(object) = row.value.as_object() else {
                         return Ok(None);
                     };

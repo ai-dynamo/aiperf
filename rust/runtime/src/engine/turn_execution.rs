@@ -47,6 +47,8 @@ const WORKER_RESPONSE_CAPACITY: usize = 256;
 /// drain loop is a separate task that is always able to run and empty it.
 const CREDIT_RETURN_CAPACITY: usize = 8192;
 
+type PendingDrain = (i64, std::sync::mpsc::SyncSender<Vec<(Uuid, RecordIngest)>>);
+
 /// Inputs for one execution backend.
 pub struct ExecutionBackendConfig {
     /// Number of requested execution workers.
@@ -1247,8 +1249,7 @@ async fn run_worker<S: WorkerSink + 'static>(
     // once at end of run.
     let mut observer: Option<Rc<NativeMetricsObserver>> = None;
     // Set by `Drain`; the loop finalizes and replies once its JoinSet empties.
-    let mut pending_drain: Option<(i64, std::sync::mpsc::SyncSender<Vec<(Uuid, RecordIngest)>>)> =
-        None;
+    let mut pending_drain: Option<PendingDrain> = None;
     while accepting || !jobs.is_empty() {
         tokio::select! {
             message = receiver.recv(), if accepting => {

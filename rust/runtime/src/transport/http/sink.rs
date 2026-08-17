@@ -51,6 +51,8 @@ mod endpoint_dispatch;
 
 use endpoint_dispatch::EndpointDispatchHooks;
 
+type UrlMemoEntry = (usize, Option<Box<str>>, String);
+
 /// Generated response returned by the response-capturing dispatch path.
 #[derive(Debug, Clone)]
 pub struct HttpDispatchResult {
@@ -205,7 +207,7 @@ pub struct TransportSink {
     /// whole lifetime, so one entry collapses the hot path to a single clone.
     /// Only successful renders are memoized, so template validation still fails
     /// closed on every request that would have failed before.
-    url_memo: RefCell<Option<(usize, Option<Box<str>>, String)>>,
+    url_memo: RefCell<Option<UrlMemoEntry>>,
     /// Whether a raw HTTP-exchange artifact will consume the retained responses.
     ///
     /// When false the responses are released on the worker that produced them,
