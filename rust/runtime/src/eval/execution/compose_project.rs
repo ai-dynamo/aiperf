@@ -249,7 +249,7 @@ impl<'a> ComposeProjectLease<'a> {
         }
         let needs_force = matches!(&remaining_after_down, Ok(resources) if resources != &OwnedComposeResources::default());
         let forced = if needs_force {
-            self.force_recorded_resources(&cleanup_deadline)
+            self.force_recorded_resources(cleanup_deadline)
         } else {
             Ok(())
         };

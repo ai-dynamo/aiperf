@@ -543,13 +543,13 @@ fn safe_child(root: &Path, relative: &Path) -> Result<PathBuf, EvalExecutionErro
     let mut current = root.to_path_buf();
     for component in relative.components() {
         current.push(component);
-        if let Ok(metadata) = fs::symlink_metadata(&current) {
-            if metadata.file_type().is_symlink() {
-                return Err(EvalExecutionError::ArtifactCollection(format!(
-                    "artifact path contains a symlink: {}",
-                    current.display()
-                )));
-            }
+        if let Ok(metadata) = fs::symlink_metadata(&current)
+            && metadata.file_type().is_symlink()
+        {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "artifact path contains a symlink: {}",
+                current.display()
+            )));
         }
     }
     Ok(current)

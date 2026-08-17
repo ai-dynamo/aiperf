@@ -772,7 +772,7 @@ impl DockerProcessSandbox {
         secrets: &dyn SecretProvider,
     ) -> Result<MultiStepExecutionResult, EvalExecutionError> {
         let mut prepared = self.prepare_compose_lease(runtime, recipe, package, plan, secrets)?;
-        let outcome = (|| {
+        let outcome = {
             let mut session = ComposeStepSession::new(
                 self.clock.clone(),
                 runtime,
@@ -784,7 +784,7 @@ impl DockerProcessSandbox {
                 secrets,
             );
             execute_benchmark_steps(plan, agent_command, package.source_digest(), &mut session)
-        })();
+        };
         let cleanup = if outcome.is_err() {
             prepared.lease.teardown_after_terminal_failure(
                 super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
@@ -1640,7 +1640,7 @@ fn remove_containers_with_deadline(
         EvalExecutionPhase::Verifier,
         super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
     );
-    let cleanup = containers
+    containers
         .into_iter()
         .rev()
         .fold(None, |first_error, container| {
@@ -1651,8 +1651,7 @@ fn remove_containers_with_deadline(
                 )
             });
             first_error.or(removal.err())
-        });
-    cleanup
+        })
 }
 
 static NEXT_DOCKER_RUN_ID: AtomicU64 = AtomicU64::new(1);
@@ -3799,9 +3798,7 @@ where
     let removal_deadline = remaining_provider_deadline(&clock, cleanup_deadline, container)
         .unwrap_or(Duration::from_nanos(1));
     let removal = remove(container, removal_deadline);
-    if let Err(error) = removal {
-        return Err(error);
-    }
+    removal?;
     let uncertainties = [
         kill.and_then(Result::err)
             .map(|reason| format!("could not kill docker exec client: {reason}")),
