@@ -29,57 +29,65 @@ pub fn preflight_docker(
     Ok(())
 }
 
+pub(crate) struct ComposePreflightRequest<'a> {
+    pub(crate) runtime: &'a dyn DockerRuntime,
+    pub(crate) plan: &'a BenchmarkExecutionPlan,
+    pub(crate) environment: &'a EnvironmentPlan,
+    pub(crate) environment_root: &'a Path,
+    pub(crate) project: ComposeProjectId,
+    pub(crate) project_directory: &'a Path,
+    pub(crate) image_tag: &'a str,
+    pub(crate) project_labels: &'a BTreeMap<String, String>,
+    pub(crate) workspace: &'a Path,
+    pub(crate) authored_overlay: &'a [u8],
+    pub(crate) deadline: Duration,
+}
+
 /// Runs the read-only provider configuration check for a Compose-backed plan.
 ///
 /// Callers must pass paths below an acquired package materialization. This
 /// function never builds, creates, or starts project resources.
 pub(crate) fn preflight_compose_configuration(
-    runtime: &dyn DockerRuntime,
-    plan: &BenchmarkExecutionPlan,
-    environment: &EnvironmentPlan,
-    environment_root: &Path,
-    project: ComposeProjectId,
-    project_directory: &Path,
-    image_tag: &str,
-    project_labels: &BTreeMap<String, String>,
-    workspace: &Path,
-    authored_overlay: &[u8],
-    deadline: Duration,
+    request: ComposePreflightRequest<'_>,
 ) -> Result<super::compose_policy::RenderedGeneratedMainCompose, EvalExecutionError> {
-    preflight_docker(runtime, plan)?;
-    let compose_plan = plan
+    preflight_docker(request.runtime, request.plan)?;
+    let compose_plan = request
+        .plan
         .compose()
         .ok_or(EvalExecutionError::InvalidRecipe("Compose project plan"))?;
     let authored = super::compose_policy::validate_authored_compose(
-        authored_overlay,
+        request.authored_overlay,
         compose_plan,
-        environment_root,
+        request.environment_root,
     )?;
     let rendered = super::compose_policy::render_generated_project_compose(
-        image_tag,
-        project_labels,
-        environment,
-        workspace,
+        request.image_tag,
+        request.project_labels,
+        request.environment,
+        request.workspace,
         &authored,
     )?;
-    let request = DockerComposeConfigRequest::new(
-        project,
-        project_directory,
+    let config_request = DockerComposeConfigRequest::new(
+        request.project,
+        request.project_directory,
         rendered.bytes().to_vec(),
-        project_directory.join(compose_plan.definition_path()),
+        request
+            .project_directory
+            .join(compose_plan.definition_path()),
     )
-    .with_deadline(deadline);
+    .with_deadline(request.deadline);
     let compose_runtime =
-        runtime
+        request
+            .runtime
             .compose_runtime()
             .ok_or(EvalExecutionError::UnsupportedEnforcement(
                 "Docker Compose runtime",
             ))?;
-    let canonical = compose_runtime.compose_config(&request)?;
+    let canonical = compose_runtime.compose_config(&config_request)?;
     super::compose_policy::validate_provider_compose_config(
         &canonical,
         compose_plan,
-        environment_root,
+        request.environment_root,
         &rendered,
         &authored,
     )?;

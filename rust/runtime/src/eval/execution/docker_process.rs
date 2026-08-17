@@ -839,19 +839,20 @@ impl DockerProcessSandbox {
         let labels = lease.project().ownership_labels();
         let overlay = fs::read(source_root.join(compose.definition_path()))
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-        let generated = preflight_compose_configuration(
-            runtime,
-            plan,
-            &environment,
-            &environment_root,
-            lease.project().clone(),
-            &source_root,
-            &image,
-            &labels,
-            workspace.path(),
-            &overlay,
-            compose.build_timeout().min(compose.startup_timeout()),
-        )?;
+        let generated =
+            preflight_compose_configuration(super::docker_runtime::ComposePreflightRequest {
+                runtime,
+                plan,
+                environment: &environment,
+                environment_root: &environment_root,
+                project: lease.project().clone(),
+                project_directory: &source_root,
+                image_tag: &image,
+                project_labels: &labels,
+                workspace: workspace.path(),
+                authored_overlay: &overlay,
+                deadline: compose.build_timeout().min(compose.startup_timeout()),
+            })?;
         fs::write(
             source_root.join("aiperf.generated.compose.yaml"),
             generated.into_bytes(),
