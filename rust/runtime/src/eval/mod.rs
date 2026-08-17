@@ -62,18 +62,23 @@ pub use import::{
 };
 pub use import_report::{ImportDisposition, ImportReport};
 pub use native_graph::{
-    AdapterId, AdapterRole, AdapterSpec, AuthoredNativeGraphSuite, EpisodeAggregate,
-    EpisodeAssignment, EpisodeAssignmentId, EpisodeComparability, EpisodeEvaluationError,
-    EpisodeEvaluator, EpisodeEvaluatorFactory, EpisodeExecution, EpisodeIntegrity, EpisodeResult,
-    EpisodeResultError, EpisodeRunner, EpisodeScoreState, GenerationDefaults,
-    HarborEpisodeEvaluator, HarborEpisodeEvaluatorFactory, HeaderSecretRef,
+    AdapterEnvelope, AdapterId, AdapterMessage, AdapterProtocol, AdapterProtocolConfig,
+    AdapterProtocolFactory, AdapterRole, AdapterSpec, ArtifactDownloadHandle, ArtifactError,
+    ArtifactQuota, ArtifactUploadHandle, AuthoredNativeGraphSuite, EpisodeAggregate,
+    EpisodeArtifactStore, EpisodeAssignment, EpisodeAssignmentId, EpisodeComparability,
+    EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, EpisodeExecution,
+    EpisodeIntegrity, EpisodeResult, EpisodeResultError, EpisodeRunner, EpisodeScoreState,
+    FrozenArtifact, FrozenArtifactManifest, GenerationDefaults, HarborEpisodeEvaluator,
+    HarborEpisodeEvaluatorFactory, HeaderSecretRef, HostEnvelope, HostMessage,
     LocalNativeGraphSuiteScheduler, LocalNativeGraphSuiteSchedulerFactory, MatrixError,
     ModelBindingId, ModelBindingSpec, ModelCapacityKey, ModelCapturePolicy, ModelSecretId,
     NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource,
     NativeGraphSuiteDefinition, NativeGraphSuiteManifest, NativeGraphSuiteScheduler,
-    ResolvedEpisodeTrial, ResolvedNativeGraphSuite, ResourceLeaseRequest, ResourceLimits,
-    SelectedModelBinding, SuiteError, SuiteRunId, SuiteSchedulerFactory, SuiteTrialSpec,
-    TokenizerBindingSpec, aggregate_episode_results, parse_native_graph_suite_toml,
+    PROTOCOL_VERSION, ProtocolCapability, ProtocolError, ProtocolLimits, ProtocolOperationState,
+    ProtocolSessionState, ResolvedEpisodeTrial, ResolvedNativeGraphSuite, ResourceLeaseRequest,
+    ResourceLimits, SelectedModelBinding, StrictAdapterProtocolFactory, SuiteError, SuiteRunId,
+    SuiteSchedulerFactory, SuiteTrialSpec, TokenizerBindingSpec, ValidatedAdapterMessage,
+    ValidatedHostMessage, aggregate_episode_results, parse_native_graph_suite_toml,
     run_resolved_suite,
 };
 pub use provider::{ProviderCapability, ProviderError, ProviderProfile};

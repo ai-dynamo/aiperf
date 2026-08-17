@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
 macro_rules! native_graph_id {
     ($name:ident, $description:literal) => {
         #[doc = $description]
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
         pub struct $name(String);
 
         impl $name {
@@ -93,7 +93,7 @@ impl NativeGraphProfile {
 }
 
 /// Declared responsibility of one supervised adapter.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdapterRole {
     /// Executes a Rust-authorized tool operation.

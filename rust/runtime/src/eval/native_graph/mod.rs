@@ -1,13 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Strict schema-1.1 NativeGraph package contracts.
+//! NativeGraph package, protocol, artifact, result, and suite contracts.
 
+mod artifacts;
 mod evaluator;
 mod matrix;
 mod package;
+mod protocol;
 mod result;
 mod suite;
+
+pub use artifacts::{
+    ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
+    EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest,
+};
 
 pub use evaluator::{
     EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, HarborEpisodeEvaluator,
@@ -35,4 +42,10 @@ pub use package::{
 };
 pub(crate) use package::{
     NativeGraphPackageDraft, NativeGraphSectionDto, resolve_native_graph_package,
+};
+pub use protocol::{
+    AdapterEnvelope, AdapterMessage, AdapterProtocol, AdapterProtocolConfig,
+    AdapterProtocolFactory, HostEnvelope, HostMessage, PROTOCOL_VERSION, ProtocolCapability,
+    ProtocolError, ProtocolLimits, ProtocolOperationState, ProtocolSessionState,
+    StrictAdapterProtocolFactory, ValidatedAdapterMessage, ValidatedHostMessage,
 };
