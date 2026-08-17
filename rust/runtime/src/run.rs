@@ -52,7 +52,6 @@ use crate::scheduled::{
     IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime, TurnDispatcher,
     Workload, run_scheduled_workload_with_ancillary,
 };
-#[cfg(feature = "dynosim")]
 use crate::scheduler::LocalTaskScheduler;
 #[cfg(feature = "dynosim")]
 use crate::transport::http::HttpRequestDispatcher;
