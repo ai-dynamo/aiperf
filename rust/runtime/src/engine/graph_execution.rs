@@ -1125,6 +1125,7 @@ struct PreparedNodeMetadata {
 ///   string-content message: `graph::recorded::trie` serializes `MessageWire {
 ///   role, content: &str }` and `graph::conditional::fold` serializes
 ///   `OpenAiChatMessage`, whose `content` is a `String`.
+///
 /// - `Text` renders `{"role", "content": <utf8>}` from a `Payload::Text`.
 ///
 /// A new graph adapter that mints a `Seg` from a lowered multimodal turn (the
@@ -1139,6 +1140,7 @@ struct PreparedNodeMetadata {
 ///
 /// - `RawMessages`: `graph::materialize::raw_message_wires` splits an authored
 ///   `dag_jsonl` array into per-object wires and validates only object-ness.
+///
 /// - `Splice`: resolves against channel state, which a trace's authored
 ///   `initial_state`/`replay_outputs` seeds verbatim
 ///   (`graph::channel_store::channel_value` builds `EncodedMessages` straight

@@ -517,7 +517,7 @@ impl<'de> Deserialize<'de> for DistributionSpec {
 
 /// Decode one concrete distribution variant from a buffered [`Value`], mapping
 /// the `serde_json` error into the caller's deserializer error type.
-fn from_value_variant<'de, T, E>(value: Value) -> Result<T, E>
+fn from_value_variant<T, E>(value: Value) -> Result<T, E>
 where
     T: serde::de::DeserializeOwned,
     E: serde::de::Error,

@@ -43,20 +43,22 @@ use crate::timing::{
 
 use crate::adaptive::{AdaptiveControlVariable, AdaptiveRunConfig, build_adaptive};
 use crate::ancillary::{AncillaryTimingConfig, parse_base_urls, url_selector};
-use crate::metrics::{
-    NativeMetricsObserver, NativeResponseMetadata, ObserverTee, RequestMetricMetadata,
-};
+use crate::metrics::{NativeMetricsObserver, ObserverTee};
+#[cfg(feature = "dynosim")]
+use crate::metrics::{NativeResponseMetadata, RequestMetricMetadata};
 use crate::multiturn::ConversationSource;
 use crate::request_rate::{RequestRateConfig, RequestRateWorkload};
 use crate::scheduled::{
     IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime, TurnDispatcher,
     Workload, run_scheduled_workload_with_ancillary,
 };
+#[cfg(feature = "dynosim")]
 use crate::scheduler::LocalTaskScheduler;
 #[cfg(feature = "dynosim")]
 use crate::transport::http::HttpRequestDispatcher;
 use crate::transport::http::TransportSink;
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
+#[cfg(feature = "dynosim")]
 use crate::workload::SkeletonWorkload;
 
 /// Online result carrying the compatibility summary and native metric engine output.

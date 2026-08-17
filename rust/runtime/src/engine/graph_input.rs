@@ -1817,8 +1817,7 @@ mod tests {
                 },
             )
             .await
-            .err()
-            .expect("unknown adapter fields must fail");
+            .expect_err("unknown adapter fields must fail");
         assert!(format!("{error:#}").contains("future_adapter_field"));
     }
 
