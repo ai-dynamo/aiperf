@@ -256,6 +256,26 @@ fn native_eval_refuses_a_local_separate_verifier_before_running_the_agent() {
 }
 
 #[test]
+fn native_eval_requires_an_image_for_default_separate_legacy_verification() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package_path = temporary.path().join("task.json");
+    fs::write(
+        &package_path,
+        br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["true"],"verifier_command":["true"],"declared_artifacts":[]}"#,
+    )
+    .unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        package_path.to_string_lossy().into_owned(),
+    ])
+    .expect_err("separate legacy verification requires a concrete Docker image");
+
+    assert!(error.to_string().contains("--image is required"));
+}
+
+#[test]
 fn native_eval_command_runs_a_pinned_git_harbor_package() {
     let temporary = tempfile::tempdir().unwrap();
     let repository = temporary.path().join("tasks");

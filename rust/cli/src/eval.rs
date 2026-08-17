@@ -228,6 +228,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     );
     let image = match flags.image {
         Some(image) => image,
+        None if use_docker && !imported.package.is_standard_directory() => {
+            anyhow::bail!("--image is required for a legacy package with separate verification")
+        }
         None if use_docker => {
             "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_owned()
         }
@@ -783,7 +786,11 @@ mod tests {
 
     #[test]
     fn auto_sandbox_uses_docker_for_separate_legacy_verification() {
-        assert!(uses_docker(SandboxFlag::Auto, false, VerifierMode::Separate));
+        assert!(uses_docker(
+            SandboxFlag::Auto,
+            false,
+            VerifierMode::Separate
+        ));
         assert!(!uses_docker(SandboxFlag::Auto, false, VerifierMode::Shared));
     }
 }
