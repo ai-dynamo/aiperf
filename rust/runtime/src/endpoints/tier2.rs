@@ -14,7 +14,9 @@ use serde_json::{Map, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EndpointConfig, RawEndpointConfig};
-use crate::endpoints::endpoints::{Endpoint, merge_extra, parse_embeddings_response, turn_texts};
+use crate::endpoints::implementation::{
+    Endpoint, merge_extra, parse_embeddings_response, turn_texts,
+};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
     EndpointError, EndpointResult, ExtractedPayload, ImageDataItem, ImageResponseData,

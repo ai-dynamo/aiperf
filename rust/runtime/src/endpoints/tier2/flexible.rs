@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
-use crate::endpoints::endpoints::{Endpoint, number_array, try_extract_embeddings};
+use crate::endpoints::implementation::{Endpoint, number_array, try_extract_embeddings};
 use crate::endpoints::metadata::{EndpointDescriptor, EndpointType, Modality};
 use crate::endpoints::models::{
     EndpointError, EndpointResult, ExtractedPayload, Media, ParsedResponse, RequestInfo,

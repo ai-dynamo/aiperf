@@ -8,11 +8,11 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value, json};
 
 use crate::body_plan::BodyPlan;
-use crate::endpoints::endpoints::{
+use crate::endpoints::extraction::{PartTypes, extract_inputs};
+use crate::endpoints::implementation::{
     build_plain_assistant_turn, build_reserved_plan, format_messages_array_wires, latest_turn_attr,
     merge_extra, non_empty_field, require_prepared_turns,
 };
-use crate::endpoints::extraction::{PartTypes, extract_inputs};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
     EndpointResult, ExtractedPayload, ParsedResponse, RequestInfo, RequestRecord, ResponseData,

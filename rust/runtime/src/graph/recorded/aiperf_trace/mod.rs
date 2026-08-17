@@ -67,8 +67,11 @@ pub async fn compile_aiperf_trace_input(
         }
     }
 
-    let owned =
-        CorpusContentSynthesizer::new(tokenizer, config.prompt_corpus, config.content_root_seed)?;
+    let owned = CorpusContentSynthesizer::build_owned(
+        tokenizer,
+        config.prompt_corpus,
+        config.content_root_seed,
+    )?;
     let mut content = owned.as_synthesizer();
     let mut pool = SegmentPool::new();
     let mut programs = Vec::with_capacity(parsed.len());

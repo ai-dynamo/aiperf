@@ -192,7 +192,7 @@ pub(crate) struct CorpusContentSynthesizer<'a> {
 
 impl<'a> CorpusContentSynthesizer<'a> {
     /// Build a self-contained synthesizer that owns its corpus (sequential path).
-    pub(crate) fn new(
+    pub(crate) fn build_owned(
         tokenizer: &'a dyn TextTokenizer,
         corpus: PromptCorpus,
         root_seed: u64,
@@ -481,7 +481,8 @@ mod tests {
     #[test]
     fn blake3_hash_streams_preserve_global_and_trace_local_namespaces() {
         let tokenizer = TiktokenTokenizer::builtin();
-        let owned = CorpusContentSynthesizer::new(&tokenizer, PromptCorpus::Sonnet, 42).unwrap();
+        let owned =
+            CorpusContentSynthesizer::build_owned(&tokenizer, PromptCorpus::Sonnet, 42).unwrap();
         let mut content = owned.as_synthesizer();
         let hash: BlockHash = "184467440737095516170".parse().unwrap();
 
@@ -558,7 +559,8 @@ mod tests {
     #[test]
     fn recorded_random_generation_respects_allowed_token_filter() {
         let tokenizer = AllowedOnlyTokenizer;
-        let owned = CorpusContentSynthesizer::new(&tokenizer, PromptCorpus::Random, 42).unwrap();
+        let owned =
+            CorpusContentSynthesizer::build_owned(&tokenizer, PromptCorpus::Random, 42).unwrap();
         let mut content = owned.as_synthesizer();
 
         let tokens = content.block_tokens(&[7_i128], 8, None).unwrap();

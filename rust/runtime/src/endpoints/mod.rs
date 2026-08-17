@@ -16,8 +16,8 @@ mod chat;
 pub mod chat_chunk;
 mod config;
 mod dynosim;
-mod endpoints;
 mod extraction;
+mod implementation;
 mod kserve;
 mod metadata;
 mod models;
@@ -35,11 +35,11 @@ pub use config::{
     ResetKvCacheConfig, ServerProfilerConfig,
 };
 pub use dynosim::DynosimEndpointFactory;
-pub use endpoints::{
+pub use extraction::extract_payload;
+pub use implementation::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
     ResponsesEndpoint, ShapeLowerer, TurnMessageLowerer, WARMUP_SYSTEM_MESSAGE_PREFIX,
 };
-pub use extraction::extract_payload;
 pub use kserve::{
     KServeChatFactory, KServeCompletionsFactory, KServeEmbeddingsFactory, KServeV1PredictFactory,
     KServeV2EmbeddingsFactory, KServeV2ImagesFactory, KServeV2InferFactory,

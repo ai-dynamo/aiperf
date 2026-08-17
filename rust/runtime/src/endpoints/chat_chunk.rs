@@ -285,7 +285,7 @@ mod tests {
                 serde_json::Value::String("chat.completion.chunk".into()),
             );
         }
-        crate::endpoints::endpoints::extract_chat_response_data(&object)
+        crate::endpoints::implementation::extract_chat_response_data(&object)
     }
 
     #[test]

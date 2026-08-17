@@ -54,8 +54,11 @@ pub async fn compile_dynamo_trace_input(
     // selection/build. A mixed-size tree cannot be hidden behind a root or
     // context filter and make the remaining trees silently executable.
     let block_size = resolve_block_size(&chains)?;
-    let owned =
-        CorpusContentSynthesizer::new(tokenizer, config.prompt_corpus, config.content_root_seed)?;
+    let owned = CorpusContentSynthesizer::build_owned(
+        tokenizer,
+        config.prompt_corpus,
+        config.content_root_seed,
+    )?;
     let mut content = owned.as_synthesizer();
     let mut pool = SegmentPool::new();
     let mut programs = Vec::with_capacity(selected.len());

@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, RawEndpointConfig};
-use crate::endpoints::endpoints::{bearer_headers, joined_text, turn_texts};
+use crate::endpoints::implementation::{bearer_headers, joined_text, turn_texts};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
     AudioResponseData, EndpointError, EndpointResult, ExtractedPayload, ParsedResponse,

@@ -15,7 +15,7 @@ use serde_json::{Map, Number, Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
-use crate::endpoints::endpoints::{
+use crate::endpoints::implementation::{
     ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, bearer_headers, joined_text, turn_texts,
 };
 use crate::endpoints::metadata::{EndpointDescriptor, EndpointType, Modality};

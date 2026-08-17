@@ -23,7 +23,7 @@ use crate::endpoints::DynosimEndpointFactory;
 use crate::endpoints::MessagesEndpoint;
 use crate::endpoints::VllmGenerateFactory;
 use crate::endpoints::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
-use crate::endpoints::endpoints::{
+use crate::endpoints::implementation::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
     ResponsesEndpoint,
 };

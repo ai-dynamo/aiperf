@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 use crate::body_plan::BodyPlan;
 use crate::endpoints::config::{EffectiveEndpointConfig, EndpointConfig};
-use crate::endpoints::endpoints::{ChatEndpoint, Endpoint};
+use crate::endpoints::implementation::{ChatEndpoint, Endpoint};
 use crate::endpoints::metadata::{EndpointDescriptor, EndpointType, Modality};
 use crate::endpoints::models::{
     EndpointResult, ExtractedPayload, ParsedResponse, RequestRecord, ServerResponse, Turn,
