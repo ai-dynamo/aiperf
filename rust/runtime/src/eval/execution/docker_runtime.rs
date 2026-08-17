@@ -689,6 +689,8 @@ pub struct DockerCreateRequest {
     public_arguments: Vec<String>,
     network_lease: Option<String>,
     deadline: Option<Duration>,
+    creation_target: Option<String>,
+    creation_phase: Option<EvalExecutionPhase>,
 }
 
 impl DockerCreateRequest {
@@ -698,6 +700,8 @@ impl DockerCreateRequest {
             public_arguments: arguments.into_iter().map(Into::into).collect(),
             network_lease: None,
             deadline: None,
+            creation_target: None,
+            creation_phase: None,
         }
     }
 
@@ -726,6 +730,28 @@ impl DockerCreateRequest {
     /// Returns the host creation deadline when one is configured.
     pub const fn deadline(&self) -> Option<Duration> {
         self.deadline
+    }
+
+    /// Identifies a bounded create so its exact resource can be compensated if
+    /// the Docker client times out after the daemon has accepted the request.
+    pub fn with_creation_identity(
+        mut self,
+        target: impl Into<String>,
+        phase: EvalExecutionPhase,
+    ) -> Self {
+        self.creation_target = Some(target.into());
+        self.creation_phase = Some(phase);
+        self
+    }
+
+    /// Returns the exact container name that must be compensated on timeout.
+    pub fn creation_target(&self) -> Option<&str> {
+        self.creation_target.as_deref()
+    }
+
+    /// Returns the phase that owns this bounded create.
+    pub const fn creation_phase(&self) -> Option<EvalExecutionPhase> {
+        self.creation_phase
     }
 }
 
@@ -955,6 +981,24 @@ pub trait DockerRuntime {
 
     /// Creates the requested container.
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError>;
+
+    /// Compensates a bounded create whose client completion is uncertain.
+    ///
+    /// A provider must override this only when it can retry the exact creation
+    /// target until it is confirmed absent within `cleanup_deadline`.
+    fn compensate_create_timeout(
+        &self,
+        request: &DockerCreateRequest,
+        _: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        let target = request
+            .creation_target()
+            .unwrap_or("unknown Docker create target");
+        Err(EvalExecutionError::ContainerTeardown {
+            container: target.to_owned(),
+            reason: "Docker provider cannot compensate an uncertain create".to_owned(),
+        })
+    }
 
     /// Starts a created container.
     fn start(&self, request: &DockerStartRequest) -> Result<(), EvalExecutionError>;

@@ -1937,10 +1937,15 @@ impl DockerRuntime for DockerCliRuntime {
                 ensure_public_network()?;
             }
         }
-        docker_command_bounded(
+        docker_command_bounded_for_phase(
             self.clock.clone(),
             request.public_arguments().iter().cloned(),
-            "task container creation",
+            request
+                .creation_target()
+                .unwrap_or("task container creation"),
+            request
+                .creation_phase()
+                .unwrap_or(EvalExecutionPhase::CollectionHook),
             match deadline_ns {
                 Some(deadline_ns) => Some(remaining_provider_deadline(
                     &self.clock,
@@ -1949,6 +1954,28 @@ impl DockerRuntime for DockerCliRuntime {
                 )?),
                 None => None,
             },
+        )
+    }
+
+    fn compensate_create_timeout(
+        &self,
+        request: &DockerCreateRequest,
+        cleanup_deadline: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        let target =
+            request
+                .creation_target()
+                .ok_or_else(|| EvalExecutionError::ContainerTeardown {
+                    container: "unknown Docker create target".to_owned(),
+                    reason: "bounded Docker create did not identify its cleanup target".to_owned(),
+                })?;
+        compensate_late_docker_create(
+            self.clock.clone(),
+            target,
+            request
+                .creation_phase()
+                .unwrap_or(EvalExecutionPhase::CollectionHook),
+            cleanup_deadline,
         )
     }
 
@@ -2504,6 +2531,22 @@ fn docker_command_bounded(
     target: &str,
     deadline: Option<Duration>,
 ) -> Result<(), EvalExecutionError> {
+    docker_command_bounded_for_phase(
+        clock,
+        arguments,
+        target,
+        EvalExecutionPhase::CollectionHook,
+        deadline,
+    )
+}
+
+fn docker_command_bounded_for_phase(
+    clock: Rc<dyn Clock>,
+    arguments: impl IntoIterator<Item = String>,
+    target: &str,
+    phase: EvalExecutionPhase,
+    deadline: Option<Duration>,
+) -> Result<(), EvalExecutionError> {
     let arguments = arguments.into_iter().collect::<Vec<_>>();
     let Some(deadline) = deadline else {
         return docker(arguments.iter().map(String::as_str), "run Docker command").map(|_| ());
@@ -2516,21 +2559,14 @@ fn docker_command_bounded(
         .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose command".to_owned()))?;
     let mut process = DockerExecChild { child };
     let mut no_remove = |_target: &str, _: Duration| Ok(());
-    drive_docker_exec(
-        clock,
-        &mut process,
-        target,
-        EvalExecutionPhase::CollectionHook,
-        deadline,
-        &mut no_remove,
+    drive_docker_exec(clock, &mut process, target, phase, deadline, &mut no_remove).map_err(
+        |error| match error {
+            EvalExecutionError::ProcessFailure(reason) => EvalExecutionError::ProcessFailure(
+                format!("bounded docker {}: {reason}", arguments.join(" ")),
+            ),
+            error => error,
+        },
     )
-    .map_err(|error| match error {
-        EvalExecutionError::ProcessFailure(reason) => EvalExecutionError::ProcessFailure(format!(
-            "bounded docker {}: {reason}",
-            arguments.join(" ")
-        )),
-        error => error,
-    })
 }
 
 fn run_docker_exec_without_deadline(
@@ -2848,6 +2884,20 @@ fn docker_remove_bounded(
     arguments: Vec<&str>,
     timeout: Duration,
 ) -> Result<(), EvalExecutionError> {
+    docker_remove_bounded_status(clock, arguments, timeout).map(|_| ())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DockerRemoveStatus {
+    Removed,
+    Absent,
+}
+
+fn docker_remove_bounded_status(
+    clock: Rc<dyn Clock>,
+    arguments: Vec<&str>,
+    timeout: Duration,
+) -> Result<DockerRemoveStatus, EvalExecutionError> {
     let target = arguments.last().copied().unwrap_or("Docker lease");
     let stderr = tempfile::tempfile().map_err(|_| EvalExecutionError::ContainerTeardown {
         container: target.to_owned(),
@@ -2900,17 +2950,82 @@ fn classify_bounded_remove_result(
     target: &str,
     outcome: Result<(), EvalExecutionError>,
     diagnostics: &[u8],
-) -> Result<(), EvalExecutionError> {
+) -> Result<DockerRemoveStatus, EvalExecutionError> {
     match outcome {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(DockerRemoveStatus::Removed),
         Err(EvalExecutionError::ProcessFailure(_)) if reports_absent_container(diagnostics) => {
-            Ok(())
+            Ok(DockerRemoveStatus::Absent)
         }
         Err(_) => Err(EvalExecutionError::ContainerTeardown {
             container: target.to_owned(),
             reason: "bounded Docker removal did not complete cleanly".to_owned(),
         }),
     }
+}
+
+fn compensate_late_docker_create(
+    clock: Rc<dyn Clock>,
+    target: &str,
+    phase: EvalExecutionPhase,
+    deadline: Duration,
+) -> Result<(), EvalExecutionError> {
+    compensate_late_create_with(clock.clone(), target, phase, deadline, |remaining| {
+        docker_remove_bounded_status(
+            clock.clone(),
+            vec!["rm", "--force", "--volumes", target],
+            remaining,
+        )
+    })
+}
+
+fn compensate_late_create_with<F>(
+    clock: Rc<dyn Clock>,
+    target: &str,
+    phase: EvalExecutionPhase,
+    deadline: Duration,
+    mut remove: F,
+) -> Result<(), EvalExecutionError>
+where
+    F: FnMut(Duration) -> Result<DockerRemoveStatus, EvalExecutionError>,
+{
+    let deadline_ns = provider_deadline_ns(&clock, deadline);
+    loop {
+        let remaining = remaining_provider_deadline(&clock, deadline_ns, target)?;
+        match remove(remaining)? {
+            DockerRemoveStatus::Removed => return Ok(()),
+            DockerRemoveStatus::Absent => {}
+        }
+        let remaining = remaining_provider_deadline(&clock, deadline_ns, target)?;
+        sleep_create_cleanup_poll(clock.clone(), remaining, target, phase)?;
+    }
+}
+
+fn sleep_create_cleanup_poll(
+    clock: Rc<dyn Clock>,
+    remaining: Duration,
+    target: &str,
+    phase: EvalExecutionPhase,
+) -> Result<(), EvalExecutionError> {
+    const CREATE_CLEANUP_POLL: Duration = Duration::from_millis(10);
+    let delay = remaining.min(CREATE_CLEANUP_POLL);
+    if !clock.is_virtual() {
+        std::thread::sleep(delay);
+        return Ok(());
+    }
+    let completed = Rc::new(Cell::new(false));
+    let completion = Rc::clone(&completed);
+    let delay_ns = delay.as_nanos().min(i64::MAX as u128) as i64;
+    let outcome = clock.clone().drive(Box::pin(async move {
+        clock.sleep(delay_ns).await;
+        completion.set(true);
+    }));
+    if outcome.deadlocked || !completed.get() {
+        return Err(EvalExecutionError::ContainerTeardown {
+            container: target.to_owned(),
+            reason: format!("{phase} create cleanup clock reached quiescence"),
+        });
+    }
+    Ok(())
 }
 
 struct DockerArchiveReader {
@@ -3143,10 +3258,34 @@ fn create_planned_container(
     let request = match deadline {
         Some(deadline) => DockerCreateRequest::new(arguments)
             .with_network_lease(network_lease)
-            .with_deadline(deadline),
+            .with_deadline(deadline)
+            .with_creation_identity(container, EvalExecutionPhase::Verifier),
         None => DockerCreateRequest::new(arguments).with_network_lease(network_lease),
     };
-    runtime.create(&request)
+    match runtime.create(&request) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if request.creation_target().is_some()
+                && matches!(
+                    error,
+                    EvalExecutionError::Timeout { .. }
+                        | EvalExecutionError::TerminalUncertainty { .. }
+                ) =>
+        {
+            let cleanup = runtime.compensate_create_timeout(
+                &request,
+                super::compose_project::TERMINAL_COMPOSE_CLEANUP_DEADLINE,
+            );
+            match cleanup {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(EvalExecutionError::ContainerTeardown {
+                    container: container.to_owned(),
+                    reason: format!("{error}; cleanup: {cleanup_error}"),
+                }),
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn prepare_workdir_with_deadline(
@@ -3951,12 +4090,13 @@ mod tests {
 
     use super::{
         DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecProcess,
-        DockerExecState, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
-        EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
-        compose_ownership_filters, compose_stop_arguments, copy_archive_stream_bounded,
-        docker_container_name, docker_image_name, drain_output_bounded, drive_docker_exec,
-        ensure_network_exists, read_optional_reward_archive, read_reward_with_runtime,
-        redact_secret_values, reports_absent_container, run_docker_exec_without_deadline,
+        DockerExecState, DockerRemoveRequest, DockerRemoveStatus, DockerRuntime,
+        DockerStartRequest, EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
+        compensate_late_create_with, compose_ownership_filters, compose_stop_arguments,
+        copy_archive_stream_bounded, docker_container_name, docker_image_name,
+        drain_output_bounded, drive_docker_exec, ensure_network_exists,
+        read_optional_reward_archive, read_reward_with_runtime, redact_secret_values,
+        reports_absent_container, run_docker_exec_without_deadline,
     };
     use crate::{
         clock::SimClock,
@@ -4046,7 +4186,7 @@ mod tests {
             Err(EvalExecutionError::ProcessFailure("status".to_owned())),
             b"Error response from daemon: No such object: exact-id",
         );
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(DockerRemoveStatus::Absent));
         let failed = classify_bounded_remove_result(
             "exact-id",
             Err(EvalExecutionError::ProcessFailure("status".to_owned())),
@@ -4506,6 +4646,31 @@ mod tests {
         assert!(reports_absent_container(
             b"Error response from daemon: No such container"
         ));
+    }
+
+    #[test]
+    fn late_create_cleanup_retries_absent_until_removed_with_sim_clock() {
+        let clock = Rc::new(SimClock::new());
+        let attempts = Cell::new(0);
+        let result = compensate_late_create_with(
+            clock.clone(),
+            "verifier-container",
+            EvalExecutionPhase::Verifier,
+            Duration::from_secs(10),
+            |_: Duration| {
+                attempts.set(attempts.get() + 1);
+                if attempts.get() == 1 {
+                    clock.advance_to(1);
+                    Ok(DockerRemoveStatus::Absent)
+                } else {
+                    Ok(DockerRemoveStatus::Removed)
+                }
+            },
+        );
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(attempts.get(), 2);
+        assert_eq!(clock.now_ns(), 10_000_001);
     }
 
     struct FakeDockerExec {

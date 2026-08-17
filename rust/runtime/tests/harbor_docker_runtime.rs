@@ -296,6 +296,8 @@ enum ComposeSessionFailure {
     ArchiveTimeout,
     Stop,
     VerifierTimeout,
+    VerifierCreateTimeoutLate,
+    VerifierCreateFailure,
 }
 
 struct ComposeSessionRecordingRuntime {
@@ -311,6 +313,11 @@ struct ComposeSessionRecordingRuntime {
     compose_down_deadlines: RefCell<Vec<Option<Duration>>>,
     advance_verifier_create_to: Option<(Rc<SimClock>, i64)>,
     advance_verifier_workdir_to: Option<(Rc<SimClock>, i64)>,
+    late_verifier_present: Cell<bool>,
+    late_verifier_remove_calls: Cell<usize>,
+    late_verifier_create_resolved: Cell<bool>,
+    late_verifier_create_clock: Option<Rc<SimClock>>,
+    create_timeout_compensation_calls: Cell<usize>,
 }
 
 impl ComposeSessionRecordingRuntime {
@@ -328,6 +335,11 @@ impl ComposeSessionRecordingRuntime {
             compose_down_deadlines: RefCell::new(Vec::new()),
             advance_verifier_create_to: None,
             advance_verifier_workdir_to: None,
+            late_verifier_present: Cell::new(false),
+            late_verifier_remove_calls: Cell::new(0),
+            late_verifier_create_resolved: Cell::new(false),
+            late_verifier_create_clock: None,
+            create_timeout_compensation_calls: Cell::new(0),
         }
     }
 
@@ -338,6 +350,11 @@ impl ComposeSessionRecordingRuntime {
 
     fn advance_after_verifier_workdir(mut self, clock: Rc<SimClock>, time_ns: i64) -> Self {
         self.advance_verifier_workdir_to = Some((clock, time_ns));
+        self
+    }
+
+    fn complete_late_verifier_create_after_absent(mut self, clock: Rc<SimClock>) -> Self {
+        self.late_verifier_create_clock = Some(clock);
         self
     }
 }
@@ -385,6 +402,24 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
         let arguments = request.public_arguments();
         let container = argument_after(arguments, "--name").to_owned();
         if container.contains("-verifier-")
+            && self.failure == Some(ComposeSessionFailure::VerifierCreateTimeoutLate)
+        {
+            self.events
+                .borrow_mut()
+                .push(format!("create-timeout:{container}"));
+            return Err(EvalExecutionError::Timeout {
+                phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+                timeout: request.deadline().unwrap_or(Duration::from_secs(1)),
+            });
+        }
+        if container.contains("-verifier-")
+            && self.failure == Some(ComposeSessionFailure::VerifierCreateFailure)
+        {
+            return Err(EvalExecutionError::ProcessFailure(
+                "deterministic verifier create failure".to_owned(),
+            ));
+        }
+        if container.contains("-verifier-")
             && let Some((clock, time_ns)) = &self.advance_verifier_create_to
         {
             clock.advance_to(*time_ns);
@@ -404,6 +439,26 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
             arguments: arguments.to_vec(),
         });
         Ok(())
+    }
+
+    fn compensate_create_timeout(
+        &self,
+        request: &DockerCreateRequest,
+        cleanup_deadline: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        self.create_timeout_compensation_calls
+            .set(self.create_timeout_compensation_calls.get() + 1);
+        assert_eq!(cleanup_deadline, Duration::from_secs(10));
+        assert!(matches!(
+            request.creation_phase(),
+            Some(aiperf_runtime::eval::EvalExecutionPhase::Verifier)
+        ));
+        let target = request
+            .creation_target()
+            .expect("bounded verifier create target");
+        let removal = DockerRemoveRequest::new(["rm", "--force", "--volumes", target]);
+        self.remove(&removal)?;
+        self.remove(&removal)
     }
 
     fn start(&self, request: &DockerStartRequest) -> Result<(), EvalExecutionError> {
@@ -489,6 +544,28 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
             return Err(EvalExecutionError::ProcessFailure(
                 "verifier removal failed".to_owned(),
             ));
+        }
+        if self.failure == Some(ComposeSessionFailure::VerifierCreateTimeoutLate)
+            && request
+                .public_arguments()
+                .last()
+                .is_some_and(|container| container.contains("-verifier-"))
+        {
+            self.late_verifier_remove_calls
+                .set(self.late_verifier_remove_calls.get() + 1);
+            if self.late_verifier_create_resolved.get() {
+                return Ok(());
+            }
+            if !self.late_verifier_present.replace(true) {
+                if let Some(clock) = &self.late_verifier_create_clock {
+                    clock.advance_to(clock.now_ns() + 1);
+                }
+                self.events.borrow_mut().push("remove-absent".to_owned());
+                return Ok(());
+            }
+            self.late_verifier_present.set(false);
+            self.late_verifier_create_resolved.set(true);
+            self.events.borrow_mut().push("remove-late".to_owned());
         }
         Ok(())
     }
@@ -1302,6 +1379,83 @@ fn compose_verifier_timeout_removes_verifier_before_project_teardown() {
         .position(|event| event == "compose-down")
         .expect("project teardown");
     assert!(remove < down);
+}
+
+#[test]
+fn compose_late_verifier_create_is_compensated_before_project_teardown() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_main_evidence_timeout_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime =
+        ComposeSessionRecordingRuntime::new(Some(ComposeSessionFailure::VerifierCreateTimeoutLate))
+            .complete_late_verifier_create_after_absent(clock.clone());
+
+    let error = DockerProcessSandbox::with_clock(clock.clone())
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("a verifier create timeout must remain a verifier failure");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::Timeout {
+            phase: aiperf_runtime::eval::EvalExecutionPhase::Verifier,
+            ..
+        }
+    ));
+    assert_eq!(runtime.late_verifier_remove_calls.get(), 3);
+    assert_eq!(clock.now_ns(), 1);
+    assert!(
+        !runtime.late_verifier_present.get(),
+        "the late verifier create must be removed before evaluation returns"
+    );
+    let events = runtime.events.borrow();
+    let remove = events
+        .iter()
+        .position(|event| event == "remove-late")
+        .expect("late verifier removal");
+    let down = events
+        .iter()
+        .position(|event| event == "compose-down")
+        .expect("project teardown");
+    assert!(remove < down);
+}
+
+#[test]
+fn compose_deterministic_verifier_create_failure_does_not_compensate() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = compose_main_evidence_timeout_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime =
+        ComposeSessionRecordingRuntime::new(Some(ComposeSessionFailure::VerifierCreateFailure));
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &compose_recipe(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("deterministic verifier creation failure");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ProcessFailure(ref reason)
+            if reason == "deterministic verifier create failure"
+    ));
+    assert_eq!(runtime.create_timeout_compensation_calls.get(), 0);
 }
 
 #[test]
@@ -3631,6 +3785,20 @@ impl DockerRuntime for StepRecordingRuntime {
             });
         }
         Ok(())
+    }
+
+    fn compensate_create_timeout(
+        &self,
+        request: &DockerCreateRequest,
+        cleanup_deadline: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        let target = request
+            .creation_target()
+            .expect("bounded verifier create target");
+        self.remove(
+            &DockerRemoveRequest::new(["rm", "--force", "--volumes", target])
+                .with_deadline(cleanup_deadline),
+        )
     }
 
     fn start(&self, request: &DockerStartRequest) -> Result<(), EvalExecutionError> {
