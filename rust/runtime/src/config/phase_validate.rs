@@ -341,7 +341,7 @@ mod tests {
             start_offset: None,
             end_offset: None,
         };
-        let err = normalize_and_validate_phases(&mut vec![phase]).unwrap_err();
+        let err = normalize_and_validate_phases(&mut [phase]).unwrap_err();
         assert!(err.to_string().contains("fixed_schedule"));
     }
 
@@ -356,7 +356,7 @@ mod tests {
             rate: 1.0,
             concurrency: None,
         };
-        let err = normalize_and_validate_phases(&mut vec![phase]).unwrap_err();
+        let err = normalize_and_validate_phases(&mut [phase]).unwrap_err();
         assert!(err.to_string().contains("rate_series"));
     }
 

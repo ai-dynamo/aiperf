@@ -1435,7 +1435,6 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                     .then(|| "replay-provenance.json".to_string()),
                 graph_replay_backend_metadata_path: is_recorded_agent_replay
                     .then(|| "backend-metadata.json".to_string()),
-                ..Default::default()
             }
         }),
         metadata: (inputs.hardware_description.is_some() || inputs.endpoint_placement != "unknown")

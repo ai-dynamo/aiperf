@@ -824,7 +824,7 @@ pub fn plan_recorded_agent_cell_assignments(
     );
     let session_limit = common
         .sessions
-        .unwrap_or_else(|| prepared.bundle.programs.len() as u64);
+        .unwrap_or(prepared.bundle.programs.len() as u64);
     let templates = prepared
         .bundle
         .programs

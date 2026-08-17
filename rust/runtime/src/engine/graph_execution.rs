@@ -888,7 +888,7 @@ impl TracePlacement for GraphWorkerBackend {
             .checked_shl(48)
             .unwrap_or(0)
             .saturating_add(local_session);
-        let terminal_nodes = terminal_graph_nodes(&plan);
+        let terminal_nodes = terminal_graph_nodes(plan);
         // Mint the per-conversation cache-bust marker once for this trace
         // instance; every node dispatched for it shares the marker, so the
         // first-turn user prefix is byte-stable across the conversation's turns.
@@ -1017,11 +1017,11 @@ impl TracePlacement for GraphWorkerBackend {
             }
             return result;
         }
-        if result.is_ok() {
-            if let Some(supplement) = replay_supplement {
-                self.events
-                    .emit(GraphExecutionEvent::TraceSupplement { supplement })?;
-            }
+        if result.is_ok()
+            && let Some(supplement) = replay_supplement
+        {
+            self.events
+                .emit(GraphExecutionEvent::TraceSupplement { supplement })?;
         }
         result
     }

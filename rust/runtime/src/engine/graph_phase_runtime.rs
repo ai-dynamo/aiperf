@@ -257,8 +257,10 @@ pub const UNBOUND_WARMUP_DEADLINE_FLOOR_SEC: f64 = 30.0;
 /// long runs do not spend minutes-to-hours priming.
 pub fn unbound_warmup_deadline_sec(budget: f64) -> f64 {
     (budget * UNBOUND_WARMUP_BUDGET_FRACTION)
-        .max(UNBOUND_WARMUP_DEADLINE_FLOOR_SEC)
-        .min(UNBOUND_WARMUP_DEADLINE_CAP_SEC)
+        .clamp(
+            UNBOUND_WARMUP_DEADLINE_FLOOR_SEC,
+            UNBOUND_WARMUP_DEADLINE_CAP_SEC,
+        )
         // Never exceed the profiling budget the warmup precedes.
         .min(budget)
 }
@@ -2388,10 +2390,10 @@ fn prepare_graph_phase(
     // built here; only a non-warmup phase that later pops a warmup handoff
     // rebuilds its source, so the arrival/run-failure objects are never used by
     // two live workloads at once (the discarded prepared workload is dropped).
-    let resume = if is_warmup {
-        None
-    } else if let Some(input_plans) = input_plans {
-        Some(ProfilingResume {
+    let resume = (!is_warmup)
+        .then_some(input_plans)
+        .flatten()
+        .map(|input_plans| ProfilingResume {
             original_plans: Rc::new(input_plans),
             phase: phase.clone(),
             t_star,
@@ -2403,10 +2405,7 @@ fn prepare_graph_phase(
             uses_admission,
             session_slots: session_slots.clone(),
             clock: clock.clone(),
-        })
-    } else {
-        None
-    };
+        });
     let workload = assemble_graph_workload(
         clock,
         source,
