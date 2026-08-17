@@ -6,7 +6,7 @@
 use std::{
     fs::{self, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Component, Path},
     process::{Command, Stdio},
 };
@@ -205,12 +205,7 @@ fn acquire_git_file(
 }
 
 fn read_local_file_capped(package: &Path) -> Result<Vec<u8>, HarborImportError> {
-    let mut source = OpenOptions::new()
-        .read(true)
-        .open(package)
-        .map_err(|error| {
-            HarborImportError::Unavailable(format!("{}: {error}", package.display()))
-        })?;
+    let mut source = open_regular_local_file(package)?;
     let mut temporary = NamedTempFile::new().map_err(git_file_error)?;
     copy_file_stream_capped(
         &mut source,
@@ -227,6 +222,26 @@ fn read_local_file_capped(package: &Path) -> Result<Vec<u8>, HarborImportError> 
         .read_to_end(&mut bytes)
         .map_err(git_file_error)?;
     Ok(bytes)
+}
+
+fn open_regular_local_file(package: &Path) -> Result<fs::File, HarborImportError> {
+    let source = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(package)
+        .map_err(|error| {
+            HarborImportError::Unavailable(format!("{}: {error}", package.display()))
+        })?;
+    let metadata = source.metadata().map_err(|error| {
+        HarborImportError::Unavailable(format!("{}: {error}", package.display()))
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(HarborImportError::Unavailable(format!(
+            "{}: package source is not a regular file",
+            package.display()
+        )));
+    }
+    Ok(source)
 }
 
 fn acquire_git_task_tree(
@@ -420,9 +435,40 @@ fn git_file_error(error: impl std::fmt::Display) -> HarborImportError {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Cursor, io::Write};
+    use std::{
+        io::{Cursor, Write},
+        process::Command,
+        sync::mpsc,
+        thread,
+        time::Duration,
+    };
 
-    use super::{copy_file_stream_capped, extract_git_tree_with_limits};
+    use super::{copy_file_stream_capped, extract_git_tree_with_limits, read_local_file_capped};
+
+    #[test]
+    fn local_file_acquisition_rejects_a_fifo_without_blocking() {
+        let temporary = tempfile::tempdir().unwrap();
+        let fifo = temporary.path().join("task.json");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            sender.send(read_local_file_capped(&fifo)).unwrap();
+        });
+
+        let result = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("local task acquisition must not block on a FIFO");
+        assert!(matches!(
+            result,
+            Err(super::HarborImportError::Unavailable(_))
+        ));
+    }
 
     #[test]
     fn pinned_git_file_stream_rejects_bytes_before_the_temporary_file_exceeds_its_cap() {

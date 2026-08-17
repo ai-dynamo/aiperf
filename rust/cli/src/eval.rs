@@ -12,6 +12,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt};
+
+#[cfg(not(unix))]
+use std::fs::File;
+
 use aiperf_runtime::eval::{
     ArtifactDigest, DockerProcessSandbox, EvalExecutionError, HarborEvaluationCoordinator,
     HarborImporter, HarborLifecycleAgentContract, HarborLifecycleRequest, HarborSandboxRecipe,
@@ -59,6 +65,8 @@ struct EvalFlags {
     #[arg(long, requires = "lifecycle_request")]
     lifecycle_output: Option<PathBuf>,
 }
+
+const MAX_LIFECYCLE_REQUEST_BYTES: u64 = 1024 * 1024;
 
 /// User-facing verifier sandbox topology.
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -364,17 +372,52 @@ fn uses_docker(
 }
 
 fn read_lifecycle_request(path: &Path) -> anyhow::Result<HarborLifecycleRequest> {
-    let bytes = fs::read(path).map_err(|error| {
-        anyhow::anyhow!(
-            "unable to read lifecycle request {}: {error}",
-            path.display()
-        )
-    })?;
+    let bytes = read_lifecycle_request_bytes(path)?;
     let request = serde_json::from_slice::<HarborLifecycleRequest>(&bytes).map_err(|error| {
         anyhow::anyhow!("invalid lifecycle request {}: {error}", path.display())
     })?;
     request.validate()?;
     Ok(request)
+}
+
+fn read_lifecycle_request_bytes(path: &Path) -> anyhow::Result<Vec<u8>> {
+    #[cfg(unix)]
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "unable to read lifecycle request {}: {error}",
+                path.display()
+            )
+        })?;
+    #[cfg(not(unix))]
+    let file = File::open(path).map_err(|error| {
+        anyhow::anyhow!(
+            "unable to read lifecycle request {}: {error}",
+            path.display()
+        )
+    })?;
+    if !file.metadata()?.is_file() {
+        anyhow::bail!("lifecycle request {} is not a regular file", path.display());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_LIFECYCLE_REQUEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "unable to read lifecycle request {}: {error}",
+                path.display()
+            )
+        })?;
+    if bytes.len() as u64 > MAX_LIFECYCLE_REQUEST_BYTES {
+        anyhow::bail!(
+            "lifecycle request {} exceeds {MAX_LIFECYCLE_REQUEST_BYTES} bytes",
+            path.display()
+        );
+    }
+    Ok(bytes)
 }
 
 fn validate_lifecycle_execution(
@@ -617,6 +660,9 @@ fn source_from_flags(
 mod tests {
     use std::{fs, process::Command};
 
+    #[cfg(unix)]
+    use std::os::unix::{ffi::OsStrExt, fs::FileTypeExt};
+
     use super::{
         LifecycleSourceProvenance, SandboxFlag, agent_command_argv, git_output_bounded,
         materialize_pinned_directory, persist_lifecycle_record, read_lifecycle_request,
@@ -680,6 +726,32 @@ mod tests {
         )
         .unwrap();
         assert!(read_lifecycle_request(&request_path).is_err());
+    }
+
+    #[test]
+    fn lifecycle_request_rejects_oversize_input_before_json_parsing() {
+        let temporary = tempfile::tempdir().unwrap();
+        let request_path = temporary.path().join("request.json");
+        fs::write(&request_path, vec![b'x'; 1024 * 1024 + 1]).unwrap();
+
+        let error = read_lifecycle_request(&request_path).unwrap_err();
+
+        assert!(error.to_string().contains("exceeds 1048576 bytes"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_request_rejects_fifo_without_waiting_for_a_writer() {
+        let temporary = tempfile::tempdir().unwrap();
+        let request_path = temporary.path().join("request.json");
+        let path = std::ffi::CString::new(request_path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `path` is NUL-terminated and this fresh temporary path does not exist.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        assert!(fs::metadata(&request_path).unwrap().file_type().is_fifo());
+
+        let error = read_lifecycle_request(&request_path).unwrap_err();
+
+        assert!(error.to_string().contains("not a regular file"));
     }
 
     #[test]
