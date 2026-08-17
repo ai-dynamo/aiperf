@@ -227,6 +227,18 @@ pub struct ModelBindingSpec {
 }
 
 impl ModelBindingSpec {
+    /// Computes the immutable identity of every runtime-relevant binding field.
+    pub fn identity_digest(&self) -> ArtifactDigest {
+        let mut material = Vec::new();
+        append_identity_field(
+            &mut material,
+            "native-graph-model-identity.domain",
+            b"aiperf-native-graph-model-v1",
+        );
+        append_model_binding_identity(&mut material, self);
+        ArtifactDigest::from_bytes(&material)
+    }
+
     /// Borrows the registered endpoint factory identifier.
     pub fn endpoint_factory_id(&self) -> &EndpointId {
         &self.endpoint_factory_id
