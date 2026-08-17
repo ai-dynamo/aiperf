@@ -609,7 +609,16 @@ impl DockerProcessSandbox {
                 artifact_workspace.path(),
                 Deadline::from_timeout(self.clock.clone(), collection_timeout),
             )?;
-            let verifier_timeout = verifier.phase().timeout();
+            let verifier_deadline = verifier.phase().timeout().map(|timeout| {
+                Deadline::from_phase_timeout(
+                    self.clock.clone(),
+                    EvalExecutionPhase::Verifier,
+                    timeout,
+                )
+            });
+            let remaining = |deadline: &Option<Deadline>| {
+                deadline.as_ref().map(Deadline::remaining).transpose()
+            };
             let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
             let verifier_network = network_lease(verifier.phase().network())?;
             let verifier_container = if verifier.mode() == VerifierMode::Separate {
@@ -617,11 +626,20 @@ impl DockerProcessSandbox {
                     .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
                 fs::set_permissions(verifier_workspace.path(), fs::Permissions::from_mode(0o755))
                     .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-                super::transfer_artifacts(
-                    artifact_workspace.path(),
-                    verifier_workspace.path(),
-                    &artifacts,
-                )?;
+                if let Some(deadline) = verifier_deadline.as_ref() {
+                    transfer_artifacts_bounded(
+                        artifact_workspace.path(),
+                        verifier_workspace.path(),
+                        &artifacts,
+                        deadline,
+                    )?;
+                } else {
+                    super::transfer_artifacts(
+                        artifact_workspace.path(),
+                        verifier_workspace.path(),
+                        &artifacts,
+                    )?;
+                }
                 let name = format!("{container}-verifier");
                 create_planned_container(
                     runtime,
@@ -631,10 +649,10 @@ impl DockerProcessSandbox {
                     verifier.environment(),
                     network_lease(verifier.environment().network())?,
                     None,
-                    verifier_timeout,
+                    remaining(&verifier_deadline)?,
                 )?;
                 containers.push(name.clone());
-                let start = match verifier_timeout {
+                let start = match remaining(&verifier_deadline)? {
                     Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
                     None => DockerStartRequest::new(&name),
                 };
@@ -646,7 +664,7 @@ impl DockerProcessSandbox {
                         verifier_workspace.path(),
                         verifier_workdir,
                         verifier_network,
-                        None,
+                        verifier_deadline.as_ref(),
                     )?;
                 }
                 Some((name, verifier_workspace))
@@ -660,7 +678,7 @@ impl DockerProcessSandbox {
                 runtime,
                 verifier_name,
                 verifier_network,
-                verifier_timeout,
+                remaining(&verifier_deadline)?,
             )?;
             execute_planned_phase_with_deadline(
                 runtime,
@@ -671,11 +689,13 @@ impl DockerProcessSandbox {
                 verifier.phase(),
                 verifier_workdir,
                 secrets,
-                verifier_timeout,
+                remaining(&verifier_deadline)?,
             )?;
-            let reward_workspace = tempfile::tempdir()
-                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            let reward = read_reward_with_runtime(runtime, verifier_name, &reward_workspace, None)?;
+            let reward = read_reward_archive_with_runtime(
+                runtime,
+                verifier_name,
+                verifier_deadline.as_ref(),
+            )?;
             let verifier = ArtifactDigest::parse(package.verifier())
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
             Ok(LocalExecutionResult {
@@ -3292,6 +3312,7 @@ fn read_reward_from_lease(
 }
 
 const MAX_REWARD_BYTES: u64 = 1024 * 1024;
+const MAX_REWARD_ARCHIVE_BYTES: u64 = MAX_REWARD_BYTES + 1024 * 1024;
 
 fn parse_reward(
     json: Option<&[u8]>,
@@ -3357,6 +3378,94 @@ fn read_optional_service_file(
         }
     }
     Ok(None)
+}
+
+fn read_reward_archive_with_runtime(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    deadline: Option<&Deadline>,
+) -> Result<RewardDocument, EvalExecutionError> {
+    let json =
+        read_optional_reward_archive(runtime, container, "/logs/verifier/reward.json", deadline)?;
+    let text =
+        read_optional_reward_archive(runtime, container, "/logs/verifier/reward.txt", deadline)?;
+    parse_reward(json.as_deref(), text.as_deref(), deadline)
+}
+
+fn read_optional_reward_archive(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    source: &str,
+    deadline: Option<&Deadline>,
+) -> Result<Option<Vec<u8>>, EvalExecutionError> {
+    let archive = match deadline.map(Deadline::remaining).transpose()? {
+        Some(remaining) => runtime.copy_archive_bounded(container, source, remaining),
+        None => runtime.copy_archive(container, source),
+    };
+    let archive = match archive {
+        Ok(archive) => archive,
+        Err(EvalExecutionError::ProcessFailure(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let expected = std::path::Path::new(source)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(EvalExecutionError::InvalidRecipe("verifier reward path"))?;
+    let mut archive = tar::Archive::new(RewardArchiveReader::new(archive));
+    for entry in archive
+        .entries()
+        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?
+    {
+        let mut entry =
+            entry.map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        let path = entry
+            .path()
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        if path.file_name().and_then(|name| name.to_str()) != Some(expected) {
+            continue;
+        }
+        if !entry.header().entry_type().is_file() {
+            return Err(EvalExecutionError::ArtifactCollection(
+                "verifier reward must be a regular file".to_owned(),
+            ));
+        }
+        if entry.size() > MAX_REWARD_BYTES {
+            return Err(EvalExecutionError::ArtifactCollection(
+                "verifier reward exceeds the maximum size".to_owned(),
+            ));
+        }
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        read_reward_bytes(&mut entry, &mut bytes, deadline)?;
+        return Ok(Some(bytes));
+    }
+    Ok(None)
+}
+
+struct RewardArchiveReader<R> {
+    source: R,
+    bytes: u64,
+}
+
+impl<R> RewardArchiveReader<R> {
+    fn new(source: R) -> Self {
+        Self { source, bytes: 0 }
+    }
+}
+
+impl<R: Read> Read for RewardArchiveReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let read = self.source.read(buffer)?;
+        self.bytes = self
+            .bytes
+            .checked_add(read as u64)
+            .ok_or_else(|| io::Error::other("verifier reward archive exceeds the maximum size"))?;
+        if self.bytes > MAX_REWARD_ARCHIVE_BYTES {
+            return Err(io::Error::other(
+                "verifier reward archive exceeds the maximum size",
+            ));
+        }
+        Ok(read)
+    }
 }
 
 fn copy_optional_with_runtime(
@@ -3861,7 +3970,8 @@ mod tests {
         EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
         compose_ownership_filters, compose_stop_arguments, copy_archive_stream_bounded,
         copy_optional_with_runtime, docker_container_name, docker_image_name, drive_docker_exec,
-        ensure_network_exists, redact_secret_values, reports_absent_container,
+        ensure_network_exists, read_optional_reward_archive, redact_secret_values,
+        reports_absent_container,
     };
     use crate::{
         clock::SimClock,
@@ -4035,6 +4145,65 @@ mod tests {
             None,
         )
         .expect_err("reward symlinks must never be followed on the host");
+
+        assert!(
+            matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("regular file"))
+        );
+    }
+
+    #[test]
+    fn legacy_reward_archive_rejects_a_verifier_authored_symlink() {
+        struct ArchiveRuntime;
+
+        impl DockerRuntime for ArchiveRuntime {
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities::none()
+            }
+
+            fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not build")
+            }
+
+            fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not create")
+            }
+
+            fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not start")
+            }
+
+            fn exec(&self, _: &super::DockerExecRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not execute")
+            }
+
+            fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not copy")
+            }
+
+            fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+                let mut archive = tar::Builder::new(Vec::new());
+                archive
+                    .append_link(
+                        &mut tar::Header::new_gnu(),
+                        "reward.json",
+                        "/verifier-controlled",
+                    )
+                    .unwrap();
+                Ok(Box::new(io::Cursor::new(archive.into_inner().unwrap())))
+            }
+
+            fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not remove")
+            }
+        }
+
+        let error = read_optional_reward_archive(
+            &ArchiveRuntime,
+            "verifier",
+            "/logs/verifier/reward.json",
+            None,
+        )
+        .expect_err("reward symlinks must never be followed from a legacy archive");
 
         assert!(
             matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("regular file"))

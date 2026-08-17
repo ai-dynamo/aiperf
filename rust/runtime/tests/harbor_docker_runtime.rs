@@ -46,6 +46,7 @@ impl DockerRuntime for LegacyRuntime {
         ProviderCapabilities::none()
             .with_docker()
             .with_image_source()
+            .with_separate_verifier()
             .with_public_network()
     }
 
@@ -88,6 +89,18 @@ impl DockerRuntime for LegacyRuntime {
                 .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
         }
         Ok(())
+    }
+
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        if source.ends_with("reward.json") {
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward.json absent".to_owned(),
+            ));
+        }
+        Ok(Box::new(io::Cursor::new(test_tar_archive(
+            "reward.txt",
+            b"1\n",
+        ))))
     }
 
     fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {

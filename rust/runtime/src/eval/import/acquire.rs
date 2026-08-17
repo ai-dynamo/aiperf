@@ -5,16 +5,20 @@
 
 use std::{
     fs::{self, OpenOptions},
-    io::{self, Cursor},
+    io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::PermissionsExt,
     path::{Component, Path},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use tar::Archive;
-use tempfile::tempdir;
+use tempfile::{NamedTempFile, tempdir};
 
 use super::{AcquiredSource, HarborImportError, source_snapshot::SourceTreeSnapshot};
+
+const MAX_PINNED_GIT_ARCHIVE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_PINNED_GIT_TREE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_PINNED_GIT_TREE_ENTRIES: usize = 10_000;
 
 /// An immutable Harbor-compatible package source reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,29 +196,65 @@ fn acquire_git_task_tree(
     } else {
         format!("{revision}:{task_root}")
     };
-    let output = Command::new("git")
+    let mut child = Command::new("git")
         .arg("-C")
         .arg(repository)
         .args(["archive", "--format=tar", &object])
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .map_err(|error| HarborImportError::Unavailable(format!("{repository}: {error}")))?;
-    if !output.status.success() {
+    let mut archive = NamedTempFile::new().map_err(git_tree_error)?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        HarborImportError::Unavailable("could not capture pinned Git task tree".to_owned())
+    })?;
+    if let Err(error) =
+        copy_stream_capped(stdout, archive.as_file_mut(), MAX_PINNED_GIT_ARCHIVE_BYTES)
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    if !child.wait().map_err(git_tree_error)?.success() {
         return Err(HarborImportError::Unavailable(format!(
-            "{repository}@{revision}:{package_path}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "{repository}@{revision}:{package_path}: git archive failed"
         )));
     }
     let directory = tempdir().map_err(|error| {
         HarborImportError::Unavailable(format!("could not retain pinned Git task tree: {error}"))
     })?;
-    extract_git_tree(&output.stdout, directory.path())?;
+    archive
+        .as_file_mut()
+        .seek(SeekFrom::Start(0))
+        .map_err(git_tree_error)?;
+    extract_git_tree_with_limits(
+        archive.as_file_mut(),
+        directory.path(),
+        MAX_PINNED_GIT_TREE_ENTRIES,
+        MAX_PINNED_GIT_TREE_BYTES,
+    )?;
     let tree = SourceTreeSnapshot::capture(directory.path())?;
     AcquiredSource::tree("task.toml", tree)
 }
 
-fn extract_git_tree(archive: &[u8], destination: &Path) -> Result<(), HarborImportError> {
-    let mut archive = Archive::new(Cursor::new(archive));
+fn extract_git_tree_with_limits(
+    source: impl Read,
+    destination: &Path,
+    max_entries: usize,
+    max_bytes: u64,
+) -> Result<(), HarborImportError> {
+    let mut archive = Archive::new(source);
+    let mut entries = 0_usize;
+    let mut bytes = 0_u64;
     for entry in archive.entries().map_err(git_tree_error)? {
+        entries = entries.checked_add(1).ok_or_else(|| {
+            HarborImportError::InvalidPackage("pinned Git task tree exceeds entry limit".to_owned())
+        })?;
+        if entries > max_entries {
+            return Err(HarborImportError::InvalidPackage(
+                "pinned Git task tree exceeds entry limit".to_owned(),
+            ));
+        }
         let mut entry = entry.map_err(git_tree_error)?;
         let entry_type = entry.header().entry_type();
         if !entry_type.is_file() && !entry_type.is_dir() {
@@ -250,13 +290,76 @@ fn extract_git_tree(archive: &[u8], destination: &Path) -> Result<(), HarborImpo
             .write(true)
             .open(&target)
             .map_err(git_tree_error)?;
-        io::copy(&mut entry, &mut output).map_err(git_tree_error)?;
+        copy_entry_capped(&mut entry, &mut output, &mut bytes, max_bytes)?;
         let mode = entry.header().mode().map_err(git_tree_error)? & 0o777;
         fs::set_permissions(&target, fs::Permissions::from_mode(mode)).map_err(git_tree_error)?;
     }
     Ok(())
 }
 
+fn copy_stream_capped(
+    mut source: impl Read,
+    destination: &mut fs::File,
+    max_bytes: u64,
+) -> Result<(), HarborImportError> {
+    let mut bytes = 0_u64;
+    copy_entry_capped(&mut source, destination, &mut bytes, max_bytes)
+}
+
+fn copy_entry_capped(
+    source: &mut dyn Read,
+    destination: &mut dyn Write,
+    bytes: &mut u64,
+    max_bytes: u64,
+) -> Result<(), HarborImportError> {
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = source.read(&mut buffer).map_err(git_tree_error)?;
+        if read == 0 {
+            return Ok(());
+        }
+        *bytes = bytes.checked_add(read as u64).ok_or_else(|| {
+            HarborImportError::InvalidPackage("pinned Git task tree exceeds byte limit".to_owned())
+        })?;
+        if *bytes > max_bytes {
+            return Err(HarborImportError::InvalidPackage(
+                "pinned Git task tree exceeds byte limit".to_owned(),
+            ));
+        }
+        destination
+            .write_all(&buffer[..read])
+            .map_err(git_tree_error)?;
+    }
+}
+
 fn git_tree_error(error: impl std::fmt::Display) -> HarborImportError {
     HarborImportError::Unavailable(format!("could not retain pinned Git task tree: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::extract_git_tree_with_limits;
+
+    #[test]
+    fn pinned_git_extraction_rejects_more_entries_than_the_cap() {
+        let temporary = tempfile::tempdir().unwrap();
+        let mut archive = tar::Builder::new(Vec::new());
+        for name in ["one", "two"] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive.append_data(&mut header, name, &b"x"[..]).unwrap();
+        }
+        let bytes = archive.into_inner().unwrap();
+
+        let error = extract_git_tree_with_limits(Cursor::new(bytes), temporary.path(), 1, 1024)
+            .expect_err("a pinned Git tree must reject an entry count above its cap");
+
+        assert!(
+            matches!(error, super::HarborImportError::InvalidPackage(message) if message.contains("entry limit"))
+        );
+    }
 }

@@ -482,6 +482,7 @@ fn materialize_pinned_directory(
             String::from_utf8_lossy(&checkout_result.stderr).trim()
         );
     }
+    fs::remove_dir_all(checkout.join(".git"))?;
     let package = checkout.join(package_path);
     let is_package_manifest = matches!(
         Path::new(package_path).file_name(),
@@ -782,6 +783,82 @@ mod tests {
             fs::read(sandbox.root().join("sibling.txt")).unwrap(),
             b"pinned sibling\n"
         );
+    }
+
+    #[test]
+    fn root_pinned_manifest_materialization_excludes_git_metadata() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("tasks");
+        fs::create_dir(&repository).unwrap();
+        for arguments in [
+            ["init"].as_slice(),
+            ["config", "user.email", "eval@example.invalid"].as_slice(),
+            ["config", "user.name", "Eval"].as_slice(),
+        ] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&repository)
+                    .args(arguments)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        fs::write(
+            repository.join("task.toml"),
+            "schema_version = \"1.0\"\n[task]\nname = \"example/root\"\n",
+        )
+        .unwrap();
+        fs::write(repository.join("instruction.md"), "Do work.\n").unwrap();
+        fs::create_dir_all(repository.join("environment")).unwrap();
+        fs::write(repository.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+        fs::create_dir_all(repository.join("tests")).unwrap();
+        fs::write(repository.join("tests/test.sh"), "exit 0\n").unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["add", "."])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-c")
+                .arg("commit.gpgsign=false")
+                .arg("-C")
+                .arg(&repository)
+                .args(["commit", "-m", "root task"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let revision = String::from_utf8(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+
+        let (tree, source) = materialize_pinned_directory(
+            &HarborSource::pinned_git(repository.to_string_lossy(), revision, "task.toml").unwrap(),
+        )
+        .unwrap();
+        let tree = tree.unwrap();
+        let source_path = match source {
+            HarborSource::Local(location) => std::path::PathBuf::from(location),
+            _ => panic!("pinned source must materialize as a local directory"),
+        };
+        assert_eq!(source_path, tree.path().join("repository"));
+        assert!(!source_path.join(".git").exists());
     }
 
     #[test]
