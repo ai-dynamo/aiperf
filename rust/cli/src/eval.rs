@@ -468,7 +468,11 @@ fn materialize_pinned_directory(
         );
     }
     let package = checkout.join(package_path);
-    let location = if package_path.ends_with("task.toml") {
+    let is_package_manifest = matches!(
+        Path::new(package_path).file_name(),
+        Some(name) if name == "task.toml" || name == "task.json"
+    );
+    let location = if is_package_manifest {
         package
             .parent()
             .map_or_else(|| checkout.clone(), std::path::Path::to_path_buf)
@@ -507,7 +511,10 @@ mod tests {
         LifecycleSourceProvenance, agent_command_argv, materialize_pinned_directory,
         persist_lifecycle_record, read_lifecycle_request, source_from_flags,
     };
-    use aiperf_runtime::eval::HarborSource;
+    use aiperf_runtime::eval::{
+        HarborImporter, HarborSandboxRecipe, HarborSource, LocalProcessSandbox,
+        NativeSourceAcquirer, SandboxRole,
+    };
 
     #[test]
     fn source_flags_require_one_complete_source_form() {
@@ -667,5 +674,98 @@ mod tests {
                 .is_file()
         );
         assert!(matches!(source, HarborSource::Local(_)));
+    }
+
+    #[test]
+    fn pinned_git_json_package_retains_its_directory_snapshot_after_mutation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("tasks");
+        fs::create_dir(&repository).unwrap();
+        for arguments in [
+            ["init"].as_slice(),
+            ["config", "user.email", "eval@example.invalid"].as_slice(),
+            ["config", "user.name", "Eval"].as_slice(),
+        ] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&repository)
+                    .args(arguments)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        fs::create_dir(repository.join("task")).unwrap();
+        fs::write(
+            repository.join("task/task.json"),
+            r#"{"id":"pinned-json","instruction":"Inspect the sibling.","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","true"],"verifier_command":["sh","-c","true"],"declared_artifacts":[]}"#,
+        )
+        .unwrap();
+        fs::write(repository.join("task/sibling.txt"), "pinned sibling\n").unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["add", "task"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-c")
+                .arg("commit.gpgsign=false")
+                .arg("-C")
+                .arg(&repository)
+                .args(["commit", "-m", "JSON package"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let revision = String::from_utf8(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repository)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+        let (tree, source) = materialize_pinned_directory(
+            &HarborSource::pinned_git(repository.to_string_lossy(), revision, "task/task.json")
+                .unwrap(),
+        )
+        .unwrap();
+        let pinned_tree = tree.unwrap();
+        let source_path = match &source {
+            HarborSource::Local(location) => std::path::PathBuf::from(location),
+            _ => panic!("pinned source must materialize as a local directory"),
+        };
+        assert_eq!(source_path, pinned_tree.path().join("repository/task"));
+
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&source)
+            .unwrap();
+        fs::write(source_path.join("sibling.txt"), "mutated sibling\n").unwrap();
+
+        let sandbox = LocalProcessSandbox::new()
+            .materialize(
+                &HarborSandboxRecipe::new(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "/work",
+                )
+                .unwrap(),
+                &imported.package,
+                SandboxRole::Agent,
+            )
+            .unwrap();
+        assert_eq!(
+            fs::read(sandbox.root().join("sibling.txt")).unwrap(),
+            b"pinned sibling\n"
+        );
     }
 }

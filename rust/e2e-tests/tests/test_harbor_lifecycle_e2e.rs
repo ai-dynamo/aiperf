@@ -226,7 +226,7 @@ fn pinned_docker_lifecycle_withholds_agent_credential_and_workspace_and_never_in
             "kind": "pinned_git",
             "repository": repository,
             "revision": revision,
-            "package_path": "task/task.toml",
+            "package_path": "task",
         })
     );
     assert_eq!(persisted["trial"]["seed"], 17);
