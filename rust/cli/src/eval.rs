@@ -229,6 +229,11 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     )?;
     let (_pinned_tree, source) = materialize_pinned_directory(&requested_source)?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
+    if imported.package.native_graph().is_some() {
+        anyhow::bail!(
+            "schema-1.1 NativeGraph packages are not executable until the native graph runner owns them"
+        );
+    }
     let requested_verifier_mode = flags.verifier_mode.map(VerifierMode::from);
     let verifier_mode = requested_verifier_mode.unwrap_or_else(|| imported.package.verifier_mode());
     let use_docker = uses_docker(

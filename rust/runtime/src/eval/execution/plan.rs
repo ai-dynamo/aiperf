@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use crate::eval::{ArtifactDigest, EvalExecutionError, VerifierMode};
+use crate::eval::{ArtifactDigest, EvalExecutionError, NativeGraphPackagePlan, VerifierMode};
 
 /// A normalized environment variable binding.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -985,6 +985,7 @@ pub(crate) struct CanonicalPackagePlan<'a> {
     agent_command: &'a [String],
     verifier_command: &'a [String],
     execution_plan: &'a BenchmarkExecutionPlan,
+    native_graph: Option<&'a NativeGraphPackagePlan>,
 }
 
 impl<'a> CanonicalPackagePlan<'a> {
@@ -993,12 +994,14 @@ impl<'a> CanonicalPackagePlan<'a> {
         agent_command: &'a [String],
         verifier_command: &'a [String],
         execution_plan: &'a BenchmarkExecutionPlan,
+        native_graph: Option<&'a NativeGraphPackagePlan>,
     ) -> Self {
         Self {
             task_id,
             agent_command,
             verifier_command,
             execution_plan,
+            native_graph,
         }
     }
 
@@ -1024,6 +1027,9 @@ impl<'a> CanonicalPackagePlan<'a> {
             );
         }
         self.execution_plan.append_identity_material(&mut material);
+        if let Some(native_graph) = self.native_graph {
+            native_graph.append_identity_material(&mut material);
+        }
         ArtifactDigest::from_bytes(&material)
     }
 }

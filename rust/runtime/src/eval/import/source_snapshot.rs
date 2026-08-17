@@ -113,7 +113,7 @@ impl AcquiredSource {
         matches!(&self.artifact, SourceArtifact::Tree(_))
     }
 
-    pub(super) fn read(&self, relative_path: &str) -> Result<&[u8], HarborImportError> {
+    pub(crate) fn read(&self, relative_path: &str) -> Result<&[u8], HarborImportError> {
         match &self.artifact {
             SourceArtifact::File(_) if relative_path == self.primary_path.as_str() => {
                 Ok(&self.primary_bytes)
@@ -122,6 +122,18 @@ impl AcquiredSource {
                 "source file is missing: {relative_path:?}"
             ))),
             SourceArtifact::Tree(tree) => tree.read(relative_path),
+        }
+    }
+
+    pub(crate) fn read_owned(&self, relative_path: &str) -> Result<Arc<[u8]>, HarborImportError> {
+        match &self.artifact {
+            SourceArtifact::File(_) if relative_path == self.primary_path.as_str() => {
+                Ok(Arc::clone(&self.primary_bytes))
+            }
+            SourceArtifact::File(_) => Err(HarborImportError::InvalidPackage(format!(
+                "source file is missing: {relative_path:?}"
+            ))),
+            SourceArtifact::Tree(tree) => tree.read_owned(relative_path),
         }
     }
 
@@ -392,6 +404,11 @@ impl SourceTreeSnapshot {
     pub(super) fn read(&self, relative_path: &str) -> Result<&[u8], HarborImportError> {
         let relative_path = SourcePath::parse(relative_path)?;
         self.file_bytes(&relative_path).map(AsRef::as_ref)
+    }
+
+    fn read_owned(&self, relative_path: &str) -> Result<Arc<[u8]>, HarborImportError> {
+        let relative_path = SourcePath::parse(relative_path)?;
+        self.file_bytes(&relative_path).map(Arc::clone)
     }
 
     pub(super) fn contains_file(&self, relative_path: &str) -> bool {

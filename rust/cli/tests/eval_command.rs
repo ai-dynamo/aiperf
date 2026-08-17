@@ -146,6 +146,53 @@ fn native_eval_refuses_standard_multi_step_tasks_locally_before_starting_the_age
 }
 
 #[test]
+fn native_eval_refuses_schema_1_1_native_graph_before_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("native-graph");
+    let started = temporary.path().join("agent-started");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("tools")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.1\"\n[task]\nname = \"example/native-graph\"\n[native_graph]\nprofile = \"native_graph\"\nprogram = \"agent_graph.json\"\nmodel_bindings = \"models.toml\"\nadapter_manifest = \"adapters.toml\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(task_root.join("agent_graph.json"), "{}\n").unwrap();
+    fs::write(
+        task_root.join("models.toml"),
+        "[[model_bindings]]\nid = \"primary\"\nendpoint_profile_id = \"provider-default\"\nendpoint_factory_id = \"chat\"\ntransport_factory_id = \"http\"\nmodel = \"example-model\"\nurls = [\"https://provider.example/v1\"]\nstreaming = true\nrequest_timeout_ms = 30000\ncapture = \"metadata\"\n[model_bindings.tokenizer]\ntype = \"local\"\nname = \"builtin\"\nrevision = \"main\"\n[model_bindings.generation]\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("adapters.toml"),
+        "[[adapters]]\nid = \"tool-adapter\"\nrole = \"tool\"\nargv = [\"tools/adapter.py\"]\nexecutable = \"tools/adapter.py\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("tools/adapter.py"), "#!/bin/sh\nexit 0\n").unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--agent-command".to_owned(),
+        format!("touch {}", started.display()),
+    ])
+    .expect_err("schema-1.1 NativeGraph must not provision the legacy runner");
+
+    assert!(
+        error
+            .to_string()
+            .contains("schema-1.1 NativeGraph packages are not executable"),
+        "unexpected NativeGraph refusal: {error:#}"
+    );
+    assert!(!started.exists());
+}
+
+#[test]
 fn native_eval_rejects_an_explicit_mode_that_conflicts_with_a_later_multi_step_verifier() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("mixed-verifier-modes");

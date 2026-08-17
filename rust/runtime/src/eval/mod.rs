@@ -10,6 +10,7 @@ mod health;
 mod identity;
 mod import;
 mod import_report;
+mod native_graph;
 mod provider;
 mod registry;
 mod score;
@@ -58,6 +59,11 @@ pub use import::{
     ImportedTask, NativeSourceAcquirer, SourceAcquirer,
 };
 pub use import_report::{ImportDisposition, ImportReport};
+pub use native_graph::{
+    AdapterId, AdapterRole, AdapterSpec, GenerationDefaults, HeaderSecretRef, ModelBindingId,
+    ModelBindingSpec, ModelCapturePolicy, ModelSecretId, NativeGraphPackagePlan,
+    NativeGraphProfile, NativeGraphProgramSource, TokenizerBindingSpec,
+};
 pub use provider::{ProviderCapability, ProviderError, ProviderProfile};
 pub use registry::{RegistryError, RegistryReference};
 pub use score::{ScoreError, ScoreVersion};

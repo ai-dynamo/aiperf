@@ -92,6 +92,7 @@ impl<'a> HarborImporter<'a> {
             draft.agent_command(),
             draft.verifier_command(),
             draft.execution_plan(),
+            draft.native_graph(),
         )
         .digest();
         let executable_source_digest = acquired.executable_source_digest(&executable_view)?;

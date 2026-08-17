@@ -15,13 +15,16 @@ use tempfile::TempDir;
 use crate::eval::{
     ArtifactDigest, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectPlan,
     ComposeServiceName, ContainerResources, EnvBinding, EnvironmentPlan, EvalExecutionError,
-    HealthcheckPlan, ImageSource, MultiStepRewardStrategy, NetworkPolicy, PhasePlan,
-    VerifierCollectHook, VerifierMode, VerifierPlan,
+    HealthcheckPlan, ImageSource, MultiStepRewardStrategy, NativeGraphPackagePlan, NetworkPolicy,
+    PhasePlan, VerifierCollectHook, VerifierMode, VerifierPlan,
     artifact_source_overlaps_reserved_verifier_path,
     shared_workdir_conflicts_reserved_verifier_path, verifier_artifact_target_collision,
 };
 
 use super::{AcquiredSource, HarborImportError, source_snapshot::ExecutableSourceView};
+use crate::eval::native_graph::{
+    NativeGraphPackageDraft, NativeGraphSectionDto, resolve_native_graph_package,
+};
 
 /// Executable material retained from one strict Harbor task package.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +43,7 @@ pub struct HarborTaskPackage {
     container_resources: Option<(u64, u64)>,
     timeouts: Option<(Duration, Duration)>,
     execution_plan: BenchmarkExecutionPlan,
+    native_graph: Option<NativeGraphPackagePlan>,
 }
 
 impl HarborTaskPackage {
@@ -118,6 +122,11 @@ impl HarborTaskPackage {
         &self.execution_plan
     }
 
+    /// Returns the resolved schema-1.1 NativeGraph plan when this task selects it.
+    pub fn native_graph(&self) -> Option<&NativeGraphPackagePlan> {
+        self.native_graph.as_ref()
+    }
+
     pub(crate) fn materialize_source(&self) -> Result<MaterializedSource, EvalExecutionError> {
         let lease = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
@@ -158,6 +167,7 @@ pub(super) struct NormalizedPackageDraft {
     container_resources: Option<(u64, u64)>,
     timeouts: Option<(Duration, Duration)>,
     execution_plan: BenchmarkExecutionPlan,
+    native_graph: Option<NativeGraphPackagePlan>,
 }
 
 impl NormalizedPackageDraft {
@@ -175,6 +185,10 @@ impl NormalizedPackageDraft {
 
     pub(super) fn execution_plan(&self) -> &BenchmarkExecutionPlan {
         &self.execution_plan
+    }
+
+    pub(super) fn native_graph(&self) -> Option<&NativeGraphPackagePlan> {
+        self.native_graph.as_ref()
     }
 
     pub(super) fn into_package(
@@ -197,6 +211,7 @@ impl NormalizedPackageDraft {
             container_resources: self.container_resources,
             timeouts: self.timeouts,
             execution_plan: self.execution_plan,
+            native_graph: self.native_graph,
         }
     }
 }
@@ -291,6 +306,7 @@ pub(super) fn normalize(
         container_resources: None,
         timeouts: None,
         execution_plan,
+        native_graph: None,
     };
     let view = if source.is_tree() {
         ExecutableSourceView::WholeTree
@@ -313,6 +329,7 @@ struct StandardTaskManifest {
     #[serde(default)]
     steps: Vec<StandardStepSection>,
     multi_step_reward_strategy: Option<String>,
+    native_graph: Option<NativeGraphSectionDto>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -426,7 +443,7 @@ pub(super) fn normalize_standard_directory(
     let manifest = manifest_value
         .try_into::<StandardTaskManifest>()
         .map_err(|error| HarborImportError::InvalidPackage(error.to_string()))?;
-    if manifest.schema_version != "1.0" {
+    if !matches!(manifest.schema_version.as_str(), "1.0" | "1.1") {
         return Err(HarborImportError::InvalidPackage(format!(
             "unsupported task schema version {:?}",
             manifest.schema_version
@@ -437,6 +454,32 @@ pub(super) fn normalize_standard_directory(
             "task.name must not be empty".to_owned(),
         ));
     }
+    let native_graph = match (manifest.schema_version.as_str(), manifest.native_graph) {
+        ("1.0", Some(_)) => {
+            return Err(HarborImportError::InvalidPackage(
+                "native_graph requires schema_version \"1.1\"".to_owned(),
+            ));
+        }
+        ("1.1", None) => {
+            return Err(HarborImportError::InvalidPackage(
+                "schema_version \"1.1\" requires native_graph".to_owned(),
+            ));
+        }
+        ("1.1", Some(section)) => {
+            if !manifest.steps.is_empty() {
+                return Err(HarborImportError::InvalidPackage(
+                    "native_graph packages must not declare steps".to_owned(),
+                ));
+            }
+            Some(resolve_native_graph_package(source, section)?)
+        }
+        ("1.0", None) => None,
+        _ => {
+            return Err(HarborImportError::InvalidPackage(
+                "unsupported task schema version".to_owned(),
+            ));
+        }
+    };
     read_required_source_file(source, "environment/Dockerfile")?;
     let mut environment_section = manifest.environment.unwrap_or_default();
     let compose = normalize_compose_project(source, &environment_section)?;
@@ -616,8 +659,21 @@ pub(super) fn normalize_standard_directory(
     validate_shared_verifier_workdir(&execution_plan)?;
     let view = ExecutableSourceView::selected_roots(
         std::iter::once("environment")
-            .chain(steps.iter().map(BenchmarkStepPlan::verifier_test_root)),
+            .chain(steps.iter().map(BenchmarkStepPlan::verifier_test_root))
+            .chain(
+                native_graph
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(NativeGraphPackageDraft::executable_source_paths),
+            ),
     )?;
+    let native_graph = native_graph
+        .map(|native_graph| {
+            source
+                .executable_source_digest(&view)
+                .map(|digest| native_graph.into_plan(digest))
+        })
+        .transpose()?;
     let draft = NormalizedPackageDraft {
         id: manifest.task.name,
         instruction,
@@ -631,6 +687,7 @@ pub(super) fn normalize_standard_directory(
         container_resources,
         timeouts,
         execution_plan,
+        native_graph,
     };
     Ok((draft, view))
 }
