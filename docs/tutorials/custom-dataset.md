@@ -445,7 +445,7 @@ For multimodal workloads, `random_pool` supports per-modality batch-size flags t
 
 | Flag | Field | Default | Notes |
 |---|---|---|---|
-| `--prompt-batch-size N` | `prompt_batch_size` | 1 | Text items per request. Must be ≥ 1. |
+| `--prompt-batch-size N` | `prompt_batch_size` | 1 | Text items per request. Set to `0` to disable text inputs entirely. |
 | `--image-batch-size N` | `image_batch_size` | 1 | Images per request. Set to `0` to disable image inputs. |
 | `--audio-batch-size N` | `audio_batch_size` | 1 | Audio items per request. Set to `0` to disable audio inputs. |
 | `--video-batch-size N` | `video_batch_size` | 1 | Video items per request. Set to `0` to disable video inputs. |

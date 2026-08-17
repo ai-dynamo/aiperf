@@ -191,6 +191,9 @@ class TestRandomPoolBatchSizeCarveOut:
         "batch_kwarg, expected_field",
         [
             param({"prompt_batch_size": 5}, "prompt_batch_size", id="text"),
+            param(
+                {"prompt_batch_size": 0}, "prompt_batch_size", id="text-zero-disables"
+            ),
             param({"image_batch_size": 3}, "image_batch_size", id="image"),
             param({"audio_batch_size": 2}, "audio_batch_size", id="audio"),
             param({"video_batch_size": 4}, "video_batch_size", id="video"),
@@ -199,7 +202,12 @@ class TestRandomPoolBatchSizeCarveOut:
     def test_batch_size_allowed_with_random_pool(
         self, pool_jsonl: Path, batch_kwarg: dict, expected_field: str
     ) -> None:
-        """Batch-size flags must not raise when custom_dataset_type is random_pool."""
+        """Batch-size flags must not raise when custom_dataset_type is random_pool.
+
+        prompt_batch_size=0 must be accepted (not just >=1): it's the documented way
+        to disable text for image/audio/video-only random_pool workloads, matching
+        image/audio/video_batch_size's existing 0-disables convention.
+        """
         cli = CLIConfig(
             model_names=["test-model"],
             input_file=str(pool_jsonl),

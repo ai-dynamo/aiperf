@@ -497,10 +497,10 @@ class FileDataset(SystemPromptMixin):
         int | None,
         Field(
             default=None,
-            ge=1,
+            ge=0,
             description="Number of text items per request. "
             "Only applies to format: random_pool; rejected on other formats. "
-            "Must be at least 1 (a text batch size of 0 has no useful meaning).",
+            "Set to 0 to disable text inputs entirely (e.g. image/audio/video-only workloads).",
         ),
     ]
 

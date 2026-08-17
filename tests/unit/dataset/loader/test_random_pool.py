@@ -849,11 +849,13 @@ class TestRandomPoolBatchSize:
 
     # Removed: test_batch_size_text_zero_disables_texts and
     # test_image_one_text_zero_disables_texts_via_legacy_path. v2 PromptConfig
-    # rejects batch_size=0 (ge=1); the "disable text via batch_size_text=0"
-    # path is unreachable from a valid v2 config so the assertion has no path
-    # to exercise. Image/audio/video batch_size=0 paths are covered here for
-    # the SyntheticDataset branch; zero-value coverage for the FileDataset
-    # (--input-file) branch lives in TestRandomPoolBatchSizeWithFileDataset.
+    # (SyntheticDataset.prompts) rejects batch_size=0 (ge=1); the "disable text
+    # via batch_size_text=0" path is unreachable from a valid v2 config so the
+    # assertion has no path to exercise. Image/audio/video batch_size=0 paths
+    # are covered here for the SyntheticDataset branch. FileDataset.prompt_batch_size
+    # allows 0 (image/audio/video-only random_pool workloads); that zero-value
+    # coverage, including text=0 disabling text output end-to-end, lives in
+    # TestRandomPoolBatchSizeWithFileDataset.
 
     def test_num_conversations_none_defaults_to_100(self, default_cfg):
         """When num_conversations=None is passed, the loader should default to 100."""
@@ -1185,3 +1187,40 @@ class TestRandomPoolBatchSizeWithFileDataset:
             filename=pool_path, run=run, num_conversations=2
         )
         assert loader.batch_size_video == 0
+
+    def test_prompt_batch_size_zero_via_file_dataset(self, tmp_path: Path) -> None:
+        """prompt_batch_size=0 through --input-file must be accepted, not raise.
+
+        FileDataset.prompt_batch_size uses ge=0 (not ge=1) so image/audio/video-only
+        random_pool workloads can disable text via --prompt-batch-size 0, matching
+        the loader's `if text_pool and self.batch_size_text > 0` guard.
+        """
+        run, pool_path = self._make_file_run(
+            tmp_path, prompt_batch_size=0, image_batch_size=2
+        )
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_text == 0
+
+    def test_prompt_batch_size_zero_disables_text_end_to_end(
+        self, tmp_path: Path
+    ) -> None:
+        """prompt_batch_size=0 must suppress text output even when text is in the pool."""
+        run, pool_path = self._make_file_run(
+            tmp_path, prompt_batch_size=0, image_batch_size=1
+        )
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(image="https://example.com/img1.png", text="query1"),
+                RandomPool(image="https://example.com/img2.png", text="query2"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert turn.texts == []
+            assert len(turn.images) == 1
