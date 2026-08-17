@@ -1991,23 +1991,9 @@ impl DockerRuntime for DockerCliRuntime {
                 timeout,
             );
         }
-        let output = Command::new("docker")
-            .args(&arguments)
-            .output()
-            .map_err(|_| {
-                EvalExecutionError::ProcessSpawn("docker run planned Docker phase".to_owned())
-            })?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(EvalExecutionError::ProcessFailure(format!(
-                "docker run planned Docker phase: {}",
-                redact_secret_values(
-                    &String::from_utf8_lossy(&output.stderr),
-                    request.secret_environment(),
-                )
-            )))
-        }
+        let mut command = Command::new("docker");
+        command.args(&arguments);
+        run_docker_exec_without_deadline(&mut command, request.secret_environment())
     }
 
     fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
@@ -2548,6 +2534,38 @@ fn docker_command_bounded(
         )),
         error => error,
     })
+}
+
+fn run_docker_exec_without_deadline(
+    command: &mut Command,
+    secrets: &std::collections::BTreeMap<super::EnvName, super::SecretValue>,
+) -> Result<(), EvalExecutionError> {
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| {
+            EvalExecutionError::ProcessSpawn("docker run planned Docker phase".to_owned())
+        })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        EvalExecutionError::ProcessFailure(
+            "docker run planned Docker phase did not provide stderr".to_owned(),
+        )
+    })?;
+    let reader =
+        thread::spawn(move || drain_output_bounded(stderr, MAX_DOCKER_COMMAND_OUTPUT_BYTES));
+    let status = child
+        .wait()
+        .map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))?;
+    let stderr = join_docker_output_reader(reader)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(EvalExecutionError::ProcessFailure(format!(
+            "docker run planned Docker phase: {}",
+            redact_secret_values(&String::from_utf8_lossy(&stderr), secrets)
+        )))
+    }
 }
 
 fn docker_output_bounded(
@@ -3939,6 +3957,7 @@ mod tests {
         cell::Cell,
         collections::VecDeque,
         io::{self, Read},
+        process::Command,
         rc::Rc,
         time::Duration,
     };
@@ -3950,7 +3969,7 @@ mod tests {
         compose_ownership_filters, compose_stop_arguments, copy_archive_stream_bounded,
         docker_container_name, docker_image_name, drain_output_bounded, drive_docker_exec,
         ensure_network_exists, read_optional_reward_archive, read_reward_with_runtime,
-        redact_secret_values, reports_absent_container,
+        redact_secret_values, reports_absent_container, run_docker_exec_without_deadline,
     };
     use crate::{
         clock::SimClock,
@@ -4105,6 +4124,24 @@ mod tests {
 
         assert!(error.to_string().contains("exceeds"));
         assert_eq!(reads.get(), 4);
+    }
+
+    #[test]
+    fn unbounded_docker_exec_discards_stdout_and_bounds_stderr() {
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "head -c 1048577 /dev/zero; head -c 1048577 /dev/zero >&2; exit 1",
+        ]);
+
+        let error = run_docker_exec_without_deadline(&mut command, &Default::default())
+            .expect_err("Docker exec diagnostics must remain bounded");
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::ProcessFailure(message)
+                if message.contains("docker command output exceeds the maximum size")
+        ));
     }
 
     #[test]
