@@ -199,7 +199,7 @@ pub(crate) enum ShardRecords {
     /// concatenating records — sketch merges an associative t-digest partition, exact-
     /// fold concatenates the shard's dense LOCAL-ordinal store through `append_store`.
     Folded {
-        accumulator: MetricsAccumulator,
+        accumulator: Box<MetricsAccumulator>,
         errored: Vec<CapturedRecord>,
     },
 }
@@ -612,7 +612,7 @@ pub(crate) async fn execute_scheduled_pipeline(
         capture.finish_record_lane()?;
         let (accumulator, errored) = capture.take_streamed();
         ShardRecords::Folded {
-            accumulator,
+            accumulator: Box::new(accumulator),
             errored,
         }
     } else {
@@ -700,11 +700,11 @@ mod tests {
     #[test]
     fn shard_records_absorb_merges_folded_accumulators_and_errored() {
         let mut left = ShardRecords::Folded {
-            accumulator: folded_accumulator(2),
+            accumulator: Box::new(folded_accumulator(2)),
             errored: vec![retained_record(10)],
         };
         let right = ShardRecords::Folded {
-            accumulator: folded_accumulator(3),
+            accumulator: Box::new(folded_accumulator(3)),
             errored: vec![retained_record(11)],
         };
         left.absorb(right).unwrap();
@@ -725,7 +725,7 @@ mod tests {
     fn shard_records_absorb_rejects_storage_mode_mismatch() {
         let mut retained = ShardRecords::Retained(vec![retained_record(0)]);
         let folded = ShardRecords::Folded {
-            accumulator: folded_accumulator(1),
+            accumulator: Box::new(folded_accumulator(1)),
             errored: Vec::new(),
         };
         let error = retained.absorb(folded).unwrap_err().to_string();

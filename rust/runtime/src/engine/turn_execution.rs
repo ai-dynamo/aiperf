@@ -422,7 +422,7 @@ enum WorkerMessage {
     /// issuance, then acknowledge so the coordinator can release all workers
     /// from a warmed state (the Rust-native "workers ready, go" barrier).
     Prewarm {
-        turn: PreparedTurn,
+        turn: Box<PreparedTurn>,
         done: oneshot::Sender<()>,
     },
     /// Finalize the worker observer at `end_ns` and return its records, then
@@ -912,7 +912,7 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
                 let (done, wait) = oneshot::channel();
                 if sender
                     .try_send(WorkerMessage::Prewarm {
-                        turn: turn.clone(),
+                        turn: Box::new(turn.clone()),
                         done,
                     })
                     .is_ok()
@@ -1299,7 +1299,7 @@ async fn run_worker<S: WorkerSink + 'static>(
                     Some(WorkerMessage::Prewarm { turn, done }) => {
                         let sink = sink.clone();
                         jobs.spawn_local(async move {
-                            let _ = sink.prewarm(turn).await;
+                            let _ = sink.prewarm(*turn).await;
                             let _ = done.send(());
                         });
                     }
