@@ -115,7 +115,7 @@ impl NumpyGenerator {
         let mut m = (self.bit.next_u32() as u64) * rng_excl;
         let mut leftover = m & 0xFFFF_FFFF;
         if leftover < rng_excl {
-            let threshold = ((u32::MAX as u64 - rng as u64) % rng_excl) as u64;
+            let threshold = (u32::MAX as u64 - rng as u64) % rng_excl;
             while leftover < threshold {
                 m = (self.bit.next_u32() as u64) * rng_excl;
                 leftover = m & 0xFFFF_FFFF;
@@ -260,9 +260,9 @@ mod tests {
     fn random_matches_numpy() {
         let mut g = NumpyGenerator::from_seed(42);
         let got = [g.random(), g.random(), g.random()];
-        assert_eq!(got[0].to_bits(), 0.773_956_048_555_963_34_f64.to_bits());
-        assert_eq!(got[1].to_bits(), 0.438_878_439_752_052_32_f64.to_bits());
-        assert_eq!(got[2].to_bits(), 0.858_597_919_911_382_46_f64.to_bits());
+        assert_eq!(got[0].to_bits(), 0.773_956_048_555_963_3_f64.to_bits());
+        assert_eq!(got[1].to_bits(), 0.438_878_439_752_052_3_f64.to_bits());
+        assert_eq!(got[2].to_bits(), 0.858_597_919_911_382_5_f64.to_bits());
     }
 
     #[test]
@@ -275,7 +275,7 @@ mod tests {
         ];
         assert_eq!(got[0].to_bits(), 0.304_717_079_754_431_35_f64.to_bits());
         assert_eq!(got[1].to_bits(), (-1.039_984_106_240_495_5_f64).to_bits());
-        assert_eq!(got[2].to_bits(), 0.750_451_195_806_457_25_f64.to_bits());
+        assert_eq!(got[2].to_bits(), 0.750_451_195_806_457_2_f64.to_bits());
     }
 
     #[test]
