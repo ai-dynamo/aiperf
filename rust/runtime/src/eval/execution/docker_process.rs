@@ -729,16 +729,16 @@ impl DockerProcessSandbox {
                 .steps()
                 .first()
                 .ok_or(EvalExecutionError::InvalidRecipe("Compose benchmark step"))?;
-            let mut session = ComposeStepSession::new(
-                self.clock.clone(),
+            let mut session = ComposeStepSession::new(ComposeStepSessionParams {
+                clock: self.clock.clone(),
                 runtime,
                 recipe,
-                prepared.source_root,
-                prepared.verifier_prefix.clone(),
-                &prepared.environment,
-                &mut prepared.lease,
+                source_root: prepared.source_root,
+                verifier_prefix: prepared.verifier_prefix.clone(),
+                environment: &prepared.environment,
+                lease: &mut prepared.lease,
                 secrets,
-            );
+            });
             session.run_agent(step, agent_command)?;
             let artifacts = session.collect_artifacts(step)?;
             let reward = session.run_verifier(step, &artifacts)?;
@@ -773,16 +773,16 @@ impl DockerProcessSandbox {
     ) -> Result<MultiStepExecutionResult, EvalExecutionError> {
         let mut prepared = self.prepare_compose_lease(runtime, recipe, package, plan, secrets)?;
         let outcome = {
-            let mut session = ComposeStepSession::new(
-                self.clock.clone(),
+            let mut session = ComposeStepSession::new(ComposeStepSessionParams {
+                clock: self.clock.clone(),
                 runtime,
                 recipe,
-                prepared.source_root,
-                prepared.verifier_prefix.clone(),
-                &prepared.environment,
-                &mut prepared.lease,
+                source_root: prepared.source_root,
+                verifier_prefix: prepared.verifier_prefix.clone(),
+                environment: &prepared.environment,
+                lease: &mut prepared.lease,
                 secrets,
-            );
+            });
             execute_benchmark_steps(plan, agent_command, package.source_digest(), &mut session)
         };
         let cleanup = if outcome.is_err() {
@@ -934,26 +934,28 @@ struct ComposeStepSession<'a> {
     artifact_collection: Option<TempDir>,
 }
 
+struct ComposeStepSessionParams<'a> {
+    clock: Rc<dyn Clock>,
+    runtime: &'a dyn DockerRuntime,
+    recipe: &'a HarborSandboxRecipe,
+    source_root: std::path::PathBuf,
+    verifier_prefix: String,
+    environment: &'a super::EnvironmentPlan,
+    lease: &'a mut dyn TaskEnvironmentLease,
+    secrets: &'a dyn SecretProvider,
+}
+
 impl<'a> ComposeStepSession<'a> {
-    fn new(
-        clock: Rc<dyn Clock>,
-        runtime: &'a dyn DockerRuntime,
-        recipe: &'a HarborSandboxRecipe,
-        source_root: std::path::PathBuf,
-        verifier_prefix: String,
-        environment: &'a super::EnvironmentPlan,
-        lease: &'a mut dyn TaskEnvironmentLease,
-        secrets: &'a dyn SecretProvider,
-    ) -> Self {
+    fn new(params: ComposeStepSessionParams<'a>) -> Self {
         Self {
-            clock,
-            runtime,
-            recipe,
-            source_root,
-            verifier_prefix,
-            environment,
-            lease,
-            secrets,
+            clock: params.clock,
+            runtime: params.runtime,
+            recipe: params.recipe,
+            source_root: params.source_root,
+            verifier_prefix: params.verifier_prefix,
+            environment: params.environment,
+            lease: params.lease,
+            secrets: params.secrets,
             artifact_collection: None,
         }
     }
