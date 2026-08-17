@@ -310,6 +310,30 @@ fn local_process_sandbox_rejects_a_symlinked_verifier_reward_before_opening_it()
 }
 
 #[test]
+fn local_process_sandbox_rejects_a_fifo_verifier_reward_without_blocking() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["true"],"verifier_command":["mkfifo","reward.json"],"declared_artifacts":[]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    let error = LocalProcessSandbox::new()
+        .execute(&recipe, &imported.package, VerifierMode::Shared)
+        .expect_err("local reward collection must reject a FIFO without opening it");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ArtifactCollection(message) if message.contains("not a regular file")
+    ));
+}
+
+#[test]
 fn local_process_sandbox_refuses_a_separate_verifier_before_running_the_agent() {
     let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","exit 91"],"verifier_command":["sh","-c","true"],"declared_artifacts":[]}"#;
     let imported = HarborImporter::new(&StaticAcquirer {

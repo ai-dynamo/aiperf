@@ -250,6 +250,12 @@ fn read_optional_file_bounded(path: &Path) -> Result<Option<Vec<u8>>, EvalExecut
     {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "verifier reward is not a regular file: {}",
+                path.display()
+            )));
+        }
         Err(error) => return Err(EvalExecutionError::ArtifactCollection(error.to_string())),
     };
     ensure_regular_file(&file, path, "verifier reward")?;
