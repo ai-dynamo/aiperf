@@ -29,7 +29,9 @@ pub(crate) use execution::{
 pub use artifact_manifest::{
     ArtifactManifestError, DeclaredArtifactManifest, MaterializedArtifactManifest,
 };
-pub use evidence::{AttemptId, EvidenceEvent, EvidenceKind};
+pub use evidence::{
+    AttemptId, EvidenceEvent, EvidenceKind, FrozenAttemptBundle, FrozenAttemptError,
+};
 pub use execution::{
     AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId,
     ComposeProjectPlan, ComposeServiceName, ContainerResources, DockerBuildRequest,
@@ -61,16 +63,18 @@ pub use import::{
 pub use import_report::{ImportDisposition, ImportReport};
 pub use native_graph::{
     AdapterId, AdapterRole, AdapterSpec, AuthoredNativeGraphSuite, EpisodeAggregate,
-    EpisodeAssignment, EpisodeAssignmentId, EpisodeComparability, EpisodeExecution,
-    EpisodeIntegrity, EpisodeResult, EpisodeResultError, EpisodeRunner, EpisodeScoreState,
-    GenerationDefaults, HeaderSecretRef, LocalNativeGraphSuiteScheduler,
-    LocalNativeGraphSuiteSchedulerFactory, MatrixError, ModelBindingId, ModelBindingSpec,
-    ModelCapacityKey, ModelCapturePolicy, ModelSecretId, NativeGraphPackagePlan,
-    NativeGraphProfile, NativeGraphProgramSource, NativeGraphSuiteDefinition,
-    NativeGraphSuiteManifest, NativeGraphSuiteScheduler, ResolvedEpisodeTrial,
-    ResolvedNativeGraphSuite, ResourceLeaseRequest, ResourceLimits, SelectedModelBinding,
-    SuiteError, SuiteRunId, SuiteSchedulerFactory, SuiteTrialSpec, TokenizerBindingSpec,
-    aggregate_episode_results, parse_native_graph_suite_toml, run_resolved_suite,
+    EpisodeAssignment, EpisodeAssignmentId, EpisodeComparability, EpisodeEvaluationError,
+    EpisodeEvaluator, EpisodeEvaluatorFactory, EpisodeExecution, EpisodeIntegrity, EpisodeResult,
+    EpisodeResultError, EpisodeRunner, EpisodeScoreState, GenerationDefaults,
+    HarborEpisodeEvaluator, HarborEpisodeEvaluatorFactory, HeaderSecretRef,
+    LocalNativeGraphSuiteScheduler, LocalNativeGraphSuiteSchedulerFactory, MatrixError,
+    ModelBindingId, ModelBindingSpec, ModelCapacityKey, ModelCapturePolicy, ModelSecretId,
+    NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource,
+    NativeGraphSuiteDefinition, NativeGraphSuiteManifest, NativeGraphSuiteScheduler,
+    ResolvedEpisodeTrial, ResolvedNativeGraphSuite, ResourceLeaseRequest, ResourceLimits,
+    SelectedModelBinding, SuiteError, SuiteRunId, SuiteSchedulerFactory, SuiteTrialSpec,
+    TokenizerBindingSpec, aggregate_episode_results, parse_native_graph_suite_toml,
+    run_resolved_suite,
 };
 pub use provider::{ProviderCapability, ProviderError, ProviderProfile};
 pub use registry::{RegistryError, RegistryReference};

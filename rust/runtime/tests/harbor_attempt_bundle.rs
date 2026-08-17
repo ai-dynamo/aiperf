@@ -2,8 +2,72 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, DeclaredArtifactManifest, MaterializedArtifactManifest,
+    AgentVariantRef, ArtifactDigest, AttemptId, DeclaredArtifactManifest, EvidenceKind,
+    HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
+    HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSource, LocalExecutionResult,
+    MaterializedArtifactManifest, ModelIdentity, PolicyIdentity, RewardDocument, RuntimeIdentity,
+    SourceAcquirer, TrialBudget,
 };
+
+struct StaticAcquirer {
+    bytes: Vec<u8>,
+}
+
+impl SourceAcquirer for StaticAcquirer {
+    fn acquire(
+        &self,
+        _: &HarborSource,
+    ) -> Result<Vec<u8>, aiperf_runtime::eval::HarborImportError> {
+        Ok(self.bytes.clone())
+    }
+}
+
+fn completed_harbor_attempt(reward: f64) -> aiperf_runtime::eval::HarborCompletedEvaluation {
+    let acquirer = StaticAcquirer {
+        bytes: br#"{"id":"frozen-harbor-attempt","instruction":"Repair","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["true"],"verifier_command":["true"],"declared_artifacts":["/results/patch.diff"]}"#.to_vec(),
+    };
+    let imported = HarborImporter::new(&acquirer)
+        .import(&HarborSource::local("task.json").unwrap())
+        .unwrap();
+    let request = HarborLifecycleRequest {
+        version: 1,
+        agent_variant: AgentVariantRef::new("native-agent").unwrap(),
+        model: ModelIdentity::new("native", "unit-test").unwrap(),
+        seed: 7,
+        policy: PolicyIdentity::new(ArtifactDigest::from_bytes(b"frozen-policy")),
+        runtime: RuntimeIdentity::new("native-unit").unwrap(),
+        attempt: AttemptId::new("frozen-attempt").unwrap(),
+        budget: TrialBudget::new(30.0, 30.0).unwrap(),
+        agent_contract: HarborLifecycleAgentContract::External,
+        command: vec!["true".to_owned()],
+        initial_score: HarborLifecycleScoreRequest {
+            metric: "reward".to_owned(),
+            rationale: ArtifactDigest::from_bytes(b"initial-rationale"),
+        },
+        regrade: HarborLifecycleScoreRequest {
+            metric: "reward".to_owned(),
+            rationale: ArtifactDigest::from_bytes(b"regrade-rationale"),
+        },
+    };
+    let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &request).unwrap();
+    let execution = LocalExecutionResult {
+        artifacts: vec![(
+            "/results/patch.diff".to_owned(),
+            ArtifactDigest::from_bytes(b"patch"),
+        )],
+        reward: RewardDocument::parse(Some(format!("{{\"reward\":{reward}}}").as_bytes()), None)
+            .unwrap(),
+        verifier: ArtifactDigest::from_bytes(b"verifier"),
+    };
+    HarborEvaluationCoordinator::complete_attempt(
+        imported,
+        trial,
+        &request.command,
+        execution,
+        &request,
+    )
+    .unwrap()
+}
 
 #[test]
 fn manifests_sort_paths_and_change_only_for_identity_bearing_content() {
@@ -152,4 +216,37 @@ fn empty_manifest_kinds_have_distinct_identities() {
     let materialized = MaterializedArtifactManifest::new([]).unwrap();
 
     assert_ne!(declared.digest, materialized.digest);
+}
+
+#[test]
+fn frozen_existing_harbor_attempt_preserves_verifier_input_evidence() {
+    let completed = completed_harbor_attempt(0.75);
+    let bundle = completed.freeze().unwrap();
+
+    assert_eq!(
+        bundle.verifier_input_evidence(),
+        completed.verifier_result.evidence
+    );
+    assert_eq!(bundle.lifecycle_evidence(), completed.evidence);
+    assert_eq!(bundle.lifecycle_evidence()[0].kind, EvidenceKind::Sandbox);
+    assert_ne!(
+        bundle.lifecycle_evidence_digest(),
+        bundle.verifier_input_evidence()[0],
+    );
+}
+
+#[test]
+fn frozen_existing_harbor_attempt_retains_append_only_score_lineage() {
+    let completed = completed_harbor_attempt(0.75);
+    let initial_score = completed.initial_score.clone();
+    let verifier_input_evidence = completed.verifier_result.evidence.clone();
+    let bundle = completed.freeze().unwrap();
+
+    assert_eq!(bundle.score_lineage()[0], initial_score);
+    assert_eq!(bundle.score_lineage()[1].version, 1);
+    assert_eq!(
+        bundle.score_lineage()[1].predecessor,
+        Some(bundle.score_lineage()[0].identity_digest()),
+    );
+    assert_eq!(bundle.score_lineage()[1].evidence, verifier_input_evidence);
 }

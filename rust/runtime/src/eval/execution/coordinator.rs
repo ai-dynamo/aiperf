@@ -9,12 +9,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::eval::{
     AgentVariantRef, ArtifactDigest, AttemptId, DeclaredArtifactTransfer, EvidenceEvent,
-    EvidenceKind, HarborImportError, HarborImporter, HarborSource, ImportedTask,
-    LocalExecutionResult, LocalProcessSandbox, ModelIdentity, PairedComparisonError,
-    PairedComparisonReport, PairedComparisonSpec, PairedMeasurements, PolicyIdentity, RegradeError,
-    RegradeRequest, RuntimeIdentity, ScoreVersion, SourceAcquirer, TrialBudget, TrialIdentityError,
-    TrialSpec, VerifierExecutionError, VerifierMode, VerifierResult, VerifierSandboxFactory,
-    prepare_verifier, regrade,
+    EvidenceKind, FrozenAttemptBundle, FrozenAttemptError, HarborImportError, HarborImporter,
+    HarborSource, ImportedTask, LocalExecutionResult, LocalProcessSandbox, ModelIdentity,
+    PairedComparisonError, PairedComparisonReport, PairedComparisonSpec, PairedMeasurements,
+    PolicyIdentity, RegradeError, RegradeRequest, RuntimeIdentity, ScoreVersion, SourceAcquirer,
+    TrialBudget, TrialIdentityError, TrialSpec, VerifierExecutionError, VerifierMode,
+    VerifierResult, VerifierSandboxFactory, prepare_verifier, regrade,
 };
 
 use super::{EvalExecutionError, EvalSandboxFactory, HarborAgentContract, HarborSandboxRecipe};
@@ -158,6 +158,18 @@ pub struct HarborCompletedEvaluation {
     pub verifier_result: VerifierResult,
     /// Ordered immutable lifecycle evidence.
     pub evidence: Vec<EvidenceEvent>,
+}
+
+impl HarborCompletedEvaluation {
+    /// Freezes completed Harbor facts for an evaluator without rerunning a verifier.
+    pub fn freeze(&self) -> Result<FrozenAttemptBundle, FrozenAttemptError> {
+        FrozenAttemptBundle::new(
+            self.trial.identity_digest(),
+            self.verifier_result.clone(),
+            self.evidence.clone(),
+            vec![self.initial_score.clone(), self.regraded_score.clone()],
+        )
+    }
 }
 
 impl<'a> HarborEvaluationCoordinator<'a> {

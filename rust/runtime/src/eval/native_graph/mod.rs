@@ -3,11 +3,16 @@
 
 //! Strict schema-1.1 NativeGraph package contracts.
 
+mod evaluator;
 mod matrix;
 mod package;
 mod result;
 mod suite;
 
+pub use evaluator::{
+    EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, HarborEpisodeEvaluator,
+    HarborEpisodeEvaluatorFactory,
+};
 pub use matrix::{
     EpisodeAssignment, EpisodeRunner, LocalNativeGraphSuiteScheduler,
     LocalNativeGraphSuiteSchedulerFactory, MatrixError, NativeGraphSuiteScheduler, ResourceLimits,
