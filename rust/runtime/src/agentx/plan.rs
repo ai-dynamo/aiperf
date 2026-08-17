@@ -24,6 +24,9 @@ use crate::agentx::loader::NormalReq;
 use crate::agentx::prepass::{MetricRecord, SortKey, compute_shared_prefix_cache_metrics};
 use crate::agentx::subagent::{ChildPlan, worker_suffix};
 
+// Per-trace, per-session cache-hit and cache-total metrics keyed by turn.
+type SharedMetricValues = HashMap<String, HashMap<(String, i64), (i64, i64)>>;
+
 /// A detected flat worker-chain conversation plan (Python `_FlatChainPlan`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FlatChainPlan {
@@ -205,8 +208,8 @@ pub fn build_shared_metric_values(
     parents: &[ParentPlan],
     children: &[ChildPlan],
     flats: &[FlatChainPlan],
-) -> HashMap<String, HashMap<(String, i64), (i64, i64)>> {
-    let mut out: HashMap<String, HashMap<(String, i64), (i64, i64)>> = HashMap::new();
+) -> SharedMetricValues {
+    let mut out: SharedMetricValues = HashMap::new();
 
     for plan in parents {
         let mut records: Vec<MetricRecord> = Vec::new();

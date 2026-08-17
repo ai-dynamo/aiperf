@@ -568,6 +568,9 @@ pub fn is_reduction_chain(requests: &[ChainReq], osl_max: i64, ratio: f64, isl_f
 /// `(t0, t1, first_outer, chain_index)` interval candidate.
 type IntervalCand = (f64, f64, i64, usize);
 
+// Requests retained during preamble detection, keyed by their original index.
+type IndexedChainRequests = Vec<(i64, ChainReq)>;
+
 /// Total order on `f64` for the active-interval min-heap.
 #[derive(PartialEq)]
 struct HeapEnd(f64, usize);
@@ -626,12 +629,12 @@ fn overlap_components(cands: &[IntervalCand]) -> Vec<Vec<IntervalCand>> {
     let mut comps: HashMap<usize, Vec<IntervalCand>> = HashMap::new();
     // Deterministic grouping: iterate in index order, key by component root.
     let mut roots_in_order: Vec<usize> = Vec::new();
-    for i in 0..n {
+    for (i, candidate) in cands.iter().enumerate() {
         let r = find(&mut parent, i);
         if !comps.contains_key(&r) {
             roots_in_order.push(r);
         }
-        comps.entry(r).or_default().push(cands[i]);
+        comps.entry(r).or_default().push(*candidate);
     }
     roots_in_order
         .into_iter()
@@ -798,7 +801,7 @@ pub fn compute_chain_prefix_blocks(
 pub fn split_off_preamble(
     normals: &[(i64, ChainReq)],
     title_gen_max_output_tokens: i64,
-) -> (Vec<(i64, ChainReq)>, Vec<(i64, ChainReq)>) {
+) -> (IndexedChainRequests, IndexedChainRequests) {
     if normals.len() < 2 {
         return (Vec::new(), normals.to_vec());
     }

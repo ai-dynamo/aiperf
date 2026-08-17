@@ -19,6 +19,9 @@ use std::collections::HashMap;
 /// Opaque phase runtime key (the slot is released under the key it was acquired).
 pub type PhaseKey = String;
 
+// Hook called when a session tree drains under its phase key.
+type DrainCallback = Box<dyn FnMut(&str, &PhaseKey)>;
+
 /// The concurrency manager's slot-release seam.
 pub trait SlotReleaser {
     /// Release one session slot acquired under `phase`.
@@ -44,7 +47,7 @@ impl TreeState {
 pub struct SessionTreeRegistry<R: SlotReleaser> {
     releaser: R,
     trees: HashMap<String, TreeState>,
-    on_drain: Option<Box<dyn FnMut(&str, &PhaseKey)>>,
+    on_drain: Option<DrainCallback>,
     pending_descendants: HashMap<String, i64>,
     peak_open: usize,
     late_events: i64,
@@ -65,7 +68,7 @@ impl<R: SlotReleaser> SessionTreeRegistry<R> {
 
     /// Register the drain callback (fired with `root_corr, phase` on normal
     /// release, NOT on `release_all` teardown).
-    pub fn set_drain_callback(&mut self, callback: Option<Box<dyn FnMut(&str, &PhaseKey)>>) {
+    pub fn set_drain_callback(&mut self, callback: Option<DrainCallback>) {
         self.on_drain = callback;
     }
 
