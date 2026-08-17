@@ -19,7 +19,7 @@ use crate::graph::model::GraphTraceProgram;
 
 use super::content::CorpusContentSynthesizer;
 use super::source::load_dynamo_documents;
-use super::trie::{RecordedRequest, graph_plan, lower_recorded_graph};
+use super::trie::{RecordedGraphLowering, RecordedRequest, graph_plan, lower_recorded_graph};
 use super::{RecordedTraceError, RecordedTraceInputConfig};
 use schema::{EventType, ReplayMetrics, RequestMetrics, TraceRecord, parse_record};
 
@@ -64,16 +64,16 @@ pub async fn compile_dynamo_trace_input(
     let mut programs = Vec::with_capacity(selected.len());
     for (root, session_ids) in selected {
         let requests = build_tree_requests(&chains, &session_ids, block_size)?;
-        let graph = lower_recorded_graph(
+        let graph = lower_recorded_graph(RecordedGraphLowering {
             requests,
             block_size,
-            config.idle_gap_cap_seconds,
-            super::trie::IdleWarpMode::BusyPeriod,
-            None,
-            &root,
-            &mut content,
-            &mut pool,
-        )?;
+            idle_gap_cap_seconds: config.idle_gap_cap_seconds,
+            idle_warp_mode: super::trie::IdleWarpMode::BusyPeriod,
+            hash_scope: None,
+            tail_scope: &root,
+            content: &mut content,
+            pool: &mut pool,
+        })?;
         let mut plan = graph_plan(graph, root);
         plan.trace.graph_ref = Some(plan.trace.id.clone());
         programs.push(GraphTraceProgram::static_graph(plan));

@@ -78,17 +78,31 @@ impl TrieNode {
     }
 }
 
+pub(crate) struct RecordedGraphLowering<'a> {
+    pub(crate) requests: Vec<RecordedRequest>,
+    pub(crate) block_size: usize,
+    pub(crate) idle_gap_cap_seconds: Option<f64>,
+    pub(crate) idle_warp_mode: timing::IdleWarpMode,
+    pub(crate) hash_scope: Option<&'a str>,
+    pub(crate) tail_scope: &'a str,
+    pub(crate) content: &'a mut dyn RecordedContentSynthesizer,
+    pub(crate) pool: &'a mut SegmentPool,
+}
+
 /// Lower one trace/tree through the frozen common trie algorithm.
 pub(crate) fn lower_recorded_graph(
-    requests: Vec<RecordedRequest>,
-    block_size: usize,
-    idle_gap_cap_seconds: Option<f64>,
-    idle_warp_mode: timing::IdleWarpMode,
-    hash_scope: Option<&str>,
-    tail_scope: &str,
-    content: &mut dyn RecordedContentSynthesizer,
-    pool: &mut SegmentPool,
+    lowering: RecordedGraphLowering<'_>,
 ) -> Result<GraphRecord, RecordedTraceError> {
+    let RecordedGraphLowering {
+        requests,
+        block_size,
+        idle_gap_cap_seconds,
+        idle_warp_mode,
+        hash_scope,
+        tail_scope,
+        content,
+        pool,
+    } = lowering;
     if requests.is_empty() {
         return Err(RecordedTraceError(
             "recorded trace contains zero inference requests".into(),

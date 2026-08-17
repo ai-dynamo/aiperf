@@ -19,7 +19,7 @@ use crate::graph::model::{ExecutableGraphNode, GraphTracePlan, GraphTraceProgram
 
 use super::content::CorpusShared;
 use super::source::load_weka_documents;
-use super::trie::{RecordedRequest, graph_plan, lower_recorded_graph};
+use super::trie::{RecordedGraphLowering, RecordedRequest, graph_plan, lower_recorded_graph};
 use super::{RecordedTraceError, RecordedTraceInputConfig};
 use schema::{WekaEntry, WekaTrace, parse_trace};
 
@@ -94,19 +94,19 @@ pub async fn compile_weka_trace_input(
             let hash_scope = (!trace.global_hash_scope).then_some(trace.id.as_str());
             let mut content = shared.synthesizer();
             let mut pool = SegmentPool::new();
-            let graph = lower_recorded_graph(
+            let graph = lower_recorded_graph(RecordedGraphLowering {
                 requests,
-                trace.block_size,
-                idle_gap,
+                block_size: trace.block_size,
+                idle_gap_cap_seconds: idle_gap,
                 // WEKA byte-exact parity with the Python `_IdleGapTimeWarp`
                 // oracle: compress consecutive request-start gaps, not
                 // busy-period gaps.
-                super::trie::IdleWarpMode::BusyPeriod,
+                idle_warp_mode: super::trie::IdleWarpMode::BusyPeriod,
                 hash_scope,
-                &trace.id,
-                &mut content,
-                &mut pool,
-            )?;
+                tail_scope: &trace.id,
+                content: &mut content,
+                pool: &mut pool,
+            })?;
             let node_count = graph.nodes.len();
             let mut plan = graph_plan(graph, trace.id);
             if !source_is_single {

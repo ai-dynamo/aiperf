@@ -26,7 +26,9 @@ use crate::graph::model::GraphTraceProgram;
 
 use super::content::CorpusContentSynthesizer;
 use super::source::load_aiperf_documents;
-use super::trie::{BlockTag, RecordedRequest, graph_plan, lower_recorded_graph};
+use super::trie::{
+    BlockTag, RecordedGraphLowering, RecordedRequest, graph_plan, lower_recorded_graph,
+};
 use super::{RecordedTraceError, RecordedTraceInputConfig};
 use schema::{AIPerfCall, AIPerfTrace, parse_trace};
 
@@ -79,16 +81,16 @@ pub async fn compile_aiperf_trace_input(
         let requests = flatten_trace(&trace)?;
         // Each session is its own hash namespace (block ids are per-session salted).
         let hash_scope = Some(trace.id.as_str());
-        let graph = lower_recorded_graph(
+        let graph = lower_recorded_graph(RecordedGraphLowering {
             requests,
-            trace.block_size,
-            config.idle_gap_cap_seconds,
-            super::trie::IdleWarpMode::BusyPeriod,
+            block_size: trace.block_size,
+            idle_gap_cap_seconds: config.idle_gap_cap_seconds,
+            idle_warp_mode: super::trie::IdleWarpMode::BusyPeriod,
             hash_scope,
-            &trace.id,
-            &mut content,
-            &mut pool,
-        )?;
+            tail_scope: &trace.id,
+            content: &mut content,
+            pool: &mut pool,
+        })?;
         let mut plan = graph_plan(graph, trace.id);
         if !source_is_single {
             plan.trace.graph_ref = Some(plan.trace.id.clone());
