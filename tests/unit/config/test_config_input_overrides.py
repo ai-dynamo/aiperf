@@ -208,6 +208,40 @@ def test_random_pool_batch_size_still_routes(random_pool_yaml: Path) -> None:
     assert resolved.prompt_batch_size == 7
 
 
+def test_zero_batch_size_overrides_yaml(tmp_path: Path) -> None:
+    """``--prompt-batch-size 0`` must win over a non-zero YAML value.
+
+    Zero disables the text modality on random_pool (FileDataset allows ge=0
+    as of the base branch). It is also falsy, so an override path gating on
+    truthiness rather than ``model_fields_set`` would drop it and leave the
+    YAML batch size in place -- text still enabled, contrary to the request.
+    """
+    pool = tmp_path / "pool.jsonl"
+    pool.write_text('{"text": "hi"}\n')
+    cfg = tmp_path / "rp.yaml"
+    cfg.write_text(
+        f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: random_pool
+    path: {pool}
+    prompt_batch_size: 4
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    assert dataset(resolve_config(cli(prompt_batch_size=0), cfg)).prompt_batch_size == 0
+    # ...and an unset flag still leaves the YAML value alone.
+    assert dataset(resolve_config(cli(), cfg)).prompt_batch_size == 4
+
+
 def test_input_file_flag_remains_rejected(synthetic_yaml: Path, tmp_path: Path) -> None:
     """--input-file would swap the dataset source the YAML declared."""
     other = tmp_path / "other.jsonl"
