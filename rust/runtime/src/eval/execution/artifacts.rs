@@ -270,7 +270,6 @@ pub(crate) fn run_collection_hook(
         phase: EvalExecutionPhase::CollectionHook,
         user: hook.user(),
         workdir: None,
-        network_lease: "default",
         deadline: Some(timeout),
     };
     match lease.exec(request) {
@@ -723,7 +722,7 @@ mod tests {
 
     use super::*;
     use crate::eval::execution::task_environment::{
-        ServiceArchiveRequest, ServiceExecRequest, ServiceHandle, TaskEnvironmentLease,
+        ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease,
     };
 
     #[test]
@@ -1149,9 +1148,6 @@ mod tests {
     impl TaskEnvironmentLease for RecordingLease {
         fn main_service(&self) -> &ComposeServiceName {
             &self.main
-        }
-        fn service(&self, name: &ComposeServiceName) -> Result<ServiceHandle, EvalExecutionError> {
-            Ok(ServiceHandle::new(name.clone()))
         }
         fn exec(&mut self, request: ServiceExecRequest<'_>) -> Result<(), EvalExecutionError> {
             self.events

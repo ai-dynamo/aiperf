@@ -1118,7 +1118,6 @@ impl<'a> ComposeStepSession<'a> {
             phase: EvalExecutionPhase::Verifier,
             user: Some("root"),
             workdir: None,
-            network_lease: "default",
             deadline: remaining(&deadline)?,
         })?;
         let source = format!(
@@ -1152,7 +1151,6 @@ impl<'a> ComposeStepSession<'a> {
             phase: EvalExecutionPhase::Verifier,
             user: verifier.phase().user().or(verifier.environment().user()),
             workdir: verifier_workdir,
-            network_lease: "default",
             deadline: remaining(&deadline)?,
         })?;
         read_reward_from_lease(self.lease, &main, deadline.as_ref())
@@ -1199,7 +1197,6 @@ impl BenchmarkStepSession for ComposeStepSession<'_> {
             phase: EvalExecutionPhase::Agent,
             user: step.agent().user().or(self.environment.user()),
             workdir,
-            network_lease: "default",
             deadline: remaining(&deadline)?,
         })
     }
@@ -1784,7 +1781,6 @@ fn run_lease_healthcheck(
             phase: EvalExecutionPhase::Healthcheck,
             user: environment.user(),
             workdir: environment.workdir(),
-            network_lease: "default",
             deadline: healthcheck.timeout(),
         }) {
             Ok(()) => return Ok(()),
@@ -1832,7 +1828,6 @@ fn prepare_lease_workdir_for_user(
         phase: execution_phase,
         user: Some("root"),
         workdir: Some(workdir),
-        network_lease: "default",
         deadline,
     })
 }
@@ -3186,14 +3181,6 @@ fn prepare_workdir_with_deadline(
             deadline.or(phase.timeout()),
         ),
     )
-}
-
-fn prepare_verifier_files(
-    runtime: &dyn DockerRuntime,
-    container: &str,
-    network_lease: &str,
-) -> Result<(), EvalExecutionError> {
-    prepare_verifier_files_with_deadline(runtime, container, network_lease, None)
 }
 
 fn prepare_verifier_files_with_deadline(

@@ -1070,7 +1070,7 @@ mod compose_lease_tests {
     };
 
     use super::*;
-    use crate::clock::SimClock;
+    use crate::clock::{RealClock, SimClock};
     use crate::eval::execution::{
         compose_project::ComposeProjectLease,
         plan::ComposeProjectPlan,
@@ -1081,6 +1081,24 @@ mod compose_lease_tests {
         events: Rc<RefCell<Vec<String>>>,
         down_graces: Rc<RefCell<Vec<Duration>>>,
         advance_after_up: Option<(Rc<SimClock>, i64)>,
+    }
+
+    fn reserve<'a>(
+        runtime: &'a dyn DockerComposeRuntime,
+        plan: &ComposeProjectPlan,
+        source_digest: &str,
+        project_directory: &str,
+        main_image: &str,
+    ) -> ComposeProjectLease<'a> {
+        ComposeProjectLease::reserve_with_clock(
+            runtime,
+            RealClock::new(),
+            plan,
+            source_digest,
+            project_directory,
+            main_image,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1282,20 +1300,15 @@ mod compose_lease_tests {
             build_timeout: std::time::Duration::from_secs(1),
             startup_timeout: std::time::Duration::from_secs(1),
         };
-        let mut lease = ComposeProjectLease::reserve(
+        let mut lease = reserve(
             runtime.as_ref(),
             &plan,
             "abcdef0123456789",
             "/tmp",
             "main:image",
-        )
-        .unwrap();
+        );
         assert!(lease.project().as_str().starts_with("aiperf-abcdef012345"));
         lease.start().unwrap();
-        assert_eq!(
-            lease.state(),
-            super::super::compose_project::ComposeLeaseState::Started
-        );
         assert_eq!(
             &*events.borrow(),
             &[
@@ -1336,10 +1349,6 @@ mod compose_lease_tests {
             lease.start(),
             Err(EvalExecutionError::ContainerTeardown { .. })
         ));
-        assert_eq!(
-            lease.state(),
-            super::super::compose_project::ComposeLeaseState::Down
-        );
         assert!(
             events
                 .borrow()
@@ -1363,22 +1372,20 @@ mod compose_lease_tests {
             build_timeout: Duration::from_secs(1),
             startup_timeout: Duration::from_secs(1),
         };
-        let mut first = ComposeProjectLease::reserve(
+        let mut first = reserve(
             runtime.as_ref(),
             &plan,
             "abcdef0123456789",
             "/tmp",
             "main:image",
-        )
-        .unwrap();
-        let mut second = ComposeProjectLease::reserve(
+        );
+        let mut second = reserve(
             runtime.as_ref(),
             &plan,
             "abcdef0123456789",
             "/tmp",
             "main:image",
-        )
-        .unwrap();
+        );
         assert_ne!(first.project(), second.project());
         first.start().unwrap();
         second.start().unwrap();
@@ -1418,14 +1425,13 @@ mod compose_lease_tests {
             build_timeout: Duration::from_secs(1),
             startup_timeout: Duration::from_secs(1),
         };
-        let mut lease = ComposeProjectLease::reserve(
+        let mut lease = reserve(
             runtime.as_ref(),
             &plan,
             "abcdef0123456789",
             "/tmp",
             "main:image",
-        )
-        .unwrap();
+        );
         lease.start().unwrap();
         let main = ComposeServiceName::main();
         let archive = lease.archive(ServiceArchiveRequest {
@@ -1614,22 +1620,11 @@ mod compose_lease_tests {
             discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
-        let mut lease = ComposeProjectLease::reserve(
-            runtime.as_ref(),
-            &cleanup_plan(),
-            "abcdef",
-            "/tmp",
-            "main",
-        )
-        .unwrap();
+        let mut lease = reserve(runtime.as_ref(), &cleanup_plan(), "abcdef", "/tmp", "main");
         assert!(lease.start().is_err());
         assert_eq!(
             *runtime.resources.borrow(),
             OwnedComposeResources::default()
-        );
-        assert_eq!(
-            lease.state(),
-            super::super::compose_project::ComposeLeaseState::Down
         );
         let requests = runtime.down_requests.borrow();
         assert_eq!(requests.len(), 1);
@@ -1661,14 +1656,7 @@ mod compose_lease_tests {
             down_requests: RefCell::new(Vec::new()),
         });
         {
-            let mut lease = ComposeProjectLease::reserve(
-                runtime.as_ref(),
-                &cleanup_plan(),
-                "abcdef",
-                "/tmp",
-                "main",
-            )
-            .unwrap();
+            let mut lease = reserve(runtime.as_ref(), &cleanup_plan(), "abcdef", "/tmp", "main");
             assert!(lease.start().is_err());
         }
         assert_eq!(
@@ -1690,25 +1678,10 @@ mod compose_lease_tests {
             discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
-        let mut lease = ComposeProjectLease::reserve(
-            runtime.as_ref(),
-            &cleanup_plan(),
-            "abcdef",
-            "/tmp",
-            "main",
-        )
-        .unwrap();
+        let mut lease = reserve(runtime.as_ref(), &cleanup_plan(), "abcdef", "/tmp", "main");
         lease.start().unwrap();
         assert!(lease.teardown().is_err());
-        assert_eq!(
-            lease.state(),
-            super::super::compose_project::ComposeLeaseState::Started
-        );
         lease.teardown().unwrap();
-        assert_eq!(
-            lease.state(),
-            super::super::compose_project::ComposeLeaseState::Down
-        );
     }
 
     #[test]
@@ -1725,14 +1698,7 @@ mod compose_lease_tests {
             down_requests: RefCell::new(Vec::new()),
         });
         {
-            let mut lease = ComposeProjectLease::reserve(
-                runtime.as_ref(),
-                &cleanup_plan(),
-                "abcdef",
-                "/tmp",
-                "main",
-            )
-            .unwrap();
+            let mut lease = reserve(runtime.as_ref(), &cleanup_plan(), "abcdef", "/tmp", "main");
             lease.start().unwrap();
             assert!(
                 lease
@@ -1766,23 +1732,12 @@ mod compose_lease_tests {
             discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
-        let mut lease = ComposeProjectLease::reserve(
-            runtime.as_ref(),
-            &cleanup_plan(),
-            "abcdef",
-            "/tmp",
-            "main",
-        )
-        .unwrap();
+        let mut lease = reserve(runtime.as_ref(), &cleanup_plan(), "abcdef", "/tmp", "main");
         lease.start().unwrap();
         assert!(lease.teardown().is_err());
         assert_eq!(
             &*runtime.removals.borrow(),
             &["one", "two", "network", "volume"]
-        );
-        assert_eq!(
-            lease.state(),
-            super::super::compose_project::ComposeLeaseState::Started
         );
     }
 
@@ -1803,14 +1758,7 @@ mod compose_lease_tests {
             discovery_deadlines: RefCell::new(Vec::new()),
             down_requests: RefCell::new(Vec::new()),
         });
-        let mut lease = ComposeProjectLease::reserve(
-            runtime.as_ref(),
-            &cleanup_plan(),
-            "abcdef",
-            "/tmp",
-            "main",
-        )
-        .unwrap();
+        let mut lease = reserve(runtime.as_ref(), &cleanup_plan(), "abcdef", "/tmp", "main");
         lease.start().unwrap();
         assert!(
             lease

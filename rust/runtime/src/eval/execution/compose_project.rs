@@ -5,11 +5,9 @@
 
 use std::{collections::BTreeSet, io::Read, rc::Rc, time::Duration};
 
-use crate::clock::{Clock, RealClock};
+use crate::clock::Clock;
 
-use super::task_environment::{
-    ServiceArchiveRequest, ServiceExecRequest, ServiceHandle, TaskEnvironmentLease,
-};
+use super::task_environment::{ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease};
 use super::{
     ComposeProjectId, ComposeProjectPlan, ComposeServiceName, DockerComposeArchiveRequest,
     DockerComposeBuildRequest, DockerComposeCopyRequest, DockerComposeDownRequest,
@@ -75,23 +73,6 @@ pub(crate) struct ComposeProjectLease<'a> {
 }
 
 impl<'a> ComposeProjectLease<'a> {
-    pub(crate) fn reserve(
-        runtime: &'a dyn DockerComposeRuntime,
-        plan: &ComposeProjectPlan,
-        source_digest: &str,
-        project_directory: impl Into<String>,
-        main_image: impl Into<String>,
-    ) -> Result<Self, EvalExecutionError> {
-        Self::reserve_with_clock(
-            runtime,
-            RealClock::new(),
-            plan,
-            source_digest,
-            project_directory,
-            main_image,
-        )
-    }
-
     pub(crate) fn reserve_with_clock(
         runtime: &'a dyn DockerComposeRuntime,
         clock: Rc<dyn Clock>,
@@ -129,10 +110,6 @@ impl<'a> ComposeProjectLease<'a> {
     pub(crate) fn project(&self) -> &ComposeProjectId {
         &self.project
     }
-    pub(crate) const fn state(&self) -> ComposeLeaseState {
-        self.state
-    }
-
     pub(crate) fn start(&mut self) -> Result<(), EvalExecutionError> {
         if self.state != ComposeLeaseState::Reserved {
             return Err(EvalExecutionError::InvalidRecipe("Compose lease state"));
@@ -324,14 +301,6 @@ impl<'a> ComposeProjectLease<'a> {
 impl TaskEnvironmentLease for ComposeProjectLease<'_> {
     fn main_service(&self) -> &ComposeServiceName {
         &self.main
-    }
-    fn service(&self, name: &ComposeServiceName) -> Result<ServiceHandle, EvalExecutionError> {
-        self.ensure_started()?;
-        if self.services.contains(name) {
-            Ok(ServiceHandle::new(name.clone()))
-        } else {
-            Err(EvalExecutionError::InvalidRecipe("Compose service"))
-        }
     }
     fn exec(&mut self, request: ServiceExecRequest<'_>) -> Result<(), EvalExecutionError> {
         self.ensure_started()?;
