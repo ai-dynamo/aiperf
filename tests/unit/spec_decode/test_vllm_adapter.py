@@ -4,13 +4,14 @@
 """Unit tests for the vLLM per-request spec-decode adapter.
 
 Covers the engine-neutral ``SpecDecodeAcceptanceRecord`` filled from vLLM's
-per-choice ``speculative_decoding_stats`` payload across the shapes the ticket
-calls out: present, absent, zero-step, and fully-rejected, in both streaming
-and non-streaming layouts, plus the detailed per-step arrays and malformed
+root ``metrics.speculative_decoding`` payload across the shapes the ticket calls
+out: present, absent, zero-step, and fully-rejected, in both streaming and
+non-streaming layouts, plus the detailed per-step arrays and malformed
 degradation.
 
 The sample payloads mirror the wire format from vLLM PR
-https://github.com/vllm-project/vllm/pull/48915.
+https://github.com/vllm-project/vllm/pull/48915: ``acceptance_histogram`` is a
+dense ``list[int]`` (index j -> step count, length num_spec_tokens + 1).
 """
 
 from collections.abc import Callable
@@ -23,28 +24,28 @@ from pytest import param
 from aiperf.common.models import ParsedResponse, SpecDecodeAcceptanceRecord
 from aiperf.spec_decode.vllm_adapter import VLLMSpecDecodeAdapter
 
-# A representative vLLM ``summary`` payload (histogram keys are JSON strings).
-# 39 steps accepted 0 drafts, 1 step accepted 1, 3 steps accepted 3:
-#   num_spec_steps      = 39 + 1 + 3            = 43
-#   num_accepted_draft  = 0*39 + 1*1 + 3*3      = 10
-#   mean_acceptance_len = 1 + 10 / 43           = 1.2325...
-#   draft_acceptance    = 10 / 129              = 0.0775...
+# A representative vLLM ``summary`` payload. The dense acceptance_histogram
+# [39, 1, 0, 3] means 39 steps accepted 0 drafts, 1 accepted 1, 3 accepted 3:
+#   num_spec_steps      = 39 + 1 + 0 + 3         = 43
+#   num_accepted_draft  = 0*39 + 1*1 + 2*0 + 3*3 = 10
+#   mean_acceptance_len = 1 + 10 / 43            = 1.2325...
+#   draft_acceptance    = 10 / 129               = 0.0775...
 SUMMARY_PAYLOAD: dict[str, Any] = {
     "mean_acceptance_length": 1.2325581395348837,
     "draft_acceptance_rate": 0.07751937984496124,
-    "acceptance_histogram": {"0": 39, "1": 1, "3": 3},
+    "acceptance_histogram": [39, 1, 0, 3],
     "num_spec_steps": 43,
     "num_accepted_draft_tokens": 10,
     "num_draft_tokens": 129,
     "num_spec_tokens": 3,
 }
 
-# A self-consistent ``detailed`` payload: 4 steps, accepted [0,1,3,0] ->
-# histogram {0:2, 1:1, 3:1} and 4 accepted; drafted [3,3,3,3] -> 12 proposed.
+# A self-consistent ``detailed`` payload: 4 steps, accepted [0,1,3,0] -> dense
+# histogram [2, 1, 0, 1] and 4 accepted; drafted [3,3,3,3] -> 12 proposed.
 DETAILED_PAYLOAD: dict[str, Any] = {
     "mean_acceptance_length": 2.0,
     "draft_acceptance_rate": 4 / 12,
-    "acceptance_histogram": {"0": 2, "1": 1, "3": 1},
+    "acceptance_histogram": [2, 1, 0, 1],
     "num_spec_steps": 4,
     "num_accepted_draft_tokens": 4,
     "num_draft_tokens": 12,
@@ -73,15 +74,15 @@ def _non_streaming(payload: dict[str, Any]) -> list[ParsedResponse]:
 
 
 def _streaming(payload: dict[str, Any]) -> list[ParsedResponse]:
-    """Streaming layout: content chunk, terminal stats chunk, usage-only chunk.
+    """Streaming layout: content chunk, then the trailing usage chunk.
 
-    Mirrors vLLM: acceptance stats ride the finish-reason chunk's choice while
-    the trailing ``include_usage`` chunk carries usage on empty choices.
+    Mirrors vLLM: the ``metrics.speculative_decoding`` payload and the usage both
+    ride the trailing ``include_usage`` chunk (empty choices) at the response
+    root.
     """
     return [
         _response(),
-        _response(spec_decode_stats=payload),
-        _response(usage={"completion_tokens": 50}),
+        _response(spec_decode_stats=payload, usage={"completion_tokens": 50}),
     ]
 
 
@@ -105,7 +106,7 @@ class TestVLLMSpecDecodeAdapter:
         assert record.engine == "vllm"
         assert record.mean_acceptance_length == pytest.approx(1.2325581395348837)
         assert record.draft_acceptance_rate == pytest.approx(0.07751937984496124)
-        # Histogram string keys are int-cast into the neutral record.
+        # The dense list is inflated into the sparse map (zero buckets dropped).
         assert record.acceptance_histogram == {0: 39, 1: 1, 3: 3}
         assert record.num_spec_steps == 43
         assert record.num_accepted_draft_tokens == 10
@@ -155,7 +156,7 @@ class TestVLLMSpecDecodeAdapter:
         payload = {
             "mean_acceptance_length": 1.0,
             "draft_acceptance_rate": 0.0,
-            "acceptance_histogram": {},
+            "acceptance_histogram": [0, 0, 0, 0],
             "num_spec_steps": 0,
             "num_accepted_draft_tokens": 0,
             "num_draft_tokens": 0,
@@ -176,7 +177,7 @@ class TestVLLMSpecDecodeAdapter:
         payload = {
             "mean_acceptance_length": 1.0,
             "draft_acceptance_rate": 0.0,
-            "acceptance_histogram": {"0": 20},
+            "acceptance_histogram": [20, 0, 0, 0],
             "num_spec_steps": 20,
             "num_accepted_draft_tokens": 0,
             "num_draft_tokens": 60,
@@ -250,16 +251,18 @@ class TestVLLMSpecDecodeAdapter:
             # Signature keys present (so can_adapt matches) but the rest of the
             # required body is missing.
             param(
-                {"acceptance_histogram": {"0": 1}, "num_spec_steps": 1},
+                {"acceptance_histogram": [0, 1], "num_spec_steps": 1},
                 id="signature_only_missing_rest",
             ),
             param(
-                {**SUMMARY_PAYLOAD, "acceptance_histogram": {"x": 1}},
-                id="non_integer_histogram_key",
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": [39, 1, "x", 3]},
+                id="non_integer_histogram_element",
             ),
             param(
-                {**SUMMARY_PAYLOAD, "acceptance_histogram": [1, 2, 3]},
-                id="histogram_wrong_type",
+                # A dict is the pre-rework wire shape; the current list-based
+                # parser must reject it rather than emit a garbled record.
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": {"0": 39, "1": 1, "3": 3}},
+                id="histogram_dict_not_list",
             ),
         ],
     )  # fmt: skip
@@ -287,7 +290,7 @@ class TestVLLMSpecDecodeAdapter:
     def test_adapt_negative_count_payload_degrades_to_none(self) -> None:
         """A signature-matching payload with a negative count is rejected by the
         record's ge=0 constraints, and the adapter degrades to None."""
-        bad = {**SUMMARY_PAYLOAD, "acceptance_histogram": {"0": -1}}
+        bad = {**SUMMARY_PAYLOAD, "acceptance_histogram": [-1, 1, 0, 3]}
         responses = [_response(spec_decode_stats=bad)]
         assert VLLMSpecDecodeAdapter.can_adapt(responses) is True
         assert VLLMSpecDecodeAdapter.adapt(responses) is None

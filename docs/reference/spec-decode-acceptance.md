@@ -66,7 +66,7 @@ class SpecDecodeAdapterProtocol(Protocol):
 
 ```mermaid
 flowchart LR
-    R["Raw response<br/>choices[].speculative_decoding_stats"]
+    R["Raw response<br/>metrics.speculative_decoding"]
     P["ParsedResponse<br/>.spec_decode_stats (raw dict)"]
     A["Engine adapter<br/>(auto-detected)"]
     N["SpecDecodeAcceptanceRecord<br/>(engine-neutral)"]
@@ -76,22 +76,26 @@ flowchart LR
 
 ## The vLLM adapter
 
-`VLLMSpecDecodeAdapter` reads vLLM's per-choice `speculative_decoding_stats`
-object, emitted when the server runs with `--per-request-spec-decode-stats`
+`VLLMSpecDecodeAdapter` reads vLLM's response-root `metrics.speculative_decoding`
+object, emitted when the server runs with `--per-request-spec-decode-metrics`
 (`summary` or `detailed`). The field names and shape track vLLM PR
 [#48915](https://github.com/vllm-project/vllm/pull/48915); its *Per-Request
 Acceptance Metrics* feature doc is the authoritative wire-format reference. It is
 present on chat and completions, streaming and non-streaming; in streaming it
-rides the finish-reason chunk's choice, which AIPerf already parses, so no extra
-endpoint code is needed.
+rides the trailing `include_usage` chunk (empty `choices`) at the response root,
+which AIPerf already parses, so no extra endpoint code is needed.
 
 The wire object maps to the record one-to-one, except:
 
-- **Histogram keys are JSON strings** and are int-cast into the record.
-- **`completion_tokens`** comes from the response `usage`, not the payload. In
-  streaming that usage rides the trailing `include_usage` chunk, which AIPerf
-  auto-injects only when `endpoint.use_server_token_count` is enabled; otherwise
-  (or whenever the server omits usage) `completion_tokens` stays `None`.
+- **`acceptance_histogram` is a dense `list[int]`** -- index `j` holds the number
+  of verify steps that accepted exactly `j` draft tokens (length
+  `num_spec_tokens + 1`). AIPerf inflates it into the record's sparse
+  `{j: count}` map, dropping zero-count buckets.
+- **`completion_tokens`** is copied from the response `usage` (not the payload)
+  so the record trace carries it next to acceptance; no metric consumes it yet.
+  `None` when usage is absent -- in streaming, usage rides the trailing
+  `include_usage` chunk, which AIPerf auto-injects only when
+  `endpoint.use_server_token_count` is enabled.
 - **`num_draft_tokens`** is vLLM's post-adjustment count: drafts invalidated by
   structured-output/grammar constraints are already subtracted server-side.
 - **`num_spec_tokens`** is always present (the configured `num_speculative_tokens`);
@@ -112,10 +116,11 @@ The wire object maps to the record one-to-one, except:
   one bad response cannot abort a run. Records whose aggregate counts contradict
   each other (histogram not summing to `num_spec_steps`, etc.) are rejected the
   same way.
-- **`n > 1`**: when a request produces multiple sequences, each choice carries
-  its own per-sequence stats, but `completion_tokens` is request-level. Rather
-  than mix one sequence's acceptance with all sequences' token count, the record
-  is suppressed (`None`) for `n > 1`, mirroring how per-request timing metrics
-  are suppressed for multi-sequence requests.
+- **`n > 1`**: vLLM populates `metrics.speculative_decoding` only for
+  single-sequence requests, leaving it `null` for `n > 1` (mixing one sequence's
+  acceptance with request-level token counts would be misleading). Because the
+  object is at the response root -- not per-choice -- AIPerf simply reads it as
+  present or absent; no client-side suppression is needed, and an `n > 1` request
+  yields no record.
 - **Behind Dynamo** the custom field is currently stripped, so this path is
   direct-to-vLLM only.
