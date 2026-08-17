@@ -11,6 +11,7 @@ use std::{
     process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
+    thread,
     time::Duration,
 };
 
@@ -34,6 +35,7 @@ use super::{
 };
 
 const MAX_DOCKER_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_DOCKER_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
 
 use super::docker_runtime::preflight_compose_configuration;
 use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
@@ -2555,37 +2557,79 @@ fn docker_output_bounded(
     deadline: Option<Duration>,
 ) -> Result<Vec<u8>, EvalExecutionError> {
     let arguments = arguments.into_iter().collect::<Vec<_>>();
-    let Some(deadline) = deadline else {
-        return docker(
-            arguments.iter().map(String::as_str),
-            "list Compose resources",
-        );
-    };
-    let child = Command::new("docker")
+    let mut child = Command::new("docker")
         .args(&arguments)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose command".to_owned()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| EvalExecutionError::ProcessSpawn("docker resource output".to_owned()))?;
+    let reader =
+        thread::spawn(move || drain_output_bounded(stdout, MAX_DOCKER_COMMAND_OUTPUT_BYTES));
     let mut process = DockerExecChild { child };
+    let Some(deadline) = deadline else {
+        let status = process
+            .child
+            .wait()
+            .map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))?;
+        let output = join_docker_output_reader(reader)?;
+        return if status.success() {
+            Ok(output)
+        } else {
+            Err(EvalExecutionError::ProcessFailure(format!(
+                "docker command exited with {status}"
+            )))
+        };
+    };
     let mut no_remove = |_target: &str, _: Duration| Ok(());
-    drive_docker_exec(
+    let result = drive_docker_exec(
         clock,
         &mut process,
         target,
         EvalExecutionPhase::CollectionHook,
         deadline,
         &mut no_remove,
-    )?;
-    let mut output = Vec::new();
-    process
-        .child
-        .stdout
-        .take()
-        .ok_or_else(|| EvalExecutionError::ProcessSpawn("docker resource output".to_owned()))?
-        .read_to_end(&mut output)
-        .map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))?;
-    Ok(output)
+    );
+    match result {
+        Ok(()) => join_docker_output_reader(reader),
+        Err(error) => Err(error),
+    }
+}
+
+fn join_docker_output_reader(
+    reader: thread::JoinHandle<io::Result<Vec<u8>>>,
+) -> Result<Vec<u8>, EvalExecutionError> {
+    reader
+        .join()
+        .map_err(|_| {
+            EvalExecutionError::ProcessFailure("docker output reader panicked".to_owned())
+        })?
+        .map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))
+}
+
+fn drain_output_bounded(mut source: impl Read, cap: usize) -> io::Result<Vec<u8>> {
+    let mut captured = Vec::with_capacity(cap.min(8192));
+    let mut buffer = [0_u8; 8192];
+    let mut exceeded = false;
+    loop {
+        let read = source.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let remaining = cap.saturating_sub(captured.len());
+        let retained = read.min(remaining);
+        captured.extend_from_slice(&buffer[..retained]);
+        exceeded |= retained < read;
+    }
+    if exceeded {
+        return Err(io::Error::other(
+            "docker command output exceeds the maximum size",
+        ));
+    }
+    Ok(captured)
 }
 
 fn compose_service_container(
@@ -3903,9 +3947,9 @@ mod tests {
         DockerExecState, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
         EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
         compose_ownership_filters, compose_stop_arguments, copy_archive_stream_bounded,
-        docker_container_name, docker_image_name, drive_docker_exec, ensure_network_exists,
-        read_optional_reward_archive, read_reward_with_runtime, redact_secret_values,
-        reports_absent_container,
+        docker_container_name, docker_image_name, drain_output_bounded, drive_docker_exec,
+        ensure_network_exists, read_optional_reward_archive, read_reward_with_runtime,
+        redact_secret_values, reports_absent_container,
     };
     use crate::{
         clock::SimClock,
@@ -4029,6 +4073,37 @@ mod tests {
             matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("exceeds"))
         );
         assert!(temporary.len() <= cap);
+    }
+
+    #[test]
+    fn bounded_command_output_keeps_draining_after_its_capture_cap() {
+        struct ChunkedOutput {
+            chunks: VecDeque<Vec<u8>>,
+            reads: Rc<Cell<usize>>,
+        }
+
+        impl Read for ChunkedOutput {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                self.reads.set(self.reads.get() + 1);
+                let Some(chunk) = self.chunks.pop_front() else {
+                    return Ok(0);
+                };
+                buffer[..chunk.len()].copy_from_slice(&chunk);
+                Ok(chunk.len())
+            }
+        }
+
+        let reads = Rc::new(Cell::new(0));
+        let output = ChunkedOutput {
+            chunks: VecDeque::from([vec![b'a'; 4], vec![b'b'; 4], vec![b'c'; 4]]),
+            reads: reads.clone(),
+        };
+
+        let error = drain_output_bounded(output, 5)
+            .expect_err("the capture cap must reject excess command output after draining it");
+
+        assert!(error.to_string().contains("exceeds"));
+        assert_eq!(reads.get(), 4);
     }
 
     #[test]

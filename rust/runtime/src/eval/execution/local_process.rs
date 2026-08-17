@@ -5,8 +5,9 @@
 
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
-    process::{Command, ExitStatus},
+    process::{Command, ExitStatus, Stdio},
 };
 
 use tempfile::TempDir;
@@ -17,6 +18,8 @@ use crate::eval::{
 };
 
 use super::{EvalExecutionError, HarborSandboxRecipe, ProviderCapabilities};
+
+const MAX_LOCAL_FILE_BYTES: u64 = 1024 * 1024;
 
 /// Selects the isolated root materialized for one evaluation participant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,22 +145,24 @@ impl MaterializedSandbox {
         {
             return Err(EvalExecutionError::InvalidCommand);
         }
-        let output = Command::new(program)
+        let status = Command::new(program)
             .args(arguments)
             .current_dir(self.root())
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("AIPERF_EVAL_ROOT", self.root())
             .envs(environment.iter().map(|(key, value)| (key, value)))
-            .output()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
             .map_err(|_| EvalExecutionError::ProcessSpawn(program.clone()))?;
-        if !output.status.success() {
+        if !status.success() {
             return Err(EvalExecutionError::ProcessFailure(program.clone()));
         }
         Ok(ProcessOutput {
-            status: output.status,
-            stdout: output.stdout,
-            stderr: output.stderr,
+            status,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
         })
     }
 }
@@ -231,16 +236,50 @@ fn collect_declared_artifacts(
                     path
                 )));
             }
-            let bytes = fs::read(artifact_path)
-                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+            let bytes = read_file_bounded(&artifact_path)?;
             Ok((path.clone(), ArtifactDigest::from_bytes(&bytes)))
         })
         .collect()
 }
 
 fn parse_reward(sandbox: &MaterializedSandbox) -> Result<RewardDocument, EvalExecutionError> {
-    let reward_json = fs::read(sandbox.root().join("reward.json")).ok();
-    let reward_txt = fs::read(sandbox.root().join("reward.txt")).ok();
+    let reward_json = read_optional_file_bounded(&sandbox.root().join("reward.json"))?;
+    let reward_txt = read_optional_file_bounded(&sandbox.root().join("reward.txt"))?;
     RewardDocument::parse(reward_json.as_deref(), reward_txt.as_deref())
         .map_err(|error| EvalExecutionError::ProcessFailure(format!("verifier reward: {error}")))
+}
+
+fn read_optional_file_bounded(path: &Path) -> Result<Option<Vec<u8>>, EvalExecutionError> {
+    match fs::File::open(path) {
+        Ok(file) => read_open_file_bounded(file).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(EvalExecutionError::ArtifactCollection(error.to_string())),
+    }
+}
+
+fn read_file_bounded(path: &Path) -> Result<Vec<u8>, EvalExecutionError> {
+    let file = fs::File::open(path)
+        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+    read_open_file_bounded(file)
+}
+
+fn read_open_file_bounded(file: fs::File) -> Result<Vec<u8>, EvalExecutionError> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+    if metadata.len() > MAX_LOCAL_FILE_BYTES {
+        return Err(EvalExecutionError::ArtifactCollection(
+            "local artifact exceeds the maximum size".to_owned(),
+        ));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_LOCAL_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+    if bytes.len() as u64 > MAX_LOCAL_FILE_BYTES {
+        return Err(EvalExecutionError::ArtifactCollection(
+            "local artifact exceeds the maximum size".to_owned(),
+        ));
+    }
+    Ok(bytes)
 }

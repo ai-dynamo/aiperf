@@ -178,6 +178,35 @@ fn local_process_sandbox_materializes_package_clears_environment_and_isolates_ve
 }
 
 #[test]
+fn local_process_sandbox_discards_phase_output() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["true"],"verifier_command":["true"],"declared_artifacts":[]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let sandbox = LocalProcessSandbox::new();
+    let materialized = sandbox
+        .materialize(&recipe, &imported.package, SandboxRole::Agent)
+        .unwrap();
+
+    let output = materialized
+        .run(
+            &["sh".to_owned(), "-c".to_owned(), "printf hidden".to_owned()],
+            &[],
+        )
+        .unwrap();
+
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn local_process_sandbox_runs_agent_transfers_declared_artifacts_and_parses_verifier_reward() {
     let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","printf patch > \"$AIPERF_EVAL_ROOT/results/patch.diff\""],"verifier_command":["sh","-c","test -f results/patch.diff && printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":["/results/patch.diff"]}"#;
     let imported = HarborImporter::new(&StaticAcquirer {
@@ -206,6 +235,54 @@ fn local_process_sandbox_runs_agent_transfers_declared_artifacts_and_parses_veri
         .unwrap();
     assert_eq!(score.version, 0);
     assert_eq!(score.value, 1.0);
+}
+
+#[test]
+fn local_process_sandbox_rejects_an_oversized_declared_artifact() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["sh","-c","head -c 1048577 /dev/zero > results/patch.diff"],"verifier_command":["true"],"declared_artifacts":["/results/patch.diff"]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    let error = LocalProcessSandbox::new()
+        .execute(&recipe, &imported.package, VerifierMode::Shared)
+        .expect_err("local artifact collection must reject files beyond the host safety cap");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ArtifactCollection(message) if message.contains("maximum size")
+    ));
+}
+
+#[test]
+fn local_process_sandbox_rejects_an_oversized_verifier_reward() {
+    let package = br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["true"],"verifier_command":["sh","-c","head -c 1048577 /dev/zero > reward.json"],"declared_artifacts":[]}"#;
+    let imported = HarborImporter::new(&StaticAcquirer {
+        bytes: package.to_vec(),
+    })
+    .import(&HarborSource::local("task.json").unwrap())
+    .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+
+    let error = LocalProcessSandbox::new()
+        .execute(&recipe, &imported.package, VerifierMode::Shared)
+        .expect_err("local reward collection must reject files beyond the host safety cap");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ArtifactCollection(message) if message.contains("maximum size")
+    ));
 }
 
 #[test]
