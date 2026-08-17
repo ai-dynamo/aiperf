@@ -31,15 +31,19 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::clock::{Clock, RealClock};
-use crate::dispatch::collector::{ReplayTerminalStatus, TraceSimulationReport};
+#[cfg(feature = "dynosim")]
+use crate::dispatch::collector::ReplayTerminalStatus;
+use crate::dispatch::collector::TraceSimulationReport;
 use crate::dispatch::observer::CollectorObserver;
 use crate::dispatch::sink::RequestObserver;
 use crate::metrics_core::{AccumulatorSummary, MetricsConfig};
 
 use crate::timing::{
-    ArrivalPattern, LinearRamp, Phase, RampDriver, RampHandle, RamperConfig, RunState, SlotPool,
-    StopChecker, StopConfig, make_interval_generator,
+    ArrivalPattern, LinearRamp, Phase, RampDriver, RampHandle, RamperConfig, SlotPool, StopConfig,
+    make_interval_generator,
 };
+#[cfg(feature = "dynosim")]
+use crate::timing::{RunState, StopChecker};
 
 use crate::adaptive::{AdaptiveControlVariable, AdaptiveRunConfig, build_adaptive};
 use crate::ancillary::{AncillaryTimingConfig, parse_base_urls, url_selector};
