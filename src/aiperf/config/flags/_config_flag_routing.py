@@ -103,6 +103,26 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         # agentic phase fields, via _apply_agentic_replay_fields
         "agentic_cache_warmup_duration",
         "agentic_warmup_grace_period",
+        # publishing targets, via build_mlflow / build_otel /
+        # build_network_latency -- the builders the CLI-only converter has
+        # always used, now called by build_cli_overrides too
+        "mlflow_artifact_globs",
+        "mlflow_experiment",
+        "mlflow_parent_run_id",
+        "mlflow_run_name",
+        "mlflow_tags",
+        "mlflow_tracking_uri",
+        "otel_resource_attributes",
+        "otel_url",
+        "gen_ai_provider",
+        "network_latency_automatic",
+        "network_latency_mean",
+        "network_latency_ping_interval",
+        # scenario lock, via _apply_scenario_overrides
+        "scenario",
+        "unsafe_override",
+        # inter-turn delay cap, carried onto trace datasets by build_dataset
+        "inter_turn_delay_cap_seconds",
         # baseten_trace dataset knobs carried by _VERBATIM_DATASET_FIELDS;
         # against another format they raise rather than drop
         "force_min_tokens",
@@ -265,27 +285,11 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         "warmup_request_rate",
         "warmup_request_rate_ramp_duration",
         # ----- outside every section frozenset -----
-        # Verified dropped: resolving with the flag set is byte-identical to
-        # resolving without it. build_mlflow / build_otel /
-        # build_network_latency exist and are called by the CLI-only
-        # converter, but build_cli_overrides never calls them.
-        "mlflow_artifact_globs",
-        "mlflow_experiment",
-        "mlflow_parent_run_id",
-        "mlflow_run_name",
-        "mlflow_tags",
-        "mlflow_tracking_uri",
-        "otel_resource_attributes",
-        "otel_url",
-        "gen_ai_provider",
-        "network_latency_automatic",
-        "network_latency_mean",
-        "network_latency_ping_interval",
-        "scenario",
-        "unsafe_override",
+        # Still dropped: --sweep-type needs a sweep block to attach to, and
+        # --disable-auto-fixed-schedule is consumed by phase construction
+        # which this path does not rebuild. Both need their own routing.
         "sweep_type",
         "disable_auto_fixed_schedule",
-        "inter_turn_delay_cap_seconds",
         # ----- loadgen: ramps, pacing, cancellation -----
         "arrival_smoothness",
         "concurrency_ramp_duration",

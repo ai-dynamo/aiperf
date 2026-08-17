@@ -179,7 +179,12 @@ def build_cli_overrides(
         build_tokenizer,
     )
     from aiperf.config.flags._converter_runtime import build_logging_runtime
-    from aiperf.config.flags._converter_telemetry import build_wandb
+    from aiperf.config.flags._converter_telemetry import (
+        build_mlflow,
+        build_network_latency,
+        build_otel,
+        build_wandb,
+    )
 
     out: dict[str, Any] = {}
     _apply_endpoint_overrides(out, cli)
@@ -194,6 +199,20 @@ def build_cli_overrides(
     _apply_optional_section(
         out, "wandb", build_wandb(cli, base_enabled=wandb_base_enabled)
     )
+    # These three builders already existed and are used by the CLI-only
+    # converter; this path simply never called them, so --mlflow-*,
+    # --otel-url, and the network-latency flags were dropped whenever a
+    # config file was supplied. They gate on model_fields_set, so an unset
+    # flag leaves the YAML block alone.
+    _apply_optional_section(out, "network_latency", build_network_latency(cli))
+    _apply_optional_section(out, "otel", build_otel(cli))
+    mlflow_base_uri = benchmark_config is not None and bool(
+        benchmark_config.mlflow.tracking_uri
+    )
+    _apply_optional_section(
+        out, "mlflow", build_mlflow(cli, base_tracking_uri=mlflow_base_uri)
+    )
+    _apply_scenario_overrides(out, cli)
 
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table
@@ -207,6 +226,21 @@ def build_cli_overrides(
     _apply_optional_section(out, "runtime", runtime_dict)
 
     return out
+
+
+def _apply_scenario_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
+    """Mirror the converter's scenario-lock fields onto the override dict.
+
+    ``scenario`` and ``unsafe_override`` are plain data on ``BenchmarkConfig``
+    rather than envelope keys, so ``_wrap_under_envelope`` moves them under
+    ``benchmark:`` exactly as ``_apply_scenario_fields`` relies on for the
+    CLI-only path.
+    """
+    set_fields = cli.model_fields_set
+    if "scenario" in set_fields:
+        out["scenario"] = cli.scenario
+    if "unsafe_override" in set_fields:
+        out["unsafe_override"] = cli.unsafe_override
 
 
 def _apply_optional_section(
