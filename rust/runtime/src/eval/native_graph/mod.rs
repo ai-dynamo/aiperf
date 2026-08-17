@@ -4,10 +4,13 @@
 //! NativeGraph package, protocol, artifact, result, and suite contracts.
 
 mod artifacts;
+mod episode_runner;
 mod evaluator;
+mod factories;
 mod live_driver;
 mod lowering;
 mod matrix;
+mod model_runtime;
 mod package;
 mod protocol;
 mod result;
@@ -19,11 +22,25 @@ pub use artifacts::{
     EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest,
 };
 
+pub use episode_runner::{
+    DockerNativeGraphEpisodeExecutor, EpisodeExecutionError, NativeGraphEpisodeExecutor,
+    NativeGraphEpisodeRunner,
+};
 pub use evaluator::{
     EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, HarborEpisodeEvaluator,
     HarborEpisodeEvaluatorFactory,
 };
+pub use factories::{
+    ConfirmedNativeGraphProviderRecoveryFactory, ExactNativeGraphFidelityObserverFactory,
+    NativeGraphAdapterRuntimeProvider, NativeGraphEnvironmentStepper,
+    NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriver,
+    NativeGraphExternalDriverFactory, NativeGraphFactoryError, NativeGraphFidelityObserver,
+    NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
+    NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
+    RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, StrictAdapterRuntimeProvider,
+};
 pub use live_driver::NativeGraphLiveTraceProgramDriverFactory;
+pub(crate) use lowering::GENERATION_METADATA_KEY;
 pub use lowering::{
     BoundedControlFlowContract, NativeGraphControlContract, NativeGraphLowererFactory,
     NativeGraphLoweringError, NativeGraphLoweringReport, NativeGraphNodeFidelity,
@@ -33,7 +50,13 @@ pub use lowering::{
 pub use matrix::{
     EpisodeAssignment, EpisodeRunner, LocalNativeGraphSuiteScheduler,
     LocalNativeGraphSuiteSchedulerFactory, MatrixError, NativeGraphSuiteScheduler, ResourceLimits,
-    SuiteSchedulerFactory, run_resolved_suite,
+    SuiteSchedulerFactory, run_resolved_suite, select_native_graph_scheduler,
+};
+pub use model_runtime::{
+    CurrentNativeGraphModelBindingResolver, EngineNativeGraphEpisodeCallback, ModelRuntimeConfig,
+    ModelRuntimeError, NativeGraphModelBindingResolver, NativeGraphModelStageError,
+    ObservedNativeGraphTransportEvidence, ResolvedModelBinding, ResolvedModelBindingSet,
+    ResolvedTokenizerBinding,
 };
 pub use result::{
     EpisodeAggregate, EpisodeComparability, EpisodeExecution, EpisodeIntegrity, EpisodeResult,

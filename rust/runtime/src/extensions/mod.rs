@@ -31,6 +31,17 @@ use crate::endpoints::{
 };
 #[cfg(feature = "engine")]
 use crate::engine::registry::{TransportFactory, WorkloadFactory};
+#[cfg(feature = "engine")]
+use crate::eval::{
+    AdapterProtocolFactory, ConfirmedNativeGraphProviderRecoveryFactory, EpisodeEvaluatorFactory,
+    ExactNativeGraphFidelityObserverFactory, HarborEpisodeEvaluatorFactory,
+    LocalNativeGraphSuiteSchedulerFactory, NativeGraphAdapterRuntimeProvider,
+    NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriverFactory,
+    NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
+    NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
+    RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, StrictAdapterProtocolFactory,
+    StrictAdapterRuntimeProvider, SuiteSchedulerFactory,
+};
 use crate::export::ExporterRegistry;
 
 /// Error returned while constructing or extending an [`AIPerfRegistry`].
@@ -146,6 +157,8 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &crate::engine::registry::GrpcExtension,
             #[cfg(all(feature = "engine", feature = "dynosim"))]
             &crate::engine::registry::DynosimExtension,
+            #[cfg(feature = "engine")]
+            &BuiltinNativeGraphExtension,
         ])
     }
 }
@@ -232,6 +245,93 @@ impl AIPerfExtension for BuiltinActuatorsExtension {
     }
 }
 
+/// Built-in NativeGraph-only factories selected by the evaluation composition
+/// layer. Existing endpoint, transport, graph, clock, and observer factories
+/// remain owned by their established product registries.
+#[cfg(feature = "engine")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinNativeGraphExtension;
+
+#[cfg(feature = "engine")]
+impl AIPerfExtension for BuiltinNativeGraphExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.native-graph"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .native_graph_lowerers
+            .insert(
+                "native_graph",
+                Arc::new(PackageNativeGraphLowererProvider) as Arc<dyn NativeGraphLowererProvider>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .native_graph_schedulers
+            .insert(
+                "local",
+                Arc::new(LocalNativeGraphSuiteSchedulerFactory) as Arc<dyn SuiteSchedulerFactory>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .native_graph_evaluators
+            .insert(
+                "harbor",
+                Arc::new(HarborEpisodeEvaluatorFactory) as Arc<dyn EpisodeEvaluatorFactory>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .native_graph_protocols
+            .insert(
+                "jsonl",
+                Arc::new(StrictAdapterProtocolFactory)
+                    as Arc<dyn AdapterProtocolFactory + Send + Sync>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .native_graph_adapter_runtimes
+            .insert(
+                "strict",
+                Arc::new(StrictAdapterRuntimeProvider)
+                    as Arc<dyn NativeGraphAdapterRuntimeProvider + Send + Sync>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .native_graph_environment_steppers
+            .insert(
+                "refuse",
+                Arc::new(RefusingEnvironmentStepperFactory)
+                    as Arc<dyn NativeGraphEnvironmentStepperFactory>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .native_graph_external_drivers
+            .insert(
+                "refuse",
+                Arc::new(RefusingExternalDriverFactory)
+                    as Arc<dyn NativeGraphExternalDriverFactory>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .native_graph_fidelity_observers
+            .insert(
+                "exact",
+                Arc::new(ExactNativeGraphFidelityObserverFactory)
+                    as Arc<dyn NativeGraphFidelityObserverFactory>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .native_graph_provider_recoveries
+            .insert(
+                "confirmed",
+                Arc::new(ConfirmedNativeGraphProviderRecoveryFactory)
+                    as Arc<dyn NativeGraphProviderRecoveryFactory>,
+            )
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        Ok(())
+    }
+}
+
 /// Aggregate of every runtime-name registry shared by the native CLI paths.
 ///
 /// Directly injected seams such as clocks, transports, observers, segment
@@ -259,6 +359,40 @@ pub struct AIPerfRegistry {
     /// preparation resolved by id.
     #[cfg(feature = "engine")]
     pub(crate) workloads: TransactionalRegistry<Arc<dyn WorkloadFactory>>,
+    /// Stateless package-aware source lowerer providers. Binding occurs only
+    /// after import retains an immutable package snapshot.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_lowerers: TransactionalRegistry<Arc<dyn NativeGraphLowererProvider>>,
+    /// Bounded NativeGraph matrix scheduler factories.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_schedulers: TransactionalRegistry<Arc<dyn SuiteSchedulerFactory>>,
+    /// Immutable completed-fact evaluator factories.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_evaluators: TransactionalRegistry<Arc<dyn EpisodeEvaluatorFactory>>,
+    /// Strict adapter wire protocol factories.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_protocols:
+        TransactionalRegistry<Arc<dyn AdapterProtocolFactory + Send + Sync>>,
+    /// Package-bound supervised adapter runtime providers.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_adapter_runtimes:
+        TransactionalRegistry<Arc<dyn NativeGraphAdapterRuntimeProvider + Send + Sync>>,
+    /// Package-bound environment stepping factories.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_environment_steppers:
+        TransactionalRegistry<Arc<dyn NativeGraphEnvironmentStepperFactory>>,
+    /// Compatibility-only externally driven episode factories.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_external_drivers:
+        TransactionalRegistry<Arc<dyn NativeGraphExternalDriverFactory>>,
+    /// Source-lowering fidelity observer factories.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_fidelity_observers:
+        TransactionalRegistry<Arc<dyn NativeGraphFidelityObserverFactory>>,
+    /// Provider-owned recovery fact factories.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_provider_recoveries:
+        TransactionalRegistry<Arc<dyn NativeGraphProviderRecoveryFactory>>,
     extension_names: BTreeSet<String>,
 }
 
@@ -275,6 +409,24 @@ impl AIPerfRegistry {
             transports: TransactionalRegistry::new(),
             #[cfg(feature = "engine")]
             workloads: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_lowerers: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_schedulers: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_evaluators: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_protocols: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_adapter_runtimes: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_environment_steppers: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_external_drivers: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_fidelity_observers: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_provider_recoveries: TransactionalRegistry::new(),
             extension_names: BTreeSet::new(),
         }
     }
@@ -397,6 +549,186 @@ impl AIPerfRegistry {
     /// Registered adaptive control-variable actuator factories.
     pub fn actuators(&self) -> &ActuatorRegistry {
         &self.actuators
+    }
+
+    /// Registers a stateless NativeGraph lowerer provider.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_lowerer(
+        &mut self,
+        name: &str,
+        provider: Arc<dyn NativeGraphLowererProvider>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_lowerers
+            .insert(name, provider)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a stateless NativeGraph lowerer provider by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_lowerer(&self, name: &str) -> Option<&Arc<dyn NativeGraphLowererProvider>> {
+        self.native_graph_lowerers.get(name)
+    }
+
+    /// Registers a NativeGraph suite scheduler factory.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_scheduler(
+        &mut self,
+        name: &str,
+        factory: Arc<dyn SuiteSchedulerFactory>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_schedulers
+            .insert(name, factory)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph suite scheduler factory by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_scheduler(&self, name: &str) -> Option<&Arc<dyn SuiteSchedulerFactory>> {
+        self.native_graph_schedulers.get(name)
+    }
+
+    /// Registers a NativeGraph completed-fact evaluator factory.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_evaluator(
+        &mut self,
+        name: &str,
+        factory: Arc<dyn EpisodeEvaluatorFactory>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_evaluators
+            .insert(name, factory)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph evaluator factory by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_evaluator(&self, name: &str) -> Option<&Arc<dyn EpisodeEvaluatorFactory>> {
+        self.native_graph_evaluators.get(name)
+    }
+
+    /// Registers a NativeGraph adapter protocol factory.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_protocol(
+        &mut self,
+        name: &str,
+        factory: Arc<dyn AdapterProtocolFactory + Send + Sync>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_protocols
+            .insert(name, factory)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph adapter protocol factory by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_protocol(
+        &self,
+        name: &str,
+    ) -> Option<&Arc<dyn AdapterProtocolFactory + Send + Sync>> {
+        self.native_graph_protocols.get(name)
+    }
+
+    /// Registers a NativeGraph adapter runtime provider.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_adapter_runtime(
+        &mut self,
+        name: &str,
+        provider: Arc<dyn NativeGraphAdapterRuntimeProvider + Send + Sync>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_adapter_runtimes
+            .insert(name, provider)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph adapter runtime provider by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_adapter_runtime(
+        &self,
+        name: &str,
+    ) -> Option<&Arc<dyn NativeGraphAdapterRuntimeProvider + Send + Sync>> {
+        self.native_graph_adapter_runtimes.get(name)
+    }
+
+    /// Registers a NativeGraph environment stepper factory.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_environment_stepper(
+        &mut self,
+        name: &str,
+        factory: Arc<dyn NativeGraphEnvironmentStepperFactory>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_environment_steppers
+            .insert(name, factory)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph environment stepper factory by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_environment_stepper(
+        &self,
+        name: &str,
+    ) -> Option<&Arc<dyn NativeGraphEnvironmentStepperFactory>> {
+        self.native_graph_environment_steppers.get(name)
+    }
+
+    /// Registers a NativeGraph external-driver factory.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_external_driver(
+        &mut self,
+        name: &str,
+        factory: Arc<dyn NativeGraphExternalDriverFactory>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_external_drivers
+            .insert(name, factory)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph external-driver factory by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_external_driver(
+        &self,
+        name: &str,
+    ) -> Option<&Arc<dyn NativeGraphExternalDriverFactory>> {
+        self.native_graph_external_drivers.get(name)
+    }
+
+    /// Registers a NativeGraph fidelity-observer factory.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_fidelity_observer(
+        &mut self,
+        name: &str,
+        factory: Arc<dyn NativeGraphFidelityObserverFactory>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_fidelity_observers
+            .insert(name, factory)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph fidelity observer factory by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_fidelity_observer(
+        &self,
+        name: &str,
+    ) -> Option<&Arc<dyn NativeGraphFidelityObserverFactory>> {
+        self.native_graph_fidelity_observers.get(name)
+    }
+
+    /// Registers a NativeGraph provider-recovery factory.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_provider_recovery(
+        &mut self,
+        name: &str,
+        factory: Arc<dyn NativeGraphProviderRecoveryFactory>,
+    ) -> Result<(), ExtensionError> {
+        self.native_graph_provider_recoveries
+            .insert(name, factory)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph provider-recovery factory by its frozen name.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_provider_recovery(
+        &self,
+        name: &str,
+    ) -> Option<&Arc<dyn NativeGraphProviderRecoveryFactory>> {
+        self.native_graph_provider_recoveries.get(name)
     }
 
     /// The catalog changes only after the descriptor and aliases pass collision

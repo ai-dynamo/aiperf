@@ -165,6 +165,8 @@ pub enum EvalExecutionError {
     ProcessSpawn(String),
     /// A local sandbox process returned a non-success status.
     ProcessFailure(String),
+    /// Rust-owned NativeGraph model execution failed before verifier collection.
+    NativeGraphModel(String),
     /// A phase exceeded its configured execution limit after its container was removed.
     Timeout {
         /// The command phase that exceeded its limit.
@@ -229,6 +231,9 @@ impl Display for EvalExecutionError {
             }
             Self::ProcessFailure(command) => {
                 write!(formatter, "sandbox command failed: {command:?}")
+            }
+            Self::NativeGraphModel(reason) => {
+                write!(formatter, "native graph model execution failed: {reason}")
             }
             Self::Timeout { phase, timeout } => {
                 write!(formatter, "{phase} phase timed out after {timeout:?}")

@@ -48,6 +48,7 @@ pub fn preflight_docker(
 pub(crate) fn resolve_native_graph_adapter_authorization(
     runtime: &dyn DockerRuntime,
     package: &HarborTaskPackage,
+    plan: &BenchmarkExecutionPlan,
 ) -> Result<Option<NativeGraphAdapterAuthorization>, EvalExecutionError> {
     let Some(native_graph) = package.native_graph() else {
         return Ok(None);
@@ -55,7 +56,7 @@ pub(crate) fn resolve_native_graph_adapter_authorization(
     if native_graph.profile() != NativeGraphProfile::NativeGraph {
         return Ok(None);
     }
-    let profile = runtime.native_graph_provider_profile(native_graph)?;
+    let profile = runtime.native_graph_provider_profile_for_plan(native_graph, plan)?;
     let secret_environment = runtime.native_graph_model_secret_environment(native_graph)?;
     NativeGraphAdapterAuthorization::resolve(
         native_graph,
@@ -1249,6 +1250,20 @@ pub trait DockerRuntime {
         Err(EvalExecutionError::UnsupportedEnforcement(
             "model endpoint isolation",
         ))
+    }
+
+    /// Resolves plan-bound adapter isolation proof before environment provisioning.
+    ///
+    /// The default preserves providers whose profile does not depend on a task
+    /// network plan. Providers with plan-sensitive isolation, such as Docker's
+    /// no-egress proof, must override this method rather than overstating a
+    /// package-only guarantee.
+    fn native_graph_provider_profile_for_plan(
+        &self,
+        package: &NativeGraphPackagePlan,
+        _: &BenchmarkExecutionPlan,
+    ) -> Result<ProviderProfile, EvalExecutionError> {
+        self.native_graph_provider_profile(package)
     }
 
     /// Resolves every logical model secret to its host-only environment name.

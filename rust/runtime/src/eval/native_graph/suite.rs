@@ -263,6 +263,11 @@ impl SuiteTrialSpec {
         &self.imported.package
     }
 
+    /// Borrows the complete immutable imported-task snapshot used by this trial.
+    pub fn imported(&self) -> &ImportedTask {
+        &self.imported
+    }
+
     /// Borrows the content-addressed task identity derived during import.
     pub fn task(&self) -> &EvalTaskRef {
         &self.imported.task
@@ -500,6 +505,11 @@ impl ResolvedEpisodeTrial {
     /// Borrows the immutable resolved trial inputs.
     pub fn trial(&self) -> &TrialSpec {
         self.specification.trial()
+    }
+
+    /// Borrows the importer-owned task snapshot selected for this exact attempt.
+    pub fn imported(&self) -> &ImportedTask {
+        self.specification.imported()
     }
 
     /// Borrows the importer-owned package snapshot used for this attempt.

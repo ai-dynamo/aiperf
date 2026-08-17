@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native execution of one Harbor-compatible evaluation package.
 
+mod native_graph;
+
 use std::{
     collections::BTreeMap,
     fs,
@@ -58,6 +60,12 @@ struct EvalFlags {
     /// Sandbox backend; `auto` uses Docker for standard directories and separate verification.
     #[arg(long, value_enum, default_value_t = SandboxFlag::Auto)]
     sandbox: SandboxFlag,
+    /// Strict host-owned NativeGraph model-secret mapping.
+    #[arg(long)]
+    model_runtime: Option<PathBuf>,
+    /// Strict NativeGraph suite document.
+    #[arg(long, conflicts_with_all = ["task", "git_repository", "git_revision", "git_path"])]
+    suite: Option<PathBuf>,
     /// Strict versioned JSON request that persists the full immutable evaluation lifecycle.
     #[arg(long)]
     lifecycle_request: Option<PathBuf>,
@@ -217,10 +225,28 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .as_deref()
         .map(read_lifecycle_request)
         .transpose()?;
+    let lifecycle_output_explicit = flags.lifecycle_output.is_some();
     let lifecycle_output = flags
         .lifecycle_output
         .unwrap_or_else(|| PathBuf::from("aiperf-eval-lifecycle.json"));
     let has_external_agent_command = flags.agent_command.is_some();
+    let native_options = native_graph::NativeGraphCliOptions {
+        image: flags.image.clone(),
+        workdir: flags.workdir.clone(),
+        sandbox: flags.sandbox,
+        requested_verifier_mode: flags.verifier_mode.map(VerifierMode::from),
+        has_external_agent_command,
+        lifecycle_output_explicit,
+    };
+    if let Some(suite) = flags.suite.as_deref() {
+        let model_runtime = flags.model_runtime.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("--model-runtime is required for schema-1.1 NativeGraph evaluation")
+        })?;
+        let lifecycle = lifecycle.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("--lifecycle-request is required for scored NativeGraph evaluation")
+        })?;
+        return native_graph::run_suite(suite, model_runtime, lifecycle, native_options);
+    }
     let requested_source = source_from_flags(
         flags.task,
         flags.git_repository,
@@ -230,9 +256,13 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let (_pinned_tree, source) = materialize_pinned_directory(&requested_source)?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
     if imported.package.native_graph().is_some() {
-        anyhow::bail!(
-            "schema-1.1 NativeGraph packages are not executable until the native graph runner owns them"
-        );
+        let model_runtime = flags.model_runtime.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("--model-runtime is required for schema-1.1 NativeGraph evaluation")
+        })?;
+        let lifecycle = lifecycle.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("--lifecycle-request is required for scored NativeGraph evaluation")
+        })?;
+        return native_graph::run_task(imported, model_runtime, lifecycle, native_options);
     }
     let requested_verifier_mode = flags.verifier_mode.map(VerifierMode::from);
     let verifier_mode = requested_verifier_mode.unwrap_or_else(|| imported.package.verifier_mode());

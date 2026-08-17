@@ -5,6 +5,7 @@
 
 use std::{
     cell::{Cell, RefCell},
+    collections::BTreeMap,
     fs,
     io::{self, Read, Seek, SeekFrom, Write},
     os::unix::fs::PermissionsExt,
@@ -27,8 +28,10 @@ use crate::{
     clock::{Clock, RealClock},
     eval::{
         AdapterProcess, AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner,
-        AdapterSupervisionError, ArtifactDigest, HarborTaskPackage,
-        NativeGraphAdapterAuthorization, RewardDocument, VerifierMode,
+        AdapterSupervisionError, ArtifactDigest, HarborTaskPackage, ModelEndpointIsolationProof,
+        ModelSecretId, NativeGraphAdapterAuthorization, NativeGraphEpisodeCallback,
+        NativeGraphEpisodeLease, ProviderCapability, ProviderProfile, RewardDocument, VerifierMode,
+        run_native_graph_episode_callback,
     },
 };
 
@@ -48,6 +51,28 @@ use super::{
 
 const MAX_DOCKER_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DOCKER_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
+
+/// Lease exposed to a Rust-owned graph only after Docker provider authorization.
+struct DockerNativeGraphEpisodeLease<'a> {
+    instruction: &'a str,
+    // Holding the exact proof for the callback lifetime prevents a later path
+    // from treating an unverified environment as an equivalent graph lease.
+    _authorization: &'a NativeGraphAdapterAuthorization,
+}
+
+impl NativeGraphEpisodeLease for DockerNativeGraphEpisodeLease<'_> {
+    fn is_authorized(&self) -> bool {
+        true
+    }
+
+    fn is_environment_acquired(&self) -> bool {
+        true
+    }
+
+    fn instruction(&self) -> &str {
+        self.instruction
+    }
+}
 
 use super::docker_runtime::preflight_compose_configuration;
 use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
@@ -107,6 +132,7 @@ impl DockerProcessSandbox {
         }
         let runtime = DockerCliRuntime {
             clock: self.clock.clone(),
+            native_graph_model_secrets: None,
         };
         self.execute_with_runtime(
             &runtime,
@@ -132,6 +158,7 @@ impl DockerProcessSandbox {
         }
         let runtime = DockerCliRuntime {
             clock: self.clock.clone(),
+            native_graph_model_secrets: None,
         };
         self.execute_multi_step_with_runtime(
             &runtime,
@@ -141,6 +168,35 @@ impl DockerProcessSandbox {
             agent_command,
             &HostSecretProvider,
         )
+    }
+
+    /// Executes one Rust-owned NativeGraph callback through Docker's plan-bound
+    /// no-egress authorization path.
+    ///
+    /// The caller supplies only logical model-secret names, never values. The
+    /// host-owned callback resolves values for the AIPerf transport while the
+    /// Docker task environment remains unable to reach model endpoints.
+    pub async fn execute_native_graph(
+        &self,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        model_secret_environment: BTreeMap<ModelSecretId, super::EnvName>,
+        secrets: &dyn SecretProvider,
+        callback: &mut dyn NativeGraphEpisodeCallback,
+    ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        let runtime = DockerCliRuntime {
+            clock: self.clock.clone(),
+            native_graph_model_secrets: Some(model_secret_environment),
+        };
+        self.execute_native_graph_with_runtime(
+            &runtime,
+            recipe,
+            package,
+            package.execution_plan(),
+            secrets,
+            callback,
+        )
+        .await
     }
 
     /// Executes an explicit step layout through an injectable Docker provider.
@@ -164,7 +220,8 @@ impl DockerProcessSandbox {
             ));
         }
         preflight_docker(runtime, plan)?;
-        let _adapter_authorization = resolve_native_graph_adapter_authorization(runtime, package)?;
+        let _adapter_authorization =
+            resolve_native_graph_adapter_authorization(runtime, package, plan)?;
         if plan.compose().is_some() {
             return self.execute_compose_multi_step_with_runtime(
                 runtime,
@@ -279,7 +336,8 @@ impl DockerProcessSandbox {
             );
         }
         preflight_docker(runtime, plan)?;
-        let _adapter_authorization = resolve_native_graph_adapter_authorization(runtime, package)?;
+        let _adapter_authorization =
+            resolve_native_graph_adapter_authorization(runtime, package, plan)?;
         if plan.compose().is_some() {
             return self.execute_compose_with_runtime(
                 runtime,
@@ -571,6 +629,319 @@ impl DockerProcessSandbox {
         )
     }
 
+    /// Executes one Rust-owned NativeGraph callback in a standard task environment.
+    ///
+    /// The callback receives no Docker command or host-secret capability. It is
+    /// admitted only after the exact provider authorization, acquired package
+    /// environment, healthcheck, and agent-workdir preparation all succeed. The
+    /// existing declared artifact, verifier, and reverse-cleanup transaction is
+    /// retained unchanged after it completes.
+    pub async fn execute_native_graph_with_runtime(
+        &self,
+        runtime: &dyn DockerRuntime,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        plan: &BenchmarkExecutionPlan,
+        secrets: &dyn SecretProvider,
+        callback: &mut dyn NativeGraphEpisodeCallback,
+    ) -> Result<LocalExecutionResult, EvalExecutionError> {
+        if package.execution_plan().is_multi_step() || plan.is_multi_step() {
+            return Err(EvalExecutionError::UnsupportedMultiStep);
+        }
+        if !package.is_standard_directory() {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "standard NativeGraph task package",
+            ));
+        }
+        preflight_docker(runtime, plan)?;
+        let authorization = resolve_native_graph_adapter_authorization(runtime, package, plan)?
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph exact-profile authorization",
+            ))?;
+        if plan.compose().is_some() {
+            return Err(EvalExecutionError::UnsupportedEnforcement(
+                "NativeGraph Compose task environment",
+            ));
+        }
+        let environment = plan.environment();
+        let verifier = plan.verifier();
+        if !runtime.supports_phase_network_transitions()
+            && (plan.agent().network() != environment.network()
+                || verifier.phase().network() != verifier.environment().network())
+        {
+            return Err(EvalExecutionError::UnsupportedEnforcement(
+                "phase network transition",
+            ));
+        }
+        let environment_workdir = recipe.resolve_workdir(environment.workdir());
+        validate_shared_verifier_workdir(runtime, plan, None, environment_workdir)?;
+        let materialized_source = package.materialize_source()?;
+        let (source_root, environment_root) =
+            standard_task_roots(package, materialized_source.root())?;
+        let workspace = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let safe_suffix = package
+            .source_digest()
+            .as_str()
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric())
+            .take(32)
+            .collect::<String>();
+        let run_id = NEXT_DOCKER_RUN_ID.fetch_add(1, Ordering::Relaxed);
+        let image = docker_image_name(&safe_suffix, std::process::id(), run_id);
+        let container = docker_container_name(&safe_suffix, std::process::id(), run_id);
+        let mut containers = vec![container.clone()];
+
+        let outcome = async {
+            let baseline_network = network_lease(environment.network())?;
+            let build_network = build_network_lease(environment.network())?;
+            runtime.build(
+                &DockerBuildRequest::new([
+                    "build",
+                    "--network",
+                    build_network,
+                    "--tag",
+                    &image,
+                    environment_root.to_string_lossy().as_ref(),
+                ])
+                .with_network_lease(build_network),
+            )?;
+            create_planned_container(
+                runtime,
+                &container,
+                &image,
+                ContainerWorkspace::at_workdir(workspace.path(), environment_workdir),
+                environment,
+                baseline_network,
+                Some(package.instruction()),
+                None,
+            )?;
+            runtime.start(&DockerStartRequest::new(&container))?;
+            validate_shared_verifier_workdir(runtime, plan, Some(&container), environment_workdir)?;
+            if let Some(healthcheck) = environment.healthcheck() {
+                run_healthcheck(
+                    self.clock.clone(),
+                    runtime,
+                    &container,
+                    environment,
+                    environment_workdir,
+                    healthcheck,
+                    baseline_network,
+                    secrets,
+                )?;
+            }
+            let agent_deadline = plan.agent().timeout().map(|timeout| {
+                Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Agent, timeout)
+            });
+            let remaining = |deadline: &Option<Deadline>| {
+                deadline.as_ref().map(Deadline::remaining).transpose()
+            };
+            prepare_workdir_with_deadline(
+                runtime,
+                &container,
+                environment,
+                plan.agent(),
+                EvalExecutionPhase::Agent,
+                environment_workdir,
+                baseline_network,
+                remaining(&agent_deadline)?,
+            )?;
+            let mut lease = DockerNativeGraphEpisodeLease {
+                instruction: package.instruction(),
+                _authorization: &authorization,
+            };
+            run_native_graph_episode_callback(callback, &mut lease, || {
+                let artifact_collection = tempfile::tempdir()
+                    .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+                let collection_timeout = plan
+                    .steps()
+                    .first()
+                    .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?
+                    .collection_timeout();
+                let collection_deadline =
+                    Deadline::from_timeout(self.clock.clone(), collection_timeout);
+                let artifacts = collect_artifacts_bounded(
+                    runtime,
+                    &container,
+                    plan.artifacts(),
+                    artifact_collection.path(),
+                    collection_deadline,
+                )?;
+                let verifier_deadline = verifier.phase().timeout().map(|timeout| {
+                    Deadline::from_phase_timeout(
+                        self.clock.clone(),
+                        EvalExecutionPhase::Verifier,
+                        timeout,
+                    )
+                });
+                let remaining = |deadline: &Option<Deadline>| {
+                    deadline.as_ref().map(Deadline::remaining).transpose()
+                };
+                let verifier_container = if verifier.mode() == VerifierMode::Separate {
+                    let verifier_workspace = tempfile::tempdir()
+                        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                    fs::set_permissions(
+                        verifier_workspace.path(),
+                        fs::Permissions::from_mode(0o755),
+                    )
+                    .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+                    if let Some(deadline) = verifier_deadline.as_ref() {
+                        transfer_artifacts_bounded(
+                            artifact_collection.path(),
+                            verifier_workspace.path(),
+                            &artifacts,
+                            deadline,
+                        )?;
+                    } else {
+                        super::transfer_artifacts(
+                            artifact_collection.path(),
+                            verifier_workspace.path(),
+                            &artifacts,
+                        )?;
+                    }
+                    let name = format!("{container}-verifier");
+                    let verifier_network = network_lease(verifier.environment().network())?;
+                    let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
+                    if !plan.artifacts().is_empty()
+                        && let Some(workdir) = verifier_workdir
+                    {
+                        validate_verifier_artifact_staging(workdir, plan.artifacts())?;
+                    }
+                    containers.push(name.clone());
+                    create_planned_container(
+                        runtime,
+                        &name,
+                        &image,
+                        ContainerWorkspace::at_workdir(verifier_workspace.path(), None),
+                        verifier.environment(),
+                        verifier_network,
+                        None,
+                        remaining(&verifier_deadline)?,
+                    )?;
+                    let start = match remaining(&verifier_deadline)? {
+                        Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
+                        None => DockerStartRequest::new(&name),
+                    };
+                    runtime.start(&start)?;
+                    if !plan.artifacts().is_empty() {
+                        let effective_verifier_workdir = match verifier_workdir {
+                            Some(workdir) => workdir.to_owned(),
+                            None => match remaining(&verifier_deadline)? {
+                                Some(deadline) => {
+                                    runtime.container_workdir_bounded(&name, deadline)?
+                                }
+                                None => runtime.container_workdir(&name)?,
+                            },
+                        };
+                        validate_verifier_artifact_staging(
+                            &effective_verifier_workdir,
+                            plan.artifacts(),
+                        )?;
+                        transfer_verifier_artifacts(
+                            runtime,
+                            &name,
+                            verifier_workspace.path(),
+                            Some(&effective_verifier_workdir),
+                            verifier_network,
+                            verifier_deadline.as_ref(),
+                        )?;
+                    }
+                    prepare_workdir_with_deadline(
+                        runtime,
+                        &name,
+                        verifier.environment(),
+                        verifier.phase(),
+                        EvalExecutionPhase::Verifier,
+                        verifier_workdir,
+                        verifier_network,
+                        remaining(&verifier_deadline)?,
+                    )?;
+                    if let Some(healthcheck) = verifier.environment().healthcheck() {
+                        run_healthcheck_with_deadline(
+                            self.clock.clone(),
+                            runtime,
+                            &name,
+                            verifier.environment(),
+                            verifier_workdir,
+                            healthcheck,
+                            verifier_network,
+                            secrets,
+                            verifier_deadline.as_ref(),
+                        )?;
+                    }
+                    Some((name, verifier_workspace))
+                } else {
+                    None
+                };
+                let verifier_name = verifier_container
+                    .as_ref()
+                    .map_or(container.as_str(), |(name, _)| name.as_str());
+                let verifier_network = network_lease(verifier.phase().network())?;
+                prepare_verifier_files_with_deadline(
+                    runtime,
+                    verifier_name,
+                    verifier_network,
+                    remaining(&verifier_deadline)?,
+                )?;
+                let copy = DockerCopyRequest::new([
+                    "cp".to_owned(),
+                    format!("{}/.", source_root.join("tests").display()),
+                    format!("{verifier_name}:/tests"),
+                ]);
+                let copy = match remaining(&verifier_deadline)? {
+                    Some(deadline) => copy.with_deadline(deadline),
+                    None => copy,
+                };
+                runtime.copy(&copy)?;
+                let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
+                if verifier.mode() == VerifierMode::Shared {
+                    prepare_workdir_with_deadline(
+                        runtime,
+                        verifier_name,
+                        verifier.environment(),
+                        verifier.phase(),
+                        EvalExecutionPhase::Verifier,
+                        verifier_workdir,
+                        verifier_network,
+                        remaining(&verifier_deadline)?,
+                    )?;
+                }
+                execute_planned_phase_with_deadline(
+                    runtime,
+                    verifier_name,
+                    EvalExecutionPhase::Verifier,
+                    &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
+                    verifier.environment(),
+                    verifier.phase(),
+                    verifier_workdir,
+                    secrets,
+                    remaining(&verifier_deadline)?,
+                )?;
+                let reward_workspace = tempfile::tempdir()
+                    .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                let reward = read_reward_with_runtime(
+                    runtime,
+                    verifier_name,
+                    &reward_workspace,
+                    verifier_deadline.as_ref(),
+                )?;
+                Ok(LocalExecutionResult {
+                    artifacts,
+                    reward,
+                    verifier: package.source_digest(),
+                })
+            })
+            .await
+        }
+        .await;
+        let cleanup = remove_containers_with_deadline(self.clock.clone(), runtime, containers);
+        combine_primary_and_cleanup(
+            outcome,
+            cleanup.map_or(Ok(()), Err),
+            "Docker evaluation containers",
+        )
+    }
+
     fn execute_legacy_with_runtime(
         &self,
         runtime: &dyn DockerRuntime,
@@ -581,7 +952,8 @@ impl DockerProcessSandbox {
         secrets: &dyn SecretProvider,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
         preflight_docker(runtime, plan)?;
-        let _adapter_authorization = resolve_native_graph_adapter_authorization(runtime, package)?;
+        let _adapter_authorization =
+            resolve_native_graph_adapter_authorization(runtime, package, plan)?;
         let environment = plan.environment();
         let verifier = plan.verifier();
         let environment_workdir = recipe.resolve_workdir(environment.workdir());
@@ -1903,6 +2275,7 @@ impl SecretProvider for HostSecretProvider {
 
 struct DockerCliRuntime {
     clock: Rc<dyn Clock>,
+    native_graph_model_secrets: Option<BTreeMap<ModelSecretId, super::EnvName>>,
 }
 
 struct DockerCliAdapterSpawner {
@@ -2106,10 +2479,30 @@ impl DockerRuntime for DockerCliRuntime {
             .with_service_exec()
             .with_service_archive()
             .with_service_stop()
+            .with_model_endpoint_isolation()
     }
 
     fn compose_runtime(&self) -> Option<&dyn DockerComposeRuntime> {
         Some(self)
+    }
+
+    fn native_graph_provider_profile_for_plan(
+        &self,
+        _: &crate::eval::NativeGraphPackagePlan,
+        plan: &BenchmarkExecutionPlan,
+    ) -> Result<ProviderProfile, EvalExecutionError> {
+        docker_cli_native_graph_no_egress_profile(plan)
+    }
+
+    fn native_graph_model_secret_environment(
+        &self,
+        _: &crate::eval::NativeGraphPackagePlan,
+    ) -> Result<BTreeMap<ModelSecretId, super::EnvName>, EvalExecutionError> {
+        self.native_graph_model_secrets
+            .clone()
+            .ok_or(EvalExecutionError::UnsupportedEnforcement(
+                "native graph model secret environment",
+            ))
     }
 
     fn adapter_spawner(
@@ -2336,6 +2729,24 @@ impl DockerRuntime for DockerCliRuntime {
             Err(error) => Err(error),
         }
     }
+}
+
+fn docker_cli_native_graph_no_egress_profile(
+    plan: &BenchmarkExecutionPlan,
+) -> Result<ProviderProfile, EvalExecutionError> {
+    if !plan.environment().network().is_no_network() || !plan.agent().network().is_no_network() {
+        return Err(EvalExecutionError::UnsupportedEnforcement(
+            "model endpoint isolation",
+        ));
+    }
+    ProviderProfile::new(
+        "docker-cli-native-graph-no-adapter-egress",
+        vec![ProviderCapability::ModelEndpointIsolation],
+    )
+    .and_then(|profile| {
+        profile.with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
+    })
+    .map_err(|_| EvalExecutionError::UnsupportedEnforcement("model endpoint isolation"))
 }
 
 impl DockerComposeRuntime for DockerCliRuntime {
@@ -4330,6 +4741,7 @@ mod tests {
     use std::{
         cell::{Cell, RefCell},
         collections::VecDeque,
+        fs,
         io::{self, Read},
         process::Command,
         rc::Rc,
@@ -4341,14 +4753,18 @@ mod tests {
         DockerExecState, DockerRemoveRequest, DockerRemoveStatus, DockerRuntime,
         DockerStartRequest, EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
         compensate_late_create_with, compose_ownership_filters, compose_stop_arguments,
-        copy_archive_stream_bounded, docker_container_name, docker_image_name,
-        drain_output_bounded, drive_docker_exec, ensure_network_exists,
-        read_optional_reward_archive, read_reward_with_runtime, reap_fenced_docker_client,
-        redact_secret_values, reports_absent_container, run_docker_exec_without_deadline,
+        copy_archive_stream_bounded, docker_cli_native_graph_no_egress_profile,
+        docker_container_name, docker_image_name, drain_output_bounded, drive_docker_exec,
+        ensure_network_exists, read_optional_reward_archive, read_reward_with_runtime,
+        reap_fenced_docker_client, redact_secret_values, reports_absent_container,
+        run_docker_exec_without_deadline,
     };
     use crate::{
         clock::SimClock,
-        eval::{ComposeProjectId, ProviderCapabilities},
+        eval::{
+            ComposeProjectId, HarborImporter, HarborSource, ModelEndpointIsolationProof,
+            NativeSourceAcquirer, ProviderCapabilities,
+        },
     };
 
     #[test]
@@ -4417,6 +4833,47 @@ mod tests {
         assert!(filters.iter().any(|filter| {
             filter.starts_with("label=aiperf.run=") && filter != "label=aiperf.run=aiperf-fixture"
         }));
+    }
+
+    fn imported_plan_with_network(network: &str) -> (tempfile::TempDir, crate::eval::ImportedTask) {
+        let temporary = tempfile::tempdir().expect("create task fixture");
+        let task_root = temporary.path().join("task");
+        fs::create_dir_all(task_root.join("environment")).expect("create environment directory");
+        fs::create_dir_all(task_root.join("tests")).expect("create tests directory");
+        fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n")
+            .expect("write Dockerfile");
+        fs::write(task_root.join("instruction.md"), "Do work.\n").expect("write instruction");
+        fs::write(task_root.join("tests/test.sh"), "exit 0\n").expect("write verifier");
+        fs::write(
+            task_root.join("task.toml"),
+            format!(
+                "schema_version = \"1.0\"\n\n[task]\nname = \"example/network-proof\"\n\n[environment]\nnetwork = \"{network}\"\n\n[agent]\nnetwork = \"{network}\"\n"
+            ),
+        )
+        .expect("write task manifest");
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).expect("local source"))
+            .expect("import task fixture");
+        (temporary, imported)
+    }
+
+    #[test]
+    fn docker_cli_no_egress_profile_is_bound_to_the_actual_task_and_agent_network_plan() {
+        let (_temporary, isolated) = imported_plan_with_network("no-network");
+        let profile = docker_cli_native_graph_no_egress_profile(isolated.package.execution_plan())
+            .expect("a fully no-network task can prove no adapter egress");
+        assert!(matches!(
+            profile.model_endpoint_isolation(),
+            Some(ModelEndpointIsolationProof::NoAdapterEgress)
+        ));
+
+        let (_temporary, public) = imported_plan_with_network("public");
+        assert!(matches!(
+            docker_cli_native_graph_no_egress_profile(public.package.execution_plan()),
+            Err(EvalExecutionError::UnsupportedEnforcement(
+                "model endpoint isolation"
+            ))
+        ));
     }
 
     #[test]

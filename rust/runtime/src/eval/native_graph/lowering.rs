@@ -9,7 +9,7 @@ use std::fmt::{self, Display};
 use std::num::NonZeroU32;
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::eval::ArtifactDigest;
 use crate::eval::semantic::{
@@ -21,12 +21,13 @@ use crate::graph::model::{
     GraphTraceProgram, LlmNode, ReducerName, START_NODE_ID, StaticEdge, ToolNode, TraceRecord,
 };
 
-use super::package::{AdapterRole, NativeGraphPackagePlan, NativeGraphProfile};
+use super::package::{AdapterRole, GenerationDefaults, NativeGraphPackagePlan, NativeGraphProfile};
 
-const NATIVE_GRAPH_SOURCE_SCHEMA: &str = "native_graph/1.0";
-const NATIVE_GRAPH_EXECUTION_PROFILE: &str = "native_graph";
+pub(crate) const NATIVE_GRAPH_SOURCE_SCHEMA: &str = "native_graph/1.0";
+pub(crate) const NATIVE_GRAPH_EXECUTION_PROFILE: &str = "native_graph";
 const LIVE_DRIVER_KIND: &str = "native_graph_live";
-const BINDING_METADATA_KEY: &str = "native_graph.binding";
+pub(crate) const BINDING_METADATA_KEY: &str = "native_graph.binding";
+pub(crate) const GENERATION_METADATA_KEY: &str = "native_graph.generation";
 
 /// Immutable Task-6 static projection facts retained from one imported source.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -324,6 +325,10 @@ pub fn lower_native_graph(
                     "endpoint".into(),
                     Value::String(binding_spec.endpoint_profile_id.clone()),
                 );
+                let generation = generation_request_body(&binding_spec.generation);
+                if !generation.is_empty() {
+                    metadata.insert(GENERATION_METADATA_KEY.into(), Value::Object(generation));
+                }
                 ExecutableGraphNode::Llm(LlmNode {
                     output,
                     streaming,
@@ -468,6 +473,35 @@ pub fn lower_native_graph(
             nodes: facts,
         },
     ))
+}
+
+fn generation_request_body(generation: &GenerationDefaults) -> Map<String, Value> {
+    let mut body = Map::new();
+    if let Some(value) = generation.min_tokens {
+        body.insert("min_tokens".into(), Value::from(value));
+    }
+    if let Some(value) = generation.temperature {
+        body.insert("temperature".into(), Value::from(value));
+    }
+    if let Some(value) = generation.top_p {
+        body.insert("top_p".into(), Value::from(value));
+    }
+    if let Some(value) = generation.top_k {
+        body.insert("top_k".into(), Value::from(value));
+    }
+    if let Some(value) = generation.seed {
+        body.insert("seed".into(), Value::from(value));
+    }
+    if let Some(value) = generation.presence_penalty {
+        body.insert("presence_penalty".into(), Value::from(value));
+    }
+    if let Some(value) = generation.frequency_penalty {
+        body.insert("frequency_penalty".into(), Value::from(value));
+    }
+    if let Some(value) = generation.repetition_penalty {
+        body.insert("repetition_penalty".into(), Value::from(value));
+    }
+    body
 }
 
 /// Validate closure over one driver-produced NativeGraph stage before execution.

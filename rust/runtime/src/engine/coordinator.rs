@@ -110,6 +110,27 @@ impl Coordinator {
         Catalog::from_registry(self.product_registry.as_ref())
     }
 
+    /// Builds a NativeGraph model-stage context from this application's frozen seams.
+    ///
+    /// NativeGraph model execution has no protocol-v2 sidecars. It still receives
+    /// the exact registry, execution factories, and input resolvers that this
+    /// coordinator composed at process startup.
+    pub fn native_graph_context(
+        &self,
+        endpoint_profiles: Vec<crate::engine::registry::ValidatedEndpointProfileV2>,
+    ) -> Result<RunContext> {
+        let sidecars = Arc::new(self.sidecar_inputs.prepare(&[])?);
+        RunContext::new(
+            self.distribution_id.clone(),
+            self.product_registry.clone(),
+            self.execution_factories.clone(),
+            self.graph_inputs.clone(),
+            self.dataset_inputs.clone(),
+            sidecars,
+            endpoint_profiles,
+        )
+    }
+
     /// Validate or execute one strict authored envelope through the frozen registries.
     pub fn handle(&self, envelope: EnvelopeV2) -> ProcessResultV2 {
         let operation = envelope.operation;

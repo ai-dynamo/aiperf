@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::body_plan::RequestBody;
 use crate::cellular::{CellPartition, ModuloCellPartition};
 use crate::clock::{Clock, RealClock, RealClockAnchor};
-use crate::dataset::{Handle, Payload, SegmentStore};
+use crate::dataset::{Handle, InMemorySegmentStore, Payload, SegmentStore};
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::RequestObserver;
 use crate::endpoints::{
@@ -62,8 +62,8 @@ use uuid::Uuid;
 
 use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
-use crate::engine::registry::{NativeTransportExecution, ValidatedEndpointProfileV2};
-use crate::eval::validate_native_graph_trace_plan;
+use crate::engine::registry::{NativeTransportExecution, RunContext, ValidatedEndpointProfileV2};
+use crate::eval::{GENERATION_METADATA_KEY, validate_native_graph_trace_plan};
 
 /// Composition seam for whole-trace graph execution placement.
 ///
@@ -305,10 +305,12 @@ pub(crate) struct GraphEndpointDispatch {
 pub(crate) struct PreparedRunnerGraphEndpointRuntimeFactory {
     registry: EndpointRegistry,
     profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
-    input_token_counter: Arc<dyn InputTokenCounter>,
-    /// The run's resolved transport binding; it owns the transport-specific
-    /// dispatcher construction (`build_graph_dispatcher`).
-    transport: Arc<dyn NativeTransportExecution>,
+    input_token_counters: BTreeMap<String, Arc<dyn InputTokenCounter>>,
+    /// Resolved bindings own profile-local dispatcher construction. This keeps
+    /// imported NativeGraph selectors authoritative without a transport kind
+    /// switch in the shared graph runtime.
+    transports: BTreeMap<String, Arc<dyn NativeTransportExecution>>,
+    default_profile_id: Option<String>,
     /// Content-server origin for media-URL tagging at dispatch; `None` disables.
     content_server_base: Option<Arc<str>>,
     /// Whether raw HTTP-exchange artifacts are retained this run; threaded into
@@ -328,6 +330,36 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
         content_server_base: Option<Arc<str>>,
         raw_enabled: bool,
     ) -> Result<Self> {
+        let input_token_counters = profiles
+            .iter()
+            .map(|profile| (profile.profile_id.clone(), input_token_counter.clone()))
+            .collect();
+        let transports = profiles
+            .iter()
+            .map(|profile| (profile.profile_id.clone(), transport.clone()))
+            .collect();
+        Self::new_with_profile_bindings(
+            registry,
+            profiles,
+            input_token_counters,
+            transports,
+            Some(DEFAULT_ENDPOINT_PROFILE_ID.into()),
+            content_server_base,
+            raw_enabled,
+        )
+    }
+
+    /// Binds imported profile selectors to their independently resolved model
+    /// transport and tokenizer authorities.
+    pub(crate) fn new_with_profile_bindings(
+        registry: EndpointRegistry,
+        profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
+        input_token_counters: BTreeMap<String, Arc<dyn InputTokenCounter>>,
+        transports: BTreeMap<String, Arc<dyn NativeTransportExecution>>,
+        default_profile_id: Option<String>,
+        content_server_base: Option<Arc<str>>,
+        raw_enabled: bool,
+    ) -> Result<Self> {
         for profile in profiles.iter() {
             let descriptor = registry.resolve_factory(&profile.endpoint_id)?.descriptor();
             ensure!(
@@ -336,12 +368,31 @@ impl PreparedRunnerGraphEndpointRuntimeFactory {
                 profile.profile_id,
                 descriptor.id
             );
+            ensure!(
+                input_token_counters.contains_key(&profile.profile_id),
+                "graph endpoint profile {:?} has no resolved input-token counter",
+                profile.profile_id
+            );
+            ensure!(
+                transports.contains_key(&profile.profile_id),
+                "graph endpoint profile {:?} has no resolved native transport",
+                profile.profile_id
+            );
+        }
+        if let Some(profile_id) = default_profile_id.as_deref() {
+            ensure!(
+                profiles
+                    .iter()
+                    .any(|profile| profile.profile_id == profile_id),
+                "default endpoint profile {profile_id:?} was not prepared"
+            );
         }
         Ok(Self {
             registry,
             profiles,
-            input_token_counter,
-            transport,
+            input_token_counters,
+            transports,
+            default_profile_id,
             content_server_base,
             raw_enabled,
         })
@@ -358,6 +409,26 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
         let mut table = PreparedEndpointTable::new();
         let mut staged = Vec::with_capacity(self.profiles.len());
         for profile in self.profiles.iter() {
+            let input_token_counter = self
+                .input_token_counters
+                .get(&profile.profile_id)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "graph endpoint profile {:?} has no resolved input-token counter",
+                        profile.profile_id
+                    )
+                })?;
+            let transport = self
+                .transports
+                .get(&profile.profile_id)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "graph endpoint profile {:?} has no resolved native transport",
+                        profile.profile_id
+                    )
+                })?;
             let mut keys = [EndpointKey::from_index(0); 2];
             for streaming in [false, true] {
                 let mut config = profile.config.clone();
@@ -385,6 +456,8 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
                     ..TransportSinkConfig::default()
                 },
                 url_count: profile.config.urls.len(),
+                input_token_counter,
+                transport,
             });
         }
         let table = Rc::new(table);
@@ -394,7 +467,7 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
         let profiles = staged
             .into_iter()
             .map(|profile| {
-                let transport = self.transport.build_graph_dispatcher(
+                let transport = profile.transport.build_graph_dispatcher(
                     clock.clone(),
                     run_origin_ns,
                     &profile.urls,
@@ -410,20 +483,35 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
                         keys: profile.keys,
                         transport,
                         url_count: profile.url_count,
+                        input_token_counter: profile.input_token_counter,
                     },
                 ))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
-        ensure!(
-            profiles.contains_key(DEFAULT_ENDPOINT_PROFILE_ID),
-            "default endpoint profile {DEFAULT_ENDPOINT_PROFILE_ID:?} was not prepared"
-        );
+        let transport_label = self
+            .transports
+            .values()
+            .map(|transport| transport.graph_transport_label())
+            .all(|label| {
+                label
+                    == self
+                        .transports
+                        .values()
+                        .next()
+                        .map_or("unknown", |transport| transport.graph_transport_label())
+            })
+            .then(|| {
+                self.transports
+                    .values()
+                    .next()
+                    .map_or("unknown", |transport| transport.graph_transport_label())
+            })
+            .unwrap_or("native_graph");
         Ok(Rc::new(PreparedRunnerGraphEndpointRuntime {
             table,
             profiles,
-            default_profile_id: DEFAULT_ENDPOINT_PROFILE_ID.into(),
-            input_token_counter: self.input_token_counter.clone(),
-            transport_label: self.transport.graph_transport_label(),
+            default_profile_id: self.default_profile_id.clone(),
+            transport_label,
         }))
     }
 }
@@ -436,6 +524,8 @@ struct StagedGraphProfile {
     urls: Vec<String>,
     transport_config: TransportSinkConfig,
     url_count: usize,
+    input_token_counter: Arc<dyn InputTokenCounter>,
+    transport: Arc<dyn NativeTransportExecution>,
 }
 
 struct PreparedGraphProfileRuntime {
@@ -443,14 +533,188 @@ struct PreparedGraphProfileRuntime {
     keys: [EndpointKey; 2],
     transport: Rc<dyn Dispatcher>,
     url_count: usize,
+    input_token_counter: Arc<dyn InputTokenCounter>,
 }
 
 struct PreparedRunnerGraphEndpointRuntime {
     table: Rc<PreparedEndpointTable>,
     profiles: BTreeMap<String, PreparedGraphProfileRuntime>,
-    default_profile_id: String,
-    input_token_counter: Arc<dyn InputTokenCounter>,
+    default_profile_id: Option<String>,
     transport_label: &'static str,
+}
+
+/// Bounded transport facts emitted by one imported NativeGraph trace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NativeGraphTransportEvidence {
+    pub(crate) model_records: usize,
+    pub(crate) completed_traces: usize,
+}
+
+const NATIVE_GRAPH_EVIDENCE_CHANNEL_CAPACITY: usize = 64;
+
+/// Bounded event admission dedicated to the one-shot NativeGraph evidence path.
+///
+/// NativeGraph scoring needs record and terminal counts, not retained raw captures.
+/// This deliberately stays separate from the general phase event transport, whose
+/// coordinator owns full record retention.
+struct NativeGraphEvidenceSink {
+    sender: mpsc::Sender<NativeGraphEvidenceEvent>,
+}
+
+impl NativeGraphEvidenceSink {
+    fn bounded() -> (Self, mpsc::Receiver<NativeGraphEvidenceEvent>) {
+        let (sender, receiver) = mpsc::channel(NATIVE_GRAPH_EVIDENCE_CHANNEL_CAPACITY);
+        (Self { sender }, receiver)
+    }
+
+    fn emit_summary(&self, event: NativeGraphEvidenceEvent) -> Result<(), TraceError> {
+        self.sender.try_send(event).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => {
+                TraceError::Other("native graph evidence queue reached its bounded capacity".into())
+            }
+            mpsc::error::TrySendError::Closed(_) => {
+                TraceError::Other("native graph evidence receiver closed".into())
+            }
+        })
+    }
+}
+
+impl GraphExecutionEventSink for NativeGraphEvidenceSink {
+    fn emit(&self, event: GraphExecutionEvent) -> Result<(), TraceError> {
+        match event {
+            GraphExecutionEvent::Record { record, .. } => {
+                drop(record);
+                self.emit_summary(NativeGraphEvidenceEvent::Record)
+            }
+            GraphExecutionEvent::TraceComplete { result, .. } => self.emit_summary(
+                NativeGraphEvidenceEvent::TraceComplete(result.map_err(|error| error.to_string())),
+            ),
+            GraphExecutionEvent::TraceSupplement { .. }
+            | GraphExecutionEvent::FirstToken { .. } => Ok(()),
+        }
+    }
+}
+
+/// Compact NativeGraph facts retained until the one-shot trace returns.
+enum NativeGraphEvidenceEvent {
+    Record,
+    TraceComplete(Result<(), String>),
+}
+
+/// Executes one immutable NativeGraph trace through the application's graph path.
+///
+/// The caller supplies only already-resolved binding facts. Endpoint preparation,
+/// dispatcher construction, token accounting, and request observation remain in
+/// the current Graph-IR worker implementation.
+pub(crate) async fn execute_native_graph_trace(
+    context: &RunContext,
+    profiles: Arc<Vec<ValidatedEndpointProfileV2>>,
+    input_token_counters: BTreeMap<String, Arc<dyn InputTokenCounter>>,
+    transports: BTreeMap<String, Arc<dyn NativeTransportExecution>>,
+    default_model: String,
+    raw_enabled: bool,
+    program: GraphTraceProgram,
+) -> Result<NativeGraphTransportEvidence> {
+    let clock_anchor = RealClockAnchor::now();
+    let clock: Rc<dyn Clock> = RealClock::from_anchor(clock_anchor);
+    let run_origin_ns = clock.now_ns();
+    let (events, mut receiver) = NativeGraphEvidenceSink::bounded();
+    let event_sink: Arc<dyn GraphExecutionEventSink> = Arc::new(events);
+    let endpoint_runtime_factory = Arc::new(
+        PreparedRunnerGraphEndpointRuntimeFactory::new_with_profile_bindings(
+            context.product_registry().endpoints().clone(),
+            profiles,
+            input_token_counters,
+            transports,
+            None,
+            None,
+            raw_enabled,
+        )?,
+    );
+    let backend = Arc::new(GraphBackendFactory::new(GraphBackendFactoryConfig {
+        real_clock_anchor: clock_anchor,
+        run_origin_ns,
+        model: default_model,
+        default_max_tokens: 256,
+        endpoint_runtime_factory,
+        segments: Arc::new(InMemorySegmentStore::default()),
+        replay_run_identity: None,
+        metrics: MetricsConfig::default(),
+        phase: Phase::Profiling,
+        prefill_concurrency: None,
+        cancellation: None,
+        raw_enabled,
+        events: event_sink.clone(),
+        on_failure: OnFailure::Abort,
+        cache_bust: None,
+        ignore_trace_delays: false,
+        system_idle_gap_cap_seconds: None,
+        trace_driver: context.execution_factories().trace_driver_handle(),
+    }));
+    let placement = context
+        .execution_factories()
+        .graph()
+        .build(1, backend, clock)
+        .map_err(|error| anyhow!(error.to_string()))?;
+    let placement = ObservedRunnerGraphPlacement::new(
+        placement,
+        event_sink,
+        context
+            .execution_factories()
+            .graph()
+            .requires_node_records(),
+    );
+    let mut evidence = NativeGraphTransportEvidence {
+        model_records: 0,
+        completed_traces: 0,
+    };
+    let execution_result = {
+        let execution = placement.execute_trace(program);
+        tokio::pin!(execution);
+        loop {
+            tokio::select! {
+                result = &mut execution => break result,
+                event = receiver.recv() => {
+                    let event = event.ok_or_else(|| {
+                        anyhow!("native graph evidence receiver closed before trace completion")
+                    })?;
+                    observe_native_graph_evidence(&mut evidence, event)?;
+                }
+            }
+        }
+    };
+    execution_result.map_err(|error| anyhow!(error.to_string()))?;
+    while let Ok(event) = receiver.try_recv() {
+        observe_native_graph_evidence(&mut evidence, event)?;
+    }
+    ensure!(
+        evidence.completed_traces == 1,
+        "native graph trace produced {} completion events, expected one",
+        evidence.completed_traces
+    );
+    Ok(evidence)
+}
+
+fn observe_native_graph_evidence(
+    evidence: &mut NativeGraphTransportEvidence,
+    event: NativeGraphEvidenceEvent,
+) -> Result<()> {
+    match event {
+        NativeGraphEvidenceEvent::Record => {
+            evidence.model_records = evidence
+                .model_records
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("native graph model-record evidence overflow"))?;
+        }
+        NativeGraphEvidenceEvent::TraceComplete(result) => {
+            result.map_err(|error| anyhow!(error))?;
+            evidence.completed_traces = evidence
+                .completed_traces
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("native graph completed-trace evidence overflow"))?;
+        }
+    }
+    Ok(())
 }
 
 impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
@@ -459,10 +723,9 @@ impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
     }
 
     fn materialize(&self, input: GraphEndpointRequest) -> Result<GraphEndpointDispatch> {
-        let profile_id = input
-            .selector
-            .as_deref()
-            .unwrap_or(&self.default_profile_id);
+        let profile_id = input.selector.as_deref().or(self.default_profile_id.as_deref()).ok_or_else(|| {
+            anyhow!("graph node has no endpoint profile selector and this graph runtime has no default endpoint profile")
+        })?;
         let profile = self.profiles.get(profile_id).ok_or_else(|| {
             anyhow!(
                 "graph node selects unknown endpoint profile {profile_id:?}; prepared profiles: {}",
@@ -496,7 +759,7 @@ impl GraphEndpointRuntime for PreparedRunnerGraphEndpointRuntime {
         let payload = endpoint
             .format_payload(&request_info)?
             .materialize_standalone()?;
-        let input_tokens = self.input_token_counter.count_prepared_input_tokens(
+        let input_tokens = profile.input_token_counter.count_prepared_input_tokens(
             endpoint,
             &payload,
             input.authored_input_tokens,
@@ -1482,6 +1745,18 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             context.phase,
             &self.trace_id,
         );
+        let mut extra_body = additional_body
+            .as_deref()
+            .map(serde_json::from_slice)
+            .transpose()
+            .context("decoding typed graph additional body")?
+            .or(prepared.extra_body.clone())
+            .unwrap_or_default();
+        if let Some(generation) = native_graph_generation_body(&node)? {
+            for (field, value) in generation {
+                extra_body.entry(field).or_insert(value);
+            }
+        }
         let turn = Turn {
             model: Some(model.clone()),
             max_tokens: max_tokens
@@ -1497,12 +1772,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 .context("decoding typed graph tools")?
                 .or(prepared.raw_tools.clone()),
             raw_system: prepared.raw_system.clone(),
-            extra_body: additional_body
-                .as_deref()
-                .map(serde_json::from_slice)
-                .transpose()
-                .context("decoding typed graph additional body")?
-                .or(prepared.extra_body.clone()),
+            extra_body: (!extra_body.is_empty()).then_some(extra_body),
             ..Turn::default()
         };
         let max_output_tokens = max_tokens.unwrap_or(self.default_max_tokens);
@@ -1695,6 +1965,32 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             ReplayTerminalStatus::Rejected | ReplayTerminalStatus::Failed => GraphReply::failed(),
         })
     }
+}
+
+fn native_graph_generation_body(node: &LlmNode) -> Result<Option<Map<String, Value>>> {
+    let Some(generation) = node.metadata.get(GENERATION_METADATA_KEY) else {
+        return Ok(None);
+    };
+    let body = generation.as_object().ok_or_else(|| {
+        anyhow!(
+            "graph node generation metadata {:?} must be an object",
+            GENERATION_METADATA_KEY
+        )
+    })?;
+    const FIELDS: &[&str] = &[
+        "min_tokens",
+        "temperature",
+        "top_p",
+        "top_k",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "repetition_penalty",
+    ];
+    if let Some(field) = body.keys().find(|field| !FIELDS.contains(&field.as_str())) {
+        anyhow::bail!("graph node generation metadata has unsupported field {field:?}");
+    }
+    Ok(Some(body.clone()))
 }
 
 impl EngineGraphSink {
@@ -2739,6 +3035,44 @@ executable = "tools/adapter.sh"
         fn emit(&self, _event: GraphExecutionEvent) -> Result<(), TraceError> {
             Ok(())
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_graph_evidence_sink_requires_drain_to_exceed_its_bounded_capacity() {
+        let (sink, mut receiver) = NativeGraphEvidenceSink::bounded();
+        for _ in 0..NATIVE_GRAPH_EVIDENCE_CHANNEL_CAPACITY {
+            sink.emit_summary(NativeGraphEvidenceEvent::TraceComplete(Ok(())))
+                .expect("bounded evidence capacity accepts its exact number of events");
+        }
+        assert!(
+            sink.emit_summary(NativeGraphEvidenceEvent::TraceComplete(Ok(())))
+                .is_err(),
+            "a producer without a draining receiver must observe bounded backpressure"
+        );
+
+        let total = NATIVE_GRAPH_EVIDENCE_CHANNEL_CAPACITY * 4;
+        let producer = async {
+            for _ in 0..total {
+                loop {
+                    if sink
+                        .emit_summary(NativeGraphEvidenceEvent::TraceComplete(Ok(())))
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }
+        };
+        let drain = async {
+            for _ in 0..NATIVE_GRAPH_EVIDENCE_CHANNEL_CAPACITY + total {
+                receiver
+                    .recv()
+                    .await
+                    .expect("concurrent drain receives every bounded event");
+            }
+        };
+        tokio::join!(producer, drain);
     }
 
     fn empty_engine_graph_sink() -> EngineGraphSink {

@@ -12,6 +12,7 @@ mod docker_process;
 mod docker_runtime;
 mod local_process;
 mod multi_step;
+mod native_graph_episode;
 mod plan;
 mod recipe;
 mod task_environment;
@@ -44,6 +45,9 @@ pub use local_process::{
     ProcessOutput, SandboxRole,
 };
 pub use multi_step::{MultiStepExecutionResult, StepExecutionResult};
+pub use native_graph_episode::{
+    NativeGraphEpisodeCallback, NativeGraphEpisodeLease, run_native_graph_episode_callback,
+};
 pub use plan::{
     ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectPlan,
     ComposeServiceName, ContainerResources, EnvBinding, EnvironmentPlan, HealthcheckPlan,

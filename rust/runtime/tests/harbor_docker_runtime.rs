@@ -24,9 +24,10 @@ use aiperf_runtime::eval::{
     DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest,
     DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest, DockerRuntime,
     DockerStartRequest, EnvName, EvalExecutionError, HarborImporter, HarborSandboxRecipe,
-    HarborSource, ModelEndpointIsolationProof, ModelSecretId, NativeGraphPackagePlan,
-    NativeSourceAcquirer, OwnedComposeResources, ProviderCapabilities, ProviderCapability,
-    ProviderProfile, SecretProvider, SecretValue, preflight_docker,
+    HarborSource, ModelEndpointIsolationProof, ModelSecretId, NativeGraphEpisodeCallback,
+    NativeGraphEpisodeLease, NativeGraphPackagePlan, NativeSourceAcquirer, OwnedComposeResources,
+    ProviderCapabilities, ProviderCapability, ProviderProfile, SecretProvider, SecretValue,
+    preflight_docker,
 };
 use async_trait::async_trait;
 use std::rc::Rc;
@@ -167,6 +168,7 @@ struct LegacyRuntime {
     events: RefCell<Vec<String>>,
     images: RefCell<Vec<String>>,
     native_graph_profile: Option<ProviderProfile>,
+    image_workdir: Option<String>,
 }
 
 impl DockerRuntime for LegacyRuntime {
@@ -176,8 +178,13 @@ impl DockerRuntime for LegacyRuntime {
             .with_image_source()
             .with_separate_verifier()
             .with_public_network();
-        if self.native_graph_profile.is_some() {
+        let capabilities = if self.native_graph_profile.is_some() {
             capabilities.with_model_endpoint_isolation()
+        } else {
+            capabilities
+        };
+        if self.image_workdir.is_some() {
+            capabilities.with_workdir()
         } else {
             capabilities
         }
@@ -258,6 +265,14 @@ impl DockerRuntime for LegacyRuntime {
             "reward.txt",
             b"1\n",
         ))))
+    }
+
+    fn container_workdir(&self, _: &str) -> Result<String, EvalExecutionError> {
+        self.image_workdir
+            .clone()
+            .ok_or(EvalExecutionError::UnsupportedEnforcement(
+                "container workdir inspection",
+            ))
     }
 
     fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
@@ -4577,6 +4592,99 @@ fn native_graph_docker_execution_accepts_the_runtime_resolved_no_egress_proof() 
         EvalExecutionError::UnsupportedEnforcement("container workdir inspection")
     ));
     assert!(runtime.events.borrow().contains(&"build".to_owned()));
+}
+
+struct OrderedNativeGraphCallback<'a> {
+    events: &'a RefCell<Vec<String>>,
+    fail: bool,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeCallback for OrderedNativeGraphCallback<'_> {
+    async fn run(
+        &mut self,
+        lease: &mut dyn NativeGraphEpisodeLease,
+    ) -> Result<(), EvalExecutionError> {
+        assert!(lease.is_authorized());
+        assert!(lease.is_environment_acquired());
+        assert_eq!(lease.instruction(), "Do work.\n");
+        self.events.borrow_mut().push("native-graph".to_owned());
+        if self.fail {
+            return Err(EvalExecutionError::ProcessFailure(
+                "native graph callback failed".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_graph_callback_precedes_verification_and_failure_keeps_reverse_cleanup() {
+    let _guard = DOCKER_RUNTIME_TEST_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let profile = ProviderProfile::new(
+        "runtime-no-egress",
+        vec![ProviderCapability::ModelEndpointIsolation],
+    )
+    .unwrap()
+    .with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
+    .unwrap();
+
+    for fail in [false, true] {
+        let runtime = LegacyRuntime {
+            native_graph_profile: Some(profile.clone()),
+            image_workdir: Some("/work".to_owned()),
+            ..LegacyRuntime::default()
+        };
+        let mut callback = OrderedNativeGraphCallback {
+            events: &runtime.events,
+            fail,
+        };
+        let result = DockerProcessSandbox::new()
+            .execute_native_graph_with_runtime(
+                &runtime,
+                &recipe,
+                &imported.package,
+                imported.package.execution_plan(),
+                &FixedSecret,
+                &mut callback,
+            )
+            .await;
+        let events = runtime.events.borrow();
+        let callback_index = events
+            .iter()
+            .position(|event| event == "native-graph")
+            .expect("callback is invoked after environment acquisition");
+        let removal_index = events
+            .iter()
+            .position(|event| event == "remove")
+            .expect("ordinary reverse cleanup removes the task container");
+        assert!(callback_index < removal_index);
+        if fail {
+            assert!(matches!(
+                result,
+                Err(EvalExecutionError::ProcessFailure(reason)) if reason == "native graph callback failed"
+            ));
+            assert!(events.iter().all(|event| event != "verifier"));
+        } else {
+            assert!(result.is_ok(), "native graph callback result: {result:?}");
+            let verifier_index = events
+                .iter()
+                .position(|event| event == "verifier")
+                .expect("verifier runs after graph callback");
+            assert!(callback_index < verifier_index);
+            assert!(verifier_index < removal_index);
+        }
+    }
 }
 
 fn standard_task_with_artifacts(

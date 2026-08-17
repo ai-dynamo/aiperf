@@ -97,6 +97,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.4",
  "tokio-stream",
+ "toml",
  "tonic 0.14.6",
  "tracing",
  "tracing-subscriber",

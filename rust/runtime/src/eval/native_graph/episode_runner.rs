@@ -1,0 +1,371 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Matrix episode execution over a Rust-owned NativeGraph callback and verifier facts.
+
+use std::{
+    fmt::{self, Display, Formatter},
+    rc::Rc,
+    sync::Arc,
+};
+
+use async_trait::async_trait;
+
+use crate::{
+    engine::application::Application,
+    eval::{
+        DockerProcessSandbox, DockerRuntime, HarborCompletedEvaluation,
+        HarborEvaluationCoordinator, HarborLifecycleAgentContract, HarborLifecycleRequest,
+        HarborSandboxRecipe, ImportedTask, SecretProvider,
+    },
+    extensions::AIPerfRegistry,
+};
+
+use super::{EngineNativeGraphEpisodeCallback, ModelRuntimeConfig};
+
+use crate::eval::{
+    EpisodeAssignment, EpisodeEvaluatorFactory, EpisodeRunner, FrozenAttemptBundle, MatrixError,
+};
+
+/// Executes one admitted NativeGraph episode and freezes its completed Harbor facts.
+///
+/// Implementations own environment acquisition, invoke the Rust graph callback,
+/// preserve the ordinary artifact/verifier lifecycle, and return only immutable
+/// facts. The matrix runner never invents a reward or verifier evidence.
+#[async_trait(?Send)]
+pub trait NativeGraphEpisodeExecutor {
+    /// Runs one admitted assignment through its model callback and verifier boundary.
+    async fn execute(
+        &self,
+        assignment: &EpisodeAssignment,
+    ) -> Result<FrozenAttemptBundle, EpisodeExecutionError>;
+}
+
+/// Concrete Docker-backed executor for one imported, immutable NativeGraph package.
+///
+/// It owns the only path from the Rust model callback through the ordinary Docker
+/// artifact/verifier transaction to the completed Harbor fact model. The matrix
+/// runner receives only `HarborCompletedEvaluation::freeze()` output, never a
+/// synthetic reward or verifier result.
+pub struct DockerNativeGraphEpisodeExecutor {
+    sandbox: DockerProcessSandbox,
+    runtime: DockerExecutorRuntime,
+    recipe: HarborSandboxRecipe,
+    imported: ImportedTask,
+    lifecycle: HarborLifecycleRequest,
+    application: Rc<Application>,
+    model_runtime: ModelRuntimeConfig,
+    secrets: Rc<dyn SecretProvider>,
+}
+
+enum DockerExecutorRuntime {
+    Host,
+    Injected(Rc<dyn DockerRuntime>),
+}
+
+impl DockerNativeGraphEpisodeExecutor {
+    /// Binds Docker's production no-egress runtime after immutable inputs freeze.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        sandbox: DockerProcessSandbox,
+        recipe: HarborSandboxRecipe,
+        imported: ImportedTask,
+        lifecycle: HarborLifecycleRequest,
+        application: Rc<Application>,
+        model_runtime: ModelRuntimeConfig,
+        secrets: Rc<dyn SecretProvider>,
+    ) -> Result<Self, EpisodeExecutionError> {
+        Self::new_inner(
+            sandbox,
+            DockerExecutorRuntime::Host,
+            recipe,
+            imported,
+            lifecycle,
+            application,
+            model_runtime,
+            secrets,
+        )
+    }
+
+    /// Binds an injectable Docker provider after every immutable episode input has frozen.
+    ///
+    /// Production composition supplies its selected Docker provider here; tests use the
+    /// same provider seam to inspect lifecycle ordering without introducing a second runner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_runtime(
+        sandbox: DockerProcessSandbox,
+        runtime: Rc<dyn DockerRuntime>,
+        recipe: HarborSandboxRecipe,
+        imported: ImportedTask,
+        lifecycle: HarborLifecycleRequest,
+        application: Rc<Application>,
+        model_runtime: ModelRuntimeConfig,
+        secrets: Rc<dyn SecretProvider>,
+    ) -> Result<Self, EpisodeExecutionError> {
+        Self::new_inner(
+            sandbox,
+            DockerExecutorRuntime::Injected(runtime),
+            recipe,
+            imported,
+            lifecycle,
+            application,
+            model_runtime,
+            secrets,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_inner(
+        sandbox: DockerProcessSandbox,
+        runtime: DockerExecutorRuntime,
+        recipe: HarborSandboxRecipe,
+        imported: ImportedTask,
+        lifecycle: HarborLifecycleRequest,
+        application: Rc<Application>,
+        model_runtime: ModelRuntimeConfig,
+        secrets: Rc<dyn SecretProvider>,
+    ) -> Result<Self, EpisodeExecutionError> {
+        if imported.package.native_graph().is_none() {
+            return Err(EpisodeExecutionError::Configuration(
+                "Docker NativeGraph executor requires an imported NativeGraph package".to_owned(),
+            ));
+        }
+        if lifecycle.agent_contract != HarborLifecycleAgentContract::NativeGraph {
+            return Err(EpisodeExecutionError::Configuration(
+                "Docker NativeGraph executor requires native_graph lifecycle provenance".to_owned(),
+            ));
+        }
+        HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)
+            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        Ok(Self {
+            sandbox,
+            runtime,
+            recipe,
+            imported,
+            lifecycle,
+            application,
+            model_runtime,
+            secrets,
+        })
+    }
+
+    fn lifecycle_for_assignment(
+        &self,
+        assignment: &EpisodeAssignment,
+    ) -> Result<(HarborLifecycleRequest, crate::eval::TrialSpec), EpisodeExecutionError> {
+        if assignment.package().identity_digest() != self.imported.package.identity_digest() {
+            return Err(EpisodeExecutionError::Configuration(
+                "NativeGraph assignment package does not match the executor snapshot".to_owned(),
+            ));
+        }
+        let mut lifecycle = self.lifecycle.clone();
+        lifecycle.attempt = assignment.attempt_id().clone();
+        let trial = HarborEvaluationCoordinator::resolve_trial(&self.imported, &lifecycle)
+            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        if &trial.identity_digest() != assignment.trial_digest() {
+            return Err(EpisodeExecutionError::Configuration(
+                "NativeGraph assignment trial does not match the lifecycle request".to_owned(),
+            ));
+        }
+        Ok((lifecycle, trial))
+    }
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
+    async fn execute(
+        &self,
+        assignment: &EpisodeAssignment,
+    ) -> Result<FrozenAttemptBundle, EpisodeExecutionError> {
+        let (lifecycle, trial) = self.lifecycle_for_assignment(assignment)?;
+        let native = self.imported.package.native_graph().ok_or_else(|| {
+            EpisodeExecutionError::Configuration(
+                "NativeGraph package disappeared after immutable executor construction".to_owned(),
+            )
+        })?;
+        let mut callback = EngineNativeGraphEpisodeCallback::new(
+            self.application.as_ref(),
+            native,
+            &self.model_runtime,
+            self.secrets.as_ref(),
+        )
+        .map_err(|error| {
+            EpisodeExecutionError::Callback(crate::eval::EvalExecutionError::NativeGraphModel(
+                error.to_string(),
+            ))
+        })?;
+        let execution = match &self.runtime {
+            DockerExecutorRuntime::Host => {
+                self.sandbox
+                    .execute_native_graph(
+                        &self.recipe,
+                        &self.imported.package,
+                        self.model_runtime.secrets.clone(),
+                        self.secrets.as_ref(),
+                        &mut callback,
+                    )
+                    .await
+            }
+            DockerExecutorRuntime::Injected(runtime) => {
+                self.sandbox
+                    .execute_native_graph_with_runtime(
+                        runtime.as_ref(),
+                        &self.recipe,
+                        &self.imported.package,
+                        self.imported.package.execution_plan(),
+                        self.secrets.as_ref(),
+                        &mut callback,
+                    )
+                    .await
+            }
+        }
+        .map_err(EpisodeExecutionError::Callback)?;
+        let evidence = callback
+            .transport_evidence()
+            .ok_or(EpisodeExecutionError::MissingTransportEvidence)?;
+        if evidence.model_records() == 0 || evidence.completed_traces() != 1 {
+            return Err(EpisodeExecutionError::UnexpectedTransportEvidence {
+                model_records: evidence.model_records(),
+                completed_traces: evidence.completed_traces(),
+            });
+        }
+        let completed: HarborCompletedEvaluation = HarborEvaluationCoordinator::complete_attempt(
+            self.imported.clone(),
+            trial,
+            &lifecycle.command,
+            execution,
+            &lifecycle,
+        )
+        .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        completed
+            .freeze()
+            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))
+    }
+}
+
+/// Task-2 matrix runner that delegates scoring to the selected Task-3 evaluator.
+pub struct NativeGraphEpisodeRunner {
+    executor: Rc<dyn NativeGraphEpisodeExecutor>,
+    evaluator_factory: Rc<dyn EpisodeEvaluatorFactory>,
+}
+
+struct RegisteredEpisodeEvaluatorFactory(Arc<dyn EpisodeEvaluatorFactory>);
+
+impl EpisodeEvaluatorFactory for RegisteredEpisodeEvaluatorFactory {
+    fn create(
+        &self,
+        trial: &crate::eval::ResolvedEpisodeTrial,
+    ) -> Result<Rc<dyn crate::eval::EpisodeEvaluator>, crate::eval::EpisodeEvaluationError> {
+        self.0.create(trial)
+    }
+}
+
+impl NativeGraphEpisodeRunner {
+    /// Binds one executor and evaluator after package/runtime selection has frozen.
+    pub fn new(
+        executor: Rc<dyn NativeGraphEpisodeExecutor>,
+        evaluator_factory: Rc<dyn EpisodeEvaluatorFactory>,
+    ) -> Self {
+        Self {
+            executor,
+            evaluator_factory,
+        }
+    }
+
+    /// Resolves the selected evaluator from the frozen application registry.
+    pub fn with_registered_evaluator(
+        executor: Rc<dyn NativeGraphEpisodeExecutor>,
+        registry: &AIPerfRegistry,
+        evaluator_name: &str,
+    ) -> Result<Self, EpisodeExecutionError> {
+        let evaluator_factory = registry
+            .native_graph_evaluator(evaluator_name)
+            .ok_or_else(|| {
+                EpisodeExecutionError::Configuration(format!(
+                    "no linked NativeGraph evaluator factory named {evaluator_name:?}"
+                ))
+            })?
+            .clone();
+        Ok(Self::new(
+            executor,
+            Rc::new(RegisteredEpisodeEvaluatorFactory(evaluator_factory)),
+        ))
+    }
+}
+
+#[async_trait(?Send)]
+impl EpisodeRunner for NativeGraphEpisodeRunner {
+    async fn run(
+        &self,
+        assignment: EpisodeAssignment,
+    ) -> Result<crate::eval::EpisodeResult, MatrixError> {
+        let frozen = self
+            .executor
+            .execute(&assignment)
+            .await
+            .map_err(|error| MatrixError::RunnerExecutionFailed(error.to_string()))?;
+        if frozen.trial_digest() != assignment.trial_digest()
+            || frozen.attempt() != assignment.attempt_id()
+        {
+            return Err(MatrixError::RunnerExecutionFailed(
+                "native graph executor returned frozen facts for another assignment".to_owned(),
+            ));
+        }
+        let evaluator = self
+            .evaluator_factory
+            .create(assignment.trial())
+            .map_err(|error| MatrixError::RunnerExecutionFailed(error.to_string()))?;
+        evaluator
+            .evaluate(frozen)
+            .await
+            .map_err(|error| MatrixError::RunnerExecutionFailed(error.to_string()))
+    }
+}
+
+/// Failure while obtaining immutable evaluator facts for an admitted episode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EpisodeExecutionError {
+    /// Immutable executor inputs or an admitted assignment did not agree.
+    Configuration(String),
+    /// The Rust-owned graph callback failed before verifier collection.
+    Callback(crate::eval::EvalExecutionError),
+    /// The callback did not publish a completed transport-observer summary.
+    MissingTransportEvidence,
+    /// The completed observer summary disagreed with the static graph contract.
+    UnexpectedTransportEvidence {
+        /// Number of complete native model records produced by the graph callback.
+        model_records: usize,
+        /// Number of completed graph traces produced by the graph callback.
+        completed_traces: usize,
+    },
+    /// Constructing immutable verifier or score facts failed.
+    Facts(String),
+}
+
+impl Display for EpisodeExecutionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Configuration(reason) => write!(
+                formatter,
+                "native graph episode configuration is invalid: {reason}"
+            ),
+            Self::Callback(error) => error.fmt(formatter),
+            Self::MissingTransportEvidence => {
+                formatter.write_str("native graph callback completed without transport evidence")
+            }
+            Self::UnexpectedTransportEvidence {
+                model_records,
+                completed_traces,
+            } => write!(
+                formatter,
+                "native graph callback observed {model_records} model records and {completed_traces} completed traces"
+            ),
+            Self::Facts(reason) => write!(
+                formatter,
+                "native graph episode facts are invalid: {reason}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EpisodeExecutionError {}

@@ -18,6 +18,7 @@ use crate::eval::{
     ArtifactDigest, AttemptId, EpisodeResult, HarborTaskPackage, ModelCapacityKey,
     ResolvedEpisodeTrial, ResolvedNativeGraphSuite, ResourceLeaseRequest,
 };
+use crate::extensions::AIPerfRegistry;
 
 /// Fixed resource capacities shared by one local matrix scheduler instance.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,6 +154,23 @@ pub trait SuiteSchedulerFactory: Send + Sync {
         &self,
         limits: ResourceLimits,
     ) -> Result<Rc<dyn NativeGraphSuiteScheduler>, MatrixError>;
+}
+
+/// Resolves and constructs a bounded NativeGraph scheduler from the frozen
+/// application registry before any episode environment is provisioned.
+pub fn select_native_graph_scheduler(
+    registry: &AIPerfRegistry,
+    scheduler_name: &str,
+    limits: ResourceLimits,
+) -> Result<Rc<dyn NativeGraphSuiteScheduler>, MatrixError> {
+    let factory = registry
+        .native_graph_scheduler(scheduler_name)
+        .ok_or_else(|| {
+            MatrixError::RunnerExecutionFailed(format!(
+                "no linked NativeGraph scheduler factory named {scheduler_name:?}"
+            ))
+        })?;
+    factory.create(limits)
 }
 
 /// Factory for the native bounded local matrix scheduler.

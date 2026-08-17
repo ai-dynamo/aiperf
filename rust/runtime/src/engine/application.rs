@@ -23,6 +23,7 @@ use crate::engine::graph_input::{
 };
 use crate::engine::protocol::Catalog;
 use crate::engine::protocol_v2::EnvelopeV2;
+use crate::engine::registry::{RunContext, ValidatedEndpointProfileV2};
 use crate::engine::sidecar_input::{
     BuiltinRunnerSidecarInputAdapterResolver, SidecarInputAdapterResolver,
 };
@@ -117,5 +118,13 @@ impl Application {
     /// Borrow the trace-driver registry frozen with this application image.
     pub fn trace_driver_factory(&self) -> &dyn TraceProgramDriverFactory {
         self.coordinator.execution_factories().trace_driver()
+    }
+
+    /// Builds a model-stage context from this application's frozen composition.
+    pub fn native_graph_context(
+        &self,
+        endpoint_profiles: Vec<ValidatedEndpointProfileV2>,
+    ) -> Result<RunContext> {
+        self.coordinator.native_graph_context(endpoint_profiles)
     }
 }

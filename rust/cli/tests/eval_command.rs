@@ -7,8 +7,8 @@ use std::time::Duration;
 use std::{collections::BTreeMap, fs};
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, LocalExecutionResult, MultiStepExecutionResult, RewardDocument,
-    StepExecutionResult,
+    ArtifactDigest, HarborImporter, HarborSource, LocalExecutionResult, MultiStepExecutionResult,
+    NativeSourceAcquirer, RewardDocument, StepExecutionResult,
 };
 use serde_json::json;
 
@@ -146,7 +146,7 @@ fn native_eval_refuses_standard_multi_step_tasks_locally_before_starting_the_age
 }
 
 #[test]
-fn native_eval_refuses_schema_1_1_native_graph_before_provisioning() {
+fn native_eval_requires_model_runtime_for_schema_1_1_before_provisioning() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("native-graph");
     let started = temporary.path().join("agent-started");
@@ -181,15 +181,116 @@ fn native_eval_refuses_schema_1_1_native_graph_before_provisioning() {
         "--agent-command".to_owned(),
         format!("touch {}", started.display()),
     ])
-    .expect_err("schema-1.1 NativeGraph must not provision the legacy runner");
+    .expect_err("schema-1.1 NativeGraph must reject before Docker without host runtime mapping");
 
     assert!(
         error
             .to_string()
-            .contains("schema-1.1 NativeGraph packages are not executable"),
+            .contains("--model-runtime is required for schema-1.1 NativeGraph evaluation"),
         "unexpected NativeGraph refusal: {error:#}"
     );
     assert!(!started.exists());
+}
+
+#[test]
+fn native_eval_suite_rejects_multiple_lifecycles_before_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("native-graph-suite");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.1\"\n[task]\nname = \"example/native-graph-suite\"\n[native_graph]\nprofile = \"native_graph\"\nprogram = \"agent_graph.json\"\nmodel_bindings = \"models.toml\"\nadapter_manifest = \"adapters.toml\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(task_root.join("agent_graph.json"), "{}\n").unwrap();
+    fs::write(
+        task_root.join("models.toml"),
+        "[[model_bindings]]\nid = \"primary\"\nendpoint_profile_id = \"provider-default\"\nendpoint_factory_id = \"chat\"\ntransport_factory_id = \"http\"\nmodel = \"example-model\"\nurls = [\"https://provider.example/v1\"]\nstreaming = true\nrequest_timeout_ms = 30000\ncapture = \"metadata\"\n[model_bindings.tokenizer]\ntype = \"local\"\nname = \"builtin\"\nrevision = \"main\"\n[model_bindings.generation]\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("adapters.toml"), "").unwrap();
+
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .expect("the suite fixture imports once into its owned snapshot");
+    let suite_path = temporary.path().join("native-graph-suite.toml");
+    let policy = ArtifactDigest::from_bytes(b"policy");
+    fs::write(
+        &suite_path,
+        format!(
+            r#"[defaults]
+runtime = "native:v1"
+execution_seconds = 2.0
+verifier_seconds = 3.0
+environment = "{environment}"
+verifier = "{verifier}"
+
+[limits]
+parallelism = 1
+cpu_units = 1
+memory_bytes = 1
+max_expanded_trials = 2
+
+[limits.model_binding_units]
+primary = 1
+
+[[tasks]]
+source = {{ kind = "local", path = {task_path:?} }}
+task_id = "{task_id}"
+task_digest = "{task_digest}"
+graph_axes = ["graph-a"]
+model_axes = ["primary"]
+policy_axes = ["{policy}"]
+seeds = [7]
+repetitions = 2
+
+[tasks.resources]
+cpu_units = 1
+memory_bytes = 1
+model_binding_units = {{ primary = 1 }}
+"#,
+            environment = ArtifactDigest::from_bytes(b"environment").as_str(),
+            verifier = ArtifactDigest::from_bytes(b"verifier").as_str(),
+            task_path = task_root.to_string_lossy(),
+            task_id = imported.task.id.as_str(),
+            task_digest = imported.task.digest.as_str(),
+            policy = policy.as_str(),
+        ),
+    )
+    .unwrap();
+    let runtime_path = temporary.path().join("model-runtime.toml");
+    fs::write(&runtime_path, "version = 1\n").unwrap();
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    fs::write(
+        &lifecycle_path,
+        format!(
+            r#"{{"version":1,"agent_variant":"native-graph","model":{{"provider":"provider","model":"model"}},"seed":7,"policy":"{policy}","runtime":"native:v1","attempt":"attempt-1","budget":{{"execution_seconds":2.0,"verifier_seconds":3.0}},"agent_contract":"native_graph","command":["native-graph"],"initial_score":{{"metric":"reward","rationale":"{policy}"}},"regrade":{{"metric":"reward","rationale":"{policy}"}}}}"#,
+            policy = policy.as_str(),
+        ),
+    )
+    .unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--suite".to_owned(),
+        suite_path.to_string_lossy().into_owned(),
+        "--model-runtime".to_owned(),
+        runtime_path.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+    ])
+    .expect_err("a multi-trial suite has no singular lifecycle provenance in the Task7 slice");
+
+    assert!(
+        error
+            .to_string()
+            .contains("requires exactly one lifecycle-addressable trial"),
+        "unexpected suite refusal: {error:#}"
+    );
 }
 
 #[test]

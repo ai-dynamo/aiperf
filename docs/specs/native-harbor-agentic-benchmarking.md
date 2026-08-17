@@ -186,7 +186,7 @@ and redaction behavior. URLs, endpoint and transport factory ids, tokenizer,
 retry, timeout, generation, and capture policy are package identity. Secret ids
 are identity; secret values are not.
 
-Both `aiperf eval --task` and `aiperf eval --suite` accept one optional strict
+Both `aiperf eval --task` and `aiperf eval --suite` require one strict
 `--model-runtime <model-runtime.toml>`. That file maps logical `ModelSecretId`
 values to host environment-variable names; it cannot override any pinned model,
 URL, endpoint, transport, tokenizer, retry, timeout, or capture field. The CLI
@@ -226,6 +226,17 @@ parallelism limits, and paired-comparison factors. Native CLI surfaces are:
 aiperf eval --task <task-directory> [--model-runtime <model-runtime.toml>]
 aiperf eval --suite <suite.toml> [--model-runtime <model-runtime.toml>]
 ```
+
+The currently runnable vertical slice is deliberately narrower than the full
+suite contract: a standard schema-1.1 `native_graph` task must be acyclic and
+adapter-free, its task and agent Docker networks must both be `no-network`, and
+its caller must provide native-graph lifecycle provenance. Rust performs model
+calls through the selected AIPerf endpoint/transport/tokenizer/observer seams;
+Docker proves `NoAdapterEgress` only for that exact plan. A task becomes one
+resolved, scored matrix trial. `--suite` uses that same path only when exactly
+one resolved trial matches the supplied lifecycle request. Dynamic controls,
+adapters, externally driven graphs, and multi-lifecycle suite provenance are
+typed refusals pending their dedicated contracts.
 
 The importer records both the complete source snapshot and a resolved native
 graph plan. In addition to the complete source digest, the package identity
