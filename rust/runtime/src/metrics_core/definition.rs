@@ -166,15 +166,12 @@ pub fn resolve(name: &str) -> Option<&'static Definition> {
     if let Some(def) = definition(name) {
         return Some(def);
     }
-    if let Some(rest) = name.strip_prefix("turn") {
-        if let Some(us) = rest.find('_') {
-            let (digits, suffix) = (&rest[..us], &rest[us + 1..]);
-            if !digits.is_empty()
-                && digits.bytes().all(|b| b.is_ascii_digit())
-                && !suffix.is_empty()
-            {
-                return definition(&format!("analyzer.per_turn_{suffix}"));
-            }
+    if let Some(rest) = name.strip_prefix("turn")
+        && let Some(us) = rest.find('_')
+    {
+        let (digits, suffix) = (&rest[..us], &rest[us + 1..]);
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) && !suffix.is_empty() {
+            return definition(&format!("analyzer.per_turn_{suffix}"));
         }
     }
     None

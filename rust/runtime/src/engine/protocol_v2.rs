@@ -416,10 +416,9 @@ impl BenchmarkRunWireV2 {
             if matches!(
                 cfg.weka_semantics.as_deref(),
                 Some("legacy") | Some("agentx")
-            ) {
-                if let Some(cap) = cfg.system_idle_gap_cap_seconds {
-                    workload_config["system_idle_gap_cap_seconds"] = serde_json::json!(cap);
-                }
+            ) && let Some(cap) = cfg.system_idle_gap_cap_seconds
+            {
+                workload_config["system_idle_gap_cap_seconds"] = serde_json::json!(cap);
             }
         }
         let workload = NamedRunnerComponentSpecV2 {

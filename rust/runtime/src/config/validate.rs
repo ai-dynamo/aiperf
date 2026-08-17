@@ -114,14 +114,14 @@ fn validate_phase_stops(cfg: &BenchmarkConfig) -> Result<()> {
 
 /// Ensure seamless is not enabled on the first phase.
 fn validate_seamless_not_on_first_phase(cfg: &BenchmarkConfig) -> Result<()> {
-    if let Some(first) = phases(cfg).first() {
-        if first.common.seamless {
-            bail!(
-                "Phase config '{}' cannot have seamless=true because it is first; \
-                 seamless transitions only apply to subsequent phase configs",
-                first.common.name
-            );
-        }
+    if let Some(first) = phases(cfg).first()
+        && first.common.seamless
+    {
+        bail!(
+            "Phase config '{}' cannot have seamless=true because it is first; \
+             seamless transitions only apply to subsequent phase configs",
+            first.common.name
+        );
     }
     Ok(())
 }

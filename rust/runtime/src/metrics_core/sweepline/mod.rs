@@ -461,8 +461,8 @@ fn radix_argsort_mt(keys: &[u64]) -> Vec<u32> {
         }
         let mut starts = vec![[0usize; 256]; chunk_count];
         for (c, start) in starts.iter_mut().enumerate() {
+            start.copy_from_slice(&running);
             for bucket in 0..256 {
-                start[bucket] = running[bucket];
                 running[bucket] += histograms[c][bucket];
             }
         }
