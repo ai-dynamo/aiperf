@@ -596,6 +596,10 @@ Inputs, endpoints, and graph:
 - [`docs/specs/semantic-agent-graph.md`](docs/specs/semantic-agent-graph.md) —
   native Rust semantic graph, lowering, transform-closure, and source-fidelity
   contract for captured and live agent/application workflows.
+- [`docs/specs/native-harbor-agentic-benchmarking.md`](docs/specs/native-harbor-agentic-benchmarking.md) —
+  proposed native-Rust Harbor episode benchmark: supervised structured-streaming
+  external nodes, independently scored end-to-end agent and RL evaluation,
+  reusable-worker reset contracts, and deterministic parallel suites.
 - [`docs/specs/harbor-replacement-platform.md`](docs/specs/harbor-replacement-platform.md) —
   pure native-Rust Harbor replacement bar: owned source snapshots, v2 executable
   package identity, compatibility tiers, the built ordered benchmark-step subset,
