@@ -96,10 +96,7 @@ mod tests {
                             .build()
                             .unwrap();
                         runtime.block_on(async move {
-                            let listener = tokio::net::TcpListener::from_std(
-                                std::net::TcpListener::from(listener),
-                            )
-                            .unwrap();
+                            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
                             let mut shutdown_rx = shutdown_rx;
                             loop {
                                 tokio::select! {
@@ -1791,10 +1788,7 @@ mod tests {
                             .build()
                             .unwrap();
                         runtime.block_on(async move {
-                            let listener = tokio::net::TcpListener::from_std(
-                                std::net::TcpListener::from(listener),
-                            )
-                            .unwrap();
+                            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
                             let mut shutdown_rx = shutdown_rx;
                             loop {
                                 tokio::select! {
@@ -1863,7 +1857,7 @@ mod tests {
         // static round-robin request-to-thread assignment, concentrates
         // slow requests unevenly across worker threads.
         let index = arrival.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let slow = index % 3 == 0;
+        let slow = index.is_multiple_of(3);
         let (ttft_ms, itl_ms) = if slow { (60, 10) } else { (4, 1) };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Frame<Bytes>, Infallible>>();
         tokio::spawn(async move {
