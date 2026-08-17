@@ -4,8 +4,9 @@
 //! Temporary-root local process execution for shared-verifier compatibility.
 
 use std::{
-    fs,
+    fs::{self, OpenOptions},
     io::Read,
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
 };
@@ -228,15 +229,7 @@ fn collect_declared_artifacts(
         .iter()
         .map(|path| {
             let artifact_path = sandbox.artifact_path(path)?;
-            let metadata = fs::symlink_metadata(&artifact_path)
-                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-            if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-                return Err(EvalExecutionError::ArtifactCollection(format!(
-                    "declared artifact is not a regular file: {}",
-                    path
-                )));
-            }
-            let bytes = read_file_bounded(&artifact_path)?;
+            let bytes = read_file_bounded(&artifact_path, "declared artifact")?;
             Ok((path.clone(), ArtifactDigest::from_bytes(&bytes)))
         })
         .collect()
@@ -250,26 +243,45 @@ fn parse_reward(sandbox: &MaterializedSandbox) -> Result<RewardDocument, EvalExe
 }
 
 fn read_optional_file_bounded(path: &Path) -> Result<Option<Vec<u8>>, EvalExecutionError> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(EvalExecutionError::ArtifactCollection(error.to_string())),
     };
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-        return Err(EvalExecutionError::ArtifactCollection(format!(
-            "verifier reward is not a regular file: {}",
-            path.display()
-        )));
-    }
-    let file = fs::File::open(path)
-        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+    ensure_regular_file(&file, path, "verifier reward")?;
     read_open_file_bounded(file).map(Some)
 }
 
-fn read_file_bounded(path: &Path) -> Result<Vec<u8>, EvalExecutionError> {
-    let file = fs::File::open(path)
-        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+fn read_file_bounded(path: &Path, kind: &str) -> Result<Vec<u8>, EvalExecutionError> {
+    let file = open_regular_file(path, kind)?;
     read_open_file_bounded(file)
+}
+
+fn open_regular_file(path: &Path, kind: &str) -> Result<fs::File, EvalExecutionError> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+    ensure_regular_file(&file, path, kind)?;
+    Ok(file)
+}
+
+fn ensure_regular_file(file: &fs::File, path: &Path, kind: &str) -> Result<(), EvalExecutionError> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+    if !metadata.file_type().is_file() {
+        return Err(EvalExecutionError::ArtifactCollection(format!(
+            "{kind} is not a regular file: {}",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn read_open_file_bounded(file: fs::File) -> Result<Vec<u8>, EvalExecutionError> {
