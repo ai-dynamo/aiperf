@@ -661,6 +661,7 @@ pub struct ProviderCapabilities {
     service_exec: bool,
     service_archive: bool,
     service_stop: bool,
+    model_endpoint_isolation: bool,
 }
 
 impl ProviderCapabilities {
@@ -684,6 +685,7 @@ impl ProviderCapabilities {
             service_exec: false,
             service_archive: false,
             service_stop: false,
+            model_endpoint_isolation: false,
         }
     }
 
@@ -789,6 +791,17 @@ impl ProviderCapabilities {
         self
     }
 
+    /// Declares provider-enforced adapter isolation from model endpoint authorities.
+    pub const fn with_model_endpoint_isolation(mut self) -> Self {
+        self.model_endpoint_isolation = true;
+        self
+    }
+
+    /// Reports whether this runtime can enforce typed model-endpoint isolation.
+    pub const fn has_model_endpoint_isolation(self) -> bool {
+        self.model_endpoint_isolation
+    }
+
     fn supports(self, capability: &str) -> bool {
         match capability {
             "docker" => self.docker,
@@ -808,6 +821,7 @@ impl ProviderCapabilities {
             "service_exec" => self.service_exec,
             "service_archive" => self.service_archive,
             "service_stop" => self.service_stop,
+            "model_endpoint_isolation" => self.model_endpoint_isolation,
             _ => false,
         }
     }

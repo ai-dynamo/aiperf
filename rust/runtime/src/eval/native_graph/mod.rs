@@ -10,6 +10,7 @@ mod package;
 mod protocol;
 mod result;
 mod suite;
+mod supervision;
 
 pub use artifacts::{
     ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
@@ -48,4 +49,11 @@ pub use protocol::{
     AdapterProtocolFactory, HostEnvelope, HostMessage, PROTOCOL_VERSION, ProtocolCapability,
     ProtocolError, ProtocolLimits, ProtocolOperationState, ProtocolSessionState,
     StrictAdapterProtocolFactory, ValidatedAdapterMessage, ValidatedHostMessage,
+};
+pub use supervision::{
+    AdapterCheckout, AdapterCheckoutOrigin, AdapterExit, AdapterLifecycleDeadlines, AdapterPool,
+    AdapterPoolKey, AdapterProcess, AdapterRuntimeFactory, AdapterSpawnRequest,
+    AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError, CancelReason,
+    NativeGraphAdapterAuthorization, ProtocolAdapterRuntimeFactory, StrictSupervisedAdapter,
+    SupervisedAdapter,
 };

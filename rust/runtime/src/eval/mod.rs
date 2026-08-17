@@ -34,22 +34,23 @@ pub use evidence::{
 };
 pub use execution::{
     AgentCapability, ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId,
-    ComposeProjectPlan, ComposeServiceName, ContainerResources, DockerBuildRequest,
-    DockerComposeArchiveRequest, DockerComposeBuildRequest, DockerComposeConfigRequest,
-    DockerComposeCopyRequest, DockerComposeDownRequest, DockerComposeExecRequest,
-    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
-    DockerCreateRequest, DockerEnvironment, DockerExecRequest, DockerProcessSandbox,
-    DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvBinding, EnvName, EnvironmentPlan,
-    EvalExecutionError, EvalExecutionPhase, EvalSandboxFactory, HarborAgentContract,
-    HarborCompletedEvaluation, HarborEvaluationCoordinator, HarborEvaluationError,
-    HarborLifecycleAgentContract, HarborLifecycleRequest, HarborLifecycleScoreRequest,
-    HarborLocalEvaluationRequest, HarborSandboxRecipe, HealthcheckPlan, ImageSource,
-    ImageSourceKind, ImmutablePatch, LocalExecutionResult, LocalProcessSandbox,
-    MaterializedSandbox, MultiStepExecutionResult, MultiStepRewardStrategy, NetworkPolicy,
-    OwnedComposeResources, PhasePlan, ProcessOutput, ProviderCapabilities, SandboxRole,
-    SecretProvider, SecretValue, StepExecutionResult, VerifierCollectHook, VerifierPlan,
-    WorkspaceOverlay, collect_artifacts, preflight_docker, resolve_phase_environment,
-    transfer_artifacts,
+    ComposeProjectPlan, ComposeServiceName, ContainerResources, DockerAdapterLease,
+    DockerAdapterProcess, DockerAdapterSpawnerRequest, DockerBuildRequest,
+    DockerComposeAdapterSpawnerRequest, DockerComposeArchiveRequest, DockerComposeBuildRequest,
+    DockerComposeConfigRequest, DockerComposeCopyRequest, DockerComposeDownRequest,
+    DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
+    DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest, DockerEnvironment,
+    DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, EnvBinding, EnvName, EnvironmentPlan, EvalExecutionError,
+    EvalExecutionPhase, EvalSandboxFactory, HarborAgentContract, HarborCompletedEvaluation,
+    HarborEvaluationCoordinator, HarborEvaluationError, HarborLifecycleAgentContract,
+    HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborLocalEvaluationRequest,
+    HarborSandboxRecipe, HealthcheckPlan, ImageSource, ImageSourceKind, ImmutablePatch,
+    LocalAdapterSpawner, LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox,
+    MultiStepExecutionResult, MultiStepRewardStrategy, NetworkPolicy, OwnedComposeResources,
+    PhasePlan, ProcessOutput, ProviderCapabilities, SandboxRole, SecretProvider, SecretValue,
+    StepExecutionResult, VerifierCollectHook, VerifierPlan, WorkspaceOverlay, collect_artifacts,
+    preflight_docker, resolve_phase_environment, transfer_artifacts,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{
@@ -62,9 +63,12 @@ pub use import::{
 };
 pub use import_report::{ImportDisposition, ImportReport};
 pub use native_graph::{
-    AdapterEnvelope, AdapterId, AdapterMessage, AdapterProtocol, AdapterProtocolConfig,
-    AdapterProtocolFactory, AdapterRole, AdapterSpec, ArtifactDownloadHandle, ArtifactError,
-    ArtifactQuota, ArtifactUploadHandle, AuthoredNativeGraphSuite, EpisodeAggregate,
+    AdapterCheckout, AdapterCheckoutOrigin, AdapterEnvelope, AdapterExit, AdapterId,
+    AdapterLifecycleDeadlines, AdapterMessage, AdapterPool, AdapterPoolKey, AdapterProcess,
+    AdapterProtocol, AdapterProtocolConfig, AdapterProtocolFactory, AdapterRole,
+    AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner,
+    AdapterSpec, AdapterSupervisionError, ArtifactDownloadHandle, ArtifactError, ArtifactQuota,
+    ArtifactUploadHandle, AuthoredNativeGraphSuite, CancelReason, EpisodeAggregate,
     EpisodeArtifactStore, EpisodeAssignment, EpisodeAssignmentId, EpisodeComparability,
     EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, EpisodeExecution,
     EpisodeIntegrity, EpisodeResult, EpisodeResultError, EpisodeRunner, EpisodeScoreState,
@@ -72,16 +76,20 @@ pub use native_graph::{
     HarborEpisodeEvaluatorFactory, HeaderSecretRef, HostEnvelope, HostMessage,
     LocalNativeGraphSuiteScheduler, LocalNativeGraphSuiteSchedulerFactory, MatrixError,
     ModelBindingId, ModelBindingSpec, ModelCapacityKey, ModelCapturePolicy, ModelSecretId,
-    NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource,
-    NativeGraphSuiteDefinition, NativeGraphSuiteManifest, NativeGraphSuiteScheduler,
-    PROTOCOL_VERSION, ProtocolCapability, ProtocolError, ProtocolLimits, ProtocolOperationState,
-    ProtocolSessionState, ResolvedEpisodeTrial, ResolvedNativeGraphSuite, ResourceLeaseRequest,
-    ResourceLimits, SelectedModelBinding, StrictAdapterProtocolFactory, SuiteError, SuiteRunId,
-    SuiteSchedulerFactory, SuiteTrialSpec, TokenizerBindingSpec, ValidatedAdapterMessage,
-    ValidatedHostMessage, aggregate_episode_results, parse_native_graph_suite_toml,
-    run_resolved_suite,
+    NativeGraphAdapterAuthorization, NativeGraphPackagePlan, NativeGraphProfile,
+    NativeGraphProgramSource, NativeGraphSuiteDefinition, NativeGraphSuiteManifest,
+    NativeGraphSuiteScheduler, PROTOCOL_VERSION, ProtocolAdapterRuntimeFactory, ProtocolCapability,
+    ProtocolError, ProtocolLimits, ProtocolOperationState, ProtocolSessionState,
+    ResolvedEpisodeTrial, ResolvedNativeGraphSuite, ResourceLeaseRequest, ResourceLimits,
+    SelectedModelBinding, StrictAdapterProtocolFactory, StrictSupervisedAdapter, SuiteError,
+    SuiteRunId, SuiteSchedulerFactory, SuiteTrialSpec, SupervisedAdapter, TokenizerBindingSpec,
+    ValidatedAdapterMessage, ValidatedHostMessage, aggregate_episode_results,
+    parse_native_graph_suite_toml, run_resolved_suite,
 };
-pub use provider::{ProviderCapability, ProviderError, ProviderProfile};
+pub use provider::{
+    ModelEndpointAuthority, ModelEndpointIsolationProof, ProviderCapability, ProviderError,
+    ProviderProfile, ProviderRecovery,
+};
 pub use registry::{RegistryError, RegistryReference};
 pub use score::{ScoreError, ScoreVersion};
 pub use semantic::{

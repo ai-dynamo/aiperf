@@ -3,9 +3,10 @@
 
 //! Backend-neutral leases for task-owned benchmark environments.
 
-use std::{collections::BTreeMap, io::Read, time::Duration};
+use std::{collections::BTreeMap, io::Read, rc::Rc, time::Duration};
 
 use super::{ComposeServiceName, EnvName, EvalExecutionError, EvalExecutionPhase, SecretValue};
+use crate::eval::{AdapterSpawner, NativeGraphAdapterAuthorization};
 
 /// A command directed to one service without a shell boundary.
 pub(crate) struct ServiceExecRequest<'a> {
@@ -27,6 +28,14 @@ pub(crate) struct ServiceArchiveRequest<'a> {
     pub(crate) phase: EvalExecutionPhase,
 }
 
+/// Requests a streaming adapter spawner bound to one already-owned task service.
+pub(crate) struct ServiceAdapterSpawnerRequest<'a> {
+    pub(crate) service: &'a ComposeServiceName,
+    pub(crate) user: Option<&'a str>,
+    pub(crate) workdir: Option<&'a str>,
+    pub(crate) deadline: Duration,
+}
+
 /// A live, task-owned environment whose services can be used by benchmark phases.
 pub(crate) trait TaskEnvironmentLease {
     fn main_service(&self) -> &ComposeServiceName;
@@ -41,6 +50,19 @@ pub(crate) trait TaskEnvironmentLease {
         source: &str,
         destination: &str,
     ) -> Result<(), EvalExecutionError>;
+    /// Returns a streaming child-spawner for one task-owned service.
+    ///
+    /// A provider must opt in explicitly: one-shot `exec` is not a safe
+    /// substitute because adapter supervision owns stdin/stdout/stderr and reaping.
+    fn adapter_spawner(
+        &mut self,
+        _: ServiceAdapterSpawnerRequest<'_>,
+        _: &NativeGraphAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "streaming adapter spawn",
+        ))
+    }
     /// Copies snapshot data while consuming the caller's phase deadline.
     fn copy_into_bounded(
         &mut self,

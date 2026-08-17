@@ -17,17 +17,144 @@ use std::{
 
 use aiperf_runtime::clock::SimClock;
 use aiperf_runtime::eval::{
-    ComposeProjectId, DockerBuildRequest, DockerComposeArchiveRequest, DockerComposeBuildRequest,
-    DockerComposeConfigRequest, DockerComposeCopyRequest, DockerComposeDownRequest,
-    DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
-    DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
-    DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest, EnvName,
-    EvalExecutionError, HarborImporter, HarborSandboxRecipe, HarborSource, NativeSourceAcquirer,
-    OwnedComposeResources, ProviderCapabilities, SecretProvider, SecretValue, preflight_docker,
+    AdapterExit, AdapterProcess, AdapterSupervisionError, CancelReason, ComposeProjectId,
+    DockerAdapterLease, DockerAdapterProcess, DockerBuildRequest, DockerComposeArchiveRequest,
+    DockerComposeBuildRequest, DockerComposeConfigRequest, DockerComposeCopyRequest,
+    DockerComposeDownRequest, DockerComposeExecRequest, DockerComposeRuntime,
+    DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest,
+    DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, EnvName, EvalExecutionError, HarborImporter, HarborSandboxRecipe,
+    HarborSource, ModelEndpointIsolationProof, ModelSecretId, NativeGraphPackagePlan,
+    NativeSourceAcquirer, OwnedComposeResources, ProviderCapabilities, ProviderCapability,
+    ProviderProfile, SecretProvider, SecretValue, preflight_docker,
 };
+use async_trait::async_trait;
 use std::rc::Rc;
 
 static DOCKER_RUNTIME_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+struct LeaseFenceClient {
+    events: Rc<RefCell<Vec<String>>>,
+}
+
+#[async_trait(?Send)]
+impl AdapterProcess for LeaseFenceClient {
+    async fn write_frame(&mut self, _: &[u8], _: Duration) -> Result<(), AdapterSupervisionError> {
+        Ok(())
+    }
+
+    async fn read_stdout_frame(
+        &mut self,
+        _: usize,
+        _: Duration,
+    ) -> Result<Vec<u8>, AdapterSupervisionError> {
+        Err(AdapterSupervisionError::EndOfStream)
+    }
+
+    async fn drain_stderr(&mut self, _: usize) -> Result<Vec<u8>, AdapterSupervisionError> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel(
+        &mut self,
+        _: CancelReason,
+        _: Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        self.events.borrow_mut().push("client-cancel".to_owned());
+        Ok(())
+    }
+
+    async fn reap(&mut self, _: Duration) -> Result<AdapterExit, AdapterSupervisionError> {
+        self.events.borrow_mut().push("client-reap".to_owned());
+        Ok(AdapterExit::Reaped)
+    }
+
+    fn fence(&mut self) {
+        self.events.borrow_mut().push("client-fence".to_owned());
+    }
+}
+
+struct ComposeLeaseFake {
+    project: ComposeProjectId,
+    container: String,
+    events: Rc<RefCell<Vec<String>>>,
+}
+
+#[async_trait(?Send)]
+impl DockerAdapterLease for ComposeLeaseFake {
+    async fn terminate(&self, _: Duration) -> Result<(), AdapterSupervisionError> {
+        self.events.borrow_mut().push(format!(
+            "terminate:{}:{}",
+            self.project.as_str(),
+            self.container
+        ));
+        Ok(())
+    }
+
+    fn fence(&self) {
+        self.events.borrow_mut().push(format!(
+            "fence:{}:{}",
+            self.project.as_str(),
+            self.container
+        ));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn compose_lease_fences_its_exact_remote_container_before_client_reap() {
+    let project = ComposeProjectId::new("aiperf-task-lease");
+    let container = "aiperf-task-lease-main-1".to_owned();
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let lease = Rc::new(ComposeLeaseFake {
+        project: project.clone(),
+        container: container.clone(),
+        events: events.clone(),
+    });
+    let mut process = DockerAdapterProcess::new(
+        Box::new(LeaseFenceClient {
+            events: events.clone(),
+        }),
+        lease,
+    );
+
+    process.fence();
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "client-fence",
+            &format!("fence:{}:{container}", project.as_str()),
+        ]
+    );
+
+    process
+        .cancel(CancelReason::HostShutdown, Duration::from_secs(1))
+        .await
+        .expect("fixture remote termination succeeds");
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "client-fence",
+            &format!("fence:{}:{container}", project.as_str()),
+            "client-cancel",
+            &format!("terminate:{}:{container}", project.as_str()),
+        ]
+    );
+    let exit = process
+        .reap(Duration::from_secs(1))
+        .await
+        .expect("remote lease was terminated before client reaping");
+    assert_eq!(exit, AdapterExit::Reaped);
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "client-fence",
+            &format!("fence:{}:{container}", project.as_str()),
+            "client-cancel",
+            &format!("terminate:{}:{container}", project.as_str()),
+            "client-reap",
+        ]
+    );
+}
 
 #[derive(Default)]
 struct RecordingRuntime {
@@ -39,15 +166,45 @@ struct RecordingRuntime {
 struct LegacyRuntime {
     events: RefCell<Vec<String>>,
     images: RefCell<Vec<String>>,
+    native_graph_profile: Option<ProviderProfile>,
 }
 
 impl DockerRuntime for LegacyRuntime {
     fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities::none()
+        let capabilities = ProviderCapabilities::none()
             .with_docker()
             .with_image_source()
             .with_separate_verifier()
-            .with_public_network()
+            .with_public_network();
+        if self.native_graph_profile.is_some() {
+            capabilities.with_model_endpoint_isolation()
+        } else {
+            capabilities
+        }
+    }
+
+    fn native_graph_provider_profile(
+        &self,
+        _: &NativeGraphPackagePlan,
+    ) -> Result<ProviderProfile, EvalExecutionError> {
+        self.native_graph_profile
+            .clone()
+            .ok_or(EvalExecutionError::UnsupportedEnforcement(
+                "model endpoint isolation",
+            ))
+    }
+
+    fn native_graph_model_secret_environment(
+        &self,
+        _: &NativeGraphPackagePlan,
+    ) -> Result<BTreeMap<ModelSecretId, EnvName>, EvalExecutionError> {
+        if self.native_graph_profile.is_some() {
+            Ok(BTreeMap::new())
+        } else {
+            Err(EvalExecutionError::UnsupportedEnforcement(
+                "native graph model secret environment",
+            ))
+        }
     }
 
     fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
@@ -4272,6 +4429,154 @@ fn standard_task_root(temporary: &tempfile::TempDir, manifest_suffix: &str) -> s
     fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
     fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
     task_root
+}
+
+fn native_graph_task_root(temporary: &tempfile::TempDir) -> std::path::PathBuf {
+    let task_root = temporary.path().join("native-graph-task");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("tools")).unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.1"
+
+[task]
+name = "example/native-graph-docker-authority"
+
+[native_graph]
+profile = "native_graph"
+program = "agent_graph.json"
+model_bindings = "models.toml"
+adapter_manifest = "adapters.toml"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("agent_graph.json"),
+        r#"{
+  "schema_version": "1.0",
+  "trace_id": "authority",
+  "stage_bound": 1,
+  "channels": { "output": { "type": "text", "reducer": "overwrite" } },
+  "nodes": [{ "id": "model", "kind": "model", "binding": "primary", "output": "output" }],
+  "edges": [{ "source": "START", "target": "model" }, { "source": "model", "target": "END" }],
+  "terminal_outputs": ["output"]
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("models.toml"),
+        r#"[[model_bindings]]
+id = "primary"
+endpoint_profile_id = "provider-default"
+endpoint_factory_id = "chat"
+transport_factory_id = "http"
+model = "example-model"
+urls = ["https://provider.example/v1"]
+streaming = true
+request_timeout_ms = 30000
+capture = "metadata"
+
+[model_bindings.tokenizer]
+type = "local"
+name = "builtin"
+revision = "main"
+apply_chat_template = true
+
+[model_bindings.generation]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("adapters.toml"),
+        r#"[[adapters]]
+id = "tool-adapter"
+role = "tool"
+argv = ["tools/adapter.sh"]
+executable = "tools/adapter.sh"
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("tools/adapter.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+    task_root
+}
+
+#[test]
+fn native_graph_docker_execution_requires_runtime_authorization_before_build() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = LegacyRuntime::default();
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            )
+            .unwrap(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("native exact profile must be authorized before Docker build");
+
+    assert!(
+        matches!(
+            error,
+            EvalExecutionError::UnsupportedEnforcement("model endpoint isolation")
+        ),
+        "unexpected preflight result: {error:?}"
+    );
+    assert!(runtime.events.borrow().is_empty());
+}
+
+#[test]
+fn native_graph_docker_execution_accepts_the_runtime_resolved_no_egress_proof() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = LegacyRuntime {
+        native_graph_profile: Some(
+            ProviderProfile::new(
+                "runtime-no-egress",
+                vec![ProviderCapability::ModelEndpointIsolation],
+            )
+            .unwrap()
+            .with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
+            .unwrap(),
+        ),
+        ..LegacyRuntime::default()
+    };
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            )
+            .unwrap(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("fixture reaches the later Docker workdir boundary");
+    assert!(matches!(
+        error,
+        EvalExecutionError::UnsupportedEnforcement("container workdir inspection")
+    ));
+    assert!(runtime.events.borrow().contains(&"build".to_owned()));
 }
 
 fn standard_task_with_artifacts(

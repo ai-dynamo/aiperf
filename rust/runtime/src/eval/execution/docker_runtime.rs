@@ -10,6 +10,16 @@ use std::{
     time::Duration,
 };
 
+use std::rc::Rc;
+
+use async_trait::async_trait;
+
+use crate::eval::{
+    AdapterExit, AdapterProcess, AdapterSpawner, AdapterSupervisionError, CancelReason,
+    HarborTaskPackage, ModelSecretId, NativeGraphAdapterAuthorization, NativeGraphPackagePlan,
+    NativeGraphProfile, ProviderProfile,
+};
+
 use super::{
     BenchmarkExecutionPlan, ComposeServiceName, EnvName, EnvironmentPlan, EvalExecutionError,
     EvalExecutionPhase, PhasePlan, ProviderCapabilities, SecretProvider, SecretValue,
@@ -27,6 +37,33 @@ pub fn preflight_docker(
         ));
     }
     Ok(())
+}
+
+/// Resolves the non-forgeable NativeGraph exact-profile authorization before provisioning.
+///
+/// Only a NativeGraph exact profile needs this boundary. The selected Docker
+/// runtime supplies its actual isolation proof and the concrete host environment
+/// names backing each logical model secret; this function validates both against
+/// the imported package before any image build or container creation.
+pub(crate) fn resolve_native_graph_adapter_authorization(
+    runtime: &dyn DockerRuntime,
+    package: &HarborTaskPackage,
+) -> Result<Option<NativeGraphAdapterAuthorization>, EvalExecutionError> {
+    let Some(native_graph) = package.native_graph() else {
+        return Ok(None);
+    };
+    if native_graph.profile() != NativeGraphProfile::NativeGraph {
+        return Ok(None);
+    }
+    let profile = runtime.native_graph_provider_profile(native_graph)?;
+    let secret_environment = runtime.native_graph_model_secret_environment(native_graph)?;
+    NativeGraphAdapterAuthorization::resolve(
+        native_graph,
+        runtime.capabilities(),
+        profile,
+        secret_environment,
+    )
+    .map(Some)
 }
 
 pub(crate) struct ComposePreflightRequest<'a> {
@@ -304,6 +341,72 @@ pub struct DockerComposeExecRequest {
     workdir: Option<String>,
     deadline: Option<Duration>,
     labels: BTreeMap<String, String>,
+}
+
+/// Identifies one task-owned Compose service for a streaming adapter client.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DockerComposeAdapterSpawnerRequest {
+    project: ComposeProjectId,
+    service: ComposeServiceName,
+    user: Option<String>,
+    workdir: Option<String>,
+    deadline: Duration,
+}
+
+impl DockerComposeAdapterSpawnerRequest {
+    /// Binds a streaming adapter to one service in an already-owned project.
+    pub fn new(project: ComposeProjectId, service: ComposeServiceName) -> Self {
+        Self {
+            project,
+            service,
+            user: None,
+            workdir: None,
+            deadline: Duration::from_secs(10),
+        }
+    }
+
+    /// Pins the effective user before the Docker client process is spawned.
+    pub fn with_user(mut self, user: Option<&str>) -> Self {
+        self.user = user.map(ToOwned::to_owned);
+        self
+    }
+
+    /// Pins the effective workdir before the Docker client process is spawned.
+    pub fn with_workdir(mut self, workdir: Option<&str>) -> Self {
+        self.workdir = workdir.map(ToOwned::to_owned);
+        self
+    }
+
+    /// Bounds the ownership lookup before any streaming client is started.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    /// Borrows the exact Compose project identity.
+    pub fn project(&self) -> &ComposeProjectId {
+        &self.project
+    }
+
+    /// Borrows the task-owned service identity.
+    pub fn service(&self) -> &ComposeServiceName {
+        &self.service
+    }
+
+    /// Borrows the requested user, if any.
+    pub fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+
+    /// Borrows the requested workdir, if any.
+    pub fn workdir(&self) -> Option<&str> {
+        self.workdir.as_deref()
+    }
+
+    /// Returns the bounded task-owned container lookup deadline.
+    pub const fn deadline(&self) -> Duration {
+        self.deadline
+    }
 }
 
 impl DockerComposeExecRequest {
@@ -802,6 +905,164 @@ pub struct DockerExecRequest {
     deadline: Option<Duration>,
 }
 
+/// Identifies one labelled task container for a streaming `docker exec -i` client.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DockerAdapterSpawnerRequest {
+    container: String,
+    project: ComposeProjectId,
+    user: Option<String>,
+    workdir: Option<String>,
+}
+
+impl DockerAdapterSpawnerRequest {
+    /// Binds a streaming adapter to one container resolved from its owning project.
+    pub(crate) fn new(
+        container: impl Into<String>,
+        project: ComposeProjectId,
+    ) -> Result<Self, EvalExecutionError> {
+        let container = container.into();
+        if container.trim().is_empty() {
+            return Err(EvalExecutionError::InvalidRecipe("adapter container"));
+        }
+        Ok(Self {
+            container,
+            project,
+            user: None,
+            workdir: None,
+        })
+    }
+
+    /// Pins the container user for every adapter child spawned through this lease.
+    pub fn with_user(mut self, user: Option<&str>) -> Self {
+        self.user = user.map(ToOwned::to_owned);
+        self
+    }
+
+    /// Pins the container workdir for every adapter child spawned through this lease.
+    pub fn with_workdir(mut self, workdir: Option<&str>) -> Self {
+        self.workdir = workdir.map(ToOwned::to_owned);
+        self
+    }
+
+    /// Borrows the previously labelled task container identity.
+    pub fn container(&self) -> &str {
+        &self.container
+    }
+
+    /// Borrows the project whose ownership labels selected this container.
+    pub fn project(&self) -> &ComposeProjectId {
+        &self.project
+    }
+
+    /// Borrows the requested user, if any.
+    pub fn user(&self) -> Option<&str> {
+        self.user.as_deref()
+    }
+
+    /// Borrows the requested workdir, if any.
+    pub fn workdir(&self) -> Option<&str> {
+        self.workdir.as_deref()
+    }
+}
+
+/// A task-owned remote container lease for one supervised adapter client.
+///
+/// The lease is deliberately separate from the local `docker exec` client:
+/// closing that client alone does not stop code already running in the task
+/// container. Implementations must terminate only the previously validated
+/// task-owned container represented by this lease.
+#[async_trait(?Send)]
+pub trait DockerAdapterLease {
+    /// Terminates the exact task-owned remote container within the supplied budget.
+    async fn terminate(&self, deadline: Duration) -> Result<(), AdapterSupervisionError>;
+    /// Starts best-effort termination when `Drop` cannot await the provider.
+    fn fence(&self);
+}
+
+/// Couples a local streaming client to its exact task-owned remote container lease.
+///
+/// A remote termination is required before this wrapper allows the local client
+/// to report `Reaped`, so fencing only the host-side `docker exec` process can
+/// never leave its remote adapter runnable.
+pub struct DockerAdapterProcess {
+    client: Box<dyn AdapterProcess>,
+    lease: Rc<dyn DockerAdapterLease>,
+    has_terminated_remote: bool,
+}
+
+impl DockerAdapterProcess {
+    /// Binds one local streaming client to its validated task-owned container lease.
+    pub fn new(client: Box<dyn AdapterProcess>, lease: Rc<dyn DockerAdapterLease>) -> Self {
+        Self {
+            client,
+            lease,
+            has_terminated_remote: false,
+        }
+    }
+
+    async fn terminate_remote(
+        &mut self,
+        deadline: Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        if self.has_terminated_remote {
+            return Ok(());
+        }
+        self.lease.terminate(deadline).await?;
+        self.has_terminated_remote = true;
+        Ok(())
+    }
+}
+
+#[async_trait(?Send)]
+impl AdapterProcess for DockerAdapterProcess {
+    async fn write_frame(
+        &mut self,
+        frame: &[u8],
+        deadline: Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        self.client.write_frame(frame, deadline).await
+    }
+
+    async fn read_stdout_frame(
+        &mut self,
+        max_bytes: usize,
+        deadline: Duration,
+    ) -> Result<Vec<u8>, AdapterSupervisionError> {
+        self.client.read_stdout_frame(max_bytes, deadline).await
+    }
+
+    async fn drain_stderr(&mut self, max_bytes: usize) -> Result<Vec<u8>, AdapterSupervisionError> {
+        self.client.drain_stderr(max_bytes).await
+    }
+
+    async fn cancel(
+        &mut self,
+        reason: CancelReason,
+        deadline: Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        let client = self.client.cancel(reason, deadline).await;
+        let remote = self.terminate_remote(deadline).await;
+        match (client, remote) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(primary), Err(recovery)) => Err(AdapterSupervisionError::Recovery {
+                primary: Box::new(primary),
+                recovery: Box::new(recovery),
+            }),
+        }
+    }
+
+    async fn reap(&mut self, deadline: Duration) -> Result<AdapterExit, AdapterSupervisionError> {
+        self.terminate_remote(deadline).await?;
+        self.client.reap(deadline).await
+    }
+
+    fn fence(&mut self) {
+        self.client.fence();
+        self.lease.fence();
+    }
+}
+
 impl DockerExecRequest {
     /// Creates a command request with literal and secret environments kept separate.
     pub fn new(
@@ -976,6 +1237,45 @@ pub trait DockerRuntime {
         None
     }
 
+    /// Resolves the provider profile that actually governs NativeGraph adapters.
+    ///
+    /// Returning a profile supplied by a caller instead of the selected runtime
+    /// would let a task claim endpoint mediation it does not receive, so exact
+    /// NativeGraph profiles fail closed unless the runtime provides this value.
+    fn native_graph_provider_profile(
+        &self,
+        _: &NativeGraphPackagePlan,
+    ) -> Result<ProviderProfile, EvalExecutionError> {
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "model endpoint isolation",
+        ))
+    }
+
+    /// Resolves every logical model secret to its host-only environment name.
+    ///
+    /// Values never cross this boundary. The exact-profile authorization checks
+    /// this map against the imported bindings and strips every returned name from
+    /// each adapter launch environment.
+    fn native_graph_model_secret_environment(
+        &self,
+        _: &NativeGraphPackagePlan,
+    ) -> Result<BTreeMap<ModelSecretId, EnvName>, EvalExecutionError> {
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "native graph model secret environment",
+        ))
+    }
+
+    /// Returns a streaming adapter spawner bound to one labelled task container.
+    fn adapter_spawner(
+        &self,
+        _: &DockerAdapterSpawnerRequest,
+        _: &NativeGraphAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "streaming Docker adapter spawn",
+        ))
+    }
+
     /// Builds the requested immutable task environment.
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError>;
 
@@ -1068,6 +1368,17 @@ pub trait DockerComposeRuntime: DockerRuntime {
 
     /// Executes a redacted command in one project service.
     fn compose_exec(&self, request: &DockerComposeExecRequest) -> Result<(), EvalExecutionError>;
+
+    /// Returns a streaming adapter spawner for one verified Compose service.
+    fn compose_adapter_spawner(
+        &self,
+        _: &DockerComposeAdapterSpawnerRequest,
+        _: &NativeGraphAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "streaming Docker Compose adapter spawn",
+        ))
+    }
 
     /// Opens a service path as a streaming archive.
     fn compose_copy_archive(

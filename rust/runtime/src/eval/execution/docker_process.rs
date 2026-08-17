@@ -10,28 +10,40 @@ use std::{
     os::unix::fs::PermissionsExt,
     process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
+    },
     thread,
     time::Duration,
 };
 
+use async_trait::async_trait;
 use tempfile::{NamedTempFile, TempDir};
+use tokio::process::Command as TokioCommand;
 
 use crate::{
     clock::{Clock, RealClock},
-    eval::{ArtifactDigest, HarborTaskPackage, RewardDocument, VerifierMode},
+    eval::{
+        AdapterProcess, AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner,
+        AdapterSupervisionError, ArtifactDigest, HarborTaskPackage,
+        NativeGraphAdapterAuthorization, RewardDocument, VerifierMode,
+    },
 };
 
 use super::{
-    BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId, DockerBuildRequest,
-    DockerComposeArchiveRequest, DockerComposeBuildRequest, DockerComposeConfigRequest,
-    DockerComposeCopyRequest, DockerComposeDownRequest, DockerComposeExecRequest,
-    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
-    DockerCreateRequest, DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
-    EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult,
-    MultiStepExecutionResult, NetworkPolicy, SecretProvider, preflight_docker, resolve_environment,
-    resolve_phase_environment, shared_workdir_conflicts_reserved_verifier_path,
-    verifier_artifact_target_collision,
+    BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId, DockerAdapterLease,
+    DockerAdapterProcess, DockerAdapterSpawnerRequest, DockerBuildRequest,
+    DockerComposeAdapterSpawnerRequest, DockerComposeArchiveRequest, DockerComposeBuildRequest,
+    DockerComposeConfigRequest, DockerComposeCopyRequest, DockerComposeDownRequest,
+    DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
+    DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
+    DockerRemoveRequest, DockerRuntime, DockerStartRequest, EvalExecutionError, EvalExecutionPhase,
+    HarborSandboxRecipe, LocalExecutionResult, MultiStepExecutionResult, NetworkPolicy,
+    SecretProvider, preflight_docker, resolve_environment,
+    resolve_native_graph_adapter_authorization, resolve_phase_environment,
+    shared_workdir_conflicts_reserved_verifier_path, verifier_artifact_target_collision,
 };
 
 const MAX_DOCKER_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
@@ -45,6 +57,7 @@ use super::{
         transfer_artifacts_bounded,
     },
     compose_project::ComposeProjectLease,
+    local_process::{configure_adapter_process_group, spawn_adapter_child},
     task_environment::{ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease},
 };
 
@@ -151,6 +164,7 @@ impl DockerProcessSandbox {
             ));
         }
         preflight_docker(runtime, plan)?;
+        let _adapter_authorization = resolve_native_graph_adapter_authorization(runtime, package)?;
         if plan.compose().is_some() {
             return self.execute_compose_multi_step_with_runtime(
                 runtime,
@@ -265,6 +279,7 @@ impl DockerProcessSandbox {
             );
         }
         preflight_docker(runtime, plan)?;
+        let _adapter_authorization = resolve_native_graph_adapter_authorization(runtime, package)?;
         if plan.compose().is_some() {
             return self.execute_compose_with_runtime(
                 runtime,
@@ -566,6 +581,7 @@ impl DockerProcessSandbox {
         secrets: &dyn SecretProvider,
     ) -> Result<LocalExecutionResult, EvalExecutionError> {
         preflight_docker(runtime, plan)?;
+        let _adapter_authorization = resolve_native_graph_adapter_authorization(runtime, package)?;
         let environment = plan.environment();
         let verifier = plan.verifier();
         let environment_workdir = recipe.resolve_workdir(environment.workdir());
@@ -1889,6 +1905,188 @@ struct DockerCliRuntime {
     clock: Rc<dyn Clock>,
 }
 
+struct DockerCliAdapterSpawner {
+    request: DockerAdapterSpawnerRequest,
+    authorization: NativeGraphAdapterAuthorization,
+}
+
+struct DockerCliAdapterLease {
+    request: DockerAdapterSpawnerRequest,
+}
+
+struct DockerFenceReapRequest {
+    child: Child,
+    completion: SyncSender<io::Result<std::process::ExitStatus>>,
+}
+
+static DOCKER_FENCE_REAPER: OnceLock<SyncSender<DockerFenceReapRequest>> = OnceLock::new();
+
+fn docker_fence_reaper() -> io::Result<SyncSender<DockerFenceReapRequest>> {
+    if let Some(sender) = DOCKER_FENCE_REAPER.get() {
+        return Ok(sender.clone());
+    }
+    let (sender, receiver) = sync_channel::<DockerFenceReapRequest>(64);
+    thread::Builder::new()
+        .name("aiperf-docker-fence-reaper".to_owned())
+        .spawn(move || {
+            while let Ok(mut request) = receiver.recv() {
+                let _ = request.completion.send(request.child.wait());
+            }
+        })?;
+    let _ = DOCKER_FENCE_REAPER.set(sender.clone());
+    Ok(DOCKER_FENCE_REAPER.get().cloned().unwrap_or(sender))
+}
+
+fn reap_fenced_docker_client(
+    child: Child,
+) -> Result<Receiver<io::Result<std::process::ExitStatus>>, (Child, io::Error)> {
+    let sender = match docker_fence_reaper() {
+        Ok(sender) => sender,
+        Err(error) => return Err((child, error)),
+    };
+    let (completion, result) = sync_channel(1);
+    let request = DockerFenceReapRequest { child, completion };
+    match sender.try_send(request) {
+        Ok(()) => Ok(result),
+        Err(TrySendError::Full(request)) | Err(TrySendError::Disconnected(request)) => Err((
+            request.child,
+            io::Error::other("Docker fence reaper is unavailable"),
+        )),
+    }
+}
+
+fn reap_unhanded_docker_client(mut child: Child) {
+    // This fallback runs only when the bounded reaper cannot accept work. Kill
+    // the local Docker client first so its synchronous reap cannot remain a
+    // long-lived Drop path, then wait so the host never retains a zombie child.
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[async_trait(?Send)]
+impl DockerAdapterLease for DockerCliAdapterLease {
+    async fn terminate(&self, deadline: Duration) -> Result<(), AdapterSupervisionError> {
+        let mut command = TokioCommand::new("docker");
+        command.args(["kill", self.request.container()]);
+        let status = tokio::time::timeout(deadline, command.status())
+            .await
+            .map_err(|_| {
+                AdapterSupervisionError::Process(
+                    "Docker adapter termination deadline elapsed".to_owned(),
+                )
+            })?
+            .map_err(|error| {
+                AdapterSupervisionError::Process(format!(
+                    "cannot terminate adapter container: {error}"
+                ))
+            })?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(AdapterSupervisionError::Process(
+                "Docker refused to terminate the task-owned adapter container".to_owned(),
+            ))
+        }
+    }
+
+    fn fence(&self) {
+        let child = Command::new("docker")
+            .args(["kill", self.request.container()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        if let Ok(child) = child
+            && let Err((child, _)) = reap_fenced_docker_client(child)
+        {
+            reap_unhanded_docker_client(child);
+        }
+    }
+}
+
+impl AdapterSpawner for DockerCliAdapterSpawner {
+    fn begin_spawn(
+        &self,
+        request: AdapterSpawnRequest,
+    ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        let request = self.authorization.authorize_spawn_request(request)?;
+        let mut command = TokioCommand::new("docker");
+        command.args(["exec", "-i"]);
+        for (name, value) in request.environment() {
+            command.args(["--env", &format!("{name}={value}")]);
+        }
+        if let Some(user) = self.request.user() {
+            command.args(["--user", user]);
+        }
+        if let Some(workdir) = self.request.workdir() {
+            command.args(["--workdir", workdir]);
+        }
+        command
+            .arg(self.request.container())
+            .args(request.argv())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        configure_adapter_process_group(&mut command);
+        let client = spawn_adapter_child(command, request.max_stderr_bytes())?;
+        let process = Box::new(DockerAdapterProcess::new(
+            client,
+            Rc::new(DockerCliAdapterLease {
+                request: self.request.clone(),
+            }),
+        ));
+        Ok(Box::new(DockerAdapterSpawnTransaction {
+            process: Some(process),
+        }))
+    }
+}
+
+/// Launch transaction retaining the Docker exec client until process ownership transfers.
+struct DockerAdapterSpawnTransaction {
+    process: Option<Box<dyn AdapterProcess>>,
+}
+
+#[async_trait(?Send)]
+impl AdapterSpawnTransaction for DockerAdapterSpawnTransaction {
+    async fn await_process(&mut self) -> Result<Box<dyn AdapterProcess>, AdapterSupervisionError> {
+        self.process
+            .take()
+            .ok_or(AdapterSupervisionError::AlreadyReaped)
+    }
+
+    async fn abort(&mut self, deadline: Duration) -> Result<(), AdapterSupervisionError> {
+        let Some(mut process) = self.process.take() else {
+            return Ok(());
+        };
+        let cancel = process
+            .cancel(crate::eval::CancelReason::HostShutdown, deadline)
+            .await;
+        let reap = process.reap(deadline).await;
+        match (cancel, reap) {
+            (Ok(()), Ok(_)) => Ok(()),
+            (Err(primary), Ok(_)) => Err(primary),
+            (Ok(()), Err(recovery)) => {
+                self.process = Some(process);
+                Err(recovery)
+            }
+            (Err(primary), Err(recovery)) => {
+                self.process = Some(process);
+                Err(AdapterSupervisionError::Recovery {
+                    primary: Box::new(primary),
+                    recovery: Box::new(recovery),
+                })
+            }
+        }
+    }
+
+    fn fence(&mut self) {
+        if let Some(process) = self.process.as_deref_mut() {
+            process.fence();
+        }
+    }
+}
+
 impl DockerRuntime for DockerCliRuntime {
     fn capabilities(&self) -> super::ProviderCapabilities {
         super::ProviderCapabilities::none()
@@ -1912,6 +2110,17 @@ impl DockerRuntime for DockerCliRuntime {
 
     fn compose_runtime(&self) -> Option<&dyn DockerComposeRuntime> {
         Some(self)
+    }
+
+    fn adapter_spawner(
+        &self,
+        request: &DockerAdapterSpawnerRequest,
+        authorization: &crate::eval::NativeGraphAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        Ok(Rc::new(DockerCliAdapterSpawner {
+            request: request.clone(),
+            authorization: authorization.clone(),
+        }))
     }
 
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
@@ -2206,6 +2415,25 @@ impl DockerComposeRuntime for DockerCliRuntime {
                 "default",
                 remaining_optional_provider_deadline(&self.clock, deadline_ns, request.project())?,
             ),
+        )
+    }
+
+    fn compose_adapter_spawner(
+        &self,
+        request: &DockerComposeAdapterSpawnerRequest,
+        authorization: &crate::eval::NativeGraphAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        let container = compose_service_container(
+            self.clock.clone(),
+            request.project(),
+            request.service(),
+            Some(request.deadline()),
+        )?;
+        self.adapter_spawner(
+            &DockerAdapterSpawnerRequest::new(container, request.project().clone())?
+                .with_user(request.user())
+                .with_workdir(request.workdir()),
+            authorization,
         )
     }
 
@@ -4115,13 +4343,27 @@ mod tests {
         compensate_late_create_with, compose_ownership_filters, compose_stop_arguments,
         copy_archive_stream_bounded, docker_container_name, docker_image_name,
         drain_output_bounded, drive_docker_exec, ensure_network_exists,
-        read_optional_reward_archive, read_reward_with_runtime, redact_secret_values,
-        reports_absent_container, run_docker_exec_without_deadline,
+        read_optional_reward_archive, read_reward_with_runtime, reap_fenced_docker_client,
+        redact_secret_values, reports_absent_container, run_docker_exec_without_deadline,
     };
     use crate::{
         clock::SimClock,
         eval::{ComposeProjectId, ProviderCapabilities},
     };
+
+    #[test]
+    fn fenced_docker_client_is_reaped_by_handoff() {
+        let child = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("fixture Docker client starts");
+        let reaper = reap_fenced_docker_client(child).expect("fence hands child to a reaper");
+        let status = reaper
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reaper publishes the child result")
+            .expect("reaper waits for Docker client");
+        assert!(status.success());
+    }
 
     #[tokio::test]
     async fn virtual_bounded_exec_refuses_an_entered_tokio_runtime() {

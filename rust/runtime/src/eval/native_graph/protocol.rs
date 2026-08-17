@@ -122,6 +122,26 @@ impl AdapterProtocolConfig {
             limits,
         })
     }
+
+    /// Returns the Rust-pinned adapter role selected for this session.
+    pub const fn role(&self) -> AdapterRole {
+        self.role
+    }
+
+    /// Returns the Rust-assigned episode correlation for this session.
+    pub fn episode(&self) -> &str {
+        &self.episode
+    }
+
+    /// Returns the exact capability set Rust selected for this session.
+    pub fn capabilities(&self) -> &BTreeSet<ProtocolCapability> {
+        &self.capabilities
+    }
+
+    /// Returns the immutable maximum wire frame selected for this session.
+    pub const fn max_frame_bytes(&self) -> usize {
+        self.limits.max_frame_bytes
+    }
 }
 
 /// One Rust-to-adapter JSONL envelope.

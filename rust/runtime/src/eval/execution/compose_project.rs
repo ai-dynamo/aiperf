@@ -7,12 +7,15 @@ use std::{collections::BTreeSet, io::Read, rc::Rc, time::Duration};
 
 use crate::clock::Clock;
 
-use super::task_environment::{ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease};
+use super::task_environment::{
+    ServiceAdapterSpawnerRequest, ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease,
+};
 use super::{
-    ComposeProjectId, ComposeProjectPlan, ComposeServiceName, DockerComposeArchiveRequest,
-    DockerComposeBuildRequest, DockerComposeCopyRequest, DockerComposeDownRequest,
-    DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
-    DockerComposeUpRequest, DockerRemoveRequest, EvalExecutionError, OwnedComposeResources,
+    ComposeProjectId, ComposeProjectPlan, ComposeServiceName, DockerComposeAdapterSpawnerRequest,
+    DockerComposeArchiveRequest, DockerComposeBuildRequest, DockerComposeCopyRequest,
+    DockerComposeDownRequest, DockerComposeExecRequest, DockerComposeRuntime,
+    DockerComposeStopRequest, DockerComposeUpRequest, DockerRemoveRequest, EvalExecutionError,
+    OwnedComposeResources,
 };
 
 /// Terminal benchmark failures get at most this host-side cleanup allowance.
@@ -321,6 +324,23 @@ impl TaskEnvironmentLease for ComposeProjectLease<'_> {
                 request.workdir,
                 request.deadline,
             ),
+        )
+    }
+    fn adapter_spawner(
+        &mut self,
+        request: ServiceAdapterSpawnerRequest<'_>,
+        authorization: &crate::eval::NativeGraphAdapterAuthorization,
+    ) -> Result<Rc<dyn crate::eval::AdapterSpawner>, EvalExecutionError> {
+        self.ensure_started()?;
+        if !self.services.contains(request.service) {
+            return Err(EvalExecutionError::InvalidRecipe("Compose service"));
+        }
+        self.runtime.compose_adapter_spawner(
+            &DockerComposeAdapterSpawnerRequest::new(self.project.clone(), request.service.clone())
+                .with_user(request.user)
+                .with_workdir(request.workdir)
+                .with_deadline(request.deadline),
+            authorization,
         )
     }
     fn archive(
