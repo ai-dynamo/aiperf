@@ -260,10 +260,10 @@ impl Phase1State {
         let new_idx = self.chains.len();
         self.chains.push(AgentChain::with_fork(fork));
         self.append(new_idx, outer_idx, req);
-        if let Some(foi) = fork_outer_idx {
-            if depth > 0 {
-                self.forks_by_tail.entry(foi).or_default().push(new_idx);
-            }
+        if let Some(foi) = fork_outer_idx
+            && depth > 0
+        {
+            self.forks_by_tail.entry(foi).or_default().push(new_idx);
         }
     }
 }
@@ -355,7 +355,7 @@ fn rekey_leftover_forks(
 
 /// Phase 2: splice join-seam continuations onto dead tails.
 fn resolve_seams(
-    chains: &mut Vec<AgentChain>,
+    chains: &mut [AgentChain],
     forks_by_tail: &mut HashMap<i64, Vec<usize>>,
     chain_of_request: &mut HashMap<i64, usize>,
     req_by_outer: &HashMap<i64, ChainReq>,
@@ -486,12 +486,11 @@ pub fn detect_agent_chains(
         i
     };
     for c in &mut state.chains {
-        if c.spliced_into.is_none() {
-            if let Some(fork) = &mut c.fork {
-                if let Some(p) = fork.parent_chain {
-                    fork.parent_chain = Some(resolve(p));
-                }
-            }
+        if c.spliced_into.is_none()
+            && let Some(fork) = &mut c.fork
+            && let Some(p) = fork.parent_chain
+        {
+            fork.parent_chain = Some(resolve(p));
         }
     }
 
@@ -534,12 +533,11 @@ pub fn is_aux_chain(
         return false;
     }
     let first = &requests[0];
-    if cross_model {
-        if let Some(mm) = main_model {
-            if first.model != mm {
-                return true;
-            }
-        }
+    if cross_model
+        && let Some(mm) = main_model
+        && first.model != mm
+    {
+        return true;
     }
     let threshold = isl_floor.max((isl_ratio * main_peak_isl as f64) as i64);
     first.input_length < threshold

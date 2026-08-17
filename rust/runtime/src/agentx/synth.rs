@@ -511,7 +511,7 @@ pub fn compute_asst_block_caps(turns: &[(Vec<i64>, i64)], block_size: i64) -> Ve
         }
 
         tile.truncate(eff_lcp as usize);
-        tile.extend(std::iter::repeat(k as i64).take(new_blocks_count as usize));
+        tile.extend(std::iter::repeat_n(k as i64, new_blocks_count as usize));
     }
 
     caps

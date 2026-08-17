@@ -146,13 +146,13 @@ pub fn classify_turn_input(req: &NormalReq, prev: Option<&NormalReq>) -> Option<
         }
         return Some(TurnInputKind::UserInput);
     }
-    if let Some(p) = prev {
-        if !p.stop.is_empty() {
-            if p.stop == "tool_use" {
-                return Some(TurnInputKind::ToolResult);
-            }
-            return Some(TurnInputKind::UserInput);
+    if let Some(p) = prev
+        && !p.stop.is_empty()
+    {
+        if p.stop == "tool_use" {
+            return Some(TurnInputKind::ToolResult);
         }
+        return Some(TurnInputKind::UserInput);
     }
     None
 }
@@ -200,10 +200,10 @@ pub fn clamp_delay_ms(delay_ms: f64, cap_seconds: Option<f64>) -> Option<f64> {
 /// honor `max_osl`, upgrade a recorded 0 to 1.
 pub fn cap_output(output_length: i64, max_osl: Option<i64>) -> i64 {
     let mut capped = output_length;
-    if let Some(m) = max_osl {
-        if capped > m {
-            capped = m;
-        }
+    if let Some(m) = max_osl
+        && capped > m
+    {
+        capped = m;
     }
     if capped >= 1 { capped } else { 1 }
 }
@@ -740,11 +740,11 @@ pub fn build_model_map(
     }
     if main_model.is_none() {
         for req in &trace.requests {
-            if let WekaRequest::Subagent(entry) = req {
-                if let Some(first) = entry.requests.first() {
-                    main_model = Some(inner_model(first));
-                    break;
-                }
+            if let WekaRequest::Subagent(entry) = req
+                && let Some(first) = entry.requests.first()
+            {
+                main_model = Some(inner_model(first));
+                break;
             }
         }
     }
