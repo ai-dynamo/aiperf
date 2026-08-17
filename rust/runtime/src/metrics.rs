@@ -1205,8 +1205,10 @@ mod tests {
     #[test]
     fn observer_uses_server_usage_for_token_counts_under_use_server_token_count() {
         let clock = Rc::new(SimClock::new());
-        let mut config = MetricsConfig::default();
-        config.use_server_token_count = true;
+        let config = MetricsConfig {
+            use_server_token_count: true,
+            ..MetricsConfig::default()
+        };
         let observer = NativeMetricsObserver::new(clock.clone(), 0, config);
         let uuid = Uuid::from_u128(11);
         observer.on_arrival(uuid, 0.0, 8, 5);

@@ -286,8 +286,10 @@ fn export_writes_both_files_and_gates_on_policy() {
     ));
     std::fs::create_dir_all(&base).unwrap();
 
-    let mut cfg = ExportConfig::default();
-    cfg.server_metrics = full_policy();
+    let mut cfg = ExportConfig {
+        server_metrics: full_policy(),
+        ..ExportConfig::default()
+    };
     ServerMetricsExporter.export(&report, &base, &cfg).unwrap();
     assert!(base.join("server_metrics_export.json").exists());
     assert!(base.join("server_metrics_export.csv").exists());
@@ -326,8 +328,10 @@ fn empty_server_metrics_writes_nothing() {
     report.summary.server_metrics = None;
     let base = std::env::temp_dir().join(format!("aiperf_sm_empty_{}", std::process::id()));
     std::fs::create_dir_all(&base).unwrap();
-    let mut cfg = ExportConfig::default();
-    cfg.server_metrics = full_policy();
+    let cfg = ExportConfig {
+        server_metrics: full_policy(),
+        ..ExportConfig::default()
+    };
     ServerMetricsExporter.export(&report, &base, &cfg).unwrap();
     assert!(!base.join("server_metrics_export.json").exists());
     assert!(!base.join("server_metrics_export.csv").exists());

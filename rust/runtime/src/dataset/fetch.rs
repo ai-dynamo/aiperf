@@ -267,17 +267,21 @@ mod tests {
     fn follows_302_even_when_transport_also_reports_it_as_an_error() {
         // The inference transport sets status, Location header, AND error on a
         // 302; the loop must follow the redirect rather than fail on the error.
-        let mut redirect = RequestRecord::default();
-        redirect.status = Some(302);
-        redirect.error = Some(ErrorDetails::http(302, ""));
-        redirect.response_headers = BTreeMap::from([(
-            "location".to_string(),
-            "https://cdn.example.com/tokenizer.json".to_string(),
-        )]);
+        let redirect = RequestRecord {
+            status: Some(302),
+            error: Some(ErrorDetails::http(302, "")),
+            response_headers: BTreeMap::from([(
+                "location".to_string(),
+                "https://cdn.example.com/tokenizer.json".to_string(),
+            )]),
+            ..RequestRecord::default()
+        };
 
-        let mut ok = RequestRecord::default();
-        ok.status = Some(200);
-        ok.responses = vec![text_body(b"{\"tokenizer\":true}")];
+        let ok = RequestRecord {
+            status: Some(200),
+            responses: vec![text_body(b"{\"tokenizer\":true}")],
+            ..RequestRecord::default()
+        };
 
         let transport = ScriptedTransport {
             records: RefCell::new(vec![redirect, ok]),
