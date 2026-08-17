@@ -55,6 +55,67 @@ ALL_SECTION_FIELDS: frozenset[str] = (
 )
 
 
+# Fields that are not benchmark configuration at all, so "routed under
+# --config" does not apply to them. Each needs a reason: an unexplained
+# exemption is a silent drop with extra steps.
+EXEMPT_FROM_CONFIG_ROUTING: frozenset[str] = frozenset(
+    {
+        # The --config flag itself; it selects the file being merged.
+        "config_file",
+        # Alias input consumed during CLIConfig validation rather than routed
+        # onto AIPerfConfig; it populates its canonical sibling, which is
+        # itself classified.
+        "stream",
+    }
+)
+
+# Fields outside every section frozenset that nonetheless reach AIPerfConfig,
+# verified by resolving with the flag set and diffing against the no-flag
+# baseline. The section sets are opt-in and incomplete; this records what is
+# genuinely routed rather than letting absence imply anything.
+_ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
+    {
+        # service runtime / logging, via build_logging_runtime
+        "api_host",
+        "api_port",
+        "extra_verbose",
+        "log_level",
+        "record_processor_service_count",
+        "stats_interval",
+        "ui_type",
+        "verbose",
+        "workers_max",
+        "zmq_dual_bind",
+        "zmq_ipc_path",
+        "zmq_tcp_host",
+        # telemetry collectors already wired into build_cli_overrides
+        "gpu_telemetry",
+        "no_gpu_telemetry",
+        "server_metrics",
+        "no_server_metrics",
+        "server_metrics_formats",
+        # wandb, via build_wandb (the non-project flags are guarded loudly
+        # rather than dropped when --wandb-project is absent)
+        "wandb_project",
+        "wandb_entity",
+        "wandb_run_name",
+        "wandb_tags",
+        # agentic phase fields, via _apply_agentic_replay_fields
+        "agentic_cache_warmup_duration",
+        "agentic_warmup_grace_period",
+        # baseten_trace dataset knobs carried by _VERBATIM_DATASET_FIELDS;
+        # against another format they raise rather than drop
+        "force_min_tokens",
+        "max_idle_gap_cap_seconds",
+        "omit_kv_hints",
+        "open_loop_replay",
+        "open_loop_strict",
+        "replay_speedup",
+        "trace_session_sample_ratio",
+    }
+)
+
+
 # Flags that would replace the dataset the config file declared rather than
 # shape it: its source file, its public-dataset identity, its format. The YAML
 # owns those, and build_dataset drops the corresponding keys in override mode,
@@ -142,7 +203,14 @@ def _build_routed_under_config() -> frozenset[str]:
     # follow-up work; see AIP-1133.
     sweeping = set(SWEEPING_FIELDS)
 
-    return frozenset(endpoint | inputs | loadgen | whole_sections | sweeping)
+    return frozenset(
+        endpoint
+        | inputs
+        | loadgen
+        | whole_sections
+        | sweeping
+        | _ROUTED_OUTSIDE_SECTIONS
+    )
 
 
 ROUTED_UNDER_CONFIG: frozenset[str] = _build_routed_under_config()
@@ -196,6 +264,28 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         "warmup_request_count",
         "warmup_request_rate",
         "warmup_request_rate_ramp_duration",
+        # ----- outside every section frozenset -----
+        # Verified dropped: resolving with the flag set is byte-identical to
+        # resolving without it. build_mlflow / build_otel /
+        # build_network_latency exist and are called by the CLI-only
+        # converter, but build_cli_overrides never calls them.
+        "mlflow_artifact_globs",
+        "mlflow_experiment",
+        "mlflow_parent_run_id",
+        "mlflow_run_name",
+        "mlflow_tags",
+        "mlflow_tracking_uri",
+        "otel_resource_attributes",
+        "otel_url",
+        "gen_ai_provider",
+        "network_latency_automatic",
+        "network_latency_mean",
+        "network_latency_ping_interval",
+        "scenario",
+        "unsafe_override",
+        "sweep_type",
+        "disable_auto_fixed_schedule",
+        "inter_turn_delay_cap_seconds",
         # ----- loadgen: ramps, pacing, cancellation -----
         "arrival_smoothness",
         "concurrency_ramp_duration",
@@ -253,7 +343,9 @@ def reject_unrouted_cli_flags(cli: CLIConfig) -> None:
     """
     from aiperf.config.loader.errors import ConfigurationError
 
-    unrouted = (cli.model_fields_set & ALL_SECTION_FIELDS) - ROUTED_UNDER_CONFIG
+    # Keyed on every CLIConfig field rather than on the section frozensets:
+    # those are opt-in, and a field nobody sectioned was invisible here.
+    unrouted = cli.model_fields_set - ROUTED_UNDER_CONFIG - EXEMPT_FROM_CONFIG_ROUTING
     # Magic-list fields resolve correctly in their list form; only the scalar
     # form falls through unrouted.
     unrouted -= {
