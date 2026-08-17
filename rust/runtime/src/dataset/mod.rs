@@ -13,7 +13,6 @@ pub mod analysis;
 pub(crate) mod coding;
 pub mod compose;
 pub mod corpus;
-pub mod dataset;
 pub mod error;
 pub mod fetch;
 pub mod generator;
@@ -22,6 +21,7 @@ pub mod materialize;
 pub mod model;
 pub mod prompt;
 pub mod request;
+pub mod runtime_dataset;
 pub mod sampler;
 pub mod segment;
 pub mod synthesis;
@@ -33,7 +33,6 @@ pub use crate::body_plan::{
 pub use corpus::{
     MAX_CHARS_PER_CHUNK, SHAKESPEARE_CORPUS, tokenize_corpus_chunked, tokenize_sonnet_corpus,
 };
-pub use dataset::{Dataset, DatasetMetadata, TurnEndpointLookup};
 pub use error::{DatasetError, Result};
 pub use fetch::{DatasetFetcher, HttpDatasetFetcher};
 pub use generator::{
@@ -70,6 +69,8 @@ pub use request::{
     BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,
     MaterializedRequest, RequestMaterializer, TraceHashAwareRequestMaterializer,
 };
+pub use runtime_dataset as dataset;
+pub use runtime_dataset::{Dataset, DatasetMetadata, TurnEndpointLookup};
 pub use sampler::{
     RandomSampler, RandomSamplerFactory, Sampler, SamplerFactory, SamplerRegistry,
     SequentialSampler, SequentialSamplerFactory, ShuffleSampler, ShuffleSamplerFactory,

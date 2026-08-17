@@ -3,12 +3,13 @@
 
 //! Real and deterministic virtual clock implementations.
 
-pub mod clock;
 pub mod real_clock;
+pub mod runtime_clock;
 pub mod sim_clock;
 
-pub use clock::Clock;
 pub use real_clock::{RealClock, RealClockAnchor, sleep_ns};
+pub use runtime_clock as clock;
+pub use runtime_clock::Clock;
 pub use sim_clock::SimClock;
 
 /// Drive `body` to completion under a virtual [`SimClock`] with an idle pump:
