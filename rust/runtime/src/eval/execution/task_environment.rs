@@ -156,6 +156,25 @@ impl TaskEnvironmentLease for DockerfileEnvironmentLease<'_> {
             format!("{}:{destination}", self.container),
         ]))
     }
+    fn copy_into_bounded(
+        &mut self,
+        service: &ComposeServiceName,
+        source: &str,
+        destination: &str,
+        deadline: Duration,
+    ) -> Result<(), EvalExecutionError> {
+        if service != &self.main {
+            return Err(EvalExecutionError::InvalidRecipe("Dockerfile service"));
+        }
+        self.runtime.copy(
+            &DockerCopyRequest::new([
+                "cp".to_owned(),
+                source.to_owned(),
+                format!("{}:{destination}", self.container),
+            ])
+            .with_deadline(deadline),
+        )
+    }
     fn stop_main(&mut self, _: Duration) -> Result<(), EvalExecutionError> {
         Ok(())
     }
@@ -167,5 +186,71 @@ impl TaskEnvironmentLease for DockerfileEnvironmentLease<'_> {
     }
     fn teardown_after_terminal_failure(&mut self, _: Duration) -> Result<(), EvalExecutionError> {
         self.teardown()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, time::Duration};
+
+    use super::*;
+    use crate::eval::{
+        DockerBuildRequest, DockerCreateRequest, DockerRemoveRequest, DockerStartRequest,
+        ProviderCapabilities,
+    };
+
+    struct DeadlineRecordingRuntime {
+        copy_deadline: Cell<Option<Duration>>,
+    }
+
+    impl DockerRuntime for DeadlineRecordingRuntime {
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::none()
+        }
+
+        fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+            unreachable!("lease copy test does not build")
+        }
+
+        fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+            unreachable!("lease copy test does not create")
+        }
+
+        fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+            unreachable!("lease copy test does not start")
+        }
+
+        fn exec(&self, _: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+            unreachable!("lease copy test does not execute")
+        }
+
+        fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+            self.copy_deadline.set(request.deadline());
+            Ok(())
+        }
+
+        fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+            unreachable!("lease copy test does not remove")
+        }
+    }
+
+    #[test]
+    fn dockerfile_lease_propagates_bounded_copy_deadline() {
+        let runtime = DeadlineRecordingRuntime {
+            copy_deadline: Cell::new(None),
+        };
+        let mut lease =
+            DockerfileEnvironmentLease::new(&runtime, "agent".to_owned(), "image".to_owned());
+
+        lease
+            .copy_into_bounded(
+                &ComposeServiceName::main(),
+                "/host/tests",
+                "/tests",
+                Duration::from_secs(3),
+            )
+            .unwrap();
+
+        assert_eq!(runtime.copy_deadline.get(), Some(Duration::from_secs(3)));
     }
 }

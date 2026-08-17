@@ -2422,24 +2422,49 @@ fn compose_config_command_bounded(
     let output_writer = output
         .reopen()
         .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-    let child = Command::new("docker")
+    let mut child = Command::new("docker")
         .env("COMPOSE_DISABLE_ENV_FILE", "1")
         .args(&arguments)
-        .stdout(Stdio::from(output_writer))
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| EvalExecutionError::ProcessSpawn("docker compose config".to_owned()))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        EvalExecutionError::ProcessFailure(
+            "docker compose config did not provide stdout".to_owned(),
+        )
+    })?;
+    // Drain stdout concurrently: a full pipe must not prevent deadline polling.
+    let reader = std::thread::spawn(move || {
+        copy_stream_bounded(
+            stdout,
+            output_writer,
+            MAX_DOCKER_ARCHIVE_BYTES,
+            "Docker Compose configuration",
+        )
+    });
     let mut process = DockerExecChild { child };
     let mut no_remove = |_target: &str, _: Duration| Ok(());
-    drive_docker_exec(
+    let execution = drive_docker_exec(
         clock,
         &mut process,
         target,
         EvalExecutionPhase::CollectionHook,
         deadline,
         &mut no_remove,
-    )?;
-    fs::read(output.path()).map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))
+    );
+    let copied = reader.join().map_err(|_| {
+        EvalExecutionError::ProcessFailure(
+            "Docker Compose configuration reader panicked".to_owned(),
+        )
+    })?;
+    copied?;
+    execution?;
+    read_file_bounded(
+        output.path(),
+        MAX_DOCKER_ARCHIVE_BYTES,
+        "Docker Compose configuration",
+    )
 }
 
 fn compose_command_bounded(
@@ -2641,32 +2666,35 @@ impl DockerCliRuntime {
             .map_err(|_| {
                 EvalExecutionError::ProcessSpawn("docker collect artifact archive".to_owned())
             })?;
-        let copy = child
-            .stdout
-            .as_mut()
-            .ok_or_else(|| {
-                EvalExecutionError::ArtifactCollection(
-                    "docker collect artifact archive did not provide stdout".to_owned(),
-                )
-            })
-            .and_then(|stdout| {
-                copy_archive_stream_bounded(stdout, archive.as_file_mut(), MAX_DOCKER_ARCHIVE_BYTES)
-            });
-        if let Err(error) = copy {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
-        }
+        let stdout = child.stdout.take().ok_or_else(|| {
+            EvalExecutionError::ArtifactCollection(
+                "docker collect artifact archive did not provide stdout".to_owned(),
+            )
+        })?;
+        let archive_writer = archive
+            .reopen()
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        // Drain stdout concurrently: a full pipe must not prevent deadline polling.
+        let reader = std::thread::spawn(move || {
+            copy_archive_stream_bounded(stdout, archive_writer, MAX_DOCKER_ARCHIVE_BYTES)
+        });
         let mut process = DockerExecChild { child };
         let mut no_remove = |_target: &str, _: Duration| Ok(());
-        drive_docker_exec(
+        let execution = drive_docker_exec(
             self.clock.clone(),
             &mut process,
             container,
             phase,
             deadline,
             &mut no_remove,
-        )?;
+        );
+        let copied = reader.join().map_err(|_| {
+            EvalExecutionError::ArtifactCollection(
+                "docker artifact archive reader panicked".to_owned(),
+            )
+        })?;
+        copied?;
+        execution?;
         archive
             .as_file_mut()
             .seek(SeekFrom::Start(0))
@@ -2676,9 +2704,23 @@ impl DockerCliRuntime {
 }
 
 fn copy_archive_stream_bounded(
-    source: &mut dyn Read,
-    destination: &mut dyn Write,
+    source: impl Read,
+    destination: impl Write,
     maximum_bytes: usize,
+) -> Result<(), EvalExecutionError> {
+    copy_stream_bounded(
+        source,
+        destination,
+        maximum_bytes,
+        "Docker artifact archive",
+    )
+}
+
+fn copy_stream_bounded(
+    mut source: impl Read,
+    mut destination: impl Write,
+    maximum_bytes: usize,
+    subject: &str,
 ) -> Result<(), EvalExecutionError> {
     let mut buffer = [0_u8; 8192];
     let mut copied = 0_usize;
@@ -2697,7 +2739,7 @@ fn copy_archive_stream_bounded(
         }
         if read > remaining {
             return Err(EvalExecutionError::ArtifactCollection(format!(
-                "Docker artifact archive exceeds {maximum_bytes} bytes"
+                "{subject} exceeds {maximum_bytes} bytes"
             )));
         }
         destination
@@ -2705,6 +2747,21 @@ fn copy_archive_stream_bounded(
             .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
         copied += read;
     }
+}
+
+fn read_file_bounded(
+    path: &std::path::Path,
+    maximum_bytes: usize,
+    subject: &str,
+) -> Result<Vec<u8>, EvalExecutionError> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))?;
+    if metadata.len() > maximum_bytes as u64 {
+        return Err(EvalExecutionError::ProcessFailure(format!(
+            "{subject} exceeds {maximum_bytes} bytes"
+        )));
+    }
+    fs::read(path).map_err(|error| EvalExecutionError::ProcessFailure(error.to_string()))
 }
 
 fn docker_remove_bounded(
@@ -3325,7 +3382,7 @@ fn copy_optional_with_runtime(
         Err(EvalExecutionError::ProcessFailure(_)) => return Ok(None),
         Err(error) => return Err(error),
     }
-    let metadata = match fs::metadata(&destination_path) {
+    let metadata = match fs::symlink_metadata(&destination_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(EvalExecutionError::Materialization(error.to_string())),
@@ -3333,6 +3390,11 @@ fn copy_optional_with_runtime(
     if metadata.len() > MAX_REWARD_BYTES {
         return Err(EvalExecutionError::ArtifactCollection(
             "verifier reward exceeds the maximum size".to_owned(),
+        ));
+    }
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(EvalExecutionError::ArtifactCollection(
+            "verifier reward must be a regular file".to_owned(),
         ));
     }
     match fs::read(destination_path) {
@@ -3786,19 +3848,25 @@ mod tests {
     use std::{
         cell::Cell,
         collections::VecDeque,
+        fs,
         io::{self, Read},
+        os::unix::fs::symlink,
         rc::Rc,
         time::Duration,
     };
 
     use super::{
-        DockerExecProcess, DockerExecState, EvalExecutionError, EvalExecutionPhase,
-        classify_bounded_remove_result, compose_ownership_filters, compose_stop_arguments,
-        copy_archive_stream_bounded, docker_container_name, docker_image_name, drive_docker_exec,
+        DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecProcess,
+        DockerExecState, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
+        EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
+        compose_ownership_filters, compose_stop_arguments, copy_archive_stream_bounded,
+        copy_optional_with_runtime, docker_container_name, docker_image_name, drive_docker_exec,
         ensure_network_exists, redact_secret_values, reports_absent_container,
     };
-    use crate::clock::SimClock;
-    use crate::eval::ComposeProjectId;
+    use crate::{
+        clock::SimClock,
+        eval::{ComposeProjectId, ProviderCapabilities},
+    };
 
     #[tokio::test]
     async fn virtual_bounded_exec_refuses_an_entered_tokio_runtime() {
@@ -3917,6 +3985,60 @@ mod tests {
             matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("exceeds"))
         );
         assert!(temporary.len() <= cap);
+    }
+
+    #[test]
+    fn direct_reward_copy_rejects_a_verifier_authored_symlink_before_host_read() {
+        struct SymlinkCopyRuntime;
+
+        impl DockerRuntime for SymlinkCopyRuntime {
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities::none()
+            }
+
+            fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward-copy test does not build")
+            }
+
+            fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward-copy test does not create")
+            }
+
+            fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward-copy test does not start")
+            }
+
+            fn exec(&self, _: &super::DockerExecRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward-copy test does not execute")
+            }
+
+            fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+                let destination = std::path::Path::new(&request.public_arguments()[2]);
+                let target = destination.with_file_name("verifier-controlled-target");
+                fs::write(&target, "{\"reward\":1}").unwrap();
+                symlink(target, destination).unwrap();
+                Ok(())
+            }
+
+            fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward-copy test does not remove")
+            }
+        }
+
+        let workspace = tempfile::tempdir().unwrap();
+        let error = copy_optional_with_runtime(
+            &SymlinkCopyRuntime,
+            "verifier",
+            "/logs/verifier/reward.json",
+            &workspace,
+            "reward.json",
+            None,
+        )
+        .expect_err("reward symlinks must never be followed on the host");
+
+        assert!(
+            matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("regular file"))
+        );
     }
 
     #[test]
