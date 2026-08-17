@@ -181,6 +181,53 @@ def test_unrouted_flag_without_config_is_allowed() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_every_cli_config_field_is_classified() -> None:
+    """EVERY CLIConfig field must be classified, not just sectioned ones.
+
+    The section frozensets are opt-in: adding a field to ``CLIConfig``
+    requires nobody to touch ``_section_fields.py``, and
+    ``test_section_fields_partition_cli_config`` only checks that section
+    entries exist on CLIConfig -- never the reverse. So an unsectioned field
+    was invisible to the guard and silently dropped under ``--config``, which
+    is how 17 fields (all mlflow_*, --otel-url, network_latency_*, --scenario)
+    came to be dropped without anyone noticing.
+
+    Keying this on CLIConfig.model_fields instead makes classification
+    mandatory: a newly-added flag belongs to no set and fails here, at
+    authoring time.
+    """
+    from aiperf.config.flags._config_flag_routing import (
+        EXEMPT_FROM_CONFIG_ROUTING,
+        ROUTED_UNDER_CONFIG,
+        UNROUTED_UNDER_CONFIG,
+    )
+
+    unclassified = (
+        frozenset(CLIConfig.model_fields)
+        - ROUTED_UNDER_CONFIG
+        - UNROUTED_UNDER_CONFIG
+        - EXEMPT_FROM_CONFIG_ROUTING
+    )
+    assert not unclassified, (
+        f"CLI fields are unclassified for the --config path: "
+        f"{sorted(unclassified)}. Every flag must be routed, listed in "
+        f"UNROUTED_UNDER_CONFIG so users get a loud error, or exempted in "
+        f"EXEMPT_FROM_CONFIG_ROUTING with a reason."
+    )
+
+
+def test_exempt_fields_are_not_also_classified() -> None:
+    """An exemption must not overlap the routed or unrouted sets."""
+    from aiperf.config.flags._config_flag_routing import (
+        EXEMPT_FROM_CONFIG_ROUTING,
+        ROUTED_UNDER_CONFIG,
+        UNROUTED_UNDER_CONFIG,
+    )
+
+    overlap = EXEMPT_FROM_CONFIG_ROUTING & (ROUTED_UNDER_CONFIG | UNROUTED_UNDER_CONFIG)
+    assert not overlap, f"exempt fields also classified: {sorted(overlap)}"
+
+
 def test_every_section_field_is_classified() -> None:
     """Each section field is either routed under --config or known-unrouted.
 

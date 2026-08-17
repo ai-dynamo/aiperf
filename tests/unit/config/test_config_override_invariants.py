@@ -45,6 +45,21 @@ def cli(**kwargs: object) -> CLIConfig:
     return CLIConfig(**CLIConfig(**kwargs).model_dump(exclude_unset=True))  # type: ignore[arg-type]
 
 
+def _with_companion(field: str, value: Any) -> dict[str, Any]:
+    """Flag kwargs for ``field``, plus the companion its schema requires.
+
+    ``images.width`` and friends validate as a normal distribution, so a
+    stddev with no mean is rejected outright. Driving the pair keeps these
+    fields covered instead of erroring into a skip.
+    """
+    kwargs: dict[str, Any] = {field: value}
+    if field.endswith("_stddev"):
+        mean_field = field[: -len("_stddev")] + "_mean"
+        if mean_field in CLIConfig.model_fields:
+            kwargs[mean_field] = 8
+    return kwargs
+
+
 def _unwrap(annotation: Any) -> Any:
     while True:
         origin = typing.get_origin(annotation)
@@ -97,6 +112,41 @@ def _leaves(value: Any, prefix: str = "") -> dict[str, Any]:
     return out
 
 
+# Fields the value generator cannot drive from their annotation (lists,
+# free-form strings, parsed DSL strings). Listing them explicitly rather than
+# skipping on the fly means a newly-added field of an unsupported type fails
+# this suite instead of quietly reporting "skipped" -- a skip is invisible in
+# CI, which is how a coverage hole hides.
+UNDRIVABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        # list-shaped
+        "audio_depths",
+        "audio_sample_rates",
+        "conversation_num",
+        "conversation_turn_mean",
+        "dataset_filters",
+        "prompt_input_tokens_mean",
+        "prompt_input_tokens_stddev",
+        "prompt_output_tokens_mean",
+        "prompt_output_tokens_stddev",
+        "video_audio_depth",
+        # free-form / parsed strings with no safe auto-generated value
+        "hf_dataset_subset",
+        "prompt_sequence_distribution",
+        "video_codec",
+    }
+)
+
+
+def _require_drivable(field: str) -> None:
+    """Fail rather than skip when a field cannot be driven and is not listed."""
+    assert field in UNDRIVABLE_FIELDS, (
+        f"{field} cannot be driven from its annotation, so it is untested. "
+        f"Extend _candidate_values to cover its type, or add it to "
+        f"UNDRIVABLE_FIELDS with a reason."
+    )
+
+
 # Fields whose emitted shape legitimately carries a constant companion key.
 # Each entry needs a reason; an unexplained entry is a bug being suppressed.
 _CONSTANT_KEY_ALLOWLIST: dict[str, set[str]] = {
@@ -110,7 +160,8 @@ def test_override_emits_no_key_the_user_did_not_set(field: str) -> None:
     """An emitted key that ignores the input value is a materialized default."""
     pair = _value_pair(field)
     if pair is None:
-        pytest.skip(f"no two distinct auto-generated values for {field}")
+        _require_drivable(field)
+        pytest.skip(f"{field} is listed in UNDRIVABLE_FIELDS")
     first, second = pair
 
     try:
@@ -139,6 +190,32 @@ def test_override_emits_no_key_the_user_did_not_set(field: str) -> None:
 
 
 @pytest.fixture
+def trace_yaml(tmp_path: Path) -> Path:
+    """A file/trace dataset, for the flags that only apply to one."""
+    pool = tmp_path / "trace.jsonl"
+    pool.write_text('{"text": "hi", "hash_ids": [1]}\n')
+    cfg = tmp_path / "trace.yaml"
+    cfg.write_text(
+        f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: mooncake_trace
+    path: {pool}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    return cfg
+
+
+@pytest.fixture
 def rich_yaml(tmp_path: Path) -> Path:
     """A synthetic dataset carrying values an override could clobber."""
     cfg = tmp_path / "rich.yaml"
@@ -164,35 +241,53 @@ benchmark:
 
 @pytest.mark.parametrize("field", sorted(DATASET_OVERRIDE_FIELDS))
 def test_routed_dataset_field_actually_changes_the_resolved_config(
-    field: str, rich_yaml: Path
+    field: str, rich_yaml: Path, trace_yaml: Path
 ) -> None:
-    """A field claimed as routed must have an observable effect."""
+    """A field claimed as routed must have an observable effect.
+
+    Checked against both a synthetic and a file dataset: many flags apply to
+    only one (synthesis_* is file/public-only, prefix prompts are
+    synthetic-only), so requiring an effect on a single type would flag
+    correct routing as broken.
+    """
     if field in MAGIC_LIST_ONLY_UNDER_CONFIG:
         pytest.skip(f"{field} routes as a sweep parameter in its list form")
     candidates = _candidate_values(field)
     if not candidates:
-        pytest.skip(f"no auto-generated value for {field}")
+        _require_drivable(field)
+        pytest.skip(f"{field} is listed in UNDRIVABLE_FIELDS")
 
-    baseline = resolve_config(cli(), rich_yaml).model_dump(mode="json")
-    # Try every candidate: one of them may coincide with the model's own
-    # default (DatasetSamplingStrategy.SEQUENTIAL does), which would show up
-    # as "no effect" without meaning the flag is dropped.
+    # Try every candidate: one may coincide with the model's own default
+    # (DatasetSamplingStrategy.SEQUENTIAL does), which would look like "no
+    # effect" without meaning the flag is dropped.
     resolutions = []
-    for value in candidates:
-        try:
-            resolutions.append(
-                resolve_config(cli(**{field: value}), rich_yaml).model_dump(mode="json")
-            )
-        except (ValueError, ConfigurationError):
-            continue
+    errors: list[str] = []
+    changed = None
+    for config_yaml in (rich_yaml, trace_yaml):
+        baseline = resolve_config(cli(), config_yaml).model_dump(mode="json")
+        for value in candidates:
+            try:
+                resolved = resolve_config(
+                    cli(**_with_companion(field, value)), config_yaml
+                ).model_dump(mode="json")
+            except (ValueError, ConfigurationError) as exc:
+                errors.append(str(exc))
+                continue
+            resolutions.append(resolved)
+            if resolved != baseline:
+                changed = resolved
     if not resolutions:
+        # "has no effect on a dataset of type X" is OUR error for a field
+        # nothing routes -- the bug, not a domain guard. Anything else (weka
+        # -only, baseten-only, needs a companion flag) is a real constraint
+        # and the flag is loud rather than dropped, so skipping is right.
+        assert not all("have no effect" in e for e in errors), (
+            f"--{field.replace('_', '-')} is classified as routed but nothing "
+            f"routes it: resolving raises {errors[0]!r}. Route it, or list it "
+            f"in UNROUTED_UNDER_CONFIG so the error names the flag properly."
+        )
         pytest.skip(f"{field} is not valid against a synthetic dataset alone")
-    changed = next(
-        (r for r in resolutions if r != baseline),
-        baseline,
-    )
-
-    assert changed != baseline, (
+    assert changed is not None, (
         f"--{field.replace('_', '-')} is classified as routed under --config but "
         f"setting it changed nothing in the resolved config -- it is being "
         f"silently dropped. Route it, or list it in UNROUTED_UNDER_CONFIG so "
