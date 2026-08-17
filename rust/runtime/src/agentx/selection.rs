@@ -42,18 +42,18 @@ pub fn filter_then_cap<T>(
         if peak > stats.largest_observed {
             stats.largest_observed = peak;
         }
-        if let Some(max) = max_context_length {
-            if peak > max {
-                stats.rejected_by_maxctx += 1;
-                continue;
-            }
+        if let Some(max) = max_context_length
+            && peak > max
+        {
+            stats.rejected_by_maxctx += 1;
+            continue;
         }
         stats.eligible += 1;
         kept.push(item);
-        if let Some(n) = num_dataset_entries {
-            if kept.len() >= n {
-                break;
-            }
+        if let Some(n) = num_dataset_entries
+            && kept.len() >= n
+        {
+            break;
         }
     }
     stats.loaded = kept.len() as u64;

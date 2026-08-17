@@ -712,9 +712,11 @@ pub fn apply_recorded_agent_scenario_locks(
             bypassable: true,
         });
     }
-    let incomplete_reasons = (!inputs.complete)
-        .then(|| vec!["incomplete_replay".to_string()])
-        .unwrap_or_default();
+    let incomplete_reasons = if !inputs.complete {
+        vec!["incomplete_replay".to_string()]
+    } else {
+        Vec::new()
+    };
     let mut invalid_reasons = Vec::new();
     if !violations.is_empty() {
         invalid_reasons.extend(["unsafe_override".to_string(), "non_comparable".to_string()]);

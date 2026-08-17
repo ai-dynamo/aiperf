@@ -86,11 +86,11 @@ impl<R: SlotReleaser> SessionTreeRegistry<R> {
 
     /// Record a newly admitted tree after its session slot was acquired.
     pub fn open_tree(&mut self, root_corr: &str, phase: PhaseKey, root_pending: bool) {
-        if let Some(existing) = self.trees.get(root_corr) {
-            if !existing.released {
-                // Duplicate open for a still-live tree: keep the original.
-                return;
-            }
+        if let Some(existing) = self.trees.get(root_corr)
+            && !existing.released
+        {
+            // Duplicate open for a still-live tree: keep the original.
+            return;
         }
         let mut state = TreeState {
             phase,
@@ -142,10 +142,10 @@ impl<R: SlotReleaser> SessionTreeRegistry<R> {
             }
             return false;
         }
-        if let Some(state) = self.trees.get_mut(root_corr) {
-            if state.outstanding > 0 {
-                state.outstanding -= 1;
-            }
+        if let Some(state) = self.trees.get_mut(root_corr)
+            && state.outstanding > 0
+        {
+            state.outstanding -= 1;
         }
         self.maybe_release(root_corr)
     }
@@ -187,10 +187,10 @@ impl<R: SlotReleaser> SessionTreeRegistry<R> {
             .map(|(k, _)| k.clone())
             .collect();
         for root_corr in &to_release {
-            if let Some(state) = self.trees.remove(root_corr) {
-                if !state.released {
-                    self.releaser.release_session_slot(phase);
-                }
+            if let Some(state) = self.trees.remove(root_corr)
+                && !state.released
+            {
+                self.releaser.release_session_slot(phase);
             }
         }
         to_release.len()

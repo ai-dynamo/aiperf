@@ -968,9 +968,9 @@ mod tests {
     /// The real-corpus end-to-end gate: reconstruct `simple.json`'s main
     /// conversation with the ACTUAL Qwen3-0.6B tokenizer + `build_coding_corpus`
     /// + `CorpusTokenSynth` + `convert_trace_to_conversations`, and diff every
-    /// turn's `raw_messages` (real decoded text) + timing + prefix-cache against
-    /// the real-Python golden (`tools/agentx_realcorpus_golden.py`). Skips when
-    /// Qwen or the golden is absent.
+    ///   turn's `raw_messages` (real decoded text) + timing + prefix-cache against
+    ///   the real-Python golden (`tools/agentx_realcorpus_golden.py`). Skips when
+    ///   Qwen or the golden is absent.
     #[test]
     fn realcorpus_main_conversation_matches_python() {
         use crate::agentx::config::WekaConfig;

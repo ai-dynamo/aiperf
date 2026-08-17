@@ -75,7 +75,7 @@ pub fn slice_trajectories_at_tstar(
     }
 
     let mut out = Vec::new();
-    for (_tree_index, (scope, members)) in trees.into_iter().enumerate() {
+    for (scope, members) in trees {
         // One t* for the whole tree, sampled over ALL tree members' warped turn
         // timestamps (Python `_trace_time_bounds` spans every conversation in the
         // trace, not just the root), seeded on the root id.
