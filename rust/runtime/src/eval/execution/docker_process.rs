@@ -3279,26 +3279,10 @@ fn execute_planned_phase_with_deadline(
 fn read_reward_with_runtime(
     runtime: &dyn DockerRuntime,
     container: &str,
-    workspace: &TempDir,
+    _: &TempDir,
     deadline: Option<&Deadline>,
 ) -> Result<RewardDocument, EvalExecutionError> {
-    let json = copy_optional_with_runtime(
-        runtime,
-        container,
-        "/logs/verifier/reward.json",
-        workspace,
-        "reward.json",
-        deadline.map(Deadline::remaining).transpose()?,
-    )?;
-    let text = copy_optional_with_runtime(
-        runtime,
-        container,
-        "/logs/verifier/reward.txt",
-        workspace,
-        "reward.txt",
-        deadline.map(Deadline::remaining).transpose()?,
-    )?;
-    parse_reward(json.as_deref(), text.as_deref(), deadline)
+    read_reward_archive_with_runtime(runtime, container, deadline)
 }
 
 fn read_reward_from_lease(
@@ -3465,54 +3449,6 @@ impl<R: Read> Read for RewardArchiveReader<R> {
             ));
         }
         Ok(read)
-    }
-}
-
-fn copy_optional_with_runtime(
-    runtime: &dyn DockerRuntime,
-    container: &str,
-    source: &str,
-    workspace: &TempDir,
-    destination: &str,
-    deadline: Option<Duration>,
-) -> Result<Option<Vec<u8>>, EvalExecutionError> {
-    let destination_path = workspace.path().join(destination);
-    let request = DockerCopyRequest::new([
-        "cp".to_owned(),
-        format!("{container}:{source}"),
-        destination_path.to_string_lossy().into_owned(),
-    ]);
-    let request = match deadline {
-        Some(deadline) => request.with_deadline(deadline),
-        None => request,
-    };
-    match runtime.copy(&request) {
-        Ok(()) => {}
-        Err(EvalExecutionError::ProcessFailure(_)) => return Ok(None),
-        Err(error) => return Err(error),
-    }
-    let metadata = match fs::symlink_metadata(&destination_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(EvalExecutionError::Materialization(error.to_string())),
-    };
-    if metadata.len() > MAX_REWARD_BYTES {
-        return Err(EvalExecutionError::ArtifactCollection(
-            "verifier reward exceeds the maximum size".to_owned(),
-        ));
-    }
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-        return Err(EvalExecutionError::ArtifactCollection(
-            "verifier reward must be a regular file".to_owned(),
-        ));
-    }
-    match fs::read(destination_path) {
-        Ok(bytes) => {
-            // Bounded reward files make parsing finite; still charge host I/O to this phase.
-            Ok(Some(bytes))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(EvalExecutionError::Materialization(error.to_string())),
     }
 }
 
@@ -3957,9 +3893,7 @@ mod tests {
     use std::{
         cell::Cell,
         collections::VecDeque,
-        fs,
         io::{self, Read},
-        os::unix::fs::symlink,
         rc::Rc,
         time::Duration,
     };
@@ -3969,8 +3903,8 @@ mod tests {
         DockerExecState, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
         EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
         compose_ownership_filters, compose_stop_arguments, copy_archive_stream_bounded,
-        copy_optional_with_runtime, docker_container_name, docker_image_name, drive_docker_exec,
-        ensure_network_exists, read_optional_reward_archive, redact_secret_values,
+        docker_container_name, docker_image_name, drive_docker_exec, ensure_network_exists,
+        read_optional_reward_archive, read_reward_with_runtime, redact_secret_values,
         reports_absent_container,
     };
     use crate::{
@@ -4098,60 +4032,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_reward_copy_rejects_a_verifier_authored_symlink_before_host_read() {
-        struct SymlinkCopyRuntime;
-
-        impl DockerRuntime for SymlinkCopyRuntime {
-            fn capabilities(&self) -> ProviderCapabilities {
-                ProviderCapabilities::none()
-            }
-
-            fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
-                unreachable!("reward-copy test does not build")
-            }
-
-            fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
-                unreachable!("reward-copy test does not create")
-            }
-
-            fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
-                unreachable!("reward-copy test does not start")
-            }
-
-            fn exec(&self, _: &super::DockerExecRequest) -> Result<(), EvalExecutionError> {
-                unreachable!("reward-copy test does not execute")
-            }
-
-            fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
-                let destination = std::path::Path::new(&request.public_arguments()[2]);
-                let target = destination.with_file_name("verifier-controlled-target");
-                fs::write(&target, "{\"reward\":1}").unwrap();
-                symlink(target, destination).unwrap();
-                Ok(())
-            }
-
-            fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
-                unreachable!("reward-copy test does not remove")
-            }
-        }
-
-        let workspace = tempfile::tempdir().unwrap();
-        let error = copy_optional_with_runtime(
-            &SymlinkCopyRuntime,
-            "verifier",
-            "/logs/verifier/reward.json",
-            &workspace,
-            "reward.json",
-            None,
-        )
-        .expect_err("reward symlinks must never be followed on the host");
-
-        assert!(
-            matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("regular file"))
-        );
-    }
-
-    #[test]
     fn legacy_reward_archive_rejects_a_verifier_authored_symlink() {
         struct ArchiveRuntime;
 
@@ -4208,6 +4088,71 @@ mod tests {
         assert!(
             matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("regular file"))
         );
+    }
+
+    #[test]
+    fn standard_reward_collection_reads_the_bounded_archive_without_host_copy() {
+        struct ArchiveRuntime;
+
+        impl DockerRuntime for ArchiveRuntime {
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities::none()
+            }
+
+            fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not build")
+            }
+
+            fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not create")
+            }
+
+            fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not start")
+            }
+
+            fn exec(&self, _: &super::DockerExecRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not execute")
+            }
+
+            fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+                panic!("standard verifier rewards must not be copied onto the host")
+            }
+
+            fn copy_archive(
+                &self,
+                _: &str,
+                source: &str,
+            ) -> Result<Box<dyn Read>, EvalExecutionError> {
+                let name = std::path::Path::new(source)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                let mut archive = tar::Builder::new(Vec::new());
+                let body = if name == "reward.json" {
+                    b"{\"reward\":1}".as_slice()
+                } else {
+                    b"".as_slice()
+                };
+                let mut header = tar::Header::new_gnu();
+                header.set_size(body.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                archive.append_data(&mut header, name, body).unwrap();
+                Ok(Box::new(io::Cursor::new(archive.into_inner().unwrap())))
+            }
+
+            fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("reward archive test does not remove")
+            }
+        }
+
+        let workspace = tempfile::tempdir().unwrap();
+        let reward = read_reward_with_runtime(&ArchiveRuntime, "verifier", &workspace, None)
+            .expect("standard verifier rewards must use the bounded archive path");
+
+        assert_eq!(reward.metrics.get("reward"), Some(&1.0));
     }
 
     #[test]

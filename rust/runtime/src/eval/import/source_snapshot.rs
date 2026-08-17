@@ -25,6 +25,8 @@ use super::HarborImportError;
 
 const SOURCE_TREE_DOMAIN: &[u8] = b"aiperf-eval-source-tree-v1";
 const EXECUTABLE_SOURCE_DOMAIN: &[u8] = b"aiperf-eval-executable-source-v1";
+const MAX_SOURCE_TREE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_SOURCE_TREE_ENTRIES: usize = 10_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ExecutableSourceView {
@@ -296,7 +298,14 @@ impl SourceTreeSnapshot {
         }
 
         let mut entries = Vec::new();
-        Self::capture_directory(&root_directory, Path::new(""), &mut entries, before_open)?;
+        let mut budget = SourceTreeCaptureBudget::default();
+        Self::capture_directory(
+            &root_directory,
+            Path::new(""),
+            &mut entries,
+            &mut budget,
+            before_open,
+        )?;
         entries.sort_by(|left, right| left.path.cmp(&right.path));
         Ok(Self { entries })
     }
@@ -305,6 +314,7 @@ impl SourceTreeSnapshot {
         directory: &File,
         relative_directory: &Path,
         entries: &mut Vec<SourceEntry>,
+        budget: &mut SourceTreeCaptureBudget,
         before_open: &mut F,
     ) -> Result<(), HarborImportError>
     where
@@ -332,23 +342,23 @@ impl SourceTreeSnapshot {
                 return Err(source_changed_error(&relative));
             }
             if metadata.file_type().is_dir() {
+                budget.reserve_entry(&source_path)?;
                 entries.push(SourceEntry {
                     path: source_path,
                     kind: SourceEntryKind::Directory,
                     mode: 0o755,
                     bytes: Arc::from(Vec::<u8>::new()),
                 });
-                Self::capture_directory(&opened, &relative, entries, before_open)?;
+                Self::capture_directory(&opened, &relative, entries, budget, before_open)?;
             } else if metadata.file_type().is_file() {
+                budget.reserve_entry(&source_path)?;
                 let mode = if metadata.permissions().mode() & 0o111 == 0 {
                     0o644
                 } else {
                     0o755
                 };
                 let mut bytes = Vec::new();
-                opened
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| source_unavailable_error(&relative, error))?;
+                read_source_file_bounded(&mut opened, &relative, &mut bytes, budget)?;
                 let after = opened
                     .metadata()
                     .map_err(|error| source_unavailable_error(&relative, error))?;
@@ -481,6 +491,60 @@ impl SourceTreeSnapshot {
             fs::set_permissions(&target, fs::Permissions::from_mode(entry.mode))?;
         }
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct SourceTreeCaptureBudget {
+    entries: usize,
+    bytes: u64,
+}
+
+impl SourceTreeCaptureBudget {
+    fn reserve_entry(&mut self, path: &SourcePath) -> Result<(), HarborImportError> {
+        self.entries = self.entries.checked_add(1).ok_or_else(|| {
+            HarborImportError::InvalidPackage("source tree exceeds entry limit".to_owned())
+        })?;
+        if self.entries > MAX_SOURCE_TREE_ENTRIES {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "source tree exceeds the {MAX_SOURCE_TREE_ENTRIES} entry limit at {:?}",
+                path.as_str()
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn read_source_file_bounded(
+    source: &mut File,
+    relative: &Path,
+    destination: &mut Vec<u8>,
+    budget: &mut SourceTreeCaptureBudget,
+) -> Result<(), HarborImportError> {
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let remaining = MAX_SOURCE_TREE_BYTES.saturating_sub(budget.bytes);
+        let read_size = if remaining == 0 {
+            1
+        } else {
+            remaining.min(buffer.len() as u64) as usize
+        };
+        let read = source
+            .read(&mut buffer[..read_size])
+            .map_err(|error| source_unavailable_error(relative, error))?;
+        if read == 0 {
+            return Ok(());
+        }
+        budget.bytes = budget.bytes.checked_add(read as u64).ok_or_else(|| {
+            HarborImportError::InvalidPackage("source tree exceeds byte limit".to_owned())
+        })?;
+        if budget.bytes > MAX_SOURCE_TREE_BYTES {
+            return Err(HarborImportError::InvalidPackage(format!(
+                "source tree exceeds the {MAX_SOURCE_TREE_BYTES} byte limit at {}",
+                relative.display()
+            )));
+        }
+        destination.extend_from_slice(&buffer[..read]);
     }
 }
 
@@ -733,7 +797,32 @@ mod tests {
         process::Command,
     };
 
-    use super::{HarborImportError, SourceEntryKind, SourcePath, SourceTreeSnapshot};
+    use super::{
+        HarborImportError, MAX_SOURCE_TREE_BYTES, SourceEntryKind, SourcePath,
+        SourceTreeCaptureBudget, SourceTreeSnapshot, read_source_file_bounded,
+    };
+
+    #[test]
+    fn capture_rejects_bytes_after_the_aggregate_source_budget_is_exhausted() {
+        let temporary = tempfile::tempdir().unwrap();
+        let file = temporary.path().join("task.json");
+        fs::write(&file, b"x").unwrap();
+        let mut source = fs::File::open(&file).unwrap();
+        let mut bytes = Vec::new();
+        let mut budget = SourceTreeCaptureBudget {
+            entries: 0,
+            bytes: MAX_SOURCE_TREE_BYTES,
+        };
+
+        let error =
+            read_source_file_bounded(&mut source, Path::new("task.json"), &mut bytes, &mut budget)
+                .expect_err("source capture must reject bytes above the aggregate cap");
+
+        assert!(
+            matches!(error, HarborImportError::InvalidPackage(message) if message.contains("byte limit"))
+        );
+        assert!(bytes.is_empty());
+    }
 
     #[test]
     fn capture_orders_entries_and_normalizes_modes_independent_of_creation_order() {

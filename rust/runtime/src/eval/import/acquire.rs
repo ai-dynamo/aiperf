@@ -19,6 +19,7 @@ use super::{AcquiredSource, HarborImportError, source_snapshot::SourceTreeSnapsh
 const MAX_PINNED_GIT_ARCHIVE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PINNED_GIT_TREE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PINNED_GIT_TREE_ENTRIES: usize = 10_000;
+const MAX_PINNED_GIT_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
 /// An immutable Harbor-compatible package source reference.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,9 +122,7 @@ impl SourceAcquirer for NativeSourceAcquirer {
                 } else {
                     path.to_path_buf()
                 };
-                fs::read(&package).map_err(|error| {
-                    HarborImportError::Unavailable(format!("{}: {error}", package.display()))
-                })
+                read_local_file_capped(&package)
             }
             HarborSource::PinnedGit {
                 repository,
@@ -168,21 +167,66 @@ fn acquire_git_file(
     package_path: &str,
 ) -> Result<Vec<u8>, HarborImportError> {
     let object = format!("{revision}:{package_path}");
-    let output = Command::new("git")
+    let mut child = Command::new("git")
         .arg("-C")
         .arg(repository)
         .arg("show")
         .arg(object)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .map_err(|error| HarborImportError::Unavailable(format!("{repository}: {error}")))?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        Err(HarborImportError::Unavailable(format!(
-            "{repository}@{revision}:{package_path}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )))
+    let stdout = child.stdout.take().ok_or_else(|| {
+        HarborImportError::Unavailable("could not capture pinned Git package file".to_owned())
+    })?;
+    let mut output = NamedTempFile::new().map_err(git_file_error)?;
+    if let Err(error) =
+        copy_file_stream_capped(stdout, output.as_file_mut(), MAX_PINNED_GIT_FILE_BYTES)
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
     }
+    if !child.wait().map_err(git_file_error)?.success() {
+        return Err(HarborImportError::Unavailable(format!(
+            "{repository}@{revision}:{package_path}: git show failed"
+        )));
+    }
+    output
+        .as_file_mut()
+        .seek(SeekFrom::Start(0))
+        .map_err(git_file_error)?;
+    let mut bytes = Vec::new();
+    output
+        .as_file_mut()
+        .read_to_end(&mut bytes)
+        .map_err(git_file_error)?;
+    Ok(bytes)
+}
+
+fn read_local_file_capped(package: &Path) -> Result<Vec<u8>, HarborImportError> {
+    let mut source = OpenOptions::new()
+        .read(true)
+        .open(package)
+        .map_err(|error| {
+            HarborImportError::Unavailable(format!("{}: {error}", package.display()))
+        })?;
+    let mut temporary = NamedTempFile::new().map_err(git_file_error)?;
+    copy_file_stream_capped(
+        &mut source,
+        temporary.as_file_mut(),
+        MAX_PINNED_GIT_FILE_BYTES,
+    )?;
+    temporary
+        .as_file_mut()
+        .seek(SeekFrom::Start(0))
+        .map_err(git_file_error)?;
+    let mut bytes = Vec::new();
+    temporary
+        .as_file_mut()
+        .read_to_end(&mut bytes)
+        .map_err(git_file_error)?;
+    Ok(bytes)
 }
 
 fn acquire_git_task_tree(
@@ -306,6 +350,40 @@ fn copy_stream_capped(
     copy_entry_capped(&mut source, destination, &mut bytes, max_bytes)
 }
 
+fn copy_file_stream_capped(
+    mut source: impl Read,
+    destination: &mut fs::File,
+    max_bytes: u64,
+) -> Result<(), HarborImportError> {
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let remaining = max_bytes.saturating_sub(copied);
+        let read_size = if remaining == 0 {
+            1
+        } else {
+            remaining.min(buffer.len() as u64) as usize
+        };
+        let read = source
+            .read(&mut buffer[..read_size])
+            .map_err(git_file_error)?;
+        if read == 0 {
+            return Ok(());
+        }
+        copied = copied.checked_add(read as u64).ok_or_else(|| {
+            HarborImportError::InvalidPackage("package file exceeds byte limit".to_owned())
+        })?;
+        if copied > max_bytes {
+            return Err(HarborImportError::InvalidPackage(
+                "package file exceeds byte limit".to_owned(),
+            ));
+        }
+        destination
+            .write_all(&buffer[..read])
+            .map_err(git_file_error)?;
+    }
+}
+
 fn copy_entry_capped(
     source: &mut dyn Read,
     destination: &mut dyn Write,
@@ -336,11 +414,28 @@ fn git_tree_error(error: impl std::fmt::Display) -> HarborImportError {
     HarborImportError::Unavailable(format!("could not retain pinned Git task tree: {error}"))
 }
 
+fn git_file_error(error: impl std::fmt::Display) -> HarborImportError {
+    HarborImportError::Unavailable(format!("could not retain package file: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{io::Cursor, io::Write};
 
-    use super::extract_git_tree_with_limits;
+    use super::{copy_file_stream_capped, extract_git_tree_with_limits};
+
+    #[test]
+    fn pinned_git_file_stream_rejects_bytes_before_the_temporary_file_exceeds_its_cap() {
+        let mut output = tempfile::NamedTempFile::new().unwrap();
+        let error = copy_file_stream_capped(Cursor::new(b"oversized"), output.as_file_mut(), 8)
+            .expect_err("pinned Git files must be capped while streaming");
+
+        assert!(
+            matches!(error, super::HarborImportError::InvalidPackage(message) if message.contains("byte limit"))
+        );
+        output.as_file_mut().flush().unwrap();
+        assert!(output.as_file().metadata().unwrap().len() <= 8);
+    }
 
     #[test]
     fn pinned_git_extraction_rejects_more_entries_than_the_cap() {

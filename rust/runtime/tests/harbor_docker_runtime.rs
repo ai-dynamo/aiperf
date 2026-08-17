@@ -141,6 +141,18 @@ impl DockerRuntime for RecordingRuntime {
         Ok(())
     }
 
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        if source.ends_with("reward.json") {
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward.json absent".to_owned(),
+            ));
+        }
+        Ok(Box::new(io::Cursor::new(test_tar_archive(
+            "reward.txt",
+            b"1\n",
+        ))))
+    }
+
     fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
         self.events.borrow_mut().push("remove".to_owned());
         Ok(())
@@ -166,6 +178,18 @@ impl DockerRuntime for ComposePreflightRuntime {
             .with_service_exec()
             .with_service_archive()
             .with_service_stop()
+    }
+
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        if source.ends_with("reward.json") {
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward.json absent".to_owned(),
+            ));
+        }
+        Ok(Box::new(io::Cursor::new(test_tar_archive(
+            "reward.txt",
+            b"1\n",
+        ))))
     }
 
     fn compose_runtime(&self) -> Option<&dyn DockerComposeRuntime> {
@@ -333,6 +357,18 @@ impl DockerRuntime for ComposeSessionRecordingRuntime {
             .with_service_exec()
             .with_service_archive()
             .with_service_stop()
+    }
+
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        if source.ends_with("reward.json") {
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward.json absent".to_owned(),
+            ));
+        }
+        Ok(Box::new(io::Cursor::new(test_tar_archive(
+            "reward.txt",
+            b"1\n",
+        ))))
     }
 
     fn compose_runtime(&self) -> Option<&dyn DockerComposeRuntime> {
@@ -1427,8 +1463,8 @@ PHASE = "verifier"
             "copy-tests",
             "prepare:root:/task:none",
             "verifier:verifier:/task:none:BASE=baseline,PHASE=verifier",
-            "copy-reward",
-            "copy-reward",
+            "archive-reward",
+            "archive-reward",
             "remove",
         ]
     );
@@ -2386,6 +2422,20 @@ impl DockerRuntime for LifecycleRuntime {
         Ok(())
     }
 
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        if source.ends_with("reward.json") {
+            self.events.borrow_mut().push("archive-reward".to_owned());
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward.json absent".to_owned(),
+            ));
+        }
+        self.events.borrow_mut().push("archive-reward".to_owned());
+        Ok(Box::new(io::Cursor::new(test_tar_archive(
+            "reward.txt",
+            b"1\n",
+        ))))
+    }
+
     fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
         if request
             .public_arguments()
@@ -2816,7 +2866,7 @@ fn single_step_separate_verifier_uses_one_absolute_deadline_for_setup_and_reward
         .unwrap();
 
     let events = runtime.deadline_events.into_inner();
-    let verifier_operations = &events[..9];
+    let verifier_operations = &events[..7];
     assert_eq!(
         verifier_operations
             .iter()
@@ -2830,8 +2880,6 @@ fn single_step_separate_verifier_uses_one_absolute_deadline_for_setup_and_reward
             "exec:verifier",
             "copy",
             "exec:verifier",
-            "copy",
-            "copy",
         ]
     );
     assert!(
@@ -2840,7 +2888,7 @@ fn single_step_separate_verifier_uses_one_absolute_deadline_for_setup_and_reward
             .all(|operations| operations[0].1 > operations[1].1),
         "verifier deadlines must consume one absolute phase budget: {events:?}"
     );
-    assert!(events[9..].iter().all(|(event, deadline)| {
+    assert!(events[7..].iter().all(|(event, deadline)| {
         event == "remove" && !deadline.is_zero() && *deadline <= Duration::from_secs(10)
     }));
 }
@@ -3604,7 +3652,18 @@ impl DockerRuntime for StepRecordingRuntime {
             .unwrap_or_else(|| "/image-workdir".to_owned()))
     }
 
-    fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        if source.ends_with("reward.json") {
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward.json absent".to_owned(),
+            ));
+        }
+        if source.ends_with("reward.txt") {
+            return Ok(Box::new(io::Cursor::new(test_tar_archive(
+                "reward.txt",
+                b"1\n",
+            ))));
+        }
         let call = self.collection_calls.get() + 1;
         self.collection_calls.set(call);
         self.events.borrow_mut().push(format!("collect:{call}"));
