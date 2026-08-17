@@ -2988,15 +2988,36 @@ fn compensate_late_create_with<F>(
 where
     F: FnMut(Duration) -> Result<DockerRemoveStatus, EvalExecutionError>,
 {
+    const CREATE_CLEANUP_POLL: Duration = Duration::from_millis(10);
+    const CREATE_CLEANUP_SETTLE: Duration = Duration::from_millis(100);
     let deadline_ns = provider_deadline_ns(&clock, deadline);
+    let mut quiet_since_ns = clock.now_ns();
+    let mut consecutive_absences = 0_u8;
     loop {
         let remaining = remaining_provider_deadline(&clock, deadline_ns, target)?;
         match remove(remaining)? {
-            DockerRemoveStatus::Removed => return Ok(()),
-            DockerRemoveStatus::Absent => {}
+            DockerRemoveStatus::Removed => {
+                quiet_since_ns = clock.now_ns();
+                consecutive_absences = 0;
+            }
+            DockerRemoveStatus::Absent
+                if clock.now_ns().saturating_sub(quiet_since_ns)
+                    >= CREATE_CLEANUP_SETTLE.as_nanos() as i64 =>
+            {
+                consecutive_absences += 1;
+                if consecutive_absences == 2 {
+                    return Ok(());
+                }
+            }
+            DockerRemoveStatus::Absent => consecutive_absences = 0,
         }
         let remaining = remaining_provider_deadline(&clock, deadline_ns, target)?;
-        sleep_create_cleanup_poll(clock.clone(), remaining, target, phase)?;
+        sleep_create_cleanup_poll(
+            clock.clone(),
+            remaining.min(CREATE_CLEANUP_POLL),
+            target,
+            phase,
+        )?;
     }
 }
 
@@ -3006,8 +3027,7 @@ fn sleep_create_cleanup_poll(
     target: &str,
     phase: EvalExecutionPhase,
 ) -> Result<(), EvalExecutionError> {
-    const CREATE_CLEANUP_POLL: Duration = Duration::from_millis(10);
-    let delay = remaining.min(CREATE_CLEANUP_POLL);
+    let delay = remaining;
     if !clock.is_virtual() {
         std::thread::sleep(delay);
         return Ok(());
@@ -4080,7 +4100,7 @@ fn reports_absent_container(stderr: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::Cell,
+        cell::{Cell, RefCell},
         collections::VecDeque,
         io::{self, Read},
         process::Command,
@@ -4659,18 +4679,48 @@ mod tests {
             Duration::from_secs(10),
             |_: Duration| {
                 attempts.set(attempts.get() + 1);
-                if attempts.get() == 1 {
-                    clock.advance_to(1);
-                    Ok(DockerRemoveStatus::Absent)
-                } else {
-                    Ok(DockerRemoveStatus::Removed)
+                match attempts.get() {
+                    1 => {
+                        clock.advance_to(1);
+                        Ok(DockerRemoveStatus::Absent)
+                    }
+                    2 => Ok(DockerRemoveStatus::Removed),
+                    _ => Ok(DockerRemoveStatus::Absent),
                 }
             },
         );
 
         assert_eq!(result, Ok(()));
-        assert_eq!(attempts.get(), 2);
-        assert_eq!(clock.now_ns(), 10_000_001);
+        assert_eq!(attempts.get(), 13);
+        assert_eq!(clock.now_ns(), 120_000_001);
+    }
+
+    #[test]
+    fn late_create_cleanup_settles_after_a_create_following_removal() {
+        let clock = Rc::new(SimClock::new());
+        let statuses = RefCell::new(VecDeque::from([
+            DockerRemoveStatus::Removed,
+            DockerRemoveStatus::Removed,
+            DockerRemoveStatus::Absent,
+        ]));
+        let attempts = Cell::new(0);
+        let result = compensate_late_create_with(
+            clock.clone(),
+            "verifier-container",
+            EvalExecutionPhase::Verifier,
+            Duration::from_secs(10),
+            |_: Duration| {
+                attempts.set(attempts.get() + 1);
+                Ok(statuses
+                    .borrow_mut()
+                    .pop_front()
+                    .unwrap_or(DockerRemoveStatus::Absent))
+            },
+        );
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(attempts.get(), 13);
+        assert_eq!(clock.now_ns(), 120_000_000);
     }
 
     struct FakeDockerExec {
