@@ -2292,7 +2292,7 @@ impl DockerComposeRuntime for DockerCliRuntime {
         ]);
         compose_command_bounded(
             self.clock.clone(),
-            arguments.into_iter(),
+            arguments,
             request.project().as_str(),
             request.deadline(),
         )
