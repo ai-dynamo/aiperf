@@ -88,6 +88,34 @@ pub fn collect_artifacts(
     Ok(collected)
 }
 
+/// Collects declared container files while enforcing one collection deadline.
+pub(crate) fn collect_artifacts_bounded(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    artifacts: &[ArtifactSpec],
+    destination: &Path,
+    deadline: Deadline,
+) -> Result<Vec<(String, ArtifactDigest)>, EvalExecutionError> {
+    fs::create_dir_all(destination).map_err(artifact_error)?;
+    fs::set_permissions(destination, fs::Permissions::from_mode(0o700)).map_err(artifact_error)?;
+    let mut collected = Vec::new();
+    let mut destinations = BTreeSet::new();
+    for artifact in artifacts {
+        let archive =
+            runtime.copy_archive_bounded(container, artifact.source(), deadline.remaining()?)?;
+        collect_archive_bounded(
+            artifact,
+            archive,
+            destination,
+            &mut destinations,
+            &mut collected,
+            &deadline,
+        )?;
+    }
+    collected.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(collected)
+}
+
 /// Collects declared files from their owning task services into one frozen snapshot.
 pub(crate) fn collect_service_artifacts(
     lease: &mut dyn TaskEnvironmentLease,
@@ -250,8 +278,33 @@ pub fn transfer_artifacts(
     destination: &Path,
     collected: &[(String, ArtifactDigest)],
 ) -> Result<(), EvalExecutionError> {
+    transfer_artifacts_with_deadline(source, destination, collected, None)
+}
+
+/// Copies verified artifacts while consuming the verifier's shared deadline.
+pub(crate) fn transfer_artifacts_bounded(
+    source: &Path,
+    destination: &Path,
+    collected: &[(String, ArtifactDigest)],
+    deadline: &Deadline,
+) -> Result<(), EvalExecutionError> {
+    transfer_artifacts_with_deadline(source, destination, collected, Some(deadline))
+}
+
+fn transfer_artifacts_with_deadline(
+    source: &Path,
+    destination: &Path,
+    collected: &[(String, ArtifactDigest)],
+    deadline: Option<&Deadline>,
+) -> Result<(), EvalExecutionError> {
+    if let Some(deadline) = deadline {
+        deadline.remaining()?;
+    }
     fs::create_dir_all(destination).map_err(artifact_error)?;
     for (relative, digest) in collected {
+        if let Some(deadline) = deadline {
+            deadline.remaining()?;
+        }
         let relative = relative_path(relative)?;
         let source_path = safe_child(source, &relative)?;
         let metadata = fs::symlink_metadata(&source_path).map_err(artifact_error)?;
@@ -262,11 +315,12 @@ pub fn transfer_artifacts(
             )));
         }
         let mut source_file = fs::File::open(source_path).map_err(artifact_error)?;
-        write_artifact_stream(
+        write_artifact_stream_with_deadline(
             destination,
             relative.to_string_lossy().as_ref(),
             &mut source_file,
             Some(digest),
+            deadline,
         )?;
     }
     Ok(())
@@ -340,6 +394,83 @@ fn collect_archive(
     let mut archive = archive.into_inner();
     io::copy(&mut archive, &mut io::sink()).map_err(artifact_error)?;
     Ok(())
+}
+
+fn collect_archive_bounded(
+    artifact: &ArtifactSpec,
+    archive: Box<dyn Read>,
+    destination: &Path,
+    destinations: &mut BTreeSet<String>,
+    collected: &mut Vec<(String, ArtifactDigest)>,
+    deadline: &Deadline,
+) -> Result<(), EvalExecutionError> {
+    deadline.remaining()?;
+    let source_name = Path::new(artifact.source())
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            EvalExecutionError::ArtifactCollection("invalid artifact source".to_owned())
+        })?;
+    let destination_root = artifact.destination().unwrap_or(source_name);
+    let destination_root = relative_path(destination_root)?;
+    let mut archive = Archive::new(archive);
+    for entry in archive.entries().map_err(artifact_error)? {
+        let mut entry = entry.map_err(artifact_error)?;
+        let entry_type = entry.header().entry_type();
+        if is_rejected_entry_type(entry_type) {
+            return Err(EvalExecutionError::ArtifactCollection(
+                "archive contains a link or special file".to_owned(),
+            ));
+        }
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            return Err(EvalExecutionError::ArtifactCollection(
+                "archive contains an unsupported entry".to_owned(),
+            ));
+        }
+        let path = entry.path().map_err(artifact_error)?;
+        let path = archive_relative(&path, source_name, artifact.is_exact_file())?;
+        if path.as_os_str().is_empty() {
+            if entry_type.is_dir() {
+                continue;
+            }
+            return Err(EvalExecutionError::ArtifactCollection(
+                "artifact archive has an empty file path".to_owned(),
+            ));
+        }
+        if entry_type.is_dir() {
+            continue;
+        }
+        let relative_source = path.to_string_lossy();
+        if artifact
+            .exclude()
+            .iter()
+            .any(|pattern| glob_matches(pattern, &relative_source))
+        {
+            continue;
+        }
+        let relative = if artifact.is_exact_file() {
+            destination_root.clone()
+        } else {
+            destination_root.join(path)
+        };
+        let relative = relative_path(relative.to_string_lossy().as_ref())?;
+        let key = relative.to_string_lossy().into_owned();
+        if !destinations.insert(key.clone()) {
+            return Err(EvalExecutionError::ArtifactCollection(format!(
+                "duplicate artifact destination: {key}"
+            )));
+        }
+        let digest = write_artifact_stream_with_deadline(
+            destination,
+            &key,
+            &mut entry,
+            None,
+            Some(deadline),
+        )?;
+        collected.push((key, digest));
+    }
+    let mut archive = archive.into_inner();
+    copy_with_deadline(&mut archive, &mut io::sink(), deadline)
 }
 
 fn is_rejected_entry_type(entry_type: EntryType) -> bool {
@@ -417,13 +548,27 @@ fn write_artifact_stream(
     source: &mut dyn Read,
     expected_digest: Option<&ArtifactDigest>,
 ) -> Result<ArtifactDigest, EvalExecutionError> {
+    write_artifact_stream_with_deadline(root, relative, source, expected_digest, None)
+}
+
+fn write_artifact_stream_with_deadline(
+    root: &Path,
+    relative: &str,
+    source: &mut dyn Read,
+    expected_digest: Option<&ArtifactDigest>,
+    deadline: Option<&Deadline>,
+) -> Result<ArtifactDigest, EvalExecutionError> {
     let relative = relative_path(relative)?;
     let parent = ensure_parent_directories(root, &relative)?;
     let path = safe_child(root, &relative)?;
     let mut temporary = NamedTempFile::new_in(parent).map_err(artifact_error)?;
     let digest = {
         let mut writer = HashingWriter::new(temporary.as_file_mut());
-        io::copy(source, &mut writer).map_err(artifact_error)?;
+        if let Some(deadline) = deadline {
+            copy_with_deadline(source, &mut writer, deadline)?;
+        } else {
+            io::copy(source, &mut writer).map_err(artifact_error)?;
+        }
         writer.flush().map_err(artifact_error)?;
         writer.finish()?
     };
@@ -443,6 +588,25 @@ fn write_artifact_stream(
     file.set_permissions(fs::Permissions::from_mode(0o644))
         .map_err(artifact_error)?;
     Ok(digest)
+}
+
+fn copy_with_deadline(
+    source: &mut dyn Read,
+    destination: &mut dyn Write,
+    deadline: &Deadline,
+) -> Result<(), EvalExecutionError> {
+    let mut buffer = [0_u8; 8192];
+    loop {
+        deadline.remaining()?;
+        let read = source.read(&mut buffer).map_err(artifact_error)?;
+        if read == 0 {
+            return Ok(());
+        }
+        destination
+            .write_all(&buffer[..read])
+            .map_err(artifact_error)?;
+        deadline.remaining()?;
+    }
 }
 
 fn ensure_parent_directories(root: &Path, relative: &Path) -> Result<PathBuf, EvalExecutionError> {
@@ -654,6 +818,48 @@ mod tests {
             } if timeout == Duration::from_nanos(5)
         ));
         assert_eq!(lease.executions.len(), 1);
+    }
+
+    #[test]
+    fn bounded_host_copy_stops_when_the_shared_deadline_expires_mid_stream() {
+        struct AdvancingReader {
+            clock: Rc<SimClock>,
+            reads: usize,
+        }
+
+        impl Read for AdvancingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if self.reads == 0 {
+                    self.reads += 1;
+                    buffer[0] = b'x';
+                    self.clock.advance_to(5);
+                    Ok(1)
+                } else {
+                    Ok(0)
+                }
+            }
+        }
+
+        let clock = Rc::new(SimClock::new());
+        let deadline = Deadline::from_phase_timeout(
+            clock.clone(),
+            EvalExecutionPhase::Verifier,
+            Duration::from_nanos(5),
+        );
+        let mut source = AdvancingReader { clock, reads: 0 };
+        let mut destination = Vec::new();
+
+        let error = copy_with_deadline(&mut source, &mut destination, &deadline)
+            .expect_err("the transfer must consume the verifier deadline while copying");
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::Timeout {
+                phase: EvalExecutionPhase::Verifier,
+                timeout,
+            } if timeout == Duration::from_nanos(5)
+        ));
+        assert_eq!(destination, b"x");
     }
 
     #[test]

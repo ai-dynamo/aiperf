@@ -1834,6 +1834,16 @@ impl DockerRuntime for ArtifactFailureRuntime {
     }
 
     fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        panic!("ordinary Docker artifact collection must use the bounded archive path")
+    }
+
+    fn copy_archive_bounded(
+        &self,
+        _: &str,
+        _: &str,
+        deadline: std::time::Duration,
+    ) -> Result<Box<dyn Read>, EvalExecutionError> {
+        assert!(!deadline.is_zero());
         self.events.borrow_mut().push("collect".to_owned());
         Err(EvalExecutionError::ArtifactCollection(
             "declared source is absent".to_owned(),
@@ -1970,10 +1980,12 @@ fn separate_verifier_start_failure_removes_registered_verifier_lease() {
             &FixedSecret,
         )
         .expect_err("failed verifier start must be terminal");
-    assert_eq!(
+    assert!(matches!(
         error,
-        EvalExecutionError::ProcessFailure("verifier start failed".to_owned())
-    );
+        EvalExecutionError::ContainerTeardown { reason, .. }
+            if reason.contains("verifier start failed")
+                && reason.contains("verifier removal failed")
+    ));
     assert_eq!(
         runtime.events.into_inner(),
         vec![
@@ -2507,7 +2519,7 @@ fn shared_verifier_resets_tests_before_each_selected_tree_copy() {
 }
 
 #[test]
-fn shared_verifier_failure_clears_hidden_state_and_beats_cleanup_error() {
+fn shared_verifier_failure_reports_its_cleanup_error() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = multi_step_task_root(&temporary, false);
     let imported = HarborImporter::new(&NativeSourceAcquirer)
@@ -2531,10 +2543,11 @@ fn shared_verifier_failure_clears_hidden_state_and_beats_cleanup_error() {
         )
         .expect_err("the verifier failure must stop before the second agent");
 
-    assert_eq!(
+    assert!(matches!(
         error,
-        EvalExecutionError::ProcessFailure("verifier 1 failed".to_owned())
-    );
+        EvalExecutionError::ContainerTeardown { reason, .. }
+            if reason.contains("verifier 1 failed") && reason.contains("reset 2 failed")
+    ));
     assert_eq!(runtime.agent_execs.get(), 1);
     assert_eq!(runtime.reset_calls.get(), 2);
 }
@@ -3058,7 +3071,16 @@ fn multi_step_failures_stop_successors_and_cleanup_every_acquired_lease() {
             )
             .expect_err("the injected phase failure must be terminal");
 
-        assert_eq!(error, expected_error);
+        if fail_first_removal {
+            assert!(matches!(
+                error,
+                EvalExecutionError::ContainerTeardown { reason, .. }
+                    if reason.contains(&expected_error.to_string())
+                        && reason.contains("first removal failed")
+            ));
+        } else {
+            assert_eq!(error, expected_error);
+        }
         assert_eq!(runtime.agent_execs.get(), expected_counts.0);
         assert_eq!(runtime.collection_calls.get(), expected_counts.1);
         assert_eq!(runtime.verifier_execs.get(), expected_counts.2);

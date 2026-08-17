@@ -28,16 +28,18 @@ use super::{
     DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
     DockerCreateRequest, DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
     EvalExecutionError, EvalExecutionPhase, HarborSandboxRecipe, LocalExecutionResult,
-    MultiStepExecutionResult, NetworkPolicy, SecretProvider, collect_artifacts, preflight_docker,
-    resolve_environment, resolve_phase_environment,
-    shared_workdir_conflicts_reserved_verifier_path, transfer_artifacts,
+    MultiStepExecutionResult, NetworkPolicy, SecretProvider, preflight_docker, resolve_environment,
+    resolve_phase_environment, shared_workdir_conflicts_reserved_verifier_path,
     verifier_artifact_target_collision,
 };
 
 use super::docker_runtime::preflight_compose_configuration;
 use super::multi_step::{BenchmarkStepSession, execute_benchmark_steps};
 use super::{
-    artifacts::{Deadline, collect_service_artifacts, collect_service_evidence},
+    artifacts::{
+        Deadline, collect_artifacts_bounded, collect_service_artifacts, collect_service_evidence,
+        transfer_artifacts_bounded,
+    },
     compose_project::ComposeProjectLease,
     task_environment::{ServiceArchiveRequest, ServiceExecRequest, TaskEnvironmentLease},
 };
@@ -366,11 +368,19 @@ impl DockerProcessSandbox {
             )?;
             let artifact_collection = tempfile::tempdir()
                 .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-            let artifacts = collect_artifacts(
+            let collection_timeout = plan
+                .steps()
+                .first()
+                .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?
+                .collection_timeout();
+            let collection_deadline =
+                Deadline::from_timeout(self.clock.clone(), collection_timeout);
+            let artifacts = collect_artifacts_bounded(
                 runtime,
                 &container,
                 plan.artifacts(),
                 artifact_collection.path(),
+                collection_deadline,
             )?;
             let verifier_deadline = verifier.phase().timeout().map(|timeout| {
                 Deadline::from_phase_timeout(
@@ -388,11 +398,20 @@ impl DockerProcessSandbox {
                     .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
                 fs::set_permissions(verifier_workspace.path(), fs::Permissions::from_mode(0o755))
                     .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-                transfer_artifacts(
-                    artifact_collection.path(),
-                    verifier_workspace.path(),
-                    &artifacts,
-                )?;
+                if let Some(deadline) = verifier_deadline.as_ref() {
+                    transfer_artifacts_bounded(
+                        artifact_collection.path(),
+                        verifier_workspace.path(),
+                        &artifacts,
+                        deadline,
+                    )?;
+                } else {
+                    super::transfer_artifacts(
+                        artifact_collection.path(),
+                        verifier_workspace.path(),
+                        &artifacts,
+                    )?;
+                }
                 let name = format!("{container}-verifier");
                 let verifier_network = network_lease(verifier.environment().network())?;
                 let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
@@ -524,11 +543,11 @@ impl DockerProcessSandbox {
             })
         })();
         let cleanup = remove_containers_with_deadline(self.clock.clone(), runtime, containers);
-        match (outcome, cleanup) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Some(error)) => Err(error),
-            (Ok(result), None) => Ok(result),
-        }
+        combine_primary_and_cleanup(
+            outcome,
+            cleanup.map_or(Ok(()), Err),
+            "Docker evaluation containers",
+        )
     }
 
     fn execute_compose_with_runtime(
@@ -572,11 +591,11 @@ impl DockerProcessSandbox {
         } else {
             prepared.lease.teardown()
         };
-        match (outcome, cleanup) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
-            (Ok(result), Ok(())) => Ok(result),
-        }
+        combine_primary_and_cleanup(
+            outcome,
+            cleanup,
+            prepared.lease.project().as_str().to_owned(),
+        )
     }
 
     fn execute_compose_multi_step_with_runtime(
@@ -609,11 +628,11 @@ impl DockerProcessSandbox {
         } else {
             prepared.lease.teardown()
         };
-        match (outcome, cleanup) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
-            (Ok(result), Ok(())) => Ok(result),
-        }
+        combine_primary_and_cleanup(
+            outcome,
+            cleanup,
+            prepared.lease.project().as_str().to_owned(),
+        )
     }
 
     fn prepare_compose_lease<'a>(
@@ -792,7 +811,11 @@ impl<'a> ComposeStepSession<'a> {
                 .ok_or(EvalExecutionError::InvalidRecipe(
                     "Compose artifact collection",
                 ))?;
-        transfer_artifacts(collection.path(), workspace.path(), artifacts)?;
+        if let Some(deadline) = deadline.as_ref() {
+            transfer_artifacts_bounded(collection.path(), workspace.path(), artifacts, deadline)?;
+        } else {
+            super::transfer_artifacts(collection.path(), workspace.path(), artifacts)?;
+        }
         let image = self.lease.main_image_id()?.to_owned();
         let name = format!("{}-verifier-{}", self.verifier_prefix, step.name());
         let verifier_network = network_lease(verifier.environment().network())?;
@@ -1152,11 +1175,12 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
         self.artifact_collection = None;
         let collection = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-        let artifacts = collect_artifacts(
+        let artifacts = collect_artifacts_bounded(
             self.runtime,
             self.agent_container,
             step.artifacts(),
             collection.path(),
+            Deadline::from_timeout(self.clock.clone(), step.collection_timeout()),
         )?;
         self.artifact_collection = Some(collection);
         Ok(artifacts)
@@ -1184,7 +1208,16 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                     .ok_or(EvalExecutionError::InvalidRecipe(
                         "multi-step artifact collection",
                     ))?;
-            transfer_artifacts(collection.path(), workspace.path(), artifacts)?;
+            if let Some(deadline) = deadline.as_ref() {
+                transfer_artifacts_bounded(
+                    collection.path(),
+                    workspace.path(),
+                    artifacts,
+                    deadline,
+                )?;
+            } else {
+                super::transfer_artifacts(collection.path(), workspace.path(), artifacts)?;
+            }
             Some(workspace)
         } else {
             None
@@ -1324,11 +1357,7 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
             Ok(())
         };
         self.artifact_collection = None;
-        match (outcome, cleanup) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
-            (Ok(reward), Ok(())) => Ok(reward),
-        }
+        combine_primary_and_cleanup(outcome, cleanup, verifier_name)
     }
 }
 
@@ -1416,10 +1445,26 @@ fn finish_with_cleanup<T>(
     outcome: Result<T, EvalExecutionError>,
 ) -> Result<T, EvalExecutionError> {
     let cleanup = remove_containers_with_deadline(clock, runtime, containers);
+    combine_primary_and_cleanup(
+        outcome,
+        cleanup.map_or(Ok(()), Err),
+        "Docker evaluation containers",
+    )
+}
+
+fn combine_primary_and_cleanup<T>(
+    outcome: Result<T, EvalExecutionError>,
+    cleanup: Result<(), EvalExecutionError>,
+    container: impl Into<String>,
+) -> Result<T, EvalExecutionError> {
     match (outcome, cleanup) {
-        (Err(error), _) => Err(error),
-        (Ok(_), Some(error)) => Err(error),
-        (Ok(result), None) => Ok(result),
+        (Err(error), Err(cleanup_error)) => Err(EvalExecutionError::ContainerTeardown {
+            container: container.into(),
+            reason: format!("{error}; cleanup: {cleanup_error}"),
+        }),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(result), Ok(())) => Ok(result),
     }
 }
 
