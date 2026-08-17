@@ -20,7 +20,8 @@ use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::engine::execute::{
-    build_file_dataset, build_public_dataset, build_synthetic_dataset, distribution,
+    FileDatasetBuildContext, SyntheticDatasetBuildContext, build_file_dataset,
+    build_public_dataset, build_synthetic_dataset, distribution,
 };
 use crate::engine::protocol::ModelsSpec;
 
@@ -845,14 +846,16 @@ impl DatasetInputAdapter for SyntheticDatasetInputAdapter {
             .map_or(context.run_rng_root, |seed| RngRoot::new(Some(seed)));
         let default_output_tokens = synthetic_default_output_tokens(&spec)?;
         let dataset = build_synthetic_dataset(
-            context.registry,
             &spec,
-            context.models,
-            rng_root,
-            context.tokenizer,
-            context.rankings,
-            context.media_generator_factory.clone(),
-            context.endpoint_descriptor.requires_raw_token_ids,
+            SyntheticDatasetBuildContext {
+                registry: context.registry,
+                models: context.models,
+                rng_root,
+                tokenizer: context.tokenizer,
+                rankings: context.rankings,
+                media_generator_factory: context.media_generator_factory.clone(),
+                requires_raw_token_ids: context.endpoint_descriptor.requires_raw_token_ids,
+            },
         )
         .await?;
         dataset.validate_for_endpoint(context.endpoint_descriptor)?;
@@ -888,14 +891,16 @@ impl DatasetInputAdapter for FileDatasetInputAdapter {
             .map_or(context.run_rng_root, |seed| RngRoot::new(Some(seed)));
         let default_output_tokens = file_default_output_tokens(&spec)?;
         let dataset = build_file_dataset(
-            context.registry,
             &spec,
-            context.models,
-            rng_root,
-            context.tokenizer,
-            context.trace_prompt_storage.clone(),
-            context.endpoint_descriptor.requires_raw_token_ids,
-            context.endpoint_descriptor.consumes_system_message(),
+            FileDatasetBuildContext {
+                registry: context.registry,
+                models: context.models,
+                run_rng_root: rng_root,
+                tokenizer: context.tokenizer,
+                trace_prompt_storage: context.trace_prompt_storage.clone(),
+                requires_raw_token_ids: context.endpoint_descriptor.requires_raw_token_ids,
+                consumes_system_message: context.endpoint_descriptor.consumes_system_message(),
+            },
         )
         .await?;
         dataset.validate_for_endpoint(context.endpoint_descriptor)?;

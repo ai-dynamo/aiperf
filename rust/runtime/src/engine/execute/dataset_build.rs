@@ -5,6 +5,26 @@
 
 use super::*;
 
+pub(crate) struct SyntheticDatasetBuildContext<'a> {
+    pub(crate) registry: &'a AIPerfRegistry,
+    pub(crate) models: &'a ModelsSpec,
+    pub(crate) rng_root: RngRoot,
+    pub(crate) tokenizer: &'a dyn TextTokenizer,
+    pub(crate) rankings: bool,
+    pub(crate) media_generator_factory: Arc<dyn SyntheticMediaGeneratorFactory>,
+    pub(crate) requires_raw_token_ids: bool,
+}
+
+pub(crate) struct FileDatasetBuildContext<'a> {
+    pub(crate) registry: &'a AIPerfRegistry,
+    pub(crate) models: &'a ModelsSpec,
+    pub(crate) run_rng_root: RngRoot,
+    pub(crate) tokenizer: &'a dyn TextTokenizer,
+    pub(crate) trace_prompt_storage: Arc<dyn TracePromptStoragePolicy>,
+    pub(crate) requires_raw_token_ids: bool,
+    pub(crate) consumes_system_message: bool,
+}
+
 pub(crate) fn dataset_default_output_tokens(dataset: &Dataset) -> Result<usize> {
     dataset
         .conversations()
@@ -431,15 +451,18 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
 }
 
 pub(crate) async fn build_synthetic_dataset(
-    registry: &AIPerfRegistry,
     spec: &SyntheticDatasetSpec,
-    models: &ModelsSpec,
-    rng_root: RngRoot,
-    tokenizer: &dyn TextTokenizer,
-    rankings: bool,
-    media_generator_factory: Arc<dyn SyntheticMediaGeneratorFactory>,
-    requires_raw_token_ids: bool,
+    context: SyntheticDatasetBuildContext<'_>,
 ) -> Result<Dataset> {
+    let SyntheticDatasetBuildContext {
+        registry,
+        models,
+        rng_root,
+        tokenizer,
+        rankings,
+        media_generator_factory,
+        requires_raw_token_ids,
+    } = context;
     let mut compose = compose_config(models, rng_root)?;
     compose.media_generator_factory = media_generator_factory;
     compose.requires_raw_token_ids = requires_raw_token_ids;
@@ -521,15 +544,18 @@ pub(crate) fn compose_config(models: &ModelsSpec, rng_root: RngRoot) -> Result<C
 }
 
 pub(crate) async fn build_file_dataset(
-    registry: &AIPerfRegistry,
     spec: &FileDatasetSpec,
-    models: &ModelsSpec,
-    run_rng_root: RngRoot,
-    tokenizer: &dyn TextTokenizer,
-    trace_prompt_storage: Arc<dyn TracePromptStoragePolicy>,
-    requires_raw_token_ids: bool,
-    consumes_system_message: bool,
+    context: FileDatasetBuildContext<'_>,
 ) -> Result<Dataset> {
+    let FileDatasetBuildContext {
+        registry,
+        models,
+        run_rng_root,
+        tokenizer,
+        trace_prompt_storage,
+        requires_raw_token_ids,
+        consumes_system_message,
+    } = context;
     ensure!(
         spec.path.is_some() ^ spec.records.is_some(),
         "file dataset requires exactly one of path or records"
@@ -1217,14 +1243,18 @@ mod tests {
         }));
         let registry = AIPerfRegistry::builtin().unwrap();
         build_synthetic_dataset(
-            &registry,
             &spec,
-            &models(),
-            RngRoot::new(Some(17)),
-            tokenizer,
-            false,
-            Arc::new(crate::dataset::NativeSyntheticMediaGeneratorFactory::default()),
-            requires_raw_token_ids,
+            SyntheticDatasetBuildContext {
+                registry: &registry,
+                models: &models(),
+                rng_root: RngRoot::new(Some(17)),
+                tokenizer,
+                rankings: false,
+                media_generator_factory: Arc::new(
+                    crate::dataset::NativeSyntheticMediaGeneratorFactory::default(),
+                ),
+                requires_raw_token_ids,
+            },
         )
         .await
         .unwrap()
@@ -1250,14 +1280,16 @@ mod tests {
         .unwrap();
         let registry = AIPerfRegistry::builtin().unwrap();
         build_file_dataset(
-            &registry,
             &spec,
-            &models(),
-            RngRoot::new(Some(23)),
-            tokenizer,
-            Arc::new(crate::dataset::MaterializedTracePromptStorage),
-            false,
-            false,
+            FileDatasetBuildContext {
+                registry: &registry,
+                models: &models(),
+                run_rng_root: RngRoot::new(Some(23)),
+                tokenizer,
+                trace_prompt_storage: Arc::new(crate::dataset::MaterializedTracePromptStorage),
+                requires_raw_token_ids: false,
+                consumes_system_message: false,
+            },
         )
         .await
         .unwrap()
@@ -1574,14 +1606,18 @@ mod tests {
         }));
         let registry = AIPerfRegistry::builtin().unwrap();
         let dataset = build_synthetic_dataset(
-            &registry,
             &spec,
-            &models(),
-            RngRoot::new(Some(73)),
-            &TiktokenTokenizer::builtin(),
-            false,
-            Arc::new(crate::dataset::NativeSyntheticMediaGeneratorFactory::default()),
-            false,
+            SyntheticDatasetBuildContext {
+                registry: &registry,
+                models: &models(),
+                rng_root: RngRoot::new(Some(73)),
+                tokenizer: &TiktokenTokenizer::builtin(),
+                rankings: false,
+                media_generator_factory: Arc::new(
+                    crate::dataset::NativeSyntheticMediaGeneratorFactory::default(),
+                ),
+                requires_raw_token_ids: false,
+            },
         )
         .await
         .unwrap();
@@ -1607,14 +1643,18 @@ mod tests {
         }));
         let registry = AIPerfRegistry::builtin().unwrap();
         let dataset = build_synthetic_dataset(
-            &registry,
             &spec,
-            &models(),
-            RngRoot::new(Some(3)),
-            &TiktokenTokenizer::builtin(),
-            true,
-            Arc::new(crate::dataset::NativeSyntheticMediaGeneratorFactory::default()),
-            false,
+            SyntheticDatasetBuildContext {
+                registry: &registry,
+                models: &models(),
+                rng_root: RngRoot::new(Some(3)),
+                tokenizer: &TiktokenTokenizer::builtin(),
+                rankings: true,
+                media_generator_factory: Arc::new(
+                    crate::dataset::NativeSyntheticMediaGeneratorFactory::default(),
+                ),
+                requires_raw_token_ids: false,
+            },
         )
         .await
         .unwrap();
@@ -1653,14 +1693,16 @@ mod tests {
         }))
         .unwrap();
         let dataset = build_file_dataset(
-            &registry,
             &accepted,
-            &models(),
-            RngRoot::new(Some(1)),
-            &TiktokenTokenizer::builtin(),
-            Arc::new(MaterializedTracePromptStorage),
-            false,
-            false,
+            FileDatasetBuildContext {
+                registry: &registry,
+                models: &models(),
+                run_rng_root: RngRoot::new(Some(1)),
+                tokenizer: &TiktokenTokenizer::builtin(),
+                trace_prompt_storage: Arc::new(MaterializedTracePromptStorage),
+                requires_raw_token_ids: false,
+                consumes_system_message: false,
+            },
         )
         .await
         .unwrap();
@@ -1679,14 +1721,16 @@ mod tests {
         }))
         .unwrap();
         let error = build_file_dataset(
-            &registry,
             &rejected,
-            &models(),
-            RngRoot::new(Some(1)),
-            &TiktokenTokenizer::builtin(),
-            Arc::new(MaterializedTracePromptStorage),
-            false,
-            false,
+            FileDatasetBuildContext {
+                registry: &registry,
+                models: &models(),
+                run_rng_root: RngRoot::new(Some(1)),
+                tokenizer: &TiktokenTokenizer::builtin(),
+                trace_prompt_storage: Arc::new(MaterializedTracePromptStorage),
+                requires_raw_token_ids: false,
+                consumes_system_message: false,
+            },
         )
         .await
         .unwrap_err();

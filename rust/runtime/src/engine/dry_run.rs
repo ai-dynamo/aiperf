@@ -740,6 +740,20 @@ struct FakeFabricator {
     ordinal: Cell<u64>,
 }
 
+struct FabricationRequest<'a> {
+    observer: &'a dyn RequestObserver,
+    uuid: Uuid,
+    isl: u64,
+    osl: usize,
+    start_abs: i64,
+    cancel_after_ns: Option<i64>,
+    request_payload: Bytes,
+    recorded: RecordedLatency,
+    contention_override: Option<usize>,
+    latency_multipliers: (f64, f64),
+    on_first_token: &'a dyn Fn(i64),
+}
+
 impl FakeFabricator {
     fn new(clock: Rc<dyn Clock>, model: String, params: DryRunParams, origin_ns: i64) -> Self {
         Self {
@@ -772,20 +786,20 @@ impl FakeFabricator {
     /// the `drive_sim` pump with no scheduled event after the first node and the
     /// run would quiesce immediately. Under a real clock the timestamps are
     /// computed instantly (fast self-benchmark; the scheduler owns pacing).
-    async fn fabricate(
-        &self,
-        observer: &dyn RequestObserver,
-        uuid: Uuid,
-        isl: u64,
-        osl: usize,
-        start_abs: i64,
-        cancel_after_ns: Option<i64>,
-        request_payload: Bytes,
-        recorded: RecordedLatency,
-        contention_override: Option<usize>,
-        latency_multipliers: (f64, f64),
-        on_first_token: &dyn Fn(i64),
-    ) -> DispatchResult {
+    async fn fabricate(&self, request: FabricationRequest<'_>) -> DispatchResult {
+        let FabricationRequest {
+            observer,
+            uuid,
+            isl,
+            osl,
+            start_abs,
+            cancel_after_ns,
+            request_payload,
+            recorded,
+            contention_override,
+            latency_multipliers,
+            on_first_token,
+        } = request;
         // The live in-flight count feeds the analytic concurrency terms; the
         // ordinal seeds the reproducible jitter draw.
         let _global_inflight_guard = VirtualInflightGuard::new(&self.inflight);
@@ -1033,19 +1047,19 @@ impl RequestExecutor for FakeRequestExecutor {
         };
         let result = self
             .core
-            .fabricate(
-                &*observer,
+            .fabricate(FabricationRequest {
+                observer: &*observer,
                 uuid,
                 isl,
                 osl,
                 start_abs,
-                turn.request.cancel_after_ns,
+                cancel_after_ns: turn.request.cancel_after_ns,
                 request_payload,
                 recorded,
                 contention_override,
-                multipliers,
+                latency_multipliers: multipliers,
                 on_first_token,
-            )
+            })
             .await;
         observer.record_response(
             uuid,
@@ -1120,19 +1134,19 @@ impl crate::transport::core::Dispatcher for FakeDispatcher {
         };
         Ok(self
             .core
-            .fabricate(
+            .fabricate(FabricationRequest {
                 observer,
                 uuid,
                 isl,
                 osl,
                 start_abs,
-                turn.request.cancel_after_ns,
+                cancel_after_ns: turn.request.cancel_after_ns,
                 request_payload,
                 recorded,
-                None,
-                (1.0, 1.0),
+                contention_override: None,
+                latency_multipliers: (1.0, 1.0),
                 on_first_token,
-            )
+            })
             .await)
     }
 

@@ -32,7 +32,8 @@ mod tests {
     use crate::endpoints::{EndpointId, RawEndpointConfig};
     use crate::engine::execute::{
         NativeDatasetPlan, NativeEndpointPlan, NativeRunSpec, NativeSidecarPlan,
-        build_synthetic_dataset, execute_prepared_native_plan_uncommitted_selected,
+        SyntheticDatasetBuildContext, build_synthetic_dataset,
+        execute_prepared_native_plan_uncommitted_selected,
     };
     use crate::engine::execution_factories::native_execution_factories;
     use crate::engine::protocol::{
@@ -260,14 +261,18 @@ mod tests {
         let spec = synthetic_spec(entries, turns);
         let tokenizer = crate::dataset::tokenizer::TiktokenTokenizer::builtin();
         let dataset = block_on_local(build_synthetic_dataset(
-            registry,
             &spec,
-            &models(),
-            RngRoot::new(Some(7)),
-            &tokenizer,
-            false,
-            Arc::new(crate::dataset::NativeSyntheticMediaGeneratorFactory::default()),
-            false,
+            SyntheticDatasetBuildContext {
+                registry,
+                models: &models(),
+                rng_root: RngRoot::new(Some(7)),
+                tokenizer: &tokenizer,
+                rankings: false,
+                media_generator_factory: Arc::new(
+                    crate::dataset::NativeSyntheticMediaGeneratorFactory::default(),
+                ),
+                requires_raw_token_ids: false,
+            },
         ))
         .unwrap();
         crate::engine::dataset_input::PreparedDatasetInput {

@@ -13,6 +13,21 @@ use crate::graph::replay::{
     ReplayRunIdentity, ReplayTaskClassification, redact_replay_provenance,
 };
 
+struct PreparedNativeExecution<'a> {
+    clock: Rc<dyn Clock>,
+    real_clock_anchor: RealClockAnchor,
+    transport_factory: Arc<dyn RequestExecutorFactory>,
+    graph_placement: &'a dyn GraphPlacementFactory,
+    trace_driver: Arc<dyn TraceProgramDriverFactory>,
+    control_plane_http: Arc<dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory>,
+    registry: &'a AIPerfRegistry,
+    sidecar_factory: &'a dyn NativeSidecarResourceFactory,
+    readiness: Option<(
+        Box<dyn PreparedOnlineReadiness>,
+        &'a dyn ReadinessTransportFactory,
+    )>,
+}
+
 /// The single native driver layer: construct the run clock once, then let the
 /// clock drive itself.
 ///
@@ -105,15 +120,17 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_with_runtime_factories(
     let outcome = clock.drive(Box::pin(async move {
         let report = prepare_and_execute_native(
             plan,
-            clock_for_body,
-            real_clock_anchor,
-            transport_factory,
-            placement,
-            trace_driver,
-            control_plane_http.clone(),
-            registry,
-            sidecar_factory,
-            readiness,
+            PreparedNativeExecution {
+                clock: clock_for_body,
+                real_clock_anchor,
+                transport_factory,
+                graph_placement: placement,
+                trace_driver,
+                control_plane_http: control_plane_http.clone(),
+                registry,
+                sidecar_factory,
+                readiness,
+            },
         )
         .await;
         *slot_for_body.borrow_mut() = Some(report);
@@ -220,21 +237,21 @@ pub(crate) struct PreparedAccuracy {
     pub(crate) tokenizer: Arc<dyn TextTokenizer>,
 }
 
-pub(crate) async fn prepare_and_execute_native(
+async fn prepare_and_execute_native(
     request: NativeRunSpec,
-    clock: Rc<dyn Clock>,
-    real_clock_anchor: RealClockAnchor,
-    transport_factory: Arc<dyn RequestExecutorFactory>,
-    graph_placement: &dyn GraphPlacementFactory,
-    trace_driver: Arc<dyn TraceProgramDriverFactory>,
-    control_plane_http: Arc<dyn crate::engine::control_plane_http::ControlPlaneHttpProviderFactory>,
-    registry: &AIPerfRegistry,
-    sidecar_factory: &dyn NativeSidecarResourceFactory,
-    readiness: Option<(
-        Box<dyn PreparedOnlineReadiness>,
-        &dyn ReadinessTransportFactory,
-    )>,
+    execution: PreparedNativeExecution<'_>,
 ) -> Result<NativeReport> {
+    let PreparedNativeExecution {
+        clock,
+        real_clock_anchor,
+        transport_factory,
+        graph_placement,
+        trace_driver,
+        control_plane_http,
+        registry,
+        sidecar_factory,
+        readiness,
+    } = execution;
     if request.dataset.is_graph() {
         validate_graph_request(&request)?;
         if let NativeDatasetPlan::Graph(graph) = &request.dataset {
