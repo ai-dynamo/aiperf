@@ -686,9 +686,23 @@ def _reject_file_dataset_incompatible(
         for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
         if attr in s and attr in batch_size_attrs and not is_random_pool
     ]
+    # Under --config the user passed neither --input-file nor
+    # --public-dataset -- the config file owns the dataset, and both flags are
+    # rejected on that path -- so the CLI-only advice cannot be followed.
+    declared = declared_type is not None
     if non_batch_violations:
+        flags = ", ".join(non_batch_violations)
+        if declared:
+            raise ValueError(
+                f"{flags} is only supported with synthetic datasets, but the "
+                f"config file declares type: {declared_type}"
+                f"{f' (format: {declared_format})' if declared_format else ''}. "
+                "Set a synthetic dataset in the config file to apply "
+                "synthetic-only prompt shaping (ISL, prefix prompts, multimodal "
+                "generation, multi-turn conversation, etc)."
+            )
         raise ValueError(
-            f"{', '.join(non_batch_violations)} is only supported with synthetic datasets; "
+            f"{flags} is only supported with synthetic datasets; "
             "remove --input-file / --public-dataset (use a synthetic dataset) to "
             "apply synthetic-only prompt shaping (ISL, prefix prompts, multimodal "
             "generation, multi-turn conversation, etc)."
@@ -711,6 +725,16 @@ def _reject_file_dataset_incompatible(
             "flattens them into one anonymous pool per modality. Point --input-file "
             "at a single random_pool file, or drop the batch-size flags."
         )
+    if batch_violations:
+        flags = ", ".join(batch_violations)
+        if declared:
+            # The config file owns the format; --custom-dataset-type and
+            # --input-file are the CLI-only remedies suggested below.
+            raise ValueError(
+                f"{flags} requires a random_pool dataset, but the config file "
+                f"declares format: {declared_format}. Set format: random_pool "
+                "in the config file, or drop these flags."
+            )
     if batch_violations and cli.input_file is not None:
         remedy = (
             "Either add --custom-dataset-type random_pool to keep --input-file"
@@ -719,7 +743,7 @@ def _reject_file_dataset_incompatible(
             "to random_pool to keep --input-file"
         )
         raise ValueError(
-            f"{', '.join(batch_violations)} requires --custom-dataset-type random_pool "
+            f"{flags} requires --custom-dataset-type random_pool "
             f"when used with --input-file. {remedy}, or remove --input-file to use a "
             "synthetic dataset."
         )

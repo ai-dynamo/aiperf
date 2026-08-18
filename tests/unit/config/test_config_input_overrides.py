@@ -418,3 +418,50 @@ def test_baseten_extra_input_collision_rejected_from_yaml_format(
     """
     with pytest.raises(ValueError, match="min_tokens"):
         resolve_config(cli(extra_inputs=["min_tokens:5"]), baseten_yaml)
+
+
+def test_synthetic_only_flag_message_is_actionable_under_config(
+    random_pool_yaml: Path,
+) -> None:
+    """The advice must be something a --config user can act on.
+
+    The CLI-only wording says to remove --input-file / --public-dataset. On
+    this path the user passed neither, and both are rejected outright, so
+    that advice is unfollowable. Point at the config file instead -- the same
+    correction already made for --dataset-filter one function over.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        resolve_config(cli(prompt_prefix_pool_size=4), random_pool_yaml)
+    message = str(excinfo.value)
+    assert "--input-file" not in message
+    assert "--public-dataset" not in message
+    assert "config file" in message
+
+
+def test_batch_size_message_is_actionable_under_config(tmp_path: Path) -> None:
+    """Same for the batch-size variant of the guard."""
+    trace = tmp_path / "t.jsonl"
+    trace.write_text('{"text": "hi"}\n')
+    cfg = tmp_path / "mooncake.yaml"
+    cfg.write_text(
+        f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: mooncake_trace
+    path: {trace}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    with pytest.raises(ValueError) as excinfo:
+        resolve_config(cli(image_batch_size=2), cfg)
+    message = str(excinfo.value)
+    assert "--input-file" not in message
+    assert "config file" in message
