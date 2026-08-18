@@ -1260,6 +1260,51 @@ def _run_dataset_rejections(
         raise ValueError("--dataset-filter requires --public-dataset")
 
 
+def _seed_declared_identity(
+    d: dict[str, Any],
+    cli: CLIConfig,
+    declared_type: Any,
+    declared_format: Any,
+) -> None:
+    """Stand in for ``_apply_dataset_type`` when the YAML declared the type.
+
+    Seeds type/format so the type-aware helpers downstream route correctly
+    (they are stripped again before the override is returned), carries the
+    ``entries`` count that ``_apply_dataset_type`` would otherwise have
+    emitted, and drops the synthetic-only subtables for file/public datasets.
+    """
+    from aiperf.common.enums import DatasetType
+
+    d["type"] = declared_type
+    if declared_format is not None:
+        d.setdefault("format", declared_format)
+
+    # --num-conversations feeds `entries`. Take it only from the flags that
+    # name a conversation count: _resolve_entries also falls back to
+    # --request-count, which makes sense when building a dataset from nothing
+    # but as an override would reset a YAML entry count from an unrelated
+    # loadgen flag.
+    fields_set = cli.model_fields_set
+    if (
+        "conversation_num" in fields_set
+        and "conversation_num_dataset_entries" not in fields_set
+    ):
+        conversations = cli.conversation_num
+        if isinstance(conversations, list):
+            conversations = max(conversations) if conversations else None
+        if conversations is not None:
+            d["entries"] = conversations
+
+    if declared_type in (DatasetType.FILE, DatasetType.PUBLIC):
+        # Same strip _apply_dataset_type performs for these types on the
+        # CLI-only path: neither carries the synthetic per-modality subtables,
+        # and leaking one trips extra_forbidden. Helpers below
+        # (--prompt-corpus, random_pool batch sizes) re-attach what these
+        # types legitimately support.
+        for key in _SYNTHETIC_ONLY_SUBTABLES:
+            d.pop(key, None)
+
+
 def build_dataset(
     cli: CLIConfig,
     *,
@@ -1293,7 +1338,6 @@ def build_dataset(
         A dict suitable for ``DatasetConfig.model_validate({"name": "main", **out})``,
         or -- in override mode -- for deep-merging onto an existing dataset dict.
     """
-    from aiperf.common.enums import DatasetType
 
     override_mode = declared_type is not None
 
@@ -1305,20 +1349,7 @@ def build_dataset(
     d = _flat_dataset_fields(cli)
     _attach_subtables(d, cli)
     if override_mode:
-        # The YAML declared the type/format; seed them so the type-aware
-        # helpers below route correctly, then strip them before returning so
-        # the override cannot rewrite what the config file owns.
-        d["type"] = declared_type
-        if declared_format is not None:
-            d.setdefault("format", declared_format)
-        if declared_type in (DatasetType.FILE, DatasetType.PUBLIC):
-            # Same strip _apply_dataset_type performs for these types on the
-            # CLI-only path: neither carries the synthetic per-modality
-            # subtables, and leaking one trips extra_forbidden. Helpers below
-            # (--prompt-corpus, random_pool batch sizes) re-attach what these
-            # types legitimately support.
-            for key in _SYNTHETIC_ONLY_SUBTABLES:
-                d.pop(key, None)
+        _seed_declared_identity(d, cli, declared_type, declared_format)
     else:
         _apply_dataset_type(d, cli, needs_text)
     _apply_sequence_distribution(d, cli)

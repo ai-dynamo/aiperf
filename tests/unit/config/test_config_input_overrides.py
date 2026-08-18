@@ -254,3 +254,40 @@ def test_public_dataset_flag_remains_rejected(synthetic_yaml: Path) -> None:
     """--public-dataset would swap the dataset type the YAML declared."""
     with pytest.raises(ConfigurationError, match=r"--public-dataset"):
         resolve_config(cli(public_dataset="sharegpt"), synthetic_yaml)
+
+
+# ---------------------------------------------------------------------------
+# --num-conversations: must match CLI-only semantics, not error
+# ---------------------------------------------------------------------------
+
+
+def test_conversation_num_sets_entries_and_sessions(synthetic_yaml: Path) -> None:
+    """``--num-conversations`` must do under --config what it does without it.
+
+    On the CLI-only path the flag sets both ``dataset.entries`` and the
+    profiling phase's ``sessions``. Under --config it produced neither, and
+    the resolver rejected it with "no effect on a dataset of type
+    'synthetic'" -- factually wrong, on one of the most-used flags in the
+    tool.
+    """
+    resolved = resolve_config(cli(conversation_num=13), synthetic_yaml)
+    assert dataset(resolved).entries == 13
+    profiling = [p for p in resolved.benchmark.phases if p.name == "profiling"]
+    assert profiling and profiling[0].sessions == 13
+
+
+def test_conversation_num_dataset_entries_sets_entries(synthetic_yaml: Path) -> None:
+    """The explicit entry-count flag wins for ``entries``."""
+    resolved = resolve_config(cli(conversation_num_dataset_entries=21), synthetic_yaml)
+    assert dataset(resolved).entries == 21
+
+
+def test_request_count_does_not_become_dataset_entries(synthetic_yaml: Path) -> None:
+    """--request-count must not silently reset a YAML ``entries``.
+
+    _resolve_entries falls back to request_count on the CLI-only path, where
+    it builds a dataset from nothing. As an override that fallback would
+    overwrite the config file's entry count from an unrelated loadgen flag.
+    """
+    resolved = resolve_config(cli(request_count=50), synthetic_yaml)
+    assert dataset(resolved).entries == 16  # the YAML value
