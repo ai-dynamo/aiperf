@@ -57,11 +57,13 @@ class CompletionsEndpoint(BaseEndpoint):
         if turn.extra_body:
             payload.update(turn.extra_body)
 
-        if (
-            model_endpoint.endpoint.streaming
-            and model_endpoint.endpoint.use_server_token_count
-        ):
-            # Automatically set stream_options to include usage when using server token counts
+        if model_endpoint.endpoint.streaming:
+            # Requested for every streaming run, not just server-token-count
+            # ones: vLLM rides per-request metrics (including
+            # metrics.speculative_decoding) on the trailing usage chunk and
+            # only emits that chunk when include_usage is set, so gating it on
+            # an unrelated flag would silently drop those metrics. Authors who
+            # want it off can set stream_options.include_usage explicitly.
             if "stream_options" not in payload:
                 payload["stream_options"] = {"include_usage": True}
             elif (

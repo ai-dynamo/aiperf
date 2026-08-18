@@ -40,8 +40,9 @@ of the metrics reference.
   includes it.
 - **Direct-to-vLLM only.** Behind Dynamo the custom stats field is currently stripped, so
   the per-request path is unavailable there (use the server-scrape path instead).
-- Streaming works out of the box; per-request `completion_tokens` is only populated when
-  the server also returns usage (enable server token counting if you want it).
+- Streaming works out of the box. In streaming, vLLM sends the metrics on the trailing
+  usage chunk, so AIPerf requests `stream_options.include_usage` on every streaming run;
+  no extra flag is needed.
 
 ---
 

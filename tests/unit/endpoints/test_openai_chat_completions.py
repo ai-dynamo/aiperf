@@ -71,6 +71,9 @@ class TestChatEndpoint:
             "model": "test-model",
             "stream": True,
             "max_completion_tokens": 42,
+            # Requested on every streaming run so vLLM emits the trailing
+            # usage chunk that carries per-request metrics.
+            "stream_options": {"include_usage": True},
         }
         assert payload == expected_payload
 
@@ -197,12 +200,16 @@ class TestChatEndpoint:
             (True, True, None, {"include_usage": True}),
             # Don't add when not streaming
             (False, True, None, None),
-            # Don't add when flag disabled
-            (True, False, None, None),
-            # Don't add when neither enabled
+            # Add for any streaming run, even without server token counts:
+            # vLLM only emits the metrics-bearing trailing usage chunk when
+            # include_usage is set, and per-request spec-decode metrics ride it.
+            (True, False, None, {"include_usage": True}),
+            # Don't add when not streaming
             (False, False, None, None),
             # Preserve user's include_usage=False
             (True, True, {"stream_options": {"include_usage": False}}, {"include_usage": False}),
+            # Preserve the opt-out without server token counts too
+            (True, False, {"stream_options": {"include_usage": False}}, {"include_usage": False}),
             # Merge with user's other options
             (True, True, {"stream_options": {"continuous_updates": True}}, {"continuous_updates": True, "include_usage": True}),
         ],

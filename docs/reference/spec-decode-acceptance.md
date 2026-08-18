@@ -82,8 +82,16 @@ object, emitted when the server runs with `--per-request-spec-decode-metrics`
 [#48915](https://github.com/vllm-project/vllm/pull/48915); its *Per-Request
 Acceptance Metrics* feature doc is the authoritative wire-format reference. It is
 present on chat and completions, streaming and non-streaming; in streaming it
-rides the trailing `include_usage` chunk (empty `choices`) at the response root,
-which AIPerf already parses, so no extra endpoint code is needed.
+rides the trailing `include_usage` chunk (empty `choices`) at the response root.
+
+Because vLLM emits that trailing chunk only when `stream_options.include_usage`
+is set, AIPerf requests it on **every** streaming run -- not just when
+`--use-server-token-count` is on, which would otherwise silently drop the
+metrics. The chunk carries no content, so it is excluded from timing metrics via
+`ParsedResponseRecord.content_responses`, and token counting still follows the
+`use_server_token_count` config rather than the presence of `usage`. To opt out,
+set the field explicitly: `--extra-inputs '{"stream_options":
+{"include_usage": false}}'`.
 
 The wire object maps to the record one-to-one, except:
 
@@ -93,9 +101,7 @@ The wire object maps to the record one-to-one, except:
   `{j: count}` map, dropping zero-count buckets.
 - **`completion_tokens`** is copied from the response `usage` (not the payload)
   so the record trace carries it next to acceptance; no metric consumes it yet.
-  `None` when usage is absent -- in streaming, usage rides the trailing
-  `include_usage` chunk, which AIPerf auto-injects only when
-  `endpoint.use_server_token_count` is enabled.
+  `None` when the server omits usage.
 - **`num_draft_tokens`** is vLLM's post-adjustment count: drafts invalidated by
   structured-output/grammar constraints are already subtracted server-side.
 - **`num_spec_tokens`** is always present (the configured `num_speculative_tokens`);
@@ -116,11 +122,13 @@ The wire object maps to the record one-to-one, except:
   one bad response cannot abort a run. Records whose aggregate counts contradict
   each other (histogram not summing to `num_spec_steps`, etc.) are rejected the
   same way.
-- **`n > 1`**: vLLM populates `metrics.speculative_decoding` only for
-  single-sequence requests, leaving it `null` for `n > 1` (mixing one sequence's
-  acceptance with request-level token counts would be misleading). Because the
-  object is at the response root -- not per-choice -- AIPerf simply reads it as
-  present or absent; no client-side suppression is needed, and an `n > 1` request
-  yields no record.
+- **`n > 1`**: vLLM populates `metrics.speculative_decoding` only when the stats
+  are attributable to a single generation stream, leaving it `null` otherwise --
+  for `n > 1` on both endpoints, and additionally for **multi-prompt** requests
+  on completions (`prompt: ["a", "b"]`), where timestamps would span prompts.
+  Because the object is at the response root -- not per-choice -- AIPerf simply
+  reads it as present or absent; no client-side suppression is needed, and such
+  requests yield no record. AIPerf sends one prompt per request, so in practice
+  only `n > 1` triggers this.
 - **Behind Dynamo** the custom field is currently stripped, so this path is
   direct-to-vLLM only.
