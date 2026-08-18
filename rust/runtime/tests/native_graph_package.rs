@@ -5,7 +5,9 @@ use std::{fs, path::Path};
 
 use aiperf_runtime::eval::{
     HarborImporter, HarborSource, ModelCapturePolicy, NativeSourceAcquirer, TokenizerBindingSpec,
+    select_native_graph_external_driver,
 };
+use aiperf_runtime::extensions::{AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
 
 const LEGACY_DIGEST: &str =
     "blake3:f6e65dd2abc7f38df7d68eb599f81326c6d4a3850d1ef775ac8b449654ac7584";
@@ -632,6 +634,79 @@ fn externally_driven_driver_selection_and_argv_are_immutable_package_identity() 
 }
 
 #[test]
+fn externally_driven_factory_selection_is_required_and_identity_bound() {
+    let missing = externally_driven_task_fixture();
+    replace(
+        &missing.path().join("task.toml"),
+        "external_driver_factory_id = \"refuse\"\n",
+        "",
+    );
+    let error = import_native_task(missing.path()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("externally_driven profile requires native_graph.external_driver_factory_id"),
+        "an external package without an explicit factory selector must refuse: {error}"
+    );
+
+    let baseline = externally_driven_task_fixture();
+    let baseline_imported = import_native_task(baseline.path()).unwrap();
+
+    let altered = externally_driven_task_fixture();
+    replace(
+        &altered.path().join("task.toml"),
+        "external_driver_factory_id = \"refuse\"",
+        "external_driver_factory_id = \"other-driver\"",
+    );
+    let altered_imported = import_native_task(altered.path()).unwrap();
+
+    assert_ne!(
+        baseline_imported.task.digest, altered_imported.task.digest,
+        "the immutable package identity must bind the exact external-driver factory selector"
+    );
+}
+
+#[test]
+fn externally_driven_factory_preflight_resolves_only_the_exact_immutable_selector() {
+    let registry = BuiltinAIPerfRegistryFactory
+        .build()
+        .expect("the built-in registry is available");
+    let selected = externally_driven_task_fixture();
+    let selected_package = import_native_task(selected.path())
+        .unwrap()
+        .package
+        .native_graph()
+        .unwrap()
+        .clone();
+
+    let factory = select_native_graph_external_driver(&registry, &selected_package)
+        .expect("the sealed built-in selector resolves exactly");
+    assert_eq!(factory.id(), "refuse");
+
+    let unknown = externally_driven_task_fixture();
+    replace(
+        &unknown.path().join("task.toml"),
+        "external_driver_factory_id = \"refuse\"",
+        "external_driver_factory_id = \"unregistered\"",
+    );
+    let unknown_package = import_native_task(unknown.path())
+        .unwrap()
+        .package
+        .native_graph()
+        .unwrap()
+        .clone();
+    let error = match select_native_graph_external_driver(&registry, &unknown_package) {
+        Ok(_) => panic!("an unregistered selector must not fall back to another driver"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("unknown external driver factory")
+    );
+}
+
+#[test]
 fn native_graph_plan_retains_the_validated_program_source_snapshot() {
     let task = native_task_fixture(b"print('adapter')\n");
     let program_path = task.path().join("agent_graph.json");
@@ -1065,6 +1140,7 @@ name = "example/external-driver"
 profile = "externally_driven"
 adapter_manifest = "adapters.toml"
 driver = "driver-adapter"
+external_driver_factory_id = "refuse"
 "#,
     )
     .unwrap();

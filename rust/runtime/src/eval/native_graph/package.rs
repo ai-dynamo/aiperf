@@ -88,6 +88,10 @@ native_graph_id!(
     ActionEncoderFactoryId,
     "Canonical identifier for a NativeGraph policy-decision action encoder."
 );
+native_graph_id!(
+    ExternalDriverFactoryId,
+    "Canonical identifier for an externally driven NativeGraph compatibility factory."
+);
 
 /// Exact execution profile selected by a schema-1.1 task.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
@@ -588,6 +592,7 @@ pub struct NativeGraphPackagePlan {
     model_bindings: Vec<ModelBindingSpec>,
     adapters: Vec<AdapterSpec>,
     driver: Option<AdapterId>,
+    external_driver_factory_id: Option<ExternalDriverFactoryId>,
     rollout: Option<NativeGraphRolloutPlan>,
     executable_source_digest: ArtifactDigest,
 }
@@ -629,6 +634,11 @@ impl NativeGraphPackagePlan {
     pub fn driver_adapter(&self) -> Option<&AdapterSpec> {
         let driver = self.driver.as_ref()?;
         self.adapters.iter().find(|adapter| adapter.id == *driver)
+    }
+
+    /// Returns the exact compatibility factory selected by an external package.
+    pub fn external_driver_factory_id(&self) -> Option<&ExternalDriverFactoryId> {
+        self.external_driver_factory_id.as_ref()
     }
 
     /// Returns the optional strict rollout selection retained from `rollout.toml`.
@@ -673,6 +683,13 @@ impl NativeGraphPackagePlan {
             "native-graph-package.driver",
             self.driver.as_ref().map(AdapterId::as_str),
         );
+        if let Some(factory_id) = &self.external_driver_factory_id {
+            append_identity_field(
+                material,
+                "native-graph-package.external-driver-factory-id",
+                factory_id.as_str().as_bytes(),
+            );
+        }
         if let Some(rollout) = &self.rollout {
             append_rollout_identity(material, rollout);
         }
@@ -693,6 +710,7 @@ pub(crate) struct NativeGraphSectionDto {
     model_bindings: Option<String>,
     adapter_manifest: Option<String>,
     driver: Option<AdapterId>,
+    external_driver_factory_id: Option<ExternalDriverFactoryId>,
 }
 
 /// Parsed NativeGraph package data awaiting its complete source projection.
@@ -702,6 +720,7 @@ pub(crate) struct NativeGraphPackageDraft {
     model_bindings: Vec<ModelBindingSpec>,
     adapters: Vec<AdapterSpec>,
     driver: Option<AdapterId>,
+    external_driver_factory_id: Option<ExternalDriverFactoryId>,
     rollout: Option<NativeGraphRolloutPlan>,
     executable_source_paths: BTreeSet<String>,
 }
@@ -723,6 +742,7 @@ impl NativeGraphPackageDraft {
             model_bindings: self.model_bindings,
             adapters: self.adapters,
             driver: self.driver,
+            external_driver_factory_id: self.external_driver_factory_id,
             rollout: self.rollout,
             executable_source_digest,
         }
@@ -753,8 +773,10 @@ pub(crate) fn resolve_native_graph_package(
 
     match section.profile {
         NativeGraphProfile::NativeGraph => {
-            if section.driver.is_some() {
-                return invalid("native_graph profile must not declare a driver");
+            if section.driver.is_some() || section.external_driver_factory_id.is_some() {
+                return invalid(
+                    "native_graph profile must not declare an external driver or compatibility factory",
+                );
             }
             if adapters
                 .iter()
@@ -785,6 +807,7 @@ pub(crate) fn resolve_native_graph_package(
                 model_bindings,
                 adapters,
                 driver: None,
+                external_driver_factory_id: None,
                 rollout,
                 executable_source_paths,
             })
@@ -803,6 +826,13 @@ pub(crate) fn resolve_native_graph_package(
                     "externally_driven profile requires native_graph.driver".to_owned(),
                 )
             })?;
+            let external_driver_factory_id =
+                section.external_driver_factory_id.ok_or_else(|| {
+                    HarborImportError::InvalidPackage(
+                    "externally_driven profile requires native_graph.external_driver_factory_id"
+                        .to_owned(),
+                )
+                })?;
             if adapters.len() != 1
                 || adapters[0].id != driver
                 || adapters[0].role != AdapterRole::Driver
@@ -817,6 +847,7 @@ pub(crate) fn resolve_native_graph_package(
                 model_bindings: Vec::new(),
                 adapters,
                 driver: Some(driver),
+                external_driver_factory_id: Some(external_driver_factory_id),
                 rollout: None,
                 executable_source_paths,
             })

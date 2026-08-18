@@ -32,8 +32,8 @@ pub use artifacts::{
     EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest, FrozenArtifactReference,
 };
 pub use capture::{
-    CaptureError, CaptureFidelity, CapturePolicy, CompatibilityObservation,
-    CompatibilityObservationReport,
+    CaptureError, CaptureFidelity, CapturePolicy, CompatibilityFidelity, CompatibilityObservation,
+    CompatibilityObservationReport, CompatibilityTerminalSupplement,
 };
 pub use cellular::{
     CellularFoldError, NativeGraphCellAssignment, NativeGraphCellLease,
@@ -54,6 +54,8 @@ pub use evaluator::{
     EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, HarborEpisodeEvaluator,
     HarborEpisodeEvaluatorFactory,
 };
+#[cfg(feature = "engine")]
+pub use factories::select_native_graph_external_driver;
 #[cfg(feature = "engine")]
 pub use factories::{
     BoundNativeGraphEnvironmentStepper, StartedNativeGraphEnvironmentStepper,
@@ -116,9 +118,10 @@ pub use suite::{
 };
 
 pub use package::{
-    ActionEncoderFactoryId, AdapterId, AdapterRole, AdapterSpec, GenerationDefaults,
-    HeaderSecretRef, ModelBindingId, ModelBindingSpec, ModelCapturePolicy, ModelSecretId,
-    NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource, TokenizerBindingSpec,
+    ActionEncoderFactoryId, AdapterId, AdapterRole, AdapterSpec, ExternalDriverFactoryId,
+    GenerationDefaults, HeaderSecretRef, ModelBindingId, ModelBindingSpec, ModelCapturePolicy,
+    ModelSecretId, NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource,
+    TokenizerBindingSpec,
 };
 pub(crate) use package::{
     NativeGraphPackageDraft, NativeGraphSectionDto, resolve_native_graph_package,

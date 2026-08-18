@@ -311,14 +311,10 @@ impl AIPerfExtension for BuiltinNativeGraphExtension {
             "move_v1",
             Arc::new(MoveV1ActionEncoderFactory) as Arc<dyn NativeGraphActionEncoderFactory>,
         )?;
-        registry
-            .native_graph_external_drivers
-            .insert(
-                "refuse",
-                Arc::new(RefusingExternalDriverFactory)
-                    as Arc<dyn NativeGraphExternalDriverFactory>,
-            )
-            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry.register_native_graph_external_driver(
+            "refuse",
+            Arc::new(RefusingExternalDriverFactory) as Arc<dyn NativeGraphExternalDriverFactory>,
+        )?;
         registry
             .native_graph_fidelity_observers
             .insert(
@@ -714,6 +710,11 @@ impl AIPerfRegistry {
         name: &str,
         factory: Arc<dyn NativeGraphExternalDriverFactory>,
     ) -> Result<(), ExtensionError> {
+        if factory.id() != name {
+            return Err(ExtensionError::rejected(
+                "NativeGraph external-driver registry name does not match its declared identifier",
+            ));
+        }
         self.native_graph_external_drivers
             .insert(name, factory)
             .map_err(|error| ExtensionError::rejected(error.to_string()))

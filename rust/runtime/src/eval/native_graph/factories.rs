@@ -695,6 +695,9 @@ pub trait NativeGraphExternalDriver {
 
 /// Factory for compatibility-only externally driven package support.
 pub trait NativeGraphExternalDriverFactory: Send + Sync {
+    /// Returns the canonical immutable selector this factory permits.
+    fn id(&self) -> &str;
+
     /// Binds an external driver to the imported package authority.
     fn bind(
         &self,
@@ -707,6 +710,10 @@ pub trait NativeGraphExternalDriverFactory: Send + Sync {
 pub struct RefusingExternalDriverFactory;
 
 impl NativeGraphExternalDriverFactory for RefusingExternalDriverFactory {
+    fn id(&self) -> &str {
+        "refuse"
+    }
+
     fn bind(
         &self,
         _: &NativeGraphPackagePlan,
@@ -715,6 +722,42 @@ impl NativeGraphExternalDriverFactory for RefusingExternalDriverFactory {
             "externally driven NativeGraph packages are not enabled by the acyclic model slice",
         ))
     }
+}
+
+/// Resolves an external compatibility driver only from its immutable package selector.
+///
+/// This preflight intentionally receives neither a task environment nor spawn authority. A
+/// later compatibility runner may bind the selected factory only after this exact selection has
+/// succeeded.
+#[cfg(feature = "engine")]
+pub fn select_native_graph_external_driver(
+    registry: &AIPerfRegistry,
+    package: &NativeGraphPackagePlan,
+) -> Result<Arc<dyn NativeGraphExternalDriverFactory>, NativeGraphFactoryError> {
+    if package.profile() != NativeGraphProfile::ExternallyDriven {
+        return Err(NativeGraphFactoryError::new(
+            "NativeGraph external driver selection requires the externally_driven profile",
+        ));
+    }
+    let selector = package.external_driver_factory_id().ok_or_else(|| {
+        NativeGraphFactoryError::new(
+            "externally driven NativeGraph package has no immutable external driver factory selector",
+        )
+    })?;
+    let factory = registry
+        .native_graph_external_driver(selector.as_str())
+        .ok_or_else(|| {
+            NativeGraphFactoryError::new(format!(
+                "NativeGraph selected unknown external driver factory {:?}",
+                selector.as_str()
+            ))
+        })?;
+    if factory.id() != selector.as_str() {
+        return Err(NativeGraphFactoryError::new(
+            "NativeGraph external driver registration does not match the sealed selector",
+        ));
+    }
+    Ok(Arc::clone(factory))
 }
 
 /// Observer that validates the fidelity account emitted by source lowering.

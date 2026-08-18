@@ -25,7 +25,8 @@ use aiperf_runtime::{
         ModelCapacityKey, ModelRuntimeConfig, NativeGraphEpisodeRunner, NativeGraphProfile,
         NativeGraphSuiteManifest, NativeSourceAcquirer, ResourceLeaseRequest, ResourceLimits,
         SecretProvider, SecretValue, SuiteRunId, SuiteTrialSpec, VerifierMode,
-        parse_native_graph_suite_toml, run_resolved_suite, select_native_graph_scheduler,
+        parse_native_graph_suite_toml, run_resolved_suite, select_native_graph_external_driver,
+        select_native_graph_scheduler,
     },
 };
 use anyhow::Context as _;
@@ -65,6 +66,15 @@ pub(super) fn run_task(
         }
         NativeGraphProfile::ExternallyDriven => {
             validate_native_graph_invocation(&imported, lifecycle, &options)?;
+            let native = imported.package.native_graph().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "NativeGraph task snapshot disappeared before external-driver preflight"
+                )
+            })?;
+            let dist_id = current_distribution_id()
+                .context("deriving native graph distribution identity from the current binary")?;
+            let application = Application::stock(dist_id)?;
+            select_native_graph_external_driver(application.product_registry(), native)?;
             anyhow::bail!("externally driven NativeGraph compatibility runner is not enabled")
         }
     }

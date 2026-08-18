@@ -221,7 +221,8 @@ The existing suite grammar still requires Rust model-binding axes, so it has no
 valid externally driven suite shape yet.
 
 The current import contract uses the same schema revision and names its sole
-declared driver explicitly; the planned compatibility runner will supervise it:
+declared driver and exact registered compatibility-factory selector explicitly;
+the planned compatibility runner will supervise it:
 
 ```toml
 schema_version = "1.1"
@@ -229,6 +230,7 @@ schema_version = "1.1"
 [native_graph]
 profile = "externally_driven"
 driver = "episode-driver"
+external_driver_factory_id = "refuse"
 adapter_manifest = "adapters.toml"
 ```
 

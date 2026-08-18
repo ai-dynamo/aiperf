@@ -4,9 +4,9 @@
 use std::{fs, path::Path};
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, AttemptId, CaptureFidelity, CapturePolicy, EvidenceKind, FrozenAttemptBundle,
-    HarborImporter, HarborSource, NativeGraphProfile, NativeSourceAcquirer, RewardDocument,
-    ScoreVersion, VerifierResult,
+    ArtifactDigest, AttemptId, CaptureFidelity, CapturePolicy, CompatibilityFidelity, EvidenceKind,
+    FrozenAttemptBundle, HarborImporter, HarborSource, NativeGraphProfile, NativeSourceAcquirer,
+    RewardDocument, ScoreVersion, VerifierResult,
 };
 
 #[test]
@@ -59,6 +59,44 @@ fn compatibility_observation_is_digest_only_bounded_and_degrades_for_partial_or_
     let mut bypassed = policy.begin_observation();
     bypassed.record_unobservable_or_bypassed_call().unwrap();
     assert_eq!(bypassed.freeze().fidelity(), CaptureFidelity::Missing);
+}
+
+#[test]
+fn compatibility_observation_without_any_capture_is_missing() {
+    let (_task, imported) = externally_driven_import();
+    let policy = CapturePolicy::from_package(imported.package.native_graph().unwrap()).unwrap();
+
+    let report = policy.begin_observation().freeze();
+
+    assert_eq!(report.fidelity(), CaptureFidelity::Missing);
+    assert_eq!(report.observed_https_calls(), 0);
+    assert_eq!(report.partial_calls(), 0);
+    assert_eq!(report.unobservable_or_bypassed_calls(), 0);
+}
+
+#[test]
+fn compatibility_terminal_supplement_is_sealed_to_external_fidelity_and_lifecycle_evidence() {
+    let (_task, imported) = externally_driven_import();
+    let policy = CapturePolicy::from_package(imported.package.native_graph().unwrap()).unwrap();
+    let mut observation = policy.begin_observation();
+    observation
+        .record_observed_https(ArtifactDigest::from_bytes(b"bounded-redacted-exchange"))
+        .unwrap();
+
+    let supplement = observation.freeze().into_terminal_supplement();
+
+    assert_eq!(
+        supplement.fidelity(),
+        CompatibilityFidelity::ObservedProxy,
+        "the externally driven result contract has no native/exact fidelity variant"
+    );
+    assert_eq!(
+        supplement
+            .lifecycle_evidence(AttemptId::new("attempt-1").unwrap(), 0, None)
+            .kind,
+        EvidenceKind::Compatibility,
+        "compatibility facts remain lifecycle-only rather than verifier input"
+    );
 }
 
 #[test]
@@ -122,6 +160,7 @@ name = "example/external-driver"
 profile = "externally_driven"
 adapter_manifest = "adapters.toml"
 driver = "driver-adapter"
+external_driver_factory_id = "refuse"
 "#,
     )
     .unwrap();

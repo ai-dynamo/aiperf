@@ -10,7 +10,6 @@ use std::{
     path::Path,
 };
 
-use async_trait::async_trait;
 use aiperf_runtime::{
     engine::application::Application,
     eval::{
@@ -21,6 +20,7 @@ use aiperf_runtime::{
         StepExecutionResult,
     },
 };
+use async_trait::async_trait;
 use serde_json::json;
 
 static DOCKER_TIMEOUT_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -31,7 +31,7 @@ fn write_externally_driven_task(task_root: &Path) {
     fs::create_dir_all(task_root.join("tools")).unwrap();
     fs::write(
         task_root.join("task.toml"),
-        "schema_version = \"1.1\"\n[task]\nname = \"example/external-driver\"\n[native_graph]\nprofile = \"externally_driven\"\nadapter_manifest = \"adapters.toml\"\ndriver = \"driver-adapter\"\n",
+        "schema_version = \"1.1\"\n[task]\nname = \"example/external-driver\"\n[native_graph]\nprofile = \"externally_driven\"\nadapter_manifest = \"adapters.toml\"\ndriver = \"driver-adapter\"\nexternal_driver_factory_id = \"refuse\"\n",
     )
     .unwrap();
     fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
@@ -499,6 +499,46 @@ fn externally_driven_eval_reaches_compatibility_runner_preflight_without_model_r
     assert!(
         !error.to_string().contains("--model-runtime is required"),
         "external compatibility preflight must not require a Rust model runtime: {error:#}"
+    );
+}
+
+#[test]
+fn externally_driven_eval_rejects_an_unregistered_factory_before_runner_or_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("external-driver");
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    write_externally_driven_task(&task_root);
+    let task_toml = fs::read_to_string(task_root.join("task.toml")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        task_toml.replace(
+            "external_driver_factory_id = \"refuse\"",
+            "external_driver_factory_id = \"unregistered\"",
+        ),
+    )
+    .unwrap();
+    write_externally_driven_lifecycle(&lifecycle_path, &["tools/driver.sh"]);
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+    ])
+    .expect_err("an unregistered factory must refuse before the compatibility runner boundary");
+
+    assert!(
+        error
+            .to_string()
+            .contains("unknown external driver factory \"unregistered\""),
+        "the selected factory must fail closed before generic execution: {error:#}"
+    );
+    assert!(
+        !error
+            .to_string()
+            .contains("compatibility runner is not enabled"),
+        "the generic compatibility runner must not be reached: {error:#}"
     );
 }
 

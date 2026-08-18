@@ -22,6 +22,20 @@ pub enum CaptureFidelity {
     Missing,
 }
 
+/// Fidelity that an externally driven terminal result may report.
+///
+/// This intentionally has no NativeGraph or exact variant: compatibility capture observes an
+/// opaque driver but never owns its model or graph decisions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompatibilityFidelity {
+    /// A bounded proxy observed declared HTTP(S) traffic without controlling it.
+    ObservedProxy,
+    /// Some declared calls were only partially observable.
+    Partial,
+    /// No call was observed or at least one call bypassed observation.
+    Missing,
+}
+
 /// Immutable capture authority derived solely from an imported external package plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapturePolicy {
@@ -132,7 +146,10 @@ impl CompatibilityObservation {
         self.hasher
             .update(self.unobservable_or_bypassed_calls.to_le_bytes().as_slice());
         let digest = ArtifactDigest::from_bytes(self.hasher.finalize().as_bytes());
-        let fidelity = if self.unobservable_or_bypassed_calls != 0 {
+        let has_no_observations = self.observed_https_calls == 0
+            && self.partial_calls == 0
+            && self.unobservable_or_bypassed_calls == 0;
+        let fidelity = if has_no_observations || self.unobservable_or_bypassed_calls != 0 {
             CaptureFidelity::Missing
         } else if self.partial_calls != 0 {
             CaptureFidelity::Partial
@@ -206,6 +223,24 @@ impl CompatibilityObservationReport {
         &self.digest
     }
 
+    /// Seals this package-bound report for an externally driven terminal result.
+    ///
+    /// The conversion is deliberately one way: callers can retain or emit only the bounded
+    /// report, never a raw capture or a NativeGraph/exact compatibility classification.
+    pub fn into_terminal_supplement(self) -> CompatibilityTerminalSupplement {
+        let fidelity = match self.fidelity {
+            CaptureFidelity::ObservedProxy => CompatibilityFidelity::ObservedProxy,
+            CaptureFidelity::Partial => CompatibilityFidelity::Partial,
+            CaptureFidelity::Missing | CaptureFidelity::NativeControlled => {
+                CompatibilityFidelity::Missing
+            }
+        };
+        CompatibilityTerminalSupplement {
+            report: self,
+            fidelity,
+        }
+    }
+
     /// Emits the report only as one ordered lifecycle fact, never verifier input evidence.
     pub fn lifecycle_evidence(
         &self,
@@ -220,6 +255,40 @@ impl CompatibilityObservationReport {
             self.digest.clone(),
             parent,
         )
+    }
+}
+
+/// Sealed bounded compatibility facts attachable only to an externally driven terminal result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompatibilityTerminalSupplement {
+    report: CompatibilityObservationReport,
+    fidelity: CompatibilityFidelity,
+}
+
+impl CompatibilityTerminalSupplement {
+    /// Returns the only fidelity classification an externally driven result may expose.
+    pub const fn fidelity(&self) -> CompatibilityFidelity {
+        self.fidelity
+    }
+
+    /// Borrows the immutable bounded observation report.
+    pub fn report(&self) -> &CompatibilityObservationReport {
+        &self.report
+    }
+
+    /// Returns the sealed bounded compatibility summary identity.
+    pub fn digest(&self) -> &ArtifactDigest {
+        self.report.digest()
+    }
+
+    /// Emits compatibility facts only as one ordered lifecycle event.
+    pub fn lifecycle_evidence(
+        &self,
+        attempt: AttemptId,
+        sequence: u64,
+        parent: Option<ArtifactDigest>,
+    ) -> EvidenceEvent {
+        self.report.lifecycle_evidence(attempt, sequence, parent)
     }
 }
 
