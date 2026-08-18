@@ -48,10 +48,13 @@ use crate::graph::tools::{ToolDispatchContext, ToolDispatchRequest, ToolDispatch
 use crate::graph::wire::OpenAiChatMessage;
 use crate::metrics::{NativeMetricsObserver, NativeResponseMetadata, RequestMetricMetadata};
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, Phase};
-use crate::multiturn::InputTokenCounter;
+use crate::multiturn::{InputTokenCounter, TurnDataPolicy};
 use crate::rng::{RngRoot, namespace};
 use crate::timing::{BernoulliFixedDelay, SlotPool};
-use crate::transport::core::{Dispatcher, PreparedEndpointBinding, PreparedTurn, Request};
+use crate::transport::core::{
+    BoundedDecisionMode, BoundedDecisionReader, Dispatcher, PreparedEndpointBinding, PreparedTurn,
+    Request,
+};
 use crate::transport::http::{PreparedEndpointReference, TransportSinkConfig};
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
@@ -543,6 +546,126 @@ struct PreparedRunnerGraphEndpointRuntime {
     profiles: BTreeMap<String, PreparedGraphProfileRuntime>,
     default_profile_id: Option<String>,
     transport_label: &'static str,
+}
+
+/// Worker-local prepared-profile transport for one selected NativeGraph policy model.
+///
+/// This is deliberately narrower than [`EngineGraphSink`]: a rollout policy decision uses the
+/// same prepared endpoint and transport construction, but can expose only the host-owned bounded
+/// reader. It has no graph record, event sink, or raw-response retention path.
+pub(crate) struct NativeGraphPolicyEndpointRuntime {
+    endpoint_runtime: Rc<dyn GraphEndpointRuntime>,
+    profile_id: String,
+    model: String,
+    is_streaming: bool,
+    next_session_num: u64,
+}
+
+impl NativeGraphPolicyEndpointRuntime {
+    /// Prepares exactly one imported endpoint profile through the graph worker seam.
+    pub(crate) fn new(
+        registry: EndpointRegistry,
+        profile: ValidatedEndpointProfileV2,
+        input_token_counter: Arc<dyn InputTokenCounter>,
+        transport: Arc<dyn NativeTransportExecution>,
+        model: String,
+        raw_enabled: bool,
+    ) -> Result<Self> {
+        let profile_id = profile.profile_id.clone();
+        let is_streaming = profile.config.streaming;
+        let mut token_counters = BTreeMap::new();
+        token_counters.insert(profile_id.clone(), input_token_counter);
+        let mut transports = BTreeMap::new();
+        transports.insert(profile_id.clone(), transport);
+        let factory = PreparedRunnerGraphEndpointRuntimeFactory::new_with_profile_bindings(
+            registry,
+            Arc::new(vec![profile]),
+            token_counters,
+            transports,
+            Some(profile_id.clone()),
+            None,
+            raw_enabled,
+        )?;
+        let clock: Rc<dyn Clock> = RealClock::new();
+        let run_origin_ns = clock.now_ns();
+        let endpoint_runtime = factory.prepare_worker(clock, run_origin_ns, &model)?;
+        Ok(Self {
+            endpoint_runtime,
+            profile_id,
+            model,
+            is_streaming,
+            next_session_num: 0,
+        })
+    }
+
+    /// Dispatches one restricted, bounded policy decision without creating a graph record.
+    pub(crate) async fn open_bounded_decision(
+        &mut self,
+        turn: Turn,
+        max_output_tokens: usize,
+        max_decision_bytes: usize,
+    ) -> Result<BoundedDecisionReader> {
+        let session_num = self.next_session_num;
+        self.next_session_num = session_num
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("NativeGraph policy session ordinal overflow"))?;
+        let trace_id = format!("native-graph-policy:{}:{session_num}", self.profile_id);
+        let dispatch = self.endpoint_runtime.materialize(GraphEndpointRequest {
+            selector: Some(self.profile_id.clone()),
+            model: self.model.clone(),
+            turn,
+            streaming: self.is_streaming,
+            authored_input_tokens: 0,
+            max_output_tokens,
+            extra_headers: BTreeMap::new(),
+            parameters: BTreeMap::new(),
+            trace_id: trace_id.clone(),
+            is_final_turn: true,
+            cancel_after_ns: None,
+            session_num,
+            phase: Phase::Profiling,
+            known_image_count: Some(0),
+        })?;
+        let GraphEndpointDispatch {
+            transport,
+            request,
+            endpoint,
+            ..
+        } = dispatch;
+        let observer = NativeGraphPolicyDecisionObserver;
+        transport
+            .dispatch_bounded_decision(
+                PreparedTurn {
+                    runtime_session_id: trace_id,
+                    request,
+                    model: self.model.clone(),
+                    endpoint,
+                    endpoint_aware: true,
+                    data_policy: TurnDataPolicy::restricted_transient(),
+                    deferred: None,
+                },
+                &observer,
+                &|_| {},
+                BoundedDecisionMode::new(max_decision_bytes)?,
+            )
+            .await
+    }
+}
+
+/// Deliberately non-retaining request observer for one live policy decision.
+///
+/// The selected binding still configures the prepared transport, but the decision path must not
+/// create a response record or let prompt, observation, or raw output escape into evidence.
+struct NativeGraphPolicyDecisionObserver;
+
+impl RequestObserver for NativeGraphPolicyDecisionObserver {
+    fn on_arrival(&self, _: Uuid, _: f64, _: usize, _: usize) {}
+
+    fn on_admit(&self, _: Uuid, _: f64, _: usize) {}
+
+    fn on_token(&self, _: Uuid, _: f64) {}
+
+    fn on_terminal(&self, _: Uuid, _: ReplayTerminalStatus) {}
 }
 
 /// Bounded transport facts emitted by one imported NativeGraph trace.

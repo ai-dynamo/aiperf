@@ -6,23 +6,27 @@
 use std::{
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
+    io::Read,
     rc::Rc,
     sync::Arc,
 };
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use serde::Deserialize;
-use serde_json::value::RawValue;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, value::RawValue};
 use url::Url;
 
 use crate::{
-    endpoints::RawEndpointConfig,
+    endpoints::{RawEndpointConfig, Turn},
     engine::registry::ValidatedEndpointProfileV2,
     engine::{
         application::Application,
         execute::load_tokenizer,
-        graph_execution::{NativeGraphTransportEvidence, execute_native_graph_trace},
+        graph_execution::{
+            NativeGraphPolicyEndpointRuntime, NativeGraphTransportEvidence,
+            execute_native_graph_trace,
+        },
         record_lane::EvalNodeRecordArtifact,
         registry::{NativeTransportExecution, WorkloadRequirements},
     },
@@ -259,6 +263,74 @@ impl ResolvedModelBindingSet {
     /// Iterates bindings in canonical package-binding identifier order.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&ModelBindingId, &ResolvedModelBinding)> {
         self.bindings.iter()
+    }
+
+    /// Prepares the exact package-selected model binding for one bounded live policy decision.
+    ///
+    /// The reader is assembled through the application's frozen endpoint and transport seams;
+    /// this method never constructs an evaluation-local HTTP or gRPC client. Only the selected
+    /// binding is prepared, so an unrelated declared binding cannot become an implicit fallback.
+    pub fn engine_selected_policy_runtime(
+        &self,
+        application: &Application,
+        selected: &ModelBindingId,
+    ) -> Result<Box<dyn NativeGraphPolicyModelRuntime>, ModelRuntimeError> {
+        let binding = self.bindings.get(selected).ok_or_else(|| {
+            ModelRuntimeError::SelectedBindingMissing(selected.as_str().to_owned())
+        })?;
+        let context = application
+            .native_graph_context(vec![binding.profile.clone()])
+            .map_err(|error| ModelRuntimeError::Application(error.to_string()))?;
+        let input_token_counter = binding
+            .tokenizer
+            .input_token_counter(&binding.model)
+            .map_err(|reason| ModelRuntimeError::Tokenizer {
+                binding: selected.as_str().to_owned(),
+                reason,
+            })?;
+        let factory = context
+            .product_registry()
+            .transport_factory(&binding.transport_id)
+            .ok_or_else(|| ModelRuntimeError::UnknownTransport {
+                binding: selected.as_str().to_owned(),
+                transport: binding.transport_id.clone(),
+            })?;
+        let config = RawValue::from_string("{}".to_owned()).map_err(|error| {
+            ModelRuntimeError::Transport {
+                binding: selected.as_str().to_owned(),
+                reason: error.to_string(),
+            }
+        })?;
+        let config = factory
+            .validate(&config, &WorkloadRequirements::default())
+            .map_err(|error| ModelRuntimeError::Transport {
+                binding: selected.as_str().to_owned(),
+                reason: error.to_string(),
+            })?;
+        let transport = factory
+            .native_execution(config.as_ref(), &context)
+            .map_err(|error| ModelRuntimeError::Transport {
+                binding: selected.as_str().to_owned(),
+                reason: error.to_string(),
+            })?
+            .ok_or_else(|| ModelRuntimeError::NoNativeTransport {
+                binding: selected.as_str().to_owned(),
+                transport: binding.transport_id.clone(),
+            })?;
+        let endpoint = NativeGraphPolicyEndpointRuntime::new(
+            context.product_registry().endpoints().clone(),
+            binding.profile.clone(),
+            input_token_counter,
+            transport,
+            binding.model.clone(),
+            binding.capture == ModelCapturePolicy::RedactedRaw,
+        )
+        .map_err(|error| ModelRuntimeError::Application(error.to_string()))?;
+        Ok(Box::new(EngineSelectedNativeGraphPolicyModelRuntime {
+            binding: selected.clone(),
+            generation: binding.generation.clone(),
+            endpoint,
+        }))
     }
 
     fn engine_inputs(
@@ -515,6 +587,138 @@ pub trait NativeGraphPolicyModelRuntime {
         &mut self,
         request: &LiveAgentPolicyDecisionRequest,
     ) -> Result<Box<dyn LiveAgentPolicyDecisionReader>, NativeGraphModelDecisionError>;
+}
+
+/// Engine-backed runtime for one immutable selected NativeGraph model binding.
+///
+/// The endpoint runtime is prepared from the application's already frozen graph profile path and
+/// exposes only a [`LiveAgentPolicyDecisionReader`]. It deliberately owns no graph evidence or
+/// response-capture sink.
+struct EngineSelectedNativeGraphPolicyModelRuntime {
+    binding: ModelBindingId,
+    generation: GenerationDefaults,
+    endpoint: NativeGraphPolicyEndpointRuntime,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphPolicyModelRuntime for EngineSelectedNativeGraphPolicyModelRuntime {
+    fn binding(&self) -> &ModelBindingId {
+        &self.binding
+    }
+
+    async fn open_decision(
+        &mut self,
+        request: &LiveAgentPolicyDecisionRequest,
+    ) -> Result<Box<dyn LiveAgentPolicyDecisionReader>, NativeGraphModelDecisionError> {
+        let turn = policy_decision_turn(request, &self.generation)?;
+        let max_output_tokens = self
+            .generation
+            .max_tokens
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| NativeGraphModelDecisionError::new("policy max_tokens exceeds usize"))?
+            .unwrap_or(256);
+        let reader = self
+            .endpoint
+            .open_bounded_decision(turn, max_output_tokens, request.max_decision_bytes())
+            .await
+            .map_err(|error| NativeGraphModelDecisionError::new(error.to_string()))?;
+        Ok(Box::new(EngineNativeGraphPolicyDecisionReader { reader }))
+    }
+}
+
+/// Reader wrapper that prevents the engine transport from returning an owned policy frame.
+struct EngineNativeGraphPolicyDecisionReader {
+    reader: crate::transport::core::BoundedDecisionReader,
+}
+
+#[async_trait(?Send)]
+impl LiveAgentPolicyDecisionReader for EngineNativeGraphPolicyDecisionReader {
+    async fn read(&mut self, destination: &mut [u8]) -> Result<usize, AgentLoopError> {
+        self.reader.read(destination).map_err(|error| {
+            AgentLoopError::new(format!("reading bounded policy decision: {error}"))
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct PolicyDecisionMessage<'a> {
+    role: &'static str,
+    content: &'a str,
+}
+
+fn policy_decision_turn(
+    request: &LiveAgentPolicyDecisionRequest,
+    generation: &GenerationDefaults,
+) -> Result<Turn, NativeGraphModelDecisionError> {
+    let prompt = std::str::from_utf8(request.prompt())
+        .map_err(|_| NativeGraphModelDecisionError::new("imported policy prompt is not UTF-8"))?;
+    let observation = std::str::from_utf8(request.observation()).map_err(|_| {
+        NativeGraphModelDecisionError::new("frozen environment observation is not UTF-8")
+    })?;
+    let messages = [
+        policy_decision_message("system", prompt)?,
+        policy_decision_message("user", observation)?,
+    ];
+    let extra_body = generation_body(generation)?;
+    Ok(Turn {
+        max_tokens: generation.max_tokens,
+        lowered: Some(messages.into_iter().collect()),
+        extra_body: (!extra_body.is_empty()).then_some(extra_body),
+        ..Turn::default()
+    })
+}
+
+fn policy_decision_message(
+    role: &'static str,
+    content: &str,
+) -> Result<Bytes, NativeGraphModelDecisionError> {
+    serde_json::to_vec(&PolicyDecisionMessage { role, content })
+        .map(Bytes::from)
+        .map_err(|_| NativeGraphModelDecisionError::new("serializing sealed policy prompt facts"))
+}
+
+fn generation_body(
+    generation: &GenerationDefaults,
+) -> Result<Map<String, Value>, NativeGraphModelDecisionError> {
+    let mut body = Map::new();
+    if let Some(value) = generation.min_tokens {
+        body.insert("min_tokens".to_owned(), Value::from(value));
+    }
+    if let Some(value) = generation.temperature {
+        insert_finite_generation(&mut body, "temperature", value)?;
+    }
+    if let Some(value) = generation.top_p {
+        insert_finite_generation(&mut body, "top_p", value)?;
+    }
+    if let Some(value) = generation.top_k {
+        body.insert("top_k".to_owned(), Value::from(value));
+    }
+    if let Some(value) = generation.seed {
+        body.insert("seed".to_owned(), Value::from(value));
+    }
+    if let Some(value) = generation.presence_penalty {
+        insert_finite_generation(&mut body, "presence_penalty", value)?;
+    }
+    if let Some(value) = generation.frequency_penalty {
+        insert_finite_generation(&mut body, "frequency_penalty", value)?;
+    }
+    if let Some(value) = generation.repetition_penalty {
+        insert_finite_generation(&mut body, "repetition_penalty", value)?;
+    }
+    Ok(body)
+}
+
+fn insert_finite_generation(
+    body: &mut Map<String, Value>,
+    field: &'static str,
+    value: f64,
+) -> Result<(), NativeGraphModelDecisionError> {
+    let value = serde_json::Number::from_f64(value).ok_or_else(|| {
+        NativeGraphModelDecisionError::new("imported policy generation value is not finite")
+    })?;
+    body.insert(field.to_owned(), Value::Number(value));
+    Ok(())
 }
 
 /// Opaque authority binding prepared live-rollout facts to one immutable environment binding.
@@ -1007,6 +1211,8 @@ pub enum ModelRuntimeError {
     UnsupportedVersion(u32),
     /// The package declared a duplicate binding identifier.
     DuplicateBinding(String),
+    /// The live rollout selected a binding absent from the immutable resolved package set.
+    SelectedBindingMissing(String),
     /// Endpoint lookup or preparation failed.
     Endpoint { binding: String, reason: String },
     /// A package transport identifier is not registered by this binary.
@@ -1061,6 +1267,10 @@ impl Display for ModelRuntimeError {
             Self::DuplicateBinding(binding) => {
                 write!(formatter, "duplicate NativeGraph model binding {binding:?}")
             }
+            Self::SelectedBindingMissing(binding) => write!(
+                formatter,
+                "NativeGraph selected model binding {binding:?} is unavailable after immutable resolution"
+            ),
             Self::Endpoint { binding, reason } => {
                 write!(
                     formatter,

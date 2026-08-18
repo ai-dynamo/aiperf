@@ -9,20 +9,23 @@ use std::{
     fs,
     num::NonZeroUsize,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use aiperf_runtime::{
+    engine::application::Application,
     eval::{
         AdapterProtocolConfig, AdapterProtocolFactory, AdapterRuntimeFactory, AdapterSpawnRequest,
         AdapterSpawner, AdapterSupervisionError, AgentVariantRef, ArtifactDigest, ArtifactQuota,
-        EpisodeArtifactStore, HarborImporter, HarborSource, ModelBindingId, ModelIdentity,
-        MoveV1ActionEncoderFactory, NativeGraphAdapterRuntimeProvider,
-        NativeGraphAdapterRuntimeResolution, NativeGraphEnvironmentStepperFactory,
-        NativeGraphFactoryError, NativeGraphLiveRolloutCoordinator, NativeGraphModelDecisionError,
-        NativeGraphPolicyModelRuntime, NativeGraphSuiteManifest, NativeSourceAcquirer,
-        PolicyIdentity, ResourceLeaseRequest, RuntimeIdentity, StrictAdapterProtocolFactory,
-        SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, bind_native_graph_environment_stepper,
+        CurrentNativeGraphModelBindingResolver, EpisodeArtifactStore, HarborImporter, HarborSource,
+        ModelBindingId, ModelIdentity, ModelRuntimeConfig, MoveV1ActionEncoderFactory,
+        NativeGraphAdapterRuntimeProvider, NativeGraphAdapterRuntimeResolution,
+        NativeGraphEnvironmentStepperFactory, NativeGraphFactoryError,
+        NativeGraphLiveRolloutCoordinator, NativeGraphModelBindingResolver,
+        NativeGraphModelDecisionError, NativeGraphPolicyModelRuntime, NativeGraphSuiteManifest,
+        NativeSourceAcquirer, PolicyIdentity, ResourceLeaseRequest, RuntimeIdentity,
+        StrictAdapterProtocolFactory, SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec,
+        bind_native_graph_environment_stepper,
     },
     graph::{
         agent::{LiveAgentPolicyDecisionReader, LiveAgentPolicyDecisionRequest},
@@ -34,6 +37,120 @@ use aiperf_runtime::{
     },
 };
 use async_trait::async_trait;
+use axum::{Json, Router, extract::State, http::header, routing::post};
+
+struct NoModelSecrets;
+
+impl aiperf_runtime::eval::SecretProvider for NoModelSecrets {
+    fn resolve(
+        &self,
+        name: &aiperf_runtime::eval::EnvName,
+    ) -> Result<aiperf_runtime::eval::SecretValue, aiperf_runtime::eval::EvalExecutionError> {
+        Err(aiperf_runtime::eval::EvalExecutionError::MissingSecret(
+            name.clone(),
+        ))
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn engine_selected_runtime_uses_exact_binding_generation_and_bounded_reader() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let endpoint = policy_model_endpoint(
+        Arc::clone(&requests),
+        r#"{"kind":"move","direction":"north"}"#,
+    )
+    .await;
+    let imported = import_rollout_fixture_at(&endpoint, 35);
+    let application = Application::stock(format!("blake3:{}", "2".repeat(64)))
+        .expect("stock application composes the selected product seams");
+    let native = imported
+        .package
+        .native_graph()
+        .expect("fixture contains the imported NativeGraph package");
+    let runtime: ModelRuntimeConfig =
+        toml::from_str("version = 1\n").expect("empty runtime secret mapping is valid");
+    let bindings = CurrentNativeGraphModelBindingResolver::from_registry(
+        application.product_registry().clone(),
+    )
+    .resolve(native.model_bindings(), &runtime, &NoModelSecrets)
+    .expect("the package model bindings resolve through the frozen application");
+    let selected = native
+        .rollout()
+        .expect("fixture has a rollout policy")
+        .policy()
+        .model_binding_id();
+    let engine_runtime = bindings
+        .engine_selected_policy_runtime(&application, selected)
+        .expect("the exact imported binding prepares a bounded engine policy reader");
+    let mut coordinator = selected_coordinator(&imported, engine_runtime)
+        .await
+        .expect("the engine runtime keeps the imported model selector");
+    let root = tempfile::tempdir().expect("artifact-store root");
+    let mut store = EpisodeArtifactStore::new(root.path(), quota()).expect("store opens");
+    let observation = freeze(&mut store, br#"{"position":0}"#);
+
+    let decision = tokio::task::LocalSet::new()
+        .run_until(async {
+            coordinator
+                .decide_policy_decision(&observation, &mut store)
+                .await
+        })
+        .await
+        .expect("an exact-limit engine response reaches the bounded policy reader");
+
+    assert!(format!("{decision:?}").contains("move_v1"));
+    let requests = requests
+        .lock()
+        .expect("test request capture is not poisoned");
+    assert_eq!(requests.len(), 1, "only the selected binding dispatches");
+    assert_eq!(requests[0]["model"], "example-model");
+    assert_eq!(requests[0]["max_completion_tokens"], 17);
+    assert_eq!(requests[0]["temperature"], 0.37);
+    assert!(
+        requests[0].get("response").is_none(),
+        "bounded policy capture must not retain a response record"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn engine_selected_runtime_rejects_an_unresolved_selector_before_dispatch() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let endpoint = policy_model_endpoint(
+        Arc::clone(&requests),
+        r#"{"kind":"move","direction":"north"}"#,
+    )
+    .await;
+    let imported = import_rollout_fixture_at(&endpoint, 35);
+    let application = Application::stock(format!("blake3:{}", "3".repeat(64)))
+        .expect("stock application composes the selected product seams");
+    let native = imported
+        .package
+        .native_graph()
+        .expect("fixture contains the imported NativeGraph package");
+    let runtime: ModelRuntimeConfig =
+        toml::from_str("version = 1\n").expect("empty runtime secret mapping is valid");
+    let bindings = CurrentNativeGraphModelBindingResolver::from_registry(
+        application.product_registry().clone(),
+    )
+    .resolve(native.model_bindings(), &runtime, &NoModelSecrets)
+    .expect("the package model bindings resolve through the frozen application");
+    let foreign: ModelBindingId =
+        serde_json::from_str("\"foreign\"").expect("fixture selector is canonical");
+
+    let error = match bindings.engine_selected_policy_runtime(&application, &foreign) {
+        Ok(_) => panic!("an unresolved package selector must fail before environment provisioning"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("selected model binding"));
+    assert!(
+        requests
+            .lock()
+            .expect("test request capture is not poisoned")
+            .is_empty(),
+        "selector preflight cannot reach the selected model transport"
+    );
+}
 
 #[tokio::test]
 async fn reset_observation_dispatches_exactly_one_selected_model_call_before_action_admission() {
@@ -500,6 +617,66 @@ const fn quota() -> ArtifactQuota {
 }
 
 fn import_rollout_fixture() -> aiperf_runtime::eval::ImportedTask {
+    import_rollout_fixture_at("https://provider.example/v1", 256)
+}
+
+async fn policy_model_endpoint(
+    requests: Arc<Mutex<Vec<serde_json::Value>>>,
+    decision: &'static str,
+) -> String {
+    #[derive(Clone)]
+    struct PolicyModelState {
+        requests: Arc<Mutex<Vec<serde_json::Value>>>,
+        decision: &'static str,
+    }
+
+    async fn completion(
+        State(state): State<PolicyModelState>,
+        Json(request): Json<serde_json::Value>,
+    ) -> ([(axum::http::HeaderName, &'static str); 1], String) {
+        state
+            .requests
+            .lock()
+            .expect("test request capture is not poisoned")
+            .push(request);
+        let frame = serde_json::json!({
+            "id": "native-graph-policy-runtime",
+            "object": "chat.completion.chunk",
+            "choices": [{
+                "index": 0,
+                "delta": {"content": state.decision},
+                "finish_reason": null
+            }]
+        });
+        (
+            [(header::CONTENT_TYPE, "text/event-stream")],
+            format!("data: {frame}\n\ndata: [DONE]\n\n"),
+        )
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback policy model endpoint");
+    let address = listener
+        .local_addr()
+        .expect("read loopback policy model endpoint address");
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/v1/chat/completions", post(completion))
+                .with_state(PolicyModelState { requests, decision }),
+        )
+        .await
+        .expect("serve loopback policy model endpoint");
+    });
+    format!("http://{address}")
+}
+
+fn import_rollout_fixture_at(
+    endpoint: &str,
+    max_decision_bytes: usize,
+) -> aiperf_runtime::eval::ImportedTask {
     let task = tempfile::tempdir().expect("temporary task root");
     fs::create_dir_all(task.path().join("environment")).expect("task environment directory");
     fs::create_dir_all(task.path().join("tests")).expect("task tests directory");
@@ -540,16 +717,17 @@ adapter_manifest = "adapters.toml"
     .expect("graph source");
     fs::write(
         task.path().join("models.toml"),
-        r#"[[model_bindings]]
+        format!(
+            r#"[[model_bindings]]
 id = "primary"
 endpoint_profile_id = "provider-default"
 endpoint_factory_id = "chat"
 transport_factory_id = "http"
 model = "example-model"
-urls = ["https://provider.example/v1"]
-streaming = true
+urls = ["{endpoint}"]
+ streaming = true
 request_timeout_ms = 30000
-capture = "none"
+capture = "redacted_raw"
 
 [model_bindings.tokenizer]
 type = "local"
@@ -558,7 +736,10 @@ revision = "main"
 apply_chat_template = false
 
 [model_bindings.generation]
+max_tokens = 17
+temperature = 0.37
 "#,
+        ),
     )
     .expect("model bindings");
     fs::write(
@@ -584,7 +765,8 @@ executable = "tools/environment.sh"
     .expect("policy prompt source");
     fs::write(
         task.path().join("rollout.toml"),
-        r#"[environment]
+        format!(
+            r#"[environment]
 adapter_id = "environment-adapter"
 protocol_factory_id = "strict_jsonl"
 runtime_provider_id = "strict_supervised"
@@ -615,7 +797,7 @@ max_download_handles = 4
 environment = "counter-v1"
 model_binding_id = "primary"
 prompt_source = "rollout/policy.json"
-max_decision_bytes = 256
+max_decision_bytes = {max_decision_bytes}
 horizon = 4
 gamma = 0.75
 
@@ -624,6 +806,7 @@ max_environment_bytes = 256
 max_horizon = 8
 max_prompt_bytes = 256
 "#,
+        ),
     )
     .expect("rollout manifest");
     let source = HarborSource::local(task.path().to_string_lossy())
