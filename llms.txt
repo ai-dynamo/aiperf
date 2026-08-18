@@ -540,13 +540,12 @@ Transports:
   pre-serialized responses blob) that keeps `AioHttpTransport` an equal
   conforming implementation of the existing plugin seam, and the
   `cp311-abi3-<platform>` wheel retag it forces.
-- [`docs/specs/websocket-transport.md`](docs/specs/websocket-transport.md) — built reusable
-  content, SSE, bidirectional message decoding, measurement, placement, and
-  registration prerequisites plus the planned Clock-injected WebSocket transport:
-  Responses WS and separate Realtime, pre-dispatch message lowering, bounded
-  read/write/cancellation progress, resource and fallback policy, compatibility-
-  named post-flush application-event lag estimators, Config-v2 validation, and
-  an interleaved-stream validity boundary.
+- [`docs/specs/websocket-transport.md`](docs/specs/websocket-transport.md) — native
+  Clock-injected WebSocket transport: Responses WS and separate Realtime,
+  pre-dispatch message lowering, bounded worker-local read/write/control progress,
+  pooled connection admission and rotation, proxy/TLS/fallback policy,
+  compatibility-named post-flush application-event lag estimators, Config-v2
+  validation, and an interleaved-stream validity boundary.
 - [`docs/specs/websocket-mock-server.md`](docs/specs/websocket-mock-server.md) — planned
   deterministic WS/WSS target for the WebSocket transport: typed serialized-turn
   and duplex-Realtime scenarios, analytic application-event timing,
@@ -670,8 +669,9 @@ Measurement and output:
   column-store accumulator, the metric catalog, sweep curves, and the typed
   report; exact vs sketch modes.
 - [`docs/specs/eval-node-metrics-artifact.md`](docs/specs/eval-node-metrics-artifact.md)
-  — planned host-owned NativeGraph eval JSONL sidecar that retains canonical
-  per-model-node metrics while preserving reward JSON and package trust boundaries.
+  — built host-owned `aiperf eval --records-output` JSONL sidecar that streams one
+  canonical record per completed NativeGraph model node while preserving reward
+  JSON and package trust boundaries.
 - [`docs/specs/definition-registry.md`](docs/specs/definition-registry.md) — built
   single shared definition layer: a lookup-only `Definition` (header, units,
   `larger_is_better`, `value_type`, group, order) for metrics and dataset-analysis
