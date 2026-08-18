@@ -16,11 +16,12 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use crate::eval::{
-    AdapterEnvelope, AdapterMessage, AdapterProtocolConfig, AdapterRole, AdapterRuntimeFactory,
-    AdapterSpawnRequest, AdapterSupervisionError, ArtifactDigest, ArtifactError, CancelReason,
-    EnvironmentTransitionRecord, EpisodeArtifactStore, FrozenArtifact, FrozenArtifactReference,
-    HostEnvelope, HostMessage, PROTOCOL_VERSION, ProtocolCapability, RlEvaluationPolicy,
-    RlRolloutError, SupervisedAdapter,
+    ActionAdmissionAuthority, ActionEncoderFactoryId, AdapterEnvelope, AdapterMessage,
+    AdapterProtocolConfig, AdapterRole, AdapterRuntimeFactory, AdapterSpawnRequest,
+    AdapterSupervisionError, AdmittedEnvironmentAction, ArtifactDigest, ArtifactError,
+    BoundNativeGraphActionEncoder, CancelReason, EnvironmentTransitionRecord, EpisodeArtifactStore,
+    FrozenArtifact, FrozenArtifactReference, HostEnvelope, HostMessage, PROTOCOL_VERSION,
+    ProtocolCapability, RlEvaluationPolicy, RlRolloutError, SupervisedAdapter,
 };
 
 /// Immutable host request for the initial environment observation.
@@ -41,18 +42,35 @@ impl EnvironmentResetRequest {
 }
 
 /// Immutable host request for one environment transition.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug)]
 pub struct EnvironmentStepRequest {
     operation: String,
-    action_ref: FrozenArtifactReference,
+    action: EnvironmentStepAction,
+}
+
+#[derive(Debug)]
+enum EnvironmentStepAction {
+    Legacy(FrozenArtifactReference),
+    Admitted(AdmittedEnvironmentAction),
 }
 
 impl EnvironmentStepRequest {
-    /// Creates one Rust-authorized environment action.
+    /// Creates a legacy caller-owned action request.
+    ///
+    /// A package-selected stepper rejects this form before dispatch; its actions must use
+    /// [`Self::admitted`]. The constructor remains for existing non-package integrations.
     pub fn new(operation: impl Into<String>, action_ref: FrozenArtifactReference) -> Self {
         Self {
             operation: operation.into(),
-            action_ref,
+            action: EnvironmentStepAction::Legacy(action_ref),
+        }
+    }
+
+    /// Creates the only request form a package-selected stepper may dispatch.
+    pub fn admitted(operation: impl Into<String>, action: AdmittedEnvironmentAction) -> Self {
+        Self {
+            operation: operation.into(),
+            action: EnvironmentStepAction::Admitted(action),
         }
     }
 }
@@ -167,6 +185,13 @@ pub struct EnvironmentStepperBinding {
     span: String,
     horizon: u32,
     artifacts: EnvironmentArtifactBindings,
+    selected_action_encoder: Option<SelectedActionEncoder>,
+}
+
+#[derive(Clone, Debug)]
+struct SelectedActionEncoder {
+    id: ActionEncoderFactoryId,
+    authority: ActionAdmissionAuthority,
 }
 
 impl EnvironmentStepperBinding {
@@ -196,7 +221,17 @@ impl EnvironmentStepperBinding {
             span: span.into(),
             horizon: policy.horizon(),
             artifacts,
+            selected_action_encoder: None,
         })
+    }
+
+    /// Pins one package-selected action encoder to this worker-local stepper.
+    pub fn with_selected_action_encoder(mut self, encoder: &BoundNativeGraphActionEncoder) -> Self {
+        self.selected_action_encoder = Some(SelectedActionEncoder {
+            id: encoder.id().clone(),
+            authority: encoder.authority(),
+        });
+        self
     }
 }
 
@@ -301,6 +336,20 @@ struct SupervisedEnvironmentStepper {
     cleanup: CleanupState,
 }
 
+enum EnvironmentInput<'a> {
+    Declared(&'a FrozenArtifactReference),
+    Admitted(&'a AdmittedEnvironmentAction),
+}
+
+impl EnvironmentInput<'_> {
+    fn reference(&self) -> &FrozenArtifactReference {
+        match self {
+            Self::Declared(reference) => reference,
+            Self::Admitted(action) => action.reference(),
+        }
+    }
+}
+
 /// Persistent supervision-cleanup ownership for one environment episode.
 #[derive(Clone, Copy)]
 enum CleanupState {
@@ -380,40 +429,46 @@ impl SupervisedEnvironmentStepper {
         &mut self,
         operation: String,
         message: HostMessage,
-        input: &FrozenArtifactReference,
+        input: EnvironmentInput<'_>,
     ) -> Result<AdapterEnvelope, EnvironmentStepperError> {
         if self.is_invalidated {
             return self.refuse_invalidated().await;
         }
         if !self.operations.insert(operation.clone()) {
             return self
-                .invalidate(
+                .reject_undispatched_input(
+                    input,
                     CancelReason::IntegrityViolation,
                     EnvironmentStepperError::OperationReused,
                 )
                 .await;
         }
+        if matches!(&input, EnvironmentInput::Admitted(_)) {
+            let validation = {
+                let artifacts = self.artifacts.borrow();
+                artifacts.validate_reference(input.reference())
+            };
+            if let Err(error) = validation {
+                return self
+                    .reject_undispatched_input(
+                        input,
+                        CancelReason::IntegrityViolation,
+                        EnvironmentStepperError::Artifact(error),
+                    )
+                    .await;
+            }
+        }
         let envelope = match self.send_host(&operation, message).await {
             Ok(envelope) => envelope,
             Err(error) => {
-                return self.invalidate(CancelReason::OperationFailure, error).await;
+                return self
+                    .reject_undispatched_input(input, CancelReason::OperationFailure, error)
+                    .await;
             }
         };
-        if !self.binding.artifacts.consume_input(input) {
+        if let Err(error) = self.consume_dispatched_input(input) {
             return self
-                .invalidate(
-                    CancelReason::IntegrityViolation,
-                    EnvironmentStepperError::UndeclaredInput,
-                )
-                .await;
-        }
-        let revocation = self.artifacts.borrow_mut().revoke_reference(input);
-        if let Err(error) = revocation {
-            return self
-                .invalidate(
-                    CancelReason::IntegrityViolation,
-                    EnvironmentStepperError::Artifact(error),
-                )
+                .invalidate(CancelReason::IntegrityViolation, error)
                 .await;
         }
         loop {
@@ -447,6 +502,44 @@ impl SupervisedEnvironmentStepper {
             }
             return Ok(response);
         }
+    }
+
+    fn consume_dispatched_input(
+        &mut self,
+        input: EnvironmentInput<'_>,
+    ) -> Result<(), EnvironmentStepperError> {
+        if matches!(&input, EnvironmentInput::Declared(_))
+            && !self.binding.artifacts.consume_input(input.reference())
+        {
+            return Err(EnvironmentStepperError::UndeclaredInput);
+        }
+        self.artifacts
+            .borrow_mut()
+            .revoke_reference(input.reference())
+            .map_err(EnvironmentStepperError::Artifact)
+    }
+
+    async fn reject_undispatched_input<T>(
+        &mut self,
+        input: EnvironmentInput<'_>,
+        reason: CancelReason,
+        primary: EnvironmentStepperError,
+    ) -> Result<T, EnvironmentStepperError> {
+        if matches!(&input, EnvironmentInput::Admitted(_)) {
+            let revocation = {
+                let mut artifacts = self.artifacts.borrow_mut();
+                artifacts.revoke_reference(input.reference())
+            };
+            if let Err(error) = revocation {
+                return self
+                    .invalidate(
+                        CancelReason::IntegrityViolation,
+                        EnvironmentStepperError::Artifact(error),
+                    )
+                    .await;
+            }
+        }
+        self.invalidate(reason, primary).await
     }
 
     async fn send_host(
@@ -665,7 +758,7 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
                 HostMessage::ResetEnvironment {
                     input_ref: request.input_ref.clone(),
                 },
-                &request.input_ref,
+                EnvironmentInput::Declared(&request.input_ref),
             )
             .await?;
         let AdapterMessage::EnvironmentReset { observation_ref } = response.message else {
@@ -692,24 +785,88 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
         &mut self,
         request: EnvironmentStepRequest,
     ) -> Result<EnvironmentTransitionRecord, EnvironmentStepperError> {
-        if let Some(result) = self.refuse_closed().await {
-            return result;
-        }
-        if !self.is_reset {
-            return Err(EnvironmentStepperError::ResetRequired);
-        }
-        if !self.binding.artifacts.contains_input(&request.action_ref) {
-            return Err(EnvironmentStepperError::UndeclaredInput);
-        }
-        let response = self
-            .exchange(
-                request.operation.clone(),
-                HostMessage::StepEnvironment {
-                    action_ref: request.action_ref.clone(),
-                },
-                &request.action_ref,
-            )
-            .await?;
+        let EnvironmentStepRequest { operation, action } = request;
+        let response = match action {
+            EnvironmentStepAction::Legacy(action_ref) => {
+                if let Some(result) = self.refuse_closed().await {
+                    return result;
+                }
+                if self.binding.selected_action_encoder.is_some() {
+                    return Err(EnvironmentStepperError::AdmittedActionRequired);
+                }
+                if !self.is_reset {
+                    return Err(EnvironmentStepperError::ResetRequired);
+                }
+                if !self.binding.artifacts.contains_input(&action_ref) {
+                    return Err(EnvironmentStepperError::UndeclaredInput);
+                }
+                self.exchange(
+                    operation.clone(),
+                    HostMessage::StepEnvironment {
+                        action_ref: action_ref.clone(),
+                    },
+                    EnvironmentInput::Declared(&action_ref),
+                )
+                .await?
+            }
+            EnvironmentStepAction::Admitted(action) => {
+                if self.is_invalidated {
+                    return self
+                        .reject_undispatched_input(
+                            EnvironmentInput::Admitted(&action),
+                            CancelReason::IntegrityViolation,
+                            EnvironmentStepperError::ProtocolInvalidated,
+                        )
+                        .await;
+                }
+                if self.is_terminal {
+                    return self
+                        .reject_undispatched_input(
+                            EnvironmentInput::Admitted(&action),
+                            CancelReason::HostShutdown,
+                            EnvironmentStepperError::EpisodeTerminal,
+                        )
+                        .await;
+                }
+                if !self.is_reset {
+                    return self
+                        .reject_undispatched_input(
+                            EnvironmentInput::Admitted(&action),
+                            CancelReason::IntegrityViolation,
+                            EnvironmentStepperError::ResetRequired,
+                        )
+                        .await;
+                }
+                let Some(selected_encoder) = self.binding.selected_action_encoder.as_ref() else {
+                    return self
+                        .reject_undispatched_input(
+                            EnvironmentInput::Admitted(&action),
+                            CancelReason::IntegrityViolation,
+                            EnvironmentStepperError::AdmittedActionRequired,
+                        )
+                        .await;
+                };
+                if action.encoder() != &selected_encoder.id
+                    || !action.matches_authority(&selected_encoder.authority)
+                {
+                    return self
+                        .reject_undispatched_input(
+                            EnvironmentInput::Admitted(&action),
+                            CancelReason::IntegrityViolation,
+                            EnvironmentStepperError::ActionEncoderMismatch,
+                        )
+                        .await;
+                }
+                self.exchange(
+                    operation.clone(),
+                    HostMessage::StepEnvironment {
+                        action_ref: action.reference().clone(),
+                    },
+                    EnvironmentInput::Admitted(&action),
+                )
+                .await?
+            }
+        };
         let AdapterMessage::Transition {
             observation_ref,
             reward,
@@ -726,7 +883,7 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
                 )
                 .await;
         };
-        let observation = match self.release_output(&request.operation, &observation_ref) {
+        let observation = match self.release_output(&operation, &observation_ref) {
             Ok(observation) => observation,
             Err(error) => {
                 return self
@@ -734,7 +891,7 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
                     .await;
             }
         };
-        let info = match self.release_output(&request.operation, &info_ref) {
+        let info = match self.release_output(&operation, &info_ref) {
             Ok(info) => info,
             Err(error) => {
                 return self
@@ -806,6 +963,10 @@ pub enum EnvironmentStepperError {
     OperationDeadlineMismatch,
     /// A request attempted to bypass the declared immutable input references.
     UndeclaredInput,
+    /// A package-selected stepper requires a selected encoder-minted action capability.
+    AdmittedActionRequired,
+    /// An admitted action was created by a different selected encoder than this stepper binds.
+    ActionEncoderMismatch,
     /// An adapter response named no immutable output reference Rust generated for this operation.
     UndeclaredOutput,
     /// The adapter completed a different upload capability than Rust granted.
@@ -883,6 +1044,12 @@ impl Display for EnvironmentStepperError {
                 .write_str("environment operation deadline does not match adapter spawn request"),
             Self::UndeclaredInput => {
                 formatter.write_str("environment request reference was not declared at binding")
+            }
+            Self::AdmittedActionRequired => {
+                formatter.write_str("environment step requires an admitted selected action")
+            }
+            Self::ActionEncoderMismatch => {
+                formatter.write_str("environment action capability was minted by another encoder")
             }
             Self::UndeclaredOutput => {
                 formatter.write_str("environment response reference was not generated by Rust")

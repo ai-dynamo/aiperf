@@ -25,6 +25,7 @@ pub(crate) use execution::{
     shared_workdir_conflicts_reserved_verifier_path, validate_env_name, validate_user,
     verifier_artifact_target_collision,
 };
+pub(crate) use native_graph::ActionAdmissionAuthority;
 #[cfg(feature = "engine")]
 pub(crate) use native_graph::GENERATION_METADATA_KEY;
 #[cfg(feature = "engine")]
@@ -75,17 +76,17 @@ pub use native_graph::{
     AdapterPool, AdapterPoolKey, AdapterProcess, AdapterProtocol, AdapterProtocolConfig,
     AdapterProtocolFactory, AdapterRole, AdapterRuntimeFactory, AdapterSpawnRequest,
     AdapterSpawnTransaction, AdapterSpawner, AdapterSpec, AdapterSupervisionError,
-    ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
-    AuthoredNativeGraphSuite, BoundNativeGraphActionEncoder, BoundedControlFlowContract,
-    CancelReason, CaptureError, CaptureFidelity, CapturePolicy, CompatibilityFidelity,
-    CompatibilityObservation, CompatibilityObservationReport, CompatibilityTerminalSupplement,
-    ConfirmedNativeGraphProviderRecoveryFactory, DeclaredPolicyDecision,
-    EnvironmentTransitionRecord, EpisodeActionEncodingError, EpisodeAggregate,
-    EpisodeArtifactStore, EpisodeAssignment, EpisodeAssignmentId, EpisodeComparability,
-    EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, EpisodeExecution,
-    EpisodeIntegrity, EpisodeResult, EpisodeResultError, EpisodeRunner, EpisodeScoreState,
-    ExactNativeGraphFidelityObserverFactory, ExternalDriverFactoryId, FrozenArtifact,
-    FrozenArtifactManifest, FrozenArtifactReference, FrozenRolloutEvidence,
+    AdmittedEnvironmentAction, ArtifactDownloadHandle, ArtifactError, ArtifactQuota,
+    ArtifactUploadHandle, AuthoredNativeGraphSuite, BoundNativeGraphActionEncoder,
+    BoundedControlFlowContract, CancelReason, CaptureError, CaptureFidelity, CapturePolicy,
+    CompatibilityFidelity, CompatibilityObservation, CompatibilityObservationReport,
+    CompatibilityTerminalSupplement, ConfirmedNativeGraphProviderRecoveryFactory,
+    DeclaredPolicyDecision, EnvironmentTransitionRecord, EpisodeActionEncodingError,
+    EpisodeAggregate, EpisodeArtifactStore, EpisodeAssignment, EpisodeAssignmentId,
+    EpisodeComparability, EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory,
+    EpisodeExecution, EpisodeIntegrity, EpisodeResult, EpisodeResultError, EpisodeRunner,
+    EpisodeScoreState, ExactNativeGraphFidelityObserverFactory, ExternalDriverFactoryId,
+    FrozenArtifact, FrozenArtifactManifest, FrozenArtifactReference, FrozenRolloutEvidence,
     FrozenRolloutTrajectory, GenerationDefaults, HarborEpisodeEvaluator,
     HarborEpisodeEvaluatorFactory, HeaderSecretRef, HostEnvelope, HostMessage,
     LocalNativeGraphSuiteScheduler, LocalNativeGraphSuiteSchedulerFactory, MatrixError,

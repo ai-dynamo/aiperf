@@ -324,6 +324,7 @@ impl BoundNativeGraphEnvironmentStepper {
                 EnvironmentArtifactBindings::new([reset_input.clone()])
                     .map_err(|error| NativeGraphFactoryError::new(error.to_string()))?,
             )
+            .map(|binding| binding.with_selected_action_encoder(&self.action_encoder))
             .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
         }) {
             Ok(binding) => binding,

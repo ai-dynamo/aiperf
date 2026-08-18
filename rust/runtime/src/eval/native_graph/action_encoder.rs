@@ -6,6 +6,7 @@
 use std::{
     fmt::{self, Display, Formatter},
     io::{self, Cursor, Write},
+    rc::Rc,
 };
 
 use serde_json::{Value, json};
@@ -111,6 +112,7 @@ pub trait NativeGraphActionEncoder: Send {
 /// One package-selected encoder bound from a frozen registry before adapter provisioning.
 pub struct BoundNativeGraphActionEncoder {
     id: ActionEncoderFactoryId,
+    authority: ActionAdmissionAuthority,
     encoder: Box<dyn NativeGraphActionEncoder>,
 }
 
@@ -123,7 +125,11 @@ impl BoundNativeGraphActionEncoder {
         if encoder.id() != id.as_str() {
             return Err(EpisodeActionEncodingError::EncoderSelectionMismatch);
         }
-        Ok(Self { id, encoder })
+        Ok(Self {
+            id,
+            authority: ActionAdmissionAuthority(Rc::new(())),
+            encoder,
+        })
     }
 
     /// Returns the exact registry identifier bound to this encoder.
@@ -131,11 +137,66 @@ impl BoundNativeGraphActionEncoder {
         &self.id
     }
 
+    /// Admits one selected policy decision as the only capability a stepper may dispatch.
+    pub fn admit(
+        &self,
+        decision: DeclaredPolicyDecision,
+        store: &mut EpisodeArtifactStore,
+        limits: ActionEncodingLimits,
+    ) -> Result<AdmittedEnvironmentAction, EpisodeActionEncodingError> {
+        let reference = freeze_declared_policy_action(&decision, self, store, limits)?;
+        Ok(AdmittedEnvironmentAction {
+            encoder: self.id.clone(),
+            authority: self.authority.clone(),
+            reference,
+        })
+    }
+
+    pub(crate) fn authority(&self) -> ActionAdmissionAuthority {
+        self.authority.clone()
+    }
+
     fn encode(
         &self,
         decision: &DeclaredPolicyDecision,
     ) -> Result<Value, EpisodeActionEncodingError> {
         self.encoder.encode(decision)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ActionAdmissionAuthority(Rc<()>);
+
+/// Opaque single-use environment action admitted by one selected bound encoder.
+///
+/// Only [`BoundNativeGraphActionEncoder::admit`] can construct this capability. Its artifact
+/// reference remains crate-private so it can only be dispatched by the environment-stepper seam.
+pub struct AdmittedEnvironmentAction {
+    encoder: ActionEncoderFactoryId,
+    authority: ActionAdmissionAuthority,
+    reference: FrozenArtifactReference,
+}
+
+impl std::fmt::Debug for AdmittedEnvironmentAction {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AdmittedEnvironmentAction")
+            .field("encoder", &self.encoder)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AdmittedEnvironmentAction {
+    pub(crate) fn encoder(&self) -> &ActionEncoderFactoryId {
+        &self.encoder
+    }
+
+    pub(crate) fn matches_authority(&self, authority: &ActionAdmissionAuthority) -> bool {
+        Rc::ptr_eq(&self.authority.0, &authority.0)
+    }
+
+    pub(crate) fn reference(&self) -> &FrozenArtifactReference {
+        &self.reference
     }
 }
 

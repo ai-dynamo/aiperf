@@ -13,17 +13,19 @@ use std::{
 
 use aiperf_runtime::{
     eval::{
-        AdapterEnvelope, AdapterExit, AdapterLifecycleDeadlines, AdapterMessage, AdapterProcess,
-        AdapterProtocolConfig, AdapterRole, AdapterRuntimeFactory, AdapterSpawnRequest,
-        AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError, ArtifactDigest,
-        ArtifactDownloadHandle, ArtifactError, ArtifactQuota, AttemptId, CancelReason,
-        EnvironmentTransitionRecord, EpisodeArtifactStore, EvidenceKind, FrozenArtifact,
-        FrozenArtifactReference, FrozenRolloutEvidence, HostEnvelope, HostMessage,
-        ProtocolAdapterRuntimeFactory, ProtocolCapability, ProtocolError, ProtocolLimits,
-        RlEvaluationLimits, RlEvaluationPolicy, RlRolloutError, RolloutAdmissionError,
-        RolloutEvidenceError, RolloutEvidenceIdentity, RolloutEvidenceLimits,
-        RolloutReturnAgreementError, RolloutVerifierDecodeError, RolloutVerifierInput,
-        StrictAdapterProtocolFactory, SupervisedAdapter,
+        ActionEncoderFactoryId, ActionEncodingLimits, AdapterEnvelope, AdapterExit,
+        AdapterLifecycleDeadlines, AdapterMessage, AdapterProcess, AdapterProtocolConfig,
+        AdapterRole, AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawnTransaction,
+        AdapterSpawner, AdapterSupervisionError, ArtifactDigest, ArtifactDownloadHandle,
+        ArtifactError, ArtifactQuota, AttemptId, BoundNativeGraphActionEncoder, CancelReason,
+        DeclaredPolicyDecision, EnvironmentTransitionRecord, EpisodeActionEncodingError,
+        EpisodeArtifactStore, EvidenceKind, FrozenArtifact, FrozenArtifactReference,
+        FrozenRolloutEvidence, HostEnvelope, HostMessage, MoveV1ActionEncoderFactory,
+        NativeGraphActionEncoder, NativeGraphActionEncoderFactory, ProtocolAdapterRuntimeFactory,
+        ProtocolCapability, ProtocolError, ProtocolLimits, RlEvaluationLimits, RlEvaluationPolicy,
+        RlRolloutError, RolloutAdmissionError, RolloutEvidenceError, RolloutEvidenceIdentity,
+        RolloutEvidenceLimits, RolloutReturnAgreementError, RolloutVerifierDecodeError,
+        RolloutVerifierInput, StrictAdapterProtocolFactory, SupervisedAdapter,
     },
     graph::tools::{
         EnvironmentArtifactBindings, EnvironmentEpisodeIdentity, EnvironmentResetRequest,
@@ -33,7 +35,7 @@ use aiperf_runtime::{
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::sync::Notify;
 
 enum FakeReapBehavior {
@@ -117,6 +119,21 @@ struct StoreBackedEnvironmentAdapter {
 struct StoreBackedEnvironmentRuntime {
     config: AdapterProtocolConfig,
     state: Rc<RefCell<StoreBackedEnvironmentState>>,
+}
+
+struct ForgedMoveActionEncoder;
+
+impl NativeGraphActionEncoder for ForgedMoveActionEncoder {
+    fn id(&self) -> &str {
+        "move_v1"
+    }
+
+    fn encode(
+        &self,
+        decision: &DeclaredPolicyDecision,
+    ) -> Result<Value, EpisodeActionEncodingError> {
+        Ok(decision.output().clone())
+    }
 }
 
 /// JSONL child fixture used to prove dynamic output bytes cross the strict adapter boundary.
@@ -1747,6 +1764,242 @@ async fn environment_stepper_refuses_a_replayed_action_capability_before_dispatc
         Err(EnvironmentStepperError::UndeclaredInput)
     ));
     assert_eq!(state.borrow().sent.len(), dispatched);
+}
+
+#[tokio::test]
+async fn selected_stepper_dispatches_only_an_admitted_action_and_revokes_it_once() {
+    let package = ArtifactDigest::from_bytes(b"imported-package");
+    let store_root = tempfile::tempdir().expect("temporary artifact root");
+    let store = Rc::new(RefCell::new(
+        EpisodeArtifactStore::new(
+            store_root.path(),
+            ArtifactQuota {
+                max_artifacts: 8,
+                max_total_bytes: 1024,
+                max_artifact_bytes: 256,
+                max_download_handles: 2,
+            },
+        )
+        .expect("episode artifact store is valid"),
+    ));
+    let reset_input = freeze_reference(&mut store.borrow_mut(), b"initial-input");
+    let encoder_id: ActionEncoderFactoryId =
+        serde_json::from_str("\"move_v1\"").expect("fixture encoder selector is valid");
+    let encoder = MoveV1ActionEncoderFactory
+        .bind(&encoder_id)
+        .expect("the selected encoder binds");
+    let binding = EnvironmentStepperBinding::new(
+        environment_config(AdapterRole::Environment),
+        EnvironmentEpisodeIdentity::new(package.clone(), "episode-1", Duration::from_secs(7))
+            .expect("episode identity is valid"),
+        "root",
+        RlEvaluationPolicy::new("env:v1", 1, 0.5).expect("valid policy"),
+        EnvironmentArtifactBindings::new([reset_input.clone()])
+            .expect("artifact input binding is valid"),
+    )
+    .expect("environment binding is valid")
+    .with_selected_action_encoder(&encoder);
+    let state = Rc::new(RefCell::new(store_backed_state([
+        store_backed_plan(
+            "reset-1",
+            StoreBackedEnvironmentResponse::Reset,
+            [b"initial-observation".as_slice()],
+        ),
+        store_backed_plan(
+            "step-1",
+            StoreBackedEnvironmentResponse::Transition {
+                reward: 1.0,
+                terminated: true,
+                truncated: false,
+            },
+            [
+                b"next-observation".as_slice(),
+                b"transition-info".as_slice(),
+            ],
+        ),
+    ])));
+    let factory =
+        SupervisedEnvironmentStepperFactory::new(Rc::new(StoreBackedEnvironmentRuntime {
+            config: environment_config(AdapterRole::Environment),
+            state: Rc::clone(&state),
+        }));
+    let mut stepper = factory
+        .start(
+            binding,
+            EnvironmentSessionAuthority::new(package, Rc::clone(&store)),
+            spawn_request(),
+        )
+        .await
+        .expect("store-bound stepper starts");
+
+    stepper
+        .reset(EnvironmentResetRequest::new("reset-1", reset_input))
+        .await
+        .expect("reset is admitted");
+    let sent_before_refusal = state.borrow().sent.len();
+    let forged_store_ref = freeze_reference(&mut store.borrow_mut(), b"forged-action");
+    assert!(matches!(
+        stepper
+            .step(EnvironmentStepRequest::new(
+                "forged",
+                forged_store_ref.clone()
+            ))
+            .await,
+        Err(EnvironmentStepperError::AdmittedActionRequired)
+    ));
+    assert_eq!(state.borrow().sent.len(), sent_before_refusal);
+    store
+        .borrow_mut()
+        .revoke_reference(&forged_store_ref)
+        .expect("the rejected caller-owned raw reference remains caller-owned");
+
+    let limits = ActionEncodingLimits::new(128, 256).expect("bounded action limits");
+    let action = encoder
+        .admit(
+            DeclaredPolicyDecision::from_json_bytes(
+                encoder_id.clone(),
+                br#"{"kind":"move","direction":"north"}"#,
+                limits,
+            )
+            .expect("bounded decision is admitted"),
+            &mut store.borrow_mut(),
+            limits,
+        )
+        .expect("the selected encoder mints the only consumable action capability");
+    let transition = stepper
+        .step(EnvironmentStepRequest::admitted("step-1", action))
+        .await
+        .expect("the real stepper dispatches the selected admitted action");
+    assert!(transition.is_terminated());
+
+    let post_terminal_action = encoder
+        .admit(
+            DeclaredPolicyDecision::from_json_bytes(
+                encoder_id,
+                br#"{"kind":"move","direction":"south"}"#,
+                limits,
+            )
+            .expect("bounded decision is admitted"),
+            &mut store.borrow_mut(),
+            limits,
+        )
+        .expect("the prior dispatched action capability was revoked exactly once");
+    assert!(matches!(
+        stepper
+            .step(EnvironmentStepRequest::admitted(
+                "step-2",
+                post_terminal_action
+            ))
+            .await,
+        Err(EnvironmentStepperError::EpisodeTerminal)
+    ));
+    encoder
+        .admit(
+            DeclaredPolicyDecision::from_json_bytes(
+                serde_json::from_str("\"move_v1\"").expect("fixture selector is valid"),
+                br#"{"kind":"move","direction":"west"}"#,
+                limits,
+            )
+            .expect("bounded decision is admitted"),
+            &mut store.borrow_mut(),
+            limits,
+        )
+        .expect("the rejected post-terminal capability was revoked without replay");
+}
+
+#[tokio::test]
+async fn selected_stepper_refuses_a_wrong_encoder_capability_before_dispatch() {
+    let package = ArtifactDigest::from_bytes(b"imported-package");
+    let store_root = tempfile::tempdir().expect("temporary artifact root");
+    let store = Rc::new(RefCell::new(
+        EpisodeArtifactStore::new(
+            store_root.path(),
+            ArtifactQuota {
+                max_artifacts: 8,
+                max_total_bytes: 1024,
+                max_artifact_bytes: 256,
+                max_download_handles: 1,
+            },
+        )
+        .expect("episode artifact store is valid"),
+    ));
+    let reset_input = freeze_reference(&mut store.borrow_mut(), b"initial-input");
+    let selected_id: ActionEncoderFactoryId =
+        serde_json::from_str("\"move_v1\"").expect("fixture selector is valid");
+    let selected_encoder = MoveV1ActionEncoderFactory
+        .bind(&selected_id)
+        .expect("the selected encoder binds");
+    let binding = EnvironmentStepperBinding::new(
+        environment_config(AdapterRole::Environment),
+        EnvironmentEpisodeIdentity::new(package.clone(), "episode-1", Duration::from_secs(7))
+            .expect("episode identity is valid"),
+        "root",
+        RlEvaluationPolicy::new("env:v1", 2, 0.5).expect("valid policy"),
+        EnvironmentArtifactBindings::new([reset_input.clone()])
+            .expect("artifact input binding is valid"),
+    )
+    .expect("environment binding is valid")
+    .with_selected_action_encoder(&selected_encoder);
+    let state = Rc::new(RefCell::new(store_backed_state([store_backed_plan(
+        "reset-1",
+        StoreBackedEnvironmentResponse::Reset,
+        [b"initial-observation".as_slice()],
+    )])));
+    let factory =
+        SupervisedEnvironmentStepperFactory::new(Rc::new(StoreBackedEnvironmentRuntime {
+            config: environment_config(AdapterRole::Environment),
+            state: Rc::clone(&state),
+        }));
+    let mut stepper = factory
+        .start(
+            binding,
+            EnvironmentSessionAuthority::new(package, Rc::clone(&store)),
+            spawn_request(),
+        )
+        .await
+        .expect("store-bound stepper starts");
+    stepper
+        .reset(EnvironmentResetRequest::new("reset-1", reset_input))
+        .await
+        .expect("reset is admitted");
+
+    let forged_encoder =
+        BoundNativeGraphActionEncoder::new(selected_id.clone(), Box::new(ForgedMoveActionEncoder))
+            .expect("fixture encoder binding is valid");
+    let limits = ActionEncodingLimits::new(128, 256).expect("bounded action limits");
+    let action = forged_encoder
+        .admit(
+            DeclaredPolicyDecision::from_json_bytes(
+                selected_id.clone(),
+                br#"{"kind":"move","direction":"north"}"#,
+                limits,
+            )
+            .expect("bounded decision is admitted"),
+            &mut store.borrow_mut(),
+            limits,
+        )
+        .expect("the forged same-selector encoder mints an opaque capability");
+    let sent_before_refusal = state.borrow().sent.len();
+    assert!(matches!(
+        stepper
+            .step(EnvironmentStepRequest::admitted("wrong-encoder", action))
+            .await,
+        Err(EnvironmentStepperError::ActionEncoderMismatch)
+    ));
+    assert_eq!(state.borrow().sent.len(), sent_before_refusal);
+
+    selected_encoder
+        .admit(
+            DeclaredPolicyDecision::from_json_bytes(
+                selected_id,
+                br#"{"kind":"move","direction":"south"}"#,
+                limits,
+            )
+            .expect("bounded decision is admitted"),
+            &mut store.borrow_mut(),
+            limits,
+        )
+        .expect("the rejected wrong-encoder capability was revoked exactly once");
 }
 
 #[tokio::test]

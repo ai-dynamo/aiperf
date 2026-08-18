@@ -27,9 +27,10 @@ mod supervision;
 
 #[cfg(feature = "engine")]
 pub use crate::engine::record_lane::EvalNodeRecordArtifact;
+pub(crate) use action_encoder::ActionAdmissionAuthority;
 pub use action_encoder::{
-    ActionEncodingLimits, BoundNativeGraphActionEncoder, DeclaredPolicyDecision,
-    EpisodeActionEncodingError, NativeGraphActionEncoder,
+    ActionEncodingLimits, AdmittedEnvironmentAction, BoundNativeGraphActionEncoder,
+    DeclaredPolicyDecision, EpisodeActionEncodingError, NativeGraphActionEncoder,
 };
 pub use artifacts::{
     ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
