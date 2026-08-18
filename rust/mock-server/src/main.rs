@@ -152,9 +152,9 @@ fn load_config() -> anyhow::Result<MockServerConfig> {
     if let Ok(json) = std::env::var(balancer::CONFIG_JSON_ENV) {
         let config: MockServerConfig = serde_json::from_str(&json)
             .map_err(|e| anyhow::anyhow!("invalid {}: {e}", balancer::CONFIG_JSON_ENV))?;
-        return Ok(config);
+        return config.resolve();
     }
-    Ok(MockServerConfig::parse().apply_flags())
+    MockServerConfig::parse().resolve()
 }
 
 fn init_tracing(level: &str) {

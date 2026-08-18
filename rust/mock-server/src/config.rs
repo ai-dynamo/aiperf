@@ -10,6 +10,55 @@ use crate::accuracy::{AccuracyFormat, AccuracyMatch};
 use crate::grpc::GrpcBehavior;
 use crate::prefix_cache::EvictionPolicy;
 
+/// Selects which test-only WebSocket routes the mock server exposes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSocketMode {
+    /// Do not expose WebSocket routes.
+    #[default]
+    Disabled,
+    /// Expose the serialized-turn route.
+    TurnSerialized,
+    /// Expose the duplex Realtime route.
+    Realtime,
+    /// Expose both WebSocket routes.
+    Both,
+}
+
+/// Selects the deterministic WebSocket behavior the mock server emits.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSocketScenario {
+    /// Emit normal content and terminal events.
+    #[default]
+    Normal,
+    /// Emit content only in the terminal event.
+    DoneOnly,
+    /// Close after content but before a terminal event.
+    CloseBeforeTerminal,
+    /// Drop the transport after a terminal event.
+    DirtyCloseAfterTerminal,
+    /// Drop the next reused serialized-turn connection before output.
+    StaleReuse,
+    /// Reject an invalid serialized-turn continuation.
+    RejectContinuation,
+    /// Emit Realtime output before input commit.
+    InterleavedRealtime,
+}
+
+/// Selects an optional control frame before the first WebSocket content event.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSocketControl {
+    /// Do not inject a control frame.
+    #[default]
+    None,
+    /// Inject a Ping frame.
+    Ping,
+    /// Inject a Pong frame.
+    Pong,
+}
+
 #[derive(Debug, Clone, Parser, Serialize, Deserialize)]
 #[command(name = "aiperf-mock-server", about = "AIPerf Mock Server (Rust)")]
 pub struct MockServerConfig {
@@ -437,6 +486,81 @@ pub struct MockServerConfig {
     #[arg(short = 'f', long, env = "MOCK_SERVER_FAST", default_value_t = false)]
     pub fast: bool,
 
+    /// Enables test-only WebSocket routes.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_MODE",
+        value_enum,
+        default_value = "disabled"
+    )]
+    pub websocket_mode: WebSocketMode,
+
+    /// Selects the deterministic WebSocket scenario.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_SCENARIO",
+        value_enum,
+        default_value = "normal"
+    )]
+    pub websocket_scenario: WebSocketScenario,
+
+    /// Number of content events before the terminal WebSocket event.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_CONTENT_EVENTS",
+        default_value_t = 1
+    )]
+    pub websocket_content_events: u32,
+
+    /// Delay before the first WebSocket content event in milliseconds.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_FIRST_CONTENT_DELAY_MS",
+        default_value_t = 20.0
+    )]
+    pub websocket_first_content_delay_ms: f64,
+
+    /// Delay between WebSocket content events in milliseconds.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_CONTENT_INTERVAL_MS",
+        default_value_t = 5.0
+    )]
+    pub websocket_content_interval_ms: f64,
+
+    /// Maximum wire fragment size for emitted WebSocket text messages.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_FRAGMENT_BYTES",
+        default_value_t = 0
+    )]
+    pub websocket_fragment_bytes: usize,
+
+    /// Optional control frame emitted immediately before first WebSocket content.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_CONTROL_BEFORE_CONTENT",
+        value_enum,
+        default_value = "none"
+    )]
+    pub websocket_control_before_content: WebSocketControl,
+
+    /// Maximum completed connection captures retained by the mock server.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_CAPTURE_CAPACITY",
+        default_value_t = 1_024
+    )]
+    pub websocket_capture_capacity: usize,
+
+    /// Maximum decoded WebSocket application message size in bytes.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_WEBSOCKET_MAX_MESSAGE_BYTES",
+        default_value_t = 8_388_608
+    )]
+    pub websocket_max_message_bytes: usize,
+
     /// WARNING: NOT A REALISTIC MOCK SERVER. Raw-throughput extreme test
     /// only — skips the real mock server entirely and serves a single
     /// HARD-CODED response (`fastmock.rs`) at ultra-low latency instead.
@@ -787,6 +911,11 @@ impl MockServerConfig {
         self.tls_self_signed || self.tls_cert.is_some() || self.tls_key.is_some()
     }
 
+    /// Returns whether any test-only WebSocket route is enabled.
+    pub fn websocket_enabled(&self) -> bool {
+        self.websocket_mode != WebSocketMode::Disabled
+    }
+
     pub fn usage_fields_enabled(&self) -> bool {
         self.usage_cache_write_tokens != 0
             || self.usage_cache_miss_tokens != 0
@@ -831,14 +960,248 @@ impl MockServerConfig {
             self.ranking_per_passage_latency = 0.0;
             self.image_retrieval_base_latency = 0.0;
             self.image_retrieval_per_image_latency = 0.0;
+            self.websocket_first_content_delay_ms = 0.0;
+            self.websocket_content_interval_ms = 0.0;
         }
         self
+    }
+
+    /// Applies derived flags and validates the resolved server configuration.
+    pub fn resolve(mut self) -> anyhow::Result<Self> {
+        self = self.apply_flags();
+        self.validate_websocket()?;
+        Ok(self)
+    }
+
+    fn validate_websocket(&self) -> anyhow::Result<()> {
+        for (flag, value) in [
+            (
+                "--websocket-first-content-delay-ms",
+                self.websocket_first_content_delay_ms,
+            ),
+            (
+                "--websocket-content-interval-ms",
+                self.websocket_content_interval_ms,
+            ),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                anyhow::bail!("{flag} must be finite and nonnegative");
+            }
+        }
+        if self.websocket_content_events == 0
+            && self.websocket_scenario != WebSocketScenario::DoneOnly
+        {
+            anyhow::bail!(
+                "--websocket-content-events must be positive unless --websocket-scenario done_only"
+            );
+        }
+        if self.websocket_max_message_bytes == 0 {
+            anyhow::bail!("--websocket-max-message-bytes must be positive");
+        }
+        if self.websocket_fragment_bytes != 0 && self.websocket_fragment_bytes < 4 {
+            anyhow::bail!("--websocket-fragment-bytes must be 0 or at least 4");
+        }
+        if self.websocket_fragment_bytes > self.websocket_max_message_bytes {
+            anyhow::bail!(
+                "--websocket-fragment-bytes must not exceed --websocket-max-message-bytes"
+            );
+        }
+        match self.websocket_scenario {
+            WebSocketScenario::StaleReuse | WebSocketScenario::RejectContinuation
+                if self.websocket_mode != WebSocketMode::TurnSerialized =>
+            {
+                anyhow::bail!(
+                    "--websocket-scenario requires --websocket-mode turn_serialized for {}",
+                    self.websocket_scenario_name()
+                );
+            }
+            WebSocketScenario::InterleavedRealtime
+                if self.websocket_mode != WebSocketMode::Realtime =>
+            {
+                anyhow::bail!(
+                    "--websocket-scenario interleaved_realtime requires --websocket-mode realtime"
+                );
+            }
+            _ => {}
+        }
+        if !self.websocket_enabled() {
+            return Ok(());
+        }
+        if self.websocket_capture_capacity == 0 {
+            anyhow::bail!(
+                "--websocket-capture-capacity must be positive when --websocket-mode is enabled"
+            );
+        }
+        if self.ludicrous_speed {
+            anyhow::bail!("--websocket-mode cannot be used with --ludicrous-speed");
+        }
+        if self.blocking {
+            anyhow::bail!("--websocket-mode cannot be used with --blocking");
+        }
+        if self.uring {
+            anyhow::bail!("--websocket-mode cannot be used with --uring");
+        }
+        if self.processes != 1 {
+            anyhow::bail!("--websocket-mode requires --processes 1");
+        }
+        Ok(())
+    }
+
+    fn websocket_scenario_name(&self) -> &'static str {
+        match self.websocket_scenario {
+            WebSocketScenario::Normal => "normal",
+            WebSocketScenario::DoneOnly => "done_only",
+            WebSocketScenario::CloseBeforeTerminal => "close_before_terminal",
+            WebSocketScenario::DirtyCloseAfterTerminal => "dirty_close_after_terminal",
+            WebSocketScenario::StaleReuse => "stale_reuse",
+            WebSocketScenario::RejectContinuation => "reject_continuation",
+            WebSocketScenario::InterleavedRealtime => "interleaved_realtime",
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn websocket_config(mode: WebSocketMode) -> MockServerConfig {
+        MockServerConfig {
+            websocket_mode: mode,
+            ..MockServerConfig::default()
+        }
+    }
+
+    #[test]
+    fn websocket_defaults_are_disabled_and_bounded() {
+        let cfg = MockServerConfig::default();
+        assert_eq!(cfg.websocket_mode, WebSocketMode::Disabled);
+        assert_eq!(cfg.websocket_scenario, WebSocketScenario::Normal);
+        assert_eq!(cfg.websocket_content_events, 1);
+        assert_eq!(cfg.websocket_first_content_delay_ms, 20.0);
+        assert_eq!(cfg.websocket_content_interval_ms, 5.0);
+        assert_eq!(cfg.websocket_fragment_bytes, 0);
+        assert_eq!(cfg.websocket_control_before_content, WebSocketControl::None);
+        assert_eq!(cfg.websocket_capture_capacity, 1_024);
+        assert_eq!(cfg.websocket_max_message_bytes, 8_388_608);
+        assert!(!cfg.websocket_enabled());
+    }
+
+    #[test]
+    fn websocket_rejects_non_upgrade_engines_and_process_fanout() {
+        let mutations: [fn(&mut MockServerConfig); 5] = [
+            |config| config.ludicrous_speed = true,
+            |config| config.blocking = true,
+            |config| config.uring = true,
+            |config| config.processes = 0,
+            |config| config.processes = 2,
+        ];
+
+        for mutate in mutations {
+            let mut cfg = websocket_config(WebSocketMode::TurnSerialized);
+            mutate(&mut cfg);
+            assert!(cfg.resolve().is_err());
+        }
+    }
+
+    #[test]
+    fn websocket_rejects_invalid_timing_and_message_bounds() {
+        let mutations: [fn(&mut MockServerConfig); 8] = [
+            |config| config.websocket_first_content_delay_ms = f64::NAN,
+            |config| config.websocket_first_content_delay_ms = -0.1,
+            |config| config.websocket_content_interval_ms = f64::INFINITY,
+            |config| config.websocket_content_interval_ms = -0.1,
+            |config| config.websocket_capture_capacity = 0,
+            |config| config.websocket_max_message_bytes = 0,
+            |config| config.websocket_fragment_bytes = 3,
+            |config| config.websocket_fragment_bytes = 9,
+        ];
+
+        for (index, mutate) in mutations.into_iter().enumerate() {
+            let mut cfg = websocket_config(WebSocketMode::TurnSerialized);
+            if index == 7 {
+                cfg.websocket_max_message_bytes = 8;
+            }
+            mutate(&mut cfg);
+            assert!(cfg.resolve().is_err());
+        }
+    }
+
+    #[test]
+    fn websocket_only_allows_zero_content_events_for_done_only() {
+        let mut cfg = websocket_config(WebSocketMode::TurnSerialized);
+        cfg.websocket_content_events = 0;
+        assert!(cfg.resolve().is_err());
+
+        cfg.websocket_scenario = WebSocketScenario::DoneOnly;
+        assert_eq!(cfg.resolve().unwrap().websocket_content_events, 0);
+    }
+
+    #[test]
+    fn websocket_route_specific_scenarios_require_one_compatible_route() {
+        for (mode, scenario) in [
+            (WebSocketMode::Disabled, WebSocketScenario::StaleReuse),
+            (
+                WebSocketMode::Disabled,
+                WebSocketScenario::RejectContinuation,
+            ),
+            (
+                WebSocketMode::Disabled,
+                WebSocketScenario::InterleavedRealtime,
+            ),
+            (WebSocketMode::Both, WebSocketScenario::StaleReuse),
+            (WebSocketMode::Both, WebSocketScenario::RejectContinuation),
+            (WebSocketMode::Both, WebSocketScenario::InterleavedRealtime),
+            (
+                WebSocketMode::TurnSerialized,
+                WebSocketScenario::InterleavedRealtime,
+            ),
+            (WebSocketMode::Realtime, WebSocketScenario::StaleReuse),
+            (
+                WebSocketMode::Realtime,
+                WebSocketScenario::RejectContinuation,
+            ),
+        ] {
+            let mut cfg = websocket_config(mode);
+            cfg.websocket_scenario = scenario;
+            assert!(cfg.resolve().is_err());
+        }
+
+        for (mode, scenario) in [
+            (WebSocketMode::TurnSerialized, WebSocketScenario::StaleReuse),
+            (
+                WebSocketMode::TurnSerialized,
+                WebSocketScenario::RejectContinuation,
+            ),
+            (
+                WebSocketMode::Realtime,
+                WebSocketScenario::InterleavedRealtime,
+            ),
+        ] {
+            let mut cfg = websocket_config(mode);
+            cfg.websocket_scenario = scenario;
+            assert!(cfg.resolve().is_ok());
+        }
+    }
+
+    #[test]
+    fn websocket_resolve_applies_fast_and_serializes_child_configuration() {
+        let cfg = MockServerConfig {
+            fast: true,
+            websocket_mode: WebSocketMode::Both,
+            ..MockServerConfig::default()
+        }
+        .resolve()
+        .unwrap();
+        assert_eq!(cfg.websocket_first_content_delay_ms, 0.0);
+        assert_eq!(cfg.websocket_content_interval_ms, 0.0);
+
+        let child_cfg: MockServerConfig =
+            serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(
+            child_cfg.resolve().unwrap().websocket_mode,
+            WebSocketMode::Both
+        );
+    }
 
     #[test]
     fn fast_zeros_all_latencies() {
