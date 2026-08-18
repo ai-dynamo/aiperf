@@ -33,6 +33,7 @@ Checks (each can also be run in isolation with --only <check>):
     pydantic-fields     Pydantic models must have <=30 ``Field(...)`` decls
     stdlib-json         no ``import json`` / ``json.dumps`` / ``json.loads``
     exception-message   raised exception messages must carry context
+    mp-context          multiprocessing primitives must come from get_mp_context()
 
 Usage:
     python tools/check_ergonomics.py                 # run all checks
@@ -80,6 +81,16 @@ INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS: dict[str, str] = {
         "flag as a top-level field by design (v1 flatten, Tasks 1-13). "
         "Splitting into sub-models would re-nest the v1 layer."
     ),
+    "src/aiperf/common/environment.py::_DatasetSettings": (
+        "Every field is a user-facing environment variable documented in "
+        "docs/environment-variables.md: the class sets "
+        "env_prefix='AIPERF_DATASET_', so field FOO *is* the public name "
+        "AIPERF_DATASET_FOO. Splitting into nested sub-models would re-prefix "
+        "each variable and break every call site that reads "
+        "Environment.DATASET.FOO. environment.py's convention is one "
+        "flat _XxxSettings class per env_prefix domain, aggregated on "
+        "_Environment -- the flat shape is the design, not pending debt."
+    ),
 }
 
 CHECKS = [
@@ -90,7 +101,39 @@ CHECKS = [
     "pydantic-fields",
     "stdlib-json",
     "exception-message",
+    "mp-context",
 ]
+
+# Multiprocessing primitives whose synchronization objects are bound to the
+# start method that created them. Building one from the process-global default
+# context and handing it to a child spawned from ``get_mp_context()`` raises
+# "A SemLock created in a fork context is being shared with a process in a
+# spawn context" -- which only reproduces on an interactive TTY (the dashboard
+# UI is the sole caller that creates such a queue, and it downgrades itself on
+# a non-TTY), so CI structurally cannot catch it. Route them through
+# ``aiperf.common.mp_context.get_mp_context()`` instead.
+MP_CONTEXT_BOUND_PRIMITIVES: frozenset[str] = frozenset(
+    {
+        "Array",
+        "Barrier",
+        "BoundedSemaphore",
+        "Condition",
+        "Event",
+        "JoinableQueue",
+        "Lock",
+        "Pool",
+        "Process",
+        "Queue",
+        "RLock",
+        "Semaphore",
+        "SimpleQueue",
+        "Value",
+    }
+)
+
+# The module that owns the context is necessarily exempt: it is where the
+# sanctioned context is constructed.
+MP_CONTEXT_EXEMPT_FILES: frozenset[str] = frozenset({"src/aiperf/common/mp_context.py"})
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +656,70 @@ def _iter_py_files(paths: list[Path]) -> list[Path]:
     return [f for f in out if "__pycache__" not in f.parts]
 
 
+def check_mp_context(tree: ast.Module, rel: str) -> list[Violation]:
+    """Flag multiprocessing primitives built from the default context.
+
+    Catches both spellings: an attribute call on the module itself
+    (``multiprocessing.Queue(...)``, including ``import multiprocessing as mp``
+    aliases) and a direct call to a name pulled in by
+    ``from multiprocessing import Queue``.
+
+    Only the *default-context* constructors are violations. A call on a context
+    object -- ``get_mp_context().Queue(...)`` or ``ctx.Queue(...)`` -- is the
+    sanctioned form and is not flagged, because its receiver is a call or a
+    local name rather than the multiprocessing module.
+    """
+    if rel in MP_CONTEXT_EXEMPT_FILES:
+        return []
+
+    module_aliases: set[str] = set()
+    imported_names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "multiprocessing":
+                    module_aliases.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module == "multiprocessing":
+            for alias in node.names:
+                if alias.name in MP_CONTEXT_BOUND_PRIMITIVES:
+                    imported_names[alias.asname or alias.name] = alias.name
+
+    enclosing = _enclosing_func_map(tree)
+    out: list[Violation] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        primitive: str | None = None
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in module_aliases
+            and func.attr in MP_CONTEXT_BOUND_PRIMITIVES
+        ):
+            primitive = func.attr
+        elif isinstance(func, ast.Name) and func.id in imported_names:
+            primitive = imported_names[func.id]
+        if primitive is None:
+            continue
+        scope = enclosing.get(id(node), "<module>")
+        out.append(
+            Violation(
+                check="mp-context",
+                file=rel,
+                line=node.lineno,
+                identifier=f"{scope}::{primitive}",
+                message=(
+                    f"multiprocessing.{primitive}(...) uses the process-global "
+                    "default start method. A primitive created that way cannot "
+                    "cross into a child spawned from get_mp_context(). Use "
+                    "get_mp_context()." + primitive + "(...) instead."
+                ),
+            )
+        )
+    return out
+
+
 def _run_per_file(
     path: Path, rel: str, enabled: set[str]
 ) -> tuple[list[Violation], ast.Module]:
@@ -630,6 +737,8 @@ def _run_per_file(
         out.extend(check_pydantic_fields(tree, rel))
     if "exception-message" in enabled:
         out.extend(check_exception_message(tree, rel))
+    if "mp-context" in enabled:
+        out.extend(check_mp_context(tree, rel))
     return out, tree
 
 

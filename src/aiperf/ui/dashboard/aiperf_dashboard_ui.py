@@ -17,6 +17,7 @@ from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 if TYPE_CHECKING:
     import multiprocessing
 
+    from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.controller.system_controller import SystemController
 
@@ -56,10 +57,7 @@ class AIPerfDashboardUI(BaseAIPerfUI):
 
         # Attach the hooks directly to the function on the app, to avoid the extra function call overhead
         self.attach_hook(AIPerfHook.ON_RECORDS_PROGRESS, self.app.on_records_progress)
-        self.attach_hook(
-            AIPerfHook.ON_PROFILING_PROGRESS, self.app.on_profiling_progress
-        )
-        self.attach_hook(AIPerfHook.ON_WARMUP_PROGRESS, self.app.on_warmup_progress)
+        self.attach_hook(AIPerfHook.ON_PHASE_PROGRESS, self._on_phase_progress)
         self.attach_hook(AIPerfHook.ON_WORKER_UPDATE, self.app.on_worker_update)
         self.attach_hook(
             AIPerfHook.ON_WORKER_STATUS_SUMMARY, self.app.on_worker_status_summary
@@ -69,6 +67,13 @@ class AIPerfDashboardUI(BaseAIPerfUI):
             AIPerfHook.ON_REALTIME_TELEMETRY_METRICS,
             self.app.on_realtime_telemetry_metrics,
         )
+
+    async def _on_phase_progress(self, phase_stats: CombinedPhaseStats) -> None:
+        """Adapt unified phase progress to the legacy dashboard callbacks."""
+        if phase_stats.phase_kind == "warmup":
+            await self.app.on_warmup_progress(phase_stats)
+            return
+        await self.app.on_profiling_progress(phase_stats)
 
     @on_start
     async def _run_app(self) -> None:

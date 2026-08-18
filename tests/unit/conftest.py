@@ -358,6 +358,21 @@ def reset_singleton_factories():
     SingletonMeta._instances.clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_service_registry():
+    """Clear the process-wide ServiceRegistry singleton between tests.
+
+    ``aiperf.common.service_registry.ServiceRegistry`` is a module-level
+    instance, so registrations and expectations survive across tests in the
+    same worker and would otherwise leak quorum state into unrelated tests.
+    """
+    yield
+
+    from aiperf.common.service_registry import ServiceRegistry
+
+    ServiceRegistry.reset()
+
+
 @pytest.fixture
 def temporary_registry() -> Generator[PluginRegistry, None, None]:
     """Fixture for isolated plugin registry testing.

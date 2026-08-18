@@ -454,10 +454,10 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
 
         warmup_phase: dict[str, Any] = {
             "name": "warmup",
+            "kind": "warmup",
             "type": "concurrency",
             "concurrency": value,
             "duration": duration,
-            "exclude_from_results": True,
         }
         # Replace any user-declared warmup so the per-iteration sweep value
         # drives the warmup; the unique-name validator on BenchmarkConfig

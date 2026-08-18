@@ -60,7 +60,8 @@ API server settings. Controls the host and port of the API server.
 | `AIPERF_API_SERVER_PORT` | `None` | ≥ 1, ≤ 65535 | Port to bind the API server to |
 | `AIPERF_API_SERVER_CORS_ORIGINS` | `[]` | — | List of CORS origins to allow (empty = no CORS, ['*'] = all origins) |
 | `AIPERF_API_SERVER_SHUTDOWN_TIMEOUT` | `5.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for graceful API server shutdown before force-cancelling |
-| `AIPERF_API_SERVER_POST_COMPLETE_GRACE` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds the API listener stays open after a benchmark terminates so polling clients can observe the final status before the server shuts down. Set to 0 to skip the grace window and shut down immediately. |
+| `AIPERF_API_SERVER_GET_POD_STATES_TIMEOUT` | `2.0` | ≥ 0.1, ≤ 60.0 | Timeout in seconds for API worker-state queries to the SystemController. A short timeout lets progress and debug endpoints fall back to their bus-fed cache while the controller is unavailable. |
+| `AIPERF_API_SERVER_POST_COMPLETE_GRACE` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds the API listener stays open after a benchmark terminates so polling clients can observe the final status before the server shuts down. Set to 0 to skip the grace window and shut down immediately. Not used under ServiceRunType.KUBERNETES, where the controller pod outlives its benchmark and is retired explicitly via POST /api/shutdown instead -- see FastAPIService._on_shutdown_command. A fixed window there is shorter than the operator's monitor interval and strands the AIPerfJob in a pre-terminal phase. |
 
 ## CHAT
 
@@ -96,11 +97,16 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for dataset configuration operations |
+| `AIPERF_DATASET_REBROADCAST_INTERVAL` | `2.0` | > 0.0, ≤ 60.0 | Seconds between re-announcements of the dataset-configured notification in Kubernetes. The notification is a one-shot broadcast and sibling worker pods start seconds apart, so a pod that subscribes late would otherwise never learn a dataset exists. |
+| `AIPERF_DATASET_REBROADCAST_WINDOW` | `120.0` | ≥ 0.0, ≤ 3600.0 | Total seconds to keep re-announcing the dataset-configured notification for late-joining worker pods. Set 0 to disable. |
 | `AIPERF_DATASET_BASETEN_SESSION_COLUMN` | `'provided_session_id'` | one of: 'provided_session_id' / 'poor_man_session_id' | Session column used by the Baseten trace loader when both supported columns exist. Set to poor_man_session_id for legacy traces. If the selected column is absent, the loader uses the available column. |
+| `AIPERF_DATASET_STATE_POLL_INTERVAL` | `1.0` | > 0.0, ≤ 60.0 | Seconds between polls of pod-local dataset state while a worker waits to become dispatchable. The dataset arrives via one-shot broadcasts; a worker container that subscribes after they fire recovers by polling its WorkerGroupManager at this interval instead of waiting forever. |
 | `AIPERF_DATASET_MMAP_BASE_PATH` | `None` | — | Base path for memory-mapped dataset files. If None, uses system temp directory. Set to a shared filesystem path for Kubernetes mounted volumes. Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/ |
 | `AIPERF_DATASET_MMAP_CACHE_ENABLED` | `True` | — | If True, AIPerf reuses memory-mapped dataset files across runs whose input bytes, tokenizer identity, and prompt/input settings are byte-identical. Set to False to force every run to re-tokenize and re-write its mmap files. Cache misses still produce byte-identical mmap files to a non-cached run. |
 | `AIPERF_DATASET_MMAP_CACHE_DIR` | `None` | — | Directory holding the content-addressed mmap cache. If None, defaults to ~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. No automatic eviction is implemented yet -- delete the directory to reclaim disk. |
 | `AIPERF_DATASET_PREFORMAT_PAYLOADS` | `False` | — | If True, pre-encode single-turn / self-contained synthetic conversations to the PAYLOAD_BYTES mmap fast path at dataset-build time so workers stream the bytes verbatim and skip per-request encoding. This is a throughput optimization that DROPS input-tokenization metrics (input_sequence_length, image counts) because the structured prompt is discarded. Default False keeps the structured-turns (CONVERSATION) path so those metrics are computed. Datasets that natively ship raw payloads (raw_payload / inputs_json / mooncake-with-payload) always use PAYLOAD_BYTES regardless of this flag; cache-bust runs always use CONVERSATION regardless. |
+| `AIPERF_DATASET_DOWNLOAD_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Maximum number of retries for dataset download in Kubernetes worker pods |
+| `AIPERF_DATASET_DOWNLOAD_RETRY_DELAY` | `2.0` | ≥ 0.1, ≤ 60.0 | Initial delay in seconds between dataset download retries (doubles each retry) |
 | `AIPERF_DATASET_PUBLIC_DATASET_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for public dataset loading operations |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds per media URL download when inline encoding is required |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |
@@ -223,15 +229,27 @@ OpenTelemetry metrics streaming configuration. Controls buffering and flush beha
 | `AIPERF_OTEL_MAX_BUFFERED_RECORDS` | `10000` | ≥ 1, ≤ 10000000 | Maximum number of buffered metric records before oldest records are dropped |
 | `AIPERF_OTEL_REQUEST_TIMEOUT_SECONDS` | `10.0` | ≥ 0.1, ≤ 300.0 | Timeout in seconds for OTel collector HTTP requests |
 
+## POD
+
+Kubernetes worker-pod monitoring configuration. Consumed by the Kubernetes service manager, which polls the Kubernetes API for worker-pod phases and container-level failures.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_POD_MONITOR_INTERVAL` | `5.0` | ≥ 0.1, ≤ 100000.0 | Interval in seconds between worker-pod monitoring sweeps. Bounds how quickly a Failed/Unknown worker pod is detected via the Kubernetes API |
+| `AIPERF_POD_FAILURE_ABORT_THRESHOLD_PERCENT` | `50.0` | ≥ 0.0, ≤ 100.0 | Percentage of failed worker pods at which the Kubernetes service manager signals the controller to abort the benchmark. Set to 0 to never abort on pod failures |
+
 ## RECORD
 
 Record processing and export configuration. Controls batch sizes, processor scaling, and progress reporting for record processing.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
+| `AIPERF_RECORD_CHECKPOINT_INTERVAL` | `30.0` | ≥ 0.0, ≤ 3600.0 | Seconds between partial-checkpoint writes during a Kubernetes run. The results sidecar serves these before the results-ready marker exists, and the operator treats a growing checkpoint as evidence the controller is alive. Set to 0 to disable. |
 | `AIPERF_RECORD_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for record export results processor |
+| `AIPERF_RECORD_COMPLETION_STALL_TIMEOUT` | `300.0` | ≥ 0.0, ≤ 86400.0 | Seconds of ZERO record progress, after all credits are complete, before the RecordsManager stops waiting and finalizes the run as degraded. The completion barrier is event-driven: it needs one record per completed request, so a request that completes without ever emitting a record leaves the barrier permanently short and nothing re-triggers it. This bounds that into a loud failure instead of an unbounded hang. The timer measures time since the last record arrived, not total elapsed, so legitimately slow aggregation is never cut short. Set 0 to disable. |
+| `AIPERF_RECORD_COMPLETION_STALL_CHECK_INTERVAL` | `10.0` | > 0.0, ≤ 3600.0 | Seconds between record-progress stall checks after credits complete. |
 | `AIPERF_RECORD_RAW_EXPORT_BATCH_SIZE` | `10` | ≥ 1, ≤ 1000000 | Batch size for raw record writer processor |
-| `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers |
+| `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers. The default of 4 is the ratio the Kubernetes pod-sizing design was built around, alongside ~500 concurrent connections per worker; see RuntimeConfig.record_processors_per_pod |
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
 | `AIPERF_RECORD_STRIP_PAYLOAD_BYTES` | `None` | — | Tri-state control for omitting canonical request payload bytes from RecordContext after a request is sent, which substantially reduces record-pipeline memory for very large prompts. None (default) auto-detects: bytes are stripped only when no downstream record consumer needs them (client-side input tokenization disabled, no synthetic image/audio/video inputs, and raw payload export off). True forces stripping even when a consumer wants the bytes, disabling client-side input tokenization, media counting from request bodies, and raw request payload export. False always retains them. Auto-detection does not see media embedded in custom dataset payloads under server-token-count mode; set False explicitly for that case. |
@@ -255,6 +273,7 @@ Server metrics collection configuration. Controls server metrics collection freq
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | `2.0` | ≥ 0.0, ≤ 30.0 | Time in seconds to continue collecting metrics after profiling completes, allowing server-side metrics to flush/finalize before shutting down (default: 2.0s) |
+| `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Seconds RecordsManager waits for the final server-metrics scrape command response. A timeout is non-fatal because the controller's result join remains the authoritative completion barrier. |
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | `0.333` | ≥ 0.001, ≤ 300.0 | Server metrics collection interval in seconds (default: 333ms, ~3Hz) |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for server metrics jsonl writer export results processor |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking server metrics endpoint reachability during init |
@@ -266,22 +285,25 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_SERVICE_COMMAND_RESPONSE_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 1000.0 | Timeout in seconds for command responses |
-| `AIPERF_SERVICE_COMMS_REQUEST_TIMEOUT` | `90.0` | ≥ 1.0, ≤ 1000.0 | Timeout in seconds for requests from req_clients to rep_clients |
-| `AIPERF_SERVICE_CONNECTION_PROBE_INTERVAL` | `0.1` | ≥ 0.1, ≤ 600.0 | Interval in seconds for connection probes while waiting for initial connection to the zmq message bus |
-| `AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT` | `90.0` | ≥ 1.0, ≤ 100000.0 | Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus |
 | `AIPERF_SERVICE_CREDIT_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 1, ≤ 100000.0 | Interval in seconds between credit progress report messages |
 | `AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL` | `30.0` | ≥ 0.0, ≤ 100000.0 | Interval in seconds between warmup progress heartbeat log messages. Set to 0 to disable. |
 | `AIPERF_SERVICE_DISABLE_UVLOOP` | `False` | — | Disable uvloop and use default asyncio event loop instead |
 | `AIPERF_SERVICE_HEARTBEAT_INTERVAL` | `5.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between heartbeat messages for component services |
+| `AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD` | `3` | ≥ 1, ≤ 100 | Consecutive heartbeat intervals a registered service may miss before the watchdog suspects it. A service is only failed after appearing stale on two consecutive watchdog ticks, so worst-case detection is HEARTBEAT_INTERVAL * (threshold + 1) seconds. |
+| `AIPERF_SERVICE_FAILURE_SHUTDOWN_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 300.0 | Wall-clock cap on the shutdown path inside AIPerfLifecycleMixin._fail. If cleanup (on_stop hooks, task cancellation) does not complete within this window after a failed on_init/on_start transition, a containerized (operator-managed) service hard-exits via os._exit(1), preventing silent zombie containers when cleanup blocks on a cancelled C-extension call. A local run logs the wedged shutdown and reports the failure normally instead, so the traceback and artifact export are not discarded. |
 | `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `600.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile configure command |
 | `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile start command |
 | `AIPERF_SERVICE_PROFILE_CANCEL_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile cancel command |
 | `AIPERF_SERVICE_REGISTRATION_INTERVAL` | `1.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between registration attempts for component services |
 | `AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS` | `10` | ≥ 1, ≤ 100000 | Maximum number of registration attempts before giving up |
 | `AIPERF_SERVICE_REGISTRATION_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for service registration |
+| `AIPERF_SERVICE_REGISTRATION_PROGRESS_LOG_INTERVAL` | `5.0` | ≥ 0.1, ≤ 100000.0 | Interval in seconds between 'still waiting for services to register' progress logs emitted by the service registry while blocked |
+| `AIPERF_SERVICE_GROUP_HELLO_ATTEMPT_TIMEOUT` | `2.0` | ≥ 0.1, ≤ 1000.0 | Timeout in seconds for a single group-local GroupPeerHello attempt before it is retried against the worker group manager |
+| `AIPERF_SERVICE_GROUP_HELLO_TOTAL_TIMEOUT` | `120.0` | ≥ 1.0, ≤ 100000.0 | Total deadline in seconds for a group-local peer to get its GroupPeerHello acknowledged before startup is failed |
 | `AIPERF_SERVICE_START_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for service start operations. Also bounds the per-phase wait for the first worker to register with the credit router before credit issuance begins; exceeding it fails the phase. |
 | `AIPERF_SERVICE_TASK_CANCEL_TIMEOUT_SHORT` | `2.0` | ≥ 1.0, ≤ 100000.0 | Maximum time in seconds to wait for simple tasks to complete when cancelling |
+| `AIPERF_SERVICE_SPAWN_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Safety-net timeout in seconds for multiprocessing Process.start(). Normal spawns complete in milliseconds; this guards against extreme system conditions (memory pressure, exhausted forkserver) blocking the event loop indefinitely. |
+| `AIPERF_SERVICE_ERROR_QUEUE_MAXSIZE` | `256` | ≥ 1, ≤ 65536 | Maximum number of pending subprocess error reports held in the multiprocessing error queue before further reports are dropped. |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_ENABLED` | `True` | — | Enable event loop health monitoring to detect blocked event loops. When enabled, TimingManager and Worker services periodically check if the event loop is responsive and log warnings when latency exceeds the threshold. |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_INTERVAL` | `0.25` | ≥ 0.05, ≤ 10.0 | Interval in seconds between event loop health checks (default: 250ms). The monitor sleeps for this duration and measures actual elapsed time to detect blocking. |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS` | `25.0` | > 1.0, ≤ 10000.0 | Warning threshold in milliseconds for event loop latency (default: 25ms). If the actual sleep duration exceeds the expected duration by this amount, a warning is logged. |
@@ -340,14 +362,19 @@ Worker management and auto-scaling configuration. Controls worker pool sizing, h
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_WORKER_CHECK_INTERVAL` | `1.0` | ≥ 0.1, ≤ 100000.0 | Interval in seconds between worker status checks by WorkerManager |
+| `AIPERF_WORKER_CLOCK_PROBE_TIMEOUT` | `1.0` | ≥ 0.1, ≤ 100000.0 | Per-probe timeout in seconds for a single startup TimePing/TimePong round trip. Kept short so an unreachable credit ROUTER costs a fast retry instead of consuming AIPERF_WORKER_CLOCK_PROBE_BUDGET on one probe. Kubernetes mode only. |
+| `AIPERF_WORKER_CLOCK_PROBE_BUDGET` | `30.0` | ≥ 0.1, ≤ 100000.0 | Total seconds a worker may spend on startup TimePing/TimePong clock-offset RTT probes before giving up and announcing readiness uncalibrated. Hard ceiling on the whole probe sequence, not per probe, so a router that never echoes cannot stall worker registration past AIPERF_SERVICE_REGISTRATION_TIMEOUT. Sized for real cluster startup, where the credit ROUTER is commonly not echoing for the first several seconds after a worker container starts. Kubernetes mode only. |
 | `AIPERF_WORKER_CPU_UTILIZATION_FACTOR` | `0.75` | ≥ 0.1, ≤ 1.0 | Factor multiplied by CPU count to determine default max workers (0.0-1.0). Formula: max(1, min(int(cpu_count * factor) - 1, MAX_WORKERS_CAP)) |
 | `AIPERF_WORKER_ERROR_RECOVERY_TIME` | `3.0` | ≥ 0.1, ≤ 1000.0 | Time in seconds from last error before worker is considered healthy again |
 | `AIPERF_WORKER_HEALTH_CHECK_INTERVAL` | `2.0` | ≥ 0.1, ≤ 1000.0 | Interval in seconds between worker health check messages |
 | `AIPERF_WORKER_HIGH_LOAD_CPU_USAGE` | `85.0` | ≥ 50.0, ≤ 100.0 | CPU usage percentage threshold for considering a worker under high load |
 | `AIPERF_WORKER_HIGH_LOAD_RECOVERY_TIME` | `5.0` | ≥ 0.1, ≤ 1000.0 | Time in seconds from last high load before worker is considered recovered |
 | `AIPERF_WORKER_MAX_WORKERS_CAP` | `32` | ≥ 1, ≤ 10000 | Absolute maximum number of workers to spawn, regardless of CPU count |
+| `AIPERF_WORKER_MIN_ALIVE_FRACTION` | `0.0` | ≥ 0.0, ≤ 1.0 | Fail the benchmark when the number of dispatchable workers remains below this fraction of the peak ever registered for one worker staleness interval. TimingManager evaluates the count after worker deregistration, so Kubernetes replacement pods can become dispatchable before a transient loss is fatal. 0 disables the check. |
 | `AIPERF_WORKER_STALE_TIME` | `10.0` | ≥ 0.1, ≤ 1000.0 | Time in seconds from last status report before worker is considered stale |
 | `AIPERF_WORKER_STATUS_SUMMARY_INTERVAL` | `0.5` | ≥ 0.1, ≤ 1000.0 | Interval in seconds between worker status summary messages |
+| `AIPERF_WORKER_RAW_RECORD_UPLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds to wait for worker pods to upload raw record files to the controller API after benchmark completion. |
+| `AIPERF_WORKER_DEFAULT_WORKERS_PER_POD` | `10` | ≥ 1, ≤ 100 | Default number of worker subprocesses per Kubernetes worker pod. Each pod downloads the dataset once and shares it across workers via mmap. Packing exists because a node holds only ~65k ephemeral ports, which caps concurrent connections per node; see RuntimeConfig.workers_per_pod |
 
 ## ZMQ
 

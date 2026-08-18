@@ -328,12 +328,63 @@ class CreditCounter:
 
         return credit_index, is_final_credit
 
+    def _session_target_satisfied(self) -> bool:
+        """The session-plan arm of ``is_final_credit``, evaluated on current state.
+
+        Byte-identical to the ``hit_session_target`` expression in
+        :meth:`increment_sent` (minus the per-credit
+        ``counts_toward_phase_target`` gate, which is a property of a credit
+        being dispatched, not of the plan). Kept as one expression so the
+        dispatch path and the reconciliation path below can never disagree
+        about when the sampled root plan is fully issued.
+        """
+        return (
+            self._config.expected_num_sessions is not None
+            and self._sent_sessions >= self._config.expected_num_sessions
+            and self._root_requests_sent >= self._total_session_turns
+        )
+
+    def retire_unsent_session_turns(self, unsent_turns: int) -> bool:
+        """Shrink the phase plan by turns a truncated session will never issue.
+
+        ``increment_sent`` books a root session's FULL remaining turn count into
+        ``_total_session_turns`` when the session starts. If the session then
+        ends early -- its sticky worker was lost and the credit forbids worker
+        migration, so the router synthesizes a cancelled return and the tail
+        turns are never dispatched -- that booking becomes a permanent deficit:
+        ``_root_requests_sent`` can never reach ``_total_session_turns``, so
+        ``is_final_credit`` never flips, ``freeze_sent_counts`` is never called,
+        ``check_all_returned_or_cancelled`` is False forever, and
+        ``SessionCountStopCondition.can_send_any_turn`` is True forever (which
+        hot-spins the rate strategy's main loop on a core until the run is
+        killed).
+
+        Returns True when retiring these turns is what newly satisfies the
+        session-target predicate. The caller must then do exactly what
+        ``CreditIssuer`` does for ``is_final_credit``: ``freeze_sent_counts()``
+        followed by setting ``all_credits_sent_event``. Returns False when the
+        predicate was already satisfied, so the signal is never sent twice.
+
+        Only ever called on early session end, and a no-op for
+        ``unsent_turns <= 0``, so a session that runs its full plan is
+        accounted for exactly as before.
+
+        Lock-free: no async calls.
+        """
+        if unsent_turns <= 0:
+            return False
+        already_satisfied = self._session_target_satisfied()
+        self._total_session_turns -= unsent_turns
+        return not already_satisfied and self._session_target_satisfied()
+
     def increment_returned(
         self,
         is_final_turn: bool,
         cancelled: bool,
-        errored: bool = False,
         *,
+        session_ended: bool | None = None,
+        session_cancelled: bool | None = None,
+        errored: bool = False,
         is_child: bool = False,
         no_request: bool = False,
     ) -> bool:
@@ -350,6 +401,10 @@ class CreditCounter:
         Args:
             is_final_turn: Whether the returned turn is the final turn of its session
             cancelled: Whether the credit was cancelled
+            session_ended: Whether this return ended the session. Defaults to
+                ``is_final_turn and not is_child``.
+            session_cancelled: Whether an ended session counts as cancelled.
+                Defaults to the request's cancellation state.
             errored: Whether the request returned with a non-None error. Errored
                 requests still count as "returned" for the all-returned invariant
                 (they are not cancellations), but also bump ``_request_errors``
@@ -374,10 +429,13 @@ class CreditCounter:
             True if ALL sent credits have now been returned or cancelled
             (phase sending must be complete for this to ever return True).
         """
+        if session_ended is None:
+            session_ended = is_final_turn and not is_child
+        if session_ended and session_cancelled is None:
+            session_cancelled = cancelled
+
         if cancelled:
             self._requests_cancelled += 1
-            if is_final_turn and not is_child:
-                self._cancelled_sessions += 1
         else:
             # Request-level (completed/errors): every real wire request ticks,
             # children included; a ``no_request`` virtual credit does not.
@@ -388,7 +446,10 @@ class CreditCounter:
                 self._requests_completed += 1
                 if errored:
                     self._request_errors += 1
-            if is_final_turn and not is_child:
+        if session_ended:
+            if session_cancelled:
+                self._cancelled_sessions += 1
+            else:
                 self._completed_sessions += 1
 
         return self.check_all_returned_or_cancelled()

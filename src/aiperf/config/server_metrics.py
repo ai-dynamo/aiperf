@@ -171,6 +171,8 @@ class ServerMetricsConfig(BaseConfig):
         if not isinstance(data, dict):
             return data
 
+        data = dict(data)
+
         # url → urls (singular to plural)
         if "url" in data and "urls" not in data:
             url = data.pop("url")

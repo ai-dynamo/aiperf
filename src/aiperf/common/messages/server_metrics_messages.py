@@ -3,17 +3,22 @@
 from pydantic import Field
 
 from aiperf.common.enums import MessageType
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
-from aiperf.common.models.server_metrics_models import ProcessServerMetricsResult
+from aiperf.common.models.server_metrics_models import (
+    ProcessServerMetricsResult,
+    ServerMetricsEndpointSummary,
+)
 from aiperf.common.types import MessageTypeT
 
 
 class ServerMetricsRecordMessage(BaseServiceMessage):
-    """Message from the server metrics data collector to the records manager.
+    """Legacy RecordsManager transport for one Prometheus scrape.
 
-    Contains a single server metrics record with all metric samples from one
-    Prometheus endpoint scrape.
+    The local manager no longer emits this message, but retaining the model
+    keeps the pre-port RecordsManager importable until its processing layer is
+    replaced by the next stack branch.
     """
 
     message_type: MessageTypeT = MessageType.SERVER_METRICS_RECORD
@@ -65,4 +70,33 @@ class ProcessServerMetricsResultMessage(BaseServiceMessage):
 
     server_metrics_result: ProcessServerMetricsResult = Field(
         description="The processed server metrics results"
+    )
+
+
+class RealtimeServerMetricsMessage(BaseServiceMessage):
+    """Real-time per-endpoint server metrics fan-out.
+
+    Published by the ServerMetricsManager on every scrape cycle so the
+    ``/api/server-metrics`` router can serve a live view without waiting for
+    end-of-run aggregation. Carries only summaries, not raw samples, to keep
+    the per-cycle message size bounded.
+    """
+
+    message_type: MessageTypeT = MessageType.REALTIME_SERVER_METRICS
+
+    # Redeclared with ge=0 so the numeric-bounds invariant in
+    # tests/unit/property/test_finite_invariants.py sees a bounded timestamp.
+    request_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Timestamp of the request in nanoseconds",
+    )
+
+    endpoint_summaries: dict[str, ServerMetricsEndpointSummary] = Field(
+        default_factory=dict,
+        description="Latest metrics summary per Prometheus endpoint URL",
+    )
+    snapshot: dict[str, FiniteFloat] = Field(
+        default_factory=dict,
+        description="Bounded scalar snapshot for realtime console rendering.",
     )

@@ -126,10 +126,14 @@ def import_modules(modules: list[str]) -> dict[str, Exception]:
             importlib.import_module(module_path)
         except pytest.skip.Exception:
             continue
-        except ModuleNotFoundError as e:
+        except ImportError as e:
+            if not isinstance(e, ModuleNotFoundError):
+                failures[module_path] = e
+                continue
             # Expected when an environment-marker-gated optional dep is absent
             # on this platform (e.g. datasets/pyarrow on Windows-on-ARM).
-            if (e.name or "").split(".")[0] in _MARKER_GATED_DEPS:
+            missing = e.name or ""
+            if missing.split(".")[0] in _MARKER_GATED_DEPS:
                 continue
             failures[module_path] = e
         except Exception as e:

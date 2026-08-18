@@ -56,13 +56,14 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: user_centric
-      excludeFromResults: true
       duration: 30
       users: 10
       rate: 1.0
 
     - name: profiling
+      kind: profiling
       type: user_centric
       duration: 120
       users: 30       # 30 simulated users sharing the global rate

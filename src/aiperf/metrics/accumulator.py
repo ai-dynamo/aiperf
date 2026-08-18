@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -95,6 +96,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         super().__init__(run=run, **kwargs)
 
         self._column_store = ColumnStore(initial_capacity=1024)
+        self._storage_lock = asyncio.Lock()
         # Credit/session numbers are scoped per phase and can restart at zero
         # for warmup and profiling. Use an internal append-only row index for
         # storage so warmup record 0 cannot be overwritten by profiling record 0.
@@ -179,6 +181,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a single ``MetricRecordsData`` into columnar storage."""
+        async with self._storage_lock:
+            self._ingest_record(record)
+
+    def _ingest_record(self, record: MetricRecordsData) -> None:
+        """Mutate columnar storage while the async storage lock is held."""
         self._maybe_hint_missing_cache_reporting(record)
         self._pool_spec_decode_record(record)
         idx = self._next_record_idx
@@ -210,7 +217,6 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 "credit_issued_ns": meta.credit_issued_ns,
                 "request_ack_ns": meta.request_ack_ns,
                 "cancellation_time_ns": meta.cancellation_time_ns,
-                "turn_index": meta.turn_index,
             },
             metadata_string={},
             metadata_bool={
@@ -607,8 +613,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         If slice_duration is configured, also computes per-timeslice results
         by partitioning the data into time windows. Always derives the
         coordinated-omission-aware ``effective_latency`` and the
-        ``credit_to_start_latency`` queue-wait metric from stored timestamps,
-        plus a per-``turn_index`` TTFT trend that surfaces KV-cache effectiveness.
+        ``credit_to_start_latency`` queue-wait metric from stored timestamps.
         """
         export_ctx: ExportContext | None = None
         if ctx is not None and (ctx.start_ns or ctx.end_ns or ctx.phase is not None):
@@ -618,7 +623,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 phase=ctx.phase,
                 phase_index=ctx.phase_index,
             )
-        return self._summarize_for_export_context(export_ctx)
+        # _summarize_for_export_context is CPU-bound numpy work on potentially
+        # hundreds of thousands of records. Run in a thread so the event loop
+        # stays responsive (heartbeat tasks can fire between accumulators).
+        async with self._storage_lock:
+            return await asyncio.to_thread(
+                self._summarize_for_export_context, export_ctx
+            )
 
     def _summarize_for_export_context(
         self, ctx: ExportContext | None = None
@@ -698,7 +709,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
         """Export final metrics results for the requested phase/window."""
-        return self._summarize_for_export_context(ctx)
+        # _summarize_for_export_context is CPU-bound numpy work; run in a thread
+        # so the event loop stays responsive while computing over large record sets.
+        async with self._storage_lock:
+            return await asyncio.to_thread(self._summarize_for_export_context, ctx)
 
     def _inject_sweep_metrics(
         self,

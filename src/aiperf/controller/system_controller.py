@@ -54,11 +54,11 @@ from aiperf.common.messages import (
 from aiperf.common.models import (
     ErrorDetails,
     ProcessRecordsResult,
-    ServiceRunInfo,
 )
 from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
+from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.controller.controller_utils import print_exit_errors
@@ -289,6 +289,8 @@ class SystemController(SignalHandlerMixin, BaseService):
                 stop_event=self._stop_requested_event,
             )
 
+        self.service_manager.activate_heartbeat_monitoring()
+
         self.info("AIPerf System is CONFIGURING")
         await self._profile_configure_all_services()
         self.info("AIPerf System is CONFIGURED")
@@ -382,19 +384,38 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         )
 
-        service_info = ServiceRunInfo(
-            registration_status=ServiceRegistrationStatus.REGISTERED,
-            service_type=message.service_type,
+        now_ns = time.time_ns()
+        ServiceRegistry.register(
             service_id=message.service_id,
-            first_seen=time.time_ns(),
+            service_type=message.service_type,
+            first_seen_ns=now_ns,
             state=message.state,
-            last_seen=time.time_ns(),
+            pod_name=message.pod_name,
+            pod_index=message.pod_index,
         )
+        service_info = ServiceRegistry.get_service(message.service_id)
+        if service_info is None:
+            raise RuntimeError(
+                f"Service registry lost registration for '{message.service_id}'"
+            )
 
+        previous = self.service_manager.service_id_map.get(message.service_id)
+        if previous is not None and previous.service_type != message.service_type:
+            self.service_manager.service_map[previous.service_type] = [
+                info
+                for info in self.service_manager.service_map.get(
+                    previous.service_type, []
+                )
+                if info.service_id != message.service_id
+            ]
         self.service_manager.service_id_map[message.service_id] = service_info
-        if message.service_type not in self.service_manager.service_map:
-            self.service_manager.service_map[message.service_type] = []
-        self.service_manager.service_map[message.service_type].append(service_info)
+        services = self.service_manager.service_map.setdefault(message.service_type, [])
+        for index, existing in enumerate(services):
+            if existing.service_id == message.service_id:
+                services[index] = service_info
+                break
+        else:
+            services.append(service_info)
 
         # Join every result domain this service advertises into the shutdown
         # barrier. A telemetry/server-metrics producer may later report it is
@@ -420,13 +441,16 @@ class SystemController(SignalHandlerMixin, BaseService):
         """
         service_id = message.service_id
         service_type = message.service_type
-        timestamp = message.request_ns
+        timestamp = message.request_ns or time.time_ns()
 
         # Update the last heartbeat timestamp if the component exists
         try:
             service_info = self.service_manager.service_id_map[service_id]
-            service_info.last_seen = timestamp
+            service_info.last_seen_ns = timestamp
             service_info.state = message.state
+            ServiceRegistry.update_service(
+                service_id, service_type, timestamp, message.state
+            )
             self.debug(lambda: f"Updated heartbeat for '{service_id}' to {timestamp}")
         except Exception:
             self.warning(
@@ -508,6 +532,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             return
 
         service_info.state = message.state
+        ServiceRegistry.update_service(
+            service_id,
+            service_type,
+            message.request_ns or time.time_ns(),
+            message.state,
+        )
 
         self.debug(f"Updated state for {service_id} to {message.state}")
 
@@ -701,6 +731,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self, message: ProcessServerMetricsResultMessage
     ) -> None:
         """Handle a server metrics results message."""
+        is_legacy_empty_result = False
         try:
             self.trace_or_debug(
                 lambda: f"Received server metrics results message: {message}",
@@ -717,24 +748,44 @@ class SystemController(SignalHandlerMixin, BaseService):
 
             server_metrics_results = message.server_metrics_result.results
 
-            if not server_metrics_results:
+            is_legacy_empty_result = (
+                server_metrics_results is None
+                and message.service_id == ServiceType.RECORDS_MANAGER
+            )
+            if is_legacy_empty_result:
                 self.debug(
-                    f"Received process server metrics result message with no results: {server_metrics_results}"
+                    "Deferring empty RecordsManager server metrics compatibility result "
+                    "until ServerMetricsManager publishes its local result"
+                )
+                return
+
+            if (
+                server_metrics_results is None
+                and self._server_metrics_results is not None
+            ):
+                self.debug(
+                    "Ignoring an empty server metrics compatibility result because "
+                    "manager-owned results are already available"
                 )
             else:
-                server_metrics_results.endpoints_configured = (
-                    self._server_metrics_endpoints_configured
-                )
-                server_metrics_results.endpoints_successful = (
-                    self._server_metrics_endpoints_reachable
-                )
-
-            self._server_metrics_results = server_metrics_results
+                if server_metrics_results is not None:
+                    server_metrics_results.endpoints_configured = (
+                        self._server_metrics_endpoints_configured
+                    )
+                    server_metrics_results.endpoints_successful = (
+                        self._server_metrics_endpoints_reachable
+                    )
+                else:
+                    self.debug(
+                        "Received process server metrics result message with no results"
+                    )
+                self._server_metrics_results = server_metrics_results
         except Exception as e:
             self.exception(f"Error processing server metrics results message: {e!r}")
         finally:
-            self._result_join_coordinator.complete_domain("server_metrics")
-            await self._check_and_trigger_shutdown()
+            if not is_legacy_empty_result:
+                self._result_join_coordinator.complete_domain("server_metrics")
+                await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.PROCESS_ACCURACY_RESULT)
     async def _on_process_accuracy_result_message(

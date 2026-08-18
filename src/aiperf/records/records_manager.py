@@ -545,10 +545,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._network_latency_state = ErrorTrackingState()
 
         self._accumulators: dict[AccumulatorType, AccumulatorProtocol] = (
-            load_accumulators(self)
+            load_accumulators(self, excluded_record_types={"server_metrics"})
         )
         self._stream_exporters: dict[StreamExporterType, StreamExporterProtocol] = (
-            load_stream_exporters(self)
+            load_stream_exporters(self, excluded_record_types={"server_metrics"})
         )
         # Summarize-time cross-accumulator analyzers (e.g. energy efficiency),
         # each carrying its live-instance and summary dependencies.

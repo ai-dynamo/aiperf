@@ -460,13 +460,14 @@ class TestBenchmarkRunSerialization:
             "phases": [
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "requests": 5,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "poisson",
                     "rate": 10.0,
                     "duration": 60,
@@ -550,13 +551,14 @@ class TestBenchmarkRunSerialization:
             "phases": [
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "requests": 5,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "concurrency",
                     "requests": 100,
                     "concurrency": 8,
@@ -648,10 +650,8 @@ benchmark:
         config = load_config_from_string(yaml_str)
         assert [p.name for p in config.benchmark.phases] == ["warmup", "profiling"]
         assert (
-            next(
-                p for p in config.benchmark.phases if p.name == "warmup"
-            ).exclude_from_results
-            is True
+            next(p for p in config.benchmark.phases if p.name == "warmup").kind
+            == "warmup"
         )
         plan = build_benchmark_plan(config)
         assert len(plan.configs) == 1

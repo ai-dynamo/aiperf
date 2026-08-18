@@ -133,6 +133,16 @@ service:
       required: true
       auto_start: true
 
+  worker_group_manager:
+    class: aiperf.workers.group_runtime:LocalWorkerGroupManagerBoundary
+    description: |
+      Runtime-neutral local worker-group process boundary. The worker execution
+      layer supplies the full group manager implementation.
+    metadata:
+      required: false
+      auto_start: false
+      replicable: true
+
 # =============================================================================
 # API Routers
 # =============================================================================

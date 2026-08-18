@@ -26,13 +26,14 @@ _MINIMAL_CONFIG_KWARGS = {
     "phases": [
         {
             "name": "warmup",
+            "kind": "warmup",
             "type": "concurrency",
             "requests": 10,
             "concurrency": 1,
-            "exclude_from_results": True,
         },
         {
             "name": "profiling",
+            "kind": "profiling",
             "type": "concurrency",
             "requests": 100,
             "concurrency": 1,

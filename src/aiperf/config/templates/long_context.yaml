@@ -46,13 +46,14 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
-      excludeFromResults: true
       requests: 20
       concurrency: 4
       prefillConcurrency: 2
 
     - name: profiling
+      kind: profiling
       type: poisson
       requests: 500
       concurrency: 20
