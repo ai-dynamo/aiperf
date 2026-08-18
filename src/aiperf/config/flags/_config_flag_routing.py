@@ -261,7 +261,11 @@ def _build_routed_under_config() -> frozenset[str]:
     counts as routed here.
     """
     from aiperf.config.flags._converter_endpoint import _ENDPOINT_FIELD_MAP
-    from aiperf.config.flags._converter_profiling import _AGENTIC_REPLAY_ROUTES
+    from aiperf.config.flags._converter_profiling import (
+        _AGENTIC_REPLAY_ROUTES,
+        _GAMMA_ONLY_ROUTES,
+        _RAMP_FIELDS,
+    )
     from aiperf.config.flags.resolver import _LOADGEN_PHASE_FIELD_MAP
 
     # _apply_endpoint_overrides: the field map, plus --url and the
@@ -287,6 +291,12 @@ def _build_routed_under_config() -> frozenset[str]:
         {attr for attr, _ in _LOADGEN_PHASE_FIELD_MAP}
         | {"request_rate_series", "arrival_pattern"}
         | (set(_AGENTIC_REPLAY_ROUTES) & LOADGEN_FIELDS)
+        # Phase shaping, applied by _apply_phase_shaping_overrides through the
+        # converter's own helpers. Derived from the same tables those helpers
+        # read, so a new ramp or gamma-only route counts as routed here too.
+        | {attr for attr, _ in _RAMP_FIELDS}
+        | {attr for _, attr in _GAMMA_ONLY_ROUTES}
+        | {"request_cancellation_rate", "request_cancellation_delay"}
     )
 
     # Whole-section builders consumed by build_cli_overrides: build_artifacts
@@ -376,12 +386,6 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         "sweep_type",
         "disable_auto_fixed_schedule",
         # ----- loadgen: ramps, pacing, cancellation -----
-        "arrival_smoothness",
-        "concurrency_ramp_duration",
-        "prefill_concurrency_ramp_duration",
-        "request_rate_ramp_duration",
-        "request_cancellation_delay",
-        "request_cancellation_rate",
     }
 )
 

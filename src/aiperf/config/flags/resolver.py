@@ -707,6 +707,33 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
         target["grace_period"] = cli.benchmark_grace_period
 
     _apply_agentic_replay_fields(target, cli)
+    _apply_phase_shaping_overrides(target, cli)
+
+
+def _apply_phase_shaping_overrides(target: dict[str, Any], cli: CLIConfig) -> None:
+    """Route ramps, cancellation and arrival smoothness onto the phase.
+
+    These were built only by the CLI-only converter, so under ``--config``
+    they were dropped and later rejected. Reuse the converter's own helpers
+    rather than restating the field maps here: ``_RAMP_FIELDS`` and the
+    gamma-only routes stay in one place, and a new entry in either is picked
+    up by both paths.
+
+    ``_apply_phase_specific_routes`` validates against ``prof["type"]``, which
+    on this path is whatever the YAML declared -- so ``--arrival-smoothness``
+    against a non-gamma YAML phase is rejected with the converter's message
+    instead of being silently dropped.
+    """
+    from aiperf.config.flags._converter_profiling import (
+        _apply_phase_specific_routes,
+        _apply_profiling_ramps,
+        apply_cancellation,
+    )
+
+    _apply_profiling_ramps(target, cli)
+    apply_cancellation(target, cli)
+    if "type" in target:
+        _apply_phase_specific_routes(target, cli)
 
 
 def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:
