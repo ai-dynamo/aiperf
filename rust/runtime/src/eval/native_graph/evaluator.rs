@@ -11,9 +11,11 @@ use std::{
 use async_trait::async_trait;
 
 use crate::eval::{
-    EpisodeComparability, EpisodeExecution, EpisodeIntegrity, EpisodeResult, EpisodeResultError,
-    FrozenAttemptBundle, FrozenAttemptError, ResolvedEpisodeTrial,
+    EpisodeComparability, EpisodeIntegrity, EpisodeResult, EpisodeResultError, FrozenAttemptBundle,
+    FrozenAttemptError, ResolvedEpisodeTrial,
 };
+
+use super::NativeGraphCompletedAttempt;
 
 /// Evaluates one frozen episode attempt through an independent scoring authority.
 #[async_trait(?Send)]
@@ -23,6 +25,20 @@ pub trait EpisodeEvaluator {
         &self,
         attempt: FrozenAttemptBundle,
     ) -> Result<EpisodeResult, EpisodeEvaluationError>;
+
+    /// Maps a sealed NativeGraph completion attempt to orthogonal episode result facts.
+    ///
+    /// Legacy implementations receive the already-frozen Harbor facts unchanged. The built-in
+    /// evaluator overrides this seam to preserve rollout terminality.
+    async fn evaluate_native_graph(
+        &self,
+        attempt: NativeGraphCompletedAttempt,
+    ) -> Result<EpisodeResult, EpisodeEvaluationError> {
+        if attempt.has_rollout() {
+            return Err(EpisodeEvaluationError::RolloutAwareEvaluatorRequired);
+        }
+        self.evaluate(attempt.into_frozen_attempt()).await
+    }
 }
 
 /// Creates a selected evaluator after package and runtime capabilities have frozen.
@@ -51,21 +67,30 @@ impl EpisodeEvaluator for HarborEpisodeEvaluator {
         &self,
         attempt: FrozenAttemptBundle,
     ) -> Result<EpisodeResult, EpisodeEvaluationError> {
-        let score = attempt
+        self.evaluate_native_graph(NativeGraphCompletedAttempt::from_frozen(attempt))
+            .await
+    }
+
+    async fn evaluate_native_graph(
+        &self,
+        attempt: NativeGraphCompletedAttempt,
+    ) -> Result<EpisodeResult, EpisodeEvaluationError> {
+        let frozen = attempt.frozen_attempt();
+        let score = frozen
             .selected_score()
             .ok_or(EpisodeEvaluationError::Frozen(
                 FrozenAttemptError::EmptyScoreLineage,
             ))?;
         let result = EpisodeResult::new(
-            attempt.trial_digest().clone(),
-            attempt.attempt().clone(),
+            frozen.trial_digest().clone(),
+            frozen.attempt().clone(),
             EpisodeIntegrity::Valid,
-            EpisodeExecution::Completed,
+            attempt.execution(),
             crate::eval::EpisodeScoreState::Verified {
                 reward: score.value,
             },
             EpisodeComparability::Scored,
-            vec![attempt.identity_digest()],
+            vec![frozen.identity_digest()],
         )?;
         Ok(result)
     }
@@ -87,6 +112,8 @@ impl EpisodeEvaluatorFactory for HarborEpisodeEvaluatorFactory {
 /// Failure while freezing or classifying an independently scored episode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EpisodeEvaluationError {
+    /// The selected evaluator did not opt in to preserving sealed rollout terminality.
+    RolloutAwareEvaluatorRequired,
     /// The incoming attempt did not preserve immutable evidence or score lineage.
     Frozen(FrozenAttemptError),
     /// The result contract rejected the verifier reward.
@@ -96,6 +123,9 @@ pub enum EpisodeEvaluationError {
 impl Display for EpisodeEvaluationError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RolloutAwareEvaluatorRequired => {
+                formatter.write_str("selected evaluator does not support sealed rollout evidence")
+            }
             Self::Frozen(error) => error.fmt(formatter),
             Self::Result(error) => error.fmt(formatter),
         }

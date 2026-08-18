@@ -25,12 +25,13 @@ use aiperf_runtime::eval::{
     HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
     HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource,
     LocalNativeGraphSuiteScheduler, ModelCapacityKey, ModelEndpointIsolationProof, ModelIdentity,
-    ModelRuntimeConfig, NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor,
-    NativeGraphEpisodeLease, NativeGraphEpisodeRunner, NativeGraphPackagePlan,
-    NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity, ProviderCapabilities,
-    ProviderCapability, ProviderProfile, RegradeRequest, ResourceLeaseRequest, RewardDocument,
-    RuntimeIdentity, ScoreVersion, SecretProvider, SuiteRunId, SuiteTrialSpec, TrialBudget,
-    TrialSpec, VerifierResult, regrade, run_native_graph_episode_callback, run_resolved_suite,
+    ModelRuntimeConfig, NativeGraphCompletedAttempt, NativeGraphEpisodeCallback,
+    NativeGraphEpisodeExecutor, NativeGraphEpisodeLease, NativeGraphEpisodeRunner,
+    NativeGraphPackagePlan, NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity,
+    ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
+    ResourceLeaseRequest, RewardDocument, RuntimeIdentity, ScoreVersion, SecretProvider,
+    SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult, regrade,
+    run_native_graph_episode_callback, run_resolved_suite,
 };
 use aiperf_runtime::{engine::application::Application, eval::EnvName};
 use async_trait::async_trait;
@@ -717,7 +718,7 @@ impl NativeGraphEpisodeExecutor for StubFrozenFactsExecutor {
     async fn execute(
         &self,
         assignment: &EpisodeAssignment,
-    ) -> Result<FrozenAttemptBundle, EpisodeExecutionError> {
+    ) -> Result<NativeGraphCompletedAttempt, EpisodeExecutionError> {
         let collection_started = Cell::new(false);
         let mut lease = RecordingLease {
             authorized: true,
@@ -765,7 +766,7 @@ impl NativeGraphEpisodeExecutor for StubFrozenFactsExecutor {
                 .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?,
         )
         .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
-        FrozenAttemptBundle::new(
+        let frozen = FrozenAttemptBundle::new(
             assignment.trial_digest().clone(),
             verifier_result,
             vec![EvidenceEvent::new(
@@ -777,7 +778,8 @@ impl NativeGraphEpisodeExecutor for StubFrozenFactsExecutor {
             )],
             vec![initial, regrade_result],
         )
-        .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))
+        .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        Ok(NativeGraphCompletedAttempt::from_frozen(frozen))
     }
 }
 

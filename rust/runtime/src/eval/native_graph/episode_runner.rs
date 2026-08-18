@@ -4,7 +4,6 @@
 //! Matrix episode execution over a Rust-owned NativeGraph callback and verifier facts.
 
 use std::{
-    cell::RefCell,
     fmt::{self, Display, Formatter},
     rc::Rc,
     sync::Arc,
@@ -22,24 +21,25 @@ use crate::{
     extensions::AIPerfRegistry,
 };
 
-use super::{EngineNativeGraphEpisodeCallback, ModelRuntimeConfig};
-
-use crate::eval::{
-    EpisodeAssignment, EpisodeEvaluatorFactory, EpisodeRunner, FrozenAttemptBundle, MatrixError,
+use super::{
+    EngineNativeGraphEpisodeCallback, ModelRuntimeConfig, NativeGraphAttemptAuthority,
+    NativeGraphCompletedAttempt,
 };
 
-/// Executes one admitted NativeGraph episode and freezes its completed Harbor facts.
+use crate::eval::{EpisodeAssignment, EpisodeEvaluatorFactory, EpisodeRunner, MatrixError};
+
+/// Executes one admitted NativeGraph episode and seals its completed Harbor and rollout facts.
 ///
 /// Implementations own environment acquisition, invoke the Rust graph callback,
-/// preserve the ordinary artifact/verifier lifecycle, and return only immutable
-/// facts. The matrix runner never invents a reward or verifier evidence.
+/// preserve the ordinary artifact/verifier lifecycle, and return only a sealed completion.
+/// The matrix runner never invents a reward, verifier evidence, or execution terminality.
 #[async_trait(?Send)]
 pub trait NativeGraphEpisodeExecutor {
     /// Runs one admitted assignment through its model callback and verifier boundary.
     async fn execute(
         &self,
         assignment: &EpisodeAssignment,
-    ) -> Result<FrozenAttemptBundle, EpisodeExecutionError>;
+    ) -> Result<NativeGraphCompletedAttempt, EpisodeExecutionError>;
 }
 
 /// Concrete Docker-backed executor for one imported, immutable NativeGraph package.
@@ -184,7 +184,7 @@ impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
     async fn execute(
         &self,
         assignment: &EpisodeAssignment,
-    ) -> Result<FrozenAttemptBundle, EpisodeExecutionError> {
+    ) -> Result<NativeGraphCompletedAttempt, EpisodeExecutionError> {
         let (lifecycle, trial) = self.lifecycle_for_assignment(assignment)?;
         let native = self.imported.package.native_graph().ok_or_else(|| {
             EpisodeExecutionError::Configuration(
@@ -246,9 +246,15 @@ impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
             &lifecycle,
         )
         .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
-        completed
+        let frozen = completed
             .freeze()
-            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))
+            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        NativeGraphCompletedAttempt::freeze(
+            &NativeGraphAttemptAuthority::from_resolved_trial(assignment.trial()),
+            frozen,
+            None,
+        )
+        .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))
     }
 }
 
@@ -308,13 +314,13 @@ impl EpisodeRunner for NativeGraphEpisodeRunner {
         &self,
         assignment: EpisodeAssignment,
     ) -> Result<crate::eval::EpisodeResult, MatrixError> {
-        let frozen = self
+        let completed = self
             .executor
             .execute(&assignment)
             .await
             .map_err(|error| MatrixError::RunnerExecutionFailed(error.to_string()))?;
-        if frozen.trial_digest() != assignment.trial_digest()
-            || frozen.attempt() != assignment.attempt_id()
+        if completed.frozen_attempt().trial_digest() != assignment.trial_digest()
+            || completed.frozen_attempt().attempt() != assignment.attempt_id()
         {
             return Err(MatrixError::RunnerExecutionFailed(
                 "native graph executor returned frozen facts for another assignment".to_owned(),
@@ -325,7 +331,7 @@ impl EpisodeRunner for NativeGraphEpisodeRunner {
             .create(assignment.trial())
             .map_err(|error| MatrixError::RunnerExecutionFailed(error.to_string()))?;
         evaluator
-            .evaluate(frozen)
+            .evaluate_native_graph(completed)
             .await
             .map_err(|error| MatrixError::RunnerExecutionFailed(error.to_string()))
     }
