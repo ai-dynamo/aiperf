@@ -1,0 +1,22 @@
+schema_version = "1.1"
+artifacts = ["/var/task/ready.txt"]
+
+[task]
+name = "ng-bench/multi-stage-analysis"
+
+[native_graph]
+profile = "native_graph"
+program = "graph.json"
+model_bindings = "model-bindings.toml"
+adapter_manifest = "adapters.toml"
+
+[environment]
+network = "no-network"
+
+[agent]
+timeout_sec = 120
+network = "no-network"
+
+[verifier]
+environment_mode = "separate"
+timeout_sec = 60

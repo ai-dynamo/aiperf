@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "agent_variant": "native:ng-multi-stage-v1",
+  "model": { "provider": "provider-default", "model": "mock-model" },
+  "seed": 7,
+  "policy": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runtime": "native:aiperf-ng-v1",
+  "attempt": "ng-multi-node-001",
+  "budget": { "execution_seconds": 120.0, "verifier_seconds": 60.0 },
+  "agent_contract": "native_graph",
+  "command": ["native-graph-driver"],
+  "initial_score": {
+    "metric": "reward",
+    "rationale": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "regrade": {
+    "metric": "reward",
+    "rationale": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

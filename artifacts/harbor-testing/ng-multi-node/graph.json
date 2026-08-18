@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "trace_id": "multi-stage-analysis",
+  "stage_bound": 6,
+  "channels": {
+    "plan": { "type": "messages", "reducer": "add_messages" },
+    "analysis": { "type": "messages", "reducer": "add_messages" },
+    "summary": { "type": "messages", "reducer": "add_messages" }
+  },
+  "nodes": [
+    {
+      "id": "planner",
+      "kind": "model",
+      "binding": "primary",
+      "inputs": [],
+      "output": "plan",
+      "streaming": true
+    },
+    {
+      "id": "analyzer",
+      "kind": "model",
+      "binding": "secondary",
+      "inputs": ["plan"],
+      "output": "analysis",
+      "streaming": true
+    },
+    {
+      "id": "summarizer",
+      "kind": "model",
+      "binding": "primary",
+      "inputs": ["plan", "analysis"],
+      "output": "summary",
+      "streaming": true
+    }
+  ],
+  "edges": [
+    { "source": "START", "target": "planner" },
+    { "source": "planner", "target": "analyzer" },
+    { "source": "analyzer", "target": "summarizer" },
+    { "source": "summarizer", "target": "END" }
+  ],
+  "terminal_outputs": []
+}
