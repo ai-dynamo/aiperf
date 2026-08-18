@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::load::{self, Inputs, Warmup, default_isl};
 use crate::model::dataset::{Distribution, RecordedAgentGraphConfig};
 use crate::model::endpoint::{ResetKvCacheConfig, ServerProfilerConfig};
-use crate::model::transport::{DynosimConfig, Transport};
+use crate::model::transport::{DynosimConfig, Transport, WebSocketTransportConfig};
 
 /// Parse a YAML config file into one native run.
 pub fn resolve(
@@ -854,15 +854,10 @@ impl<'de> Deserialize<'de> for ModelItem {
 struct TransportSection {
     #[serde(rename = "type")]
     transport_type: String,
-    /// DynoSim knobs sit flat on the transport object (like Config's
-    /// `DynosimOfflineTransport`); captured for the `dynosim_*` types and
-    /// ignored (all-`None`) for `http`/`grpc`.
+    /// Transport-specific fields stay flat beside the discriminator and are
+    /// decoded only after `type` selects their public DTO.
     #[serde(flatten)]
-    dynosim: DynosimConfig,
-    /// `dry_run` analytic-latency knobs sit flat on the transport object;
-    /// captured for the `dry_run` type and ignored (all-`None`) otherwise.
-    #[serde(flatten)]
-    dry_run: crate::model::transport::DryRunConfig,
+    options: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2507,19 +2502,59 @@ fn parse_transport(section: Option<&TransportSection>) -> anyhow::Result<Transpo
     let Some(section) = section else {
         return Ok(Transport::Http);
     };
-    let dynosim = || {
-        let mut cfg: DynosimConfig = section.dynosim.clone();
-        cfg.normalize();
-        cfg
+    let reject_websocket_options = || -> anyhow::Result<()> {
+        for field in [
+            "fallback",
+            "ping_interval_seconds",
+            "stream_idle_timeout_seconds",
+            "max_queued_commands",
+            "max_queued_bytes",
+            "max_frame_bytes",
+            "max_message_bytes",
+            "max_response_bytes",
+        ] {
+            anyhow::ensure!(
+                !section.options.contains_key(field),
+                "transport.type {:?} does not support WebSocket field {field:?}",
+                section.transport_type
+            );
+        }
+        Ok(())
     };
-    Ok(match section.transport_type.as_str() {
-        "http" => Transport::Http,
-        "grpc" => Transport::Grpc,
-        "dynosim_offline" => Transport::DynosimOffline(dynosim()),
-        "dynosim_online" => Transport::DynosimOnline(dynosim()),
-        "dry_run" => Transport::DryRun(section.dry_run.clone()),
+    let decode_options = || serde_json::Value::Object(section.options.clone());
+    let dynosim = || -> anyhow::Result<DynosimConfig> {
+        reject_websocket_options()?;
+        let mut cfg: DynosimConfig = serde_json::from_value(decode_options()).map_err(|error| {
+            anyhow::anyhow!("transport.type {:?}: {error}", section.transport_type)
+        })?;
+        cfg.normalize();
+        Ok(cfg)
+    };
+    match section.transport_type.as_str() {
+        "http" => {
+            reject_websocket_options()?;
+            Ok(Transport::Http)
+        }
+        "grpc" => {
+            reject_websocket_options()?;
+            Ok(Transport::Grpc)
+        }
+        "dynosim_offline" => Ok(Transport::DynosimOffline(dynosim()?)),
+        "dynosim_online" => Ok(Transport::DynosimOnline(dynosim()?)),
+        "dry_run" => {
+            reject_websocket_options()?;
+            let config = serde_json::from_value(decode_options()).map_err(|error| {
+                anyhow::anyhow!("transport.type {:?}: {error}", section.transport_type)
+            })?;
+            Ok(Transport::DryRun(config))
+        }
+        "websocket" => serde_json::from_value::<WebSocketTransportConfig>(decode_options())
+            .map(Transport::Websocket)
+            .map_err(|error| {
+                anyhow::anyhow!("transport.type {:?}: {error}", section.transport_type)
+            }),
         other => anyhow::bail!("unknown transport.type {other:?}"),
-    })
+    }
 }
 
 /// Extract the ISL distribution, optional OSL, batch size, and block size.
@@ -2853,6 +2888,93 @@ fn clone_num_or_dist(n: &NumOrDist) -> Distribution {
 #[cfg(test)]
 mod tests {
     use super::{ConfigFile, UNIMPLEMENTED_KEYS, resolve_expanded_value, resolve_str};
+
+    #[test]
+    fn websocket_transport_maps_every_authored_value() {
+        let run = resolve_str(
+            &cfg("  transport:\n\
+                 \x20   type: websocket\n\
+                 \x20   fallback: http_sse\n\
+                 \x20   ping_interval_seconds: 12.5\n\
+                 \x20   stream_idle_timeout_seconds: 34.5\n\
+                 \x20   max_queued_commands: 7\n\
+                 \x20   max_queued_bytes: 4096\n\
+                 \x20   max_frame_bytes: 1024\n\
+                 \x20   max_message_bytes: 2048\n\
+                 \x20   max_response_bytes: 8192\n\
+                 \x20 phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
+            Some("/tmp/x".into()),
+        )
+        .expect("websocket YAML resolves");
+        let transport = run.cfg.transport.as_ref().expect("resolved transport");
+
+        assert_eq!(
+            serde_json::to_value(transport).expect("transport serializes"),
+            serde_json::json!({
+                "type": "websocket",
+                "fallback": "http_sse",
+                "ping_interval_seconds": 12.5,
+                "stream_idle_timeout_seconds": 34.5,
+                "max_queued_commands": 7,
+                "max_queued_bytes": 4096,
+                "max_frame_bytes": 1024,
+                "max_message_bytes": 2048,
+                "max_response_bytes": 8192,
+            })
+        );
+    }
+
+    #[test]
+    fn websocket_transport_rejects_unknown_yaml_field() {
+        for (field, value) in [
+            ("surprise", "true"),
+            ("engine_profile", "profile"),
+            ("ttft_ms", "1"),
+        ] {
+            let body = format!(
+                "  transport:\n    type: websocket\n    {field}: {value}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+            );
+            let error = err(&body);
+            assert!(
+                error.contains("unknown field") && error.contains(field),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_transports_reject_websocket_only_yaml_fields() {
+        let transports = [
+            "http",
+            "grpc",
+            "dry_run",
+            "dynosim_offline",
+            "dynosim_online",
+        ];
+        let websocket_fields = [
+            ("fallback", "http_sse"),
+            ("ping_interval_seconds", "1"),
+            ("stream_idle_timeout_seconds", "1"),
+            ("max_queued_commands", "1"),
+            ("max_queued_bytes", "1"),
+            ("max_frame_bytes", "1"),
+            ("max_message_bytes", "1"),
+            ("max_response_bytes", "1"),
+        ];
+
+        for transport in transports {
+            for (field, value) in websocket_fields {
+                let body = format!(
+                    "  transport:\n    type: {transport}\n    {field}: {value}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+                );
+                let error = err(&body);
+                assert!(
+                    error.contains(field),
+                    "transport {transport} must reject {field}: {error}"
+                );
+            }
+        }
+    }
 
     /// A minimal valid config with the given `dataset:`/`phases:` bodies spliced in.
     fn cfg(body: &str) -> String {

@@ -29,7 +29,9 @@ pub(crate) fn validate_supported_control_hook_transport(run: &BenchmarkRun) -> R
         return Ok(());
     }
     match run.cfg.transport.as_ref() {
-        None | Some(Transport::Http) | Some(Transport::Grpc) => Ok(()),
+        None | Some(Transport::Http) | Some(Transport::Grpc) | Some(Transport::Websocket(_)) => {
+            Ok(())
+        }
         Some(Transport::DryRun(_)) => bail!(
             "endpoint.reset_kv_cache / endpoint.server_profiler require a live HTTP or gRPC target; \
              the dry_run transport has no server control plane"

@@ -27,6 +27,10 @@ engine = []
 # base — the side channels (server-metrics, GPU telemetry, dataset fetch,
 # control plane) depend on it — so there is no symmetric `http` off switch.
 grpc = ["dep:tonic"]
+# Native WebSocket transport plumbing. The direct dependency is rustls-only
+# with WebPKI roots; feature-off builds retain config parsing and fail closed
+# when execution cannot find a registered WebSocket transport factory.
+websocket = ["dep:tokio-tungstenite"]
 # Server-metrics Parquet export sink + public-dataset `.parquet` reader. Links
 # `arrow` + `parquet` (~2.6 MiB of `.text`, plus zstd/snap). A lite/online-only
 # runner (e.g. a lightweight nightly wheel) builds without it: the exporter is
@@ -107,6 +111,7 @@ sha2.workspace = true
 smallvec.workspace = true
 tiktoken-rs.workspace = true
 tokio.workspace = true
+tokio-tungstenite = { workspace = true, optional = true }
 tokio-util.workspace = true
 toml.workspace = true
 velo = { git = "https://github.com/ajcasagrande/velo.git", branch = "feat/connect-by-endpoint", default-features = false, optional = true }

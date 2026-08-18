@@ -646,13 +646,25 @@ pub fn tokenize_request(req: &GenRequest<'_>) -> TokenizedText {
     }
 
     if prompt_tokens.is_empty() {
+        // Requests with no extractable text (e.g. NativeGraph start node with
+        // empty messages) still carry max_tokens from the model binding, so
+        // honour it: emit output tokens seeded from an empty prompt so the
+        // transport sees non-zero content and classifies the reply as
+        // Completed rather than Failed.
+        let (output_tokens, finish_reason) = generate_output_tokens(
+            &prompt_tokens,
+            0,
+            max_tokens,
+            min_tokens_of(req),
+            ignore_eos_of(req),
+        );
         return TokenizedText {
             text,
-            tokens: Vec::new(),
+            tokens: output_tokens,
             prompt_token_count: 0,
             reasoning_tokens: 0,
             reasoning_content_tokens: Vec::new(),
-            finish_reason: "stop",
+            finish_reason,
         };
     }
 
@@ -774,11 +786,18 @@ mod tests {
     }
 
     #[test]
-    fn empty_prompt_yields_empty_output() {
-        let req = chat("gpt-4", "");
+    fn empty_messages_still_yields_output_tokens() {
+        // A request with no extractable text (e.g. NativeGraph start node with
+        // empty messages or an empty-string user message) must still return
+        // output tokens so the transport classifies the reply as Completed
+        // rather than Failed. max_tokens defaults to 2*0=0 → floor 16.
+        let mut req = chat("gpt-4", "");
+        req.max_tokens = Some(64);
         let req_gen = GenRequest::Chat(&req);
         let out = tokenize_request(&req_gen);
-        assert_eq!(out.tokens, Vec::<String>::new());
+        assert!(!out.tokens.is_empty(), "empty prompt must still generate output tokens");
+        assert!(out.tokens.len() <= 64, "must respect max_tokens");
+        assert_eq!(out.prompt_token_count, 0);
     }
 
     #[test]

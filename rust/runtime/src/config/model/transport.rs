@@ -5,7 +5,7 @@
 //! The wire uses a `type`-discriminated union and omits unset optional fields.
 //! DynoSim configuration fields are flattened onto the transport object.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Inline transport selection discriminated by `type`.
 ///
@@ -25,6 +25,8 @@ pub enum Transport {
     /// Lightweight fake execution leaf: analytic-latency synthetic responses,
     /// zero network (fields flat on the transport).
     DryRun(DryRunConfig),
+    /// Native persistent WebSocket transport.
+    Websocket(WebSocketTransportConfig),
 }
 
 impl Transport {
@@ -39,6 +41,217 @@ impl Transport {
     /// Whether this is the no-server fake `dry_run` transport.
     pub fn is_dry_run(&self) -> bool {
         matches!(self, Transport::DryRun(_))
+    }
+
+    /// Whether this selects the persistent WebSocket transport.
+    pub fn is_websocket(&self) -> bool {
+        matches!(self, Transport::Websocket(_))
+    }
+}
+
+/// WebSocket fallback policy.
+///
+/// An HTTP/SSE fallback is available only when the selected endpoint dialect
+/// declares a semantically equivalent operation. The transport default is
+/// deliberately closed: a failed WebSocket request must not silently change
+/// protocols.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebSocketFallback {
+    /// Require the selected WebSocket dialect to complete the operation.
+    #[default]
+    Disabled,
+    /// Permit a dialect-declared pre-send HTTP/SSE alternative.
+    HttpSse,
+}
+
+const fn default_websocket_ping_interval_seconds() -> f64 {
+    30.0
+}
+
+const fn default_websocket_stream_idle_timeout_seconds() -> f64 {
+    900.0
+}
+
+const fn default_websocket_max_queued_commands() -> usize {
+    64
+}
+
+const fn default_websocket_max_queued_bytes() -> usize {
+    1_048_576
+}
+
+const fn default_websocket_max_frame_bytes() -> usize {
+    1_048_576
+}
+
+const fn default_websocket_max_message_bytes() -> usize {
+    8_388_608
+}
+
+const fn default_websocket_max_response_bytes() -> usize {
+    67_108_864
+}
+
+/// Strict policy for a native WebSocket transport.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WebSocketTransportConfig {
+    /// Fallback policy selected before an application message is sent.
+    pub fallback: WebSocketFallback,
+    /// Interval between application-independent keepalive pings in seconds.
+    pub ping_interval_seconds: f64,
+    /// Maximum inactive duration for a live response stream in seconds.
+    pub stream_idle_timeout_seconds: f64,
+    /// Maximum commands retained in the outbound driver queue.
+    pub max_queued_commands: usize,
+    /// Maximum total application payload bytes retained in the outbound queue.
+    pub max_queued_bytes: usize,
+    /// Maximum payload size for one WebSocket frame.
+    pub max_frame_bytes: usize,
+    /// Maximum reassembled WebSocket application-message size.
+    pub max_message_bytes: usize,
+    /// Maximum cumulative response bytes accepted for one operation.
+    pub max_response_bytes: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebSocketTransportConfigRaw {
+    #[serde(default)]
+    fallback: WebSocketFallback,
+    #[serde(
+        default = "default_websocket_ping_interval_seconds",
+        deserialize_with = "deserialize_positive_finite_seconds"
+    )]
+    ping_interval_seconds: f64,
+    #[serde(
+        default = "default_websocket_stream_idle_timeout_seconds",
+        deserialize_with = "deserialize_positive_finite_seconds"
+    )]
+    stream_idle_timeout_seconds: f64,
+    #[serde(
+        default = "default_websocket_max_queued_commands",
+        deserialize_with = "deserialize_positive_usize"
+    )]
+    max_queued_commands: usize,
+    #[serde(
+        default = "default_websocket_max_queued_bytes",
+        deserialize_with = "deserialize_positive_usize"
+    )]
+    max_queued_bytes: usize,
+    #[serde(
+        default = "default_websocket_max_frame_bytes",
+        deserialize_with = "deserialize_positive_usize"
+    )]
+    max_frame_bytes: usize,
+    #[serde(
+        default = "default_websocket_max_message_bytes",
+        deserialize_with = "deserialize_positive_usize"
+    )]
+    max_message_bytes: usize,
+    #[serde(
+        default = "default_websocket_max_response_bytes",
+        deserialize_with = "deserialize_positive_usize"
+    )]
+    max_response_bytes: usize,
+}
+
+impl<'de> Deserialize<'de> for WebSocketTransportConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = WebSocketTransportConfigRaw::deserialize(deserializer)?;
+        Self {
+            fallback: raw.fallback,
+            ping_interval_seconds: raw.ping_interval_seconds,
+            stream_idle_timeout_seconds: raw.stream_idle_timeout_seconds,
+            max_queued_commands: raw.max_queued_commands,
+            max_queued_bytes: raw.max_queued_bytes,
+            max_frame_bytes: raw.max_frame_bytes,
+            max_message_bytes: raw.max_message_bytes,
+            max_response_bytes: raw.max_response_bytes,
+        }
+        .validate()
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+fn deserialize_positive_finite_seconds<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let seconds = f64::deserialize(deserializer)?;
+    validate_websocket_seconds("duration", seconds).map_err(serde::de::Error::custom)
+}
+
+fn validate_websocket_seconds(field: &str, seconds: f64) -> Result<f64, String> {
+    if seconds.is_finite() && seconds > 0.0 {
+        Ok(seconds)
+    } else {
+        Err(format!("websocket {field} must be finite and positive"))
+    }
+}
+
+fn deserialize_positive_usize<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = usize::deserialize(deserializer)?;
+    validate_websocket_positive_usize("limit", value).map_err(serde::de::Error::custom)
+}
+
+fn validate_websocket_positive_usize(field: &str, value: usize) -> Result<usize, String> {
+    if value > 0 {
+        Ok(value)
+    } else {
+        Err(format!("websocket {field} must be positive"))
+    }
+}
+
+impl Default for WebSocketTransportConfig {
+    fn default() -> Self {
+        Self {
+            fallback: WebSocketFallback::Disabled,
+            ping_interval_seconds: default_websocket_ping_interval_seconds(),
+            stream_idle_timeout_seconds: default_websocket_stream_idle_timeout_seconds(),
+            max_queued_commands: default_websocket_max_queued_commands(),
+            max_queued_bytes: default_websocket_max_queued_bytes(),
+            max_frame_bytes: default_websocket_max_frame_bytes(),
+            max_message_bytes: default_websocket_max_message_bytes(),
+            max_response_bytes: default_websocket_max_response_bytes(),
+        }
+    }
+}
+
+impl WebSocketTransportConfig {
+    /// Validate the policy shared by every configuration frontend.
+    pub fn validate(self) -> Result<Self, String> {
+        for (field, seconds) in [
+            ("ping_interval_seconds", self.ping_interval_seconds),
+            (
+                "stream_idle_timeout_seconds",
+                self.stream_idle_timeout_seconds,
+            ),
+        ] {
+            validate_websocket_seconds(field, seconds)?;
+        }
+        for (field, value) in [
+            ("max_queued_commands", self.max_queued_commands),
+            ("max_queued_bytes", self.max_queued_bytes),
+            ("max_frame_bytes", self.max_frame_bytes),
+            ("max_message_bytes", self.max_message_bytes),
+            ("max_response_bytes", self.max_response_bytes),
+        ] {
+            validate_websocket_positive_usize(field, value)?;
+        }
+        if self.max_frame_bytes > self.max_message_bytes {
+            return Err("websocket max_frame_bytes cannot exceed max_message_bytes".into());
+        }
+        if self.max_message_bytes > self.max_response_bytes {
+            return Err("websocket max_message_bytes cannot exceed max_response_bytes".into());
+        }
+        Ok(self)
     }
 }
 
@@ -353,6 +566,26 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Transport::Http).unwrap(),
             serde_json::json!({"type": "http"})
+        );
+    }
+
+    #[test]
+    fn websocket_transport_defaults_are_strict() {
+        let value = serde_json::json!({"type": "websocket"});
+        let decoded: Transport = serde_json::from_value(value).unwrap();
+        let Transport::Websocket(config) = decoded else {
+            panic!("expected websocket transport");
+        };
+
+        assert_eq!(config.fallback, WebSocketFallback::Disabled);
+        assert_eq!(config.ping_interval_seconds, 30.0);
+        assert_eq!(config.stream_idle_timeout_seconds, 900.0);
+        assert!(
+            serde_json::from_value::<Transport>(serde_json::json!({
+                "type": "websocket",
+                "unsupported": true,
+            }))
+            .is_err()
         );
     }
 
