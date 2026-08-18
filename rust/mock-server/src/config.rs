@@ -12,6 +12,7 @@ use crate::prefix_cache::EvictionPolicy;
 
 /// Selects which test-only WebSocket routes the mock server exposes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum, Serialize, Deserialize)]
+#[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum WebSocketMode {
     /// Do not expose WebSocket routes.
@@ -27,6 +28,7 @@ pub enum WebSocketMode {
 
 /// Selects the deterministic WebSocket behavior the mock server emits.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum, Serialize, Deserialize)]
+#[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum WebSocketScenario {
     /// Emit normal content and terminal events.
@@ -48,6 +50,7 @@ pub enum WebSocketScenario {
 
 /// Selects an optional control frame before the first WebSocket content event.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum, Serialize, Deserialize)]
+#[clap(rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum WebSocketControl {
     /// Do not inject a control frame.
@@ -1084,6 +1087,33 @@ mod tests {
         assert_eq!(cfg.websocket_capture_capacity, 1_024);
         assert_eq!(cfg.websocket_max_message_bytes, 8_388_608);
         assert!(!cfg.websocket_enabled());
+    }
+
+    #[test]
+    fn websocket_cli_uses_snake_case_enum_values() {
+        let cfg = MockServerConfig::try_parse_from([
+            "aiperf-mock-server",
+            "--websocket-mode",
+            "turn_serialized",
+            "--websocket-scenario",
+            "done_only",
+            "--websocket-control-before-content",
+            "ping",
+        ])
+        .unwrap();
+        assert_eq!(cfg.websocket_mode, WebSocketMode::TurnSerialized);
+        assert_eq!(cfg.websocket_scenario, WebSocketScenario::DoneOnly);
+        assert_eq!(cfg.websocket_control_before_content, WebSocketControl::Ping);
+    }
+
+    #[test]
+    fn websocket_cli_rejects_kebab_case_enum_values() {
+        let result = MockServerConfig::try_parse_from([
+            "aiperf-mock-server",
+            "--websocket-mode",
+            "turn-serialized",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
