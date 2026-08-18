@@ -7,9 +7,16 @@ Used by every CLI command that supports both flag-form and file-form input
 (``aiperf profile`` and ``aiperf service``). When both are supplied, the YAML
 supplies the base configuration and any explicitly-set CLI flags on
 ``cli_config`` are deep-merged on top before AIPerfConfig validation -- so
-``aiperf profile --config foo.yaml --search-recipe X --ttft-sla-ms 200``
-works the way users intuit instead of throwing
+``aiperf profile --config foo.yaml --streaming --search-recipe X`` works the
+way users intuit instead of throwing
 ``CLIConfig.endpoint.modelNames: Field required``.
+
+Not every flag can be applied this way. Anything this path cannot route is
+rejected up front by ``reject_unrouted_cli_flags`` with an error naming the
+flag, rather than being silently discarded -- see ``_config_flag_routing``
+and ``docs/dev/global-invariants.md`` for the classification and the tests
+that keep it honest. ``--ttft-sla-ms`` is one such flag today: it does not
+take effect under ``--config`` even alongside a recipe, so it errors.
 """
 
 from __future__ import annotations

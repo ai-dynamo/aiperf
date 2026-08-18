@@ -136,6 +136,51 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
 )
 
 
+# SWEEPING members that resolve cleanly under --config and change nothing,
+# each verified by resolving with the flag and diffing the result. Notably
+# --ttft-sla-ms does NOT take effect even alongside --search-recipe plus
+# --streaming, contrary to the example in resolver's module docstring.
+SWEEP_FIELDS_NOT_ROUTED: frozenset[str] = frozenset(
+    {
+        "concurrency_max",
+        "concurrency_min",
+        "concurrency_steps",
+        "convergence_mode",
+        "convergence_stat",
+        "degradation_metric_tag",
+        "degradation_stat",
+        "e2e_sla_ms",
+        "isl_max",
+        "isl_min",
+        "isl_steps",
+        "itl_sla_ms",
+        "osl_max",
+        "osl_min",
+        "osl_steps",
+        "parameter_sweep_cooldown_seconds",
+        "parameter_sweep_mode",
+        "parameter_sweep_same_seed",
+        "search_style",
+        "sweep_variants",
+        "tpot_sla_ms",
+        "ttft_sla_ms",
+    }
+)
+
+
+# Flags that only route when a companion flag is also present, verified by
+# resolving with and without the companion. Without it they resolve cleanly
+# and change nothing, so they must be rejected rather than quietly ignored.
+COMPANION_ROUTED: dict[str, frozenset[str]] = {
+    # _apply_endpoint_overrides writes `models.strategy` only inside the
+    # `model_names` branch.
+    "model_selection_strategy": frozenset({"model_names"}),
+    # _apply_phase_loadgen_overrides consults arrival_pattern only when
+    # rewriting a phase for --request-rate-series.
+    "arrival_pattern": frozenset({"request_rate_series"}),
+}
+
+
 # Flags that would replace the dataset the config file declared rather than
 # shape it: its source file, its public-dataset identity, its format. The YAML
 # owns those, and build_dataset drops the corresponding keys in override mode,
@@ -213,7 +258,9 @@ def _build_routed_under_config() -> frozenset[str]:
     # + resolve_auto_plot, build_tokenizer, build_accuracy.
     whole_sections = OUTPUT_FIELDS | TOKENIZER_FIELDS | ACCURACY_FIELDS
 
-    # SWEEPING is treated as routed in full. build_sweep / expand_search_recipe
+    # SWEEPING minus the members verified to resolve cleanly while changing
+    # nothing (see SWEEP_FIELDS_NOT_ROUTED). The rest -- --search-recipe,
+    # --search-space and friends -- do take effect. build_sweep / expand_search_recipe
     # consume the section, but only conditionally -- e.g. --concurrency-min /
     # --concurrency-max / --concurrency-steps under --config verifiably
     # produce no sweep at all, while --ttft-sla-ms does take effect alongside
@@ -221,7 +268,7 @@ def _build_routed_under_config() -> frozenset[str]:
     # requires a combination audit that is out of scope here, and erroring on
     # the whole section would break valid recipe invocations. Tracked as
     # follow-up work; see AIP-1133.
-    sweeping = set(SWEEPING_FIELDS)
+    sweeping = set(SWEEPING_FIELDS) - SWEEP_FIELDS_NOT_ROUTED
 
     return frozenset(
         endpoint
@@ -284,6 +331,8 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         "warmup_request_count",
         "warmup_request_rate",
         "warmup_request_rate_ramp_duration",
+        # ----- sweep flags that resolve cleanly and do nothing -----
+        *SWEEP_FIELDS_NOT_ROUTED,
         # ----- outside every section frozenset -----
         # Still dropped: --sweep-type needs a sweep block to attach to, and
         # --disable-auto-fixed-schedule is consumed by phase construction
@@ -313,15 +362,21 @@ def flag_names_for(field: str) -> tuple[str, ...]:
 
     Returns an empty tuple when the field carries no ``CLIParameter``.
     """
-    from aiperf.config.cli_parameter import CLIParameter
     from aiperf.config.flags import CLIConfig
 
     info = CLIConfig.model_fields.get(field)
     if info is None:
         return ()
+    # Fields declare their flags via CLIParameter or via cyclopts' Parameter
+    # (--parameter-sweep-same-seed uses the latter). Match structurally on a
+    # `name` tuple of dash-prefixed spellings rather than on either class, so
+    # a third declaration style still yields real flag names.
     for meta in info.metadata:
-        if isinstance(meta, CLIParameter) and meta.name:
-            return tuple(meta.name)
+        names = getattr(meta, "name", None)
+        if isinstance(names, (tuple, list)) and any(
+            isinstance(n, str) and n.startswith("--") for n in names
+        ):
+            return tuple(n for n in names if isinstance(n, str))
     return ()
 
 
@@ -350,6 +405,13 @@ def reject_unrouted_cli_flags(cli: CLIConfig) -> None:
     # Keyed on every CLIConfig field rather than on the section frozensets:
     # those are opt-in, and a field nobody sectioned was invisible here.
     unrouted = cli.model_fields_set - ROUTED_UNDER_CONFIG - EXEMPT_FROM_CONFIG_ROUTING
+    # Companion-routed flags are inert on their own, so treat a missing
+    # companion the same as no routing at all.
+    unrouted |= {
+        field
+        for field, companions in COMPANION_ROUTED.items()
+        if field in cli.model_fields_set and not (companions & cli.model_fields_set)
+    }
     # Magic-list fields resolve correctly in their list form; only the scalar
     # form falls through unrouted.
     unrouted -= {

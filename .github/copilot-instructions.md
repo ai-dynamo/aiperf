@@ -46,6 +46,10 @@ Python 3.11+ async AI benchmarking tool for measuring LLM inference server perfo
 
 Numeric metric values crossing a serialization boundary or feeding a numerical algorithm must be finite or explicitly `None`. Use `aiperf.common.finite` (`FiniteFloat`, `scrub_non_finite`, `nan_safe_mean`/`std`, `is_finite_value`). Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py` reject new violations and ratchet existing debt to zero via baseline files. See [`docs/dev/patterns.md`](docs/dev/patterns.md) § "NaN/Inf Discipline Pattern" and [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) for the full contract.
 
+## CLI Flag Routing Under `--config`
+
+A CLI flag passed alongside `--config` MUST either change the resolved config or raise an error naming the flag — never be silently ignored, which for a benchmarking tool means publishing numbers that do not match what was asked for. `CLIConfig` is the source of truth: every field must be classified in `src/aiperf/config/flags/_config_flag_routing.py` as `ROUTED_UNDER_CONFIG`, `UNROUTED_UNDER_CONFIG`, `EXEMPT_FROM_CONFIG_ROUTING`, or one of the conditional sets (`COMPANION_ROUTED`, `MAGIC_LIST_ONLY_UNDER_CONFIG`). Adding a flag without classifying it fails `test_every_cli_config_field_is_classified`; claiming a flag is routed when nothing routes it fails `test_routed_field_never_silently_no_ops`. Prefer routing the flag (check whether a builder already exists) over listing it as unrouted. See [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) § "CLI flag routing under `--config`".
+
 ## Build and Test Commands
 
 ```bash
