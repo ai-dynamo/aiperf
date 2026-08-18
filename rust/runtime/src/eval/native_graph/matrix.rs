@@ -18,6 +18,7 @@ use crate::eval::{
     ArtifactDigest, AttemptId, EpisodeResult, HarborTaskPackage, ModelCapacityKey,
     ResolvedEpisodeTrial, ResolvedNativeGraphSuite, ResourceLeaseRequest,
 };
+#[cfg(feature = "engine")]
 use crate::extensions::AIPerfRegistry;
 
 /// Fixed resource capacities shared by one local matrix scheduler instance.
@@ -158,6 +159,7 @@ pub trait SuiteSchedulerFactory: Send + Sync {
 
 /// Resolves and constructs a bounded NativeGraph scheduler from the frozen
 /// application registry before any episode environment is provisioned.
+#[cfg(feature = "engine")]
 pub fn select_native_graph_scheduler(
     registry: &AIPerfRegistry,
     scheduler_name: &str,
@@ -198,7 +200,7 @@ impl LocalNativeGraphSuiteScheduler {
         let (availability, _) = watch::channel(());
         Ok(Self {
             state: Rc::new(LocalSchedulerState {
-                pools: RefCell::new(ResourcePools::from(&limits)),
+                pools: RefCell::new(ResourceCapacityLedger::from(&limits)),
                 availability,
             }),
             limits,
@@ -303,7 +305,7 @@ impl LocalNativeGraphSuiteScheduler {
         assignment: &EpisodeAssignment,
     ) -> Result<Option<AdmissionLease>, MatrixError> {
         let mut pool = self.state.pools.borrow_mut();
-        if !pool.try_acquire(assignment.resources()) {
+        if !pool.try_reserve(assignment.resources()) {
             return Ok(None);
         }
         drop(pool);
@@ -347,18 +349,19 @@ impl Drop for AdmissionLease {
 }
 
 struct LocalSchedulerState {
-    pools: RefCell<ResourcePools>,
+    pools: RefCell<ResourceCapacityLedger>,
     availability: watch::Sender<()>,
 }
 
-struct ResourcePools {
+/// Shared mutable capacity ledger for trusted NativeGraph resource requests.
+pub(crate) struct ResourceCapacityLedger {
     episode_slots: usize,
     cpu_units: u32,
     memory_bytes: u64,
     model_binding_units: BTreeMap<ModelCapacityKey, u32>,
 }
 
-impl From<&ResourceLimits> for ResourcePools {
+impl From<&ResourceLimits> for ResourceCapacityLedger {
     fn from(limits: &ResourceLimits) -> Self {
         Self {
             episode_slots: limits.episode_slots,
@@ -369,8 +372,9 @@ impl From<&ResourceLimits> for ResourcePools {
     }
 }
 
-impl ResourcePools {
-    fn try_acquire(&mut self, request: &ResourceLeaseRequest) -> bool {
+impl ResourceCapacityLedger {
+    /// Attempts to reserve every requested resource atomically.
+    pub(crate) fn try_reserve(&mut self, request: &ResourceLeaseRequest) -> bool {
         if self.episode_slots == 0
             || self.cpu_units < request.cpu_units()
             || self.memory_bytes < request.memory_bytes()
@@ -397,7 +401,8 @@ impl ResourcePools {
         true
     }
 
-    fn release(&mut self, request: &ResourceLeaseRequest) {
+    /// Returns one previously reserved request to the shared capacity pool.
+    pub(crate) fn release(&mut self, request: &ResourceLeaseRequest) {
         self.episode_slots += 1;
         self.cpu_units += request.cpu_units();
         self.memory_bytes += request.memory_bytes();
@@ -407,6 +412,41 @@ impl ResourcePools {
             }
         }
     }
+
+    /// Rejects a request that could never be admitted by these fixed limits.
+    pub(crate) fn validate_request(
+        limits: &ResourceLimits,
+        output_index: usize,
+        request: &ResourceLeaseRequest,
+    ) -> Result<(), MatrixError> {
+        if request.cpu_units() > limits.cpu_units {
+            return Err(MatrixError::ResourceRequestExceedsLimit {
+                output_index,
+                resource: "cpu_units".to_owned(),
+            });
+        }
+        if request.memory_bytes() > limits.memory_bytes {
+            return Err(MatrixError::ResourceRequestExceedsLimit {
+                output_index,
+                resource: "memory_bytes".to_owned(),
+            });
+        }
+        for (binding, units) in request.model_binding_units() {
+            let Some(capacity) = limits.model_binding_units.get(binding) else {
+                return Err(MatrixError::MissingModelBindingCapacity {
+                    output_index,
+                    binding: binding.digest().as_str().to_owned(),
+                });
+            };
+            if units > capacity {
+                return Err(MatrixError::ResourceRequestExceedsLimit {
+                    output_index,
+                    resource: format!("model_binding_units:{}", binding.digest().as_str()),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 fn validate_resource_requests(
@@ -414,33 +454,11 @@ fn validate_resource_requests(
     assignments: &[EpisodeAssignment],
 ) -> Result<(), MatrixError> {
     for assignment in assignments {
-        let request = assignment.resources();
-        if request.cpu_units() > limits.cpu_units {
-            return Err(MatrixError::ResourceRequestExceedsLimit {
-                output_index: assignment.output_index(),
-                resource: "cpu_units".to_owned(),
-            });
-        }
-        if request.memory_bytes() > limits.memory_bytes {
-            return Err(MatrixError::ResourceRequestExceedsLimit {
-                output_index: assignment.output_index(),
-                resource: "memory_bytes".to_owned(),
-            });
-        }
-        for (binding, units) in request.model_binding_units() {
-            let Some(capacity) = limits.model_binding_units.get(binding) else {
-                return Err(MatrixError::MissingModelBindingCapacity {
-                    output_index: assignment.output_index(),
-                    binding: binding.digest().as_str().to_owned(),
-                });
-            };
-            if units > capacity {
-                return Err(MatrixError::ResourceRequestExceedsLimit {
-                    output_index: assignment.output_index(),
-                    resource: format!("model_binding_units:{}", binding.digest().as_str()),
-                });
-            }
-        }
+        ResourceCapacityLedger::validate_request(
+            limits,
+            assignment.output_index(),
+            assignment.resources(),
+        )?;
     }
     Ok(())
 }
@@ -536,3 +554,42 @@ impl fmt::Display for MatrixError {
 }
 
 impl std::error::Error for MatrixError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_capacity_ledger_restores_an_exhausted_request() {
+        let limits = ResourceLimits::new(1, 2, 128, BTreeMap::new()).expect("limits are valid");
+        let request = ResourceLeaseRequest::new(2, 128, BTreeMap::new()).expect("request is valid");
+        let mut ledger = ResourceCapacityLedger::from(&limits);
+
+        assert!(ledger.try_reserve(&request));
+        assert!(
+            !ledger.try_reserve(&request),
+            "all weighted capacities must be exhausted together"
+        );
+
+        ledger.release(&request);
+
+        assert!(
+            ledger.try_reserve(&request),
+            "a completed reservation must restore every weighted capacity"
+        );
+    }
+
+    #[test]
+    fn resource_capacity_ledger_rejects_an_oversized_request_before_admission() {
+        let limits = ResourceLimits::new(1, 1, 64, BTreeMap::new()).expect("limits are valid");
+        let request = ResourceLeaseRequest::new(2, 64, BTreeMap::new()).expect("request is valid");
+
+        assert_eq!(
+            ResourceCapacityLedger::validate_request(&limits, 7, &request),
+            Err(MatrixError::ResourceRequestExceedsLimit {
+                output_index: 7,
+                resource: "cpu_units".to_owned(),
+            })
+        );
+    }
+}

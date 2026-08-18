@@ -4,24 +4,35 @@
 //! NativeGraph package, protocol, artifact, result, and suite contracts.
 
 mod artifacts;
+mod cellular;
+#[cfg(feature = "engine")]
 mod episode_runner;
 mod evaluator;
 mod factories;
 mod live_driver;
 mod lowering;
 mod matrix;
+#[cfg(feature = "engine")]
 mod model_runtime;
 mod package;
 mod protocol;
 mod result;
+mod rl;
+mod rollout_evidence;
 mod suite;
 mod supervision;
 
 pub use artifacts::{
     ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
-    EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest,
+    EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest, FrozenArtifactReference,
+};
+pub use cellular::{
+    CellularFoldError, NativeGraphCellLease, NativeGraphCellLeaseAuthority,
+    NativeGraphCellLeaseError, NativeGraphCellLeaseId, NativeGraphCellPlacement,
+    NativeGraphCellularFold, NativeGraphCellularPlan,
 };
 
+#[cfg(feature = "engine")]
 pub use episode_runner::{
     DockerNativeGraphEpisodeExecutor, EpisodeExecutionError, NativeGraphEpisodeExecutor,
     NativeGraphEpisodeRunner,
@@ -50,11 +61,14 @@ pub use lowering::{
     NativeGraphNodeLowering, ReservedNativeGraphBranch, ReservedNativeGraphJoin,
     ReservedNativeGraphLoop, lower_native_graph, validate_native_graph_trace_plan,
 };
+#[cfg(feature = "engine")]
+pub use matrix::select_native_graph_scheduler;
 pub use matrix::{
     EpisodeAssignment, EpisodeRunner, LocalNativeGraphSuiteScheduler,
     LocalNativeGraphSuiteSchedulerFactory, MatrixError, NativeGraphSuiteScheduler, ResourceLimits,
-    SuiteSchedulerFactory, run_resolved_suite, select_native_graph_scheduler,
+    SuiteSchedulerFactory, run_resolved_suite,
 };
+#[cfg(feature = "engine")]
 pub use model_runtime::{
     CurrentNativeGraphModelBindingResolver, EngineNativeGraphEpisodeCallback, ModelRuntimeConfig,
     ModelRuntimeError, NativeGraphModelBindingResolver, NativeGraphModelStageError,
@@ -64,6 +78,16 @@ pub use model_runtime::{
 pub use result::{
     EpisodeAggregate, EpisodeComparability, EpisodeExecution, EpisodeIntegrity, EpisodeResult,
     EpisodeResultError, EpisodeScoreState, aggregate_episode_results,
+};
+pub use rl::{
+    EnvironmentTransitionRecord, FrozenRolloutTrajectory, RlEvaluationLimits, RlEvaluationPolicy,
+    RlRolloutError,
+};
+pub use rollout_evidence::{
+    FrozenRolloutEvidence, RolloutAdmissionError, RolloutEvidenceError, RolloutEvidenceIdentity,
+    RolloutEvidenceLimits, RolloutEvidenceLimitsError, RolloutPolicyEvidence,
+    RolloutReturnAgreementError, RolloutReturns, RolloutTransitionEvidence,
+    RolloutVerifierDecodeError, RolloutVerifierInput,
 };
 pub use suite::{
     AuthoredNativeGraphSuite, EpisodeAssignmentId, ModelCapacityKey, NativeGraphSuiteDefinition,
