@@ -539,7 +539,15 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_rate", "rate"),
     ("user_centric_rate", "rate"),
     ("num_users", "users"),
+    # --num-conversations sets the profiling phase's session count as well as
+    # the dataset entry count, matching convert_cli_to_aiperf. It lives in
+    # INPUT_FIELDS rather than LOADGEN_FIELDS, hence the explicit mention in
+    # the gate below.
+    ("conversation_num", "sessions"),
 )
+
+# Fields routed onto the profiling phase that are not LOADGEN_FIELDS members.
+_NON_LOADGEN_PHASE_FIELDS: frozenset[str] = frozenset({"conversation_num"})
 
 
 def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
@@ -567,7 +575,7 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
         _apply_agentic_replay_fields,
     )
 
-    loadgen_set = cli.model_fields_set & LOADGEN_FIELDS
+    loadgen_set = cli.model_fields_set & (LOADGEN_FIELDS | _NON_LOADGEN_PHASE_FIELDS)
     agentic_set = cli.model_fields_set.intersection(_AGENTIC_REPLAY_ROUTES)
     if not loadgen_set and not agentic_set:
         return
