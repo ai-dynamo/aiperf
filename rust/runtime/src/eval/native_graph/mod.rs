@@ -24,6 +24,8 @@ mod rollout_evidence;
 mod suite;
 mod supervision;
 
+#[cfg(feature = "engine")]
+pub use crate::engine::record_lane::EvalNodeRecordArtifact;
 pub use artifacts::{
     ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
     EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest, FrozenArtifactReference,
@@ -36,8 +38,6 @@ pub use cellular::{
 pub use completed_attempt::{
     NativeGraphAttemptAuthority, NativeGraphCompletedAttempt, NativeGraphCompletedAttemptError,
 };
-#[cfg(feature = "engine")]
-pub use crate::engine::record_lane::EvalNodeRecordArtifact;
 #[cfg(feature = "engine")]
 pub use episode_runner::{
     DockerNativeGraphEpisodeExecutor, EpisodeExecutionError, NativeGraphEpisodeExecutor,
@@ -54,8 +54,8 @@ pub use factories::{
 };
 pub use factories::{
     ConfirmedNativeGraphProviderRecoveryFactory, ExactNativeGraphFidelityObserverFactory,
-    NativeGraphAdapterRuntimeProvider, NativeGraphEnvironmentStepper,
-    NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriver,
+    NativeGraphAdapterRuntimeProvider, NativeGraphAdapterRuntimeResolution,
+    NativeGraphEnvironmentStepper, NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriver,
     NativeGraphExternalDriverFactory, NativeGraphFactoryError, NativeGraphFidelityObserver,
     NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
     NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,

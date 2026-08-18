@@ -39,8 +39,8 @@ use crate::eval::{
     NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriverFactory,
     NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
     NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
-    RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, StrictAdapterProtocolFactory,
-    StrictAdapterRuntimeProvider, SuiteSchedulerFactory,
+    RefusingExternalDriverFactory, StrictAdapterProtocolFactory, StrictAdapterRuntimeProvider,
+    SuiteSchedulerFactory, SupervisedEnvironmentStepperBinder,
 };
 use crate::export::ExporterRegistry;
 
@@ -285,7 +285,7 @@ impl AIPerfExtension for BuiltinNativeGraphExtension {
         registry
             .native_graph_protocols
             .insert(
-                "jsonl",
+                "strict_jsonl",
                 Arc::new(StrictAdapterProtocolFactory)
                     as Arc<dyn AdapterProtocolFactory + Send + Sync>,
             )
@@ -293,7 +293,7 @@ impl AIPerfExtension for BuiltinNativeGraphExtension {
         registry
             .native_graph_adapter_runtimes
             .insert(
-                "strict",
+                "strict_supervised",
                 Arc::new(StrictAdapterRuntimeProvider)
                     as Arc<dyn NativeGraphAdapterRuntimeProvider + Send + Sync>,
             )
@@ -301,8 +301,8 @@ impl AIPerfExtension for BuiltinNativeGraphExtension {
         registry
             .native_graph_environment_steppers
             .insert(
-                "refuse",
-                Arc::new(RefusingEnvironmentStepperFactory)
+                "supervised_environment",
+                Arc::new(SupervisedEnvironmentStepperBinder)
                     as Arc<dyn NativeGraphEnvironmentStepperFactory>,
             )
             .map_err(|error| ExtensionError::rejected(error.to_string()))?;

@@ -9,18 +9,36 @@
 //! seam of its own.
 
 use std::{
+    cell::RefCell,
+    collections::BTreeSet,
     fmt::{self, Display, Formatter},
+    io::Cursor,
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 
-use crate::eval::semantic::GraphLowererFactory;
-use crate::eval::{AdapterSpec, ProviderRecovery};
+#[cfg(feature = "engine")]
+use crate::extensions::AIPerfRegistry;
+use crate::graph::tools::{
+    EnvironmentArtifactBindings, EnvironmentEpisodeIdentity, EnvironmentSessionAuthority,
+    EnvironmentStepper, EnvironmentStepperBinding,
+    EnvironmentStepperFactory as WorkerEnvironmentStepperFactory,
+    SupervisedEnvironmentStepperFactory,
+};
+use crate::{
+    eval::semantic::GraphLowererFactory,
+    eval::{AdapterSpec, ArtifactDigest, ProviderRecovery},
+};
 
+#[cfg(feature = "engine")]
+use super::package::{NativeGraphRolloutEnvironment, NativeGraphRolloutResetSource};
 use super::{
-    AdapterProtocolConfig, AdapterProtocolFactory, AdapterRuntimeFactory, AdapterSpawner,
-    NativeGraphLowererFactory, NativeGraphLoweringReport, NativeGraphPackagePlan,
-    ProtocolAdapterRuntimeFactory,
+    AdapterLifecycleDeadlines, AdapterProtocolConfig, AdapterProtocolFactory,
+    AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawner, ArtifactError, ArtifactQuota,
+    FrozenArtifactReference, NativeGraphLowererFactory, NativeGraphLoweringReport,
+    NativeGraphPackagePlan, NativeGraphProfile, ProtocolAdapterRuntimeFactory, ProtocolCapability,
+    ProtocolLimits, RlEvaluationPolicy,
 };
 
 /// Failure while selecting or binding one NativeGraph-only extension seam.
@@ -64,16 +82,27 @@ impl NativeGraphLowererProvider for PackageNativeGraphLowererProvider {
     }
 }
 
-/// Factory that creates one package-scoped, protocol-validated adapter runtime.
+/// Factory that resolves one package-scoped, protocol-validated adapter runtime.
 ///
-/// The selected protocol and process spawner are explicit constructor inputs;
-/// the provider does not retain an ambient adapter or Docker capability.
+/// Resolution receives no spawn authority. The resolved worker-local object receives the
+/// task-owned spawner only after the sealed package admission has succeeded.
 pub trait NativeGraphAdapterRuntimeProvider {
-    /// Binds one validated protocol configuration and task-owned spawner.
-    fn bind(
+    /// Resolves the provider's exact protocol admission without spawn authority.
+    fn resolve(
         &self,
         config: AdapterProtocolConfig,
         protocol_factory: Rc<dyn AdapterProtocolFactory>,
+    ) -> Result<Rc<dyn NativeGraphAdapterRuntimeResolution>, NativeGraphFactoryError>;
+}
+
+/// One pure provider resolution which can receive task-owned spawn authority only at start.
+pub trait NativeGraphAdapterRuntimeResolution {
+    /// Returns the exact immutable protocol configuration admitted during resolution.
+    fn protocol_config(&self) -> &AdapterProtocolConfig;
+
+    /// Binds the task-owned spawner after the caller has completed all admission checks.
+    fn bind(
+        &self,
         spawner: Rc<dyn AdapterSpawner>,
     ) -> Result<Rc<dyn AdapterRuntimeFactory>, NativeGraphFactoryError>;
 }
@@ -83,47 +112,527 @@ pub trait NativeGraphAdapterRuntimeProvider {
 pub struct StrictAdapterRuntimeProvider;
 
 impl NativeGraphAdapterRuntimeProvider for StrictAdapterRuntimeProvider {
-    fn bind(
+    fn resolve(
         &self,
         config: AdapterProtocolConfig,
         protocol_factory: Rc<dyn AdapterProtocolFactory>,
+    ) -> Result<Rc<dyn NativeGraphAdapterRuntimeResolution>, NativeGraphFactoryError> {
+        Ok(Rc::new(StrictAdapterRuntimeResolution {
+            config,
+            protocol_factory,
+        }))
+    }
+}
+
+struct StrictAdapterRuntimeResolution {
+    config: AdapterProtocolConfig,
+    protocol_factory: Rc<dyn AdapterProtocolFactory>,
+}
+
+impl NativeGraphAdapterRuntimeResolution for StrictAdapterRuntimeResolution {
+    fn protocol_config(&self) -> &AdapterProtocolConfig {
+        &self.config
+    }
+
+    fn bind(
+        &self,
         spawner: Rc<dyn AdapterSpawner>,
     ) -> Result<Rc<dyn AdapterRuntimeFactory>, NativeGraphFactoryError> {
         Ok(Rc::new(ProtocolAdapterRuntimeFactory::new(
-            config,
-            protocol_factory,
+            self.config.clone(),
+            Rc::clone(&self.protocol_factory),
             spawner,
         )))
     }
 }
 
-/// Host-owned stepper for a declared environment adapter.
+/// Factory that binds a selected adapter runtime to one worker-local environment stepper.
+pub trait NativeGraphEnvironmentStepperFactory: Send + Sync {
+    /// Creates a worker-local environment-stepper factory over the selected runtime.
+    fn bind(
+        &self,
+        runtime: Rc<dyn AdapterRuntimeFactory>,
+    ) -> Result<Rc<dyn WorkerEnvironmentStepperFactory>, NativeGraphFactoryError>;
+}
+
+/// Host-owned stepper for legacy environment-adapter integrations.
+///
+/// New package-selected rollouts use [`NativeGraphEnvironmentStepperFactory`] to obtain the
+/// strict worker-local stepper seam. This trait remains available for existing integrations that
+/// own their own already-authorized stepping boundary.
 pub trait NativeGraphEnvironmentStepper {
     /// Advances the environment by one already-authorized operation.
     fn step(&mut self) -> Result<(), NativeGraphFactoryError>;
 }
 
-/// Factory for package-bound environment stepping implementations.
-pub trait NativeGraphEnvironmentStepperFactory: Send + Sync {
-    /// Binds an implementation to one declared environment adapter.
+/// Built-in binder for the strict supervised environment stepper.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SupervisedEnvironmentStepperBinder;
+
+impl NativeGraphEnvironmentStepperFactory for SupervisedEnvironmentStepperBinder {
     fn bind(
         &self,
-        adapter: &AdapterSpec,
-    ) -> Result<Box<dyn NativeGraphEnvironmentStepper>, NativeGraphFactoryError>;
+        runtime: Rc<dyn AdapterRuntimeFactory>,
+    ) -> Result<Rc<dyn WorkerEnvironmentStepperFactory>, NativeGraphFactoryError> {
+        Ok(Rc::new(SupervisedEnvironmentStepperFactory::new(runtime)))
+    }
 }
 
-/// Explicit refusal until a later slice supplies an environment-step protocol.
+/// Explicit refusal for compositions that deliberately disable environment stepping.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RefusingEnvironmentStepperFactory;
 
 impl NativeGraphEnvironmentStepperFactory for RefusingEnvironmentStepperFactory {
     fn bind(
         &self,
-        _: &AdapterSpec,
-    ) -> Result<Box<dyn NativeGraphEnvironmentStepper>, NativeGraphFactoryError> {
+        _: Rc<dyn AdapterRuntimeFactory>,
+    ) -> Result<Rc<dyn WorkerEnvironmentStepperFactory>, NativeGraphFactoryError> {
         Err(NativeGraphFactoryError::new(
-            "NativeGraph environment stepping is not available in the acyclic model slice",
+            "NativeGraph environment stepping is unavailable in this product composition",
         ))
+    }
+}
+
+/// Immutable worker-local environment admission assembled from one package snapshot.
+#[cfg(feature = "engine")]
+pub struct BoundNativeGraphEnvironmentStepper {
+    adapter: AdapterSpec,
+    package_identity: ArtifactDigest,
+    protocol: AdapterProtocolConfig,
+    policy: RlEvaluationPolicy,
+    artifact_quota: ArtifactQuota,
+    operation_deadline: Duration,
+    reset_source: NativeGraphRolloutResetSource,
+    runtime: Rc<dyn NativeGraphAdapterRuntimeResolution>,
+    stepper_factory: Arc<dyn NativeGraphEnvironmentStepperFactory>,
+}
+
+#[cfg(feature = "engine")]
+impl BoundNativeGraphEnvironmentStepper {
+    /// Returns the exact environment adapter declared by the imported package.
+    pub fn adapter(&self) -> &AdapterSpec {
+        &self.adapter
+    }
+
+    /// Returns the imported package identity bound to the worker-local store session.
+    pub fn package_identity(&self) -> &ArtifactDigest {
+        &self.package_identity
+    }
+
+    /// Returns the exact protocol admission configuration selected by the package.
+    pub fn protocol(&self) -> &AdapterProtocolConfig {
+        &self.protocol
+    }
+
+    /// Returns the sealed environment operation deadline.
+    pub const fn operation_deadline(&self) -> Duration {
+        self.operation_deadline
+    }
+
+    /// Starts the selected worker-local stepper and returns its only reset-input capability.
+    pub async fn start(
+        &self,
+        span: impl Into<String>,
+        store: Rc<RefCell<super::EpisodeArtifactStore>>,
+        spawner: Rc<dyn AdapterSpawner>,
+    ) -> Result<StartedNativeGraphEnvironmentStepper, NativeGraphFactoryError> {
+        let request = self.sealed_spawn_request()?;
+        let reset_input = {
+            let mut store = store.try_borrow_mut().map_err(|_| {
+                NativeGraphFactoryError::new(
+                    "NativeGraph environment artifact store is already borrowed",
+                )
+            })?;
+            if store.quota() != self.artifact_quota {
+                return Err(NativeGraphFactoryError::new(
+                    "NativeGraph environment artifact store does not match the sealed quota",
+                ));
+            }
+            self.freeze_reset_input(&mut store)?
+        };
+        let identity = EnvironmentEpisodeIdentity::new(
+            self.package_identity.clone(),
+            self.protocol.episode(),
+            self.operation_deadline,
+        )
+        .map_err(|error| NativeGraphFactoryError::new(error.to_string()));
+        let binding = match identity.and_then(|identity| {
+            EnvironmentStepperBinding::new(
+                self.protocol.clone(),
+                identity,
+                span,
+                self.policy.clone(),
+                EnvironmentArtifactBindings::new([reset_input.clone()])
+                    .map_err(|error| NativeGraphFactoryError::new(error.to_string()))?,
+            )
+            .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
+        }) {
+            Ok(binding) => binding,
+            Err(primary) => return Err(revoke_reset_reference(&store, &reset_input, primary)),
+        };
+        let authority =
+            EnvironmentSessionAuthority::new(self.package_identity.clone(), Rc::clone(&store));
+        let runtime = match self.runtime.bind(spawner) {
+            Ok(runtime) if runtime.protocol_config() == Some(&self.protocol) => runtime,
+            Ok(_) => {
+                return Err(revoke_reset_reference(
+                    &store,
+                    &reset_input,
+                    NativeGraphFactoryError::new(
+                        "NativeGraph environment runtime protocol configuration does not match the sealed role and capabilities",
+                    ),
+                ));
+            }
+            Err(error) => {
+                return Err(revoke_reset_reference(
+                    &store,
+                    &reset_input,
+                    NativeGraphFactoryError::new(format!(
+                        "NativeGraph environment runtime provider binding failed: {error}"
+                    )),
+                ));
+            }
+        };
+        let factory = match self.stepper_factory.bind(runtime) {
+            Ok(factory) => factory,
+            Err(error) => {
+                return Err(revoke_reset_reference(
+                    &store,
+                    &reset_input,
+                    NativeGraphFactoryError::new(format!(
+                        "NativeGraph environment stepper factory binding failed: {error}"
+                    )),
+                ));
+            }
+        };
+        match factory.start(binding, authority, request).await {
+            Ok(stepper) => Ok(StartedNativeGraphEnvironmentStepper {
+                stepper,
+                reset_input,
+            }),
+            Err(error) => Err(revoke_reset_reference(
+                &store,
+                &reset_input,
+                NativeGraphFactoryError::new(error.to_string()),
+            )),
+        }
+    }
+
+    fn freeze_reset_input(
+        &self,
+        store: &mut super::EpisodeArtifactStore,
+    ) -> Result<FrozenArtifactReference, NativeGraphFactoryError> {
+        let declared_bytes = u64::try_from(self.reset_source.bytes().len()).map_err(|_| {
+            NativeGraphFactoryError::new("NativeGraph rollout reset source length does not fit u64")
+        })?;
+        store
+            .preflight_reference()
+            .map_err(|error| artifact_factory_error("preflight reset capability", error))?;
+        let upload = store
+            .begin_upload(declared_bytes)
+            .map_err(|error| artifact_factory_error("reserve reset source", error))?;
+        let write = store.write_upload(&upload, &mut Cursor::new(self.reset_source.bytes()));
+        if let Err(primary) = write {
+            return Err(abort_reset_upload(
+                store,
+                &upload,
+                artifact_factory_error("write reset source", primary),
+            ));
+        }
+        let artifact = match store.commit_upload(&upload) {
+            Ok(artifact) => artifact,
+            Err(primary) => {
+                return Err(abort_reset_upload(
+                    store,
+                    &upload,
+                    artifact_factory_error("freeze reset source", primary),
+                ));
+            }
+        };
+        store
+            .issue_reference(&artifact)
+            .map_err(|error| artifact_factory_error("grant reset capability", error))
+    }
+
+    fn sealed_spawn_request(&self) -> Result<AdapterSpawnRequest, NativeGraphFactoryError> {
+        let defaults = AdapterLifecycleDeadlines::default();
+        let deadlines = AdapterLifecycleDeadlines::new(
+            defaults.startup(),
+            defaults.reset(),
+            defaults.heartbeat(),
+            defaults.idle(),
+            self.operation_deadline,
+            defaults.cancel(),
+            defaults.reap(),
+        )
+        .map_err(|error| NativeGraphFactoryError::new(error.to_string()))?;
+        AdapterSpawnRequest::for_non_model_adapter(
+            self.adapter.argv.clone(),
+            Default::default(),
+            deadlines,
+        )
+        .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
+    }
+}
+
+/// One started worker-local stepper paired with the reset-input capability Rust admitted.
+#[cfg(feature = "engine")]
+pub struct StartedNativeGraphEnvironmentStepper {
+    stepper: Box<dyn EnvironmentStepper>,
+    reset_input: FrozenArtifactReference,
+}
+
+#[cfg(feature = "engine")]
+impl StartedNativeGraphEnvironmentStepper {
+    /// Borrows the one-shot reset-input capability frozen from the imported package snapshot.
+    pub fn reset_input(&self) -> &FrozenArtifactReference {
+        &self.reset_input
+    }
+
+    /// Transfers ownership of the selected worker-local environment stepper.
+    pub fn into_stepper(self) -> Box<dyn EnvironmentStepper> {
+        self.stepper
+    }
+}
+
+/// Resolves the sealed rollout selectors into one worker-local supervised environment stepper.
+#[cfg(feature = "engine")]
+pub fn bind_native_graph_environment_stepper(
+    registry: &AIPerfRegistry,
+    trial: &super::ResolvedEpisodeTrial,
+) -> Result<BoundNativeGraphEnvironmentStepper, NativeGraphFactoryError> {
+    let package = trial.imported().package.native_graph().ok_or_else(|| {
+        NativeGraphFactoryError::new(
+            "NativeGraph environment stepping requires an imported NativeGraph package",
+        )
+    })?;
+    if package.profile() != NativeGraphProfile::NativeGraph {
+        return Err(NativeGraphFactoryError::new(
+            "NativeGraph environment stepping requires the native_graph profile",
+        ));
+    }
+    let rollout = package.rollout().ok_or_else(|| {
+        NativeGraphFactoryError::new(
+            "NativeGraph environment stepping requires a sealed rollout selection",
+        )
+    })?;
+    let environment = rollout.environment();
+    let adapter = package
+        .adapters()
+        .iter()
+        .find(|adapter| adapter.id == *environment.adapter_id())
+        .ok_or_else(|| {
+            NativeGraphFactoryError::new(
+                "NativeGraph rollout selected an adapter absent from the imported package",
+            )
+        })?;
+    if adapter.role != super::AdapterRole::Environment {
+        return Err(NativeGraphFactoryError::new(
+            "NativeGraph rollout selected an adapter without the environment role",
+        ));
+    }
+    let protocol_factory = registry
+        .native_graph_protocol(environment.protocol_factory_id().as_str())
+        .ok_or_else(|| {
+            NativeGraphFactoryError::new(format!(
+                "NativeGraph rollout selected unknown protocol factory {:?}",
+                environment.protocol_factory_id().as_str()
+            ))
+        })?;
+    let runtime_provider = registry
+        .native_graph_adapter_runtime(environment.runtime_provider_id().as_str())
+        .ok_or_else(|| {
+            NativeGraphFactoryError::new(format!(
+                "NativeGraph rollout selected unknown adapter runtime provider {:?}",
+                environment.runtime_provider_id().as_str()
+            ))
+        })?;
+    let stepper_factory = registry
+        .native_graph_environment_stepper(environment.stepper_factory_id().as_str())
+        .ok_or_else(|| {
+            NativeGraphFactoryError::new(format!(
+                "NativeGraph rollout selected unknown environment stepper factory {:?}",
+                environment.stepper_factory_id().as_str()
+            ))
+        })?;
+    let protocol = environment_protocol_config(
+        environment,
+        ArtifactDigest::from_bytes(trial.attempt_id().as_str().as_bytes())
+            .as_str()
+            .to_owned(),
+    )?;
+    let artifact_quota = environment_artifact_quota(environment)?;
+    let operation_deadline = Duration::from_millis(environment.operation_deadline_ms().get());
+    let protocol_factory = Rc::new(WorkerLocalProtocolFactory {
+        inner: Arc::clone(protocol_factory),
+    });
+    let resolved = runtime_provider
+        .resolve(protocol.clone(), protocol_factory.clone())
+        .map_err(|error| {
+            NativeGraphFactoryError::new(format!(
+                "NativeGraph environment runtime provider resolution failed: {error}"
+            ))
+        })?;
+    if resolved.protocol_config() != &protocol {
+        return Err(NativeGraphFactoryError::new(
+            "NativeGraph environment runtime protocol configuration does not match the sealed role and capabilities",
+        ));
+    }
+    Ok(BoundNativeGraphEnvironmentStepper {
+        adapter: adapter.clone(),
+        package_identity: trial.imported().task.digest.clone(),
+        protocol,
+        policy: RlEvaluationPolicy::new(
+            rollout.policy().environment(),
+            rollout.policy().horizon(),
+            rollout.policy().gamma(),
+        )
+        .map_err(|error| NativeGraphFactoryError::new(error.to_string()))?,
+        artifact_quota,
+        operation_deadline,
+        reset_source: environment.reset_source().clone(),
+        runtime: resolved,
+        stepper_factory: Arc::clone(stepper_factory),
+    })
+}
+
+#[cfg(feature = "engine")]
+struct WorkerLocalProtocolFactory {
+    inner: Arc<dyn AdapterProtocolFactory + Send + Sync>,
+}
+
+#[cfg(feature = "engine")]
+impl AdapterProtocolFactory for WorkerLocalProtocolFactory {
+    fn create(
+        &self,
+        config: AdapterProtocolConfig,
+    ) -> Result<Box<dyn super::AdapterProtocol>, super::ProtocolError> {
+        self.inner.create(config)
+    }
+}
+
+#[cfg(feature = "engine")]
+fn environment_protocol_config(
+    environment: &NativeGraphRolloutEnvironment,
+    episode: String,
+) -> Result<AdapterProtocolConfig, NativeGraphFactoryError> {
+    let limits = environment.protocol_limits();
+    let protocol_limits = ProtocolLimits {
+        max_frame_bytes: environment_limit_usize(limits.max_frame_bytes(), "max_frame_bytes")?,
+        max_identifier_bytes: environment_limit_usize(
+            limits.max_identifier_bytes(),
+            "max_identifier_bytes",
+        )?,
+        max_json_bytes: environment_limit_usize(limits.max_json_bytes(), "max_json_bytes")?,
+        max_json_depth: environment_limit_usize(limits.max_json_depth(), "max_json_depth")?,
+        max_json_array_entries: environment_limit_usize(
+            limits.max_json_array_entries(),
+            "max_json_array_entries",
+        )?,
+        max_json_object_entries: environment_limit_usize(
+            limits.max_json_object_entries(),
+            "max_json_object_entries",
+        )?,
+        max_operation_ledger_entries: environment_limit_usize(
+            limits.max_operation_ledger_entries(),
+            "max_operation_ledger_entries",
+        )?,
+        max_model_call_lineage_entries: environment_limit_usize(
+            limits.max_model_call_lineage_entries(),
+            "max_model_call_lineage_entries",
+        )?,
+        max_session_model_call_lineage_entries: environment_limit_usize(
+            limits.max_session_model_call_lineage_entries(),
+            "max_session_model_call_lineage_entries",
+        )?,
+        max_session_model_call_lineage_bytes: environment_limit_usize(
+            limits.max_session_model_call_lineage_bytes(),
+            "max_session_model_call_lineage_bytes",
+        )?,
+        max_artifact_handles: environment_limit_usize(
+            limits.max_artifact_handles(),
+            "max_artifact_handles",
+        )?,
+        max_artifact_bytes: limits.max_artifact_bytes(),
+    };
+    AdapterProtocolConfig::new(
+        super::AdapterRole::Environment,
+        episode,
+        [
+            ProtocolCapability::Environment,
+            ProtocolCapability::Artifacts,
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>(),
+        BTreeSet::new(),
+        protocol_limits,
+    )
+    .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
+}
+
+#[cfg(feature = "engine")]
+fn environment_artifact_quota(
+    environment: &NativeGraphRolloutEnvironment,
+) -> Result<ArtifactQuota, NativeGraphFactoryError> {
+    let limits = environment.artifact_limits();
+    Ok(ArtifactQuota {
+        max_artifacts: environment_limit_usize(limits.max_artifacts(), "max_artifacts")?,
+        max_total_bytes: limits.max_total_bytes(),
+        max_artifact_bytes: limits.max_artifact_bytes(),
+        max_download_handles: environment_limit_usize(
+            limits.max_download_handles(),
+            "max_download_handles",
+        )?,
+    })
+}
+
+#[cfg(feature = "engine")]
+fn environment_limit_usize(
+    value: u64,
+    field: &'static str,
+) -> Result<usize, NativeGraphFactoryError> {
+    usize::try_from(value).map_err(|_| {
+        NativeGraphFactoryError::new(format!(
+            "NativeGraph environment limit {field} does not fit this platform"
+        ))
+    })
+}
+
+#[cfg(feature = "engine")]
+fn artifact_factory_error(stage: &'static str, error: ArtifactError) -> NativeGraphFactoryError {
+    NativeGraphFactoryError::new(format!("NativeGraph environment cannot {stage}: {error}"))
+}
+
+#[cfg(feature = "engine")]
+fn abort_reset_upload(
+    store: &mut super::EpisodeArtifactStore,
+    upload: &super::ArtifactUploadHandle,
+    primary: NativeGraphFactoryError,
+) -> NativeGraphFactoryError {
+    match store.abort_upload(upload) {
+        Ok(()) => primary,
+        Err(cleanup) => NativeGraphFactoryError::new(format!(
+            "{primary}; NativeGraph environment reset upload cleanup failed: {cleanup}"
+        )),
+    }
+}
+
+#[cfg(feature = "engine")]
+fn revoke_reset_reference(
+    store: &Rc<RefCell<super::EpisodeArtifactStore>>,
+    reset_input: &FrozenArtifactReference,
+    primary: NativeGraphFactoryError,
+) -> NativeGraphFactoryError {
+    match store.try_borrow_mut() {
+        Ok(mut store) => match store.revoke_reference(reset_input) {
+            Ok(()) => primary,
+            Err(cleanup) => NativeGraphFactoryError::new(format!(
+                "{primary}; NativeGraph environment reset capability cleanup failed: {cleanup}"
+            )),
+        },
+        Err(_) => NativeGraphFactoryError::new(format!(
+            "{primary}; NativeGraph environment reset capability cleanup could not borrow the store"
+        )),
     }
 }
 
