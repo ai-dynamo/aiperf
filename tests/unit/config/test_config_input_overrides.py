@@ -343,3 +343,78 @@ def test_dataset_flag_outside_input_fields_is_reconciled(
     """
     with pytest.raises(ConfigurationError, match=r"--inter-turn-delay-cap-seconds"):
         resolve_config(cli(inter_turn_delay_cap_seconds=3.0), synthetic_yaml)
+
+
+# ---------------------------------------------------------------------------
+# YAML-declared baseten_trace: the guards must read the declared identity
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def baseten_yaml(tmp_path: Path) -> Path:
+    """A file dataset that declares format: baseten_trace in the YAML."""
+    trace = tmp_path / "baseten.jsonl"
+    trace.write_text('{"text": "hi"}\n')
+    cfg = tmp_path / "baseten.yaml"
+    cfg.write_text(
+        f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: baseten_trace
+    path: {trace}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    return cfg
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("replay_speedup", 2.0),
+        ("max_idle_gap_cap_seconds", 3.0),
+        ("trace_session_sample_ratio", 0.5),
+        ("open_loop_replay", True),
+        ("omit_kv_hints", True),
+    ],
+)
+def test_baseten_only_flags_accepted_on_yaml_declared_baseten_trace(
+    baseten_yaml: Path, field: str, value: object
+) -> None:
+    """These are baseten_trace-only, and the YAML declares baseten_trace.
+
+    The guard inferred the loader from --input-file / --custom-dataset-type,
+    which the --config path rejects outright because the config file owns
+    the dataset source and format. So a supported combination failed before
+    the run started.
+    """
+    resolved = dataset(resolve_config(cli(**{field: value}), baseten_yaml))
+    assert getattr(resolved, field) == value
+
+
+def test_baseten_only_flag_still_rejected_on_other_trace_format(
+    random_pool_yaml: Path,
+) -> None:
+    """The guard must still fire when the YAML declares a different loader."""
+    with pytest.raises(ValueError, match="baseten_trace"):
+        resolve_config(cli(replay_speedup=2.0), random_pool_yaml)
+
+
+def test_baseten_extra_input_collision_rejected_from_yaml_format(
+    baseten_yaml: Path,
+) -> None:
+    """Loader-injected extras collide whether the format came from YAML or CLI.
+
+    The collision guard keyed off cli.custom_dataset_type, so under --config
+    it never ran and the user's value was clobbered on the wire instead.
+    """
+    with pytest.raises(ValueError, match="min_tokens"):
+        resolve_config(cli(extra_inputs=["min_tokens:5"]), baseten_yaml)
