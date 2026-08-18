@@ -614,6 +614,22 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         store: &dyn SegmentStore,
         overrides: &Overrides,
     ) -> EndpointResult<PreparedWsOperation> {
+        if body.literal_field("type").is_some() || overrides.fields().contains_key("type") {
+            return Err(EndpointError::InvalidRequest(
+                "Responses `type` is a reserved WebSocket event field".to_owned(),
+            ));
+        }
+        let mut fallback_plan = body.clone();
+        fallback_plan.merge_overrides(overrides);
+        fallback_plan.set_literal("stream", Value::Bool(true));
+        if fallback_plan.literal_field("stream") != Some(&Value::Bool(true)) {
+            return Err(EndpointError::InvalidRequest(
+                "Responses WebSocket fallback requires a named-field request body".to_owned(),
+            ));
+        }
+        let fallback_body =
+            JsonBodyMaterializer::materialize(&fallback_plan, store, &Overrides::new())
+                .map_err(|error| EndpointError::Serialization(error.to_string()))?;
         let body = JsonBodyMaterializer::materialize(body, store, overrides)
             .map_err(|error| EndpointError::Serialization(error.to_string()))?;
         let fields = body
@@ -636,7 +652,7 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
                 Bytes::from(event),
                 PreparedWsMessageRole::MeasuredInput,
             )],
-            Some(body),
+            Some(fallback_body),
         ))
     }
 
@@ -1993,6 +2009,37 @@ mod lowering_tests {
         .unwrap();
         assert!(fallback.get("type").is_none());
         assert_eq!(fallback["model"], "gpt-test");
+        assert_eq!(fallback["stream"], true);
+    }
+
+    #[test]
+    fn responses_websocket_lowering_rejects_a_colliding_event_type() {
+        let turns = [text_turn()];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let store = SegmentPool::new().freeze();
+        let mut endpoint = RawEndpointConfig::default();
+        endpoint.extra = Some(Map::from_iter([(
+            "type".to_owned(),
+            Value::String("authored.type".to_owned()),
+        )]));
+        let body = ResponsesEndpoint
+            .format_prepared_payload(&request, &endpoint)
+            .unwrap();
+
+        let error = ResponsesEndpoint
+            .prepare_ws_operation(&request, &endpoint, &body, &store, &Overrides::new())
+            .unwrap_err();
+
+        assert!(error.to_string().contains("reserved WebSocket event field"));
     }
 
     /// The two halves of "this dialect splices lowered wires" must agree for

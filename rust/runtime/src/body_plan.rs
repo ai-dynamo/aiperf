@@ -776,7 +776,7 @@ impl PreparedWsMessage {
 /// Immutable, store-free application messages for one WebSocket operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedWsOperation {
-    messages: std::sync::Arc<[PreparedWsMessage]>,
+    messages: Box<[PreparedWsMessage]>,
     http_sse_fallback_body: Option<Bytes>,
 }
 

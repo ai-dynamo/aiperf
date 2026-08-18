@@ -20,7 +20,12 @@ pub struct RoundTripTimingState {
 impl RoundTripTimingState {
     /// Record a measured input timestamp immediately after its flush completes.
     pub fn on_measured_input_flushed(&mut self, timestamp_ns: i64) {
-        if self.is_invalid || timestamp_ns < 0 {
+        if self.is_invalid
+            || timestamp_ns < 0
+            || self
+                .last_send_ns
+                .is_some_and(|previous| timestamp_ns < previous)
+        {
             self.is_invalid = true;
             return;
         }
@@ -42,7 +47,12 @@ impl RoundTripTimingState {
 
     /// Record one decoded event carrying non-empty user-visible content.
     pub fn on_content_received(&mut self, timestamp_ns: i64) {
-        if self.is_invalid || timestamp_ns < 0 {
+        if self.is_invalid
+            || timestamp_ns < 0
+            || self
+                .last_content_receive_ns
+                .is_some_and(|previous| timestamp_ns < previous)
+        {
             self.is_invalid = true;
             return;
         }
@@ -116,5 +126,20 @@ mod tests {
         timing.on_measured_input_flushed(20);
         timing.on_content_received(10);
         assert_eq!(timing.finish(), Default::default());
+    }
+
+    #[test]
+    fn regressing_send_or_content_timestamp_invalidates_operation() {
+        let mut send_regression = RoundTripTimingState::default();
+        send_regression.on_measured_input_flushed(300);
+        send_regression.on_measured_input_flushed(100);
+        send_regression.on_content_received(500);
+        assert_eq!(send_regression.finish(), Default::default());
+
+        let mut content_regression = RoundTripTimingState::default();
+        content_regression.on_measured_input_flushed(100);
+        content_regression.on_content_received(500);
+        content_regression.on_content_received(300);
+        assert_eq!(content_regression.finish(), Default::default());
     }
 }

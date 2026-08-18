@@ -649,7 +649,7 @@ fn materialize_websocket_prepared(
                 .to_owned(),
         ));
     }
-    let turns = session.endpoint_turns(store, false)?;
+    let turns = session.endpoint_turns(store, splices_lowered_wires(endpoint, phase))?;
     let system_message = resolve_prompt(store, conversation.system)?;
     let user_context_message = resolve_prompt(store, conversation.user_context)?;
     let request = PreparedRequest::new(
@@ -1531,6 +1531,9 @@ thread_local! {
     /// image batch as data URLs — so a build that declined every hit would give
     /// the entire saving back with every byte assertion still passing.
     pub(crate) static CACHE_HITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+
+    /// Composed content handles resolved on this thread during dispatch.
+    pub(crate) static COMPOSED_CONTENT_RESOLUTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether a dispatch override rewrites the very field a cached plan's captured
@@ -1679,7 +1682,11 @@ fn resolve_turn_inner(
         let contents = group
             .handles
             .iter()
-            .map(|handle| content_string(store, *handle, group.kind))
+            .map(|handle| {
+                #[cfg(test)]
+                COMPOSED_CONTENT_RESOLUTIONS.with(|count| count.set(count.get() + 1));
+                content_string(store, *handle, group.kind)
+            })
             .collect::<Result<Vec<_>>>()?;
         let media = Media {
             name: group.name.clone(),
@@ -3420,6 +3427,37 @@ mod tests {
         assert_eq!(event["input"][0]["content"], "hello world");
         assert_eq!(fallback["model"], "override-model");
         assert_eq!(fallback["input"][0]["content"], "hello world");
+        assert_eq!(fallback["stream"], true);
+    }
+
+    #[test]
+    fn websocket_materialization_reuses_lowered_wires() {
+        let mut pool = SegmentPool::new();
+        let turn = text_turn(&mut pool, b"hello world", false, false);
+        let mut dataset = single_conversation_dataset(
+            ConversationContextMode::MessageArrayWithResponses,
+            vec![turn],
+            pool,
+        );
+        let endpoint = prepare_endpoint("responses");
+        let lowerer = ShapeLowerer::for_descriptor_id(endpoint.descriptor().id).unwrap();
+        dataset.lower_messages_for_endpoint(&lowerer).unwrap();
+        let mut session =
+            ConversationSession::new(Arc::new(dataset), SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+        COMPOSED_CONTENT_RESOLUTIONS.with(|count| count.set(0));
+
+        session
+            .materialize_prepared(
+                &WsRequestMaterializer,
+                endpoint.as_ref(),
+                "primary-model",
+                CreditPhase::Profiling,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        COMPOSED_CONTENT_RESOLUTIONS.with(|count| assert_eq!(count.get(), 0));
     }
 
     #[test]

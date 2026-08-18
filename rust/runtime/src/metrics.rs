@@ -499,7 +499,7 @@ impl PendingRequest {
             .as_deref()
             .copied()
             .unwrap_or_default();
-        let mut metric_overrides = Vec::with_capacity(2);
+        let mut metric_overrides = Vec::new();
         if terminal == ReplayTerminalStatus::Completed {
             if let Some(value) = self
                 .round_trip_metrics
