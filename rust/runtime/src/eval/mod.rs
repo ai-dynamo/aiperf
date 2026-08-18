@@ -86,8 +86,9 @@ pub use native_graph::{
     HostMessage, LocalNativeGraphSuiteScheduler, LocalNativeGraphSuiteSchedulerFactory,
     MatrixError, ModelBindingId, ModelBindingSpec, ModelCapacityKey, ModelCapturePolicy,
     ModelSecretId, NativeGraphAdapterAuthorization, NativeGraphAdapterRuntimeProvider,
-    NativeGraphControlContract, NativeGraphEnvironmentStepper,
-    NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriver,
+    NativeGraphAttemptAuthority, NativeGraphCompletedAttempt, NativeGraphCompletedAttemptError,
+    NativeGraphControlContract,
+    NativeGraphEnvironmentStepper, NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriver,
     NativeGraphExternalDriverFactory, NativeGraphFactoryError, NativeGraphFidelityObserver,
     NativeGraphFidelityObserverFactory, NativeGraphLiveAgentLoopFactories,
     NativeGraphLiveTraceProgramDriverFactory, NativeGraphLowererFactory,
@@ -106,22 +107,25 @@ pub use native_graph::{
     RolloutVerifierDecodeError, RolloutVerifierInput, SelectedModelBinding,
     StrictAdapterProtocolFactory, StrictAdapterRuntimeProvider, StrictSupervisedAdapter,
     SuiteError, SuiteRunId, SuiteSchedulerFactory, SuiteTrialSpec, SupervisedAdapter,
-    TokenizerBindingSpec, ValidatedAdapterMessage, ValidatedHostMessage, aggregate_episode_results,
-    lower_native_graph, parse_native_graph_suite_toml, run_resolved_suite,
-    validate_native_graph_trace_plan,
+    SupervisedEnvironmentStepperBinder, TokenizerBindingSpec, ValidatedAdapterMessage,
+    ValidatedHostMessage, aggregate_episode_results, lower_native_graph,
+    parse_native_graph_suite_toml, run_resolved_suite, validate_native_graph_trace_plan,
+};
+#[cfg(feature = "engine")]
+pub use native_graph::{
+    BoundNativeGraphEnvironmentStepper, CurrentNativeGraphModelBindingResolver,
+    DockerNativeGraphEpisodeExecutor, EngineNativeGraphEpisodeCallback, EpisodeExecutionError,
+    EvalNodeRecordArtifact, ModelRuntimeConfig, ModelRuntimeError, NativeGraphEpisodeExecutor,
+    NativeGraphEpisodeRunner,
+    NativeGraphModelBindingResolver, NativeGraphModelStageError,
+    ObservedNativeGraphTransportEvidence, ResolvedModelBinding, ResolvedModelBindingSet,
+    ResolvedTokenizerBinding, StartedNativeGraphEnvironmentStepper,
+    bind_native_graph_environment_stepper,
 };
 pub use native_graph::{
     CellularFoldError, NativeGraphCellLease, NativeGraphCellLeaseAuthority,
     NativeGraphCellLeaseError, NativeGraphCellLeaseId, NativeGraphCellPlacement,
     NativeGraphCellularFold, NativeGraphCellularPlan,
-};
-#[cfg(feature = "engine")]
-pub use native_graph::{
-    CurrentNativeGraphModelBindingResolver, DockerNativeGraphEpisodeExecutor,
-    EngineNativeGraphEpisodeCallback, EpisodeExecutionError, ModelRuntimeConfig, ModelRuntimeError,
-    NativeGraphEpisodeExecutor, NativeGraphEpisodeRunner, NativeGraphModelBindingResolver,
-    NativeGraphModelStageError, ObservedNativeGraphTransportEvidence, ResolvedModelBinding,
-    ResolvedModelBindingSet, ResolvedTokenizerBinding,
 };
 pub use provider::{
     ModelEndpointAuthority, ModelEndpointIsolationProof, ProviderCapability, ProviderError,

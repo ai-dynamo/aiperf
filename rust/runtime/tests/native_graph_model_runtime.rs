@@ -13,10 +13,10 @@ use std::{
 
 use aiperf_runtime::eval::{
     CurrentNativeGraphModelBindingResolver, EngineNativeGraphEpisodeCallback, EnvName,
-    EvalExecutionError, GraphLowererFactory, HarborImporter, HarborSource, ModelCapturePolicy,
-    ModelRuntimeConfig, NativeGraphFactoryError, NativeGraphLowererProvider,
-    NativeGraphModelBindingResolver, NativeGraphPackagePlan, NativeSourceAcquirer, SecretProvider,
-    SecretValue,
+    EvalExecutionError, EvalNodeRecordArtifact, GraphLowererFactory, HarborImporter, HarborSource,
+    ModelCapturePolicy, ModelRuntimeConfig, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
+    NativeGraphFactoryError, NativeGraphLowererProvider, NativeGraphModelBindingResolver,
+    NativeGraphPackagePlan, NativeSourceAcquirer, SecretProvider, SecretValue,
 };
 use aiperf_runtime::{
     engine::{
@@ -30,6 +30,7 @@ use aiperf_runtime::{
         ExtensionError,
     },
 };
+use axum::{Json, Router, routing::post};
 
 #[test]
 fn resolves_binding_through_the_current_endpoint_transport_and_tokenizer_seams() {
@@ -143,6 +144,7 @@ fn callback_selects_the_registered_lowerer_before_any_environment_provisioning()
         native,
         &runtime,
         &FixedSecrets,
+        None,
     ) {
         Ok(_) => {
             panic!("the selected lowerer must be consulted before a Docker environment exists")
@@ -152,6 +154,131 @@ fn callback_selects_the_registered_lowerer_before_any_environment_provisioning()
 
     assert!(error.to_string().contains("test lowerer selected"));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn callback_without_record_artifact_preserves_execution_without_creating_a_file() {
+    let endpoint = live_model_endpoint().await;
+    let imported = import_fixture_at(false, &endpoint);
+    let native = imported
+        .package
+        .native_graph()
+        .expect("fixture contains a NativeGraph package");
+    let application = Application::stock(format!("blake3:{}", "8".repeat(64)))
+        .expect("compose the stock application once");
+    let runtime: ModelRuntimeConfig =
+        toml::from_str("version = 1\n").expect("empty runtime secret mapping is valid");
+    let output = tempfile::tempdir().expect("temporary output directory");
+    let records_path = output.path().join("records.jsonl");
+    let mut callback =
+        EngineNativeGraphEpisodeCallback::new(&application, native, &runtime, &FixedSecrets, None)
+            .expect("construct callback with record export disabled");
+    let mut lease = AuthorizedLease;
+
+    callback
+        .run(&mut lease)
+        .await
+        .expect("disabled artifact does not change callback execution");
+
+    assert!(!records_path.exists());
+    let evidence = callback
+        .transport_evidence()
+        .expect("callback retains completed transport evidence");
+    assert_eq!(evidence.model_records(), 1);
+    assert_eq!(evidence.completed_traces(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn callback_writes_one_canonical_row_for_one_completed_model_node() {
+    let endpoint = live_model_endpoint().await;
+    let imported = import_fixture_at(false, &endpoint);
+    let native = imported
+        .package
+        .native_graph()
+        .expect("fixture contains a NativeGraph package");
+    let application = Application::stock(format!("blake3:{}", "9".repeat(64)))
+        .expect("compose the stock application once");
+    let runtime: ModelRuntimeConfig =
+        toml::from_str("version = 1\n").expect("empty runtime secret mapping is valid");
+    let output = tempfile::tempdir().expect("temporary output directory");
+    let records_path = output.path().join("records.jsonl");
+    let artifact =
+        EvalNodeRecordArtifact::open(&records_path).expect("open suite-owned node record artifact");
+    let mut callback = EngineNativeGraphEpisodeCallback::new(
+        &application,
+        native,
+        &runtime,
+        &FixedSecrets,
+        Some(artifact.clone()),
+    )
+    .expect("construct callback with suite-owned artifact");
+    let mut lease = AuthorizedLease;
+
+    callback
+        .run(&mut lease)
+        .await
+        .expect("single model node completes through the real callback path");
+    artifact.finish().expect("flush suite-owned artifact");
+
+    let rows = fs::read_to_string(&records_path).expect("read node record artifact");
+    assert_eq!(rows.lines().count(), 1);
+    let row: serde_json::Value = serde_json::from_str(&rows).expect("record row is valid JSON");
+    assert_eq!(
+        row["metadata"]["benchmark_phase"],
+        serde_json::json!("profiling")
+    );
+    assert!(row["metadata"]["x_request_id"].is_string());
+    assert!(row["metrics"]["request_latency"]["value"].is_number());
+    assert_eq!(row["error"], serde_json::Value::Null);
+    assert!(
+        row.get("response").is_none(),
+        "canonical records exclude raw output"
+    );
+}
+
+async fn live_model_endpoint() -> String {
+    async fn completion() -> Json<serde_json::Value> {
+        Json(serde_json::json!({
+            "id": "native-graph-record-test",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "completed"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+        }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback model endpoint");
+    let address = listener.local_addr().expect("read loopback address");
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route("/v1/chat/completions", post(completion)),
+        )
+        .await
+        .expect("serve loopback model endpoint");
+    });
+    format!("http://{address}")
+}
+
+struct AuthorizedLease;
+
+impl NativeGraphEpisodeLease for AuthorizedLease {
+    fn is_authorized(&self) -> bool {
+        true
+    }
+
+    fn is_environment_acquired(&self) -> bool {
+        true
+    }
+
+    fn instruction(&self) -> &str {
+        "complete the graph"
+    }
 }
 
 struct DuplicateLowererExtension;
@@ -237,6 +364,10 @@ impl SecretProvider for FixedSecrets {
 }
 
 fn import_fixture(with_secret: bool) -> aiperf_runtime::eval::ImportedTask {
+    import_fixture_at(with_secret, "https://provider.example/v1")
+}
+
+fn import_fixture_at(with_secret: bool, endpoint: &str) -> aiperf_runtime::eval::ImportedTask {
     let task = tempfile::tempdir().expect("temporary task root");
     fs::create_dir_all(task.path().join("environment")).expect("task environment directory");
     fs::create_dir_all(task.path().join("tests")).expect("task tests directory");
@@ -286,8 +417,8 @@ endpoint_profile_id = "provider-default"
 endpoint_factory_id = "chat"
 transport_factory_id = "http"
 model = "example-model"
-urls = ["https://provider.example/v1"]
-streaming = true
+urls = ["{endpoint}"]
+streaming = false
 max_connect_retries = 2
 request_timeout_ms = 30000
 capture = "redacted_raw"

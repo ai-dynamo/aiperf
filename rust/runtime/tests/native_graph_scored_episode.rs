@@ -20,17 +20,17 @@ use aiperf_runtime::eval::{
     AgentVariantRef, ArtifactDigest, AttemptId, DockerBuildRequest, DockerCopyRequest,
     DockerCreateRequest, DockerExecRequest, DockerNativeGraphEpisodeExecutor, DockerProcessSandbox,
     DockerRemoveRequest, DockerRuntime, DockerStartRequest, EngineNativeGraphEpisodeCallback,
-    EpisodeAssignment, EpisodeExecutionError, EvalExecutionError, EvidenceEvent, EvidenceKind,
-    FrozenAttemptBundle, HarborEpisodeEvaluatorFactory, HarborEvaluationCoordinator,
-    HarborImporter, HarborLifecycleAgentContract, HarborLifecycleRequest,
-    HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource, LocalNativeGraphSuiteScheduler,
-    ModelCapacityKey, ModelEndpointIsolationProof, ModelIdentity, ModelRuntimeConfig,
-    NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor, NativeGraphEpisodeLease,
-    NativeGraphEpisodeRunner, NativeGraphPackagePlan, NativeGraphSuiteManifest,
-    NativeSourceAcquirer, PolicyIdentity, ProviderCapabilities, ProviderCapability,
-    ProviderProfile, RegradeRequest, ResourceLeaseRequest, RewardDocument, RuntimeIdentity,
-    ScoreVersion, SecretProvider, SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec,
-    VerifierResult, regrade, run_native_graph_episode_callback, run_resolved_suite,
+    EpisodeAssignment, EpisodeExecutionError, EvalExecutionError, EvalNodeRecordArtifact,
+    EvidenceEvent, EvidenceKind, FrozenAttemptBundle, HarborEpisodeEvaluatorFactory,
+    HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
+    HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource,
+    LocalNativeGraphSuiteScheduler, ModelCapacityKey, ModelEndpointIsolationProof, ModelIdentity,
+    ModelRuntimeConfig, NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor,
+    NativeGraphEpisodeLease, NativeGraphEpisodeRunner, NativeGraphPackagePlan,
+    NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity, ProviderCapabilities,
+    ProviderCapability, ProviderProfile, RegradeRequest, ResourceLeaseRequest, RewardDocument,
+    RuntimeIdentity, ScoreVersion, SecretProvider, SuiteRunId, SuiteTrialSpec, TrialBudget,
+    TrialSpec, VerifierResult, regrade, run_native_graph_episode_callback, run_resolved_suite,
 };
 use aiperf_runtime::{engine::application::Application, eval::EnvName};
 use async_trait::async_trait;
@@ -120,7 +120,7 @@ async fn imported_acyclic_graph_callback_emits_current_transport_observer_eviden
     let runtime: ModelRuntimeConfig =
         toml::from_str("version = 1\n").expect("empty host model-secret mapping is valid");
     let mut callback =
-        EngineNativeGraphEpisodeCallback::new(&application, native, &runtime, &EmptySecrets)
+        EngineNativeGraphEpisodeCallback::new(&application, native, &runtime, &EmptySecrets, None)
             .expect("resolve the immutable model binding through the stock application");
     let collection_started = Cell::new(false);
     let mut lease = RecordingLease {
@@ -187,7 +187,7 @@ async fn imported_generation_defaults_reach_the_outbound_graph_request() {
     let runtime: ModelRuntimeConfig =
         toml::from_str("version = 1\n").expect("empty host model-secret mapping is valid");
     let mut callback =
-        EngineNativeGraphEpisodeCallback::new(&application, native, &runtime, &EmptySecrets)
+        EngineNativeGraphEpisodeCallback::new(&application, native, &runtime, &EmptySecrets, None)
             .expect("resolve the immutable model binding through the stock application");
     let collection_started = Cell::new(false);
     let mut lease = RecordingLease {
@@ -254,7 +254,7 @@ async fn runner_unit_maps_explicitly_stubbed_frozen_facts_after_observed_model_d
     let runtime: ModelRuntimeConfig =
         toml::from_str("version = 1\n").expect("empty host model-secret mapping is valid");
     let callback =
-        EngineNativeGraphEpisodeCallback::new(&application, &native, &runtime, &EmptySecrets)
+        EngineNativeGraphEpisodeCallback::new(&application, &native, &runtime, &EmptySecrets, None)
             .expect("resolve the imported graph callback");
     let binding = native
         .model_bindings()
@@ -309,7 +309,7 @@ async fn runner_unit_maps_explicitly_stubbed_frozen_facts_after_observed_model_d
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn docker_episode_executor_runs_model_graph_then_harbor_verifier_then_task3_scoring() {
+async fn docker_episode_executor_appends_two_suite_episodes_to_one_record_artifact() {
     async fn completion() -> Json<serde_json::Value> {
         Json(serde_json::json!({
             "id": "native-graph-docker-e2e",
@@ -353,7 +353,7 @@ async fn docker_episode_executor_runs_model_graph_then_harbor_verifier_then_task
         SuiteTrialSpec::from_imported(
             imported.clone(),
             trial,
-            NonZeroUsize::new(1).expect("one repetition"),
+            NonZeroUsize::new(2).expect("two repetitions"),
             resources,
         )
         .expect("suite trial"),
@@ -370,6 +370,10 @@ async fn docker_episode_executor_runs_model_graph_then_harbor_verifier_then_task
     );
     let model_runtime: ModelRuntimeConfig =
         toml::from_str("version = 1\n").expect("empty host model-secret mapping is valid");
+    let output = tempfile::tempdir().expect("temporary suite output directory");
+    let records_path = output.path().join("records.jsonl");
+    let artifact =
+        EvalNodeRecordArtifact::open(&records_path).expect("open suite-owned node record artifact");
     let executor = Rc::new(
         DockerNativeGraphEpisodeExecutor::new_with_runtime(
             DockerProcessSandbox::new(),
@@ -384,6 +388,7 @@ async fn docker_episode_executor_runs_model_graph_then_harbor_verifier_then_task
             application,
             model_runtime,
             Rc::new(EmptySecrets),
+            Some(artifact.clone()),
         )
         .expect("construct the concrete Docker NativeGraph executor"),
     );
@@ -401,11 +406,133 @@ async fn docker_episode_executor_runs_model_graph_then_harbor_verifier_then_task
         .await
         .expect("Docker callback, declared verifier, freeze, and evaluator all complete");
 
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].verified_reward(), Some(1.0));
+    artifact.finish().expect("flush suite-owned artifact");
+
+    assert_eq!(results.len(), 2);
+    assert!(
+        results
+            .iter()
+            .all(|result| result.verified_reward() == Some(1.0))
+    );
     assert_eq!(
         runtime.events.borrow().as_slice(),
-        ["build", "create", "start", "verifier", "remove"]
+        [
+            "build", "create", "start", "verifier", "remove", "build", "create", "start",
+            "verifier", "remove"
+        ]
+    );
+    let rows = fs::read_to_string(&records_path).expect("read suite node record artifact");
+    assert_eq!(rows.lines().count(), 2);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn episode_fails_on_record_append_error_without_exposing_record_content() {
+    const PRIVATE_OUTPUT_MARKER: &str = "private-model-output-marker";
+
+    async fn completion() -> Json<serde_json::Value> {
+        Json(serde_json::json!({
+            "id": "native-graph-writer-error",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": format!("{}{}", PRIVATE_OUTPUT_MARKER, "x".repeat(32 * 1024))
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+        }))
+    }
+
+    let app = Router::new().route("/v1/chat/completions", post(completion));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback model endpoint");
+    let address = listener.local_addr().expect("read loopback address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve loopback model endpoint");
+    });
+
+    let imported = import_live_graph_fixture(&format!("http://{address}"));
+    let lifecycle = native_graph_lifecycle_request();
+    let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)
+        .expect("resolve lifecycle trial before environment provisioning");
+    let binding = imported
+        .package
+        .native_graph()
+        .expect("fixture has NativeGraph package")
+        .model_bindings()
+        .first()
+        .expect("fixture has one model binding");
+    let capacity_key = ModelCapacityKey::from_task_binding(&imported.task, binding);
+    let resources = ResourceLeaseRequest::new(1, 64, BTreeMap::from([(capacity_key.clone(), 1)]))
+        .expect("finite episode resources");
+    let suite = NativeGraphSuiteManifest::new(vec![
+        SuiteTrialSpec::from_imported(
+            imported.clone(),
+            trial,
+            NonZeroUsize::new(1).expect("one repetition"),
+            resources,
+        )
+        .expect("suite trial"),
+    ])
+    .expect("one-trial suite")
+    .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
+        b"writer-error-run",
+    )))
+    .expect("resolve one matrix assignment");
+    let application = Rc::new(
+        Application::stock(format!("blake3:{}", "a".repeat(64)))
+            .expect("compose the stock application once"),
+    );
+    let model_runtime: ModelRuntimeConfig =
+        toml::from_str("version = 1\n").expect("empty host model-secret mapping is valid");
+    let artifact = EvalNodeRecordArtifact::open(std::path::Path::new("/dev/full"))
+        .expect("open deterministic failing destination");
+    let executor = Rc::new(
+        DockerNativeGraphEpisodeExecutor::new_with_runtime(
+            DockerProcessSandbox::new(),
+            Rc::new(GraphDockerRuntime::default()),
+            HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            )
+            .expect("immutable Docker recipe"),
+            imported,
+            lifecycle,
+            application,
+            model_runtime,
+            Rc::new(EmptySecrets),
+            Some(artifact),
+        )
+        .expect("construct executor with failing record artifact"),
+    );
+    let scheduler = LocalNativeGraphSuiteScheduler::new(
+        aiperf_runtime::eval::ResourceLimits::new(1, 1, 64, BTreeMap::from([(capacity_key, 1)]))
+            .expect("finite scheduler resources"),
+    )
+    .expect("scheduler");
+    let runner = Rc::new(NativeGraphEpisodeRunner::new(
+        executor,
+        Rc::new(HarborEpisodeEvaluatorFactory),
+    ));
+
+    let error = run_resolved_suite(&scheduler, suite, runner)
+        .await
+        .expect_err("record append failure must fail the episode before scoring");
+    let message = error.to_string();
+    assert!(
+        message.contains("full"),
+        "error names the sanitized destination"
+    );
+    assert!(!message.contains("/dev/full"), "error omits the raw path");
+    assert!(
+        !message.contains(PRIVATE_OUTPUT_MARKER),
+        "error omits raw model output"
     );
 }
 
@@ -453,6 +580,7 @@ async fn unknown_source_model_binding_fails_before_any_model_dispatch() {
         native,
         &runtime,
         &EmptySecrets,
+        None,
     ) {
         Ok(_) => panic!("unknown model binding must reject before graph dispatch"),
         Err(error) => error,
@@ -507,7 +635,7 @@ async fn two_declared_model_bindings_prepare_and_dispatch_without_default_fallba
     let runtime: ModelRuntimeConfig =
         toml::from_str("version = 1\n").expect("empty host model-secret mapping is valid");
     let mut callback =
-        EngineNativeGraphEpisodeCallback::new(&application, native, &runtime, &EmptySecrets)
+        EngineNativeGraphEpisodeCallback::new(&application, native, &runtime, &EmptySecrets, None)
             .expect("every declared binding prepares through the frozen application");
     let collection_started = Cell::new(false);
     let mut lease = RecordingLease {

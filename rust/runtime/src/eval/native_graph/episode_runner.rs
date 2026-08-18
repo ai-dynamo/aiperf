@@ -13,10 +13,7 @@ use std::{
 use async_trait::async_trait;
 
 use crate::{
-    engine::{
-        application::Application,
-        record_lane::EvalNodeRecordArtifact,
-    },
+    engine::{application::Application, record_lane::EvalNodeRecordArtifact},
     eval::{
         DockerProcessSandbox, DockerRuntime, HarborCompletedEvaluation,
         HarborEvaluationCoordinator, HarborLifecycleAgentContract, HarborLifecycleRequest,
@@ -60,7 +57,7 @@ pub struct DockerNativeGraphEpisodeExecutor {
     application: Rc<Application>,
     model_runtime: ModelRuntimeConfig,
     secrets: Rc<dyn SecretProvider>,
-    record_artifact: Option<Rc<RefCell<EvalNodeRecordArtifact>>>,
+    record_artifact: Option<EvalNodeRecordArtifact>,
 }
 
 enum DockerExecutorRuntime {
@@ -79,6 +76,7 @@ impl DockerNativeGraphEpisodeExecutor {
         application: Rc<Application>,
         model_runtime: ModelRuntimeConfig,
         secrets: Rc<dyn SecretProvider>,
+        record_artifact: Option<EvalNodeRecordArtifact>,
     ) -> Result<Self, EpisodeExecutionError> {
         Self::new_inner(
             sandbox,
@@ -89,6 +87,7 @@ impl DockerNativeGraphEpisodeExecutor {
             application,
             model_runtime,
             secrets,
+            record_artifact,
         )
     }
 
@@ -106,6 +105,7 @@ impl DockerNativeGraphEpisodeExecutor {
         application: Rc<Application>,
         model_runtime: ModelRuntimeConfig,
         secrets: Rc<dyn SecretProvider>,
+        record_artifact: Option<EvalNodeRecordArtifact>,
     ) -> Result<Self, EpisodeExecutionError> {
         Self::new_inner(
             sandbox,
@@ -116,6 +116,7 @@ impl DockerNativeGraphEpisodeExecutor {
             application,
             model_runtime,
             secrets,
+            record_artifact,
         )
     }
 
@@ -129,6 +130,7 @@ impl DockerNativeGraphEpisodeExecutor {
         application: Rc<Application>,
         model_runtime: ModelRuntimeConfig,
         secrets: Rc<dyn SecretProvider>,
+        record_artifact: Option<EvalNodeRecordArtifact>,
     ) -> Result<Self, EpisodeExecutionError> {
         if imported.package.native_graph().is_none() {
             return Err(EpisodeExecutionError::Configuration(
@@ -151,17 +153,8 @@ impl DockerNativeGraphEpisodeExecutor {
             application,
             model_runtime,
             secrets,
-            record_artifact: None,
+            record_artifact,
         })
-    }
-
-    /// Attaches one suite-owned coordinator artifact to every episode callback.
-    pub(crate) fn with_record_artifact(
-        mut self,
-        artifact: Rc<RefCell<EvalNodeRecordArtifact>>,
-    ) -> Self {
-        self.record_artifact = Some(artifact);
-        self
     }
 
     fn lifecycle_for_assignment(
@@ -203,15 +196,13 @@ impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
             native,
             &self.model_runtime,
             self.secrets.as_ref(),
+            self.record_artifact.clone(),
         )
         .map_err(|error| {
             EpisodeExecutionError::Callback(crate::eval::EvalExecutionError::NativeGraphModel(
                 error.to_string(),
             ))
         })?;
-        if let Some(artifact) = &self.record_artifact {
-            callback = callback.with_record_artifact(artifact.clone());
-        }
         let execution = match &self.runtime {
             DockerExecutorRuntime::Host => {
                 self.sandbox

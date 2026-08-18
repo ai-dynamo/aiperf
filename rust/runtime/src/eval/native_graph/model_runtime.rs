@@ -4,10 +4,8 @@
 //! Resolution of immutable NativeGraph model bindings through product seams.
 
 use std::{
-    cell::RefCell,
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
-    rc::Rc,
     sync::Arc,
 };
 
@@ -486,7 +484,7 @@ struct NativeGraphModelStageInputs {
 pub struct EngineNativeGraphEpisodeCallback {
     inputs: NativeGraphModelStageInputs,
     program: crate::graph::model::GraphTraceProgram,
-    record_artifact: Option<Rc<RefCell<EvalNodeRecordArtifact>>>,
+    record_artifact: Option<EvalNodeRecordArtifact>,
     evidence: Option<NativeGraphTransportEvidence>,
 }
 
@@ -497,6 +495,7 @@ impl EngineNativeGraphEpisodeCallback {
         package: &NativeGraphPackagePlan,
         runtime: &ModelRuntimeConfig,
         secrets: &dyn SecretProvider,
+        record_artifact: Option<EvalNodeRecordArtifact>,
     ) -> Result<Self, NativeGraphModelStageError> {
         let registry = application.product_registry();
         let source =
@@ -551,18 +550,9 @@ impl EngineNativeGraphEpisodeCallback {
         Ok(Self {
             inputs,
             program,
-            record_artifact: None,
+            record_artifact,
             evidence: None,
         })
-    }
-
-    /// Attaches a suite-owned coordinator artifact for completed model-node records.
-    pub(crate) fn with_record_artifact(
-        mut self,
-        artifact: Rc<RefCell<EvalNodeRecordArtifact>>,
-    ) -> Self {
-        self.record_artifact = Some(artifact);
-        self
     }
 
     /// Returns the completed graph's observed transport facts.

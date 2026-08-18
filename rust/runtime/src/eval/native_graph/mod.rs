@@ -6,6 +6,7 @@
 mod action_encoder;
 mod artifacts;
 mod cellular;
+mod completed_attempt;
 #[cfg(feature = "engine")]
 mod episode_runner;
 mod evaluator;
@@ -32,7 +33,11 @@ pub use cellular::{
     NativeGraphCellLeaseError, NativeGraphCellLeaseId, NativeGraphCellPlacement,
     NativeGraphCellularFold, NativeGraphCellularPlan,
 };
-
+pub use completed_attempt::{
+    NativeGraphAttemptAuthority, NativeGraphCompletedAttempt, NativeGraphCompletedAttemptError,
+};
+#[cfg(feature = "engine")]
+pub use crate::engine::record_lane::EvalNodeRecordArtifact;
 #[cfg(feature = "engine")]
 pub use episode_runner::{
     DockerNativeGraphEpisodeExecutor, EpisodeExecutionError, NativeGraphEpisodeExecutor,
@@ -42,6 +47,11 @@ pub use evaluator::{
     EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, HarborEpisodeEvaluator,
     HarborEpisodeEvaluatorFactory,
 };
+#[cfg(feature = "engine")]
+pub use factories::{
+    BoundNativeGraphEnvironmentStepper, StartedNativeGraphEnvironmentStepper,
+    bind_native_graph_environment_stepper,
+};
 pub use factories::{
     ConfirmedNativeGraphProviderRecoveryFactory, ExactNativeGraphFidelityObserverFactory,
     NativeGraphAdapterRuntimeProvider, NativeGraphEnvironmentStepper,
@@ -50,6 +60,7 @@ pub use factories::{
     NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
     NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
     RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, StrictAdapterRuntimeProvider,
+    SupervisedEnvironmentStepperBinder,
 };
 pub(crate) use live_driver::NATIVE_GRAPH_LIVE_DRIVER_KIND;
 pub use live_driver::{

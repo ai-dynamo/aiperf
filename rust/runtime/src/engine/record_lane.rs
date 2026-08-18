@@ -155,34 +155,60 @@ impl OutputsLaneWriter {
     }
 }
 
-/// Coordinator-local writer for NativeGraph evaluation node records.
+/// Cloneable suite-owned handle for NativeGraph evaluation node records.
 ///
 /// Rows use the same default metric projection and compact JSONL serialization as
 /// [`crate::engine::records::write_records_jsonl`]. The file is opened eagerly so
-/// an evaluation with no completed nodes still leaves an empty artifact.
-pub(crate) struct EvalNodeRecordArtifact {
+/// an evaluation with no completed nodes still leaves an empty artifact. Record
+/// append remains crate-private; external composition can only open and finish the
+/// artifact, while cloned handles share one coordinator-local writer.
+#[derive(Clone)]
+pub struct EvalNodeRecordArtifact {
+    inner: Rc<RefCell<EvalNodeRecordWriter>>,
+    destination: String,
+}
+
+struct EvalNodeRecordWriter {
     writer: BufWriter<File>,
     metrics: MetricsConfig,
 }
 
 impl EvalNodeRecordArtifact {
     /// Open (truncating) the node-record artifact and create its parent directory.
-    pub(crate) fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path) -> Result<Self> {
+        let destination = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("node records")
+            .to_owned();
         Ok(Self {
-            writer: create_export_file(path, "native eval node record export")?,
-            metrics: MetricsConfig::default(),
+            inner: Rc::new(RefCell::new(EvalNodeRecordWriter {
+                writer: create_export_file(path, "native eval node record export")?,
+                metrics: MetricsConfig::default(),
+            })),
+            destination,
         })
     }
 
+    /// Sanitized destination label suitable for public error context.
+    pub(crate) fn destination(&self) -> &str {
+        &self.destination
+    }
+
     /// Append one completed node record using the canonical record-row projection.
-    pub(crate) fn append(&mut self, captured: &CapturedRecord) -> Result<()> {
-        write_record_jsonl_row(&mut self.writer, captured, &self.metrics, false)
+    pub(crate) fn append(&self, captured: &CapturedRecord) -> Result<()> {
+        let mut inner = self.inner.borrow_mut();
+        let EvalNodeRecordWriter { writer, metrics } = &mut *inner;
+        write_record_jsonl_row(writer, captured, metrics, false)
             .context("writing eval node record export row")
     }
 
     /// Flush all appended rows. Repeated calls are harmless.
-    pub(crate) fn finish(&mut self) -> Result<()> {
-        self.writer
+    pub fn finish(&self) -> Result<()> {
+        self.inner
+            .borrow_mut()
+            .writer
             .flush()
             .context("flushing eval node record export")
     }

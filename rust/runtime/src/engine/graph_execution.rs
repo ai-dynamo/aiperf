@@ -615,7 +615,7 @@ pub(crate) async fn execute_native_graph_trace(
     default_model: String,
     raw_enabled: bool,
     program: GraphTraceProgram,
-    record_artifact: Option<Rc<RefCell<EvalNodeRecordArtifact>>>,
+    record_artifact: Option<EvalNodeRecordArtifact>,
 ) -> Result<NativeGraphTransportEvidence> {
     let clock_anchor = RealClockAnchor::now();
     let clock: Rc<dyn Clock> = RealClock::from_anchor(clock_anchor);
@@ -700,15 +700,17 @@ pub(crate) async fn execute_native_graph_trace(
 fn observe_native_graph_evidence(
     evidence: &mut NativeGraphTransportEvidence,
     event: NativeGraphEvidenceEvent,
-    record_artifact: Option<&Rc<RefCell<EvalNodeRecordArtifact>>>,
+    record_artifact: Option<&EvalNodeRecordArtifact>,
 ) -> Result<()> {
     match event {
         NativeGraphEvidenceEvent::Record(record) => {
             if let Some(artifact) = record_artifact {
-                artifact
-                    .borrow_mut()
-                    .append(&record)
-                    .context("exporting completed native graph node record")?;
+                artifact.append(&record).with_context(|| {
+                    format!(
+                        "appending completed native graph node record to {}",
+                        artifact.destination()
+                    )
+                })?;
             }
             evidence.model_records = evidence
                 .model_records
