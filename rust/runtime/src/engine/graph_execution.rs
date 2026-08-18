@@ -3305,6 +3305,86 @@ executable = "tools/adapter.sh"
         }
     }
 
+    #[test]
+    fn native_graph_record_export_disabled_preserves_completed_evidence() {
+        let mut evidence = NativeGraphTransportEvidence {
+            model_records: 0,
+            completed_traces: 0,
+        };
+
+        observe_native_graph_evidence(
+            &mut evidence,
+            NativeGraphEvidenceEvent::Record(Box::new(completed_evidence_record())),
+            None,
+        )
+        .expect("disabled record export leaves evidence collection unchanged");
+
+        assert_eq!(evidence.model_records, 1);
+        assert_eq!(evidence.completed_traces, 0);
+    }
+
+    #[test]
+    fn suite_owned_native_graph_record_artifact_appends_across_episodes() {
+        let dir = tempfile::tempdir().expect("temporary record artifact directory");
+        let path = dir.path().join("records.jsonl");
+        let artifact = Rc::new(RefCell::new(
+            EvalNodeRecordArtifact::open(&path).expect("open suite-owned record artifact"),
+        ));
+
+        for _ in 0..2 {
+            let mut episode_evidence = NativeGraphTransportEvidence {
+                model_records: 0,
+                completed_traces: 0,
+            };
+            observe_native_graph_evidence(
+                &mut episode_evidence,
+                NativeGraphEvidenceEvent::Record(Box::new(completed_evidence_record())),
+                Some(&artifact),
+            )
+            .expect("append one completed record for the episode");
+            assert_eq!(episode_evidence.model_records, 1);
+        }
+        artifact
+            .borrow_mut()
+            .finish()
+            .expect("flush suite-owned record artifact");
+
+        let rows = fs::read_to_string(path).expect("read completed record artifact");
+        assert_eq!(rows.lines().count(), 2);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_graph_record_append_failure_does_not_complete_evidence() {
+        let artifact = Rc::new(RefCell::new(
+            EvalNodeRecordArtifact::open(std::path::Path::new("/dev/full"))
+                .expect("open deterministic full-device writer"),
+        ));
+        let mut record = completed_evidence_record();
+        let oversized_output = "x".repeat(16 * 1024);
+        record.output =
+            CapturedModelOutput::from_parts(&oversized_output, Some(&oversized_output), None);
+        let mut evidence = NativeGraphTransportEvidence {
+            model_records: 0,
+            completed_traces: 0,
+        };
+
+        let error = observe_native_graph_evidence(
+            &mut evidence,
+            NativeGraphEvidenceEvent::Record(Box::new(record)),
+            Some(&artifact),
+        )
+        .expect_err("record append failure must fail the episode evidence drain");
+
+        assert!(
+            error
+                .to_string()
+                .contains("exporting completed native graph node record")
+        );
+        assert_eq!(evidence.model_records, 0);
+        assert_eq!(evidence.completed_traces, 0);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn native_graph_evidence_sink_requires_drain_to_exceed_its_bounded_capacity() {
         let (sink, mut receiver) = NativeGraphEvidenceSink::bounded();
