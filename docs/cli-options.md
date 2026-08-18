@@ -712,6 +712,14 @@ Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (sy
 
 ### Prefix Prompt
 
+#### `--system-prompt` `<str>`
+
+Verbatim system prompt text, identical across every conversation. Sent as a system-role message ahead of all turns. Works with both synthetic and file/public datasets; when the dataset already carries its own system message, this text is prepended to it. Tokens are additive: `--isl` continues to size the generated user prompt only. Mutually exclusive with `--system-prompt-file`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
+
+#### `--system-prompt-file` `<str>`
+
+Path to a UTF-8 text file holding the verbatim system prompt. Preferred over `--system-prompt` for real production prompts, which are long enough that shell quoting mangles them. Read once at startup, so a missing or unreadable file fails immediately rather than mid-run. Mutually exclusive with `--system-prompt`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
+
 #### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
 
 Number of distinct prefix prompts to generate for K-V cache testing. Each prefix is prepended to user prompts, simulating cached context scenarios. Prefixes randomly selected from pool per request. Set to 0 to disable prefix prompts. Mutually exclusive with `--shared-system-prompt-length`/`--user-context-prompt-length`.
@@ -935,7 +943,7 @@ Algorithm for generating synthetic video content. Different types produce differ
 
 #### `--video-format` `<str>`
 
-Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). Format choice affects compatibility, file size, and encoding options. Use `webm` for open-source workflows, `mp4` for maximum compatibility.
+Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (widely compatible container, VP9 by default). Format choice affects compatibility, file size, and encoding options. `mp4` is the more portable container, but note that the default VP9 video and Opus audio are less widely supported by players than H.264/AAC would be.
 
 **Choices:**
 
@@ -946,7 +954,7 @@ Container format for generated video files. Supports `webm` (VP9, recommended, B
 
 #### `--video-codec` `<str>`
 
-The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL-licensed, widely compatible), libx265 (CPU, GPL-licensed, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
+The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default), libvpx (CPU, BSD-licensed, VP8). Any codec the local FFmpeg supports can be used, but the AIPerf container ships a minimal FFmpeg build limited to VP8/VP9 video with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc require an FFmpeg build that includes them.
 <br/>_Default: `libvpx-vp9`_
 
 #### `--video-audio-sample-rate` `<float>`
@@ -963,15 +971,15 @@ Number of audio channels to embed in generated video files. 0 = disabled (no aud
 
 #### `--video-audio-codec` `<str>`
 
-Audio codec for the embedded audio track. If not specified, auto-selects based on video format: aac for MP4, libvorbis for WebM. Options: aac, libvorbis, libopus.
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Options: libvorbis, libopus, aac. The AIPerf container ships only libvorbis and libopus; aac requires an FFmpeg build that includes an AAC encoder. libopus always encodes at 48 kHz, so any --video-audio-sample-rate is resampled during muxing.
 
 **Choices:**
 
 | | | |
 |-------|:-------:|-------------|
-| `aac` |  | AAC codec. Default for MP4 containers. |
+| `aac` |  | AAC codec. Not built into the AIPerf container's FFmpeg; selecting it requires an FFmpeg build that includes an AAC encoder. |
 | `libvorbis` |  | Vorbis codec. Default for WebM containers. |
-| `libopus` |  | Opus codec. Alternative for WebM containers. |
+| `libopus` |  | Opus codec. Default for MP4 containers. Always encodes at 48 kHz regardless of the requested sample rate. |
 
 #### `--video-audio-depth` `<str>`
 
@@ -2290,6 +2298,14 @@ Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (sy
 
 ### Prefix Prompt
 
+#### `--system-prompt` `<str>`
+
+Verbatim system prompt text, identical across every conversation. Sent as a system-role message ahead of all turns. Works with both synthetic and file/public datasets; when the dataset already carries its own system message, this text is prepended to it. Tokens are additive: `--isl` continues to size the generated user prompt only. Mutually exclusive with `--system-prompt-file`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
+
+#### `--system-prompt-file` `<str>`
+
+Path to a UTF-8 text file holding the verbatim system prompt. Preferred over `--system-prompt` for real production prompts, which are long enough that shell quoting mangles them. Read once at startup, so a missing or unreadable file fails immediately rather than mid-run. Mutually exclusive with `--system-prompt`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
+
 #### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
 
 Number of distinct prefix prompts to generate for K-V cache testing. Each prefix is prepended to user prompts, simulating cached context scenarios. Prefixes randomly selected from pool per request. Set to 0 to disable prefix prompts. Mutually exclusive with `--shared-system-prompt-length`/`--user-context-prompt-length`.
@@ -2513,7 +2529,7 @@ Algorithm for generating synthetic video content. Different types produce differ
 
 #### `--video-format` `<str>`
 
-Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). Format choice affects compatibility, file size, and encoding options. Use `webm` for open-source workflows, `mp4` for maximum compatibility.
+Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (widely compatible container, VP9 by default). Format choice affects compatibility, file size, and encoding options. `mp4` is the more portable container, but note that the default VP9 video and Opus audio are less widely supported by players than H.264/AAC would be.
 
 **Choices:**
 
@@ -2524,7 +2540,7 @@ Container format for generated video files. Supports `webm` (VP9, recommended, B
 
 #### `--video-codec` `<str>`
 
-The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL-licensed, widely compatible), libx265 (CPU, GPL-licensed, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
+The video codec to use for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default), libvpx (CPU, BSD-licensed, VP8). Any codec the local FFmpeg supports can be used, but the AIPerf container ships a minimal FFmpeg build limited to VP8/VP9 video with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc require an FFmpeg build that includes them.
 <br/>_Default: `libvpx-vp9`_
 
 #### `--video-audio-sample-rate` `<float>`
@@ -2541,15 +2557,15 @@ Number of audio channels to embed in generated video files. 0 = disabled (no aud
 
 #### `--video-audio-codec` `<str>`
 
-Audio codec for the embedded audio track. If not specified, auto-selects based on video format: aac for MP4, libvorbis for WebM. Options: aac, libvorbis, libopus.
+Audio codec for the embedded audio track. If not specified, auto-selects based on video format: libopus for MP4, libvorbis for WebM. Options: libvorbis, libopus, aac. The AIPerf container ships only libvorbis and libopus; aac requires an FFmpeg build that includes an AAC encoder. libopus always encodes at 48 kHz, so any --video-audio-sample-rate is resampled during muxing.
 
 **Choices:**
 
 | | | |
 |-------|:-------:|-------------|
-| `aac` |  | AAC codec. Default for MP4 containers. |
+| `aac` |  | AAC codec. Not built into the AIPerf container's FFmpeg; selecting it requires an FFmpeg build that includes an AAC encoder. |
 | `libvorbis` |  | Vorbis codec. Default for WebM containers. |
-| `libopus` |  | Opus codec. Alternative for WebM containers. |
+| `libopus` |  | Opus codec. Default for MP4 containers. Always encodes at 48 kHz regardless of the requested sample rate. |
 
 #### `--video-audio-depth` `<str>`
 

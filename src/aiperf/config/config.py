@@ -566,6 +566,60 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_system_prompt_compatibility(self) -> Self:
+        """Reject a verbatim system prompt that would conflict or be silently dropped.
+
+        A custom system prompt is the content-valued replacement for
+        ``prefix_prompts.shared_system_length``: both fill
+        ``Conversation.system_message``. It therefore inherits that field's
+        exclusivity with the prefix pool rather than defining its own rule.
+
+        Endpoints opt into receiving a system message via the
+        ``consumes_system_message`` plugin metadata flag. On the others the text
+        would never reach the wire, so the benchmark would silently measure
+        something other than what was asked for.
+        """
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        if self.get_system_prompt() is None:
+            return self
+
+        prefix_prompts = getattr(self.get_default_dataset(), "prefix_prompts", None)
+        if prefix_prompts is not None:
+            if prefix_prompts.shared_system_length is not None:
+                raise ValueError(
+                    "--system-prompt/--system-prompt-file and "
+                    "--shared-system-prompt-length are mutually exclusive: both fill "
+                    "the system message. Use the first for verbatim text, the second "
+                    "for synthetic filler of a target token length."
+                )
+            if prefix_prompts.pool_size or prefix_prompts.length:
+                raise ValueError(
+                    "--system-prompt/--system-prompt-file and "
+                    "--num-prefix-prompts/--prefix-prompt-length are mutually "
+                    "exclusive, matching --shared-system-prompt-length, which fills "
+                    "the same system-message slot."
+                )
+
+        endpoint_metadata = plugins.get_endpoint_metadata(self.endpoint.type)
+        if not endpoint_metadata.consumes_system_message:
+            supported = ", ".join(
+                sorted(
+                    entry.name
+                    for entry, _ in plugins.iter_all(PluginType.ENDPOINT)
+                    if plugins.get_endpoint_metadata(entry.name).consumes_system_message
+                )
+            )
+            raise ValueError(
+                f"--system-prompt/--system-prompt-file is not supported by endpoint "
+                f"type '{self.endpoint.type}' (no system role), so the text would "
+                f"never reach the wire. Supported endpoint types: {supported}."
+            )
+
+        return self
+
+    @model_validator(mode="after")
     def validate_warmup_isolation_not_agentic_replay(self) -> Self:
         """Reject WARMUP_ISOLATION_* targets when timing mode resolves to AGENTIC_REPLAY.
 
@@ -623,6 +677,10 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         silently falls through to the user turn, making it indistinguishable from
         ``warmup_isolation_first_turn``.
 
+        A verbatim ``--system-prompt``/``--system-prompt-file`` satisfies this
+        requirement exactly as ``shared_system_length`` does: both statically
+        guarantee a system message, so the marker has a real slot to land in.
+
         This check is scoped to synthetic datasets where system-message presence is
         statically known. File and trace datasets may carry system messages inside
         their content, which cannot be inspected at config time.
@@ -636,6 +694,9 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         if dataset.type != DatasetType.SYNTHETIC:
             return self
 
+        if self.get_system_prompt() is not None:
+            return self
+
         prefix_prompts = getattr(dataset, "prefix_prompts", None)
         has_shared_system = (
             prefix_prompts is not None
@@ -644,10 +705,12 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         if not has_shared_system:
             raise ValueError(
                 "cache_bust=warmup_isolation_system requires a shared system prompt, "
-                "but no shared_system_length is configured on the synthetic dataset. "
+                "but no shared_system_length or verbatim system prompt is configured "
+                "on the synthetic dataset. "
                 "The marker would silently fall through to the user turn, making it "
                 "indistinguishable from warmup_isolation_first_turn. "
-                "Either set prefix_prompts.shared_system_length (--shared-system-prompt-length) "
+                "Either set prefix_prompts.shared_system_length (--shared-system-prompt-length), "
+                "pass --system-prompt/--system-prompt-file, "
                 "or switch to cache_bust=warmup_isolation_first_turn."
             )
         return self
