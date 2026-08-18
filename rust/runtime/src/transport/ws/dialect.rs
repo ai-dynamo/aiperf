@@ -486,9 +486,8 @@ impl TurnOperationState {
             {
                 self.has_verified_correlation = true;
             }
-            ResponsesEvent::Created {
-                operation_id: None, ..
-            } if !self.is_reused_socket => {}
+            ResponsesEvent::Created { .. }
+                if self.operation_id.is_none() && !self.is_reused_socket => {}
             ResponsesEvent::Created {
                 response_id,
                 operation_id: _,
@@ -1050,6 +1049,52 @@ mod tests {
             "authored-value"
         );
         assert!(!correlated.correlation().supports_reused_socket());
+    }
+
+    #[test]
+    fn authored_marker_like_metadata_completes_a_fresh_response_lifecycle() {
+        let request = PreparedWsOperation::new(
+            [PreparedWsMessage::text(
+                Bytes::from_static(
+                    br#"{"type":"response.create","metadata":{"_aiperf_ws_operation":"authored-value"}}"#,
+                ),
+                PreparedWsMessageRole::MeasuredInput,
+            )],
+            None,
+        );
+        let correlated =
+            correlate_operation(&request, WebSocketDialect::Responses, "internal-operation")
+                .expect("valid authored metadata remains valid");
+        let mut state = TurnOperationState::new(correlated.correlation(), false);
+
+        for (timestamp_ns, payload, expected) in [
+            (
+                1,
+                br#"{"type":"response.created","response":{"id":"current","metadata":{"_aiperf_ws_operation":"authored-value"}}}"#.as_slice(),
+                EventDisposition::Attributed { is_terminal: false },
+            ),
+            (
+                2,
+                br#"{"type":"response.output_text.delta","item_id":"message-1","output_index":0,"content_index":0,"delta":"hello","sequence_number":2}"#.as_slice(),
+                EventDisposition::Attributed { is_terminal: false },
+            ),
+            (
+                3,
+                br#"{"type":"response.completed","response":{"id":"current","status":"completed","metadata":{"_aiperf_ws_operation":"authored-value"}}}"#.as_slice(),
+                EventDisposition::Attributed { is_terminal: true },
+            ),
+        ] {
+            let event = classify_responses_event(payload, true)
+                .expect("official Responses lifecycle event parses");
+            assert_eq!(
+                state
+                    .on_correlated_event(&event, timestamp_ns)
+                    .expect("fresh response lifecycle remains attributable"),
+                expected,
+            );
+        }
+
+        assert!(!state.has_verified_correlation());
     }
 
     #[test]

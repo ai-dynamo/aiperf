@@ -8,6 +8,7 @@ mod common;
 use aiperf_mock_server::config::WebSocketMode;
 use common::{AIPerfHarness, DEFAULT_MODEL, MockServerConfig};
 use serde_json::Value;
+use std::time::Duration;
 
 const REQUESTS: u32 = 2;
 
@@ -77,6 +78,32 @@ fn websocket_config(url: &str, endpoint_type: &str, path: &str) -> String {
     )
 }
 
+fn websocket_authored_marker_config(url: &str) -> String {
+    websocket_config(url, "responses", "/mock/websocket/turns").replacen(
+        "    streaming: true\n",
+        "    streaming: true\n    timeout: 0.5\n    extra:\n      metadata:\n        _aiperf_ws_operation: authored-value\n",
+        1,
+    )
+}
+
+async fn completed_websocket_captures(mock_url: &str, expected: usize) -> Vec<Value> {
+    let url = format!("{mock_url}/mock/websocket/captures");
+    let mut captures = Vec::new();
+    for _ in 0..50 {
+        captures = reqwest::get(&url)
+            .await
+            .expect("mock capture request succeeds")
+            .json::<Vec<Value>>()
+            .await
+            .expect("mock captures are JSON");
+        if captures.len() >= expected {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    captures
+}
+
 #[tokio::test]
 async fn websocket_responses_profile_records_application_events() {
     let config = MockServerConfig {
@@ -135,6 +162,61 @@ async fn websocket_responses_profile_records_application_events() {
                 .is_some_and(|value| value > 0.0)
         );
     }
+}
+
+#[tokio::test]
+async fn authored_marker_like_metadata_completes_without_socket_retention() {
+    let config = MockServerConfig {
+        websocket_mode: WebSocketMode::TurnSerialized,
+        websocket_content_events: 1,
+        websocket_first_content_delay_ms: 20.0,
+        websocket_content_interval_ms: 5.0,
+        no_tokenizer: true,
+        ..MockServerConfig::default()
+    };
+    let harness = AIPerfHarness::new_with(config).await;
+    let url = harness.mock.url.replacen("http://", "ws://", 1);
+    let config_path = harness
+        .artifact_path()
+        .join("websocket-authored-marker.yaml");
+    std::fs::write(&config_path, websocket_authored_marker_config(&url))
+        .expect("write authored-marker WebSocket profile config");
+
+    let result = harness.run(&format!("--config {}", config_path.display()));
+    assert!(
+        result.success(),
+        "authored-marker WebSocket profile failed:\nstdout:\n{}\nstderr:\n{}",
+        result.stdout,
+        result.stderr
+    );
+    assert_eq!(
+        response_texts(&result),
+        vec!["mock".to_owned(); REQUESTS as usize]
+    );
+    let records = result.artifacts.raw_records();
+    assert_eq!(records.len(), REQUESTS as usize);
+    for record in &records {
+        assert!(record["error"].is_null());
+        let payload = record["payload"]["messages"][0]["payload"]
+            .as_str()
+            .expect("raw request retains the exact WebSocket message bytes");
+        assert!(payload.contains(r#""metadata":{"_aiperf_ws_operation":"authored-value"}"#));
+        assert_eq!(
+            response_event_types(record),
+            [
+                "response.created",
+                "response.output_text.delta",
+                "response.completed",
+            ]
+        );
+    }
+
+    let captures = completed_websocket_captures(&harness.mock.url, REQUESTS as usize).await;
+    assert_eq!(
+        captures.len(),
+        REQUESTS as usize,
+        "a markerless fresh response must not retain its socket"
+    );
 }
 
 #[tokio::test]
