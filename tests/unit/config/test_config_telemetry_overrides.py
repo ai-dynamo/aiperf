@@ -140,3 +140,37 @@ def test_network_latency_automatic_routes(base_yaml: Path) -> None:
 def test_unsafe_override_routes(base_yaml: Path) -> None:
     resolved = resolve_config(cli(unsafe_override=True), base_yaml)
     assert resolved.benchmark.unsafe_override is True
+
+
+# ---------------------------------------------------------------------------
+# Runtime: --api-host with a YAML-supplied api_port
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def api_port_yaml(base_yaml: Path, tmp_path: Path) -> Path:
+    cfg = tmp_path / "with_port.yaml"
+    cfg.write_text(
+        base_yaml.read_text().replace(
+            "  phases:", "  runtime:\n    api_port: 19090\n  phases:"
+        )
+    )
+    return cfg
+
+
+def test_api_host_accepts_port_from_yaml(api_port_yaml: Path) -> None:
+    """--api-host must not demand a flag the config file already supplies.
+
+    build_logging_runtime raises when api_host is set and api_port is None,
+    which under --config is exactly the supported case: the port came from
+    the file.
+    """
+    resolved = resolve_config(cli(api_host="0.0.0.0"), api_port_yaml)
+    assert resolved.benchmark.runtime.api_host == "0.0.0.0"
+    assert resolved.benchmark.runtime.api_port == 19090
+
+
+def test_api_host_without_any_port_still_errors(base_yaml: Path) -> None:
+    """The guard stands when neither the CLI nor the YAML supplies a port."""
+    with pytest.raises(ValueError, match="api_host requires api_port"):
+        resolve_config(cli(api_host="0.0.0.0"), base_yaml)

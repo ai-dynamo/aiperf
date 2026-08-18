@@ -228,7 +228,12 @@ def build_cli_overrides(
     # land on RuntimeConfig / LoggingConfig in AIPerfConfig. build_logging_runtime
     # already gates on cli.model_fields_set, so YAML defaults stay
     # intact when the user didn't pass these flags.
-    logging_dict, runtime_dict = build_logging_runtime(cli)
+    runtime_base_port = benchmark_config is not None and (
+        benchmark_config.runtime.api_port is not None
+    )
+    logging_dict, runtime_dict = build_logging_runtime(
+        cli, base_api_port=runtime_base_port
+    )
     _apply_optional_section(out, "logging", logging_dict)
     _apply_optional_section(out, "runtime", runtime_dict)
 
