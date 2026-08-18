@@ -297,6 +297,8 @@ def _build_routed_under_config() -> frozenset[str]:
         | {attr for attr, _ in _RAMP_FIELDS}
         | {attr for _, attr in _GAMMA_ONLY_ROUTES}
         | {"request_cancellation_rate", "request_cancellation_delay"}
+        # Warmup phase shaping, applied by _apply_warmup_overrides.
+        | {field for field in LOADGEN_FIELDS if field.startswith("warmup_")}
     )
 
     # Whole-section builders consumed by build_cli_overrides: build_artifacts
@@ -366,17 +368,6 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         # ----- input: not carried on the dataset block -----
         *_INPUT_NOT_ON_DATASET,
         # ----- loadgen: warmup phase -----
-        "warmup_arrival_pattern",
-        "warmup_concurrency",
-        "warmup_concurrency_ramp_duration",
-        "warmup_duration",
-        "warmup_grace_period",
-        "warmup_num_sessions",
-        "warmup_prefill_concurrency",
-        "warmup_prefill_concurrency_ramp_duration",
-        "warmup_request_count",
-        "warmup_request_rate",
-        "warmup_request_rate_ramp_duration",
         # ----- sweep flags that resolve cleanly and do nothing -----
         *SWEEP_FIELDS_NOT_ROUTED,
         # ----- outside every section frozenset -----

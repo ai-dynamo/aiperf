@@ -19,6 +19,7 @@ import pytest
 
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
+from aiperf.config.loader.errors import ConfigurationError
 
 
 def cli(**kwargs: object) -> CLIConfig:
@@ -144,3 +145,90 @@ def test_arrival_smoothness_rejected_on_non_gamma_phase(
 ) -> None:
     with pytest.raises(ValueError, match="arrival-smoothness"):
         resolve_config(cli(arrival_smoothness=0.5), concurrency_yaml)
+
+
+# ---------------------------------------------------------------------------
+# Warmup
+# ---------------------------------------------------------------------------
+
+
+def warmup(cfg):
+    return next((p for p in cfg.benchmark.phases if p.name == "warmup"), None)
+
+
+@pytest.fixture
+def warmup_yaml(tmp_path: Path) -> Path:
+    """A config that already declares a warmup phase."""
+    cfg = tmp_path / "warmup.yaml"
+    cfg.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: synthetic
+  phases:
+    - name: warmup
+      kind: warmup
+      type: concurrency
+      concurrency: 2
+      requests: 3
+    - name: profiling
+      kind: profiling
+      type: concurrency
+      concurrency: 4
+      requests: 5
+"""
+    )
+    return cfg
+
+
+def test_warmup_flag_overrides_existing_warmup_phase(warmup_yaml: Path) -> None:
+    resolved = resolve_config(cli(warmup_request_count=9), warmup_yaml)
+    assert warmup(resolved).requests == 9
+
+
+def test_warmup_flag_leaves_untouched_warmup_values_alone(warmup_yaml: Path) -> None:
+    """Only what the user set may change on the YAML's warmup phase."""
+    resolved = resolve_config(cli(warmup_request_count=9), warmup_yaml)
+    assert warmup(resolved).concurrency == 2
+
+
+def test_warmup_flag_does_not_disturb_the_profiling_phase(warmup_yaml: Path) -> None:
+    resolved = resolve_config(cli(warmup_request_count=9), warmup_yaml)
+    assert profiling(resolved).requests == 5
+    assert profiling(resolved).concurrency == 4
+
+
+def test_secondary_warmup_flag_applies_to_an_existing_phase(
+    warmup_yaml: Path,
+) -> None:
+    """--warmup-concurrency has no trigger of its own.
+
+    On the CLI-only path that means "no warmup phase", so the flag is
+    ignored. Here the config file already declares the phase, so the flag
+    has somewhere to land and must be applied rather than dropped.
+    """
+    resolved = resolve_config(cli(warmup_concurrency=7), warmup_yaml)
+    assert warmup(resolved).concurrency == 7
+
+
+def test_warmup_trigger_creates_a_phase_when_yaml_has_none(
+    concurrency_yaml: Path,
+) -> None:
+    """A trigger flag builds the warmup phase, as it does CLI-only."""
+    resolved = resolve_config(cli(warmup_request_count=4), concurrency_yaml)
+    created = warmup(resolved)
+    assert created is not None
+    assert created.requests == 4
+    assert created.exclude_from_results is True
+
+
+def test_secondary_warmup_flag_without_a_phase_or_trigger_errors(
+    concurrency_yaml: Path,
+) -> None:
+    """Nowhere to land and nothing to create it: must be loud, not dropped."""
+    with pytest.raises(ConfigurationError, match=r"warmup"):
+        resolve_config(cli(warmup_concurrency=7), concurrency_yaml)
