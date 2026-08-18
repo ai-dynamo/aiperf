@@ -182,6 +182,122 @@ impl HttpTransport {
             .await
     }
 
+    /// Send one streaming request without creating a terminal request record.
+    ///
+    /// Bounded decision consumers use this narrow path to admit each decoded
+    /// frame before any response/raw-record accumulation exists. Requests with
+    /// a post-send cancellation policy fail closed until this no-record path
+    /// has an equivalent cancellation lifecycle.
+    pub async fn send_request_bytes_streaming(
+        &self,
+        cfg: &RequestConfig,
+        body: Bytes,
+        max_sse_frame_bytes: usize,
+        on_first_token: &mut dyn FnMut(i64),
+        on_message: &mut dyn FnMut(&SseMessage) -> Result<bool, ErrorDetails>,
+    ) -> Result<u16, ErrorDetails> {
+        if cfg.cancel_after_ns.is_some() {
+            return Err(ErrorDetails::cancelled(
+                "bounded decision dispatch does not support post-send cancellation",
+            ));
+        }
+
+        let start_ns = self.clock.now_ns();
+        let headers = build_headers(
+            cfg,
+            true,
+            self.session_header.as_deref(),
+            &self.user_agent,
+            self.dynamo_session_id_from_correlation_id,
+            self.x_session_id_from_correlation_id,
+            self.x_smg_routing_key_from_correlation_id,
+        );
+        let full = build_url(&cfg.url, "", &cfg.params)
+            .map_err(|error| ErrorDetails::other(format!("bad url {}: {error}", cfg.url)))?;
+        let url = url::Url::parse(&full)
+            .map_err(|error| ErrorDetails::other(format!("bad url {full}: {error}")))?;
+        let reuse = cfg.reuse;
+        let correlation_id = cfg.correlation_id.as_deref();
+        let total_timeout_ns = positive_timeout(self.client_cfg.total_timeout_ns);
+        let deadline_ns = total_timeout_ns.map(|timeout| start_ns.saturating_add(timeout));
+        let mut trace = TraceData {
+            request_send_start_ns: Some(start_ns),
+            ..TraceData::default()
+        };
+
+        let result = async {
+            let acquire_remaining_ns = remaining_timeout(deadline_ns, self.clock.now_ns())?;
+            let acquire_timeout_ns = minimum_timeout(
+                connect_acquire_budget_ns(&self.client_cfg),
+                acquire_remaining_ns,
+            );
+            let mut lease = with_timeout(
+                self.clock.clone(),
+                acquire_timeout_ns,
+                self.connections.acquire(
+                    &url,
+                    &self.client_cfg,
+                    self.clock.clone(),
+                    reuse,
+                    correlation_id,
+                    &mut trace,
+                ),
+                || ErrorDetails {
+                    kind: crate::transport::core::ErrorKind::Timeout,
+                    code: None,
+                    message: format!(
+                        "connection acquisition timeout after {}ns",
+                        acquire_timeout_ns.unwrap_or_default()
+                    ),
+                },
+            )
+            .await?;
+            let remaining_ns = remaining_timeout(deadline_ns, self.clock.now_ns())?;
+            let dispatch_timeout_ns =
+                minimum_timeout(self.client_cfg.request_timeout_ns, remaining_ns);
+            let code = with_timeout(
+                self.clock.clone(),
+                dispatch_timeout_ns,
+                self.client.dispatch_bounded_streaming_with_handler(
+                    lease.sender_mut(),
+                    &url,
+                    &headers,
+                    body,
+                    max_sse_frame_bytes,
+                    on_first_token,
+                    on_message,
+                ),
+                || ErrorDetails {
+                    kind: crate::transport::core::ErrorKind::Timeout,
+                    code: None,
+                    message: "bounded decision request timed out".to_string(),
+                },
+            )
+            .await?;
+            let keep = match reuse {
+                ConnectionReuseStrategy::StickyUserSessions => !cfg.is_final_turn,
+                _ => true,
+            };
+            if keep {
+                lease.mark_reusable();
+            } else if let (ConnectionReuseStrategy::StickyUserSessions, Some(correlation_id)) =
+                (reuse, correlation_id)
+            {
+                self.connections.release_session(correlation_id);
+            }
+            Ok(code)
+        }
+        .await;
+
+        if result.is_err()
+            && let (ConnectionReuseStrategy::StickyUserSessions, Some(correlation_id)) =
+                (reuse, correlation_id)
+        {
+            self.connections.release_session(correlation_id);
+        }
+        result
+    }
+
     /// Send a non-streaming GET request through the same Clock-injected client
     /// and connection pool. This is intended for control-plane inputs such as
     /// public benchmark datasets; inference dispatch remains [`send_request`](Self::send_request).

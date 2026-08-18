@@ -17,7 +17,8 @@ pub mod sse;
 pub mod trace;
 
 pub use dispatch::{
-    CreditReportKind, DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome,
+    BoundedDecisionAdmission, BoundedDecisionMode, BoundedDecisionReader, CreditReportKind,
+    DecisionAdmissionError, DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome,
     PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor, WorkerCreditReport,
 };
 pub use error::{ErrorDetails, ErrorKind};

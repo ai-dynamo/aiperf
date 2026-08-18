@@ -20,6 +20,7 @@ use crate::dispatch::sink::{
 };
 use crate::endpoints::{ParsedResponse, ResponseData, Turn, UsageView};
 use crate::scheduled::ModelResponseMetadata;
+use crate::transport::core::{BoundedDecisionAdmission, DecisionAdmissionError};
 
 /// Mutable state accumulated across parsed responses.
 pub(crate) struct EndpointReduceAccumulators<'a> {
@@ -89,6 +90,47 @@ pub(crate) fn reduce_parsed_response(
         }
     }
     true
+}
+
+/// Admit the textual decision facts from one decoded response without creating
+/// terminal response metadata or a concatenated response string.
+///
+/// The bounded decision transport calls this while it still owns the live
+/// response frame. Splitting combined response variants avoids constructing an
+/// intermediate combined string before the selected cap is enforced.
+pub(crate) fn admit_parsed_decision(
+    parsed: &ParsedResponse,
+    admission: &mut BoundedDecisionAdmission,
+) -> Result<bool, DecisionAdmissionError> {
+    let Some(data) = parsed.data.as_ref() else {
+        return Ok(false);
+    };
+    match data {
+        ResponseData::Text { text } => admission.push(text.as_bytes())?,
+        ResponseData::Reasoning { content, reasoning } => {
+            admission.push(reasoning.as_bytes())?;
+            if let Some(content) = content {
+                admission.push(content.as_bytes())?;
+            }
+        }
+        ResponseData::ToolCall {
+            tool_call_text,
+            content,
+        } => {
+            if let Some(content) = content {
+                admission.push(content.as_bytes())?;
+            }
+            admission.push(tool_call_text.as_bytes())?;
+        }
+        ResponseData::TokenIds { .. }
+        | ResponseData::Embeddings { .. }
+        | ResponseData::Rankings { .. }
+        | ResponseData::ImageRetrieval { .. }
+        | ResponseData::Images(_)
+        | ResponseData::Audio(_)
+        | ResponseData::Video(_) => return Ok(false),
+    }
+    Ok(true)
 }
 
 /// Classify a response chunk as reasoning or output for token emission.

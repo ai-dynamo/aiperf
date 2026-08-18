@@ -31,9 +31,9 @@ use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{RequestObserver, RequestSink};
 use crate::metrics::NativeMetricsObserver;
 use crate::transport::core::{
-    ConnectionReuseStrategy, DispatchResult, Dispatcher, ErrorDetails, ErrorKind, MeasuredContext,
-    MeasuredOutcome, PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor,
-    RequestRecord,
+    BoundedDecisionMode, BoundedDecisionReader, ConnectionReuseStrategy, DispatchResult,
+    Dispatcher, ErrorDetails, ErrorKind, MeasuredContext, MeasuredOutcome, PreparedEndpointBinding,
+    PreparedTurn, Request, RequestExecutor, RequestRecord,
 };
 use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::HttpVersion;
@@ -532,6 +532,59 @@ impl Dispatcher for TransportSink {
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult> {
         TransportSink::dispatch_collect(self, turn, observer, on_first_token).await
+    }
+
+    async fn dispatch_bounded_decision(
+        &self,
+        turn: PreparedTurn,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        mode: BoundedDecisionMode,
+    ) -> Result<BoundedDecisionReader> {
+        let PreparedTurn {
+            runtime_session_id: _,
+            mut request,
+            model,
+            endpoint,
+            endpoint_aware: _,
+            data_policy,
+            deferred: _,
+        } = turn;
+        if !data_policy.allow_result_cache() {
+            request
+                .headers
+                .insert("cache-control".to_string(), "no-store".to_string());
+            request
+                .headers
+                .insert("pragma".to_string(), "no-cache".to_string());
+        }
+        match endpoint {
+            PreparedEndpointBinding::Prepared(reference) => {
+                let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "HTTP worker received prepared endpoint key {} without a prepared table",
+                        reference.key.index()
+                    )
+                })?;
+                let endpoint = table.get(reference.key)?;
+                anyhow::ensure!(
+                    endpoint.descriptor().id == reference.endpoint_id.as_str(),
+                    "prepared endpoint key {} resolved to {:?}, expected {:?}",
+                    reference.key.index(),
+                    endpoint.descriptor().id,
+                    reference.endpoint_id.as_str()
+                );
+                self.dispatch_prepared_endpoint_bounded_decision(
+                    request,
+                    endpoint,
+                    &model,
+                    observer,
+                    on_first_token,
+                    mode,
+                )
+                .await
+            }
+        }
     }
 
     fn inference_dimensions(&self, request: &Request) -> InferenceDimensions {

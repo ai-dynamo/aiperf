@@ -25,7 +25,9 @@ use crate::transport::http::client::connection::{
     SendCompletion, Sender, TimedBody, establish, with_timeout,
 };
 use crate::transport::http::config::ClientConfig;
-use crate::transport::http::sse::{SseMessageHandler, read_sse, read_sse_with_handler};
+use crate::transport::http::sse::{
+    SseMessageHandler, read_sse, read_sse_with_bounded_frames, read_sse_with_handler,
+};
 
 /// Re-frames an `application/vnd.amazon.eventstream` byte stream (AWS
 /// SageMaker Runtime `InvokeEndpointWithResponseStream` framing) as
@@ -279,6 +281,34 @@ where
     first_seen: bool,
     filter: &'a mut F,
     responses: &'a mut Vec<Response>,
+}
+
+/// No-record SSE handler used by bounded decision dispatch.
+///
+/// Unlike the ordinary streaming convenience callback, this handler can reject
+/// a decoded frame. The SSE reader then stops before parsing another frame and
+/// the caller drops the in-flight response rather than retaining terminal
+/// response/raw-record state.
+struct FallibleStreamingSseHandler<'a> {
+    start_ns: i64,
+    first_seen: bool,
+    on_first_token: &'a mut dyn FnMut(i64),
+    on_message: &'a mut dyn FnMut(&SseMessage) -> Result<bool, ErrorDetails>,
+}
+
+impl SseMessageHandler for FallibleStreamingSseHandler<'_> {
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<Result<(), ErrorDetails>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(&mut self, message: SseMessage) -> Result<(), ErrorDetails> {
+        let is_meaningful = (self.on_message)(&message)?;
+        if is_meaningful && !self.first_seen {
+            self.first_seen = true;
+            (self.on_first_token)(message.perf_ns - self.start_ns);
+        }
+        Ok(())
+    }
 }
 
 impl<F> SseMessageHandler for FirstTokenSseHandler<'_, F>
@@ -777,9 +807,6 @@ impl HttpClient {
         on_message: &mut dyn FnMut(&SseMessage),
     ) -> Result<u16, ErrorDetails> {
         let start_ns = self.clock.now_ns();
-
-        // This lean path discards the send-complete timing, so the signal is a
-        // throwaway retained only by the body.
         let req = self.build_request(url, headers, body, Rc::new(SendCompletion::new()))?;
 
         let resp = sender.send(req).await?;
@@ -806,13 +833,85 @@ impl HttpClient {
         }
 
         let mut first = false;
-        read_sse(limited, self.clock.clone(), |m: SseMessage| {
+        read_sse(limited, self.clock.clone(), |message: SseMessage| {
             if !first {
                 first = true;
-                on_first_token(m.perf_ns - start_ns);
+                on_first_token(message.perf_ns - start_ns);
             }
-            on_message(&m);
+            on_message(&message);
         })
+        .await?;
+        Ok(code)
+    }
+
+    /// Lean streaming dispatch with a fallible decoded-frame consumer.
+    ///
+    /// The consumer runs before any terminal response/raw-record accumulation.
+    /// Returning an error terminates response processing and leaves the caller
+    /// to drop the connection lease, which is required for bounded decision
+    /// admission failures.
+    pub async fn dispatch_bounded_streaming_with_handler(
+        &self,
+        sender: &mut Sender,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        max_sse_frame_bytes: usize,
+        on_first_token: &mut dyn FnMut(i64),
+        on_message: &mut dyn FnMut(&SseMessage) -> Result<bool, ErrorDetails>,
+    ) -> Result<u16, ErrorDetails> {
+        let start_ns = self.clock.now_ns();
+
+        // This lean path discards the send-complete timing, so the signal is a
+        // throwaway retained only by the body.
+        let req = self.build_request(url, headers, body, Rc::new(SendCompletion::new()))?;
+
+        let resp = sender.send(req).await?;
+        let code = resp.status().as_u16();
+        let success = resp.status().is_success();
+        let is_sse = resp
+            .headers()
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/event-stream"));
+        check_declared_body_length(resp.headers(), self.cfg.max_response_body_bytes)?;
+        let max_response_body_bytes = self.cfg.max_response_body_bytes;
+        let mut observed_body_bytes = 0_u64;
+        let body_stream = resp.into_body().into_data_stream();
+        let limited = body_stream.map(move |item| match item {
+            Ok(bytes) => {
+                observe_body_chunk(
+                    &mut observed_body_bytes,
+                    bytes.len(),
+                    max_response_body_bytes,
+                )?;
+                Ok(bytes)
+            }
+            Err(error) => Err(body_err(error)),
+        });
+        if !success {
+            drain_body(limited).await?;
+            return Ok(code);
+        }
+        if !is_sse {
+            drain_body(limited).await?;
+            return Err(ErrorDetails::other(
+                "bounded decision dispatch requires an SSE response",
+            ));
+        }
+
+        let mut handler = FallibleStreamingSseHandler {
+            start_ns,
+            first_seen: false,
+            on_first_token,
+            on_message,
+        };
+        read_sse_with_bounded_frames(
+            limited,
+            self.clock.clone(),
+            max_sse_frame_bytes,
+            &mut handler,
+        )
         .await?;
         Ok(code)
     }

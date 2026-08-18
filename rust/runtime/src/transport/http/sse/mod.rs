@@ -6,4 +6,6 @@
 pub mod reader;
 // Keep the endpoint-owned chat codec available through the transport API.
 pub use crate::endpoints::chat_chunk::{ChatChoice, ChatChunk, Delta, TokenDetails, Usage};
-pub use reader::{SseMessageHandler, read_sse, read_sse_with_handler};
+pub use reader::{
+    SseMessageHandler, read_sse, read_sse_with_bounded_frames, read_sse_with_handler,
+};

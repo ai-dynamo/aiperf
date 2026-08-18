@@ -22,7 +22,10 @@ use crate::endpoints::{
     RequestRecord as EndpointRequestRecord, ServerResponse, Turn,
 };
 use crate::metrics_core::RequestTrace;
-use crate::transport::core::{ErrorDetails, ErrorKind, RequestRecord};
+use crate::transport::core::{
+    BoundedDecisionAdmission, BoundedDecisionMode, BoundedDecisionReader, ErrorDetails, ErrorKind,
+    RequestRecord,
+};
 use crate::transport::http::transport::endpoint_binding::{
     HttpEndpointBinding, HttpEndpointBindingError, HttpEndpointRequest, HttpEndpointResponseFilter,
     MetadataHttpEndpointBinding, prepare_request,
@@ -31,7 +34,8 @@ use crate::transport::http::transport::endpoint_binding::{
 use crate::multiturn::TurnDataPolicy;
 use crate::scheduled::{ModelResponseMetadata, TurnResponseObserver};
 use crate::transport::reduce::{
-    EndpointReduceAccumulators, TokenEmitter, assistant_message, reduce_parsed_response,
+    EndpointReduceAccumulators, TokenEmitter, admit_parsed_decision, assistant_message,
+    reduce_parsed_response, token_kind,
 };
 
 use super::{
@@ -102,6 +106,39 @@ impl<'a> EndpointDispatchHooks<'a> {
             responses,
             data_policy,
         }
+    }
+}
+
+/// Owns the terminal lifecycle after the bounded path reports admission.
+///
+/// Every fallible preparation, send, response-admission, and cancellation path
+/// then crosses one RAII boundary. It begins as `Canceled` while an in-flight
+/// await remains unresolved; every completed result explicitly resolves its
+/// final state before returning, so dropping an aborted future cannot flatten
+/// cancellation into failure.
+struct ArmedTerminalFence<'a> {
+    observer: &'a dyn RequestObserver,
+    uuid: uuid::Uuid,
+    status: ReplayTerminalStatus,
+}
+
+impl<'a> ArmedTerminalFence<'a> {
+    fn arm(observer: &'a dyn RequestObserver, uuid: uuid::Uuid) -> Self {
+        Self {
+            observer,
+            uuid,
+            status: ReplayTerminalStatus::Canceled,
+        }
+    }
+
+    fn resolve(&mut self, status: ReplayTerminalStatus) {
+        self.status = status;
+    }
+}
+
+impl Drop for ArmedTerminalFence<'_> {
+    fn drop(&mut self) {
+        self.observer.on_terminal(self.uuid, self.status);
     }
 }
 
@@ -209,6 +246,154 @@ impl TransportSink {
         let endpoint = WorkerPreparedEndpointAdapter(endpoint);
         self.dispatch_runtime_endpoint_collect_record_with_hooks(req, &endpoint, &binding, hooks)
             .await
+    }
+
+    /// Dispatch one selected endpoint through the no-record bounded-decision
+    /// path.
+    ///
+    /// Response bytes are admitted while the SSE reader owns each decoded
+    /// frame. This intentionally does not share the ordinary collect path,
+    /// whose terminal `RequestRecord` is already an allocation boundary.
+    pub(super) async fn dispatch_prepared_endpoint_bounded_decision(
+        &self,
+        req: Request,
+        endpoint: &dyn PreparedEndpoint,
+        model: &str,
+        observer: &dyn RequestObserver,
+        on_first_token: &dyn Fn(i64),
+        mode: BoundedDecisionMode,
+    ) -> Result<BoundedDecisionReader> {
+        let endpoint = WorkerPreparedEndpointAdapter(endpoint);
+        let binding =
+            MetadataHttpEndpointBinding::from_prepared(endpoint.0, &self.base_urls, model);
+        let Request {
+            uuid,
+            max_output_tokens,
+            prompt_text,
+            body,
+            headers,
+            parameters,
+            endpoint_path,
+            streaming,
+            x_correlation_id,
+            is_final_turn,
+            cancel_after_ns,
+            url_index,
+            ..
+        } = req;
+        observer.on_admit(uuid, self.ms(self.clock.now_ns()), 0);
+        let mut terminal_fence = ArmedTerminalFence::arm(observer, uuid);
+        let dispatched: Result<(
+            std::result::Result<u16, ErrorDetails>,
+            BoundedDecisionAdmission,
+        )> = async {
+            let body = match body {
+                Some(body) => body.into_wire()?,
+                None => {
+                    let prompt = prompt_text.unwrap_or_default();
+                    let payload = crate::endpoints::chat_request_body(
+                        model,
+                        &[("user", prompt.as_str())],
+                        max_output_tokens,
+                    );
+                    Bytes::from(serde_json::to_vec(&payload)?)
+                }
+            };
+            let (body, _) = match self.content_server_base.as_deref() {
+                Some(base) => super::tag_content_urls(
+                    body,
+                    base,
+                    &uuid.to_string(),
+                    crate::content_server::dispatch_wall_ns(),
+                ),
+                None => (body, None),
+            };
+            let prepared = prepare_request(
+                &binding,
+                HttpEndpointRequest {
+                    body,
+                    headers,
+                    parameters,
+                    endpoint_path,
+                    streaming,
+                    correlation_id: x_correlation_id,
+                    request_id: Some(uuid.to_string()),
+                    is_final_turn,
+                    cancel_after_ns,
+                    url_index,
+                    reuse: self.connection_reuse,
+                },
+            )
+            .await?;
+            let mut admission = BoundedDecisionAdmission::new(mode);
+            let to_ms = |ns| self.ms(ns);
+            let mut on_response = |perf_ns: i64, response: &ServerResponse| {
+                let Some(parsed) =
+                    parse_endpoint_response(&endpoint, response).map_err(|error| {
+                        ErrorDetails::other(format!("bounded decision parse failed: {error}"))
+                    })?
+                else {
+                    return Ok(false);
+                };
+                let Some(data) = parsed.data.as_ref() else {
+                    return Ok(false);
+                };
+                admit_parsed_decision(&parsed, &mut admission)
+                    .map_err(|error| ErrorDetails::other(error.to_string()))?;
+                if data.has_token_output() {
+                    observer.on_classified_token(uuid, to_ms(perf_ns), token_kind(data));
+                    return Ok(true);
+                }
+                Ok(false)
+            };
+            let mut first = |ttft_ns| on_first_token(ttft_ns);
+            let status = prepared
+                .dispatch_bounded_sse(
+                    &self.transport,
+                    &binding,
+                    mode.max_sse_frame_bytes(),
+                    &mut first,
+                    &mut on_response,
+                )
+                .await;
+            drop(on_response);
+            Ok((status, admission))
+        }
+        .await;
+        let (result, terminal_status) = match dispatched {
+            Ok((Ok(status), admission)) if (200..300).contains(&status) => {
+                let result = admission.finish().map_err(anyhow::Error::from);
+                let terminal_status = if result.is_ok() {
+                    ReplayTerminalStatus::Completed
+                } else {
+                    ReplayTerminalStatus::Failed
+                };
+                (result, terminal_status)
+            }
+            Ok((Ok(status), _)) => (
+                Err(anyhow::anyhow!(
+                    "bounded decision dispatch returned HTTP status {status}"
+                )),
+                ReplayTerminalStatus::Failed,
+            ),
+            Ok((Err(error), _)) => {
+                let terminal_status = if error.kind == ErrorKind::Cancelled {
+                    ReplayTerminalStatus::Canceled
+                } else {
+                    ReplayTerminalStatus::Failed
+                };
+                (
+                    Err(anyhow::anyhow!(
+                        "bounded decision transport failed: {}",
+                        error.message
+                    )),
+                    terminal_status,
+                )
+            }
+            Err(error) => (Err(error), ReplayTerminalStatus::Failed),
+        };
+        terminal_fence.resolve(terminal_status);
+        result
     }
 
     async fn dispatch_runtime_endpoint_collect_record_with_hooks<A, B>(
@@ -718,6 +903,10 @@ mod tests {
     use crate::transport::core::SseMessage;
     use crate::transport::http::transport::endpoint_binding::decode_sse_response;
     use crate::transport::reduce::absorb_usage;
+    use std::cell::{Cell, RefCell};
+    use std::io::Read;
+    use std::rc::Rc;
+    use std::sync::Arc;
 
     /// Prepare a builtin streaming endpoint by its open ID.
     fn prepared_streaming(endpoint_name: &str) -> Box<dyn PreparedEndpoint> {
@@ -742,6 +931,69 @@ mod tests {
         fn on_token(&self, _: uuid::Uuid, _: f64) {}
         fn on_usage(&self, _: uuid::Uuid, _: ObservedUsage) {}
         fn on_terminal(&self, _: uuid::Uuid, _: ReplayTerminalStatus) {}
+    }
+
+    /// Captures the bounded path lifecycle without retaining a response record.
+    struct TerminalObserver {
+        admits: Cell<usize>,
+        terminals: RefCell<Vec<ReplayTerminalStatus>>,
+    }
+
+    impl TerminalObserver {
+        fn new() -> Self {
+            Self {
+                admits: Cell::new(0),
+                terminals: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl RequestObserver for TerminalObserver {
+        fn on_arrival(&self, _: uuid::Uuid, _: f64, _: usize, _: usize) {}
+        fn on_admit(&self, _: uuid::Uuid, _: f64, _: usize) {
+            self.admits.set(self.admits.get() + 1);
+        }
+        fn on_token(&self, _: uuid::Uuid, _: f64) {}
+        fn on_usage(&self, _: uuid::Uuid, _: ObservedUsage) {}
+        fn on_terminal(&self, _: uuid::Uuid, status: ReplayTerminalStatus) {
+            self.terminals.borrow_mut().push(status);
+        }
+    }
+
+    fn bounded_request(
+        body: Option<crate::body_plan::RequestBody>,
+        cancel_after_ns: Option<i64>,
+    ) -> Request {
+        Request {
+            uuid: uuid::Uuid::new_v4(),
+            input_length: 2,
+            max_output_tokens: 2,
+            prompt_text: Some("bounded decision".to_string()),
+            body,
+            headers: std::collections::BTreeMap::new(),
+            parameters: std::collections::BTreeMap::new(),
+            endpoint_path: None,
+            streaming: true,
+            x_correlation_id: None,
+            is_final_turn: true,
+            cancel_after_ns,
+            url_index: None,
+            image_count: None,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
+        }
+    }
+
+    fn bounded_sink(base: &str) -> TransportSink {
+        let clock = crate::clock::RealClock::new();
+        TransportSink::new_multi_configured(
+            clock.clone(),
+            clock.now_ns(),
+            std::slice::from_ref(&base.to_string()),
+            "m",
+            crate::transport::http::TransportSinkConfig::default(),
+        )
+        .unwrap()
     }
 
     /// Dispatch one streaming chat turn through the real endpoint-aware path at
@@ -795,6 +1047,232 @@ mod tests {
         .await
         .unwrap()
         .request_payload
+    }
+
+    /// Dispatch the test server's two one-byte chat deltas through the bounded
+    /// no-record path. The helper intentionally returns only the reader bytes:
+    /// this path has no `RequestRecord` to inspect or retain.
+    async fn dispatch_bounded_decision_at(
+        base: &str,
+        max_decision_bytes: usize,
+    ) -> anyhow::Result<Vec<u8>> {
+        let clock = crate::clock::RealClock::new();
+        let sink = TransportSink::new_multi_configured(
+            clock.clone(),
+            clock.now_ns(),
+            std::slice::from_ref(&base.to_string()),
+            "m",
+            crate::transport::http::TransportSinkConfig::default(),
+        )?;
+        let endpoint = prepared_streaming("chat");
+        let request = Request {
+            uuid: uuid::Uuid::new_v4(),
+            input_length: 2,
+            max_output_tokens: 2,
+            prompt_text: Some("bounded decision".to_string()),
+            body: None,
+            headers: std::collections::BTreeMap::new(),
+            parameters: std::collections::BTreeMap::new(),
+            endpoint_path: None,
+            streaming: true,
+            x_correlation_id: None,
+            is_final_turn: true,
+            cancel_after_ns: None,
+            url_index: None,
+            image_count: None,
+            recorded_api_time_ns: None,
+            recorded_ttft_ns: None,
+        };
+        let observer = SilentObserver;
+        let on_first_token = |_: i64| {};
+        let mut reader = sink
+            .dispatch_prepared_endpoint_bounded_decision(
+                request,
+                endpoint.as_ref(),
+                "m",
+                &observer,
+                &on_first_token,
+                BoundedDecisionMode::new(max_decision_bytes)?,
+            )
+            .await?;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    #[tokio::test]
+    async fn bounded_decision_streaming_admits_exact_limit_without_a_terminal_record() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+                let bytes = dispatch_bounded_decision_at(&base, 2).await.unwrap();
+                assert_eq!(bytes, b"ab");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn bounded_decision_streaming_aborts_on_the_first_byte_over_limit() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = crate::test_util::spawn_mock().await;
+                let sink = bounded_sink(&base);
+                let endpoint = prepared_streaming("chat");
+                let observer = TerminalObserver::new();
+                let on_first_token = |_: i64| {};
+                let error = sink
+                    .dispatch_prepared_endpoint_bounded_decision(
+                        bounded_request(None, None),
+                        endpoint.as_ref(),
+                        "m",
+                        &observer,
+                        &on_first_token,
+                        BoundedDecisionMode::new(1).unwrap(),
+                    )
+                    .await
+                    .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("exceeds the selected 1-byte limit")
+                );
+                assert_eq!(
+                    observer.terminals.into_inner(),
+                    vec![ReplayTerminalStatus::Failed]
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn bounded_decision_emits_one_failed_terminal_when_request_preparation_fails() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let operation = crate::body_plan::PreparedWsOperation::new(
+                    [crate::body_plan::PreparedWsMessage::text(
+                        Bytes::from_static(br#"{"type":"response.create"}"#),
+                        crate::body_plan::PreparedWsMessageRole::MeasuredInput,
+                    )],
+                    None,
+                );
+                let request = bounded_request(
+                    Some(crate::body_plan::RequestBody::WebSocket(Arc::new(
+                        operation,
+                    ))),
+                    None,
+                );
+                let sink = bounded_sink("http://127.0.0.1:9");
+                let endpoint = prepared_streaming("chat");
+                let observer = TerminalObserver::new();
+                let on_first_token = |_: i64| {};
+
+                assert!(
+                    sink.dispatch_prepared_endpoint_bounded_decision(
+                        request,
+                        endpoint.as_ref(),
+                        "m",
+                        &observer,
+                        &on_first_token,
+                        BoundedDecisionMode::new(1).unwrap(),
+                    )
+                    .await
+                    .is_err()
+                );
+                assert_eq!(
+                    observer.terminals.into_inner(),
+                    vec![ReplayTerminalStatus::Failed]
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn bounded_decision_emits_one_cancelled_terminal_for_post_admit_cancellation() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let sink = bounded_sink("http://127.0.0.1:9");
+                let endpoint = prepared_streaming("chat");
+                let observer = TerminalObserver::new();
+                let on_first_token = |_: i64| {};
+
+                assert!(
+                    sink.dispatch_prepared_endpoint_bounded_decision(
+                        bounded_request(
+                            Some(crate::body_plan::RequestBody::wire(Bytes::from_static(
+                                b"{}"
+                            ))),
+                            Some(1),
+                        ),
+                        endpoint.as_ref(),
+                        "m",
+                        &observer,
+                        &on_first_token,
+                        BoundedDecisionMode::new(1).unwrap(),
+                    )
+                    .await
+                    .is_err()
+                );
+                assert_eq!(
+                    observer.terminals.into_inner(),
+                    vec![ReplayTerminalStatus::Canceled]
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn bounded_decision_emits_one_cancelled_terminal_when_pending_network_future_is_aborted()
+    {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+                let server = tokio::task::spawn_local(async move {
+                    let (_stream, _) = listener.accept().await.unwrap();
+                    let _ = accepted_tx.send(());
+                    futures::future::pending::<()>().await;
+                });
+                let sink = bounded_sink(&format!("http://{address}"));
+                let endpoint = prepared_streaming("chat");
+                let observer = Rc::new(TerminalObserver::new());
+                let observer_for_dispatch = observer.clone();
+                let on_first_token = |_: i64| {};
+                let dispatch = tokio::task::spawn_local(async move {
+                    sink.dispatch_prepared_endpoint_bounded_decision(
+                        bounded_request(
+                            Some(crate::body_plan::RequestBody::wire(Bytes::from_static(
+                                b"{}",
+                            ))),
+                            None,
+                        ),
+                        endpoint.as_ref(),
+                        "m",
+                        observer_for_dispatch.as_ref(),
+                        &on_first_token,
+                        BoundedDecisionMode::new(1).unwrap(),
+                    )
+                    .await
+                });
+
+                accepted_rx.await.unwrap();
+                assert_eq!(observer.admits.get(), 1);
+                dispatch.abort();
+                assert!(dispatch.await.unwrap_err().is_cancelled());
+                server.abort();
+                let _ = server.await;
+
+                assert_eq!(
+                    observer.terminals.borrow().as_slice(),
+                    [ReplayTerminalStatus::Canceled]
+                );
+            })
+            .await;
     }
 
     /// Pin BOTH directions of the canonical-payload gate at the seam that decides

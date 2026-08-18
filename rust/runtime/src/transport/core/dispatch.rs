@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::io::{self, Read};
+use std::num::NonZeroUsize;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -114,6 +116,187 @@ impl Dispatchable for Request {
     }
     fn max_output_tokens(&self) -> usize {
         self.max_output_tokens
+    }
+}
+
+/// Immutable byte cap for one opt-in model-decision response.
+///
+/// A decision transport must admit every decoded decision byte through
+/// [`BoundedDecisionAdmission`] before it can expose a
+/// [`BoundedDecisionReader`]. The cap is deliberately separate from general
+/// response limits: callers opt into this mode only for package-selected policy
+/// decisions that must not reach response/raw-record accumulation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoundedDecisionMode {
+    max_decision_bytes: NonZeroUsize,
+}
+
+impl BoundedDecisionMode {
+    // A JSON `\u00xx` escape is the largest wire representation of one
+    // admitted byte. The fixed allowance covers the SSE `data:` prefix and
+    // endpoint envelope without making that metadata caller-controlled.
+    const JSON_ESCAPED_BYTE_MULTIPLIER: usize = 6;
+    const SSE_FRAME_OVERHEAD_BYTES: usize = 4 * 1024;
+
+    /// Create a bounded decision mode with a positive byte cap.
+    pub fn new(max_decision_bytes: usize) -> Result<Self, DecisionAdmissionError> {
+        let max_decision_bytes =
+            NonZeroUsize::new(max_decision_bytes).ok_or(DecisionAdmissionError::ZeroLimit)?;
+        if max_decision_bytes.get()
+            > (usize::MAX - Self::SSE_FRAME_OVERHEAD_BYTES) / Self::JSON_ESCAPED_BYTE_MULTIPLIER
+        {
+            return Err(DecisionAdmissionError::WireLimitOverflow);
+        }
+        Ok(Self { max_decision_bytes })
+    }
+
+    /// Return the exact maximum number of admitted decision bytes.
+    pub const fn max_decision_bytes(self) -> usize {
+        self.max_decision_bytes.get()
+    }
+
+    /// Return the bounded raw SSE frame allowance for one decision message.
+    ///
+    /// This is intentionally derived from the immutable decoded-decision cap,
+    /// rather than from the general response-body cap: a JSON escape occupies
+    /// at most six raw bytes per admitted decision byte, and endpoint framing
+    /// has a fixed finite allowance. A transport that cannot honor this cap
+    /// must refuse bounded-decision dispatch.
+    pub const fn max_sse_frame_bytes(self) -> usize {
+        self.max_decision_bytes.get() * Self::JSON_ESCAPED_BYTE_MULTIPLIER
+            + Self::SSE_FRAME_OVERHEAD_BYTES
+    }
+}
+
+/// Failure while admitting a bounded model-decision response.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecisionAdmissionError {
+    /// The selected package supplied a zero-byte decision cap.
+    ZeroLimit,
+    /// The selected cap cannot derive a finite raw wire-frame allowance.
+    WireLimitOverflow,
+    /// The incoming chunk would exceed the immutable decision byte cap.
+    LimitExceeded {
+        /// Immutable cap selected before dispatch.
+        max_decision_bytes: usize,
+    },
+    /// A previous admission failure permanently closed this response.
+    Rejected,
+    /// The host could not reserve the bounded reader buffer.
+    AllocationFailed,
+}
+
+impl fmt::Display for DecisionAdmissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroLimit => formatter.write_str("bounded decision byte limit must be positive"),
+            Self::WireLimitOverflow => {
+                formatter.write_str("bounded decision byte limit cannot derive a wire frame cap")
+            }
+            Self::LimitExceeded { max_decision_bytes } => write!(
+                formatter,
+                "bounded decision exceeds the selected {max_decision_bytes}-byte limit"
+            ),
+            Self::Rejected => formatter.write_str("bounded decision admission is closed"),
+            Self::AllocationFailed => {
+                formatter.write_str("unable to reserve the bounded decision buffer")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DecisionAdmissionError {}
+
+/// Host-owned incremental admission for one bounded model decision.
+///
+/// The admission permanently closes on the first rejected chunk. This lets the
+/// transport abort that response immediately instead of completing a terminal
+/// record that a later consumer would have to discard.
+pub struct BoundedDecisionAdmission {
+    mode: BoundedDecisionMode,
+    bytes: Vec<u8>,
+    is_rejected: bool,
+}
+
+impl BoundedDecisionAdmission {
+    /// Start admitting one response under an immutable byte cap.
+    pub fn new(mode: BoundedDecisionMode) -> Self {
+        Self {
+            mode,
+            bytes: Vec::new(),
+            is_rejected: false,
+        }
+    }
+
+    /// Admit one already-decoded decision chunk.
+    ///
+    /// Capacity is checked before reserve or copy, so the first byte over the
+    /// selected limit cannot force a terminal response/raw-record allocation.
+    pub fn push(&mut self, bytes: &[u8]) -> Result<(), DecisionAdmissionError> {
+        if self.is_rejected {
+            return Err(DecisionAdmissionError::Rejected);
+        }
+        let Some(total) = self.bytes.len().checked_add(bytes.len()) else {
+            self.is_rejected = true;
+            return Err(DecisionAdmissionError::LimitExceeded {
+                max_decision_bytes: self.mode.max_decision_bytes(),
+            });
+        };
+        if total > self.mode.max_decision_bytes() {
+            self.is_rejected = true;
+            return Err(DecisionAdmissionError::LimitExceeded {
+                max_decision_bytes: self.mode.max_decision_bytes(),
+            });
+        }
+        if self.bytes.try_reserve(bytes.len()).is_err() {
+            self.is_rejected = true;
+            return Err(DecisionAdmissionError::AllocationFailed);
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    /// Seal admission at transport EOF and expose the host-owned reader.
+    pub fn finish(self) -> Result<BoundedDecisionReader, DecisionAdmissionError> {
+        if self.is_rejected {
+            return Err(DecisionAdmissionError::Rejected);
+        }
+        Ok(BoundedDecisionReader {
+            bytes: self.bytes,
+            offset: 0,
+        })
+    }
+}
+
+/// Immutable host-owned decision bytes exposed only after bounded admission.
+pub struct BoundedDecisionReader {
+    bytes: Vec<u8>,
+    offset: usize,
+}
+
+impl BoundedDecisionReader {
+    /// Return the number of unread admitted bytes.
+    pub const fn remaining_len(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+}
+
+impl fmt::Debug for BoundedDecisionReader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BoundedDecisionReader")
+            .field("remaining_len", &self.remaining_len())
+            .finish()
+    }
+}
+
+impl Read for BoundedDecisionReader {
+    fn read(&mut self, destination: &mut [u8]) -> io::Result<usize> {
+        let available = &self.bytes[self.offset..];
+        let count = available.len().min(destination.len());
+        destination[..count].copy_from_slice(&available[..count]);
+        self.offset = self.offset.saturating_add(count);
+        Ok(count)
     }
 }
 
@@ -455,6 +638,23 @@ pub trait Dispatcher {
         on_first_token: &dyn Fn(i64),
     ) -> Result<DispatchResult>;
 
+    /// Dispatch through a transport-owned, no-record bounded decision path.
+    ///
+    /// The default deliberately fails before dispatch. A transport must opt in
+    /// only when it can enforce [`BoundedDecisionMode`] while streaming, before
+    /// it creates terminal response or raw-record accumulation.
+    async fn dispatch_bounded_decision(
+        &self,
+        _turn: PreparedTurn,
+        _observer: &dyn RequestObserver,
+        _on_first_token: &dyn Fn(i64),
+        _mode: BoundedDecisionMode,
+    ) -> Result<BoundedDecisionReader> {
+        Err(anyhow!(
+            "selected transport does not support bounded decisions"
+        ))
+    }
+
     /// Resolve report dimensions using the same endpoint selection as dispatch.
     fn inference_dimensions(&self, request: &Request) -> InferenceDimensions;
 
@@ -468,6 +668,10 @@ pub trait Dispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+
+    use crate::endpoints::{EndpointId, EndpointKey};
+    use crate::multiturn::TurnDataPolicy;
 
     fn assert_send_sync<T: Send + Sync>() {}
 
@@ -479,5 +683,132 @@ mod tests {
     fn request_stays_send_and_sync() {
         assert_send_sync::<Request>();
         assert_send_sync::<RequestBody>();
+    }
+
+    #[test]
+    fn bounded_decision_admits_the_exact_limit_before_exposing_a_reader() {
+        let mode = BoundedDecisionMode::new(4).unwrap();
+        let mut admission = BoundedDecisionAdmission::new(mode);
+        admission.push(b"ab").unwrap();
+        admission.push(b"cd").unwrap();
+
+        let mut reader = admission.finish().unwrap();
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"abcd");
+    }
+
+    #[test]
+    fn bounded_decision_derives_a_fixed_escaped_json_frame_allowance() {
+        let mode = BoundedDecisionMode::new(3).unwrap();
+        assert_eq!(mode.max_sse_frame_bytes(), 4 * 1024 + 18);
+    }
+
+    #[test]
+    fn bounded_decision_rejects_the_first_byte_over_the_limit_while_streaming() {
+        let mode = BoundedDecisionMode::new(4).unwrap();
+        let mut admission = BoundedDecisionAdmission::new(mode);
+        admission.push(b"ab").unwrap();
+        admission.push(b"cd").unwrap();
+
+        let error = admission.push(b"e").unwrap_err();
+        assert!(error.to_string().contains("exceeds"));
+        assert!(admission.finish().is_err());
+    }
+
+    #[test]
+    fn bounded_decision_reader_reports_eof_after_admitted_bytes() {
+        let mode = BoundedDecisionMode::new(3).unwrap();
+        let mut admission = BoundedDecisionAdmission::new(mode);
+        admission.push(b"abc").unwrap();
+
+        let mut reader = admission.finish().unwrap();
+        let mut bytes = [0_u8; 8];
+        assert_eq!(reader.read(&mut bytes).unwrap(), 3);
+        assert_eq!(&bytes[..3], b"abc");
+        assert_eq!(reader.read(&mut bytes).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn unsupported_dispatcher_fails_closed_for_bounded_decision_mode() {
+        struct UnsupportedDispatcher;
+
+        #[async_trait(?Send)]
+        impl Dispatcher for UnsupportedDispatcher {
+            async fn dispatch_collect(
+                &self,
+                _turn: PreparedTurn,
+                _observer: &dyn RequestObserver,
+                _on_first_token: &dyn Fn(i64),
+            ) -> Result<DispatchResult> {
+                unreachable!("the bounded-decision default must not dispatch")
+            }
+
+            fn inference_dimensions(&self, _request: &Request) -> InferenceDimensions {
+                InferenceDimensions::default()
+            }
+        }
+
+        struct SilentObserver;
+
+        impl RequestObserver for SilentObserver {
+            fn on_arrival(&self, _uuid: Uuid, _arrival_ms: f64, _input: usize, _output: usize) {}
+
+            fn on_admit(&self, _uuid: Uuid, _admit_ms: f64, _reused_input: usize) {}
+
+            fn on_token(&self, _uuid: Uuid, _at_ms: f64) {}
+
+            fn on_terminal(
+                &self,
+                _uuid: Uuid,
+                _status: crate::dispatch::collector::ReplayTerminalStatus,
+            ) {
+            }
+        }
+
+        let turn = PreparedTurn {
+            runtime_session_id: "test-session".to_string(),
+            request: Request {
+                uuid: Uuid::nil(),
+                input_length: 1,
+                max_output_tokens: 1,
+                prompt_text: None,
+                body: None,
+                headers: BTreeMap::new(),
+                parameters: BTreeMap::new(),
+                endpoint_path: None,
+                streaming: true,
+                x_correlation_id: None,
+                is_final_turn: true,
+                cancel_after_ns: None,
+                url_index: None,
+                image_count: None,
+                recorded_api_time_ns: None,
+                recorded_ttft_ns: None,
+            },
+            model: "test-model".to_string(),
+            endpoint: PreparedEndpointBinding::Prepared(PreparedEndpointReference {
+                key: EndpointKey::from_index(0),
+                endpoint_id: EndpointId::new("chat").unwrap(),
+            }),
+            endpoint_aware: true,
+            data_policy: TurnDataPolicy::ordinary(),
+            deferred: None,
+        };
+
+        let error = UnsupportedDispatcher
+            .dispatch_bounded_decision(
+                turn,
+                &SilentObserver,
+                &|_| {},
+                BoundedDecisionMode::new(4).unwrap(),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not support bounded decisions")
+        );
     }
 }

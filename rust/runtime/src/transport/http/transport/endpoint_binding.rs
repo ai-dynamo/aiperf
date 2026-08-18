@@ -243,6 +243,47 @@ impl PreparedHttpEndpointRequest {
             )
             .await
     }
+
+    /// Dispatch a streaming request through the no-record bounded-decision
+    /// path.
+    ///
+    /// Polling and non-streaming responses deliberately fail before the wire
+    /// operation because neither can enforce a decision cap before terminal
+    /// body/record accumulation.
+    pub async fn dispatch_bounded_sse(
+        self,
+        transport: &HttpTransport,
+        binding: &dyn HttpEndpointBinding,
+        max_sse_frame_bytes: usize,
+        on_first_token: &mut dyn FnMut(i64),
+        on_response: &mut dyn FnMut(i64, &ServerResponse) -> Result<bool, ErrorDetails>,
+    ) -> Result<u16, ErrorDetails> {
+        if self.polling.is_some() {
+            return Err(ErrorDetails::other(
+                "bounded decision dispatch does not support polling endpoints",
+            ));
+        }
+        if !self.streaming {
+            return Err(ErrorDetails::other(
+                "bounded decision dispatch requires a streaming endpoint",
+            ));
+        }
+        let mut filter = |message: &SseMessage| {
+            let Some(response) = binding.decode_sse_response(message) else {
+                return Ok(false);
+            };
+            on_response(message.perf_ns, &response)
+        };
+        transport
+            .send_request_bytes_streaming(
+                &self.request_config,
+                self.wire_body,
+                max_sse_frame_bytes,
+                on_first_token,
+                &mut filter,
+            )
+            .await
+    }
 }
 
 /// Object-safe translation seam between one endpoint dialect and HTTP.
