@@ -155,6 +155,39 @@ impl OutputsLaneWriter {
     }
 }
 
+/// Coordinator-local writer for NativeGraph evaluation node records.
+///
+/// Rows use the same default metric projection and compact JSONL serialization as
+/// [`crate::engine::records::write_records_jsonl`]. The file is opened eagerly so
+/// an evaluation with no completed nodes still leaves an empty artifact.
+pub(crate) struct EvalNodeRecordArtifact {
+    writer: BufWriter<File>,
+    metrics: MetricsConfig,
+}
+
+impl EvalNodeRecordArtifact {
+    /// Open (truncating) the node-record artifact and create its parent directory.
+    pub(crate) fn open(path: &Path) -> Result<Self> {
+        Ok(Self {
+            writer: create_export_file(path, "native eval node record export")?,
+            metrics: MetricsConfig::default(),
+        })
+    }
+
+    /// Append one completed node record using the canonical record-row projection.
+    pub(crate) fn append(&mut self, captured: &CapturedRecord) -> Result<()> {
+        write_record_jsonl_row(&mut self.writer, captured, &self.metrics, false)
+            .context("writing eval node record export row")
+    }
+
+    /// Flush all appended rows. Repeated calls are harmless.
+    pub(crate) fn finish(&mut self) -> Result<()> {
+        self.writer
+            .flush()
+            .context("flushing eval node record export")
+    }
+}
+
 /// A run-held lane that streams enabled per-record artifacts one row at a time.
 ///
 /// Built once (when the exact-fold path requests any of records/raw/CSV), fed
@@ -470,6 +503,35 @@ mod tests {
         // The mixed slice always yields at least one non-skipped CSV row, so the CSV
         // file exists in both.
         assert!(lane_dir.path().join("profile_export_records.csv").exists());
+    }
+
+    #[test]
+    fn eval_node_record_artifact_matches_canonical_jsonl_rows() {
+        let records = sample_records();
+        let dir = tempfile::tempdir().unwrap();
+        let artifact_path = dir.path().join("eval-node-records.jsonl");
+        let canonical_path = dir.path().join("canonical-records.jsonl");
+
+        let mut artifact = EvalNodeRecordArtifact::open(&artifact_path).unwrap();
+        for record in &records {
+            artifact.append(record).unwrap();
+        }
+        artifact.finish().unwrap();
+        artifact.finish().unwrap();
+
+        write_records_jsonl(&canonical_path, &records, &MetricsConfig::default(), false).unwrap();
+
+        let parse_rows = |path: &Path| -> Vec<serde_json::Value> {
+            std::fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        };
+        let artifact_rows = parse_rows(&artifact_path);
+        let canonical_rows = parse_rows(&canonical_path);
+        assert_eq!(artifact_rows.len(), 2);
+        assert_eq!(artifact_rows, canonical_rows);
     }
 
     #[test]

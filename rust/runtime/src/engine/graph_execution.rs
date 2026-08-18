@@ -555,9 +555,9 @@ const NATIVE_GRAPH_EVIDENCE_CHANNEL_CAPACITY: usize = 64;
 
 /// Bounded event admission dedicated to the one-shot NativeGraph evidence path.
 ///
-/// NativeGraph scoring needs record and terminal counts, not retained raw captures.
-/// This deliberately stays separate from the general phase event transport, whose
-/// coordinator owns full record retention.
+/// NativeGraph scoring retains each completed model record until the coordinator
+/// consumes it, together with the trace terminal result. This deliberately stays
+/// separate from the general phase event transport.
 struct NativeGraphEvidenceSink {
     sender: mpsc::Sender<NativeGraphEvidenceEvent>,
 }
@@ -584,8 +584,7 @@ impl GraphExecutionEventSink for NativeGraphEvidenceSink {
     fn emit(&self, event: GraphExecutionEvent) -> Result<(), TraceError> {
         match event {
             GraphExecutionEvent::Record { record, .. } => {
-                drop(record);
-                self.emit_summary(NativeGraphEvidenceEvent::Record)
+                self.emit_summary(NativeGraphEvidenceEvent::Record(record))
             }
             GraphExecutionEvent::TraceComplete { result, .. } => self.emit_summary(
                 NativeGraphEvidenceEvent::TraceComplete(result.map_err(|error| error.to_string())),
@@ -596,9 +595,9 @@ impl GraphExecutionEventSink for NativeGraphEvidenceSink {
     }
 }
 
-/// Compact NativeGraph facts retained until the one-shot trace returns.
+/// NativeGraph facts retained until the one-shot trace returns.
 enum NativeGraphEvidenceEvent {
-    Record,
+    Record(Box<CapturedRecord>),
     TraceComplete(Result<(), String>),
 }
 
@@ -701,7 +700,7 @@ fn observe_native_graph_evidence(
     event: NativeGraphEvidenceEvent,
 ) -> Result<()> {
     match event {
-        NativeGraphEvidenceEvent::Record => {
+        NativeGraphEvidenceEvent::Record(_record) => {
             evidence.model_records = evidence
                 .model_records
                 .checked_add(1)
@@ -3249,6 +3248,51 @@ executable = "tools/adapter.sh"
     impl GraphExecutionEventSink for DiscardGraphExecutionEvents {
         fn emit(&self, _event: GraphExecutionEvent) -> Result<(), TraceError> {
             Ok(())
+        }
+    }
+
+    fn completed_evidence_record() -> CapturedRecord {
+        let mut ingest =
+            crate::metrics_core::RecordIngest::minimal(1_000_000, 9_000_000, Phase::Profiling);
+        ingest.session_num = 17;
+        ingest.first_token_ns = Some(3_000_000);
+        ingest.tokens.input = Some(11);
+        ingest.tokens.output = Some(5);
+        CapturedRecord {
+            uuid: Uuid::from_u128(17),
+            x_correlation_id: "trace-a".into(),
+            output: CapturedModelOutput::from_parts("answer", Some("answer"), None),
+            raw: None,
+            ingest,
+        }
+    }
+
+    #[test]
+    fn native_graph_evidence_sink_preserves_completed_record() {
+        let (sink, mut receiver) = NativeGraphEvidenceSink::bounded();
+        let expected_uuid = Uuid::from_u128(17);
+
+        sink.emit(GraphExecutionEvent::Record {
+            record: Box::new(completed_evidence_record()),
+            node_id: Some("node-a".into()),
+        })
+        .expect("completed record enters the evidence lane");
+
+        match receiver
+            .try_recv()
+            .expect("evidence receiver gets one event")
+        {
+            NativeGraphEvidenceEvent::Record(actual) => {
+                assert_eq!(actual.uuid, expected_uuid);
+                assert_eq!(actual.x_correlation_id, "trace-a");
+                assert_eq!(actual.ingest.session_num, 17);
+                assert_eq!(actual.ingest.first_token_ns, Some(3_000_000));
+                assert_eq!(actual.ingest.tokens.input, Some(11));
+                assert_eq!(actual.ingest.tokens.output, Some(5));
+            }
+            NativeGraphEvidenceEvent::TraceComplete(_) => {
+                panic!("expected record evidence, received trace completion")
+            }
         }
     }
 
