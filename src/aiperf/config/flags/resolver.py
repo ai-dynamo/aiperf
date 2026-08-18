@@ -472,6 +472,84 @@ def _drop_alias_spellings(base: dict[str, Any], override: dict[str, Any]) -> Non
             _drop_alias_spellings(base[key], value)
 
 
+def _inert_dataset_flags(
+    cli: CLIConfig,
+    declared_type: Any,
+    declared_format: Any,
+    candidates: set[str],
+) -> list[str]:
+    """Return the flags in ``candidates`` that contribute nothing on their own.
+
+    Attribution is by re-running the real builder with exactly one flag set,
+    rather than by inspecting the combined result: a flag that emits nothing
+    alone emits nothing in company either, and asking ``build_dataset``
+    directly means the answer cannot drift from what it actually does.
+
+    A flag whose solo build raises is treated as contributing -- it is loud,
+    which is the property that matters, and the combined build already
+    succeeded.
+    """
+    # CLIConfig is a TYPE_CHECKING-only import at module scope; it has to be
+    # imported for real here, and the narrow `except` below is what would
+    # have surfaced that rather than silently treating every flag as routed.
+    from aiperf.config.flags import CLIConfig as _CLIConfig
+    from aiperf.config.flags._converter_dataset import build_dataset
+    from aiperf.config.loader.errors import ConfigurationError
+
+    inert: list[str] = []
+    for field in candidates:
+        try:
+            solo = _CLIConfig(**{field: getattr(cli, field)})
+            emitted = build_dataset(
+                solo, declared_type=declared_type, declared_format=declared_format
+            )
+        except (ValueError, ConfigurationError):
+            # Loud on its own, which is the property that matters; the
+            # combined build already succeeded. Deliberately narrow: a broad
+            # `except` here would turn a bug in this function into a silently
+            # disabled guard.
+            continue
+        if not emitted:
+            inert.append(field)
+    return inert
+
+
+def _reject_inert_dataset_flags(cli: CLIConfig, dataset: dict[str, Any]) -> None:
+    """Raise for dataset flags that resolve cleanly while doing nothing.
+
+    Checking only whether the whole override came back empty let any inert
+    flag ride along with a routable one: the result was non-empty, the guard
+    never fired, and the inert flag was dropped exactly as before this work.
+    Every multi-flag command line touching the dataset escaped the guarantee,
+    so the reconciliation is per flag.
+    """
+    from aiperf.config.flags._config_flag_routing import (
+        DATASET_FIELDS_OUTSIDE_INPUT,
+        DATASET_OVERRIDE_FIELDS,
+        flag_names_for,
+    )
+    from aiperf.config.loader.errors import ConfigurationError
+
+    candidates = cli.model_fields_set & (
+        DATASET_OVERRIDE_FIELDS | DATASET_FIELDS_OUTSIDE_INPUT
+    )
+    if not candidates:
+        return
+
+    inert = _inert_dataset_flags(
+        cli, dataset.get("type"), dataset.get("format"), candidates
+    )
+    if not inert:
+        return
+
+    names = sorted("/".join(flag_names_for(f) or (f,)) for f in inert)
+    raise ConfigurationError(
+        f"These CLI flags have no effect on a dataset of type "
+        f"{dataset.get('type')!r}: {', '.join(names)}. Remove them, or use a "
+        f"dataset type that supports them."
+    )
+
+
 def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
     """Overlay explicitly-set dataset flags onto the YAML-supplied dataset.
 
@@ -506,22 +584,8 @@ def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
         declared_type=dataset.get("type"),
         declared_format=dataset.get("format"),
     )
-    dataset_flags = cli.model_fields_set & DATASET_OVERRIDE_FIELDS
+    _reject_inert_dataset_flags(cli, dataset)
     if not override:
-        if dataset_flags:
-            # The flags are routable in principle but produce nothing for this
-            # dataset type -- e.g. --synthesis-* against a synthetic dataset,
-            # where the synthesis block only exists on file/public datasets.
-            # Applying nothing quietly is the bug this work removes.
-            from aiperf.config.flags._config_flag_routing import flag_names_for
-            from aiperf.config.loader.errors import ConfigurationError
-
-            names = sorted((flag_names_for(f) or (f,))[0] for f in dataset_flags)
-            raise ConfigurationError(
-                f"These CLI flags have no effect on a dataset of type "
-                f"{dataset.get('type')!r}: {', '.join(names)}. Remove them, or "
-                f"use a dataset type that supports them."
-            )
         return
 
     _drop_alias_spellings(dataset, override)

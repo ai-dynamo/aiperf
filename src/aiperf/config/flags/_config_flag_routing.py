@@ -223,6 +223,25 @@ _INPUT_NOT_ON_DATASET: frozenset[str] = frozenset(
 )
 
 
+# Dataset-carried fields that are not INPUT_FIELDS members. build_dataset
+# reads them (via _VERBATIM_DATASET_FIELDS and the trace helpers), so the
+# per-flag reconciliation in _apply_dataset_overrides must consider them too;
+# keying that check on INPUT_FIELDS alone let them no-op silently.
+DATASET_FIELDS_OUTSIDE_INPUT: frozenset[str] = frozenset(
+    {
+        "force_min_tokens",
+        "inter_turn_delay_cap_seconds",
+        "max_idle_gap_cap_seconds",
+        "omit_kv_hints",
+        "open_loop_replay",
+        "open_loop_strict",
+        "replay_speedup",
+        "system_prompt",
+        "system_prompt_file",
+        "trace_session_sample_ratio",
+    }
+)
+
 # INPUT fields that _apply_dataset_overrides carries onto the dataset block.
 # Used to decide whether a config file lacking a dataset is an error for this
 # invocation or simply nothing to do.
