@@ -30,12 +30,15 @@ The current native Harbor implementation supplies immutable local and
 pinned-Git task acquisition, standard and JSON package import, external and
 installed agent commands, Docker/strict-Compose environments, declared-artifact
 verifier isolation, rewards, lifecycle records, regrade, and a limited ordered
-multi-step layout. Schema-1.1 `NativeGraph` runs one adapter-free standard-task
-episode through the same matrix and verifier path. Its staged driver supports
-source-declared acyclic stages plus bounded model-selected branches, joins,
-loops, and retries; Rust owns the counters, child-workspace leases, selected
-candidate merge, and append-only control receipts. Adapters and externally
-driven graphs remain fail-closed for this slice.
+multi-step layout. Schema-1.1 `NativeGraph` runs one standard-task episode
+through the same matrix and verifier path. A sealed rollout selects its exact
+environment protocol, runtime, stepper, and action encoder before provisioning.
+Rust drives the bounded live policy/environment loop through the selected model
+binding and a task-minted, secret-free Docker adapter start; it retains only
+descriptor rollout evidence and bounded scalar policy-call lifecycle facts
+before independent verification and scoring. The task and agent Docker networks
+remain `no-network`, and Docker proves `NoAdapterEgress` for the sealed plan.
+Externally driven graphs remain fail-closed for this slice.
 
 The runtime also supplies native Graph-IR scheduling, state channels, reducers,
 worker-local metrics, trace-local placement, cellular folding, and injected
@@ -252,18 +255,18 @@ aiperf eval --suite <suite.toml> [--model-runtime <model-runtime.toml>]
 ```
 
 The currently runnable vertical slice is deliberately narrower than the full
-suite contract: a standard schema-1.1 `native_graph` task is adapter-free, its
-task and agent Docker networks must both be `no-network`, and its caller must
-provide native-graph lifecycle provenance. It supports source-declared acyclic
-stages plus bounded model-selected branches, joins, loops, and retries through
-the staged driver; Rust validates the declared topology, owns counters and
-invocation workspaces, and emits typed control/merge receipts. Rust performs
-model calls through the selected AIPerf endpoint/transport/tokenizer/observer
-seams; Docker proves `NoAdapterEgress` only for that exact plan. A task becomes
-one resolved, scored matrix trial. `--suite` uses that same path only when
-exactly one resolved trial matches the supplied lifecycle request. Adapters,
-externally driven graphs, and multi-lifecycle suite provenance remain typed
-refusals pending their dedicated contracts.
+suite contract: a standard schema-1.1 `native_graph` task may select one sealed,
+bounded environment rollout, its task and agent Docker networks must both be
+`no-network`, and its caller must provide native-graph lifecycle provenance.
+Rust validates the declared topology, rollout selectors, model binding, prompt,
+and decision limits before provisioning. It performs model calls through the
+selected AIPerf endpoint/transport/tokenizer seams; the Docker session accepts
+only its task-minted adapter start and produces descriptor-only reset/transition
+evidence. A task becomes one resolved, independently verified, scored matrix
+trial. `--suite` uses that same path only when exactly one resolved trial
+matches the supplied lifecycle request. Externally driven graphs and
+multi-lifecycle suite provenance remain typed refusals pending their dedicated
+contracts.
 
 The importer records both the complete source snapshot and a resolved native
 graph plan. In addition to the complete source digest, the package identity

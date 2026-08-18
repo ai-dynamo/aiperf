@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! CLI composition for the first scored, acyclic NativeGraph episode.
+//! CLI composition for the first scored NativeGraph episode.
 
 //! A task invocation becomes a one-trial suite. A suite document is accepted
 //! only when its already-resolved shape has exactly one lifecycle-addressable
@@ -31,6 +31,7 @@ use aiperf_runtime::{
 };
 use anyhow::Context as _;
 use serde::Serialize;
+use tokio::task::LocalSet;
 
 use super::SandboxFlag;
 
@@ -140,10 +141,8 @@ fn validate_native_graph_invocation(
             if lifecycle.agent_contract != HarborLifecycleAgentContract::NativeGraph {
                 anyhow::bail!("NativeGraph evaluation requires a native_graph lifecycle contract");
             }
-            if !native.adapters().is_empty() {
-                anyhow::bail!(
-                    "NativeGraph adapters are not enabled by the acyclic model slice; the task must declare no adapters"
-                );
+            if !native.adapters().is_empty() && native.rollout().is_none() {
+                anyhow::bail!("NativeGraph adapters require one sealed rollout selection");
             }
         }
         NativeGraphProfile::ExternallyDriven => {
@@ -281,7 +280,11 @@ fn run_resolved_native_graph_suite(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let results = runtime.block_on(run_resolved_suite(scheduler.as_ref(), suite, runner))?;
+    let local = LocalSet::new();
+    let results = local.block_on(
+        &runtime,
+        run_resolved_suite(scheduler.as_ref(), suite, runner),
+    )?;
     if let Some(record_artifact) = &record_artifact {
         record_artifact.finish()?;
     }
@@ -312,20 +315,6 @@ fn preflight_registered_native_graph_seams(
                 .is_some(),
         ),
         (
-            "adapter protocol",
-            registry.native_graph_protocol("jsonl").is_some(),
-        ),
-        (
-            "adapter runtime",
-            registry.native_graph_adapter_runtime("strict").is_some(),
-        ),
-        (
-            "environment stepper",
-            registry
-                .native_graph_environment_stepper("refuse")
-                .is_some(),
-        ),
-        (
             "external driver",
             registry.native_graph_external_driver("refuse").is_some(),
         ),
@@ -342,6 +331,38 @@ fn preflight_registered_native_graph_seams(
     ];
     if let Some((seam, _)) = required.iter().find(|(_, available)| !available) {
         anyhow::bail!("no linked NativeGraph {seam} factory is available");
+    }
+    if let Some(rollout) = native.rollout() {
+        let environment = rollout.environment();
+        let selected = [
+            (
+                "rollout adapter protocol",
+                registry
+                    .native_graph_protocol(environment.protocol_factory_id().as_str())
+                    .is_some(),
+            ),
+            (
+                "rollout adapter runtime",
+                registry
+                    .native_graph_adapter_runtime(environment.runtime_provider_id().as_str())
+                    .is_some(),
+            ),
+            (
+                "rollout environment stepper",
+                registry
+                    .native_graph_environment_stepper(environment.stepper_factory_id().as_str())
+                    .is_some(),
+            ),
+            (
+                "rollout action encoder",
+                registry
+                    .native_graph_action_encoder(environment.action_encoder_id().as_str())
+                    .is_some(),
+            ),
+        ];
+        if let Some((seam, _)) = selected.iter().find(|(_, available)| !available) {
+            anyhow::bail!("no linked NativeGraph {seam} factory is available");
+        }
     }
     if native.program_source().is_none() {
         anyhow::bail!("NativeGraph task has no immutable program source");

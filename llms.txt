@@ -18,16 +18,16 @@ purpose for each, so an agent knows which file to open for a given question.
   in the lean build). `eval` is a native command that imports and executes
   supported Harbor-compatible packages without a Harbor runtime. Schema-1.1
   NativeGraph evaluation supports source-declared acyclic stages plus bounded
-  model-selected branches, joins, loops, and retries for one adapter-free
-  standard task: it requires `--model-runtime` plus native-graph lifecycle
-  provenance, task and agent Docker networks set to `no-network`, host-owned
-  AIPerf model transport, and a plan-bound Docker `NoAdapterEgress` proof; it
-  runs as one scored matrix trial with invocation-owned branch workspaces and
-  typed control receipts. Optional rollout imports seal exact environment,
-  protocol/runtime/stepper, and action-encoder selectors before provisioning;
-  controller-local bounded receipts preserve completed-attempt identity for
-  cellular folding, but neither a live policy/environment loop nor cross-host
-  episode transport is runnable yet. The `externally_driven` profile instead validates an
+  model-selected branches, joins, loops, and retries for one standard task: it
+  requires `--model-runtime` plus native-graph lifecycle provenance, task and
+  agent Docker networks set to `no-network`, host-owned AIPerf model transport,
+  and a plan-bound Docker `NoAdapterEgress` proof. A sealed rollout selects
+  exact environment protocol/runtime/stepper/action-encoder seams, drives a
+  bounded live policy/environment loop through the selected model binding, and
+  retains only descriptor rollout facts plus bounded scalar policy lifecycle
+  evidence for independent verification and scoring. It runs as one scored
+  matrix trial; cross-host episode transport is not runnable yet. The
+  `externally_driven` profile instead validates an
   `externally_driven` lifecycle record against its immutable manifest driver,
   rejects `--agent-command`, and a single-task invocation reaches its
   unavailable compatibility-runner preflight without `--model-runtime`; it

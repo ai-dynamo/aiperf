@@ -22,12 +22,13 @@ AIPerf replaces Harbor for the built compatibility tier when a user can run an
 unchanged supported Harbor task from a local path or pinned Git reference;
 choose an external or installed agent; receive reproducible scores and
 artifacts; regrade the attempt; and never require Harbor's runtime. Native
-graph-agent execution beyond the bounded acyclic NativeGraph slice and online
+graph-agent execution beyond the bounded NativeGraph rollout slice and online
 registry acquisition are future extensions. The built slice requires a strict
-host model-runtime mapping, a native-graph lifecycle request, a standard
-adapter-free task, and `no-network` task/agent Docker phases; it uses
-host-owned AIPerf model transport and a plan-bound Docker `NoAdapterEgress`
-proof for one scored matrix trial.
+host model-runtime mapping, a native-graph lifecycle request, and `no-network`
+task/agent Docker phases. A sealed rollout selects its exact environment
+protocol, runtime, stepper, and action encoder before provisioning; AIPerf owns
+the bounded policy dispatch and a task-minted, secret-free adapter start, with a
+plan-bound Docker `NoAdapterEgress` proof for one scored matrix trial.
 
 ```text
 Harbor-compatible package
@@ -93,9 +94,8 @@ empty directories:
   result; they are not acquired through Harbor or Python fallback;
 - `reward.json` then `reward.txt`, including multi-metric numeric rewards;
 - external environment-driving agents and installed/headless agents. The
-  `NativeGraph` contract is executable for the bounded acyclic adapter-free
-  slice above; dynamic controls, adapters, externally driven profiles, and
-  multi-lifecycle suites remain typed refusals.
+  `NativeGraph` contract executes the bounded sealed environment rollout above;
+  externally driven profiles and multi-lifecycle suites remain typed refusals.
 
 P0 supports shared and separately provisioned verifier modes. A separate
 verifier receives declared artifacts at declared paths, never ambient agent
