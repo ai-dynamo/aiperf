@@ -3,6 +3,13 @@
 
 //! WebSocket application-event lag measurement.
 
+#[cfg(feature = "websocket")]
+pub(crate) mod connector;
+#[cfg(feature = "websocket")]
+pub(crate) mod dialect;
+#[cfg(feature = "websocket")]
+pub(crate) mod driver;
+
 use crate::dispatch::sink::ObservedRoundTripMetrics;
 
 /// Constant-size post-flush timing state for one logical WebSocket operation.
@@ -110,6 +117,12 @@ impl RoundTripTimingState {
 mod tests {
     use super::RoundTripTimingState;
 
+    #[cfg(feature = "websocket")]
+    use super::driver::{
+        ApplicationQueueLimits, FallbackReason, classify_upgrade_failure,
+        validate_application_queue,
+    };
+
     #[test]
     fn unequal_populations_use_the_difference_of_timestamp_means() {
         let mut timing = RoundTripTimingState::default();
@@ -155,5 +168,70 @@ mod tests {
         timing.on_measured_input_flushed(400);
 
         assert_eq!(timing.finish(), Default::default());
+    }
+
+    #[cfg(feature = "websocket")]
+    #[test]
+    fn websocket_driver_queue_is_bounded_by_count_and_bytes() {
+        use bytes::Bytes;
+
+        use crate::body_plan::{PreparedWsMessage, PreparedWsMessageRole, PreparedWsOperation};
+
+        let operation = PreparedWsOperation::new(
+            [
+                PreparedWsMessage::text(
+                    Bytes::from_static(b"1234"),
+                    PreparedWsMessageRole::MeasuredInput,
+                ),
+                PreparedWsMessage::text(
+                    Bytes::from_static(b"5678"),
+                    PreparedWsMessageRole::Control,
+                ),
+            ],
+            None,
+        );
+        assert!(validate_application_queue(&operation, ApplicationQueueLimits::new(2, 8)).is_ok());
+        assert!(validate_application_queue(&operation, ApplicationQueueLimits::new(1, 8)).is_err());
+        assert!(validate_application_queue(&operation, ApplicationQueueLimits::new(2, 7)).is_err());
+    }
+
+    #[cfg(feature = "websocket")]
+    #[test]
+    fn websocket_fallback_classifier_is_narrow() {
+        use http::StatusCode;
+
+        assert_eq!(
+            classify_upgrade_failure(&tokio_tungstenite::tungstenite::Error::Io(
+                std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused")
+            )),
+            Some(FallbackReason::NetworkConnect)
+        );
+        assert_eq!(
+            classify_upgrade_failure(&tokio_tungstenite::tungstenite::Error::Http(
+                http::Response::builder()
+                    .status(StatusCode::UPGRADE_REQUIRED)
+                    .body(None)
+                    .expect("test response is valid")
+            )),
+            Some(FallbackReason::UnsupportedUpgrade)
+        );
+        assert_eq!(
+            classify_upgrade_failure(&tokio_tungstenite::tungstenite::Error::Http(
+                http::Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(None)
+                    .expect("test response is valid")
+            )),
+            None
+        );
+        assert_eq!(
+            classify_upgrade_failure(&tokio_tungstenite::tungstenite::Error::Http(
+                http::Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(None)
+                    .expect("test response is valid")
+            )),
+            None
+        );
     }
 }

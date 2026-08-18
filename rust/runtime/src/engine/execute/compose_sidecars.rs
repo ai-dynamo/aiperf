@@ -98,6 +98,13 @@ pub(crate) async fn execute_native_inner(
     };
     let input_token_counter =
         select_input_token_counter(tokenizer.clone(), request.tokenizer.apply_chat_template);
+    let request_materializer = request.transport.as_ref().map_or_else(
+        || {
+            Arc::new(crate::dataset::EndpointRequestMaterializer)
+                as Arc<dyn crate::dataset::RequestMaterializer>
+        },
+        |transport| transport.request_materializer(),
+    );
     let (endpoint_urls, transport_config, prepared_endpoints, source_factory): NativeEndpointExecutionParts<'_> = {
         let NativeEndpointPlan::Prepared(profiles) = &request.endpoint;
         let profile = default_prepared_endpoint_profile(profiles)?;
@@ -124,6 +131,7 @@ pub(crate) async fn execute_native_inner(
             Box::new(PreparedNativeConversationSourceFactory {
                 endpoint_resolver,
                 samplers: registry.samplers(),
+                materializer: request_materializer.clone(),
                 // Coordinator and cell-entry paths read the process-global partition.
                 cell_partition: None,
                 // Same rule as the thread-per-core factory (`sharding.rs`), and
@@ -673,6 +681,7 @@ pub(crate) async fn execute_native_inner(
             input_token_counter: input_token_counter.clone(),
             endpoint_urls: endpoint_urls.clone(),
             transport_config: transport_config.clone(),
+            request_materializer,
             default_output_tokens,
             dataset_rng_root,
             rng_root,

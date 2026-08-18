@@ -69,3 +69,5 @@ pub mod slurm_topology;
 pub mod turn_execution;
 #[cfg(test)]
 mod workers_characterization;
+#[cfg(feature = "websocket")]
+pub mod ws_execution;

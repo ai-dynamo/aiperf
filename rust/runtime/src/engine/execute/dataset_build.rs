@@ -58,6 +58,8 @@ pub(crate) trait NativeConversationSourceFactory {
 pub(crate) struct PreparedNativeConversationSourceFactory<'a> {
     pub(crate) endpoint_resolver: Rc<dyn PreparedTurnEndpointResolver>,
     pub(crate) samplers: &'a crate::dataset::SamplerRegistry,
+    /// Transport-selected request materialization target.
+    pub(crate) materializer: Arc<dyn crate::dataset::RequestMaterializer>,
     /// The dataset instance partition this source draws. `None` reads the
     /// process-global partition; thread-per-core execution injects a per-thread
     /// partition that `AIPERF_CELL_ID`/`_COUNT` cannot express.
@@ -103,6 +105,7 @@ impl NativeConversationSourceFactory for PreparedNativeConversationSourceFactory
         };
         Ok(Box::new(
             source
+                .with_request_materializer(self.materializer.clone())
                 .with_response_tokenizer(tokenizer)
                 .with_input_token_counter(input_token_counter),
         ))

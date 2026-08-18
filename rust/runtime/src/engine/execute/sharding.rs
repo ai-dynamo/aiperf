@@ -112,6 +112,8 @@ pub(crate) struct ShardedShared {
     pub(crate) endpoint_urls: Vec<String>,
     /// Fully resolved transport policy.
     pub(crate) transport_config: TransportSinkConfig,
+    /// Transport-selected lowering used by every per-thread conversation source.
+    pub(crate) request_materializer: Arc<dyn crate::dataset::RequestMaterializer>,
     /// Dataset default output-token bound.
     pub(crate) default_output_tokens: usize,
     /// Dataset RNG root (seeded per phase inside the plan builder).
@@ -447,6 +449,7 @@ pub(crate) async fn execute_scheduled_pipeline(
     let source_factory = PreparedNativeConversationSourceFactory {
         endpoint_resolver: resolver,
         samplers: &shared.samplers,
+        materializer: shared.request_materializer.clone(),
         // Inject this thread's partition so its sampler draws only its nested
         // subset of the cell's instances.
         cell_partition: Some(partition),

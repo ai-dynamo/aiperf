@@ -155,6 +155,8 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &crate::engine::registry::HttpExtension,
             #[cfg(all(feature = "engine", feature = "grpc"))]
             &crate::engine::registry::GrpcExtension,
+            #[cfg(all(feature = "engine", feature = "websocket"))]
+            &crate::engine::registry::WebSocketExtension,
             #[cfg(all(feature = "engine", feature = "dynosim"))]
             &crate::engine::registry::DynosimExtension,
             #[cfg(feature = "engine")]

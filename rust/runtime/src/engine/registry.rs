@@ -242,6 +242,11 @@ pub trait NativeTransportExecution: Send + Sync {
     /// Turn-placement factory this transport drives below the shared dispatcher.
     fn executor_factory(&self) -> Arc<dyn crate::engine::turn_execution::RequestExecutorFactory>;
 
+    /// Transport-selected lowering while the dataset segment store is available.
+    fn request_materializer(&self) -> Arc<dyn crate::dataset::RequestMaterializer> {
+        Arc::new(crate::dataset::EndpointRequestMaterializer)
+    }
+
     /// Whether a model-readiness probe runs before profiling. Only the HTTP
     /// transport polls a live server; `grpc`/`dry_run` skip it.
     fn readiness_enabled(&self) -> bool;
@@ -763,6 +768,24 @@ impl AIPerfExtension for GrpcExtension {
     fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
         registry
             .register_transport(Arc::new(OnlineGrpcTransportFactoryV2))
+            .map_err(extension_rejected)
+    }
+}
+
+/// Feature-gated persistent native WebSocket transport.
+#[cfg(feature = "websocket")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WebSocketExtension;
+
+#[cfg(feature = "websocket")]
+impl AIPerfExtension for WebSocketExtension {
+    fn name(&self) -> &str {
+        "aiperf.transport.websocket"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .register_transport(Arc::new(WebSocketTransportFactoryV2))
             .map_err(extension_rejected)
     }
 }
@@ -1467,6 +1490,16 @@ pub static ONLINE_GRPC_TRANSPORT_DESCRIPTOR: TransportDescriptor = TransportDesc
     url_schemes: &["grpc", "grpcs"],
 };
 
+/// Built-in native WebSocket transport descriptor.
+#[cfg(feature = "websocket")]
+pub static WEBSOCKET_TRANSPORT_DESCRIPTOR: TransportDescriptor = TransportDescriptor {
+    id: "websocket",
+    description: "Clock-injected persistent native WebSocket transport",
+    clock: ClockKind::Real,
+    features: &["websocket", "tls", "persistent_connections"],
+    url_schemes: &["ws", "wss"],
+};
+
 /// Built-in scheduled workload descriptor.
 pub static SCHEDULED_WORKLOAD_DESCRIPTOR: WorkloadDescriptor = WorkloadDescriptor {
     id: "scheduled",
@@ -1558,6 +1591,42 @@ impl TransportFactory for OnlineGrpcTransportFactoryV2 {
     ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
         Ok(Some(Arc::new(
             crate::engine::grpc_execution::GrpcNativeExecution::new(),
+        )))
+    }
+}
+
+#[cfg(feature = "websocket")]
+#[derive(Debug)]
+struct WebSocketTransportFactoryV2;
+
+#[cfg(feature = "websocket")]
+impl TransportFactory for WebSocketTransportFactoryV2 {
+    fn descriptor(&self) -> &'static TransportDescriptor {
+        &WEBSOCKET_TRANSPORT_DESCRIPTOR
+    }
+
+    fn validate(
+        &self,
+        authored: &RawValue,
+        _requirements: &WorkloadRequirements,
+    ) -> Result<Box<dyn ValidatedTransportConfig>> {
+        Ok(Box::new(strict_decode::<
+            crate::config::model::transport::WebSocketTransportConfig,
+        >(authored, "websocket transport config")?))
+    }
+
+    fn native_execution(
+        &self,
+        config: &dyn ValidatedTransportConfig,
+        _context: &RunContext,
+    ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
+        let config = config
+            .as_any()
+            .downcast_ref::<crate::config::model::transport::WebSocketTransportConfig>()
+            .ok_or_else(|| anyhow!("websocket transport received an invalid validated config"))?
+            .clone();
+        Ok(Some(Arc::new(
+            crate::engine::ws_execution::WebSocketNativeExecution::new(config),
         )))
     }
 }

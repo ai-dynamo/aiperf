@@ -330,6 +330,16 @@ fn rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
         .clone()
 }
 
+/// Reuse the resolved HTTP trust and client-identity policy for a WebSocket
+/// HTTP/1.1 upgrade. HTTP/2 ALPN is deliberately removed because RFC 6455 uses
+/// an HTTP/1.1 upgrade on this connector.
+#[cfg(feature = "websocket")]
+pub(crate) fn websocket_rustls_config(client: &ClientConfig) -> Arc<rustls::ClientConfig> {
+    let mut config = (*rustls_config(client)).clone();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Arc::new(config)
+}
+
 /// Build the non-prepared client TLS config for one `ssl_verify` mode.
 fn build_non_prepared_rustls_config(ssl_verify: bool) -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
