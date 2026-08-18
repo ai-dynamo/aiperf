@@ -465,3 +465,43 @@ benchmark:
     message = str(excinfo.value)
     assert "--input-file" not in message
     assert "config file" in message
+
+
+def test_dataset_without_explicit_type_uses_override_mode(tmp_path: Path) -> None:
+    """A YAML dataset may omit ``type``; validation resolves it to synthetic.
+
+    Passing that absent type through as None switched build_dataset back to
+    inferring from flags -- the CLI-only path, which materializes defaults
+    built for constructing a dataset from nothing. Both spellings of
+    "synthetic" must take the same route.
+    """
+    cfg = tmp_path / "no_type.yaml"
+    cfg.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    entries: 16
+    turns:
+      mean: 3
+      stddev: 2
+    images:
+      width:
+        mean: 64
+      batch_size: 4
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    resolved = dataset(resolve_config(cli(image_width_mean=128), cfg))
+    assert resolved.type == "synthetic"
+    assert resolved.images.width.mean == 128
+    # Nothing the user did not set may be disturbed.
+    assert resolved.images.batch_size == 4
+    assert resolved.turns.stddev == 2
+    assert resolved.entries == 16

@@ -25,6 +25,7 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.enums import DatasetType
 from aiperf.common.phase import infer_legacy_phase_kind
 from aiperf.config.flags._resolver_gpu_telemetry import (
     build_gpu_telemetry_override,
@@ -547,7 +548,10 @@ def _reject_inert_dataset_flags(cli: CLIConfig, dataset: dict[str, Any]) -> None
         return
 
     inert = _inert_dataset_flags(
-        cli, dataset.get("type"), dataset.get("format"), candidates
+        cli,
+        dataset.get("type") or DatasetType.SYNTHETIC,
+        dataset.get("format"),
+        candidates,
     )
     if not inert:
         return
@@ -589,9 +593,15 @@ def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
             )
         return
 
+    # A YAML dataset may omit `type`; validation resolves that to synthetic.
+    # Passing None here would instead switch build_dataset back to inferring
+    # the type from flags -- the CLI-only path, which materializes defaults
+    # meant for building a dataset from nothing. Default it so both spellings
+    # of "synthetic" take the same route.
+    declared_type = dataset.get("type") or DatasetType.SYNTHETIC
     override = build_dataset(
         cli,
-        declared_type=dataset.get("type"),
+        declared_type=declared_type,
         declared_format=dataset.get("format"),
     )
     _reject_inert_dataset_flags(cli, dataset)
