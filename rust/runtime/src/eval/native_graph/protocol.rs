@@ -8,6 +8,7 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -293,6 +294,18 @@ pub enum HostMessage {
         /// Exact frozen length the read stream will carry.
         length: u64,
     },
+    /// Streams one bounded Rust-owned fragment through an active read capability.
+    ArtifactDownloadChunk {
+        /// The exact read capability granted for this transfer.
+        download: ArtifactDownloadHandle,
+        /// One nonempty base64 fragment whose decoded bytes count against the grant.
+        bytes_base64: String,
+    },
+    /// Closes a completed Rust-owned artifact read capability.
+    ArtifactDownloadComplete {
+        /// The exact read capability granted for this transfer.
+        download: ArtifactDownloadHandle,
+    },
     /// Cancels exactly one live target operation.
     Cancel {
         /// Existing operation that transitions to cancelling until acknowledged.
@@ -577,6 +590,10 @@ enum OperationState {
         declared_bytes: u64,
     },
     AwaitDownloadGrant,
+    AwaitDownloadBytes {
+        download: ArtifactDownloadHandle,
+        remaining: u64,
+    },
     AwaitCancelAck {
         target_operation: String,
     },
@@ -610,6 +627,8 @@ impl StrictAdapterProtocol {
                 | HostMessage::PutArtifactHandle { .. }
                 | HostMessage::ArtifactCommitted { .. }
                 | HostMessage::GetArtifactHandle { .. }
+                | HostMessage::ArtifactDownloadChunk { .. }
+                | HostMessage::ArtifactDownloadComplete { .. }
         ) {
             self.require_operation_span(&envelope.operation, &envelope.span)?;
         }
@@ -837,6 +856,91 @@ impl StrictAdapterProtocol {
                     });
                 }
                 self.reserve_download_handle(download.as_str())?;
+                self.require_operation_mut(&envelope.operation)?.state =
+                    OperationState::AwaitDownloadBytes {
+                        download,
+                        remaining: length,
+                    };
+            }
+            HostMessage::ArtifactDownloadChunk {
+                download,
+                bytes_base64,
+            } => {
+                self.require_ready()?;
+                self.require_capability(ProtocolCapability::Artifacts)?;
+                validate_identifier(
+                    download.as_str(),
+                    &self.config.limits,
+                    "download capability",
+                )?;
+                if bytes_base64.is_empty()
+                    || bytes_base64.len() > self.config.limits.max_frame_bytes
+                {
+                    return Err(ProtocolError::InvalidJson(
+                        "artifact download chunk is empty or exceeds the frame limit".to_owned(),
+                    ));
+                }
+                let bytes = STANDARD.decode(bytes_base64).map_err(|_| {
+                    ProtocolError::InvalidJson("artifact download chunk is not base64".to_owned())
+                })?;
+                if bytes.is_empty() {
+                    return Err(ProtocolError::InvalidJson(
+                        "artifact download chunk decodes to no bytes".to_owned(),
+                    ));
+                }
+                let actual = u64::try_from(bytes.len()).map_err(|_| {
+                    ProtocolError::ArtifactLengthTooLarge {
+                        limit: self.config.limits.max_artifact_bytes,
+                        actual: u64::MAX,
+                    }
+                })?;
+                let (expected_download, remaining) =
+                    match &self.require_operation(&envelope.operation)?.state {
+                        OperationState::AwaitDownloadBytes {
+                            download,
+                            remaining,
+                        } => (download.clone(), *remaining),
+                        state => {
+                            return Err(ProtocolError::OperationState {
+                                operation: envelope.operation.clone(),
+                                state: operation_disposition(state),
+                            });
+                        }
+                    };
+                if expected_download != download || actual > remaining {
+                    return Err(ProtocolError::ArtifactLengthMismatch {
+                        expected: remaining,
+                        actual,
+                    });
+                }
+                self.require_operation_mut(&envelope.operation)?.state =
+                    OperationState::AwaitDownloadBytes {
+                        download,
+                        remaining: remaining - actual,
+                    };
+            }
+            HostMessage::ArtifactDownloadComplete { download } => {
+                self.require_ready()?;
+                self.require_capability(ProtocolCapability::Artifacts)?;
+                let (expected_download, remaining) =
+                    match &self.require_operation(&envelope.operation)?.state {
+                        OperationState::AwaitDownloadBytes {
+                            download,
+                            remaining,
+                        } => (download.clone(), *remaining),
+                        state => {
+                            return Err(ProtocolError::OperationState {
+                                operation: envelope.operation.clone(),
+                                state: operation_disposition(state),
+                            });
+                        }
+                    };
+                if expected_download != download || remaining != 0 {
+                    return Err(ProtocolError::ArtifactLengthMismatch {
+                        expected: 0,
+                        actual: remaining,
+                    });
+                }
                 self.require_operation_mut(&envelope.operation)?.state = OperationState::Closed;
             }
             HostMessage::Cancel { target_operation } => {
@@ -2084,6 +2188,7 @@ fn operation_disposition(state: &OperationState) -> ProtocolOperationState {
         | OperationState::AwaitArtifactGrant { .. }
         | OperationState::AwaitArtifactCommit { .. }
         | OperationState::AwaitDownloadGrant
+        | OperationState::AwaitDownloadBytes { .. }
         | OperationState::AwaitShutdownAck => ProtocolOperationState::Pending,
     }
 }

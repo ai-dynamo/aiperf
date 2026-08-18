@@ -1142,6 +1142,61 @@ fn consumed_download_handles_are_released_from_the_protocol_cap() {
 }
 
 #[test]
+fn artifact_read_grant_streams_the_exact_bounded_host_bytes() {
+    let mut protocol = new_protocol(AdapterRole::Environment);
+    let (_directory, _upload, reference) = artifact_handles();
+    let download = reference.download().clone();
+    ready(protocol.as_mut(), AdapterRole::Environment);
+    protocol
+        .accept_host(host(
+            1,
+            "step-1",
+            HostMessage::StepEnvironment {
+                action_ref: reference.clone(),
+            },
+        ))
+        .expect("Rust opens the environment step with its one-shot action grant");
+    protocol
+        .accept_adapter(adapter(
+            1,
+            "read-action-1",
+            AdapterMessage::GetArtifactRequest {
+                parent_operation: "step-1".to_owned(),
+                request: serde_json::to_value(reference)
+                    .expect("frozen action reference is serializable"),
+            },
+        ))
+        .expect("adapter may request the action reference owned by the step");
+    protocol
+        .accept_host(host(
+            2,
+            "read-action-1",
+            HostMessage::GetArtifactHandle {
+                download: download.clone(),
+                length: 3,
+            },
+        ))
+        .expect("host grants the bounded action read");
+    protocol
+        .accept_host(host(
+            3,
+            "read-action-1",
+            HostMessage::ArtifactDownloadChunk {
+                download: download.clone(),
+                bytes_base64: "YWJj".to_owned(),
+            },
+        ))
+        .expect("host streams the exact granted bytes");
+    protocol
+        .accept_host(host(
+            4,
+            "read-action-1",
+            HostMessage::ArtifactDownloadComplete { download },
+        ))
+        .expect("host closes the one-shot action read");
+}
+
+#[test]
 fn bounded_jsonl_rejects_the_frame_before_deserializing_it() {
     let strict = StrictAdapterProtocolFactory;
     let mut limits = ProtocolLimits::default();
