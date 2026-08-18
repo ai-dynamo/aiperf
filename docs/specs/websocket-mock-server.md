@@ -75,16 +75,18 @@ the child-process configuration:
 
 All durations must be finite and nonnegative. `content_events` must be positive
 except under `done_only`, which synthesizes one content-bearing terminal event.
-`fragment_bytes = 0` sends an unfragmented message; a positive value fragments
-text messages into chunks no larger than that byte count without splitting a
-UTF-8 code point. Capture capacity must be positive when WebSocket mode is
-enabled. Maximum message bytes must be positive, and fragment bytes cannot
-exceed it.
+`fragment_bytes = 0` sends an unfragmented message; a positive value must be at
+least four and fragments text messages into chunks no larger than that byte
+count without splitting a UTF-8 code point. Capture capacity must be positive
+when WebSocket mode is enabled. Maximum message bytes must be positive, and
+fragment bytes cannot exceed it.
 
 Scenarios are intentionally closed and validated:
 
 - `stale_reuse` and `reject_continuation` require the turn-serialized route.
 - `interleaved_realtime` requires the Realtime route.
+- `both` accepts only scenarios shared by both routes; route-specific scenarios
+  require their single-route mode.
 - `close_before_terminal` emits no terminal event.
 - `dirty_close_after_terminal` emits a complete terminal event, then drops the
   transport without a WebSocket close handshake.
