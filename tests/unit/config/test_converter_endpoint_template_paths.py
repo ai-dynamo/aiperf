@@ -28,7 +28,9 @@ from aiperf.common.path_safety import safe_read_template_path
 from aiperf.config.flags._converter_endpoint import (
     _endpoint_template_fallback,
     _endpoint_template_from_extra,
+    build_endpoint,
 )
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import EndpointType
 
 
@@ -284,9 +286,6 @@ class TestEndpointFieldPropagation:
     """
 
     def test_per_chunk_usage_propagates_to_endpoint(self) -> None:
-        from aiperf.config.flags._converter_endpoint import build_endpoint
-        from aiperf.config.flags.cli_config import CLIConfig
-
         cli = CLIConfig(per_chunk_usage=True, use_server_token_count=True)
         endpoint = build_endpoint(cli)
 
@@ -294,9 +293,6 @@ class TestEndpointFieldPropagation:
         assert endpoint["use_server_token_count"] is True
 
     def test_per_chunk_usage_absent_when_not_set(self) -> None:
-        from aiperf.config.flags._converter_endpoint import build_endpoint
-        from aiperf.config.flags.cli_config import CLIConfig
-
         endpoint = build_endpoint(CLIConfig())
 
         assert "per_chunk_usage" not in endpoint

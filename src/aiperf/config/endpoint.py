@@ -259,8 +259,8 @@ class EndpointConfig(BaseConfig):
             "lets inter-token latency subtract the first content chunk's real token "
             "count instead of assuming one token. Requires a server that supports "
             "continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. "
-            "Best paired with use_server_token_count so all counts share the server "
-            "source.",
+            "Requires use_server_token_count so OSL and the first-chunk count share "
+            "the server source.",
         ),
     ]
 
@@ -546,6 +546,22 @@ class EndpointConfig(BaseConfig):
         """Require image UUID reuse to use the Chat Completions endpoint."""
         if self.uuid_and_strip and self.type != EndpointType.CHAT:
             raise ValueError("--uuid-and-strip requires endpoint type 'chat'")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_per_chunk_usage(self) -> Self:
+        """Require server token counts when per-chunk usage is requested.
+
+        The first content chunk's token count is read only from server-reported
+        per-chunk usage (in the server-token-count path). Without
+        ``--use-server-token-count`` the client-tokenization path never populates
+        it, so ``--per-chunk-usage`` would silently have no effect on inter-token
+        latency."""
+        if self.per_chunk_usage and not self.use_server_token_count:
+            raise ValueError(
+                "--per-chunk-usage requires --use-server-token-count "
+                "(the first-chunk token count comes from server-reported per-chunk usage)"
+            )
         return self
 
     @model_validator(mode="after")

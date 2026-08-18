@@ -53,10 +53,12 @@ class BaseCompletionRequest(BaseModel):
     max_tokens: int | None = None
     ignore_eos: bool = False
     min_tokens: int | None = None
-    # Test knob: bundle the first N output tokens into the first streamed chunk to
-    # emulate a server (e.g. TRT-LLM stream-interval) whose first content chunk
-    # carries more than one token. Defaults to 1 (one token per chunk).
-    mock_first_chunk_tokens: int = 1
+    mock_first_chunk_tokens: int = Field(
+        default=1,
+        description="Test knob: bundle the first N output tokens into the first "
+        "streamed chunk to emulate a server (e.g. TRT-LLM stream-interval) whose "
+        "first content chunk carries more than one token. Defaults to 1.",
+    )
 
     @property
     def include_usage(self) -> bool:

@@ -15,6 +15,7 @@ import math
 
 import pytest
 
+from aiperf.common.models import RawRecordInfo
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
@@ -23,7 +24,7 @@ from tests.harness.utils import AIPerfCLI
 FIRST_CHUNK_TOKENS = 3
 
 
-def _first_content_chunk_usage(raw_record) -> int | None:
+def _first_content_chunk_usage(raw_record: RawRecordInfo) -> int | None:
     """Cumulative completion_tokens on the first streamed chunk carrying content."""
     for response in raw_record.responses:
         chunk = response.get_json()

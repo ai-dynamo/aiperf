@@ -390,7 +390,7 @@ class CLIConfig(BaseConfig):
                 "real token count (fixing TPS/user inflation when a server bundles "
                 "multiple tokens into the first streamed chunk). Requires a server "
                 "that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict "
-                "OpenAI rejects it. Best paired with --use-server-token-count."
+                "OpenAI rejects it. Requires --use-server-token-count."
             ),
         ),
         CLIParameter(
