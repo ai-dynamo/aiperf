@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "trace_id": "code-review-simple",
+  "stage_bound": 2,
+  "channels": {
+    "review": { "type": "messages", "reducer": "add_messages" }
+  },
+  "nodes": [
+    {
+      "id": "review-model",
+      "kind": "model",
+      "binding": "primary",
+      "inputs": [],
+      "output": "review",
+      "streaming": true
+    }
+  ],
+  "edges": [
+    { "source": "START", "target": "review-model" },
+    { "source": "review-model", "target": "END" }
+  ],
+  "terminal_outputs": []
+}

@@ -1,0 +1,15 @@
+{
+  "id": "humaneval/HE-26-remove-duplicates",
+  "instruction": "Implement the function `remove_duplicates(numbers: List[int]) -> List[int]` that takes a list of integers and returns a list of all elements that appear exactly once in the input, in the original order.\n\nExample:\n- remove_duplicates([1, 2, 3, 2, 4]) == [1, 3, 4]\n- remove_duplicates([1, 1, 1]) == []\n- remove_duplicates([]) == []\n\nWrite the implementation to `$AIPERF_EVAL_ROOT/results/solution.py`.",
+  "environment": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "verifier": "blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "agent_command": [
+    "sh", "-c",
+    "cat > \"$AIPERF_EVAL_ROOT/results/solution.py\" << 'EOF'\nfrom typing import List\nfrom collections import Counter\n\ndef remove_duplicates(numbers: List[int]) -> List[int]:\n    counts = Counter(numbers)\n    return [n for n in numbers if counts[n] == 1]\nEOF"
+  ],
+  "verifier_command": [
+    "sh", "-c",
+    "python3 -c \"\nimport sys\nsys.path.insert(0, 'results')\nfrom solution import remove_duplicates\n\ncases = [\n    ([1, 2, 3, 2, 4], [1, 3, 4]),\n    ([1, 1, 1], []),\n    ([], []),\n    ([1, 2, 3], [1, 2, 3]),\n    ([1, 1, 2, 2, 3, 3, 4], [4]),\n    ([5, 7, 5, 3, 3, 7, 8], [8]),\n]\nfailed = 0\nfor inp, expected in cases:\n    got = remove_duplicates(inp)\n    if got != expected:\n        print(f'FAIL: remove_duplicates({inp}) = {got}, expected {expected}')\n        failed += 1\npass_rate = (len(cases) - failed) / len(cases)\nreward = 1.0 if failed == 0 else pass_rate\nimport json\nopen('reward.json','w').write(json.dumps({'reward': reward, 'pass_rate': pass_rate}))\nprint(f'RESULT: {len(cases)-failed}/{len(cases)} tests passed (reward={reward})')\nif failed > 0:\n    sys.exit(1)\n\"\n"
+  ],
+  "declared_artifacts": ["/results/solution.py"]
+}

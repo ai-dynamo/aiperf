@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "agent_variant": "native:ng-code-review-v1",
+  "model": { "provider": "provider-default", "model": "mock-model" },
+  "seed": 42,
+  "policy": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runtime": "native:aiperf-ng-v1",
+  "attempt": "ng-code-review-attempt-001",
+  "budget": { "execution_seconds": 60.0, "verifier_seconds": 30.0 },
+  "agent_contract": "native_graph",
+  "command": ["native-graph-driver"],
+  "initial_score": {
+    "metric": "reward",
+    "rationale": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "regrade": {
+    "metric": "reward",
+    "rationale": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

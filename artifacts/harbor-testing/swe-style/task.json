@@ -1,0 +1,15 @@
+{
+  "id": "swe-bench/django-fix-off-by-one",
+  "instruction": "The function `binary_search(arr, target)` in `/work/search.py` has an off-by-one error in the loop termination condition. When `target` is the last element of `arr`, the function returns -1 instead of the correct index. Fix the bug so all tests pass.\n\nThe buggy code:\n```python\ndef binary_search(arr, target):\n    lo, hi = 0, len(arr) - 2  # BUG: should be len(arr) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return -1\n```\n\nWrite the corrected `binary_search` function to `/work/search.py`.",
+  "environment": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "verifier": "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "agent_command": [
+    "sh", "-c",
+    "cat > \"$AIPERF_EVAL_ROOT/results/search.py\" << 'EOF'\ndef binary_search(arr, target):\n    lo, hi = 0, len(arr) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return -1\nEOF"
+  ],
+  "verifier_command": [
+    "sh", "-c",
+    "python3 -c \"\nimport sys\nsys.path.insert(0, 'results')\nfrom search import binary_search\n\ntests = [\n    ([1,2,3,4,5], 5, 4),\n    ([1,2,3,4,5], 1, 0),\n    ([1,2,3,4,5], 3, 2),\n    ([1,2,3], 4, -1),\n    ([10], 10, 0),\n]\nfailed = 0\nfor arr, t, expected in tests:\n    got = binary_search(arr, t)\n    if got != expected:\n        print(f'FAIL: binary_search({arr},{t}) = {got}, expected {expected}')\n        failed += 1\nif failed == 0:\n    import json\n    open('reward.json','w').write(json.dumps({'reward':1.0,'quality':0.95}))\n    print('ALL TESTS PASSED')\nelse:\n    open('reward.json','w').write('{\\\"reward\\\":0.0}')\n    sys.exit(1)\n\"\n"
+  ],
+  "declared_artifacts": ["/results/search.py"]
+}

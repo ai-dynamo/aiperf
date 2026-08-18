@@ -1,0 +1,15 @@
+{
+  "id": "intercode/bash-file-analysis",
+  "instruction": "You are given a directory `/work/logs/` containing several log files. Find the log file with the most ERROR lines and write its filename (basename only) to `/work/result.txt`.\n\nThe logs directory structure and a `find` command are available. Each log file contains lines like:\n```\n[INFO] ...\n[ERROR] ...\n[WARN] ...\n```\n\nUse shell commands to analyze the logs and write the answer.",
+  "environment": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "verifier": "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "agent_command": [
+    "sh", "-c",
+    "mkdir -p \"$AIPERF_EVAL_ROOT/work/logs\" && printf '[INFO] start\\n[ERROR] disk full\\n[ERROR] timeout\\n[INFO] retry\\n' > \"$AIPERF_EVAL_ROOT/work/logs/app.log\" && printf '[ERROR] crash\\n[INFO] boot\\n[WARN] slow\\n' > \"$AIPERF_EVAL_ROOT/work/logs/system.log\" && printf '[ERROR] auth fail\\n[ERROR] rate limit\\n[ERROR] bad token\\n[ERROR] expired\\n[INFO] ok\\n' > \"$AIPERF_EVAL_ROOT/work/logs/access.log\" && grep -c '\\[ERROR\\]' \"$AIPERF_EVAL_ROOT/work/logs\"/*.log | sort -t: -k2 -rn | head -1 | cut -d: -f1 | xargs basename > \"$AIPERF_EVAL_ROOT/results/result.txt\""
+  ],
+  "verifier_command": [
+    "sh", "-c",
+    "ANSWER=$(cat results/result.txt 2>/dev/null | tr -d '[:space:]') && if [ \"$ANSWER\" = 'access.log' ]; then printf '{\"reward\":1.0}' > reward.json && echo 'CORRECT: access.log has the most errors (4)'; else printf '{\"reward\":0.0}' > reward.json && echo \"WRONG: got '$ANSWER', expected 'access.log'\"; fi"
+  ],
+  "declared_artifacts": ["/results/result.txt"]
+}

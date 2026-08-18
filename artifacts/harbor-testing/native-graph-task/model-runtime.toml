@@ -1,0 +1,4 @@
+version = 1
+
+[secrets]
+# No authentication needed for the local mock server

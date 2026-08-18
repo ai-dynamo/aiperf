@@ -19,6 +19,8 @@ htmlcov/
 .env.*
 *.log
 artifacts/
+!artifacts/harbor-testing/
+!artifacts/harbor-testing/**
 test-results/
 dist/
 .DS_Store

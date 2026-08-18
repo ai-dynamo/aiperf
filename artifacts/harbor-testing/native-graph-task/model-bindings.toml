@@ -1,0 +1,19 @@
+[[model_bindings]]
+id = "primary"
+endpoint_profile_id = "provider-default"
+endpoint_factory_id = "chat"
+transport_factory_id = "http"
+model = "mock-model"
+urls = ["http://127.0.0.1:19500/v1"]
+streaming = true
+request_timeout_ms = 30000
+capture = "metadata"
+
+[model_bindings.tokenizer]
+type = "local"
+name = "builtin"
+revision = "main"
+
+[model_bindings.generation]
+max_tokens = 256
+temperature = 0.0
