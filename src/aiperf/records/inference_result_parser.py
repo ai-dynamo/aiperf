@@ -25,6 +25,7 @@ from aiperf.common.models.record_models import (
     TokenCounts,
     ToolCallResponseData,
     find_last_non_empty_usage,
+    first_content_chunk_completion_tokens,
 )
 from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
@@ -519,6 +520,11 @@ class InferenceResultParser(CommunicationMixin):
             input=input_token_count,
             reasoning=reasoning_token_count,
             output=output_token_count,
+            # Present only when --per-chunk-usage requested continuous_usage_stats and
+            # the server honored it; None otherwise, so ITL falls back to subtracting
+            # one. Same server source as `output`, so OSL and the first-chunk count
+            # stay mutually consistent.
+            first_content_chunk_tokens=first_content_chunk_completion_tokens(responses),
         )
 
         # Warn if server provided no usage information

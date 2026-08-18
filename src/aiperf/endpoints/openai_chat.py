@@ -86,11 +86,13 @@ class ChatEndpoint(BaseEndpoint):
         if extra_body:
             payload.update(extra_body)
 
-        if (
-            model_endpoint.endpoint.streaming
-            and model_endpoint.endpoint.use_server_token_count
+        if model_endpoint.endpoint.streaming and (
+            model_endpoint.endpoint.use_server_token_count
+            or model_endpoint.endpoint.per_chunk_usage
         ):
-            self._ensure_include_usage(payload)
+            self._ensure_include_usage(
+                payload, continuous=model_endpoint.endpoint.per_chunk_usage
+            )
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
@@ -154,18 +156,25 @@ class ChatEndpoint(BaseEndpoint):
                 )
 
     @staticmethod
-    def _ensure_include_usage(payload: dict[str, Any]) -> None:
-        """Force ``stream_options.include_usage = True`` while preserving any
-        author-supplied stream_options keys (and any explicit ``include_usage``
-        the author already set)."""
-        if "stream_options" not in payload:
-            payload["stream_options"] = {"include_usage": True}
+    def _ensure_include_usage(
+        payload: dict[str, Any], *, continuous: bool = False
+    ) -> None:
+        """Force ``stream_options.include_usage = True`` (and, when ``continuous``,
+        ``stream_options.continuous_usage_stats = True``) while preserving any
+        author-supplied stream_options keys (and any explicit values the author
+        already set).
+
+        ``continuous_usage_stats`` asks the server to report cumulative usage on
+        every streamed chunk, not just the final one. It is a vLLM/TRT-LLM
+        extension (strict OpenAI rejects it), so it is only injected when the
+        caller opts in via ``--per-chunk-usage``.
+        """
+        stream_options = payload.setdefault("stream_options", {})
+        if not isinstance(stream_options, dict):
             return
-        if (
-            isinstance(payload["stream_options"], dict)
-            and "include_usage" not in payload["stream_options"]
-        ):
-            payload["stream_options"]["include_usage"] = True
+        stream_options.setdefault("include_usage", True)
+        if continuous:
+            stream_options.setdefault("continuous_usage_stats", True)
 
     def parse_response(
         self, response: InferenceServerResponse

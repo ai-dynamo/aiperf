@@ -325,6 +325,43 @@ class TestServerTokenCount:
         assert result.token_counts.output is None
         assert result.token_counts.reasoning is None
 
+    async def test_first_content_chunk_from_per_chunk_usage(
+        self, server_token_parser, request_record
+    ):
+        """With per-chunk (continuous) usage, first_content_chunk_tokens is the
+        cumulative completion_tokens reported on the first content chunk -- the
+        real bundled-first-chunk count ITL subtracts."""
+        setup_parser_responses(
+            server_token_parser,
+            [
+                make_parsed_response(text="hello world", completion_tokens=20),
+                make_parsed_response(text=" more", completion_tokens=50),
+            ],
+        )
+
+        result = await server_token_parser.process_valid_record(request_record)
+
+        assert result.token_counts.first_content_chunk_tokens == 20
+        assert result.token_counts.output == 50  # final total, unchanged
+
+    async def test_first_content_chunk_none_without_per_chunk_usage(
+        self, server_token_parser, request_record
+    ):
+        """Without per-chunk usage (only the final chunk carries usage),
+        first_content_chunk_tokens is None so ITL falls back to subtracting one."""
+        setup_parser_responses(
+            server_token_parser,
+            [
+                make_parsed_response(text="hello", include_usage=False),
+                make_parsed_response(text="", completion_tokens=50),  # final usage-only
+            ],
+        )
+
+        result = await server_token_parser.process_valid_record(request_record)
+
+        assert result.token_counts.first_content_chunk_tokens is None
+        assert result.token_counts.output == 50
+
     async def test_partial_usage(self, server_token_parser, request_record):
         """Partial usage information is handled correctly."""
         setup_parser_responses(

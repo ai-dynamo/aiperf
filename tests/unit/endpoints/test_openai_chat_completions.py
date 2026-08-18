@@ -234,6 +234,38 @@ class TestChatEndpoint:
             assert payload["stream_options"] == expected_stream_options
             endpoint.build_messages(turns)
 
+    @pytest.mark.parametrize(
+        "streaming,per_chunk_usage,expected",
+        [
+            (True, True, {"include_usage": True, "continuous_usage_stats": True}),
+            (True, False, None),
+            (False, True, None),
+        ],
+        ids=["on", "off_no_stream_options", "non_streaming_no_injection"],
+    )  # fmt: skip
+    def test_per_chunk_usage_injects_continuous_usage_stats(
+        self,
+        model_endpoint,
+        sample_conversations,
+        streaming,
+        per_chunk_usage,
+        expected,
+    ):
+        """--per-chunk-usage adds stream_options.continuous_usage_stats (plus
+        include_usage) on streaming requests, and nothing when off or non-streaming."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = streaming
+        model_endpoint.endpoint.use_server_token_count = False
+        model_endpoint.endpoint.per_chunk_usage = per_chunk_usage
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        if expected is None:
+            assert "stream_options" not in payload
+        else:
+            assert payload["stream_options"] == expected
+
     def test_create_messages_with_system_message(
         self, model_endpoint, sample_conversations
     ):

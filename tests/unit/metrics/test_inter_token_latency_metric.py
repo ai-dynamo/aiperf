@@ -81,3 +81,87 @@ class TestInterTokenLatencyMetric:
 
         with pytest.raises(NoMetricValue):
             InterTokenLatencyMetric().parse_record(record, empty_metrics)
+
+    def test_inter_token_latency_subtracts_bundled_first_chunk(self):
+        """When the server reports the first content chunk carried N tokens, ITL
+        divides the decode window by (OSL - N), not (OSL - 1), so a server that
+        bundles the first chunk cannot inflate TPS/user."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=3,  # first chunk carried 3 tokens, not 1
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        # ttft=20, latency=100, OSL=6, first chunk=3
+        # ITL = (100 - 20) / (6 - 3) = 26.6667, vs the inflated (100-20)/(6-1)=16
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([80.0 / 3.0])
+
+    def test_inter_token_latency_first_chunk_one_matches_legacy(self):
+        """A one-token first chunk reproduces the legacy (OSL - 1) formula exactly."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=1,
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([16.0])
+
+    def test_inter_token_latency_absent_first_chunk_falls_back_to_one(self):
+        """When per-chunk usage is unavailable (None), ITL falls back to (OSL - 1)."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=None,
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([16.0])
+
+    def test_inter_token_latency_all_tokens_in_first_chunk_not_emitted(self):
+        """When the entire output arrived in the first chunk there is no decode
+        window, so ITL is undefined and not emitted."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=6,  # all 6 tokens in the first chunk
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        assert (
+            InterTokenLatencyMetric.tag not in metric_results
+            or len(metric_results[InterTokenLatencyMetric.tag]) == 0
+        )

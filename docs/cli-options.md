@@ -442,6 +442,11 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
 <br/>_Flag (no value required)_
 
+#### `--per-chunk-usage`
+
+Request per-chunk token usage on streaming responses by setting stream_options.continuous_usage_stats, so the server reports cumulative usage on every chunk instead of only the final one. This lets inter-token latency subtract the first content chunk's real token count (fixing TPS/user inflation when a server bundles multiple tokens into the first streamed chunk). Requires a server that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. Best paired with --use-server-token-count.
+<br/>_Flag (no value required)_
+
 #### `--connection-reuse-strategy` `<str>`
 
 Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response. 'sticky-user-sessions': connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing).
@@ -2010,6 +2015,11 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 #### `--use-server-token-count`
 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
+<br/>_Flag (no value required)_
+
+#### `--per-chunk-usage`
+
+Request per-chunk token usage on streaming responses by setting stream_options.continuous_usage_stats, so the server reports cumulative usage on every chunk instead of only the final one. This lets inter-token latency subtract the first content chunk's real token count (fixing TPS/user inflation when a server bundles multiple tokens into the first streamed chunk). Requires a server that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. Best paired with --use-server-token-count.
 <br/>_Flag (no value required)_
 
 #### `--connection-reuse-strategy` `<str>`

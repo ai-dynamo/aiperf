@@ -59,6 +59,7 @@ class EndpointDefaults:
     API_KEY = None
     USE_LEGACY_MAX_TOKENS = False
     USE_SERVER_TOKEN_COUNT = False
+    PER_CHUNK_USAGE = False
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
@@ -245,6 +246,21 @@ class EndpointConfig(BaseConfig):
             description="Use server-reported token counts from response usage field. "
             "When true, trusts usage.prompt_tokens and usage.completion_tokens. "
             "When false, counts tokens locally using configured tokenizer.",
+        ),
+    ]
+
+    per_chunk_usage: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Request per-chunk token usage on streaming responses by "
+            "setting stream_options.continuous_usage_stats. When true, the server "
+            "reports cumulative usage on every chunk (not just the final one), which "
+            "lets inter-token latency subtract the first content chunk's real token "
+            "count instead of assuming one token. Requires a server that supports "
+            "continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. "
+            "Best paired with use_server_token_count so all counts share the server "
+            "source.",
         ),
     ]
 
