@@ -389,11 +389,21 @@ fn cycle_tokens(prompt_tokens: &[String], num_tokens: usize, offset: usize) -> V
 }
 
 fn cycle_prompt(prompt_tokens: &[String], num_tokens: usize, offset: usize) -> Vec<String> {
+    // When there is no prompt to cycle (e.g. NativeGraph start node with empty
+    // inputs), fall back to a static placeholder so the mock still emits valid
+    // streaming content. An empty return causes parsed_content=false downstream,
+    // which the transport classifies as a failed reply even on HTTP 200.
+    static FALLBACK: &[&str] = &["ok", " "];
+    let source: &[String];
+    let fallback_owned: Vec<String>;
     if prompt_tokens.is_empty() {
-        return Vec::new();
+        fallback_owned = FALLBACK.iter().map(|s| s.to_string()).collect();
+        source = &fallback_owned;
+    } else {
+        source = prompt_tokens;
     }
     (0..num_tokens)
-        .map(|i| prompt_tokens[(offset + i) % prompt_tokens.len()].clone())
+        .map(|i| source[(offset + i) % source.len()].clone())
         .collect()
 }
 
