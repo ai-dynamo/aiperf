@@ -98,6 +98,8 @@ fn header_map() -> HashMap<String, String> {
     [
         ("request_latency", "Request Latency"),
         ("time_to_first_token", "Time to First Token"),
+        ("time_to_last_round_trip", "Time to Last Round Trip"),
+        ("avg_round_trip_time", "Average Round Trip Time"),
         ("inter_token_latency", "Inter Token Latency"),
         ("request_throughput", "Request Throughput"),
         ("request_count", "Request Count"),
@@ -251,6 +253,49 @@ fn non_streaming_report_omits_absent_streaming_metrics() {
 
     let csv = render_csv(&report, &cfg("profile_export").genai_perf).unwrap();
     assert!(!csv.contains("Time to First Token"));
+}
+
+#[test]
+fn websocket_lag_distributions_render_only_when_present() {
+    let report = report_with(BTreeMap::from([
+        (
+            "time_to_last_round_trip".to_owned(),
+            dist(
+                "ms",
+                1,
+                Some(fin(300.0)),
+                Some(fin(300.0)),
+                Some(fin(300.0)),
+                Some(fin(0.0)),
+                pcts([300.0; 9]),
+            ),
+        ),
+        (
+            "avg_round_trip_time".to_owned(),
+            dist(
+                "ms",
+                1,
+                Some(fin(250.0)),
+                Some(fin(250.0)),
+                Some(fin(250.0)),
+                Some(fin(0.0)),
+                pcts([250.0; 9]),
+            ),
+        ),
+    ]));
+
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
+    assert!(json.contains("time_to_last_round_trip"));
+    assert!(json.contains("avg_round_trip_time"));
+    let csv = render_csv(&report, &cfg("profile_export").genai_perf).unwrap();
+    assert!(csv.contains("Time to Last Round Trip (ms),300.00"));
+    assert!(csv.contains("Average Round Trip Time (ms),250.00"));
+
+    let absent = report_with(BTreeMap::new());
+    let json = render_json(&absent, &cfg("profile_export").genai_perf);
+    assert!(!json.contains("round_trip"));
+    let csv = render_csv(&absent, &cfg("profile_export").genai_perf).unwrap();
+    assert!(!csv.contains("Round Trip"));
 }
 
 #[test]

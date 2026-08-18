@@ -84,6 +84,9 @@ impl fmt::Debug for Request {
                 &self.body.as_ref().map(|body| match body {
                     RequestBody::Wire(bytes) => format!("wire({} bytes)", bytes.len()),
                     RequestBody::Plan(_) => "plan".to_string(),
+                    RequestBody::WebSocket(plan) => {
+                        format!("websocket({} messages)", plan.messages().len())
+                    }
                     RequestBody::Value(_) => "value".to_string(),
                 }),
             )

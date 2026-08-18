@@ -9,7 +9,11 @@ use bytes::Bytes;
 use serde_json::{Map, Value, json};
 use smallvec::SmallVec;
 
-use crate::body_plan::BodyPlan;
+use crate::body_plan::{
+    BodyPlan, JsonBodyMaterializer, PreparedWsMessage, PreparedWsMessageRole, PreparedWsOperation,
+};
+use crate::dataset::materialize::Overrides;
+use crate::dataset::segment::SegmentStore;
 use crate::endpoints::config::{EndpointConfig, RawEndpointConfig};
 use crate::endpoints::extraction::{PartTypes, extract_inputs};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
@@ -600,6 +604,40 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
             ensure_include_usage(&mut payload);
         }
         build_reserved_plan(&payload, "input", input_wires)
+    }
+
+    fn prepare_ws_operation(
+        &self,
+        _request: &PreparedRequest<'_>,
+        _endpoint: &RawEndpointConfig,
+        body: &BodyPlan,
+        store: &dyn SegmentStore,
+        overrides: &Overrides,
+    ) -> EndpointResult<PreparedWsOperation> {
+        let body = JsonBodyMaterializer::materialize(body, store, overrides)
+            .map_err(|error| EndpointError::Serialization(error.to_string()))?;
+        let fields = body
+            .strip_prefix(b"{")
+            .and_then(|body| body.strip_suffix(b"}"))
+            .ok_or_else(|| {
+                EndpointError::Serialization(
+                    "Responses WebSocket request body must be a JSON object".to_owned(),
+                )
+            })?;
+        let mut event = Vec::with_capacity(fields.len() + 27);
+        event.extend_from_slice(b"{\"type\":\"response.create\"");
+        if !fields.is_empty() {
+            event.push(b',');
+            event.extend_from_slice(fields);
+        }
+        event.push(b'}');
+        Ok(PreparedWsOperation::new(
+            [PreparedWsMessage::text(
+                Bytes::from(event),
+                PreparedWsMessageRole::MeasuredInput,
+            )],
+            Some(body),
+        ))
     }
 
     fn renders_all_turns(&self) -> bool {
@@ -1830,6 +1868,8 @@ pub(crate) fn build_plain_assistant_turn<E: Endpoint + ?Sized>(
 #[cfg(test)]
 mod lowering_tests {
     use super::*;
+    use crate::dataset::segment::SegmentPool;
+    use crate::endpoints::registry::PreparedEndpointBehavior;
 
     fn text_turn() -> Turn {
         Turn {
@@ -1907,6 +1947,52 @@ mod lowering_tests {
     fn non_message_array_dialects_have_no_lowerer() {
         assert!(ShapeLowerer::for_descriptor_id("embeddings").is_none());
         assert!(ShapeLowerer::for_descriptor_id("completions").is_none());
+    }
+
+    #[test]
+    fn responses_websocket_lowering_emits_one_handle_free_create_event() {
+        let turns = [text_turn()];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let store = SegmentPool::new().freeze();
+
+        let body = ResponsesEndpoint
+            .format_prepared_payload(&request, &RawEndpointConfig::default())
+            .unwrap();
+        let operation = ResponsesEndpoint
+            .prepare_ws_operation(
+                &request,
+                &RawEndpointConfig::default(),
+                &body,
+                &store,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        assert_eq!(operation.messages().len(), 1);
+        let message = &operation.messages()[0];
+        assert_eq!(message.role(), PreparedWsMessageRole::MeasuredInput);
+        assert_eq!(message.opcode(), crate::body_plan::PreparedWsOpcode::Text);
+        let event: Value = serde_json::from_slice(message.payload()).unwrap();
+        assert_eq!(event["type"], "response.create");
+        assert_eq!(event["model"], "gpt-test");
+        assert!(event["input"].is_array());
+        let fallback: Value = serde_json::from_slice(
+            operation
+                .http_sse_fallback_body()
+                .expect("Responses prepares its equivalent HTTP/SSE body"),
+        )
+        .unwrap();
+        assert!(fallback.get("type").is_none());
+        assert_eq!(fallback["model"], "gpt-test");
     }
 
     /// The two halves of "this dialect splices lowered wires" must agree for

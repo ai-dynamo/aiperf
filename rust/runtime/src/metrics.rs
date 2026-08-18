@@ -16,11 +16,12 @@ use std::sync::Arc;
 use crate::clock::Clock;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{
-    ObservedEndpointMetrics, ObservedTokenKind, ObservedUsage, RequestObserver,
+    ObservedEndpointMetrics, ObservedRoundTripMetrics, ObservedTokenKind, ObservedUsage,
+    RequestObserver,
 };
 use crate::metrics_core::{
-    AccumulatorSummary, InferenceDimensions, MetricsAccumulator, MetricsConfig, Phase,
-    RecordIngest, RequestTrace, TokenCounts, UsageMetrics,
+    AccumulatorSummary, InferenceDimensions, MetricTag, MetricValue, MetricsAccumulator,
+    MetricsConfig, Phase, RecordIngest, RequestTrace, TokenCounts, UsageMetrics,
 };
 use rustc_hash::FxHashMap;
 use uuid::Uuid;
@@ -105,6 +106,7 @@ struct PendingRequest {
     reasoning_tokens: u64,
     first_output_token_ns: Option<i64>,
     endpoint_metrics: Option<Box<ObservedEndpointMetrics>>,
+    round_trip_metrics: Option<ObservedRoundTripMetrics>,
     observed_usage: CompactObservedUsage,
     terminal: Option<ReplayTerminalStatus>,
     metadata: RequestMetricMetadata,
@@ -497,6 +499,27 @@ impl PendingRequest {
             .as_deref()
             .copied()
             .unwrap_or_default();
+        let mut metric_overrides = Vec::with_capacity(2);
+        if terminal == ReplayTerminalStatus::Completed {
+            if let Some(value) = self
+                .round_trip_metrics
+                .and_then(|metrics| metrics.last_send_to_last_content_ns)
+                .filter(|value| *value >= 0)
+            {
+                metric_overrides.push((
+                    MetricTag::TimeToLastRoundTrip,
+                    MetricValue::Finite(value as f64),
+                ));
+            }
+            if let Some(value) = self
+                .round_trip_metrics
+                .and_then(|metrics| metrics.mean_timestamp_lag_ns)
+                .filter(|value| value.is_finite() && *value >= 0.0)
+            {
+                metric_overrides
+                    .push((MetricTag::AverageRoundTripTime, MetricValue::Finite(value)));
+            }
+        }
         RecordIngest {
             request_index: self.metadata.request_index.or(Some(ordinal as usize)),
             // Assigned by the coordinator's issuer after the worker join, not here: a
@@ -590,7 +613,7 @@ impl PendingRequest {
             num_images: endpoint_metrics.num_images.map(|value| value as u64),
             video_inference_seconds: endpoint_metrics.video_inference_seconds,
             video_peak_memory_mb: endpoint_metrics.video_peak_memory_mb,
-            metric_overrides: Vec::new(),
+            metric_overrides,
         }
     }
 }
@@ -643,6 +666,7 @@ impl RequestObserver for NativeMetricsObserver {
                 reasoning_tokens: 0,
                 first_output_token_ns: None,
                 endpoint_metrics: None,
+                round_trip_metrics: None,
                 observed_usage: CompactObservedUsage::default(),
                 terminal: None,
                 metadata,
@@ -720,6 +744,12 @@ impl RequestObserver for NativeMetricsObserver {
         }
     }
 
+    fn on_round_trip_metrics(&self, uuid: Uuid, metrics: ObservedRoundTripMetrics) {
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
+            request.round_trip_metrics = Some(metrics);
+        }
+    }
+
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
         let terminal_ns = self.relative_now_ns();
         let mut state = self.state.borrow_mut();
@@ -791,6 +821,12 @@ impl RequestObserver for ObserverTee {
         }
     }
 
+    fn on_round_trip_metrics(&self, uuid: Uuid, metrics: ObservedRoundTripMetrics) {
+        for delegate in &self.delegates {
+            delegate.on_round_trip_metrics(uuid, metrics);
+        }
+    }
+
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
         for delegate in &self.delegates {
             delegate.on_terminal(uuid, status);
@@ -817,6 +853,79 @@ mod tests {
         assert_eq!(request.token_arrivals_ns, [1_000_000, 2_500_000, 4_000_000]);
         assert_eq!(request.output_tokens, 3);
         assert_eq!(request.first_output_token_ns, Some(1_000_000));
+    }
+
+    #[test]
+    fn round_trip_facts_are_recorded_only_for_completed_requests() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock, 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(100);
+        observer.on_arrival(uuid, 0.0, 4, 2);
+        observer.on_round_trip_metrics(
+            uuid,
+            ObservedRoundTripMetrics {
+                last_send_to_last_content_ns: Some(300_000_000),
+                mean_timestamp_lag_ns: Some(250_000_000.5),
+            },
+        );
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+
+        let record = observer.snapshot_record(uuid, 0).unwrap();
+        assert_eq!(
+            record.metric_overrides,
+            vec![
+                (
+                    MetricTag::TimeToLastRoundTrip,
+                    MetricValue::Finite(300_000_000.0),
+                ),
+                (
+                    MetricTag::AverageRoundTripTime,
+                    MetricValue::Finite(250_000_000.5),
+                ),
+            ]
+        );
+
+        let failed = Uuid::from_u128(101);
+        observer.on_arrival(failed, 0.0, 4, 2);
+        observer.on_round_trip_metrics(
+            failed,
+            ObservedRoundTripMetrics {
+                last_send_to_last_content_ns: Some(1),
+                mean_timestamp_lag_ns: Some(1.0),
+            },
+        );
+        observer.on_terminal(failed, ReplayTerminalStatus::Failed);
+        assert!(
+            observer
+                .snapshot_record(failed, 1)
+                .unwrap()
+                .metric_overrides
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn invalid_round_trip_facts_remain_absent() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock, 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(102);
+        observer.on_arrival(uuid, 0.0, 4, 2);
+        observer.on_round_trip_metrics(
+            uuid,
+            ObservedRoundTripMetrics {
+                last_send_to_last_content_ns: Some(-1),
+                mean_timestamp_lag_ns: Some(f64::NAN),
+            },
+        );
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+
+        assert!(
+            observer
+                .snapshot_record(uuid, 0)
+                .unwrap()
+                .metric_overrides
+                .is_empty()
+        );
     }
 
     #[test]

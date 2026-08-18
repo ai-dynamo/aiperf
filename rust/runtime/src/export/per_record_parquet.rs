@@ -619,6 +619,8 @@ mod tests {
             metrics: BTreeMap::from([
                 ("request_latency".to_string(), 10.0),
                 ("time_to_first_token".to_string(), 5.0),
+                ("time_to_last_round_trip".to_string(), 300.0),
+                ("avg_round_trip_time".to_string(), 250.0),
             ]),
             ..PerRecordRow::default()
         }
@@ -655,6 +657,8 @@ mod tests {
         // Common per-record metrics are present; hidden/aggregate ones are not.
         assert!(tags.contains(&"request_latency"));
         assert!(tags.contains(&"time_to_first_token"));
+        assert!(tags.contains(&"time_to_last_round_trip"));
+        assert!(tags.contains(&"avg_round_trip_time"));
         // request_count is an aggregate (not a Record metric) — never a column.
         assert!(!tags.contains(&"request_count"));
         // Every metric carries a non-empty unit for the aiperf.units metadata.
@@ -710,6 +714,12 @@ mod tests {
         let latency = column::<Float64Array>(&batch, "request_latency");
         assert_eq!(latency.value(0), 10.0);
         assert!(latency.is_null(1), "cancelled row has no request_latency");
+        let last = column::<Float64Array>(&batch, "time_to_last_round_trip");
+        assert_eq!(last.value(0), 300.0);
+        assert!(last.is_null(1));
+        let average = column::<Float64Array>(&batch, "avg_round_trip_time");
+        assert_eq!(average.value(0), 250.0);
+        assert!(average.is_null(1));
 
         // Error tail.
         let code = column::<Int64Array>(&batch, "error_code");

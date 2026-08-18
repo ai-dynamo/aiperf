@@ -295,6 +295,10 @@ fn normalize_endpoint_name(name: &str) -> String {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EndpointRequestMaterializer;
 
+/// Build one handle-free WebSocket operation while its segment store is available.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WsRequestMaterializer;
+
 /// Select a complete prebuilt body via [`Turn::body`] and its segment domain.
 /// A `raw`-domain `body[0]` is dispatched byte-for-byte without endpoint
 /// formatting; a `message`- or
@@ -602,6 +606,101 @@ impl RequestMaterializer for EndpointRequestMaterializer {
             extracted,
         })
     }
+}
+
+impl RequestMaterializer for WsRequestMaterializer {
+    fn materialize(
+        &self,
+        _session: &ConversationSession,
+        _endpoint: &dyn Endpoint,
+        _model_endpoint: &ModelEndpoint,
+        _phase: CreditPhase,
+        _overrides: &Overrides,
+    ) -> Result<MaterializedRequest> {
+        Err(DatasetError::Validation(
+            "WebSocket execution requires a prepared endpoint binding".to_owned(),
+        ))
+    }
+
+    fn materialize_prepared(
+        &self,
+        session: &ConversationSession,
+        endpoint: &dyn PreparedEndpoint,
+        primary_model_name: &str,
+        phase: CreditPhase,
+        overrides: &Overrides,
+    ) -> Result<MaterializedRequest> {
+        materialize_websocket_prepared(session, endpoint, primary_model_name, phase, overrides)
+    }
+}
+
+fn materialize_websocket_prepared(
+    session: &ConversationSession,
+    endpoint: &dyn PreparedEndpoint,
+    primary_model_name: &str,
+    phase: CreditPhase,
+    overrides: &Overrides,
+) -> Result<MaterializedRequest> {
+    let (conversation, current, turn_index) = session.current()?;
+    let store = session.dataset.segments().as_ref();
+    if raw_body_handle(current, store)?.is_some() {
+        return Err(DatasetError::Validation(
+            "WebSocket request materialization does not accept opaque raw request bodies"
+                .to_owned(),
+        ));
+    }
+    let turns = session.endpoint_turns(store, false)?;
+    let system_message = resolve_prompt(store, conversation.system)?;
+    let user_context_message = resolve_prompt(store, conversation.user_context)?;
+    let request = PreparedRequest::new(
+        primary_model_name,
+        &turns,
+        system_message.as_deref(),
+        user_context_message.as_deref(),
+        phase,
+        None,
+        None,
+        Some(session.conversation_id().as_str()),
+    );
+    let plan = endpoint.format_payload(&request)?;
+    let (effective, _) = effective_from_plan(
+        &plan,
+        current,
+        primary_model_name,
+        endpoint.config().streaming(),
+        endpoint.descriptor().supports_streaming,
+        overrides,
+    )?;
+    let operation = endpoint.prepare_ws_operation(&request, &plan, store, overrides)?;
+    let mut headers = endpoint.headers().clone();
+    headers.extend(raw_string_map(
+        store,
+        current.extra_headers,
+        "extra_headers",
+    )?);
+    Ok(MaterializedRequest {
+        body: RequestBody::WebSocket(Arc::new(operation)),
+        headers,
+        parameters: raw_string_map(store, current.request_parameters, "request_parameters")?,
+        endpoint: current.endpoint.clone(),
+        endpoint_path: endpoint
+            .config()
+            .as_raw()
+            .path
+            .clone()
+            .or_else(|| endpoint.descriptor().endpoint_path.map(str::to_string)),
+        model: effective.model,
+        max_tokens: effective.max_tokens,
+        streaming: effective.streaming,
+        input_tokens: session.input_tokens(store)?,
+        raw_token_ids: None,
+        audio_duration_seconds: current.audio_duration_seconds,
+        image_count: session.known_image_count(turn_index, overrides),
+        accuracy: conversation.accuracy.clone(),
+        turn_index,
+        is_final_turn: turn_index + 1 == conversation.turns.len(),
+        extracted: None,
+    })
 }
 
 /// Request materializer for simulator backends that consume stored trace hash
@@ -3280,6 +3379,47 @@ mod tests {
             .body
             .to_wire()
             .unwrap()
+    }
+
+    #[test]
+    fn websocket_materialization_resolves_handles_and_applies_overrides_before_dispatch() {
+        let mut pool = SegmentPool::new();
+        let turn = text_turn(&mut pool, b"hello world", true, false);
+        let dataset = Arc::new(single_conversation_dataset(
+            ConversationContextMode::MessageArrayWithResponses,
+            vec![turn],
+            pool,
+        ));
+        let endpoint = prepare_endpoint("responses");
+        let mut session = ConversationSession::new(dataset, SessionId::from("session")).unwrap();
+        session.advance_to(0).unwrap();
+        let mut overrides = Overrides::new();
+        overrides.set_model("override-model");
+
+        let request = session
+            .materialize_prepared(
+                &WsRequestMaterializer,
+                endpoint.as_ref(),
+                "primary-model",
+                CreditPhase::Profiling,
+                &overrides,
+            )
+            .unwrap();
+        let operation = request.body.websocket().unwrap();
+        let event: Value = serde_json::from_slice(operation.messages()[0].payload()).unwrap();
+        let fallback: Value = serde_json::from_slice(
+            operation
+                .http_sse_fallback_body()
+                .expect("Responses prepares an equivalent HTTP/SSE request"),
+        )
+        .unwrap();
+
+        assert_eq!(request.model, "override-model");
+        assert_eq!(event["type"], "response.create");
+        assert_eq!(event["model"], "override-model");
+        assert_eq!(event["input"][0]["content"], "hello world");
+        assert_eq!(fallback["model"], "override-model");
+        assert_eq!(fallback["input"][0]["content"], "hello world");
     }
 
     #[test]

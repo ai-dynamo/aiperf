@@ -18,7 +18,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::body_plan::BodyPlan;
+use crate::body_plan::{BodyPlan, PreparedWsOperation};
+use crate::dataset::materialize::Overrides;
+use crate::dataset::segment::SegmentStore;
 use crate::endpoints::DynosimEndpointFactory;
 use crate::endpoints::MessagesEndpoint;
 use crate::endpoints::VllmGenerateFactory;
@@ -310,6 +312,22 @@ pub trait PreparedEndpointBehavior: Endpoint {
         config: &RawEndpointConfig,
     ) -> EndpointResult<BodyPlan>;
 
+    /// Lower one request into complete WebSocket application messages while the
+    /// segment store is still available.
+    fn prepare_ws_operation(
+        &self,
+        _request: &PreparedRequest<'_>,
+        _config: &RawEndpointConfig,
+        _body: &BodyPlan,
+        _store: &dyn SegmentStore,
+        _overrides: &Overrides,
+    ) -> EndpointResult<PreparedWsOperation> {
+        Err(EndpointError::InvalidConfig(format!(
+            "endpoint {:?} does not support the websocket transport",
+            self.descriptor().id
+        )))
+    }
+
     /// See [`PreparedEndpoint::renders_all_turns`].
     fn renders_all_turns(&self) -> bool {
         false
@@ -391,6 +409,21 @@ pub trait PreparedEndpoint: fmt::Debug {
 
     /// Build a request-body plan the shared materializer splices into wire bytes.
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan>;
+
+    /// Lower one request into complete WebSocket application messages while the
+    /// segment store is still available.
+    fn prepare_ws_operation(
+        &self,
+        _request: &PreparedRequest<'_>,
+        _body: &BodyPlan,
+        _store: &dyn SegmentStore,
+        _overrides: &Overrides,
+    ) -> EndpointResult<PreparedWsOperation> {
+        Err(EndpointError::InvalidConfig(format!(
+            "endpoint {:?} does not support the websocket transport",
+            self.descriptor().id
+        )))
+    }
 
     /// Whether the body is the concatenation of every turn handed to the
     /// formatter, rather than a selection from them.
@@ -558,6 +591,17 @@ where
     fn format_payload(&self, request: &PreparedRequest<'_>) -> EndpointResult<BodyPlan> {
         self.endpoint
             .format_prepared_payload(request, self.config.as_raw())
+    }
+
+    fn prepare_ws_operation(
+        &self,
+        request: &PreparedRequest<'_>,
+        body: &BodyPlan,
+        store: &dyn SegmentStore,
+        overrides: &Overrides,
+    ) -> EndpointResult<PreparedWsOperation> {
+        self.endpoint
+            .prepare_ws_operation(request, self.config.as_raw(), body, store, overrides)
     }
 
     fn renders_all_turns(&self) -> bool {

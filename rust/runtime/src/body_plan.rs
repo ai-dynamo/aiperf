@@ -623,6 +623,8 @@ pub enum RequestBody {
     /// handle-bearing plans, so no [`Handle`] ever crosses the boundary without
     /// its store.
     Plan(std::sync::Arc<BodyPlan>),
+    /// Complete application messages consumed only by the WebSocket transport.
+    WebSocket(std::sync::Arc<PreparedWsOperation>),
     /// A decoded body supplied by a caller that never had a plan (accuracy
     /// benchmarks, the skeleton workload). Boxed to keep the enum small;
     /// `size_of::<serde_json::Value>()` is several times a `Bytes`.
@@ -654,6 +656,14 @@ impl RequestBody {
         }
     }
 
+    /// The complete WebSocket application-message plan, when selected.
+    pub fn websocket(&self) -> Option<&PreparedWsOperation> {
+        match self {
+            Self::WebSocket(plan) => Some(plan),
+            _ => None,
+        }
+    }
+
     /// Assemble JSON bytes. [`Wire`](Self::Wire) returns a refcount clone;
     /// [`Plan`](Self::Plan) runs the JSON emitter against the empty store its
     /// store-freeness guarantees. Used by dispatch, record capture,
@@ -662,6 +672,9 @@ impl RequestBody {
         match self {
             Self::Wire(bytes) => Ok(bytes.clone()),
             Self::Plan(plan) => plan.materialize_standalone(),
+            Self::WebSocket(_) => Err(DatasetError::Validation(
+                "a WebSocket request body cannot be materialized as HTTP wire bytes".into(),
+            )),
             // Right-sized before `Bytes::from` for the same reason
             // `LiteralValue::new` does it: the `Vec` path otherwise retains the
             // doubling slack and pays a `Shared` allocation.
@@ -696,8 +709,97 @@ impl RequestBody {
             // right-sizing rationale documented in exactly one place. Matched by
             // name rather than `_` so a future owned-bytes variant fails to
             // compile here instead of silently taking the cloning path.
-            other @ (Self::Plan(_) | Self::Value(_)) => other.to_wire(),
+            other @ (Self::Plan(_) | Self::Value(_) | Self::WebSocket(_)) => other.to_wire(),
         }
+    }
+}
+
+/// WebSocket application opcode selected by an endpoint dialect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreparedWsOpcode {
+    /// A UTF-8 text application message.
+    Text,
+    /// An opaque binary application message.
+    Binary,
+}
+
+/// Logical role of one complete WebSocket application message.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreparedWsMessageRole {
+    /// Request-scoped input that contributes to application-event timing.
+    MeasuredInput,
+    /// Session or protocol control message excluded from timing.
+    Control,
+    /// Terminal acknowledgement excluded from timing.
+    TerminalAck,
+}
+
+/// One immutable complete application message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedWsMessage {
+    opcode: PreparedWsOpcode,
+    payload: Bytes,
+    role: PreparedWsMessageRole,
+}
+
+impl PreparedWsMessage {
+    /// Build an application message with the endpoint-selected opcode.
+    pub fn new(opcode: PreparedWsOpcode, payload: Bytes, role: PreparedWsMessageRole) -> Self {
+        Self {
+            opcode,
+            payload,
+            role,
+        }
+    }
+
+    /// Build a text application message.
+    pub fn text(payload: Bytes, role: PreparedWsMessageRole) -> Self {
+        Self::new(PreparedWsOpcode::Text, payload, role)
+    }
+
+    /// Return the endpoint-selected application opcode.
+    pub fn opcode(&self) -> PreparedWsOpcode {
+        self.opcode
+    }
+
+    /// Borrow the complete immutable message payload.
+    pub fn payload(&self) -> &Bytes {
+        &self.payload
+    }
+
+    /// Return how this message participates in request timing.
+    pub fn role(&self) -> PreparedWsMessageRole {
+        self.role
+    }
+}
+
+/// Immutable, store-free application messages for one WebSocket operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedWsOperation {
+    messages: std::sync::Arc<[PreparedWsMessage]>,
+    http_sse_fallback_body: Option<Bytes>,
+}
+
+impl PreparedWsOperation {
+    /// Freeze application messages and an optional independently prepared HTTP/SSE body.
+    pub fn new(
+        messages: impl IntoIterator<Item = PreparedWsMessage>,
+        http_sse_fallback_body: Option<Bytes>,
+    ) -> Self {
+        Self {
+            messages: messages.into_iter().collect(),
+            http_sse_fallback_body,
+        }
+    }
+
+    /// Borrow the complete application messages in send order.
+    pub fn messages(&self) -> &[PreparedWsMessage] {
+        &self.messages
+    }
+
+    /// Borrow the equivalent HTTP/SSE request body when the dialect prepared one.
+    pub fn http_sse_fallback_body(&self) -> Option<&Bytes> {
+        self.http_sse_fallback_body.as_ref()
     }
 }
 
@@ -2010,6 +2112,26 @@ mod tests {
                 BodyPlan::new().array("messages", [handle])
             ))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn websocket_body_is_handle_free_and_not_http_wire() {
+        let operation = PreparedWsOperation::new(
+            [PreparedWsMessage::text(
+                Bytes::from_static(br#"{"type":"response.create"}"#),
+                PreparedWsMessageRole::MeasuredInput,
+            )],
+            Some(Bytes::from_static(br#"{"model":"test"}"#)),
+        );
+        let body = RequestBody::WebSocket(std::sync::Arc::new(operation));
+
+        assert!(body.to_wire().is_err());
+        let operation = body.websocket().unwrap();
+        assert_eq!(operation.messages().len(), 1);
+        assert_eq!(
+            operation.http_sse_fallback_body(),
+            Some(&Bytes::from_static(br#"{"model":"test"}"#))
         );
     }
 

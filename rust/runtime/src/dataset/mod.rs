@@ -68,6 +68,7 @@ pub use prompt::{
 pub use request::{
     BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,
     MaterializedRequest, RequestMaterializer, TraceHashAwareRequestMaterializer,
+    WsRequestMaterializer,
 };
 pub use runtime_dataset as dataset;
 pub use runtime_dataset::{Dataset, DatasetMetadata, TurnEndpointLookup};

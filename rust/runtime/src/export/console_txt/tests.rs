@@ -370,6 +370,54 @@ fn full_render_regression() {
     assert_regression("full_render", &text);
 }
 
+#[test]
+fn websocket_lag_rows_render_only_when_present() {
+    let mut report = empty_report();
+    report.metrics.insert(
+        "time_to_last_round_trip".to_string(),
+        dist_entry("ms", 300.0),
+    );
+    report
+        .metrics
+        .insert("avg_round_trip_time".to_string(), dist_entry("ms", 250.0));
+    let metrics = BTreeMap::from([
+        (
+            "time_to_last_round_trip".to_string(),
+            ConsoleMetricMeta {
+                header: "Time to Last Round Trip".to_string(),
+                group: "default".to_string(),
+                display_order: Some(220),
+                internal: false,
+                experimental: false,
+                error_only: false,
+            },
+        ),
+        (
+            "avg_round_trip_time".to_string(),
+            ConsoleMetricMeta {
+                header: "Average Round Trip Time".to_string(),
+                group: "default".to_string(),
+                display_order: Some(230),
+                internal: false,
+                experimental: false,
+                error_only: false,
+            },
+        ),
+    ]);
+    let cfg = ConsoleTxtExportConfig {
+        enabled: true,
+        width: 140,
+        dev: false,
+        title: "NVIDIA AIPerf | LLM Metrics".to_string(),
+        metrics,
+    };
+
+    let text = render_console_txt(&report, &cfg);
+    assert!(text.contains("Time to Last Round Trip (ms)"));
+    assert!(text.contains("Average Round Trip Time (ms)"));
+    assert!(!render_console_txt(&empty_report(), &cfg).contains("Round Trip"));
+}
+
 // ---------------------------------------------------------------------------
 // Unicode cell-width parity (Rich `cells.cell_len` / `_cell_widths`)
 // ---------------------------------------------------------------------------

@@ -66,6 +66,15 @@ pub struct ObservedEndpointMetrics {
     pub video_peak_memory_mb: Option<f64>,
 }
 
+/// Terminal application-event lag facts emitted by a WebSocket operation.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ObservedRoundTripMetrics {
+    /// Last content event minus the final flushed measured-input event, in ns.
+    pub last_send_to_last_content_ns: Option<i64>,
+    /// Difference between content and input timestamp means, in ns.
+    pub mean_timestamp_lag_ns: Option<f64>,
+}
+
 /// Measurement hook fed by any sink. Timestamps are milliseconds relative to
 /// run start. The observer is intentionally local-loop friendly: it has no
 /// `Send`/`Sync` supertraits, so thread-per-core workers can accumulate through
@@ -115,6 +124,8 @@ pub trait RequestObserver {
     /// The default is a no-op so token-only transports and observers do not pay
     /// for modality handling.
     fn on_endpoint_metrics(&self, _uuid: Uuid, _metrics: ObservedEndpointMetrics) {}
+    /// Record transport-computed application-event lag facts before terminal status.
+    fn on_round_trip_metrics(&self, _uuid: Uuid, _metrics: ObservedRoundTripMetrics) {}
     /// Record terminal status for the request.
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus);
 }

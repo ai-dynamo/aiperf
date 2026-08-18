@@ -12,3 +12,5 @@ pub mod http;
 pub(crate) mod measure;
 pub(crate) mod reduce;
 pub(crate) mod retry;
+#[cfg(feature = "websocket")]
+pub mod ws;

@@ -1478,6 +1478,43 @@ mod tests {
     }
 
     #[test]
+    fn websocket_lag_metrics_are_optional_native_distributions() {
+        let mut accumulator = MetricsAccumulator::new();
+        let mut measured = RecordIngest::minimal(0, 500_000_000, Phase::Profiling);
+        measured.metric_overrides = vec![
+            (
+                MetricTag::TimeToLastRoundTrip,
+                MetricValue::Finite(300_000_000.0),
+            ),
+            (
+                MetricTag::AverageRoundTripTime,
+                MetricValue::Finite(250_000_000.5),
+            ),
+        ];
+        accumulator.process_record(&measured);
+        accumulator.process_record(&RecordIngest::minimal(
+            600_000_000,
+            700_000_000,
+            Phase::Profiling,
+        ));
+
+        let value =
+            serde_json::to_value(NativeReport::new(&accumulator.summarize(), None)).unwrap();
+        let last = &value["metrics"]["time_to_last_round_trip"];
+        let average = &value["metrics"]["avg_round_trip_time"];
+        assert_eq!(last["unit"], "ms");
+        assert_eq!(last["series"][0]["stats"]["count"], 1);
+        assert_eq!(last["series"][0]["stats"]["avg"], 300.0);
+        assert_eq!(average["series"][0]["stats"]["count"], 1);
+        assert_eq!(average["series"][0]["stats"]["avg"], 250.0000005);
+
+        let empty =
+            serde_json::to_value(NativeReport::new(&AccumulatorSummary::new(), None)).unwrap();
+        assert!(empty["metrics"].get("time_to_last_round_trip").is_none());
+        assert!(empty["metrics"].get("avg_round_trip_time").is_none());
+    }
+
+    #[test]
     fn coordinator_finalization_flattens_common_and_pair_facts_into_run() {
         let run_metadata = ReportRunMetadata::new(
             format!("blake3:{}", "a".repeat(64)),

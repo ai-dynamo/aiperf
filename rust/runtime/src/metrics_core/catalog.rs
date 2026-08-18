@@ -144,14 +144,14 @@ pub enum MetricTag {
     ActiveImageSamplesPerSecond,
     EffectiveImageSamplesPerSecondPerUser,
     ActiveTotalThroughput,
+    TimeToLastRoundTrip,
+    AverageRoundTripTime,
 }
 
 impl MetricTag {
-    /// Number of distinct tags. The variants are declared contiguously from
-    /// discriminant 0, so `ActiveTotalThroughput` (the last) plus one is the
-    /// dense column count. A reordering that makes it no longer last would only
-    /// oversize the backing array, never index out of bounds.
-    pub const COUNT: usize = MetricTag::ActiveTotalThroughput as usize + 1;
+    /// Number of distinct tags. Variants are contiguous from discriminant zero,
+    /// and new identities append at the tail so existing dense columns remain stable.
+    pub const COUNT: usize = MetricTag::AverageRoundTripTime as usize + 1;
 
     /// Dense array index for this tag — its zero-based declaration discriminant.
     #[inline(always)]
@@ -176,6 +176,8 @@ impl MetricTag {
             Self::TimeToFirstToken => "time_to_first_token",
             Self::TimeToSecondToken => "time_to_second_token",
             Self::TimeToFirstOutputToken => "time_to_first_output_token",
+            Self::TimeToLastRoundTrip => "time_to_last_round_trip",
+            Self::AverageRoundTripTime => "avg_round_trip_time",
             Self::InterTokenLatency => "inter_token_latency",
             Self::DecodeDuration => "decode_duration",
             Self::InterChunkLatency => "inter_chunk_latency",
@@ -545,6 +547,8 @@ const fn cfg_short_header(tag: MetricTag) -> Option<&'static str> {
         RequestedOutputSequenceLength => Some("Req OSL"),
         Rtfx => Some("RTFx"),
         TimeToFirstOutputToken => Some("TTFO"),
+        TimeToLastRoundTrip => Some("Last Round Trip"),
+        AverageRoundTripTime => Some("Avg Round Trip"),
         TimeToFirstToken => Some("TTFT"),
         TimeToSecondToken => Some("TTST"),
         TotalErrorInputSequenceLength => Some("Total Error ISL"),
@@ -664,6 +668,8 @@ const fn cfg_display_unit(tag: MetricTag) -> Option<Unit> {
         | TimeToFirstToken
         | TimeToSecondToken
         | TimeToFirstOutputToken
+        | TimeToLastRoundTrip
+        | AverageRoundTripTime
         | InterTokenLatency
         | InterChunkLatency
         | DecodeDuration
@@ -734,6 +740,8 @@ const fn cfg_display_order(tag: MetricTag) -> Option<u32> {
         RequestThroughput => Some(900),
         Rtfx => Some(850),
         TimeToFirstOutputToken => Some(210),
+        TimeToLastRoundTrip => Some(220),
+        AverageRoundTripTime => Some(230),
         TimeToFirstToken => Some(100),
         TimeToSecondToken => Some(200),
         TotalGpuEnergy => Some(901),
@@ -881,6 +889,7 @@ const fn cfg_value_type(tag: MetricTag) -> MetricValueType {
         | TimeToFirstToken
         | TimeToSecondToken
         | TimeToFirstOutputToken
+        | TimeToLastRoundTrip
         | OutputSequenceLength
         | InputSequenceLength
         | OutputTokenCount
@@ -2135,6 +2144,24 @@ pub static CATALOG: [MetricSpec; MetricTag::COUNT] = [
         MetricFlags::NO_INDIVIDUAL_RECORDS.union(MetricFlags::LARGER_IS_BETTER),
         []
     ),
+    spec!(
+        TimeToLastRoundTrip,
+        "Time to Last Round Trip",
+        Nanosecond,
+        Record,
+        None,
+        MetricFlags::NONE,
+        []
+    ),
+    spec!(
+        AverageRoundTripTime,
+        "Average Round Trip Time",
+        Nanosecond,
+        Record,
+        None,
+        MetricFlags::NONE,
+        []
+    ),
 ];
 
 /// Returns the [`Definition`] for `tag` in O(1).
@@ -2332,6 +2359,18 @@ mod tests {
     }
 
     #[test]
+    fn websocket_lag_tags_append_after_existing_dense_identities() {
+        assert_eq!(
+            MetricTag::TimeToLastRoundTrip as usize,
+            MetricTag::ActiveTotalThroughput as usize + 1
+        );
+        assert_eq!(
+            MetricTag::AverageRoundTripTime as usize,
+            MetricTag::ActiveTotalThroughput as usize + 2
+        );
+    }
+
+    #[test]
     fn metric_definition_matches_catalog() {
         for s in CATALOG.iter() {
             assert!(std::ptr::eq(metric_definition(s.tag), &s.def));
@@ -2356,7 +2395,7 @@ mod tests {
         // Updated 2026-07-25: removed the legacy `plot_direction` MetricSpec field;
         // direction now derives from `def.larger_is_better`, which the fingerprint
         // hashes in its place (Task 7 of the definition-registry feature).
-        assert_eq!(catalog_fingerprint(), 8_467_953_495_543_639_765);
+        assert_eq!(catalog_fingerprint(), 4_395_760_333_607_761_587);
     }
 
     #[test]
