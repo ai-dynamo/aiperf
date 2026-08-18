@@ -18,7 +18,7 @@ use tokio::process::{Child, ChildStdout, Command};
 use tokio::sync::Mutex;
 
 use crate::clock::Clock;
-use crate::graph::driver::TraceIdentity;
+use crate::graph::driver::{TraceAgentInvocationContext, TraceIdentity};
 use crate::graph::replay::ReplayRunIdentity;
 
 use super::{
@@ -369,13 +369,13 @@ impl ToolDispatcher for DeferredNativeToolDispatcher {
                     ))
                 }
             }
-            ToolExecutionBackend::Docker => Rc::new(DockerSessionSandbox::new(
+            ToolExecutionBackend::Docker => Rc::new(DockerSessionSandbox::new_for_invocation(
                 environment.clone(),
                 provisioned_workspace
                     .as_ref()
                     .map(|workspace| workspace.root.clone()),
                 context.trace.clone(),
-                context.run_identity.clone(),
+                context.invocation.clone(),
                 context.clock.clone(),
                 (self.runtime)(context.clock.clone()),
                 self.output_limit,
@@ -465,6 +465,38 @@ impl ContainerCreateSpec {
         trace: &TraceIdentity,
         run_identity: &ReplayRunIdentity,
     ) -> Result<Self, ToolSandboxError> {
+        Self::from_cleanup_label(
+            environment,
+            workspace_root,
+            trace,
+            run_identity.label(),
+            "aiperf-recorded-agent",
+        )
+    }
+
+    /// Compose a Docker creation contract from a trace-local invocation scope.
+    pub fn from_invocation(
+        environment: &ResolvedTraceEnvironment,
+        workspace_root: Option<PathBuf>,
+        trace: &TraceIdentity,
+        invocation: &TraceAgentInvocationContext,
+    ) -> Result<Self, ToolSandboxError> {
+        Self::from_cleanup_label(
+            environment,
+            workspace_root,
+            trace,
+            invocation.cleanup_label(),
+            "aiperf-native-graph-agent",
+        )
+    }
+
+    fn from_cleanup_label(
+        environment: &ResolvedTraceEnvironment,
+        workspace_root: Option<PathBuf>,
+        trace: &TraceIdentity,
+        cleanup_label: &str,
+        container_name_prefix: &str,
+    ) -> Result<Self, ToolSandboxError> {
         let mut mounts = Vec::new();
         if environment.workspace.mount_workspace {
             let root = workspace_root.ok_or_else(|| {
@@ -477,15 +509,15 @@ impl ContainerCreateSpec {
                 container_path: environment.workspace.workdir.clone(),
             });
         }
-        let label = run_identity.label().trim();
+        let label = cleanup_label.trim();
         if label.is_empty() {
             return Err(ToolSandboxError::new(
-                "Docker replay cleanup requires a nonempty run label",
+                "Docker cleanup requires a nonempty invocation label",
             ));
         }
         let sequence = CONTAINER_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let trace_slug = sanitize_container_component(&trace.trace_id);
-        let name = format!("aiperf-recorded-agent-{trace_slug}-{sequence:x}");
+        let name = format!("{container_name_prefix}-{trace_slug}-{sequence:x}");
         Ok(Self {
             image: environment.image.clone(),
             name,
@@ -959,6 +991,33 @@ impl DockerSessionSandbox {
             workspace_root,
             &trace,
             &run_identity,
+        )?;
+        Ok(Self {
+            environment,
+            create_spec,
+            clock,
+            runtime,
+            output_limit,
+            container: RefCell::new(ContainerState::Idle),
+            command_gate: Mutex::new(()),
+        })
+    }
+
+    /// Construct one sandbox from a non-replay trace invocation scope.
+    pub fn new_for_invocation(
+        environment: ResolvedTraceEnvironment,
+        workspace_root: Option<PathBuf>,
+        trace: TraceIdentity,
+        invocation: TraceAgentInvocationContext,
+        clock: Rc<dyn Clock>,
+        runtime: Rc<dyn ContainerRuntime>,
+        output_limit: usize,
+    ) -> Result<Self, ToolSandboxError> {
+        let create_spec = ContainerCreateSpec::from_invocation(
+            &environment,
+            workspace_root,
+            &trace,
+            &invocation,
         )?;
         Ok(Self {
             environment,

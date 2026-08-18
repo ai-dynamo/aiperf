@@ -17,7 +17,7 @@ use futures::future::{AbortHandle, Abortable};
 
 use aiperf_runtime::clock::{Clock, RealClock, SimClock};
 use aiperf_runtime::dataset::SegmentPool;
-use aiperf_runtime::graph::driver::TraceIdentity;
+use aiperf_runtime::graph::driver::{TraceAgentInvocationContext, TraceIdentity};
 use aiperf_runtime::graph::replay::ReplayRunIdentity;
 use aiperf_runtime::graph::replay::{
     ReplayArtifactPaths, ReplayTraceSupplement, ToolCallMeasurement, write_replay_artifacts,
@@ -721,6 +721,7 @@ async fn stock_dispatcher_materializes_pinch_segments_before_mounting_workspace(
         BTreeMap::new(),
         "cache namespace",
     );
+    let invocation = TraceAgentInvocationContext::from_replay(&run_identity, &trace, 0);
 
     dispatcher
         .open_trace(TraceOpenContext {
@@ -729,7 +730,7 @@ async fn stock_dispatcher_materializes_pinch_segments_before_mounting_workspace(
             workspace: Some(&workspace),
             clock: &clock,
             segments: &segments,
-            run_identity: &run_identity,
+            invocation: &invocation,
         })
         .await
         .expect("Pinch workspace is materialized and mounted");
@@ -781,6 +782,7 @@ async fn stock_dispatcher_virtualizes_absolute_workspace_paths_for_local_recipes
     let trace = trace();
     let clock: Rc<dyn Clock> = RealClock::new();
     let run_identity = ReplayRunIdentity::mint(RngRoot::new(Some(31)), "local-product");
+    let invocation = TraceAgentInvocationContext::from_replay(&run_identity, &trace, 0);
     let dispatcher = DockerToolDispatcherFactory::with_runtime_factory(1024, |_| {
         panic!("local recipe must not construct a Docker runtime")
     })
@@ -794,7 +796,7 @@ async fn stock_dispatcher_virtualizes_absolute_workspace_paths_for_local_recipes
             workspace: Some(&workspace),
             clock: &clock,
             segments: &segments,
-            run_identity: &run_identity,
+            invocation: &invocation,
         })
         .await
         .expect("local recipe opens without Docker");
@@ -889,6 +891,7 @@ async fn stock_dispatcher_preserves_swe_heredoc_body_while_rebasing_testbed() {
     let trace = trace();
     let clock: Rc<dyn Clock> = RealClock::new();
     let run_identity = ReplayRunIdentity::mint(RngRoot::new(Some(32)), "local-swe-heredoc");
+    let invocation = TraceAgentInvocationContext::from_replay(&run_identity, &trace, 0);
     let dispatcher = DockerToolDispatcherFactory::with_runtime_factory(1024, |_| {
         panic!("local recipe must not construct a Docker runtime")
     })
@@ -902,7 +905,7 @@ async fn stock_dispatcher_preserves_swe_heredoc_body_while_rebasing_testbed() {
             workspace: Some(&workspace),
             clock: &clock,
             segments: &segments,
-            run_identity: &run_identity,
+            invocation: &invocation,
         })
         .await
         .expect("local SWE recipe opens without Docker");

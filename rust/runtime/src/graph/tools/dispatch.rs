@@ -14,8 +14,7 @@ use bytes::Bytes;
 
 use crate::clock::Clock;
 use crate::dataset::SegmentStore;
-use crate::graph::driver::TraceIdentity;
-use crate::graph::replay::ReplayRunIdentity;
+use crate::graph::driver::{TraceAgentInvocationContext, TraceIdentity};
 
 use super::{
     CommandDisposition, ResolvedTraceEnvironment, ToolCommandPolicy, ToolCommandResult,
@@ -184,8 +183,8 @@ pub struct TraceOpenContext<'a> {
     pub clock: &'a Rc<dyn Clock>,
     /// Frozen graph segments, including staged workspace content.
     pub segments: &'a dyn SegmentStore,
-    /// Controller-persisted replay identity used for cleanup scope.
-    pub run_identity: &'a ReplayRunIdentity,
+    /// Trace-local cleanup and correlation identity.
+    pub invocation: &'a TraceAgentInvocationContext,
 }
 
 /// Per-dispatch policy inputs supplied by the trace owner.

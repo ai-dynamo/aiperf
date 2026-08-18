@@ -30,8 +30,12 @@ The current native Harbor implementation supplies immutable local and
 pinned-Git task acquisition, standard and JSON package import, external and
 installed agent commands, Docker/strict-Compose environments, declared-artifact
 verifier isolation, rewards, lifecycle records, regrade, and a limited ordered
-multi-step layout. The current `aiperf eval` path rejects `NativeGraph` before
-provisioning.
+multi-step layout. Schema-1.1 `NativeGraph` runs one adapter-free standard-task
+episode through the same matrix and verifier path. Its staged driver supports
+source-declared acyclic stages plus bounded model-selected branches, joins,
+loops, and retries; Rust owns the counters, child-workspace leases, selected
+candidate merge, and append-only control receipts. Adapters and externally
+driven graphs remain fail-closed for this slice.
 
 The runtime also supplies native Graph-IR scheduling, state channels, reducers,
 worker-local metrics, trace-local placement, cellular folding, and injected
@@ -228,15 +232,18 @@ aiperf eval --suite <suite.toml> [--model-runtime <model-runtime.toml>]
 ```
 
 The currently runnable vertical slice is deliberately narrower than the full
-suite contract: a standard schema-1.1 `native_graph` task must be acyclic and
-adapter-free, its task and agent Docker networks must both be `no-network`, and
-its caller must provide native-graph lifecycle provenance. Rust performs model
-calls through the selected AIPerf endpoint/transport/tokenizer/observer seams;
-Docker proves `NoAdapterEgress` only for that exact plan. A task becomes one
-resolved, scored matrix trial. `--suite` uses that same path only when exactly
-one resolved trial matches the supplied lifecycle request. Dynamic controls,
-adapters, externally driven graphs, and multi-lifecycle suite provenance are
-typed refusals pending their dedicated contracts.
+suite contract: a standard schema-1.1 `native_graph` task is adapter-free, its
+task and agent Docker networks must both be `no-network`, and its caller must
+provide native-graph lifecycle provenance. It supports source-declared acyclic
+stages plus bounded model-selected branches, joins, loops, and retries through
+the staged driver; Rust validates the declared topology, owns counters and
+invocation workspaces, and emits typed control/merge receipts. Rust performs
+model calls through the selected AIPerf endpoint/transport/tokenizer/observer
+seams; Docker proves `NoAdapterEgress` only for that exact plan. A task becomes
+one resolved, scored matrix trial. `--suite` uses that same path only when
+exactly one resolved trial matches the supplied lifecycle request. Adapters,
+externally driven graphs, and multi-lifecycle suite provenance remain typed
+refusals pending their dedicated contracts.
 
 The importer records both the complete source snapshot and a resolved native
 graph plan. In addition to the complete source digest, the package identity
@@ -325,11 +332,12 @@ endpoint interference, retry policy, invalid denominators, repetitions, and
 multiple-comparison policy are explicit report inputs.
 
 The bounded matrix scheduler is established around the first independently
-scored single-episode vertical slice, before richer branching, RL, compatibility
-capture, or cellular extensions. Those later capabilities enter through the
-same `EpisodeRunner`, resource-lease, stable-order, attempt, and aggregation
-contracts; they do not add alternate direct-execution paths. Cellular execution
-adds a placement and associative-fold implementation to that scheduler shape.
+scored single-episode vertical slice. Bounded dynamic controls enter through
+the same `EpisodeRunner`, resource-lease, stable-order, attempt, and aggregation
+contracts; they do not add alternate direct-execution paths. RL, compatibility
+capture, and cellular extensions remain separate work on those same contracts.
+Cellular execution adds a placement and associative-fold implementation to that
+scheduler shape.
 
 ## Results, verifier, and RL authority
 
@@ -372,11 +380,11 @@ measurement.
    and CLI diagnostics with unsupported schema refusal.
 2. Implement the duplex adapter state machine, bounded artifacts, process
    supervision, and a non-Rust conformance adapter fixture.
-3. Implement the NativeGraph lowerer/executor on the existing graph/endpoint
-   seams, with Rust-owned model dispatch and typed refusal for unsupported nodes.
-4. Put the first scored episode behind bounded parallel suite execution, then
-   implement invocation leases, branch merge policy, fresh/reused adapter
-   semantics, and stable cellular folding through that same scheduler.
+3. Extend the built NativeGraph lowerer/executor only through declared adapter
+   contracts, preserving Rust-owned model dispatch and typed refusal for
+   unsupported nodes.
+4. Extend the bounded scored-episode scheduler with fresh/reused adapter
+   semantics and stable cellular folding through that same scheduler.
 5. Implement verified episode records, proxy fidelity classifications, paired
    comparisons, and RL rollout evaluation. Defer training to a separate plan
    written only after immutable evaluation lineage passes the release gate.

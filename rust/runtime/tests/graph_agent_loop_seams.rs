@@ -8,8 +8,8 @@ use std::rc::Rc;
 
 use aiperf_runtime::graph::agent::{
     AgentInvocationEnvironment, AgentInvocationIdentity, AgentInvocationLeaseFactoryFactory,
-    AgentInvocationRequest, AgentResponseSource, AgentResponseStore, AgentTrajectorySinkFactory,
-    AgentTurn, AgentTurnCoordinator, DelegatedInvocationTerminal,
+    AgentInvocationRequest, AgentInvocationWorkspace, AgentResponseSource, AgentResponseStore,
+    AgentTrajectorySinkFactory, AgentTurn, AgentTurnCoordinator, DelegatedInvocationTerminal,
     InMemoryAgentInvocationLeaseFactoryFactory, InMemoryAgentResponseStore,
     InMemoryAgentTrajectorySink, InMemoryAgentTrajectorySinkFactory,
     InMemoryInvocationLeaseFactory, ResponseSelection, StaticAgentTurnCoordinator,
@@ -48,6 +48,7 @@ async fn fake_live_loop_reuses_original_wire_and_correlates_tool_results() {
                     parent_invocation_id: None,
                 },
                 environment: AgentInvocationEnvironment::Isolated,
+                workspace: AgentInvocationWorkspace::Root,
             },
             None,
         )
@@ -153,6 +154,7 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
             &AgentInvocationRequest {
                 identity: root_identity.clone(),
                 environment: AgentInvocationEnvironment::Isolated,
+                workspace: AgentInvocationWorkspace::Root,
             },
             None,
         )
@@ -173,6 +175,7 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
             &AgentInvocationRequest {
                 identity: child_identity.clone(),
                 environment: AgentInvocationEnvironment::Shared,
+                workspace: AgentInvocationWorkspace::Root,
             },
             Some(root.as_ref()),
         )
@@ -192,6 +195,7 @@ async fn delegated_leases_share_only_the_parent_dispatcher_and_join_in_authored_
                     parent_invocation_id: None,
                 },
                 environment: AgentInvocationEnvironment::Isolated,
+                workspace: AgentInvocationWorkspace::Root,
             },
             None,
         )

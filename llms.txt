@@ -17,12 +17,14 @@ purpose for each, so an agent knows which file to open for a given question.
   (`plot`/`service`/`plugins`) to Python (embedded CPython, or `python -m aiperf`
   in the lean build). `eval` is a native command that imports and executes
   supported Harbor-compatible packages without a Harbor runtime. Schema-1.1
-  NativeGraph evaluation is currently a strict acyclic, adapter-free standard
-  task slice: it requires `--model-runtime` plus native-graph lifecycle
+  NativeGraph evaluation supports source-declared acyclic stages plus bounded
+  model-selected branches, joins, loops, and retries for one adapter-free
+  standard task: it requires `--model-runtime` plus native-graph lifecycle
   provenance, task and agent Docker networks set to `no-network`, host-owned
   AIPerf model transport, and a plan-bound Docker `NoAdapterEgress` proof; it
-  runs as one scored matrix trial. Dynamic controls, adapters, externally
-  driven graphs, and multi-lifecycle suites fail closed.
+  runs as one scored matrix trial with invocation-owned branch workspaces and
+  typed control receipts. Adapters, externally driven graphs, and
+  multi-lifecycle suites fail closed.
   The one `aiperf` binary is BOTH the entry point AND the execution engine — the sole
   executable that dispatches load and owns exactly one benchmark hot path (no separate
   runner binary). The runtime library it links is crate `aiperf-runtime` (`rust/runtime`).

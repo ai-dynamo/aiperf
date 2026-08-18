@@ -26,6 +26,7 @@ pub(crate) use execution::{
     verifier_artifact_target_collision,
 };
 pub(crate) use native_graph::GENERATION_METADATA_KEY;
+pub(crate) use native_graph::NATIVE_GRAPH_LIVE_DRIVER_KIND;
 
 pub use artifact_manifest::{
     ArtifactManifestError, DeclaredArtifactManifest, MaterializedArtifactManifest,
@@ -86,23 +87,23 @@ pub use native_graph::{
     NativeGraphEnvironmentStepperFactory, NativeGraphEpisodeExecutor, NativeGraphEpisodeRunner,
     NativeGraphExternalDriver, NativeGraphExternalDriverFactory, NativeGraphFactoryError,
     NativeGraphFidelityObserver, NativeGraphFidelityObserverFactory,
-    NativeGraphLiveTraceProgramDriverFactory, NativeGraphLowererFactory,
-    NativeGraphLowererProvider, NativeGraphLoweringError, NativeGraphLoweringReport,
-    NativeGraphModelBindingResolver, NativeGraphModelStageError, NativeGraphNodeFidelity,
-    NativeGraphNodeLowering, NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource,
-    NativeGraphProviderRecoveryFactory, NativeGraphSuiteDefinition, NativeGraphSuiteManifest,
-    NativeGraphSuiteScheduler, ObservedNativeGraphTransportEvidence, PROTOCOL_VERSION,
-    PackageNativeGraphLowererProvider, ProtocolAdapterRuntimeFactory, ProtocolCapability,
-    ProtocolError, ProtocolLimits, ProtocolOperationState, ProtocolSessionState,
-    RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, ReservedNativeGraphBranch,
-    ReservedNativeGraphJoin, ReservedNativeGraphLoop, ResolvedEpisodeTrial, ResolvedModelBinding,
-    ResolvedModelBindingSet, ResolvedNativeGraphSuite, ResolvedTokenizerBinding,
-    ResourceLeaseRequest, ResourceLimits, SelectedModelBinding, StrictAdapterProtocolFactory,
-    StrictAdapterRuntimeProvider, StrictSupervisedAdapter, SuiteError, SuiteRunId,
-    SuiteSchedulerFactory, SuiteTrialSpec, SupervisedAdapter, TokenizerBindingSpec,
-    ValidatedAdapterMessage, ValidatedHostMessage, aggregate_episode_results, lower_native_graph,
-    parse_native_graph_suite_toml, run_resolved_suite, select_native_graph_scheduler,
-    validate_native_graph_trace_plan,
+    NativeGraphLiveAgentLoopFactories, NativeGraphLiveTraceProgramDriverFactory,
+    NativeGraphLowererFactory, NativeGraphLowererProvider, NativeGraphLoweringError,
+    NativeGraphLoweringReport, NativeGraphModelBindingResolver, NativeGraphModelStageError,
+    NativeGraphNodeFidelity, NativeGraphNodeLowering, NativeGraphPackagePlan, NativeGraphProfile,
+    NativeGraphProgramSource, NativeGraphProviderRecoveryFactory, NativeGraphSuiteDefinition,
+    NativeGraphSuiteManifest, NativeGraphSuiteScheduler, ObservedNativeGraphTransportEvidence,
+    PROTOCOL_VERSION, PackageNativeGraphLowererProvider, ProtocolAdapterRuntimeFactory,
+    ProtocolCapability, ProtocolError, ProtocolLimits, ProtocolOperationState,
+    ProtocolSessionState, RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory,
+    ReservedNativeGraphBranch, ReservedNativeGraphJoin, ReservedNativeGraphLoop,
+    ResolvedEpisodeTrial, ResolvedModelBinding, ResolvedModelBindingSet, ResolvedNativeGraphSuite,
+    ResolvedTokenizerBinding, ResourceLeaseRequest, ResourceLimits, SelectedModelBinding,
+    StrictAdapterProtocolFactory, StrictAdapterRuntimeProvider, StrictSupervisedAdapter,
+    SuiteError, SuiteRunId, SuiteSchedulerFactory, SuiteTrialSpec, SupervisedAdapter,
+    TokenizerBindingSpec, ValidatedAdapterMessage, ValidatedHostMessage, aggregate_episode_results,
+    lower_native_graph, parse_native_graph_suite_toml, run_resolved_suite,
+    select_native_graph_scheduler, validate_native_graph_trace_plan,
 };
 pub use provider::{
     ModelEndpointAuthority, ModelEndpointIsolationProof, ProviderCapability, ProviderError,

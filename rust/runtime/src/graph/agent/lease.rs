@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use async_trait::async_trait;
 
+use crate::eval::ArtifactDigest;
 use crate::graph::tools::{InMemoryToolDispatcher, ToolDispatcher};
 /// One trace-local invocation lease.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,6 +81,69 @@ pub enum AgentInvocationEnvironment {
     Isolated,
 }
 
+/// Immutable workspace authority selected for one root or branch invocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentInvocationWorkspace {
+    /// The canonical task workspace, owned by the root or borrowed by a
+    /// shared delegated invocation.
+    Root,
+    /// One branch candidate receives an isolated overlay owned by the factory.
+    ///
+    /// The request deliberately contains no candidate content digest or host
+    /// path. The child lease mints that digest only after its workspace reaches
+    /// its completion boundary.
+    IsolatedBranch {
+        /// Declared branch identifier from the immutable control contract.
+        branch_id: String,
+        /// Deterministic candidate identifier scoped to `branch_id`.
+        candidate_id: String,
+        /// Parent invocation which owns the source workspace snapshot.
+        parent_invocation_id: String,
+        /// Immutable source snapshot identity selected before child provisioning.
+        parent_snapshot_digest: String,
+    },
+}
+
+/// Immutable branch-workspace candidate returned only by a completed child lease.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentInvocationWorkspaceCandidate {
+    /// Declared candidate identifier selected by the parent merge contract.
+    id: String,
+    /// Factory-minted immutable content identity for the completed overlay.
+    digest: ArtifactDigest,
+}
+
+impl AgentInvocationWorkspaceCandidate {
+    /// Creates a candidate from a factory-minted validated artifact identity.
+    pub fn new(id: String, digest: ArtifactDigest) -> Self {
+        Self { id, digest }
+    }
+
+    /// Validates a factory-provided textual artifact identity before it may enter
+    /// a workspace candidate or a control receipt.
+    pub fn parse(
+        id: String,
+        digest: impl Into<String>,
+    ) -> Result<Self, crate::graph::agent::AgentLoopError> {
+        let digest = ArtifactDigest::parse(digest).map_err(|_| {
+            crate::graph::agent::AgentLoopError::new(
+                "workspace candidate digest is not a valid artifact identity",
+            )
+        })?;
+        Ok(Self::new(id, digest))
+    }
+
+    /// Borrows the contract-selected candidate identifier.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Borrows the validated immutable workspace content identity.
+    pub fn digest(&self) -> &ArtifactDigest {
+        &self.digest
+    }
+}
+
 /// Request passed to lifecycle-owned invocation leasing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentInvocationRequest {
@@ -87,6 +151,8 @@ pub struct AgentInvocationRequest {
     pub identity: AgentInvocationIdentity,
     /// Requested parent sharing discipline.
     pub environment: AgentInvocationEnvironment,
+    /// Workspace authority requested from the lifecycle-owning factory.
+    pub workspace: AgentInvocationWorkspace,
 }
 
 /// Terminal child fact retained until the parent joins in authored order.
@@ -121,6 +187,16 @@ pub trait AgentInvocationLease {
     fn dispatcher(&self) -> Rc<dyn ToolDispatcher>;
     /// Synchronously fence resources when an owning task is cancelled or dropped.
     fn close_on_drop(&mut self);
+    /// Freeze this child workspace into a merge candidate after successful work.
+    ///
+    /// Root and shared invocations return `None`; an isolated branch may return
+    /// one immutable candidate only while its lease remains open.
+    async fn complete_workspace(
+        &mut self,
+    ) -> Result<Option<AgentInvocationWorkspaceCandidate>, crate::graph::agent::AgentLoopError>
+    {
+        Ok(None)
+    }
     /// Close child resources before the parent or trace ends.
     async fn close(&mut self) -> Result<(), crate::graph::agent::AgentLoopError>;
 }
@@ -198,6 +274,7 @@ impl AgentInvocationLeaseFactoryFactory for InMemoryAgentInvocationLeaseFactoryF
 /// Deterministic lease that simply retains its injected fake dispatcher.
 pub struct InMemoryAgentInvocationLease {
     dispatcher: Rc<dyn ToolDispatcher>,
+    workspace: AgentInvocationWorkspace,
     is_closed: Cell<bool>,
 }
 
@@ -209,6 +286,33 @@ impl AgentInvocationLease for InMemoryAgentInvocationLease {
 
     fn close_on_drop(&mut self) {
         self.is_closed.set(true);
+    }
+
+    async fn complete_workspace(
+        &mut self,
+    ) -> Result<Option<AgentInvocationWorkspaceCandidate>, crate::graph::agent::AgentLoopError>
+    {
+        if self.is_closed.get() {
+            return Err(crate::graph::agent::AgentLoopError::new(
+                "cannot complete a closed invocation workspace",
+            ));
+        }
+        let AgentInvocationWorkspace::IsolatedBranch {
+            branch_id,
+            candidate_id,
+            parent_invocation_id,
+            parent_snapshot_digest,
+        } = &self.workspace
+        else {
+            return Ok(None);
+        };
+        let material = format!(
+            "native-graph-workspace-candidate-v1\x1f{branch_id}\x1f{candidate_id}\x1f{parent_invocation_id}\x1f{parent_snapshot_digest}"
+        );
+        Ok(Some(AgentInvocationWorkspaceCandidate::new(
+            candidate_id.clone(),
+            ArtifactDigest::from_bytes(material.as_bytes()),
+        )))
     }
 
     async fn close(&mut self) -> Result<(), crate::graph::agent::AgentLoopError> {
@@ -253,6 +357,7 @@ impl AgentInvocationLeaseFactory for InMemoryAgentInvocationLeaseFactory {
         request: &AgentInvocationRequest,
         parent: Option<&dyn AgentInvocationLease>,
     ) -> Result<Box<dyn AgentInvocationLeaseOpening>, crate::graph::agent::AgentLoopError> {
+        validate_workspace_request(request)?;
         if request.environment == AgentInvocationEnvironment::Shared && parent.is_none() {
             return Err(crate::graph::agent::AgentLoopError::new(
                 "shared delegated invocation requires a parent lease",
@@ -276,8 +381,50 @@ impl AgentInvocationLeaseFactory for InMemoryAgentInvocationLeaseFactory {
         Ok(Box::new(InMemoryAgentInvocationLeaseOpening {
             lease: Some(Box::new(InMemoryAgentInvocationLease {
                 dispatcher,
+                workspace: request.workspace.clone(),
                 is_closed: Cell::new(false),
             })),
         }))
+    }
+}
+
+fn validate_workspace_request(
+    request: &AgentInvocationRequest,
+) -> Result<(), crate::graph::agent::AgentLoopError> {
+    match &request.workspace {
+        AgentInvocationWorkspace::Root
+            if request.identity.parent_invocation_id.is_none()
+                && request.environment == AgentInvocationEnvironment::Isolated =>
+        {
+            Ok(())
+        }
+        AgentInvocationWorkspace::Root
+            if request.identity.parent_invocation_id.is_some()
+                && request.environment == AgentInvocationEnvironment::Shared =>
+        {
+            Ok(())
+        }
+        AgentInvocationWorkspace::Root => Err(crate::graph::agent::AgentLoopError::new(
+            "root workspace must be owned by an isolated root or borrowed by a shared child",
+        )),
+        AgentInvocationWorkspace::IsolatedBranch {
+            branch_id,
+            candidate_id,
+            parent_invocation_id,
+            parent_snapshot_digest,
+        } => {
+            if request.environment != AgentInvocationEnvironment::Isolated
+                || branch_id.is_empty()
+                || candidate_id.is_empty()
+                || parent_invocation_id.is_empty()
+                || parent_snapshot_digest.is_empty()
+                || request.identity.parent_invocation_id.as_deref() != Some(parent_invocation_id)
+            {
+                return Err(crate::graph::agent::AgentLoopError::new(
+                    "isolated branch workspace request does not match its parent invocation authority",
+                ));
+            }
+            Ok(())
+        }
     }
 }

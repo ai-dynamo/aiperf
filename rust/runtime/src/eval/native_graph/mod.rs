@@ -39,7 +39,10 @@ pub use factories::{
     NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
     RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, StrictAdapterRuntimeProvider,
 };
-pub use live_driver::NativeGraphLiveTraceProgramDriverFactory;
+pub(crate) use live_driver::NATIVE_GRAPH_LIVE_DRIVER_KIND;
+pub use live_driver::{
+    NativeGraphLiveAgentLoopFactories, NativeGraphLiveTraceProgramDriverFactory,
+};
 pub(crate) use lowering::GENERATION_METADATA_KEY;
 pub use lowering::{
     BoundedControlFlowContract, NativeGraphControlContract, NativeGraphLowererFactory,

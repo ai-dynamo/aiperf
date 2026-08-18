@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::dataset::Handle;
+use crate::eval::ArtifactDigest;
 use crate::graph::replay::{ReplayCallMeasurement, ToolCallMeasurement};
 
 /// Versioned terminal facts that placement can fold without reading agent state.
@@ -43,6 +44,148 @@ pub struct TraceTerminalSupplement {
     /// Named opaque outputs selected by the authored terminal declaration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub terminal_outputs: BTreeMap<String, Handle>,
+    /// Ordered opaque decisions made by a declared dynamic NativeGraph control.
+    ///
+    /// This records only contract-bound selection facts. Raw model replies, tool
+    /// payloads, credentials, and workspace paths remain outside the terminal
+    /// supplement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dynamic_control_receipts: Vec<DynamicControlReceipt>,
+}
+
+/// One immutable operation selected from a declared NativeGraph control contract.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DynamicControlOperation {
+    /// A model result selected one declared branch candidate.
+    Branch,
+    /// A declared join reduced one selected branch candidate.
+    Merge,
+    /// A model result continued one declared bounded loop iteration.
+    Loop,
+    /// A declared retry budget admitted one retry.
+    Retry,
+}
+
+/// Rust-owned bounded counters accompanying one dynamic control receipt.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DynamicControlCounters {
+    /// Number of completed acyclic stages when the receipt was appended.
+    pub completed_stages: u32,
+    /// Iterations consumed for the selected loop, or zero for non-loop receipts.
+    pub loop_iterations: u32,
+    /// Retries consumed for the selected loop, or zero for non-retry receipts.
+    pub retries: u32,
+}
+
+/// Validated source-declared name retained in dynamic-control evidence.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DeclaredDynamicControlName(String);
+
+impl DeclaredDynamicControlName {
+    pub(crate) fn parse(value: impl Into<String>) -> Result<Self, &'static str> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > 128
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        {
+            return Err("invalid declared dynamic control name");
+        }
+        Ok(Self(value))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for DeclaredDynamicControlName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Compact append-only proof of one declared dynamic control decision.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DynamicControlReceipt {
+    /// Private lowering provenance digest for the immutable control contract.
+    control_digest: ArtifactDigest,
+    /// Monotonic receipt ordinal within this trace.
+    sequence: u32,
+    /// Declared operation selected at this point in the trace.
+    operation: DynamicControlOperation,
+    /// Declared branch, join, loop, or retry identifier.
+    control_id: DeclaredDynamicControlName,
+    /// Declared candidate or merge identity selected by the operation.
+    selected_candidate: DeclaredDynamicControlName,
+    /// Digest of the selected declared candidate, not its model or tool payload.
+    selected_candidate_digest: ArtifactDigest,
+    /// Rust-owned bounded accounting at the selection point.
+    counters: DynamicControlCounters,
+}
+
+impl DynamicControlReceipt {
+    pub(crate) fn new(
+        control_digest: ArtifactDigest,
+        sequence: u32,
+        operation: DynamicControlOperation,
+        control_id: DeclaredDynamicControlName,
+        selected_candidate: DeclaredDynamicControlName,
+        selected_candidate_digest: ArtifactDigest,
+        counters: DynamicControlCounters,
+    ) -> Self {
+        Self {
+            control_digest,
+            sequence,
+            operation,
+            control_id,
+            selected_candidate,
+            selected_candidate_digest,
+            counters,
+        }
+    }
+
+    /// Borrows the trusted lowering provenance digest.
+    pub fn control_digest(&self) -> &ArtifactDigest {
+        &self.control_digest
+    }
+
+    /// Returns this receipt's append-only ordinal.
+    pub const fn sequence(&self) -> u32 {
+        self.sequence
+    }
+
+    /// Returns the declared operation selected by this receipt.
+    pub const fn operation(&self) -> DynamicControlOperation {
+        self.operation
+    }
+
+    /// Borrows the validated declared control identifier.
+    pub fn control_id(&self) -> &str {
+        self.control_id.as_str()
+    }
+
+    /// Borrows the validated declared selected candidate name.
+    pub fn selected_candidate(&self) -> &str {
+        self.selected_candidate.as_str()
+    }
+
+    /// Borrows the selected candidate artifact digest.
+    pub fn selected_candidate_digest(&self) -> &ArtifactDigest {
+        &self.selected_candidate_digest
+    }
+
+    /// Borrows Rust-owned counter facts recorded at selection.
+    pub const fn counters(&self) -> &DynamicControlCounters {
+        &self.counters
+    }
 }
 
 /// Runtime replay-trace identity retained for measurements and artifacts.
@@ -268,6 +411,7 @@ impl TraceTerminalSupplement {
             calls: Vec::new(),
             tools: Vec::new(),
             terminal_outputs: BTreeMap::new(),
+            dynamic_control_receipts: Vec::new(),
         }
     }
 
@@ -280,6 +424,15 @@ impl TraceTerminalSupplement {
     /// Attach the declared terminal outputs without inferring an ordering.
     pub fn with_terminal_outputs(mut self, outputs: BTreeMap<String, Handle>) -> Self {
         self.terminal_outputs = outputs;
+        self
+    }
+
+    /// Attach the compact append-only dynamic-control evidence emitted by a driver.
+    pub(crate) fn with_dynamic_control_receipts(
+        mut self,
+        receipts: Vec<DynamicControlReceipt>,
+    ) -> Self {
+        self.dynamic_control_receipts = receipts;
         self
     }
 

@@ -55,7 +55,7 @@ impl RegisteredTraceProgramDrivers {
                 )?;
                 staged.insert(
                     "native_graph_live",
-                    Arc::new(NativeGraphLiveTraceProgramDriverFactory)
+                    Arc::new(NativeGraphLiveTraceProgramDriverFactory::default())
                         as Arc<dyn TraceProgramDriverFactory>,
                 )?;
                 Ok::<(), crate::extensions::DuplicateName>(())

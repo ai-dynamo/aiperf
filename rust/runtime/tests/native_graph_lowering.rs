@@ -134,11 +134,11 @@ fn native_source_lowers_to_the_existing_trace_program_type() {
 }
 
 #[test]
-fn nonempty_live_control_collections_are_refused_before_driver_creation() {
-    for (collection, expected_control, declaration) in [
-        ("branches", "branch", "[{\"future\":\"branch\"}]"),
-        ("joins", "join", "[{\"future\":\"join\"}]"),
-        ("loops", "loop", "[{\"future\":\"loop\"}]"),
+fn untyped_live_control_collections_are_refused_by_the_strict_source_dto() {
+    for (collection, declaration) in [
+        ("branches", "[{\"future\":\"branch\"}]"),
+        ("joins", "[{\"future\":\"join\"}]"),
+        ("loops", "[{\"future\":\"loop\"}]"),
     ] {
         let source = format!(
             r#"{{
@@ -158,8 +158,7 @@ fn nonempty_live_control_collections_are_refused_before_driver_creation() {
             .expect("fixture contains a NativeGraph package");
         assert!(matches!(
             lower_native_graph(native),
-            Err(NativeGraphLoweringError::RequiresLiveControlFlow { control })
-                if control == expected_control
+            Err(NativeGraphLoweringError::InvalidSource(_))
         ));
     }
 }
@@ -324,7 +323,7 @@ fn unbounded_static_cycle_is_refused_before_driver_creation() {
 }
 
 #[test]
-fn source_feedback_is_refused_for_the_later_live_control_slice() {
+fn untyped_source_feedback_is_refused_by_the_strict_loop_dto() {
     let task = native_task_fixture(
         br#"{
   "schema_version": "1.0", "trace_id": "feedback", "stage_bound": 2,
@@ -342,7 +341,7 @@ fn source_feedback_is_refused_for_the_later_live_control_slice() {
         .expect("NativeGraph fixture");
     assert!(matches!(
         lower_native_graph(native),
-        Err(NativeGraphLoweringError::RequiresLiveControlFlow { control }) if control == "loop"
+        Err(NativeGraphLoweringError::InvalidSource(_))
     ));
 }
 

@@ -10,8 +10,9 @@
 
 use std::{collections::BTreeMap, fs, num::NonZeroUsize, path::Path, rc::Rc};
 
+use anyhow::Context as _;
 use aiperf_runtime::{
-    engine::application::Application,
+    engine::{application::Application, distribution_identity::current_distribution_id},
     eval::{
         DockerNativeGraphEpisodeExecutor, DockerProcessSandbox, EngineNativeGraphEpisodeCallback,
         EnvName, HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
@@ -43,14 +44,23 @@ pub(super) struct NativeGraphCliOptions {
 /// Runs one imported NativeGraph task as exactly one resolved suite trial.
 pub(super) fn run_task(
     imported: ImportedTask,
-    model_runtime_path: &Path,
+    model_runtime_path: Option<&Path>,
     lifecycle: &HarborLifecycleRequest,
     options: NativeGraphCliOptions,
 ) -> anyhow::Result<i32> {
-    let runtime = read_model_runtime(model_runtime_path)?;
-    let trial = validate_native_graph_invocation(&imported, lifecycle, &options)?;
-    let (resolved, limits) = one_trial_suite(imported.clone(), trial)?;
-    run_resolved_native_graph_suite(imported, runtime, lifecycle, options, resolved, limits)
+    match native_profile(&imported)? {
+        NativeGraphProfile::NativeGraph => {
+            let runtime = read_required_model_runtime(model_runtime_path)?;
+            validate_native_graph_invocation(&imported, lifecycle, &options)?;
+            let trial = HarborEvaluationCoordinator::resolve_trial(&imported, lifecycle)?;
+            let (resolved, limits) = one_trial_suite(imported.clone(), trial)?;
+            run_resolved_native_graph_suite(imported, runtime, lifecycle, options, resolved, limits)
+        }
+        NativeGraphProfile::ExternallyDriven => {
+            validate_native_graph_invocation(&imported, lifecycle, &options)?;
+            anyhow::bail!("externally driven NativeGraph compatibility runner is not enabled")
+        }
+    }
 }
 
 /// Runs a one-lifecycle-addressable NativeGraph suite through the shared matrix path.
@@ -71,7 +81,8 @@ pub(super) fn run_suite(
         );
     };
     let imported = trial.imported().clone();
-    let lifecycle_trial = validate_native_graph_invocation(&imported, lifecycle, &options)?;
+    validate_native_graph_invocation(&imported, lifecycle, &options)?;
+    let lifecycle_trial = HarborEvaluationCoordinator::resolve_trial(&imported, lifecycle)?;
     if lifecycle_trial.identity_digest() != trial.trial().identity_digest() {
         anyhow::bail!(
             "NativeGraph --suite trial does not match the supplied lifecycle request; multi-lifecycle suite provenance is deferred"
@@ -91,7 +102,7 @@ fn validate_native_graph_invocation(
     imported: &ImportedTask,
     lifecycle: &HarborLifecycleRequest,
     options: &NativeGraphCliOptions,
-) -> anyhow::Result<aiperf_runtime::eval::TrialSpec> {
+) -> anyhow::Result<()> {
     if matches!(options.sandbox, SandboxFlag::Local) {
         anyhow::bail!("NativeGraph evaluation requires the Docker sandbox backend");
     }
@@ -103,22 +114,36 @@ fn validate_native_graph_invocation(
             "--lifecycle-output is not available for NativeGraph matrix results; retain the emitted scored episode result instead"
         );
     }
-    if lifecycle.agent_contract != HarborLifecycleAgentContract::NativeGraph {
-        anyhow::bail!("NativeGraph evaluation requires a native_graph lifecycle contract");
-    }
     let native = imported
         .package
         .native_graph()
         .ok_or_else(|| anyhow::anyhow!("NativeGraph task snapshot disappeared before execution"))?;
-    if native.profile() != NativeGraphProfile::NativeGraph {
-        anyhow::bail!(
-            "externally driven NativeGraph packages are not enabled by the acyclic model slice"
-        );
-    }
-    if !native.adapters().is_empty() {
-        anyhow::bail!(
-            "NativeGraph adapters are not enabled by the acyclic model slice; the task must declare no adapters"
-        );
+    match native.profile() {
+        NativeGraphProfile::NativeGraph => {
+            if lifecycle.agent_contract != HarborLifecycleAgentContract::NativeGraph {
+                anyhow::bail!("NativeGraph evaluation requires a native_graph lifecycle contract");
+            }
+            if !native.adapters().is_empty() {
+                anyhow::bail!(
+                    "NativeGraph adapters are not enabled by the acyclic model slice; the task must declare no adapters"
+                );
+            }
+        }
+        NativeGraphProfile::ExternallyDriven => {
+            if lifecycle.agent_contract != HarborLifecycleAgentContract::ExternallyDriven {
+                anyhow::bail!(
+                    "externally driven NativeGraph evaluation requires an externally_driven lifecycle contract"
+                );
+            }
+            let driver = native.driver_adapter().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "externally driven NativeGraph task snapshot has no selected driver adapter"
+                )
+            })?;
+            if lifecycle.command != driver.argv {
+                anyhow::bail!("lifecycle command provenance disagrees with the manifest driver");
+            }
+        }
     }
     if !imported.package.is_standard_directory() {
         anyhow::bail!("NativeGraph evaluation requires a standard task directory");
@@ -128,9 +153,22 @@ fn validate_native_graph_invocation(
     {
         anyhow::bail!("--verifier-mode conflicts with the NativeGraph task verifier environment");
     }
-    Ok(HarborEvaluationCoordinator::resolve_trial(
-        imported, lifecycle,
-    )?)
+    Ok(())
+}
+
+fn native_profile(imported: &ImportedTask) -> anyhow::Result<NativeGraphProfile> {
+    imported
+        .package
+        .native_graph()
+        .map(|native| native.profile())
+        .ok_or_else(|| anyhow::anyhow!("NativeGraph task snapshot disappeared before execution"))
+}
+
+fn read_required_model_runtime(path: Option<&Path>) -> anyhow::Result<ModelRuntimeConfig> {
+    let path = path.ok_or_else(|| {
+        anyhow::anyhow!("--model-runtime is required for schema-1.1 NativeGraph evaluation")
+    })?;
+    read_model_runtime(path)
 }
 
 fn one_trial_suite(
@@ -177,10 +215,9 @@ fn run_resolved_native_graph_suite(
         "sha256:0000000000000000000000000000000000000000000000000000000000".to_owned()
     });
     let recipe = HarborSandboxRecipe::for_standard_task(image, options.workdir)?;
-    let application = Rc::new(Application::stock(format!(
-        "aiperf-cli-native-graph:{}",
-        imported.package.identity_digest().as_str()
-    ))?);
+    let dist_id = current_distribution_id()
+        .context("deriving native graph distribution identity from the current binary")?;
+    let application = Rc::new(Application::stock(dist_id)?);
     let native = imported
         .package
         .native_graph()

@@ -10,7 +10,7 @@ use bytes::Bytes;
 
 use aiperf_runtime::clock::{Clock, SimClock};
 use aiperf_runtime::dataset::InMemorySegmentStore;
-use aiperf_runtime::graph::driver::TraceIdentity;
+use aiperf_runtime::graph::driver::{TraceAgentInvocationContext, TraceIdentity};
 use aiperf_runtime::graph::replay::ReplayRunIdentity;
 use aiperf_runtime::graph::tools::{
     CommandDisposition, EnvironmentToolDispatcher, ToolCommandPolicy, ToolCommandResult,
@@ -163,6 +163,7 @@ async fn dispatcher_continues_after_timeout_when_fake_recycles() {
     let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
     let segments = InMemorySegmentStore::default();
     let run_identity = ReplayRunIdentity::mint(aiperf_runtime::rng::RngRoot::new(Some(1)), "fake");
+    let invocation = TraceAgentInvocationContext::from_replay(&run_identity, &trace, 0);
     dispatcher
         .open_trace(TraceOpenContext {
             trace: &trace,
@@ -170,7 +171,7 @@ async fn dispatcher_continues_after_timeout_when_fake_recycles() {
             workspace: None,
             clock: &clock,
             segments: &segments,
-            run_identity: &run_identity,
+            invocation: &invocation,
         })
         .await
         .expect("sandbox opens");

@@ -63,12 +63,15 @@ NativeGraph slice. It requires a strict host `--model-runtime` mapping and
 native-graph lifecycle request, resolves every selected model through the
 frozen AIPerf endpoint/transport/tokenizer/observer seams, and runs the graph
 between Docker environment acquisition and declared artifact/verifier
-completion. The current slice admits only acyclic, adapter-free standard tasks
-with task and agent networks set to `no-network`; Docker supplies a
-plan-bound `NoAdapterEgress` proof while model traffic remains host-owned.
-One task becomes one resolved matrix trial and `--suite` accepts only an
-exactly matching one-trial lifecycle shape. Dynamic controls, adapters,
-externally driven graphs, and multi-lifecycle suite provenance fail closed.
+completion. The current slice admits adapter-free standard tasks with task and
+agent networks set to `no-network`. Its staged driver executes source-declared
+acyclic stages and bounded model-selected branches, joins, loops, and retries;
+Rust validates the declared topology, owns invocation workspaces and counters,
+and records typed control/merge receipts. Docker supplies a plan-bound
+`NoAdapterEgress` proof while model traffic remains host-owned. One task becomes
+one resolved matrix trial and `--suite` accepts only an exactly matching
+one-trial lifecycle shape. Adapters, externally driven graphs, and
+multi-lifecycle suite provenance fail closed.
 Capability preflight resolves the selected sandbox/provider/image/recipe before
 environment spend and fails closed if persistent workspaces, read-only
 base/overlay isolation, staging, network controls, secret policy, descendant
@@ -97,9 +100,11 @@ Track 2 is the stable contract boundary for Tracks 3–6. P0 compatibility accep
 Every track supplies strict unit tests and deterministic fake-provider/sandbox tests. P0 product fixtures prove native local and pinned-Git source acquisition, an external agent contract, separately provisioned verifier declared-artifact isolation, exact declared artifact paths, deterministic source identity, reward precedence, immutable regrade, timeout-pair normalization, and Docker timeout cleanup for agent and separate-verifier containers. Unsupported import refusal before sandbox opening is covered by the coordinator contract suite.
 
 Semantic contracts prove exact-or-refused lowering and fixed-baseline
-comparison guards. The acyclic adapter-free NativeGraph slice is part of the
-native `aiperf eval` acceptance surface; broader graph-agent behavior remains
-behind its explicit fail-closed boundaries.
+comparison guards. The bounded-dynamic adapter-free NativeGraph slice is part
+of the native `aiperf eval` acceptance surface: declared model-selected
+branches, joins, loops, retries, isolated invocation workspaces, and typed
+merge receipts execute through the staged driver. Broader graph-agent behavior
+remains behind its explicit fail-closed boundaries.
 
 The built multi-step verification covers immutable planning, persistent Docker workspace state, per-step test and verifier isolation, immutable artifact snapshots, exact source-context identity and materialization after origin removal, canonical modes and empty directories, directional shared-workdir refusal, phase-policy inheritance/overrides, mean/final rewards, additive CLI output, terminal failure, eager cleanup, and strict Compose preflight, service-evidence ordering, and labelled cleanup. Future P1/P2 verification covers broader provider capability behavior, task health and quarantine, registry/share semantics, and trajectory export without requiring online registry availability for local/private suites.
 

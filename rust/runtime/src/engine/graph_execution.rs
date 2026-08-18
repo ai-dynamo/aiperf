@@ -20,10 +20,11 @@ use crate::endpoints::{
     CreditPhase, EndpointId, EndpointKey, EndpointRegistry, PreparedEndpointTable, PreparedRequest,
     Turn,
 };
+use crate::eval::NATIVE_GRAPH_LIVE_DRIVER_KIND;
 use crate::failure::OnFailure;
 use crate::graph::driver::{
-    TraceDriverContext, TraceIdentity, TraceProgramDriver, TraceProgramDriverFactory,
-    TraceStageDirective, TraceStageResult, WorkerIdentity,
+    TraceAgentInvocationContext, TraceDriverContext, TraceIdentity, TraceProgramDriver,
+    TraceProgramDriverFactory, TraceStageDirective, TraceStageResult, WorkerIdentity,
 };
 use crate::graph::errors::TraceError;
 use crate::graph::execution::{LocalGraphTraceExecutionBackend, TracePlacement};
@@ -1094,13 +1095,37 @@ impl TracePlacement for GraphWorkerBackend {
         let mut opened_driver = None;
         let mut is_staged_driver = false;
         let mut driver_trace = None;
+        let mut driver_invocation = None;
         let program = if program.is_static_graph_program() {
             program
         } else {
-            let trace = TraceIdentity {
+            driver_trace = Some(TraceIdentity {
                 run_id: self.run_origin_ns.to_string(),
                 trajectory_id: format!("{}::trajectory", program.profiling.trace.id),
                 trace_id: program.profiling.trace.id.clone(),
+            });
+            let trace = driver_trace.as_ref().ok_or_else(|| {
+                TraceError::Other("graph trace lost its driver identity before open".into())
+            })?;
+            driver_invocation = if program.driver.kind == NATIVE_GRAPH_LIVE_DRIVER_KIND {
+                Some(TraceAgentInvocationContext::native_graph(
+                    trace,
+                    execution_id,
+                    program
+                        .driver
+                        .source_provenance()
+                        .ok_or_else(|| {
+                            TraceError::Other(
+                                "native graph trace is missing immutable task provenance".into(),
+                            )
+                        })?
+                        .source_digest()
+                        .to_owned(),
+                ))
+            } else {
+                self.replay_run_identity.as_ref().map(|run_identity| {
+                    TraceAgentInvocationContext::from_replay(run_identity, trace, execution_id)
+                })
             };
             let mut driver = self
                 .trace_driver
@@ -1121,14 +1146,14 @@ impl TracePlacement for GraphWorkerBackend {
                 active: &self.active,
                 lifecycle_id,
             };
-            let driver_context = self.replay_run_identity.as_ref().map_or_else(
+            let driver_context = driver_invocation.as_ref().map_or_else(
                 || TraceDriverContext::metadata_only(&trace),
-                |run_identity| {
+                |invocation| {
                     TraceDriverContext::for_execution(
                         &trace,
                         &self.clock,
                         self.segments.as_ref(),
-                        run_identity,
+                        invocation,
                     )
                 },
             );
@@ -1136,17 +1161,22 @@ impl TracePlacement for GraphWorkerBackend {
             match opened {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
+                    let _ = driver.abort_open().await;
                     return Err(TraceError::Other(error.to_string()));
                 }
                 Err(_) => {
-                    return Err(TraceError::Cancelled(
-                        "graph trace driver was cancelled during open".into(),
-                    ));
+                    let cleanup = driver.abort_open().await;
+                    let message = match cleanup {
+                        Ok(()) => "graph trace driver was cancelled during open".into(),
+                        Err(error) => format!(
+                            "graph trace driver was cancelled during open; rollback failed: {error}"
+                        ),
+                    };
+                    return Err(TraceError::Cancelled(message));
                 }
             }
             drop(driver_open_lifecycle);
             opened_driver = Some(driver);
-            driver_trace = Some(trace);
             GraphTraceProgram::static_graph(program.profiling.clone())
         };
         let plan = &program.profiling;
@@ -1207,7 +1237,7 @@ impl TracePlacement for GraphWorkerBackend {
             terminal_nodes: RefCell::new(terminal_nodes),
             events: self.events.clone(),
             cache_bust_marker,
-            tool_dispatcher,
+            tool_dispatcher: RefCell::new(tool_dispatcher),
             arrivals: Cell::new(0),
             terminal_records: Cell::new(0),
             profiling_records: Cell::new(0),
@@ -1259,6 +1289,7 @@ impl TracePlacement for GraphWorkerBackend {
                         sink.as_ref(),
                         driver.as_mut(),
                         trace,
+                        driver_invocation.as_ref(),
                         lifecycle_id,
                     )
                     .await?,
@@ -1388,6 +1419,7 @@ impl GraphWorkerBackend {
         sink: &EngineGraphSink,
         driver: &mut dyn TraceProgramDriver,
         trace: &TraceIdentity,
+        invocation: Option<&TraceAgentInvocationContext>,
         lifecycle_id: u64,
     ) -> Result<TraceTerminalSupplement, TraceError> {
         let _lifecycle = ActiveGraphTraceLifecycle {
@@ -1397,14 +1429,14 @@ impl GraphWorkerBackend {
         let bound = driver.stage_bound().ok_or_else(|| {
             TraceError::Other("staged graph driver omitted its finite stage bound".into())
         })?;
-        let context = self.replay_run_identity.as_ref().map_or_else(
+        let context = invocation.map_or_else(
             || TraceDriverContext::metadata_only(trace),
-            |run_identity| {
+            |invocation| {
                 TraceDriverContext::for_execution(
                     trace,
                     &self.clock,
                     self.segments.as_ref(),
-                    run_identity,
+                    invocation,
                 )
             },
         );
@@ -1438,7 +1470,7 @@ impl GraphWorkerBackend {
                     }
                     validate_native_graph_trace_plan(&plan)
                         .map_err(|error| TraceError::Other(error.to_string()))?;
-                    sink.configure_stage(&plan);
+                    sink.configure_stage(&plan, driver.tool_dispatcher());
                     let result = local
                         .execute_static_trace_result(plan, self.phase, TraceSubphase::Profiling)
                         .await?;
@@ -1483,12 +1515,13 @@ impl GraphWorkerBackend {
 
     /// Close an opened driver to completion before returning cancellation.
     ///
-    /// Driver open remains cancellable because its opening guards can perform
-    /// synchronous rollback. Once open succeeds, however, dispatcher and sandbox
-    /// teardown is asynchronous and owns external resources. The worker therefore
-    /// awaits close to completion. Resource-owning drivers place Clock-driven bounds
-    /// inside their teardown layers so a generic deadline cannot drop an in-flight
-    /// external-resource cleanup future.
+    /// A driver open remains cancellable to the caller, while its explicit
+    /// `abort_open` rollback releases any partially provisioned state before
+    /// placement returns cancellation. Once ownership transfers to placement,
+    /// dispatcher and sandbox teardown is asynchronous and owns external resources.
+    /// The worker therefore awaits close to completion. Resource-owning drivers
+    /// place Clock-driven bounds inside their teardown layers so a generic deadline
+    /// cannot drop an in-flight cleanup future.
     async fn close_driver(
         &self,
         driver: &mut dyn crate::graph::driver::TraceProgramDriver,
@@ -1614,7 +1647,7 @@ struct EngineGraphSink {
     arrivals: Cell<u64>,
     terminal_records: Cell<u64>,
     profiling_records: Cell<u64>,
-    tool_dispatcher: Option<Rc<dyn ToolDispatcher>>,
+    tool_dispatcher: RefCell<Option<Rc<dyn ToolDispatcher>>>,
     /// Completed profiling-only LLM timing facts, retained until the trace terminal.
     replay_calls: Rc<RefCell<Vec<ReplayCallMeasurement>>>,
     /// Attempted profiling-only tool timings, retained without command/output bytes.
@@ -1631,7 +1664,8 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
     ) -> Result<GraphReply<OpenAiChatMessage>> {
         let dispatcher = self
             .tool_dispatcher
-            .as_ref()
+            .borrow()
+            .clone()
             .ok_or_else(|| anyhow!("graph tool node {node_id:?} has no trace dispatcher"))?;
         let mut output = String::new();
         for (index, command) in node.commands.iter().enumerate() {
@@ -1999,7 +2033,7 @@ impl EngineGraphSink {
     /// Stage identity remains trace-local while node metadata and terminal-node
     /// classification are replaced atomically on this worker thread. Parsed
     /// metadata cannot carry across an authored rewrite of the same node id.
-    fn configure_stage(&self, plan: &GraphTracePlan) {
+    fn configure_stage(&self, plan: &GraphTracePlan, dispatcher: Option<Rc<dyn ToolDispatcher>>) {
         *self.nodes.borrow_mut() = plan
             .graph
             .nodes
@@ -2008,6 +2042,7 @@ impl EngineGraphSink {
             .collect();
         self.prepared_metadata.borrow_mut().clear();
         *self.terminal_nodes.borrow_mut() = terminal_graph_nodes(plan);
+        *self.tool_dispatcher.borrow_mut() = dispatcher;
     }
 
     /// Return the dense ordinal exported with this terminal record. Warmup
@@ -2374,6 +2409,186 @@ mod tests {
             _context: &TraceDriverContext<'_>,
         ) -> Result<TraceTerminalSupplement, TraceDriverError> {
             unreachable!("staged driver must execute through the stage loop")
+        }
+    }
+
+    struct PendingOpenDriverFactory {
+        dropped: Arc<AtomicUsize>,
+    }
+
+    impl TraceProgramDriverFactory for PendingOpenDriverFactory {
+        fn capabilities(
+            &self,
+            _spec: &TraceDriverSpec,
+        ) -> Result<TraceDriverCapabilities, TraceDriverError> {
+            Ok(TraceDriverCapabilities::default())
+        }
+
+        fn create(
+            &self,
+            _worker: WorkerIdentity,
+            _trace: &TraceIdentity,
+            _spec: &TraceDriverSpec,
+        ) -> Result<Box<dyn TraceProgramDriver>, TraceDriverError> {
+            Ok(Box::new(PendingOpenDriver {
+                dropped: self.dropped.clone(),
+            }))
+        }
+    }
+
+    struct PendingOpenDriver {
+        dropped: Arc<AtomicUsize>,
+    }
+
+    impl Drop for PendingOpenDriver {
+        fn drop(&mut self) {
+            self.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl TraceProgramDriver for PendingOpenDriver {
+        async fn open(
+            &mut self,
+            _program: &GraphTraceProgram,
+            _context: &TraceDriverContext<'_>,
+        ) -> Result<(), TraceDriverError> {
+            std::future::pending::<()>().await;
+            Ok(())
+        }
+
+        async fn run(
+            &mut self,
+            _program: &GraphTraceProgram,
+            _context: &TraceDriverContext<'_>,
+        ) -> Result<TraceTerminalSupplement, TraceDriverError> {
+            unreachable!("permanently pending driver never reaches graph execution")
+        }
+    }
+
+    struct DelayedDispatcherOpenTraceDriverFactory {
+        events: Arc<Mutex<Vec<String>>>,
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    impl TraceProgramDriverFactory for DelayedDispatcherOpenTraceDriverFactory {
+        fn capabilities(
+            &self,
+            _spec: &TraceDriverSpec,
+        ) -> Result<TraceDriverCapabilities, TraceDriverError> {
+            Ok(TraceDriverCapabilities::default())
+        }
+
+        fn create(
+            &self,
+            _worker: WorkerIdentity,
+            trace: &TraceIdentity,
+            _spec: &TraceDriverSpec,
+        ) -> Result<Box<dyn TraceProgramDriver>, TraceDriverError> {
+            Ok(Box::new(DelayedDispatcherOpenTraceDriver {
+                trace: trace.clone(),
+                dispatcher: Rc::new(DelayedOpenToolDispatcher {
+                    events: self.events.clone(),
+                    started: self.started.clone(),
+                    release: self.release.clone(),
+                }),
+            }))
+        }
+    }
+
+    struct DelayedDispatcherOpenTraceDriver {
+        trace: TraceIdentity,
+        dispatcher: Rc<dyn tools::ToolDispatcher>,
+    }
+
+    #[async_trait(?Send)]
+    impl TraceProgramDriver for DelayedDispatcherOpenTraceDriver {
+        async fn open(
+            &mut self,
+            _program: &GraphTraceProgram,
+            context: &TraceDriverContext<'_>,
+        ) -> Result<(), TraceDriverError> {
+            let execution = context.execution.as_ref().ok_or_else(|| {
+                TraceDriverError::new("delayed dispatcher test requires worker execution context")
+            })?;
+            self.dispatcher
+                .open_trace(tools::TraceOpenContext {
+                    trace: &self.trace,
+                    environment: None,
+                    workspace: None,
+                    clock: execution.clock,
+                    segments: execution.segments,
+                    invocation: execution.invocation,
+                })
+                .await
+                .map_err(|error| TraceDriverError::new(error.to_string()))
+        }
+
+        async fn close(&mut self) -> Result<(), TraceDriverError> {
+            self.dispatcher
+                .close_trace(&self.trace)
+                .await
+                .map_err(|error| TraceDriverError::new(error.to_string()))
+        }
+
+        async fn abort_open(&mut self) -> Result<(), TraceDriverError> {
+            self.close().await
+        }
+
+        async fn run(
+            &mut self,
+            _program: &GraphTraceProgram,
+            _context: &TraceDriverContext<'_>,
+        ) -> Result<TraceTerminalSupplement, TraceDriverError> {
+            unreachable!("aborted delayed dispatcher test never runs the graph")
+        }
+    }
+
+    struct DelayedOpenToolDispatcher {
+        events: Arc<Mutex<Vec<String>>>,
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait(?Send)]
+    impl tools::ToolDispatcher for DelayedOpenToolDispatcher {
+        async fn open_trace(
+            &self,
+            _context: tools::TraceOpenContext<'_>,
+        ) -> Result<(), tools::ToolDispatchError> {
+            self.events
+                .lock()
+                .expect("dispatcher events are available")
+                .push("dispatcher:open".into());
+            self.started.notify_one();
+            self.release.notified().await;
+            self.events
+                .lock()
+                .expect("dispatcher events are available")
+                .push("dispatcher:opened".into());
+            Ok(())
+        }
+
+        async fn dispatch(
+            &self,
+            _request: tools::ToolDispatchRequest,
+            _context: &tools::ToolDispatchContext,
+        ) -> Result<tools::ToolDispatchResult, tools::ToolDispatchError> {
+            Err(tools::ToolDispatchError::new(
+                "delayed dispatcher test does not execute tools",
+            ))
+        }
+
+        async fn close_trace(
+            &self,
+            _trace: &TraceIdentity,
+        ) -> Result<(), tools::ToolDispatchError> {
+            self.events
+                .lock()
+                .expect("dispatcher events are available")
+                .push("dispatcher:close".into());
+            Ok(())
         }
     }
 
@@ -3104,7 +3319,7 @@ executable = "tools/adapter.sh"
             arrivals: Cell::new(0),
             terminal_records: Cell::new(0),
             profiling_records: Cell::new(0),
-            tool_dispatcher: None,
+            tool_dispatcher: RefCell::new(None),
             replay_calls: Rc::new(RefCell::new(Vec::new())),
             replay_tools: Rc::new(RefCell::new(Vec::new())),
         }
@@ -3235,7 +3450,8 @@ executable = "tools/adapter.sh"
             .native_graph()
             .expect("fixture contains a NativeGraph package");
         let (program, _) = lower_native_graph(native).expect("fixture lowers");
-        let backend = empty_graph_worker(Arc::new(NativeGraphLiveTraceProgramDriverFactory));
+        let backend =
+            empty_graph_worker(Arc::new(NativeGraphLiveTraceProgramDriverFactory::default()));
 
         let error = tokio::task::LocalSet::new()
             .run_until(async { backend.execute_trace(program).await.unwrap_err() })
@@ -3272,6 +3488,100 @@ executable = "tools/adapter.sh"
                 assert!(
                     backend.active.borrow().is_empty(),
                     "aborting a suspended driver open must drop its lifecycle handle"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelling_a_permanently_pending_driver_open_drops_its_lifecycle() {
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let backend = Rc::new(empty_graph_worker(Arc::new(PendingOpenDriverFactory {
+            dropped: dropped.clone(),
+        })));
+        let task_backend = backend.clone();
+
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let task = tokio::task::spawn_local(async move {
+                    let mut program = empty_recorded_program("permanently-pending-open");
+                    program.driver.kind = "pending_open".into();
+                    task_backend.execute_trace(program).await
+                });
+                tokio::task::yield_now().await;
+                backend
+                    .cancel_inflight()
+                    .expect("cancels the registered pending driver open");
+                assert!(matches!(task.await.unwrap(), Err(TraceError::Cancelled(_))));
+                for _ in 0..8 {
+                    if dropped.load(Ordering::SeqCst) == 1 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(
+                    dropped.load(Ordering::SeqCst),
+                    1,
+                    "cancellation cannot leave a permanently pending driver owned by a detached task"
+                );
+                assert!(
+                    backend.active.borrow().is_empty(),
+                    "a cancelled pending open has no retained lifecycle entry"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn aborting_pending_driver_open_rolls_back_delayed_dispatcher_cleanup() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let backend = Rc::new(empty_graph_worker(Arc::new(
+            DelayedDispatcherOpenTraceDriverFactory {
+                events: events.clone(),
+                started: started.clone(),
+                release: release.clone(),
+            },
+        )));
+        let task_backend = backend.clone();
+
+        tokio::task::LocalSet::new()
+            .run_until(async move {
+                let started_wait = started.notified();
+                let task = tokio::task::spawn_local(async move {
+                    let mut program = empty_recorded_program("delayed-dispatcher-open");
+                    program.driver.kind = "delayed_dispatcher_open".into();
+                    task_backend.execute_trace(program).await
+                });
+                started_wait.await;
+                backend
+                    .cancel_inflight()
+                    .expect("cancels the registered delayed driver open");
+                assert!(matches!(task.await.unwrap(), Err(TraceError::Cancelled(_))));
+                assert!(
+                    backend.active.borrow().is_empty(),
+                    "the aborted trace releases its active lifecycle entry"
+                );
+
+                for _ in 0..8 {
+                    if events
+                        .lock()
+                        .expect("dispatcher events are available")
+                        .iter()
+                        .any(|event| event == "dispatcher:close")
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert_eq!(
+                    events
+                        .lock()
+                        .expect("dispatcher events are available")
+                        .as_slice(),
+                    ["dispatcher:open", "dispatcher:close"],
+                    "cancellation rolls back the partially opened dispatcher exactly once"
                 );
             })
             .await;
