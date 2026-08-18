@@ -4,8 +4,8 @@
 use std::{fs, path::Path};
 
 use aiperf_runtime::eval::{
-    HarborImporter, HarborSource, ModelCapturePolicy, NativeSourceAcquirer, TokenizerBindingSpec,
-    select_native_graph_external_driver,
+    ArtifactDigest, HarborImporter, HarborSource, ModelCapturePolicy, NativeSourceAcquirer,
+    TokenizerBindingSpec, select_native_graph_external_driver,
 };
 use aiperf_runtime::extensions::{AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
 
@@ -269,6 +269,20 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
     );
     assert_eq!(rollout.environment().operation_deadline_ms().get(), 5_000);
     assert_eq!(rollout.policy().environment(), "counter-v1");
+    assert_eq!(rollout.policy().model_binding_id().as_str(), "primary");
+    assert_eq!(
+        rollout.policy().prompt_source().path(),
+        "rollout/policy.json"
+    );
+    assert_eq!(
+        rollout.policy().prompt_source().bytes(),
+        b"{\"instruction\":\"choose a move\"}\n"
+    );
+    assert_eq!(
+        rollout.policy().prompt_source().digest(),
+        &ArtifactDigest::from_bytes(b"{\"instruction\":\"choose a move\"}\n")
+    );
+    assert_eq!(rollout.policy().max_decision_bytes(), 256);
     assert_eq!(rollout.policy().horizon(), 4);
     assert_eq!(rollout.policy().gamma(), 0.75);
     assert_eq!(rollout.limits().max_environment_bytes(), 256);
@@ -304,6 +318,24 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
             "rollout.toml",
             "gamma = 0.75",
             "gamma = 0.5",
+        ),
+        (
+            "policy model binding selection",
+            "rollout.toml",
+            "model_binding_id = \"primary\"",
+            "model_binding_id = \"secondary\"",
+        ),
+        (
+            "policy prompt selection",
+            "rollout.toml",
+            "prompt_source = \"rollout/policy.json\"",
+            "prompt_source = \"rollout/alternate-policy.json\"",
+        ),
+        (
+            "policy decision byte cap",
+            "rollout.toml",
+            "max_decision_bytes = 256",
+            "max_decision_bytes = 128",
         ),
         (
             "environment byte cap",
@@ -461,6 +493,12 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
             "{\"seed\":7}",
             "{\"seed\":8}",
         ),
+        (
+            "policy prompt bytes",
+            "rollout/policy.json",
+            "choose a move",
+            "choose a different move",
+        ),
     ] {
         let altered = rollout_task_fixture(b"{\"seed\":7}\n");
         replace(&altered.path().join(path), from, to);
@@ -498,6 +536,46 @@ fn native_graph_rollout_rejects_invalid_or_incompatible_authoring_before_provisi
         "gamma = nan",
     );
     assert_invalid_package(invalid_gamma.path());
+
+    let missing_policy_model = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &missing_policy_model.path().join("rollout.toml"),
+        "model_binding_id = \"primary\"\n",
+        "",
+    );
+    assert_invalid_package(missing_policy_model.path());
+
+    let unknown_policy_model = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &unknown_policy_model.path().join("rollout.toml"),
+        "model_binding_id = \"primary\"",
+        "model_binding_id = \"not-declared\"",
+    );
+    assert_invalid_package(unknown_policy_model.path());
+
+    let missing_policy_prompt = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &missing_policy_prompt.path().join("rollout.toml"),
+        "prompt_source = \"rollout/policy.json\"\n",
+        "",
+    );
+    assert_invalid_package(missing_policy_prompt.path());
+
+    let missing_prompt_snapshot = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &missing_prompt_snapshot.path().join("rollout.toml"),
+        "prompt_source = \"rollout/policy.json\"",
+        "prompt_source = \"rollout/missing-policy.json\"",
+    );
+    assert_invalid_package(missing_prompt_snapshot.path());
+
+    let zero_decision_limit = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &zero_decision_limit.path().join("rollout.toml"),
+        "max_decision_bytes = 256",
+        "max_decision_bytes = 0",
+    );
+    assert_invalid_package(zero_decision_limit.path());
 
     let noncanonical_reset = rollout_task_fixture(b"{\"seed\":7}\n");
     replace(
@@ -576,6 +654,11 @@ fn native_graph_rollout_retains_the_acquired_reset_snapshot_after_origin_mutatio
 
     fs::write(task.path().join("rollout.toml"), b"not valid TOML\n").unwrap();
     fs::write(task.path().join("rollout/reset.json"), b"{\"seed\":999}\n").unwrap();
+    fs::write(
+        task.path().join("rollout/policy.json"),
+        b"{\"instruction\":\"choose a different move\"}\n",
+    )
+    .unwrap();
 
     let rollout = imported
         .package
@@ -586,6 +669,10 @@ fn native_graph_rollout_retains_the_acquired_reset_snapshot_after_origin_mutatio
     assert_eq!(
         rollout.environment().reset_source().bytes(),
         b"{\"seed\":7}\n"
+    );
+    assert_eq!(
+        rollout.policy().prompt_source().bytes(),
+        b"{\"instruction\":\"choose a move\"}\n"
     );
 }
 
@@ -1054,6 +1141,28 @@ policy = ["tools/policy.toml"]
 fn rollout_task_fixture(reset: &[u8]) -> tempfile::TempDir {
     let task = native_task_fixture(b"print('adapter')\n");
     append(
+        &task.path().join("models.toml"),
+        r#"
+[[model_bindings]]
+id = "secondary"
+endpoint_profile_id = "provider-secondary"
+endpoint_factory_id = "chat"
+transport_factory_id = "http"
+model = "alternate-model"
+urls = ["https://alternate.example/v1"]
+streaming = false
+request_timeout_ms = 30000
+capture = "none"
+
+[model_bindings.tokenizer]
+type = "local"
+name = "builtin"
+revision = "main"
+
+[model_bindings.generation]
+"#,
+    );
+    append(
         &task.path().join("adapters.toml"),
         r#"
 [[adapters]]
@@ -1082,6 +1191,16 @@ executable = "tools/alternate-environment.py"
     fs::create_dir_all(task.path().join("rollout")).unwrap();
     fs::write(task.path().join("rollout/reset.json"), reset).unwrap();
     fs::write(task.path().join("rollout/alternate-reset.json"), reset).unwrap();
+    fs::write(
+        task.path().join("rollout/policy.json"),
+        b"{\"instruction\":\"choose a move\"}\n",
+    )
+    .unwrap();
+    fs::write(
+        task.path().join("rollout/alternate-policy.json"),
+        b"{\"instruction\":\"choose an alternate move\"}\n",
+    )
+    .unwrap();
     fs::write(task.path().join("rollout.toml"), valid_rollout_toml()).unwrap();
     task
 }
@@ -1117,6 +1236,9 @@ max_download_handles = 4
 
 [policy]
 environment = "counter-v1"
+model_binding_id = "primary"
+prompt_source = "rollout/policy.json"
+max_decision_bytes = 256
 horizon = 4
 gamma = 0.75
 

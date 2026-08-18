@@ -217,7 +217,9 @@ async fn selected_worker_local_components_preserve_rollout_admission_through_ste
     assert_eq!(bound.adapter().id.as_str(), "environment-adapter");
     assert_eq!(bound.package_identity(), &imported.task.digest);
     assert_eq!(bound.action_encoder_id().as_str(), "move_v1");
-    assert_eq!(bound.action_encoder().id(), "move_v1");
+    assert_eq!(bound.action_encoder().id().as_str(), "move_v1");
+    assert_eq!(bound.action_encoding_limits().max_decision_bytes(), 256);
+    assert_eq!(bound.action_encoding_limits().max_action_bytes(), 3_072);
     assert_eq!(bound.operation_deadline(), Duration::from_secs(5));
     assert_eq!(runtime_starts.load(Ordering::Relaxed), 1);
     assert_eq!(spawner.starts.get(), 0);
@@ -687,6 +689,11 @@ executable = "tools/environment.sh"
     .expect("adapter executable");
     fs::write(task.path().join("rollout/reset.json"), b"{\"seed\":7}\n").expect("reset source");
     fs::write(
+        task.path().join("rollout/policy.json"),
+        b"{\"instruction\":\"choose a move\"}\n",
+    )
+    .expect("policy prompt source");
+    fs::write(
         task.path().join("rollout.toml"),
         r#"[environment]
 adapter_id = "environment-adapter"
@@ -717,6 +724,9 @@ max_download_handles = 4
 
 [policy]
 environment = "counter-v1"
+model_binding_id = "primary"
+prompt_source = "rollout/policy.json"
+max_decision_bytes = 256
 horizon = 4
 gamma = 0.75
 

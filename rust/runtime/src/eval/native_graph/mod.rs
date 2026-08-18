@@ -27,6 +27,10 @@ mod supervision;
 
 #[cfg(feature = "engine")]
 pub use crate::engine::record_lane::EvalNodeRecordArtifact;
+pub use action_encoder::{
+    ActionEncodingLimits, BoundNativeGraphActionEncoder, DeclaredPolicyDecision,
+    EpisodeActionEncodingError, NativeGraphActionEncoder,
+};
 pub use artifacts::{
     ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
     EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest, FrozenArtifactReference,
@@ -121,7 +125,7 @@ pub use package::{
     ActionEncoderFactoryId, AdapterId, AdapterRole, AdapterSpec, ExternalDriverFactoryId,
     GenerationDefaults, HeaderSecretRef, ModelBindingId, ModelBindingSpec, ModelCapturePolicy,
     ModelSecretId, NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource,
-    TokenizerBindingSpec,
+    NativeGraphRolloutPolicyPromptSource, TokenizerBindingSpec,
 };
 pub(crate) use package::{
     NativeGraphPackageDraft, NativeGraphSectionDto, resolve_native_graph_package,

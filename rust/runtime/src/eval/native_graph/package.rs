@@ -308,6 +308,31 @@ pub struct NativeGraphRolloutResetSource {
     digest: ArtifactDigest,
 }
 
+/// Immutable policy-prompt bytes selected from the acquired rollout snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeGraphRolloutPolicyPromptSource {
+    path: String,
+    bytes: Arc<[u8]>,
+    digest: ArtifactDigest,
+}
+
+impl NativeGraphRolloutPolicyPromptSource {
+    /// Returns the canonical package-relative policy-prompt path.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Returns the exact policy-prompt bytes retained at import time.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Returns the digest of the retained policy-prompt bytes.
+    pub fn digest(&self) -> &ArtifactDigest {
+        &self.digest
+    }
+}
+
 impl NativeGraphRolloutResetSource {
     /// Returns the canonical package-relative reset-source path.
     pub fn path(&self) -> &str {
@@ -439,6 +464,9 @@ impl NativeGraphEnvironmentArtifactLimits {
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeGraphRolloutPolicy {
     environment: String,
+    model_binding_id: ModelBindingId,
+    prompt_source: NativeGraphRolloutPolicyPromptSource,
+    max_decision_bytes: u64,
     horizon: u32,
     gamma: f64,
 }
@@ -447,6 +475,21 @@ impl NativeGraphRolloutPolicy {
     /// Returns the declared environment identity.
     pub fn environment(&self) -> &str {
         &self.environment
+    }
+
+    /// Returns the exact package-selected model binding that may emit policy decisions.
+    pub fn model_binding_id(&self) -> &ModelBindingId {
+        &self.model_binding_id
+    }
+
+    /// Returns the immutable policy-prompt source retained from the import snapshot.
+    pub fn prompt_source(&self) -> &NativeGraphRolloutPolicyPromptSource {
+        &self.prompt_source
+    }
+
+    /// Returns the positive raw model-decision byte cap selected by the package.
+    pub const fn max_decision_bytes(&self) -> u64 {
+        self.max_decision_bytes
     }
 
     /// Returns the maximum rollout horizon.
@@ -765,12 +808,6 @@ pub(crate) fn resolve_native_graph_package(
         executable_source_paths.extend(adapter.config.iter().cloned());
         executable_source_paths.extend(adapter.policy.iter().cloned());
     }
-    let rollout = resolve_rollout(source, section.profile, &adapters)?;
-    if let Some(rollout) = &rollout {
-        executable_source_paths.insert(ROLLOUT_MANIFEST_PATH.to_owned());
-        executable_source_paths.insert(rollout.environment.reset_source.path.clone());
-    }
-
     match section.profile {
         NativeGraphProfile::NativeGraph => {
             if section.driver.is_some() || section.external_driver_factory_id.is_some() {
@@ -799,6 +836,12 @@ pub(crate) fn resolve_native_graph_package(
             if model_bindings.is_empty() {
                 return invalid("native_graph profile requires at least one model binding");
             }
+            let rollout = resolve_rollout(source, section.profile, &adapters, &model_bindings)?;
+            if let Some(rollout) = &rollout {
+                executable_source_paths.insert(ROLLOUT_MANIFEST_PATH.to_owned());
+                executable_source_paths.insert(rollout.environment.reset_source.path.clone());
+                executable_source_paths.insert(rollout.policy.prompt_source.path.clone());
+            }
             executable_source_paths.insert(program_path);
             executable_source_paths.insert(model_manifest_path);
             Ok(NativeGraphPackageDraft {
@@ -818,9 +861,7 @@ pub(crate) fn resolve_native_graph_package(
                     "externally_driven profile must not declare a graph program or model bindings",
                 );
             }
-            if rollout.is_some() {
-                return invalid("rollout.toml requires the native_graph profile");
-            }
+            let _ = resolve_rollout(source, section.profile, &adapters, &[])?;
             let driver = section.driver.ok_or_else(|| {
                 HarborImportError::InvalidPackage(
                     "externally_driven profile requires native_graph.driver".to_owned(),
@@ -903,6 +944,9 @@ struct RolloutArtifactLimitsDto {
 #[serde(deny_unknown_fields)]
 struct RolloutPolicyDto {
     environment: String,
+    model_binding_id: ModelBindingId,
+    prompt_source: String,
+    max_decision_bytes: u64,
     horizon: u32,
     gamma: f64,
 }
@@ -918,6 +962,7 @@ fn resolve_rollout(
     source: &AcquiredSource,
     profile: NativeGraphProfile,
     adapters: &[AdapterSpec],
+    model_bindings: &[ModelBindingSpec],
 ) -> Result<Option<NativeGraphRolloutPlan>, HarborImportError> {
     let rollout_bytes = match source.read(ROLLOUT_MANIFEST_PATH) {
         Ok(bytes) => bytes,
@@ -955,12 +1000,34 @@ fn resolve_rollout(
     if !manifest.policy.gamma.is_finite() || !(0.0..=1.0).contains(&manifest.policy.gamma) {
         return invalid("rollout.policy.gamma must be finite and within [0, 1]");
     }
+    if manifest.policy.max_decision_bytes == 0 {
+        return invalid("rollout.policy.max_decision_bytes must be positive");
+    }
+    if !model_bindings
+        .iter()
+        .any(|binding| binding.id == manifest.policy.model_binding_id)
+    {
+        return invalid("rollout.policy.model_binding_id is not declared");
+    }
+    let prompt_path = canonical_relative_path(
+        "rollout.policy.prompt_source",
+        manifest.policy.prompt_source,
+    )?;
+    let prompt_bytes = source.read_owned(&prompt_path)?;
+    let prompt_source = NativeGraphRolloutPolicyPromptSource {
+        path: prompt_path,
+        digest: ArtifactDigest::from_bytes(&prompt_bytes),
+        bytes: prompt_bytes,
+    };
     let environment =
         resolve_rollout_environment(source, manifest.environment, manifest.artifacts, adapters)?;
     Ok(Some(NativeGraphRolloutPlan {
         environment,
         policy: NativeGraphRolloutPolicy {
             environment: policy_environment,
+            model_binding_id: manifest.policy.model_binding_id,
+            prompt_source,
+            max_decision_bytes: manifest.policy.max_decision_bytes,
             horizon: manifest.policy.horizon,
             gamma: manifest.policy.gamma,
         },
@@ -1643,6 +1710,26 @@ fn append_rollout_identity(material: &mut Vec<u8>, rollout: &NativeGraphRolloutP
         material,
         "native-graph-rollout.policy.environment",
         rollout.policy.environment.as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.policy.model-binding-id",
+        rollout.policy.model_binding_id.as_str().as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.policy.prompt-source-path",
+        rollout.policy.prompt_source.path.as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.policy.prompt-source-digest",
+        rollout.policy.prompt_source.digest.as_str().as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.policy.max-decision-bytes",
+        &rollout.policy.max_decision_bytes.to_le_bytes(),
     );
     append_identity_field(
         material,

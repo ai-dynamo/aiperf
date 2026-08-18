@@ -8,44 +8,23 @@ use std::{
     io::{self, Cursor, Write},
 };
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::artifacts::{
-    ArtifactError, ArtifactQuota, EpisodeArtifactStore, FrozenArtifactReference,
-};
-
-const MAX_ACTION_ENCODER_ID_BYTES: usize = 128;
-
-/// Opaque identity for the Rust-selected encoder that admits one declared decision.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ActionEncoderId(String);
-
-impl ActionEncoderId {
-    /// Validates a stable, non-secret Rust-owned encoder identifier.
-    pub(crate) fn new(value: impl AsRef<str>) -> Result<Self, EpisodeActionEncodingError> {
-        let value = value.as_ref();
-        if value.is_empty()
-            || value.len() > MAX_ACTION_ENCODER_ID_BYTES
-            || !value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err(EpisodeActionEncodingError::InvalidEncoderId);
-        }
-        Ok(Self(value.to_owned()))
-    }
-}
+#[cfg(test)]
+use super::artifacts::ArtifactQuota;
+use super::artifacts::{ArtifactError, EpisodeArtifactStore, FrozenArtifactReference};
+use super::package::ActionEncoderFactoryId;
 
 /// Exact limits for one Rust-owned decision-to-action admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ActionEncodingLimits {
+pub struct ActionEncodingLimits {
     max_decision_bytes: usize,
     max_action_bytes: usize,
 }
 
 impl ActionEncodingLimits {
     /// Requires positive byte limits before a decision or action reaches the artifact store.
-    pub(crate) fn new(
+    pub fn new(
         max_decision_bytes: usize,
         max_action_bytes: usize,
     ) -> Result<Self, EpisodeActionEncodingError> {
@@ -57,12 +36,22 @@ impl ActionEncodingLimits {
             max_action_bytes,
         })
     }
+
+    /// Returns the maximum raw policy-decision bytes admitted before JSON deserialization.
+    pub const fn max_decision_bytes(&self) -> usize {
+        self.max_decision_bytes
+    }
+
+    /// Returns the maximum canonical action bytes frozen into the episode store.
+    pub const fn max_action_bytes(&self) -> usize {
+        self.max_action_bytes
+    }
 }
 
 /// Bounded, immutable policy output that is not yet an environment-action reference.
 #[derive(Clone, Debug)]
-pub(crate) struct DeclaredPolicyDecision {
-    encoder: ActionEncoderId,
+pub struct DeclaredPolicyDecision {
+    encoder: ActionEncoderFactoryId,
     output: Value,
     canonical_bytes: usize,
 }
@@ -70,7 +59,7 @@ pub(crate) struct DeclaredPolicyDecision {
 impl DeclaredPolicyDecision {
     /// Retains only a byte-bounded policy output under the encoder it declares.
     pub(crate) fn new(
-        encoder: ActionEncoderId,
+        encoder: ActionEncoderFactoryId,
         output: Value,
         limits: ActionEncodingLimits,
     ) -> Result<Self, EpisodeActionEncodingError> {
@@ -84,47 +73,113 @@ impl DeclaredPolicyDecision {
         })
     }
 
+    /// Lexically bounds one raw model decision before `serde_json` can allocate a value tree.
+    pub fn from_json_bytes(
+        encoder: ActionEncoderFactoryId,
+        bytes: &[u8],
+        limits: ActionEncodingLimits,
+    ) -> Result<Self, EpisodeActionEncodingError> {
+        preflight_raw_decision_json(bytes, limits.max_decision_bytes)?;
+        let output = serde_json::from_slice(bytes)
+            .map_err(|_| EpisodeActionEncodingError::InvalidDecisionJson)?;
+        Self::new(encoder, output, limits)
+    }
+
     /// Returns the exact Rust-owned encoder selection declared by this decision.
-    pub(crate) fn encoder(&self) -> &ActionEncoderId {
+    pub fn encoder(&self) -> &ActionEncoderFactoryId {
         &self.encoder
     }
 
     /// Borrows the bounded raw policy output for the selected encoder's validation only.
-    pub(crate) fn output(&self) -> &Value {
+    pub fn output(&self) -> &Value {
         &self.output
     }
 }
 
-/// Validated action document that cannot become a capability until the store freezes it.
-#[derive(Clone, Debug)]
-pub(crate) struct FrozenActionDocument(Value);
-
-impl FrozenActionDocument {
-    fn new(value: Value) -> Self {
-        Self(value)
-    }
-}
-
-mod sealed {
-    pub trait EpisodeActionEncoder {}
-}
-
 /// Rust-owned validator and encoder for exactly one declared decision kind.
-pub(crate) trait EpisodeActionEncoder: sealed::EpisodeActionEncoder {
+pub trait NativeGraphActionEncoder: Send {
     /// Returns the only declared decision kind this encoder may admit.
-    fn id(&self) -> &ActionEncoderId;
+    fn id(&self) -> &str;
 
-    /// Validates one bounded decision and returns its untrusted-free action document.
+    /// Validates one bounded decision and returns one unfrozen canonicalizable action document.
     fn encode(
         &self,
         decision: &DeclaredPolicyDecision,
-    ) -> Result<FrozenActionDocument, EpisodeActionEncodingError>;
+    ) -> Result<Value, EpisodeActionEncodingError>;
+}
+
+/// One package-selected encoder bound from a frozen registry before adapter provisioning.
+pub struct BoundNativeGraphActionEncoder {
+    id: ActionEncoderFactoryId,
+    encoder: Box<dyn NativeGraphActionEncoder>,
+}
+
+impl BoundNativeGraphActionEncoder {
+    /// Binds one encoder only when it matches the already sealed package selector.
+    pub fn new(
+        id: ActionEncoderFactoryId,
+        encoder: Box<dyn NativeGraphActionEncoder>,
+    ) -> Result<Self, EpisodeActionEncodingError> {
+        if encoder.id() != id.as_str() {
+            return Err(EpisodeActionEncodingError::EncoderSelectionMismatch);
+        }
+        Ok(Self { id, encoder })
+    }
+
+    /// Returns the exact registry identifier bound to this encoder.
+    pub fn id(&self) -> &ActionEncoderFactoryId {
+        &self.id
+    }
+
+    fn encode(
+        &self,
+        decision: &DeclaredPolicyDecision,
+    ) -> Result<Value, EpisodeActionEncodingError> {
+        self.encoder.encode(decision)
+    }
+}
+
+/// Built-in validator for the schema-1 `move_v1` action contract.
+pub(crate) struct MoveV1ActionEncoder;
+
+impl NativeGraphActionEncoder for MoveV1ActionEncoder {
+    fn id(&self) -> &str {
+        "move_v1"
+    }
+
+    fn encode(
+        &self,
+        decision: &DeclaredPolicyDecision,
+    ) -> Result<Value, EpisodeActionEncodingError> {
+        let Value::Object(values) = decision.output() else {
+            return Err(EpisodeActionEncodingError::RejectedDecision(
+                "move action must be an object",
+            ));
+        };
+        let Some(Value::String(direction)) = values.get("direction") else {
+            return Err(EpisodeActionEncodingError::RejectedDecision(
+                "move action has no declared direction",
+            ));
+        };
+        if values.len() != 2
+            || values.get("kind") != Some(&json!("move"))
+            || !matches!(direction.as_str(), "north" | "south" | "west")
+        {
+            return Err(EpisodeActionEncodingError::RejectedDecision(
+                "move action is not declared",
+            ));
+        }
+        Ok(json!({
+            "kind": "move",
+            "direction": direction,
+        }))
+    }
 }
 
 /// Freezes a selected encoder's canonical action through the episode-owned artifact store.
 pub(crate) fn freeze_declared_policy_action(
     decision: &DeclaredPolicyDecision,
-    encoder: &dyn EpisodeActionEncoder,
+    encoder: &BoundNativeGraphActionEncoder,
     store: &mut EpisodeArtifactStore,
     limits: ActionEncodingLimits,
 ) -> Result<FrozenArtifactReference, EpisodeActionEncodingError> {
@@ -140,7 +195,7 @@ pub(crate) fn freeze_declared_policy_action(
 
     store.preflight_reference()?;
     let action = encoder.encode(decision)?;
-    let bytes = canonical_json_bytes(&action.0, limits.max_action_bytes)
+    let bytes = canonical_json_bytes(&action, limits.max_action_bytes)
         .map_err(|error| error.into_action_error(limits.max_action_bytes))?;
     let declared_bytes = u64::try_from(bytes.len())
         .map_err(|_| EpisodeActionEncodingError::ArtifactLengthOverflow)?;
@@ -152,7 +207,7 @@ pub(crate) fn freeze_declared_policy_action(
 
 /// Decision-to-action admission failure without echoing policy or action contents.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum EpisodeActionEncodingError {
+pub enum EpisodeActionEncodingError {
     /// An encoder identifier was empty, overlong, or not an ASCII identifier.
     InvalidEncoderId,
     /// One decision or action byte limit was zero.
@@ -173,6 +228,8 @@ pub(crate) enum EpisodeActionEncodingError {
     },
     /// The selected Rust encoder was not the decision's declared encoder.
     EncoderSelectionMismatch,
+    /// Raw decision bytes were not a complete lexically valid JSON input.
+    InvalidDecisionJson,
     /// The selected encoder rejected the declared decision's shape or values.
     RejectedDecision(&'static str),
     /// A byte length could not be represented by the artifact store.
@@ -207,6 +264,9 @@ impl Display for EpisodeActionEncodingError {
             Self::EncoderSelectionMismatch => {
                 formatter.write_str("selected action encoder does not match declared encoder")
             }
+            Self::InvalidDecisionJson => {
+                formatter.write_str("declared policy decision is not valid bounded JSON")
+            }
             Self::RejectedDecision(reason) => write!(
                 formatter,
                 "selected action encoder rejected decision: {reason}"
@@ -235,6 +295,60 @@ impl From<ArtifactError> for EpisodeActionEncodingError {
     fn from(error: ArtifactError) -> Self {
         Self::Artifact(error)
     }
+}
+
+fn preflight_raw_decision_json(
+    bytes: &[u8],
+    limit: usize,
+) -> Result<(), EpisodeActionEncodingError> {
+    if bytes.len() > limit {
+        return Err(EpisodeActionEncodingError::DecisionTooLarge {
+            limit,
+            observed_at_least: bytes.len(),
+        });
+    }
+    let mut index = 0;
+    let mut in_string = false;
+    while let Some(&byte) = bytes.get(index) {
+        if !in_string {
+            if byte == b'"' {
+                in_string = true;
+            }
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'"' => {
+                in_string = false;
+                index += 1;
+            }
+            b'\\' => {
+                index += 1;
+                let Some(&escape) = bytes.get(index) else {
+                    return Err(EpisodeActionEncodingError::InvalidDecisionJson);
+                };
+                match escape {
+                    b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => index += 1,
+                    b'u' => {
+                        let Some(units) = bytes.get(index + 1..index + 5) else {
+                            return Err(EpisodeActionEncodingError::InvalidDecisionJson);
+                        };
+                        if !units.iter().all(u8::is_ascii_hexdigit) {
+                            return Err(EpisodeActionEncodingError::InvalidDecisionJson);
+                        }
+                        index += 5;
+                    }
+                    _ => return Err(EpisodeActionEncodingError::InvalidDecisionJson),
+                }
+            }
+            0..=0x1f => return Err(EpisodeActionEncodingError::InvalidDecisionJson),
+            _ => index += 1,
+        }
+    }
+    if in_string || bytes.is_empty() {
+        return Err(EpisodeActionEncodingError::InvalidDecisionJson);
+    }
+    Ok(())
 }
 
 enum CanonicalJsonError {
@@ -368,53 +482,15 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        ActionEncoderId, ActionEncodingLimits, ArtifactError, DeclaredPolicyDecision,
-        EpisodeActionEncoder, EpisodeActionEncodingError, EpisodeArtifactStore,
-        FrozenActionDocument, freeze_declared_policy_action,
+        ActionEncoderFactoryId, ActionEncodingLimits, ArtifactError, DeclaredPolicyDecision,
+        EpisodeActionEncodingError, EpisodeArtifactStore, freeze_declared_policy_action,
+    };
+    use crate::eval::native_graph::factories::{
+        MoveV1ActionEncoderFactory, NativeGraphActionEncoderFactory,
     };
 
-    struct MoveEncoder {
-        id: ActionEncoderId,
-    }
-
-    impl super::sealed::EpisodeActionEncoder for MoveEncoder {}
-
-    impl EpisodeActionEncoder for MoveEncoder {
-        fn id(&self) -> &ActionEncoderId {
-            &self.id
-        }
-
-        fn encode(
-            &self,
-            decision: &DeclaredPolicyDecision,
-        ) -> Result<FrozenActionDocument, EpisodeActionEncodingError> {
-            let serde_json::Value::Object(values) = decision.output() else {
-                return Err(EpisodeActionEncodingError::RejectedDecision(
-                    "move action must be an object",
-                ));
-            };
-            let Some(serde_json::Value::String(direction)) = values.get("direction") else {
-                return Err(EpisodeActionEncodingError::RejectedDecision(
-                    "move action has no declared direction",
-                ));
-            };
-            if values.len() != 2
-                || values.get("kind") != Some(&json!("move"))
-                || !matches!(direction.as_str(), "north" | "south" | "west")
-            {
-                return Err(EpisodeActionEncodingError::RejectedDecision(
-                    "move action is not declared",
-                ));
-            }
-            Ok(FrozenActionDocument::new(json!({
-                "kind": "move",
-                "direction": direction,
-            })))
-        }
-    }
-
     fn declared_move(
-        encoder: ActionEncoderId,
+        encoder: ActionEncoderFactoryId,
         direction: &str,
         limits: ActionEncodingLimits,
     ) -> DeclaredPolicyDecision {
@@ -424,6 +500,50 @@ mod tests {
             limits,
         )
         .expect("declared move is bounded")
+    }
+
+    #[test]
+    fn raw_policy_decision_bytes_are_bounded_before_json_deserialization() {
+        let limits = ActionEncodingLimits::new(64, 64).expect("positive action limits");
+        let move_id = move_v1_id();
+
+        let error = DeclaredPolicyDecision::from_json_bytes(
+            move_id.clone(),
+            &[b'x'; 65],
+            limits,
+        )
+        .expect_err(
+            "an oversized malformed model response must fail by the byte cap before JSON parsing",
+        );
+        assert!(matches!(
+            error,
+            EpisodeActionEncodingError::DecisionTooLarge {
+                limit: 64,
+                observed_at_least: 65,
+            }
+        ));
+
+        let error = DeclaredPolicyDecision::from_json_bytes(
+            move_id.clone(),
+            br#"{"kind":"move","direction":"n"#,
+            limits,
+        )
+        .expect_err("a lexically incomplete decision cannot reach serde_json allocation");
+        assert!(matches!(
+            error,
+            EpisodeActionEncodingError::InvalidDecisionJson
+        ));
+
+        let decision = DeclaredPolicyDecision::from_json_bytes(
+            move_id,
+            br#"{"direction":"north","kind":"move"}"#,
+            limits,
+        )
+        .expect("a bounded complete decision is admitted");
+        assert_eq!(
+            decision.output(),
+            &json!({"direction": "north", "kind": "move"})
+        );
     }
 
     #[test]
@@ -440,16 +560,16 @@ mod tests {
         )
         .expect("artifact quota is valid");
         let limits = ActionEncodingLimits::new(64, 64).expect("positive action limits");
-        let move_id = ActionEncoderId::new("move").expect("declared encoder id is valid");
+        let move_id = move_v1_id();
         let raw = DeclaredPolicyDecision::new(
             move_id.clone(),
             json!({"arbitrary": ["untrusted"]}),
             limits,
         )
         .expect("bounded declared decision is accepted but is not an action reference");
-        let encoder = MoveEncoder {
-            id: move_id.clone(),
-        };
+        let encoder = MoveV1ActionEncoderFactory
+            .bind(&move_id)
+            .expect("the selected factory binds the real move_v1 encoder");
 
         let error = freeze_declared_policy_action(&raw, &encoder, &mut store, limits)
             .expect_err("an encoder must validate raw decision JSON before an action exists");
@@ -494,10 +614,10 @@ mod tests {
         )
         .expect("artifact quota is valid");
         let limits = ActionEncodingLimits::new(64, 64).expect("positive action limits");
-        let move_id = ActionEncoderId::new("move").expect("declared encoder id is valid");
-        let encoder = MoveEncoder {
-            id: move_id.clone(),
-        };
+        let move_id = move_v1_id();
+        let encoder = MoveV1ActionEncoderFactory
+            .bind(&move_id)
+            .expect("the selected factory binds the real move_v1 encoder");
 
         let first = freeze_declared_policy_action(
             &declared_move(move_id.clone(), "north", limits),
@@ -528,5 +648,9 @@ mod tests {
             limits,
         )
         .expect("the failed second action retained no frozen artifact quota");
+    }
+
+    fn move_v1_id() -> ActionEncoderFactoryId {
+        serde_json::from_str("\"move_v1\"").expect("move_v1 is a valid action encoder id")
     }
 }

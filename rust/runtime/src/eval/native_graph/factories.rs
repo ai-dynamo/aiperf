@@ -31,10 +31,13 @@ use crate::{
     eval::{AdapterSpec, ArtifactDigest, ProviderRecovery},
 };
 
-#[cfg(feature = "engine")]
-use super::package::{
-    ActionEncoderFactoryId, NativeGraphRolloutEnvironment, NativeGraphRolloutResetSource,
+use super::action_encoder::{
+    ActionEncodingLimits, BoundNativeGraphActionEncoder, EpisodeActionEncodingError,
+    MoveV1ActionEncoder,
 };
+use super::package::ActionEncoderFactoryId;
+#[cfg(feature = "engine")]
+use super::package::{NativeGraphRolloutEnvironment, NativeGraphRolloutResetSource};
 use super::{
     AdapterLifecycleDeadlines, AdapterProtocolConfig, AdapterProtocolFactory,
     AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawner, ArtifactError, ArtifactQuota,
@@ -149,18 +152,18 @@ impl NativeGraphAdapterRuntimeResolution for StrictAdapterRuntimeResolution {
 }
 
 /// Stateless Rust-owned action-encoder implementation selected by an imported package.
-///
-/// This seam establishes exact package-to-registry selection only. A later live-runner slice
-/// binds declared policy output to this selected implementation before action freezing.
 pub trait NativeGraphActionEncoderFactory: Send + Sync {
     /// Returns the canonical selector this factory permits.
     fn id(&self) -> &str;
+
+    /// Binds one fresh encoder after exact sealed-selector resolution and before adapter start.
+    fn bind(
+        &self,
+        selection: &ActionEncoderFactoryId,
+    ) -> Result<BoundNativeGraphActionEncoder, NativeGraphFactoryError>;
 }
 
-/// Built-in marker for the schema-1 `move_v1` decision/action contract.
-///
-/// It is selected and retained here, but no model decision reaches it until the live action
-/// dispatch boundary is introduced.
+/// Built-in factory for the schema-1 `move_v1` decision/action contract.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MoveV1ActionEncoderFactory;
 
@@ -168,6 +171,20 @@ impl NativeGraphActionEncoderFactory for MoveV1ActionEncoderFactory {
     fn id(&self) -> &str {
         "move_v1"
     }
+
+    fn bind(
+        &self,
+        selection: &ActionEncoderFactoryId,
+    ) -> Result<BoundNativeGraphActionEncoder, NativeGraphFactoryError> {
+        BoundNativeGraphActionEncoder::new(selection.clone(), Box::new(MoveV1ActionEncoder))
+            .map_err(action_encoder_factory_error)
+    }
+}
+
+fn action_encoder_factory_error(error: EpisodeActionEncodingError) -> NativeGraphFactoryError {
+    NativeGraphFactoryError::new(format!(
+        "NativeGraph action encoder binding failed: {error}"
+    ))
 }
 
 /// Factory that binds a selected adapter runtime to one worker-local environment stepper.
@@ -224,7 +241,8 @@ pub struct BoundNativeGraphEnvironmentStepper {
     package_identity: ArtifactDigest,
     protocol: AdapterProtocolConfig,
     action_encoder_id: ActionEncoderFactoryId,
-    action_encoder: Arc<dyn NativeGraphActionEncoderFactory>,
+    action_encoder: BoundNativeGraphActionEncoder,
+    action_encoding_limits: ActionEncodingLimits,
     policy: RlEvaluationPolicy,
     artifact_quota: ArtifactQuota,
     operation_deadline: Duration,
@@ -255,9 +273,14 @@ impl BoundNativeGraphEnvironmentStepper {
         &self.action_encoder_id
     }
 
-    /// Borrows the exact registered action encoder selected before spawn authority exists.
-    pub fn action_encoder(&self) -> &Arc<dyn NativeGraphActionEncoderFactory> {
+    /// Borrows the exact real action encoder bound before spawn authority exists.
+    pub fn action_encoder(&self) -> &BoundNativeGraphActionEncoder {
         &self.action_encoder
+    }
+
+    /// Returns the exact decision and action byte limits derived from the sealed package.
+    pub const fn action_encoding_limits(&self) -> ActionEncodingLimits {
+        self.action_encoding_limits
     }
 
     /// Returns the sealed environment operation deadline.
@@ -491,7 +514,7 @@ pub fn bind_native_graph_environment_stepper(
                 environment.stepper_factory_id().as_str()
             ))
         })?;
-    let action_encoder = registry
+    let action_encoder_factory = registry
         .native_graph_action_encoder(environment.action_encoder_id().as_str())
         .ok_or_else(|| {
             NativeGraphFactoryError::new(format!(
@@ -499,9 +522,15 @@ pub fn bind_native_graph_environment_stepper(
                 environment.action_encoder_id().as_str()
             ))
         })?;
-    if action_encoder.id() != environment.action_encoder_id().as_str() {
+    if action_encoder_factory.id() != environment.action_encoder_id().as_str() {
         return Err(NativeGraphFactoryError::new(
             "NativeGraph action encoder registration does not match the sealed selector",
+        ));
+    }
+    let action_encoder = action_encoder_factory.bind(environment.action_encoder_id())?;
+    if action_encoder.id() != environment.action_encoder_id() {
+        return Err(NativeGraphFactoryError::new(
+            "NativeGraph action encoder binding does not match the sealed selector",
         ));
     }
     let protocol = environment_protocol_config(
@@ -511,6 +540,17 @@ pub fn bind_native_graph_environment_stepper(
             .to_owned(),
     )?;
     let artifact_quota = environment_artifact_quota(environment)?;
+    let action_encoding_limits = ActionEncodingLimits::new(
+        environment_limit_usize(
+            rollout.policy().max_decision_bytes(),
+            "rollout.policy.max_decision_bytes",
+        )?,
+        environment_limit_usize(
+            artifact_quota.max_artifact_bytes,
+            "rollout.artifacts.max_artifact_bytes",
+        )?,
+    )
+    .map_err(action_encoder_factory_error)?;
     let operation_deadline = Duration::from_millis(environment.operation_deadline_ms().get());
     let protocol_factory = Rc::new(WorkerLocalProtocolFactory {
         inner: Arc::clone(protocol_factory),
@@ -532,7 +572,8 @@ pub fn bind_native_graph_environment_stepper(
         package_identity: trial.imported().task.digest.clone(),
         protocol,
         action_encoder_id: environment.action_encoder_id().clone(),
-        action_encoder: Arc::clone(action_encoder),
+        action_encoder,
+        action_encoding_limits,
         policy: RlEvaluationPolicy::new(
             rollout.policy().environment(),
             rollout.policy().horizon(),
