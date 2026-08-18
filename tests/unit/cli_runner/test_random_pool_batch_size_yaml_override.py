@@ -165,3 +165,62 @@ benchmark:
     cli = _cli(prompt_batch_size=4)
     with pytest.raises(ValueError, match="random_pool"):
         resolve_config(cli, yaml_path)
+
+
+# ---------------------------------------------------------------------------
+# Synthetic / public datasets: batch-size flags are legitimate elsewhere and
+# must not be rejected by the random_pool-specific override helper.
+# ---------------------------------------------------------------------------
+
+
+def _write_synthetic_yaml(tmp_path: Path, **extra_prompts_fields: object) -> Path:
+    """Write a minimal YAML config with a synthetic dataset."""
+    extra_lines = "".join(
+        f"      {key}: {value}\n" for key, value in extra_prompts_fields.items()
+    )
+    yaml_content = f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: synthetic
+    prompts:
+{extra_lines}\
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    cfg_path = tmp_path / "synthetic.yaml"
+    cfg_path.write_text(yaml_content)
+    return cfg_path
+
+
+@pytest.mark.parametrize(
+    "batch_kwarg",
+    [
+        pytest.param({"prompt_batch_size": 4}, id="text"),
+        pytest.param({"image_batch_size": 2}, id="image"),
+        pytest.param({"audio_batch_size": 2}, id="audio"),
+        pytest.param({"video_batch_size": 2}, id="video"),
+    ],
+)
+def test_batch_size_flag_on_synthetic_yaml_does_not_raise(
+    tmp_path: Path, batch_kwarg: dict
+) -> None:
+    """Batch-size CLI flags must not raise on a synthetic YAML dataset.
+
+    Regression test: synthetic datasets have no ``format`` field at all, so
+    ``dataset.get("format")`` returned ``None`` and the ``!= RANDOM_POOL`` check
+    incorrectly raised for perfectly legitimate synthetic/embeddings batch-size
+    usage. These flags are already routed onto SyntheticDataset's
+    prompts/images/audio/video.batch_size sub-configs by the generic CLI-override
+    deep-merge that runs before this helper, so the helper must no-op here
+    rather than validate or touch anything.
+    """
+    yaml_path = _write_synthetic_yaml(tmp_path, batch_size=1)
+    cli = _cli(**batch_kwarg)
+    cfg = resolve_config(cli, yaml_path)
+    assert cfg.benchmark.datasets[0].type == "synthetic"

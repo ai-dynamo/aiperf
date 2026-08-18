@@ -402,6 +402,32 @@ def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> N
     filters.update(_parse_dataset_filters(cli.dataset_filters))
 
 
+def _first_yaml_dataset(
+    benchmark: dict[str, Any], *, warn_context: str
+) -> dict[str, Any] | None:
+    """Resolve the singular ``dataset`` or first entry of ``datasets`` from a
+    merged YAML ``benchmark`` mapping. Returns ``None`` if neither is present.
+
+    ``warn_context`` names the flag/feature in the "multiple datasets" warning
+    (e.g. ``"Batch-size flags"``), consistent with the convention shared by
+    ``_apply_dataset_filter_overrides`` and ``_apply_dataset_synthesis_overrides``.
+    """
+    dataset = benchmark.get("dataset")
+    if isinstance(dataset, dict):
+        return dataset
+
+    datasets = benchmark.get("datasets")
+    if not isinstance(datasets, list) or not datasets:
+        return None
+    if len(datasets) > 1:
+        logger.warning(
+            "%s with multiple YAML datasets apply only to the first dataset",
+            warn_context,
+        )
+    dataset = datasets[0]
+    return dataset if isinstance(dataset, dict) else None
+
+
 # Maps CLIConfig attribute name -> (FileDataset field name, CLI flag display name).
 # Used by _apply_random_pool_batch_size_overrides for gating and error messages.
 _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP: tuple[tuple[str, str, str], ...] = (
@@ -426,10 +452,16 @@ def _apply_random_pool_batch_size_overrides(
     against the field value — so an unset flag never clobbers a YAML-supplied value.
     Zero is a valid value (``image/audio/video_batch_size=0`` disables that modality).
 
-    For non-random_pool datasets a ``ValueError`` is raised with a message that
-    names the flag and the format, matching the friendly error the CLI-only path
-    produces instead of letting the ``FileDataset`` model validator fire a raw
-    Pydantic trace.
+    Only applies to ``type: file`` datasets. Synthetic and public datasets have no
+    ``format`` field at all, and the generic ``build_cli_overrides`` deep-merge
+    (which runs before this function) already routes these same flags onto
+    ``SyntheticDataset.prompts/images/audio/video.batch_size`` -- so this function
+    must not touch or reject them here.
+
+    For a ``type: file`` dataset that isn't ``format: random_pool``, a ``ValueError``
+    is raised with a message that names the flag and the format, matching the
+    friendly error the CLI-only path produces instead of letting the ``FileDataset``
+    model validator fire a raw Pydantic trace.
 
     With multiple YAML datasets the override applies to the first dataset only,
     consistent with the convention in ``_apply_dataset_synthesis_overrides`` and
@@ -445,18 +477,9 @@ def _apply_random_pool_batch_size_overrides(
     if not isinstance(benchmark, dict):
         return
 
-    dataset = benchmark.get("dataset")
-    if not isinstance(dataset, dict):
-        datasets = benchmark.get("datasets")
-        if not isinstance(datasets, list) or not datasets:
-            return
-        if len(datasets) > 1:
-            logger.warning(
-                "Batch-size flags with multiple YAML datasets apply only to the first dataset"
-            )
-        dataset = datasets[0]
-        if not isinstance(dataset, dict):
-            return
+    dataset = _first_yaml_dataset(benchmark, warn_context="Batch-size flags")
+    if dataset is None or dataset.get("type") != DatasetType.FILE:
+        return
 
     fmt = dataset.get("format")
     if fmt != DatasetFormat.RANDOM_POOL:
