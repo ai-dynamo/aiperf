@@ -9,13 +9,13 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 
-use crate::config::MockServerConfig;
+use crate::config::{MockServerConfig, WebSocketMode};
 use crate::handlers;
 use crate::observability;
 pub use crate::state::AppState;
 
 pub fn build_router(state: Arc<AppState>) -> Router {
-    Router::new()
+    let mut router = Router::new()
         .route("/", get(handlers::root_info))
         .route("/health", get(handlers::health))
         .route("/v1/models", get(handlers::list_models))
@@ -118,8 +118,38 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/wandb/runs", post(observability::receive_wandb))
         // Large prompts can exceed axum's 2 MiB default before reaching a handler.
-        .layer(DefaultBodyLimit::disable())
-        .with_state(state)
+        .layer(DefaultBodyLimit::disable());
+
+    match state.config.websocket_mode {
+        WebSocketMode::Disabled => {}
+        WebSocketMode::TurnSerialized => {
+            router = router.route(
+                "/mock/websocket/turns",
+                get(crate::websocket::turns_upgrade),
+            );
+        }
+        WebSocketMode::Realtime => {
+            router = router.route(
+                "/mock/websocket/realtime",
+                get(crate::websocket::realtime_upgrade),
+            );
+        }
+        WebSocketMode::Both => {
+            router = router
+                .route(
+                    "/mock/websocket/turns",
+                    get(crate::websocket::turns_upgrade),
+                )
+                .route(
+                    "/mock/websocket/realtime",
+                    get(crate::websocket::realtime_upgrade),
+                );
+        }
+    }
+    if state.config.websocket_enabled() {
+        router = router.route("/mock/websocket/captures", get(crate::websocket::captures));
+    }
+    router.with_state(state)
 }
 
 pub fn build_state(config: MockServerConfig) -> Arc<AppState> {

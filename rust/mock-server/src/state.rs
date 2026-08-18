@@ -17,6 +17,7 @@ use crate::dcgm::{DcgmFaker, DcgmPool};
 use crate::metrics::MetricRecorder;
 use crate::prefix_cache::PrefixCache;
 use crate::scheduler::BatchScheduler;
+use crate::websocket::WebSocketCaptureStore;
 
 pub struct AppState {
     pub config: MockServerConfig,
@@ -52,6 +53,9 @@ pub struct AppState {
     pub content_fetch_client: Option<ContentFetchClient>,
     /// In-memory observability collector state used by integration tests.
     pub observability: crate::observability::ObservabilityState,
+    /// Monotonic WebSocket connection identities and bounded completed captures.
+    pub(crate) websocket_connections: AtomicU64,
+    pub(crate) websocket_captures: WebSocketCaptureStore,
 }
 
 /// Pooled plain-HTTP client used to fetch content URLs. `Empty<Bytes>` is the
@@ -172,6 +176,8 @@ impl AppState {
             accuracy_live: crate::accuracy::AccuracyLive::default(),
             content_fetch_client,
             observability: crate::observability::ObservabilityState::default(),
+            websocket_connections: AtomicU64::new(0),
+            websocket_captures: WebSocketCaptureStore::new(config.websocket_capture_capacity),
         });
 
         if config.dcgm_auto_load {

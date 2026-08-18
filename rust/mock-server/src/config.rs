@@ -10,6 +10,8 @@ use crate::accuracy::{AccuracyFormat, AccuracyMatch};
 use crate::grpc::GrpcBehavior;
 use crate::prefix_cache::EvictionPolicy;
 
+const MAX_WEBSOCKET_CONTENT_EVENTS: u32 = 10_000;
+
 /// Selects which test-only WebSocket routes the mock server exposes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum, Serialize, Deserialize)]
 #[clap(rename_all = "snake_case")]
@@ -998,6 +1000,11 @@ impl MockServerConfig {
                 "--websocket-content-events must be positive unless --websocket-scenario done_only"
             );
         }
+        if self.websocket_content_events > MAX_WEBSOCKET_CONTENT_EVENTS {
+            anyhow::bail!(
+                "--websocket-content-events must not exceed {MAX_WEBSOCKET_CONTENT_EVENTS}"
+            );
+        }
         if self.websocket_max_message_bytes == 0 {
             anyhow::bail!("--websocket-max-message-bytes must be positive");
         }
@@ -1160,10 +1167,17 @@ mod tests {
     fn websocket_only_allows_zero_content_events_for_done_only() {
         let mut cfg = websocket_config(WebSocketMode::TurnSerialized);
         cfg.websocket_content_events = 0;
-        assert!(cfg.resolve().is_err());
+        assert!(cfg.clone().resolve().is_err());
 
         cfg.websocket_scenario = WebSocketScenario::DoneOnly;
         assert_eq!(cfg.resolve().unwrap().websocket_content_events, 0);
+    }
+
+    #[test]
+    fn websocket_rejects_unbounded_content_action_configuration() {
+        let mut cfg = websocket_config(WebSocketMode::TurnSerialized);
+        cfg.websocket_content_events = MAX_WEBSOCKET_CONTENT_EVENTS + 1;
+        assert!(cfg.resolve().is_err());
     }
 
     #[test]
