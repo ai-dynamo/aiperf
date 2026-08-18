@@ -24,6 +24,15 @@ use async_trait::async_trait;
 use tempfile::{NamedTempFile, TempDir};
 use tokio::process::Command as TokioCommand;
 
+#[cfg(feature = "engine")]
+use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
+#[cfg(feature = "engine")]
+use crate::eval::{
+    EpisodeArtifactStore, FrozenArtifact, FrozenRolloutEvidence, NativeGraphAttemptAuthority,
+    NativeGraphEnvironmentRolloutSession, NativeGraphLeaseRolloutStart,
+    NativeGraphLiveRolloutCoordinator, NativeGraphRolloutReceipt,
+    NativeGraphRolloutTransitionReceipt, StartedNativeGraphEnvironmentStepper,
+};
 use crate::{
     clock::{Clock, RealClock},
     eval::{
@@ -108,6 +117,149 @@ struct DockerNativeGraphAdapterStartGuard {
     transaction: Option<Box<dyn AdapterSpawnTransaction>>,
 }
 
+/// Docker-owned supervised rollout state whose callback surface contains descriptors only.
+#[cfg(feature = "engine")]
+struct DockerNativeGraphEnvironmentRolloutSession {
+    started: StartedNativeGraphEnvironmentStepper,
+    coordinator: NativeGraphLiveRolloutCoordinator,
+    receipt: Option<NativeGraphRolloutReceipt>,
+    authority: NativeGraphAttemptAuthority,
+    policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+    _artifact_root: TempDir,
+}
+
+#[cfg(feature = "engine")]
+impl DockerNativeGraphEnvironmentRolloutSession {
+    async fn start(
+        start: NativeGraphLeaseRolloutStart,
+        spawner: Rc<dyn AdapterSpawner>,
+        request: AdapterSpawnRequest,
+    ) -> Result<Self, EvalExecutionError> {
+        let (binding, prepared, authority, policy_summary) = start.into_parts();
+        let artifact_root = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+        let artifacts = Rc::new(RefCell::new(
+            EpisodeArtifactStore::new(artifact_root.path(), binding.artifact_quota())
+                .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?,
+        ));
+        let mut started = binding
+            .start_with_authorized_request("native-graph-rollout", artifacts, spawner, request)
+            .await
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        let receipt = started.new_rollout_receipt();
+        let coordinator = match started.bind_live_rollout_coordinator(prepared) {
+            Ok(coordinator) => coordinator,
+            Err(primary) => match started.cancel_and_reap().await {
+                Ok(()) => return Err(EvalExecutionError::NativeGraphModel(primary.to_string())),
+                Err(cleanup) => {
+                    return Err(EvalExecutionError::ProcessFailure(format!(
+                        "NativeGraph rollout coordinator binding failed: {primary}; environment adapter cleanup failed: {cleanup}"
+                    )));
+                }
+            },
+        };
+        Ok(Self {
+            started,
+            coordinator,
+            receipt: Some(receipt),
+            authority,
+            policy_summary,
+            _artifact_root: artifact_root,
+        })
+    }
+
+    async fn cancel_and_reap(&mut self) -> Result<(), EvalExecutionError> {
+        self.started
+            .cancel_and_reap()
+            .await
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))
+    }
+}
+
+#[cfg(feature = "engine")]
+#[async_trait(?Send)]
+impl NativeGraphEnvironmentRolloutSession for DockerNativeGraphEnvironmentRolloutSession {
+    async fn reset(&mut self) -> Result<FrozenArtifact, EvalExecutionError> {
+        let observation = self
+            .started
+            .reset_live_rollout("native-graph-rollout-reset")
+            .await
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        self.receipt
+            .as_mut()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph frozen rollout receipt",
+            ))?
+            .record_reset(observation.clone())
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        Ok(observation)
+    }
+
+    async fn step(
+        &mut self,
+        observation: &FrozenArtifact,
+    ) -> Result<NativeGraphRolloutTransitionReceipt, EvalExecutionError> {
+        let receipt = self
+            .receipt
+            .as_ref()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph frozen rollout receipt",
+            ))?;
+        receipt
+            .admit_observation(observation)
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        let operation = format!("native-graph-rollout-step-{}", receipt.transition_count());
+        let transition = self
+            .started
+            .step_live_rollout(&mut self.coordinator, operation, observation)
+            .await
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        self.receipt
+            .as_mut()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph frozen rollout receipt",
+            ))?
+            .record_transition(transition.action().clone(), transition.transition().clone())
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        Ok(transition)
+    }
+
+    fn freeze(&mut self) -> Result<FrozenRolloutEvidence, EvalExecutionError> {
+        let receipt = self
+            .receipt
+            .take()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph frozen rollout receipt",
+            ))?;
+        let policy_calls = self
+            .policy_summary
+            .try_borrow()
+            .map_err(|_| {
+                EvalExecutionError::NativeGraphModel(
+                    "NativeGraph live policy timing facts are already borrowed".to_owned(),
+                )
+            })?
+            .snapshot()
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        let transitions = u64::try_from(receipt.transition_count()).map_err(|_| {
+            EvalExecutionError::NativeGraphModel(
+                "NativeGraph rollout transition count exceeds live policy evidence range"
+                    .to_owned(),
+            )
+        })?;
+        if policy_calls.call_count() != transitions {
+            return Err(EvalExecutionError::NativeGraphModel(
+                "NativeGraph live policy call count does not match frozen rollout transitions"
+                    .to_owned(),
+            ));
+        }
+        self.started
+            .freeze_rollout_receipt(receipt, self.authority.rollout_identity())
+            .map(|evidence| evidence.with_live_policy_calls(policy_calls))
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))
+    }
+}
+
 impl DockerNativeGraphAdapterStartGuard {
     fn new(transaction: Box<dyn AdapterSpawnTransaction>) -> Self {
         Self {
@@ -149,6 +301,12 @@ struct DockerNativeGraphEnvironmentAdapterStart {
     request: Option<AdapterSpawnRequest>,
     spawner: Rc<dyn AdapterSpawner>,
     process: Option<Box<dyn AdapterProcess>>,
+    #[cfg(feature = "engine")]
+    is_rollout_session_required: bool,
+    #[cfg(feature = "engine")]
+    rollout_start: Option<NativeGraphLeaseRolloutStart>,
+    #[cfg(feature = "engine")]
+    rollout_session: Option<DockerNativeGraphEnvironmentRolloutSession>,
     deadlines: AdapterLifecycleDeadlines,
 }
 
@@ -163,6 +321,10 @@ impl DockerNativeGraphEnvironmentAdapterStart {
     }
 
     async fn cancel_and_reap(&mut self) -> Result<(), EvalExecutionError> {
+        #[cfg(feature = "engine")]
+        if let Some(session) = self.rollout_session.as_mut() {
+            return session.cancel_and_reap().await;
+        }
         let Some(mut process) = self.process.take() else {
             return Ok(());
         };
@@ -198,7 +360,22 @@ impl Drop for DockerNativeGraphEnvironmentAdapterStart {
 #[async_trait(?Send)]
 impl NativeGraphEnvironmentAdapterStart for DockerNativeGraphEnvironmentAdapterStart {
     async fn start(&mut self) -> Result<(), EvalExecutionError> {
-        if self.process.is_some() {
+        #[cfg(feature = "engine")]
+        if self.is_rollout_session_required {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "NativeGraph descriptor-only rollout start",
+            ));
+        }
+        if self.process.is_some() || {
+            #[cfg(feature = "engine")]
+            {
+                self.rollout_session.is_some()
+            }
+            #[cfg(not(feature = "engine"))]
+            {
+                false
+            }
+        } {
             return Err(EvalExecutionError::InvalidRecipe(
                 "NativeGraph environment adapter already started",
             ));
@@ -229,6 +406,52 @@ impl NativeGraphEnvironmentAdapterStart for DockerNativeGraphEnvironmentAdapterS
         self.process = Some(process);
         Ok(())
     }
+
+    #[cfg(feature = "engine")]
+    async fn start_rollout(&mut self) -> Result<(), EvalExecutionError> {
+        if !self.is_rollout_session_required {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "NativeGraph sealed rollout start",
+            ));
+        }
+        if self.process.is_some() || self.rollout_session.is_some() {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "NativeGraph environment adapter already started",
+            ));
+        }
+        let request = self
+            .request
+            .take()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph environment adapter start operation",
+            ))?;
+        let rollout_start = self
+            .rollout_start
+            .take()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph sealed rollout start",
+            ))?;
+        let session = DockerNativeGraphEnvironmentRolloutSession::start(
+            rollout_start,
+            Rc::clone(&self.spawner),
+            request,
+        )
+        .await?;
+        self.rollout_session = Some(session);
+        Ok(())
+    }
+
+    #[cfg(feature = "engine")]
+    fn rollout_session(
+        &mut self,
+    ) -> Result<&mut dyn NativeGraphEnvironmentRolloutSession, EvalExecutionError> {
+        self.rollout_session
+            .as_mut()
+            .map(|session| session as &mut dyn NativeGraphEnvironmentRolloutSession)
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph supervised rollout session",
+            ))
+    }
 }
 
 fn native_graph_environment_adapter_start(
@@ -239,6 +462,7 @@ fn native_graph_environment_adapter_start(
     project: Option<&ComposeProjectId>,
     environment: &super::EnvironmentPlan,
     environment_workdir: Option<&str>,
+    #[cfg(feature = "engine")] rollout_start: Option<NativeGraphLeaseRolloutStart>,
 ) -> Result<Option<DockerNativeGraphEnvironmentAdapterStart>, EvalExecutionError> {
     let native_graph = package
         .native_graph()
@@ -246,8 +470,20 @@ fn native_graph_environment_adapter_start(
             "NativeGraph package plan",
         ))?;
     let Some(rollout) = native_graph.rollout() else {
+        #[cfg(feature = "engine")]
+        if rollout_start.is_some() {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "NativeGraph sealed rollout start",
+            ));
+        }
         return Ok(None);
     };
+    #[cfg(feature = "engine")]
+    if rollout_start.is_none() {
+        return Err(EvalExecutionError::InvalidRecipe(
+            "NativeGraph sealed rollout start",
+        ));
+    }
     let adapter = native_graph
         .adapters()
         .iter()
@@ -288,6 +524,12 @@ fn native_graph_environment_adapter_start(
         request: Some(request),
         spawner,
         process: None,
+        #[cfg(feature = "engine")]
+        is_rollout_session_required: rollout_start.is_some(),
+        #[cfg(feature = "engine")]
+        rollout_start,
+        #[cfg(feature = "engine")]
+        rollout_session: None,
         deadlines,
     }))
 }
@@ -915,6 +1157,8 @@ impl DockerProcessSandbox {
         let adapter_labels = adapter_project
             .as_ref()
             .map(ComposeProjectId::ownership_labels);
+        #[cfg(feature = "engine")]
+        let rollout_start = callback.take_lease_rollout_start();
         let environment_adapter_start = native_graph_environment_adapter_start(
             runtime,
             package,
@@ -923,6 +1167,8 @@ impl DockerProcessSandbox {
             adapter_project.as_ref(),
             environment,
             environment_workdir,
+            #[cfg(feature = "engine")]
+            rollout_start,
         )?;
         let mut containers = vec![container.clone()];
 
@@ -5053,7 +5299,7 @@ fn reports_absent_container(stderr: &[u8]) -> bool {
 mod tests {
     use std::{
         cell::Cell,
-        collections::VecDeque,
+        collections::{BTreeMap, VecDeque},
         fs,
         io::{self, Read},
         process::Command,
@@ -5068,23 +5314,88 @@ mod tests {
 
     use super::{
         DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecProcess,
-        DockerExecState, DockerRemoveRequest, DockerRemoveStatus, DockerRuntime,
-        DockerStartRequest, EvalExecutionError, EvalExecutionPhase, adapter_ownership_arguments,
-        classify_bounded_remove_result, compensate_late_create_with, compose_ownership_filters,
-        compose_stop_arguments, copy_archive_stream_bounded,
-        docker_cli_native_graph_no_egress_profile, docker_container_name, docker_image_name,
-        drain_output_bounded, drive_docker_exec, ensure_network_exists,
-        parse_owned_adapter_container_id, read_optional_reward_archive, read_reward_with_runtime,
-        reap_fenced_docker_client, redact_secret_values, reports_absent_container,
-        run_docker_exec_without_deadline,
+        DockerExecState, DockerNativeGraphEnvironmentAdapterStart, DockerRemoveRequest,
+        DockerRemoveStatus, DockerRuntime, DockerStartRequest, EvalExecutionError,
+        EvalExecutionPhase, adapter_ownership_arguments, classify_bounded_remove_result,
+        compensate_late_create_with, compose_ownership_filters, compose_stop_arguments,
+        copy_archive_stream_bounded, docker_cli_native_graph_no_egress_profile,
+        docker_container_name, docker_image_name, drain_output_bounded, drive_docker_exec,
+        ensure_network_exists, parse_owned_adapter_container_id, read_optional_reward_archive,
+        read_reward_with_runtime, reap_fenced_docker_client, redact_secret_values,
+        reports_absent_container, run_docker_exec_without_deadline,
     };
     use crate::{
         clock::SimClock,
         eval::{
-            ComposeProjectId, DockerAdapterSpawnerRequest, HarborImporter, HarborSource,
-            ModelEndpointIsolationProof, NativeSourceAcquirer, ProviderCapabilities,
+            AdapterLifecycleDeadlines, AdapterSpawnRequest, AdapterSpawnTransaction,
+            AdapterSpawner, AdapterSupervisionError, ComposeProjectId, DockerAdapterSpawnerRequest,
+            HarborImporter, HarborSource, ModelEndpointIsolationProof,
+            NativeGraphEnvironmentAdapterStart, NativeSourceAcquirer, ProviderCapabilities,
         },
     };
+
+    struct RecordingLegacyStartSpawner {
+        spawned: Rc<Cell<bool>>,
+    }
+
+    impl AdapterSpawner for RecordingLegacyStartSpawner {
+        fn begin_spawn(
+            &self,
+            _: AdapterSpawnRequest,
+        ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+            self.spawned.set(true);
+            Err(AdapterSupervisionError::InvalidSpawnRequest(
+                "legacy rollout start must not reach the spawner",
+            ))
+        }
+    }
+
+    #[cfg(feature = "engine")]
+    #[tokio::test]
+    async fn legacy_start_refuses_a_rollout_operation_before_adapter_provisioning() {
+        let spawned = Rc::new(Cell::new(false));
+        let deadlines = AdapterLifecycleDeadlines::new(
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .expect("fixture deadlines are valid");
+        let request = AdapterSpawnRequest::for_non_model_adapter(
+            ["environment-adapter".to_owned()],
+            BTreeMap::new(),
+            deadlines,
+        )
+        .expect("fixture request is valid");
+        let mut operation = DockerNativeGraphEnvironmentAdapterStart {
+            request: Some(request),
+            spawner: Rc::new(RecordingLegacyStartSpawner {
+                spawned: Rc::clone(&spawned),
+            }),
+            process: None,
+            rollout_start: None,
+            rollout_session: None,
+            is_rollout_session_required: true,
+            deadlines,
+        };
+
+        let error = operation
+            .start()
+            .await
+            .expect_err("a rollout operation must not expose the legacy raw adapter start");
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::InvalidRecipe("NativeGraph descriptor-only rollout start")
+        ));
+        assert!(
+            !spawned.get(),
+            "legacy start must fail before a forwarded rollout request reaches provisioning"
+        );
+    }
 
     #[test]
     fn adapter_remote_termination_resolves_exact_labelled_container_id() {

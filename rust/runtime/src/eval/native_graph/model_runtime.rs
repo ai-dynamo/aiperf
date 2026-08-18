@@ -4,6 +4,7 @@
 //! Resolution of immutable NativeGraph model bindings through product seams.
 
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
     io::Read,
@@ -24,8 +25,8 @@ use crate::{
         application::Application,
         execute::load_tokenizer,
         graph_execution::{
-            NativeGraphPolicyEndpointRuntime, NativeGraphTransportEvidence,
-            execute_native_graph_trace,
+            NativeGraphLivePolicyCallSummary, NativeGraphPolicyEndpointRuntime,
+            NativeGraphTransportEvidence, execute_native_graph_trace,
         },
         record_lane::EvalNodeRecordArtifact,
         registry::{NativeTransportExecution, WorkloadRequirements},
@@ -33,7 +34,7 @@ use crate::{
     eval::GraphLoweringRequest,
     eval::{
         EnvName, EvalExecutionError, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
-        SecretProvider, SecretValue,
+        NativeGraphLeaseRolloutStart, SecretProvider, SecretValue,
     },
     extensions::AIPerfRegistry,
     graph::agent::{
@@ -48,10 +49,11 @@ use crate::{
 
 use super::package::NativeGraphRolloutPlan;
 use super::{
-    ActionEncoderFactoryId, ActionEncodingLimits, ArtifactError, DeclaredPolicyDecision,
-    EpisodeActionEncodingError, EpisodeArtifactStore, FrozenArtifact, GenerationDefaults,
-    ModelBindingId, ModelBindingSpec, ModelCapturePolicy, ModelSecretId, NativeGraphPackagePlan,
-    TokenizerBindingSpec, lower_native_graph,
+    ActionEncoderFactoryId, ActionEncodingLimits, ArtifactError,
+    BoundNativeGraphEnvironmentStepper, DeclaredPolicyDecision, EpisodeActionEncodingError,
+    EpisodeArtifactStore, FrozenArtifact, FrozenRolloutEvidence, GenerationDefaults,
+    ModelBindingId, ModelBindingSpec, ModelCapturePolicy, ModelSecretId,
+    NativeGraphAttemptAuthority, NativeGraphPackagePlan, TokenizerBindingSpec, lower_native_graph,
     lowering::{NATIVE_GRAPH_EXECUTION_PROFILE, NATIVE_GRAPH_SOURCE_SCHEMA},
 };
 
@@ -275,6 +277,19 @@ impl ResolvedModelBindingSet {
         application: &Application,
         selected: &ModelBindingId,
     ) -> Result<Box<dyn NativeGraphPolicyModelRuntime>, ModelRuntimeError> {
+        self.engine_selected_policy_runtime_with_summary(
+            application,
+            selected,
+            Rc::new(RefCell::new(NativeGraphLivePolicyCallSummary::new())),
+        )
+    }
+
+    fn engine_selected_policy_runtime_with_summary(
+        &self,
+        application: &Application,
+        selected: &ModelBindingId,
+        live_policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+    ) -> Result<Box<dyn NativeGraphPolicyModelRuntime>, ModelRuntimeError> {
         let binding = self.bindings.get(selected).ok_or_else(|| {
             ModelRuntimeError::SelectedBindingMissing(selected.as_str().to_owned())
         })?;
@@ -324,6 +339,7 @@ impl ResolvedModelBindingSet {
             transport,
             binding.model.clone(),
             binding.capture == ModelCapturePolicy::RedactedRaw,
+            live_policy_summary,
         )
         .map_err(|error| ModelRuntimeError::Application(error.to_string()))?;
         Ok(Box::new(EngineSelectedNativeGraphPolicyModelRuntime {
@@ -894,13 +910,25 @@ impl NativeGraphLiveRolloutCoordinator {
     ) -> Result<IssuedNativeGraphPolicyDecision, NativeGraphLiveRolloutError> {
         let observation = store
             .read_frozen(observation)
+            .map(Bytes::from)
             .map_err(NativeGraphLiveRolloutError::Artifact)?;
+        self.decide_policy_decision_bytes(observation).await
+    }
+
+    /// Converts trusted, already-bounded frozen observation bytes into one sealed decision.
+    ///
+    /// The started environment stepper reads its own artifact store before this async call so a
+    /// worker-local `RefCell` borrow cannot outlive a model-runtime await point.
+    pub(crate) async fn decide_policy_decision_bytes(
+        &mut self,
+        observation: Bytes,
+    ) -> Result<IssuedNativeGraphPolicyDecision, NativeGraphLiveRolloutError> {
         if self.prompt.bytes().len() > self.max_prompt_bytes {
             return Err(NativeGraphLiveRolloutError::PromptLimitExceeded);
         }
         let request = LiveAgentPolicyDecisionRequest::new(
             Bytes::copy_from_slice(self.prompt.bytes()),
-            Bytes::from(observation),
+            observation,
             self.limits.max_decision_bytes(),
         )
         .map_err(NativeGraphLiveRolloutError::Coordinator)?;
@@ -1047,6 +1075,11 @@ pub struct EngineNativeGraphEpisodeCallback {
     program: crate::graph::model::GraphTraceProgram,
     record_artifact: Option<EvalNodeRecordArtifact>,
     evidence: Option<NativeGraphTransportEvidence>,
+    live_policy_runtime: Option<Box<dyn NativeGraphPolicyModelRuntime>>,
+    live_policy_summary: Option<Rc<RefCell<NativeGraphLivePolicyCallSummary>>>,
+    lease_rollout_start: Option<NativeGraphLeaseRolloutStart>,
+    needs_live_rollout: bool,
+    rollout_evidence: Option<FrozenRolloutEvidence>,
 }
 
 impl EngineNativeGraphEpisodeCallback {
@@ -1105,6 +1138,20 @@ impl EngineNativeGraphEpisodeCallback {
         let bindings = resolver
             .resolve(package.model_bindings(), runtime, secrets)
             .map_err(NativeGraphModelStageError::Resolution)?;
+        let (live_policy_runtime, live_policy_summary) = match package.rollout() {
+            Some(rollout) => {
+                let summary = Rc::new(RefCell::new(NativeGraphLivePolicyCallSummary::new()));
+                let runtime = bindings
+                    .engine_selected_policy_runtime_with_summary(
+                        application,
+                        rollout.policy().model_binding_id(),
+                        Rc::clone(&summary),
+                    )
+                    .map_err(NativeGraphModelStageError::Resolution)?;
+                (Some(runtime), Some(summary))
+            }
+            None => (None, None),
+        };
         let inputs = bindings
             .engine_inputs(application)
             .map_err(NativeGraphModelStageError::Resolution)?;
@@ -1113,7 +1160,56 @@ impl EngineNativeGraphEpisodeCallback {
             program,
             record_artifact,
             evidence: None,
+            live_policy_runtime,
+            live_policy_summary,
+            lease_rollout_start: None,
+            needs_live_rollout: false,
+            rollout_evidence: None,
         })
+    }
+
+    /// Binds one package-selected supervised rollout before Docker can provision its adapter.
+    pub fn bind_live_rollout(
+        &mut self,
+        stepper: BoundNativeGraphEnvironmentStepper,
+        authority: NativeGraphAttemptAuthority,
+    ) -> Result<(), NativeGraphModelStageError> {
+        if self.lease_rollout_start.is_some() || self.needs_live_rollout {
+            return Err(NativeGraphModelStageError::Factory {
+                seam: "live rollout",
+                reason: "NativeGraph callback already has a bound live rollout".to_owned(),
+            });
+        }
+        let runtime =
+            self.live_policy_runtime
+                .take()
+                .ok_or_else(|| NativeGraphModelStageError::Factory {
+                    seam: "live rollout",
+                    reason: "NativeGraph package has no selected live rollout model runtime"
+                        .to_owned(),
+                })?;
+        let summary =
+            self.live_policy_summary
+                .take()
+                .ok_or_else(|| NativeGraphModelStageError::Factory {
+                    seam: "live rollout",
+                    reason: "NativeGraph package has no selected live rollout policy summary"
+                        .to_owned(),
+                })?;
+        let coordinator = stepper
+            .prepare_live_rollout_coordinator(runtime)
+            .map_err(|error| NativeGraphModelStageError::Factory {
+                seam: "live rollout",
+                reason: error.to_string(),
+            })?;
+        self.lease_rollout_start = Some(NativeGraphLeaseRolloutStart::new(
+            stepper,
+            coordinator,
+            authority,
+            summary,
+        ));
+        self.needs_live_rollout = true;
+        Ok(())
     }
 
     /// Returns the completed graph's observed transport facts.
@@ -1128,6 +1224,7 @@ impl EngineNativeGraphEpisodeCallback {
 pub struct ObservedNativeGraphTransportEvidence {
     model_records: usize,
     completed_traces: usize,
+    live_policy_calls: u64,
 }
 
 impl ObservedNativeGraphTransportEvidence {
@@ -1140,6 +1237,11 @@ impl ObservedNativeGraphTransportEvidence {
     pub const fn completed_traces(&self) -> usize {
         self.completed_traces
     }
+
+    /// Returns the number of non-raw selected-policy calls used by a live rollout.
+    pub const fn live_policy_calls(&self) -> u64 {
+        self.live_policy_calls
+    }
 }
 
 impl From<NativeGraphTransportEvidence> for ObservedNativeGraphTransportEvidence {
@@ -1147,13 +1249,21 @@ impl From<NativeGraphTransportEvidence> for ObservedNativeGraphTransportEvidence
         Self {
             model_records: value.model_records,
             completed_traces: value.completed_traces,
+            live_policy_calls: value.live_policy_calls,
         }
     }
 }
 
 #[async_trait(?Send)]
 impl NativeGraphEpisodeCallback for EngineNativeGraphEpisodeCallback {
-    async fn run(&mut self, _: &mut dyn NativeGraphEpisodeLease) -> Result<(), EvalExecutionError> {
+    fn take_lease_rollout_start(&mut self) -> Option<NativeGraphLeaseRolloutStart> {
+        self.lease_rollout_start.take()
+    }
+
+    async fn run(
+        &mut self,
+        lease: &mut dyn NativeGraphEpisodeLease,
+    ) -> Result<(), EvalExecutionError> {
         let evidence = execute_native_graph_trace(
             &self.inputs.context,
             self.inputs.profiles.clone(),
@@ -1167,7 +1277,36 @@ impl NativeGraphEpisodeCallback for EngineNativeGraphEpisodeCallback {
         .await
         .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
         self.evidence = Some(evidence);
+        if self.needs_live_rollout {
+            let operation = lease.environment_adapter_start()?;
+            operation.start_rollout().await?;
+            let session = operation.rollout_session()?;
+            let mut observation = session.reset().await?;
+            loop {
+                let transition = session.step(&observation).await?;
+                if transition.is_terminal() {
+                    break;
+                }
+                observation = transition.transition().observation().clone();
+            }
+            let rollout = session.freeze()?;
+            let policy_calls = rollout
+                .live_policy_calls()
+                .map_or(0, |evidence| evidence.call_count());
+            let evidence = self
+                .evidence
+                .as_mut()
+                .ok_or(EvalExecutionError::InvalidRecipe(
+                    "NativeGraph transport evidence",
+                ))?;
+            evidence.live_policy_calls = policy_calls;
+            self.rollout_evidence = Some(rollout);
+        }
         Ok(())
+    }
+
+    fn take_rollout_evidence(&mut self) -> Option<FrozenRolloutEvidence> {
+        self.rollout_evidence.take()
     }
 }
 

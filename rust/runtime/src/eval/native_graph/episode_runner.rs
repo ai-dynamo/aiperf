@@ -16,14 +16,15 @@ use crate::{
     eval::{
         DockerProcessSandbox, DockerRuntime, HarborCompletedEvaluation,
         HarborEvaluationCoordinator, HarborLifecycleAgentContract, HarborLifecycleRequest,
-        HarborSandboxRecipe, ImportedTask, SecretProvider,
+        HarborSandboxRecipe, ImportedTask, NativeGraphEpisodeCallback, SecretProvider,
     },
     extensions::AIPerfRegistry,
 };
 
 use super::{
     EngineNativeGraphEpisodeCallback, ModelRuntimeConfig, NativeGraphAttemptAuthority,
-    NativeGraphCompletedAttempt,
+    NativeGraphCompletedAttempt, ObservedNativeGraphTransportEvidence,
+    bind_native_graph_environment_stepper,
 };
 
 use crate::eval::{EpisodeAssignment, EpisodeEvaluatorFactory, EpisodeRunner, MatrixError};
@@ -203,6 +204,23 @@ impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
                 error.to_string(),
             ))
         })?;
+        if native.rollout().is_some() {
+            let bound = bind_native_graph_environment_stepper(
+                self.application.product_registry(),
+                assignment.trial(),
+            )
+            .map_err(|error| EpisodeExecutionError::Configuration(error.to_string()))?;
+            callback
+                .bind_live_rollout(
+                    bound,
+                    NativeGraphAttemptAuthority::from_resolved_trial(assignment.trial()),
+                )
+                .map_err(|error| {
+                    EpisodeExecutionError::Callback(
+                        crate::eval::EvalExecutionError::NativeGraphModel(error.to_string()),
+                    )
+                })?;
+        }
         let execution = match &self.runtime {
             DockerExecutorRuntime::Host => {
                 self.sandbox
@@ -229,13 +247,15 @@ impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
             }
         }
         .map_err(EpisodeExecutionError::Callback)?;
+        let rollout = callback.take_rollout_evidence();
         let evidence = callback
             .transport_evidence()
             .ok_or(EpisodeExecutionError::MissingTransportEvidence)?;
-        if evidence.model_records() == 0 || evidence.completed_traces() != 1 {
+        if !has_admitted_native_graph_transport_evidence(evidence) {
             return Err(EpisodeExecutionError::UnexpectedTransportEvidence {
                 model_records: evidence.model_records(),
                 completed_traces: evidence.completed_traces(),
+                live_policy_calls: evidence.live_policy_calls(),
             });
         }
         let completed: HarborCompletedEvaluation = HarborEvaluationCoordinator::complete_attempt(
@@ -252,10 +272,17 @@ impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
         NativeGraphCompletedAttempt::freeze(
             &NativeGraphAttemptAuthority::from_resolved_trial(assignment.trial()),
             frozen,
-            None,
+            rollout,
         )
         .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))
     }
+}
+
+fn has_admitted_native_graph_transport_evidence(
+    evidence: ObservedNativeGraphTransportEvidence,
+) -> bool {
+    evidence.completed_traces() == 1
+        && (evidence.model_records() > 0 || evidence.live_policy_calls() > 0)
 }
 
 /// Task-2 matrix runner that delegates scoring to the selected Task-3 evaluator.
@@ -319,6 +346,13 @@ impl EpisodeRunner for NativeGraphEpisodeRunner {
             .execute(&assignment)
             .await
             .map_err(|error| MatrixError::RunnerExecutionFailed(error.to_string()))?;
+        let authority = NativeGraphAttemptAuthority::from_resolved_trial(assignment.trial());
+        if authority.requires_rollout_evidence() != completed.has_rollout() {
+            return Err(MatrixError::RunnerExecutionFailed(
+                "native graph executor omitted or added sealed rollout evidence contrary to the imported assignment"
+                    .to_owned(),
+            ));
+        }
         if completed.frozen_attempt().trial_digest() != assignment.trial_digest()
             || completed.frozen_attempt().attempt() != assignment.attempt_id()
         {
@@ -352,6 +386,8 @@ pub enum EpisodeExecutionError {
         model_records: usize,
         /// Number of completed graph traces produced by the graph callback.
         completed_traces: usize,
+        /// Number of non-raw selected-policy calls completed for a live rollout.
+        live_policy_calls: u64,
     },
     /// Constructing immutable verifier or score facts failed.
     Facts(String),
@@ -371,9 +407,10 @@ impl Display for EpisodeExecutionError {
             Self::UnexpectedTransportEvidence {
                 model_records,
                 completed_traces,
+                live_policy_calls,
             } => write!(
                 formatter,
-                "native graph callback observed {model_records} model records and {completed_traces} completed traces"
+                "native graph callback observed {model_records} model records, {live_policy_calls} live policy calls, and {completed_traces} completed traces"
             ),
             Self::Facts(reason) => write!(
                 formatter,
@@ -384,3 +421,30 @@ impl Display for EpisodeExecutionError {
 }
 
 impl std::error::Error for EpisodeExecutionError {}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::graph_execution::NativeGraphTransportEvidence;
+
+    use super::{
+        ObservedNativeGraphTransportEvidence, has_admitted_native_graph_transport_evidence,
+    };
+
+    #[test]
+    fn rollout_only_transport_evidence_requires_one_trace_and_one_live_policy_call() {
+        assert!(has_admitted_native_graph_transport_evidence(
+            ObservedNativeGraphTransportEvidence::from(NativeGraphTransportEvidence {
+                model_records: 0,
+                completed_traces: 1,
+                live_policy_calls: 1,
+            })
+        ));
+        assert!(!has_admitted_native_graph_transport_evidence(
+            ObservedNativeGraphTransportEvidence::from(NativeGraphTransportEvidence {
+                model_records: 0,
+                completed_traces: 1,
+                live_policy_calls: 0,
+            })
+        ));
+    }
+}

@@ -26,6 +26,80 @@ const DEFAULT_MAX_VERIFIER_DOCUMENT_BYTES: usize = 256 * 1024;
 const DEFAULT_MAX_VERIFIER_STRING_BYTES: usize = 4 * 1024;
 const ARTIFACT_DIGEST_BYTES: usize = "blake3:".len() + 64;
 
+/// Bounded non-raw timing facts for the model calls that produced one live rollout.
+///
+/// This fact intentionally contains only checked counters and durations. It cannot retain a
+/// prompt, observation, decision bytes, capture record, or live model capability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeGraphLivePolicyCallEvidence {
+    call_count: u64,
+    first_token_count: u64,
+    total_first_token_ns: u64,
+    max_first_token_ns: u64,
+}
+
+impl NativeGraphLivePolicyCallEvidence {
+    pub(crate) const fn new(
+        call_count: u64,
+        first_token_count: u64,
+        total_first_token_ns: u64,
+        max_first_token_ns: u64,
+    ) -> Self {
+        Self {
+            call_count,
+            first_token_count,
+            total_first_token_ns,
+            max_first_token_ns,
+        }
+    }
+
+    /// Returns the exact number of policy calls accepted by the selected transport.
+    pub const fn call_count(&self) -> u64 {
+        self.call_count
+    }
+
+    /// Returns the number of calls that reached a first-token boundary.
+    pub const fn first_token_count(&self) -> u64 {
+        self.first_token_count
+    }
+
+    /// Returns the checked total arrival-to-first-token time in nanoseconds.
+    pub const fn total_first_token_ns(&self) -> u64 {
+        self.total_first_token_ns
+    }
+
+    /// Returns the maximum arrival-to-first-token time in nanoseconds.
+    pub const fn max_first_token_ns(&self) -> u64 {
+        self.max_first_token_ns
+    }
+
+    pub(crate) fn identity_digest(&self) -> ArtifactDigest {
+        let mut material = Vec::new();
+        append_identity_field(
+            &mut material,
+            "domain",
+            b"aiperf-native-graph-live-policy-calls-v1",
+        );
+        append_identity_field(&mut material, "calls", &self.call_count.to_le_bytes());
+        append_identity_field(
+            &mut material,
+            "first-token-calls",
+            &self.first_token_count.to_le_bytes(),
+        );
+        append_identity_field(
+            &mut material,
+            "total-first-token-ns",
+            &self.total_first_token_ns.to_le_bytes(),
+        );
+        append_identity_field(
+            &mut material,
+            "max-first-token-ns",
+            &self.max_first_token_ns.to_le_bytes(),
+        );
+        ArtifactDigest::from_bytes(&material)
+    }
+}
+
 /// Immutable resource and artifact limits selected for freezing and verifying one rollout.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RolloutEvidenceLimits {
@@ -83,6 +157,31 @@ impl RolloutEvidenceLimits {
         trajectory: &FrozenRolloutTrajectory,
         store_quota: ArtifactQuota,
     ) -> Result<(), RolloutAdmissionError> {
+        self.admit_trajectory_artifacts(
+            reset_observation.artifact(),
+            actions.iter().map(FrozenArtifactReference::artifact),
+            trajectory,
+            store_quota,
+        )
+    }
+
+    fn admit_descriptor_trajectory(
+        &self,
+        reset_observation: &FrozenArtifact,
+        actions: &[FrozenArtifact],
+        trajectory: &FrozenRolloutTrajectory,
+        store_quota: ArtifactQuota,
+    ) -> Result<(), RolloutAdmissionError> {
+        self.admit_trajectory_artifacts(reset_observation, actions.iter(), trajectory, store_quota)
+    }
+
+    fn admit_trajectory_artifacts<'a>(
+        &self,
+        reset_observation: &FrozenArtifact,
+        actions: impl ExactSizeIterator<Item = &'a FrozenArtifact>,
+        trajectory: &FrozenRolloutTrajectory,
+        store_quota: ArtifactQuota,
+    ) -> Result<(), RolloutAdmissionError> {
         if trajectory.limits() != trajectory.policy().limits() || trajectory.limits() != self.policy
         {
             return Err(RolloutAdmissionError::PolicyLimitsMismatch);
@@ -113,13 +212,13 @@ impl RolloutEvidenceLimits {
         }
         let total_limit = self.quota.max_total_bytes.min(store_quota.max_total_bytes);
         let mut total_bytes = 0;
-        self.admit_artifact(reset_observation.artifact(), store_quota)?;
-        admit_descriptor_total(&mut total_bytes, reset_observation.artifact(), total_limit)?;
-        for (action, transition) in actions.iter().zip(trajectory.transitions()) {
-            self.admit_artifact(action.artifact(), store_quota)?;
+        self.admit_artifact(reset_observation, store_quota)?;
+        admit_descriptor_total(&mut total_bytes, reset_observation, total_limit)?;
+        for (action, transition) in actions.zip(trajectory.transitions()) {
+            self.admit_artifact(action, store_quota)?;
             self.admit_artifact(transition.observation(), store_quota)?;
             self.admit_artifact(transition.info(), store_quota)?;
-            admit_descriptor_total(&mut total_bytes, action.artifact(), total_limit)?;
+            admit_descriptor_total(&mut total_bytes, action, total_limit)?;
             admit_descriptor_total(&mut total_bytes, transition.observation(), total_limit)?;
             admit_descriptor_total(&mut total_bytes, transition.info(), total_limit)?;
         }
@@ -318,16 +417,20 @@ fn decode_json_unicode_escape(document: &[u8], index: &mut usize) -> Option<u16>
     Some(unit)
 }
 
-/// Immutable source, task, and environment provenance for one rollout.
+/// Immutable imported provenance and rollout selection for one rollout.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RolloutEvidenceIdentity {
     source: ArtifactDigest,
     task: ArtifactDigest,
     environment_implementation: ArtifactDigest,
+    rollout_selection_digest: ArtifactDigest,
 }
 
 impl RolloutEvidenceIdentity {
     /// Creates provenance bound to the imported source, task, and environment implementation.
+    ///
+    /// Callers that hold an imported rollout selection must bind its digest with
+    /// [`Self::with_rollout_selection_digest`] before freezing evidence.
     pub fn new(
         source: ArtifactDigest,
         task: ArtifactDigest,
@@ -337,7 +440,16 @@ impl RolloutEvidenceIdentity {
             source,
             task,
             environment_implementation,
+            rollout_selection_digest: ArtifactDigest::from_bytes(
+                b"aiperf-native-graph-unbound-rollout-selection-v1",
+            ),
         }
+    }
+
+    /// Binds this provenance to the complete immutable imported rollout selection.
+    pub fn with_rollout_selection_digest(mut self, digest: ArtifactDigest) -> Self {
+        self.rollout_selection_digest = digest;
+        self
     }
 
     /// Borrows the imported source digest.
@@ -354,6 +466,11 @@ impl RolloutEvidenceIdentity {
     pub fn environment_implementation(&self) -> &ArtifactDigest {
         &self.environment_implementation
     }
+
+    /// Borrows the digest of the full selected rollout environment and policy facts.
+    pub fn rollout_selection_digest(&self) -> &ArtifactDigest {
+        &self.rollout_selection_digest
+    }
 }
 
 /// Immutable policy facts used to derive one rollout return.
@@ -366,10 +483,13 @@ pub struct RolloutPolicyEvidence {
 }
 
 impl RolloutPolicyEvidence {
-    fn from_policy(policy: &RlEvaluationPolicy) -> Self {
-        let environment = policy.environment().to_owned();
-        let horizon = policy.horizon();
-        let gamma = policy.gamma();
+    pub(crate) fn from_policy(policy: &RlEvaluationPolicy) -> Self {
+        Self::from_imported(policy.environment(), policy.horizon(), policy.gamma())
+    }
+
+    /// Retains immutable package policy facts that the importer has already validated.
+    pub(crate) fn from_imported(environment: &str, horizon: u32, gamma: f64) -> Self {
+        let environment = environment.to_owned();
         Self {
             identity: policy_identity(&environment, horizon, gamma),
             environment,
@@ -677,6 +797,11 @@ impl RolloutVerifierInput {
         );
         append_identity_field(
             &mut material,
+            "rollout-selection",
+            self.identity.rollout_selection_digest.as_str().as_bytes(),
+        );
+        append_identity_field(
+            &mut material,
             "policy",
             self.policy.identity.as_str().as_bytes(),
         );
@@ -727,10 +852,214 @@ impl RolloutVerifierInput {
     }
 }
 
+/// Descriptor-only receipt retained by a NativeGraph callback during one live rollout.
+///
+/// The receipt deliberately contains only frozen artifact descriptors. Adapter download
+/// capabilities are released before a reset or transition reaches this boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeGraphRolloutReceipt {
+    policy: RlEvaluationPolicy,
+    reset_observation: Option<FrozenArtifact>,
+    transitions: Vec<NativeGraphRolloutTransitionReceipt>,
+}
+
+impl NativeGraphRolloutReceipt {
+    /// Starts an empty receipt bound to the immutable policy selected by the imported package.
+    pub fn new(policy: RlEvaluationPolicy) -> Self {
+        Self {
+            policy,
+            reset_observation: None,
+            transitions: Vec::new(),
+        }
+    }
+
+    /// Retains the one reset observation after the adapter capability has been stripped.
+    pub fn record_reset(
+        &mut self,
+        observation: FrozenArtifact,
+    ) -> Result<(), NativeGraphRolloutReceiptError> {
+        if self.reset_observation.is_some() {
+            return Err(NativeGraphRolloutReceiptError::DuplicateReset);
+        }
+        self.reset_observation = Some(observation);
+        Ok(())
+    }
+
+    /// Retains one action descriptor and its authoritative environment transition.
+    pub fn record_transition(
+        &mut self,
+        action: FrozenArtifact,
+        transition: EnvironmentTransitionRecord,
+    ) -> Result<(), NativeGraphRolloutReceiptError> {
+        if self.reset_observation.is_none() {
+            return Err(NativeGraphRolloutReceiptError::MissingReset);
+        }
+        let horizon = usize::try_from(self.policy.horizon()).map_err(|_| {
+            NativeGraphRolloutReceiptError::Trajectory(RlRolloutError::HorizonExceeded)
+        })?;
+        if self.transitions.len() >= horizon {
+            return Err(NativeGraphRolloutReceiptError::Trajectory(
+                RlRolloutError::HorizonExceeded,
+            ));
+        }
+        if self
+            .transitions
+            .last()
+            .is_some_and(|receipt| receipt.is_terminal())
+        {
+            return Err(NativeGraphRolloutReceiptError::Trajectory(
+                RlRolloutError::PostTerminalStep,
+            ));
+        }
+        let expected_step = u32::try_from(self.transitions.len()).map_err(|_| {
+            NativeGraphRolloutReceiptError::Trajectory(RlRolloutError::InvalidStepOrder)
+        })?;
+        if transition.step() != expected_step {
+            return Err(NativeGraphRolloutReceiptError::Trajectory(
+                RlRolloutError::InvalidStepOrder,
+            ));
+        }
+        self.transitions
+            .push(NativeGraphRolloutTransitionReceipt { action, transition });
+        Ok(())
+    }
+
+    /// Returns the number of retained transitions without exposing their artifact facts.
+    pub const fn transition_count(&self) -> usize {
+        self.transitions.len()
+    }
+
+    /// Admits only the authoritative current observation before a model decision can begin.
+    pub fn admit_observation(
+        &self,
+        observation: &FrozenArtifact,
+    ) -> Result<(), NativeGraphRolloutReceiptError> {
+        let horizon = usize::try_from(self.policy.horizon()).map_err(|_| {
+            NativeGraphRolloutReceiptError::Trajectory(RlRolloutError::HorizonExceeded)
+        })?;
+        if self.transitions.len() >= horizon {
+            return Err(NativeGraphRolloutReceiptError::Trajectory(
+                RlRolloutError::HorizonExceeded,
+            ));
+        }
+        let expected = match self.transitions.last() {
+            Some(transition) if transition.is_terminal() => {
+                return Err(NativeGraphRolloutReceiptError::Terminal);
+            }
+            Some(transition) => transition.transition.observation(),
+            None => self
+                .reset_observation
+                .as_ref()
+                .ok_or(NativeGraphRolloutReceiptError::MissingReset)?,
+        };
+        if expected != observation {
+            return Err(NativeGraphRolloutReceiptError::UnexpectedObservation);
+        }
+        Ok(())
+    }
+
+    /// Freezes the retained descriptors into verifier-isolated rollout evidence.
+    pub fn freeze(
+        self,
+        identity: RolloutEvidenceIdentity,
+        store: &EpisodeArtifactStore,
+    ) -> Result<FrozenRolloutEvidence, NativeGraphRolloutReceiptError> {
+        let reset_observation = self
+            .reset_observation
+            .ok_or(NativeGraphRolloutReceiptError::MissingReset)?;
+        let mut actions = Vec::with_capacity(self.transitions.len());
+        let mut transitions = Vec::with_capacity(self.transitions.len());
+        for receipt in self.transitions {
+            actions.push(receipt.action);
+            transitions.push(receipt.transition);
+        }
+        let trajectory = self
+            .policy
+            .trajectory(transitions)
+            .map_err(NativeGraphRolloutReceiptError::Trajectory)?;
+        FrozenRolloutEvidence::freeze_descriptors(
+            identity,
+            reset_observation,
+            &actions,
+            trajectory,
+            store,
+        )
+        .map_err(NativeGraphRolloutReceiptError::Evidence)
+    }
+}
+
+/// One descriptor-only action and environment transition emitted by a started worker stepper.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeGraphRolloutTransitionReceipt {
+    action: FrozenArtifact,
+    transition: EnvironmentTransitionRecord,
+}
+
+impl NativeGraphRolloutTransitionReceipt {
+    pub(crate) fn from_stepper(
+        action: FrozenArtifact,
+        transition: EnvironmentTransitionRecord,
+    ) -> Self {
+        Self { action, transition }
+    }
+
+    /// Borrows the action descriptor after its single-use capability has been consumed.
+    pub fn action(&self) -> &FrozenArtifact {
+        &self.action
+    }
+
+    /// Borrows the authoritative transition after output capabilities have been released.
+    pub fn transition(&self) -> &EnvironmentTransitionRecord {
+        &self.transition
+    }
+
+    /// Returns whether the environment ended at this transition.
+    pub const fn is_terminal(&self) -> bool {
+        self.transition.is_terminated() || self.transition.is_truncated()
+    }
+}
+
+/// Failure while retaining or freezing a descriptor-only callback rollout receipt.
+#[derive(Debug)]
+pub enum NativeGraphRolloutReceiptError {
+    /// The callback tried to retain more than one reset observation.
+    DuplicateReset,
+    /// A transition or freeze was attempted before the reset observation.
+    MissingReset,
+    /// A model decision attempted to use a stale or unrelated artifact descriptor.
+    UnexpectedObservation,
+    /// A model decision attempted after an authoritative terminal transition.
+    Terminal,
+    /// The retained trajectory violated immutable rollout policy facts.
+    Trajectory(RlRolloutError),
+    /// Descriptor-only evidence could not be frozen against the trusted artifact store.
+    Evidence(RolloutEvidenceError),
+}
+
+impl Display for NativeGraphRolloutReceiptError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateReset => formatter.write_str("NativeGraph rollout receipt has a duplicate reset"),
+            Self::MissingReset => formatter.write_str("NativeGraph rollout receipt is missing its reset observation"),
+            Self::UnexpectedObservation => formatter.write_str(
+                "NativeGraph rollout receipt observation does not match the authoritative current observation",
+            ),
+            Self::Terminal => formatter.write_str(
+                "NativeGraph rollout receipt cannot admit a model decision after terminal transition",
+            ),
+            Self::Trajectory(error) => error.fmt(formatter),
+            Self::Evidence(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for NativeGraphRolloutReceiptError {}
+
 /// A rollout document frozen after Rust validated the trajectory and its returns.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrozenRolloutEvidence {
     verifier_input: RolloutVerifierInput,
+    live_policy_calls: Option<NativeGraphLivePolicyCallEvidence>,
 }
 
 impl FrozenRolloutEvidence {
@@ -773,6 +1102,62 @@ impl FrozenRolloutEvidence {
             return Err(RolloutEvidenceError::UnexpectedAction);
         }
         limits.admit_trajectory(&reset_observation, actions, &trajectory, store.quota())?;
+        let actions = actions
+            .iter()
+            .map(|reference| reference.artifact().clone())
+            .collect::<Vec<_>>();
+        Self::freeze_descriptor_trajectory(
+            identity,
+            reset_observation.artifact().clone(),
+            &actions,
+            trajectory,
+            limits,
+            store,
+        )
+    }
+
+    fn freeze_descriptors(
+        identity: RolloutEvidenceIdentity,
+        reset_observation: FrozenArtifact,
+        actions: &[FrozenArtifact],
+        trajectory: FrozenRolloutTrajectory,
+        store: &EpisodeArtifactStore,
+    ) -> Result<Self, RolloutEvidenceError> {
+        let limits = RolloutEvidenceLimits::from_artifact_quota(store.quota())?;
+        limits.admit_descriptor_trajectory(
+            &reset_observation,
+            actions,
+            &trajectory,
+            store.quota(),
+        )?;
+        Self::freeze_descriptor_trajectory(
+            identity,
+            reset_observation,
+            actions,
+            trajectory,
+            &limits,
+            store,
+        )
+    }
+
+    fn freeze_descriptor_trajectory(
+        identity: RolloutEvidenceIdentity,
+        reset_observation: FrozenArtifact,
+        actions: &[FrozenArtifact],
+        trajectory: FrozenRolloutTrajectory,
+        limits: &RolloutEvidenceLimits,
+        store: &EpisodeArtifactStore,
+    ) -> Result<Self, RolloutEvidenceError> {
+        let transition_count = trajectory.transitions().len();
+        if actions.len() < transition_count {
+            let step = u32::try_from(actions.len()).map_err(|_| {
+                RolloutEvidenceError::Admission(RolloutAdmissionError::ArtifactCountOverflow)
+            })?;
+            return Err(RolloutEvidenceError::MissingAction { step });
+        }
+        if actions.len() > transition_count {
+            return Err(RolloutEvidenceError::UnexpectedAction);
+        }
         let policy = RolloutPolicyEvidence::from_policy(trajectory.policy());
         let mut transitions = Vec::with_capacity(trajectory.transitions().len());
         for (action, transition) in actions.iter().zip(trajectory.transitions()) {
@@ -781,7 +1166,6 @@ impl FrozenRolloutEvidence {
                 transition,
             ));
         }
-        let reset_observation = reset_observation.artifact().clone();
         let mut artifacts = BTreeSet::new();
         artifacts.insert(reset_observation.clone());
         for transition in &transitions {
@@ -804,7 +1188,10 @@ impl FrozenRolloutEvidence {
         verifier_input.evidence_digest = verifier_input.identity_digest();
         verifier_input.verify_return_agreement()?;
         admit_canonical_verifier_document(&verifier_input, limits.max_document_bytes)?;
-        Ok(Self { verifier_input })
+        Ok(Self {
+            verifier_input,
+            live_policy_calls: None,
+        })
     }
 
     /// Borrows the isolated verifier document.
@@ -815,6 +1202,20 @@ impl FrozenRolloutEvidence {
     /// Returns the immutable verifier document digest.
     pub fn identity_digest(&self) -> ArtifactDigest {
         self.verifier_input.evidence_digest.clone()
+    }
+
+    /// Retains non-raw live-policy timing facts outside the verifier document.
+    pub(crate) fn with_live_policy_calls(
+        mut self,
+        live_policy_calls: NativeGraphLivePolicyCallEvidence,
+    ) -> Self {
+        self.live_policy_calls = Some(live_policy_calls);
+        self
+    }
+
+    /// Returns bounded non-raw selected-policy facts, when this evidence came from a live rollout.
+    pub const fn live_policy_calls(&self) -> Option<NativeGraphLivePolicyCallEvidence> {
+        self.live_policy_calls
     }
 
     /// Projects rollout identity into Task 3 lifecycle evidence without changing verifier inputs.
@@ -835,13 +1236,10 @@ impl FrozenRolloutEvidence {
 }
 
 impl RolloutTransitionEvidence {
-    fn from_transition(
-        action: FrozenArtifactReference,
-        transition: &EnvironmentTransitionRecord,
-    ) -> Self {
+    fn from_transition(action: FrozenArtifact, transition: &EnvironmentTransitionRecord) -> Self {
         Self {
             step: transition.step(),
-            action: action.artifact().clone(),
+            action,
             observation: transition.observation().clone(),
             reward: transition.reward(),
             terminated: transition.is_terminated(),
@@ -990,6 +1388,7 @@ impl<'de> Visitor<'de> for RolloutEvidenceIdentityVisitor<'_> {
         let mut source = None;
         let mut task = None;
         let mut environment_implementation = None;
+        let mut rollout_selection_digest = None;
         while let Some(field) = map.next_key()? {
             match field {
                 RolloutIdentityField::Source => set_once(
@@ -1013,6 +1412,13 @@ impl<'de> Visitor<'de> for RolloutEvidenceIdentityVisitor<'_> {
                     })?,
                     "environment_implementation",
                 )?,
+                RolloutIdentityField::RolloutSelectionDigest => set_once(
+                    &mut rollout_selection_digest,
+                    map.next_value_seed(ArtifactDigestSeed {
+                        limits: self.limits,
+                    })?,
+                    "rollout_selection_digest",
+                )?,
             }
         }
         Ok(RolloutEvidenceIdentity::new(
@@ -1020,6 +1426,10 @@ impl<'de> Visitor<'de> for RolloutEvidenceIdentityVisitor<'_> {
             task.ok_or_else(|| de::Error::missing_field("task"))?,
             environment_implementation
                 .ok_or_else(|| de::Error::missing_field("environment_implementation"))?,
+        )
+        .with_rollout_selection_digest(
+            rollout_selection_digest
+                .ok_or_else(|| de::Error::missing_field("rollout_selection_digest"))?,
         ))
     }
 }
@@ -1622,6 +2032,7 @@ enum RolloutIdentityField {
     Source,
     Task,
     EnvironmentImplementation,
+    RolloutSelectionDigest,
 }
 
 #[derive(Deserialize)]

@@ -614,6 +614,18 @@ impl NativeGraphRolloutPlan {
     pub const fn limits(&self) -> NativeGraphRolloutLimits {
         self.limits
     }
+
+    /// Returns the immutable digest of every imported rollout selection fact.
+    pub(crate) fn selection_digest(&self) -> ArtifactDigest {
+        let mut material = Vec::new();
+        append_identity_field(
+            &mut material,
+            "domain",
+            b"aiperf-native-graph-rollout-selection-v1",
+        );
+        append_rollout_identity(&mut material, self);
+        ArtifactDigest::from_bytes(&material)
+    }
 }
 
 impl NativeGraphProgramSource {

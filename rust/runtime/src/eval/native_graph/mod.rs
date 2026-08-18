@@ -114,10 +114,11 @@ pub use rl::{
     RlRolloutError,
 };
 pub use rollout_evidence::{
-    FrozenRolloutEvidence, RolloutAdmissionError, RolloutEvidenceError, RolloutEvidenceIdentity,
-    RolloutEvidenceLimits, RolloutEvidenceLimitsError, RolloutPolicyEvidence,
-    RolloutReturnAgreementError, RolloutReturns, RolloutTransitionEvidence,
-    RolloutVerifierDecodeError, RolloutVerifierInput,
+    FrozenRolloutEvidence, NativeGraphLivePolicyCallEvidence, NativeGraphRolloutReceipt,
+    NativeGraphRolloutReceiptError, NativeGraphRolloutTransitionReceipt, RolloutAdmissionError,
+    RolloutEvidenceError, RolloutEvidenceIdentity, RolloutEvidenceLimits,
+    RolloutEvidenceLimitsError, RolloutPolicyEvidence, RolloutReturnAgreementError, RolloutReturns,
+    RolloutTransitionEvidence, RolloutVerifierDecodeError, RolloutVerifierInput,
 };
 pub use suite::{
     AuthoredNativeGraphSuite, EpisodeAssignmentId, ModelCapacityKey, NativeGraphSuiteDefinition,

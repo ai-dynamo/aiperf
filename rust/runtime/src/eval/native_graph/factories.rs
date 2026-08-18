@@ -21,15 +21,16 @@ use std::{
 #[cfg(feature = "engine")]
 use crate::extensions::AIPerfRegistry;
 use crate::graph::tools::{
-    EnvironmentArtifactBindings, EnvironmentEpisodeIdentity, EnvironmentSessionAuthority,
-    EnvironmentStepRequest, EnvironmentStepper, EnvironmentStepperBinding,
-    EnvironmentStepperFactory as WorkerEnvironmentStepperFactory,
+    EnvironmentArtifactBindings, EnvironmentEpisodeIdentity, EnvironmentResetRequest,
+    EnvironmentSessionAuthority, EnvironmentStepRequest, EnvironmentStepper,
+    EnvironmentStepperBinding, EnvironmentStepperFactory as WorkerEnvironmentStepperFactory,
     SupervisedEnvironmentStepperFactory,
 };
 use crate::{
     eval::semantic::GraphLowererFactory,
     eval::{AdapterSpec, ArtifactDigest, ProviderRecovery},
 };
+use bytes::Bytes;
 
 use super::action_encoder::{
     ActionEncodingLimits, ActionSessionAuthority, BoundNativeGraphActionEncoder,
@@ -50,9 +51,10 @@ use super::package::{
 use super::{
     AdapterLifecycleDeadlines, AdapterProtocolConfig, AdapterProtocolFactory,
     AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawner, ArtifactError, ArtifactQuota,
-    FrozenArtifactReference, NativeGraphLowererFactory, NativeGraphLoweringReport,
-    NativeGraphPackagePlan, NativeGraphProfile, ProtocolAdapterRuntimeFactory, ProtocolCapability,
-    ProtocolLimits, RlEvaluationPolicy,
+    FrozenArtifact, FrozenArtifactReference, FrozenRolloutEvidence, NativeGraphLowererFactory,
+    NativeGraphLoweringReport, NativeGraphPackagePlan, NativeGraphProfile,
+    NativeGraphRolloutReceipt, NativeGraphRolloutTransitionReceipt, ProtocolAdapterRuntimeFactory,
+    ProtocolCapability, ProtocolLimits, RlEvaluationPolicy,
 };
 
 /// Failure while selecting or binding one NativeGraph-only extension seam.
@@ -299,6 +301,11 @@ impl BoundNativeGraphEnvironmentStepper {
         self.operation_deadline
     }
 
+    /// Returns the exact artifact quota sealed into the imported rollout selection.
+    pub const fn artifact_quota(&self) -> ArtifactQuota {
+        self.artifact_quota
+    }
+
     /// Prepares a selected model runtime for this exact imported rollout before a worker starts.
     pub fn prepare_live_rollout_coordinator(
         &self,
@@ -320,6 +327,38 @@ impl BoundNativeGraphEnvironmentStepper {
         spawner: Rc<dyn AdapterSpawner>,
     ) -> Result<StartedNativeGraphEnvironmentStepper, NativeGraphFactoryError> {
         let request = self.sealed_spawn_request()?;
+        self.start_with_request(span, store, spawner, request, false)
+            .await
+    }
+
+    /// Starts the selected stepper from the backend's exact authorization-minted request.
+    ///
+    /// The backend retains the only request bearing the NativeGraph exact-spawn token; this
+    /// worker seam verifies its immutable package-facing fields but never mints a replacement.
+    pub(crate) async fn start_with_authorized_request(
+        &self,
+        span: impl Into<String>,
+        store: Rc<RefCell<super::EpisodeArtifactStore>>,
+        spawner: Rc<dyn AdapterSpawner>,
+        request: AdapterSpawnRequest,
+    ) -> Result<StartedNativeGraphEnvironmentStepper, NativeGraphFactoryError> {
+        self.start_with_request(span, store, spawner, request, true)
+            .await
+    }
+
+    async fn start_with_request(
+        &self,
+        span: impl Into<String>,
+        store: Rc<RefCell<super::EpisodeArtifactStore>>,
+        spawner: Rc<dyn AdapterSpawner>,
+        request: AdapterSpawnRequest,
+        defer_terminal_cleanup: bool,
+    ) -> Result<StartedNativeGraphEnvironmentStepper, NativeGraphFactoryError> {
+        if request.argv() != self.adapter.argv.as_slice() || !request.environment().is_empty() {
+            return Err(NativeGraphFactoryError::new(
+                "NativeGraph authorized environment spawn request does not match the imported adapter selection",
+            ));
+        }
         let rollout_session = NativeGraphLiveRolloutSessionAuthority::new();
         let action_session = ActionSessionAuthority::new();
         let reset_input = {
@@ -355,6 +394,13 @@ impl BoundNativeGraphEnvironmentStepper {
                     &self.action_encoder,
                     action_session.clone(),
                 )
+            })
+            .map(|binding| {
+                if defer_terminal_cleanup {
+                    binding.with_deferred_terminal_cleanup()
+                } else {
+                    binding
+                }
             })
             .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
         }) {
@@ -402,6 +448,7 @@ impl BoundNativeGraphEnvironmentStepper {
                 reset_input,
                 action_encoder: self.action_encoder.clone(),
                 action_encoding_limits: self.action_encoding_limits,
+                policy: self.policy.clone(),
                 rollout_binding: self.rollout_binding.clone(),
                 rollout_session,
                 coordinator_bind_token: RefCell::new(Some(())),
@@ -480,6 +527,7 @@ pub struct StartedNativeGraphEnvironmentStepper {
     reset_input: FrozenArtifactReference,
     action_encoder: BoundNativeGraphActionEncoder,
     action_encoding_limits: ActionEncodingLimits,
+    policy: RlEvaluationPolicy,
     rollout_binding: NativeGraphLiveRolloutBindingAuthority,
     rollout_session: NativeGraphLiveRolloutSessionAuthority,
     coordinator_bind_token: RefCell<Option<()>>,
@@ -492,6 +540,26 @@ impl StartedNativeGraphEnvironmentStepper {
     /// Borrows the one-shot reset-input capability frozen from the imported package snapshot.
     pub fn reset_input(&self) -> &FrozenArtifactReference {
         &self.reset_input
+    }
+
+    /// Starts a descriptor-only receipt under this session's immutable rollout policy.
+    pub fn new_rollout_receipt(&self) -> NativeGraphRolloutReceipt {
+        NativeGraphRolloutReceipt::new(self.policy.clone())
+    }
+
+    /// Resets the selected environment and returns only its frozen observation descriptor.
+    pub async fn reset_live_rollout(
+        &mut self,
+        operation: impl Into<String>,
+    ) -> Result<FrozenArtifact, NativeGraphFactoryError> {
+        self.stepper
+            .reset(EnvironmentResetRequest::new(
+                operation,
+                self.reset_input.clone(),
+            ))
+            .await
+            .map(|record| record.observation().clone())
+            .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
     }
 
     /// Consumes exact prepared package facts to bind one coordinator to this started session.
@@ -551,6 +619,93 @@ impl StartedNativeGraphEnvironmentStepper {
         self.stepper
             .step(EnvironmentStepRequest::admitted(operation, action))
             .await
+            .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
+    }
+
+    /// Admits and dispatches one sealed policy decision while retaining a capability-free receipt.
+    pub async fn step_policy_decision_receipt(
+        &mut self,
+        operation: impl Into<String>,
+        decision: IssuedNativeGraphPolicyDecision,
+    ) -> Result<NativeGraphRolloutTransitionReceipt, NativeGraphFactoryError> {
+        if !decision.belongs_to(&self.rollout_session) {
+            return Err(NativeGraphFactoryError::new(
+                "NativeGraph policy decision belongs to another worker-local rollout session",
+            ));
+        }
+        let action = {
+            let mut artifacts = self.artifacts.try_borrow_mut().map_err(|_| {
+                NativeGraphFactoryError::new(
+                    "NativeGraph environment artifact store is already borrowed",
+                )
+            })?;
+            self.action_encoder
+                .admit_for_session(
+                    decision.into_decision(),
+                    &mut artifacts,
+                    self.action_encoding_limits,
+                    &self.action_session,
+                )
+                .map_err(action_encoder_factory_error)?
+        };
+        let action_descriptor = action.reference().artifact().clone();
+        let transition = self
+            .stepper
+            .step(EnvironmentStepRequest::admitted(operation, action))
+            .await
+            .map_err(|error| NativeGraphFactoryError::new(error.to_string()))?;
+        Ok(NativeGraphRolloutTransitionReceipt::from_stepper(
+            action_descriptor,
+            transition,
+        ))
+    }
+
+    /// Uses the matching coordinator to decide and dispatch one descriptor-only rollout step.
+    pub(crate) async fn step_live_rollout(
+        &mut self,
+        coordinator: &mut NativeGraphLiveRolloutCoordinator,
+        operation: impl Into<String>,
+        observation: &FrozenArtifact,
+    ) -> Result<NativeGraphRolloutTransitionReceipt, NativeGraphFactoryError> {
+        let observation = {
+            let artifacts = self.artifacts.try_borrow().map_err(|_| {
+                NativeGraphFactoryError::new(
+                    "NativeGraph environment artifact store is already borrowed",
+                )
+            })?;
+            artifacts
+                .read_frozen(observation)
+                .map(Bytes::from)
+                .map_err(|error| NativeGraphFactoryError::new(error.to_string()))?
+        };
+        let decision = coordinator
+            .decide_policy_decision_bytes(observation)
+            .await
+            .map_err(live_rollout_factory_error)?;
+        self.step_policy_decision_receipt(operation, decision).await
+    }
+
+    /// Reaps a nonterminal environment adapter after callback or collection completion.
+    pub async fn cancel_and_reap(&mut self) -> Result<(), NativeGraphFactoryError> {
+        self.stepper
+            .cancel_and_reap()
+            .await
+            .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
+    }
+
+    /// Freezes this session's descriptor-only receipt against its private trusted artifact store.
+    pub(crate) fn freeze_rollout_receipt(
+        &self,
+        receipt: NativeGraphRolloutReceipt,
+        identity: super::RolloutEvidenceIdentity,
+    ) -> Result<FrozenRolloutEvidence, NativeGraphFactoryError> {
+        let artifacts = self.artifacts.try_borrow().map_err(|_| {
+            NativeGraphFactoryError::new(
+                "NativeGraph environment artifact store is already borrowed",
+            )
+        })?;
+        receipt
+            .freeze(identity, &artifacts)
             .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
     }
 

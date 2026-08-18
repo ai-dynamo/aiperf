@@ -3,11 +3,65 @@
 
 //! Narrow callback boundary between an acquired task environment and Rust-owned graph execution.
 
-use std::{future::Future, pin::Pin};
+use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc};
 
 use async_trait::async_trait;
 
 use super::EvalExecutionError;
+#[cfg(feature = "engine")]
+use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
+#[cfg(feature = "engine")]
+use crate::eval::{
+    BoundNativeGraphEnvironmentStepper, FrozenArtifact, FrozenRolloutEvidence,
+    NativeGraphAttemptAuthority, NativeGraphRolloutTransitionReceipt,
+    PreparedNativeGraphLiveRolloutCoordinator,
+};
+
+/// Opaque, immutable rollout start facts retained by the Docker lease before provisioning.
+///
+/// The engine callback can create this only from a resolved trial and selected worker-local
+/// bindings. Its constructor and accessors remain crate-private so callbacks cannot mint or
+/// substitute package, coordinator, or attempt authority after a lease is exposed.
+#[cfg(feature = "engine")]
+pub struct NativeGraphLeaseRolloutStart {
+    stepper: BoundNativeGraphEnvironmentStepper,
+    coordinator: PreparedNativeGraphLiveRolloutCoordinator,
+    authority: NativeGraphAttemptAuthority,
+    live_policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+}
+
+#[cfg(feature = "engine")]
+impl NativeGraphLeaseRolloutStart {
+    pub(crate) fn new(
+        stepper: BoundNativeGraphEnvironmentStepper,
+        coordinator: PreparedNativeGraphLiveRolloutCoordinator,
+        authority: NativeGraphAttemptAuthority,
+        live_policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+    ) -> Self {
+        Self {
+            stepper,
+            coordinator,
+            authority,
+            live_policy_summary,
+        }
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        BoundNativeGraphEnvironmentStepper,
+        PreparedNativeGraphLiveRolloutCoordinator,
+        NativeGraphAttemptAuthority,
+        Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+    ) {
+        (
+            self.stepper,
+            self.coordinator,
+            self.authority,
+            self.live_policy_summary,
+        )
+    }
+}
 
 /// Opaque, lease-owned operation which starts the package-declared environment adapter.
 ///
@@ -17,6 +71,47 @@ use super::EvalExecutionError;
 pub trait NativeGraphEnvironmentAdapterStart {
     /// Starts the already-authorized package-declared environment adapter exactly once.
     async fn start(&mut self) -> Result<(), EvalExecutionError>;
+
+    /// Starts one Rust-owned supervised rollout session from exact selected package facts.
+    ///
+    /// The backend retains the adapter process and cleanup authority. Callbacks receive only
+    /// descriptor-only reset and transition receipts through [`NativeGraphEnvironmentRolloutSession`].
+    #[cfg(feature = "engine")]
+    async fn start_rollout(&mut self) -> Result<(), EvalExecutionError> {
+        Err(EvalExecutionError::InvalidRecipe(
+            "NativeGraph supervised rollout session",
+        ))
+    }
+
+    /// Borrows the descriptor-only rollout session after [`Self::start_rollout`] succeeds.
+    #[cfg(feature = "engine")]
+    fn rollout_session(
+        &mut self,
+    ) -> Result<&mut dyn NativeGraphEnvironmentRolloutSession, EvalExecutionError> {
+        Err(EvalExecutionError::InvalidRecipe(
+            "NativeGraph supervised rollout session",
+        ))
+    }
+}
+
+/// Descriptor-only live-rollout operations exposed to a Rust graph callback.
+///
+/// The callback cannot reach child-process, spawn, protocol-handle, or raw model-decision
+/// authority through this interface. The backend owns all terminal cleanup.
+#[cfg(feature = "engine")]
+#[async_trait(?Send)]
+pub trait NativeGraphEnvironmentRolloutSession {
+    /// Resets the selected environment and returns the frozen initial observation descriptor.
+    async fn reset(&mut self) -> Result<FrozenArtifact, EvalExecutionError>;
+
+    /// Obtains and dispatches one selected model decision, returning frozen transition facts only.
+    async fn step(
+        &mut self,
+        observation: &FrozenArtifact,
+    ) -> Result<NativeGraphRolloutTransitionReceipt, EvalExecutionError>;
+
+    /// Freezes exactly one terminal trajectory into verifier-isolated evidence.
+    fn freeze(&mut self) -> Result<FrozenRolloutEvidence, EvalExecutionError>;
 }
 
 /// Borrowed capabilities of an already-authorized NativeGraph task environment.
@@ -56,9 +151,7 @@ pub trait NativeGraphEpisodeBackendLease: NativeGraphEpisodeLease {
     /// Reaps an environment adapter started through this lease.
     fn reap_environment_adapter<'lease>(
         &'lease mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<(), EvalExecutionError>> + 'lease>> {
-        Box::pin(async { Ok(()) })
-    }
+    ) -> Pin<Box<dyn Future<Output = Result<(), EvalExecutionError>> + 'lease>>;
 }
 
 struct NativeGraphEpisodeCallbackLease<'lease> {
@@ -93,6 +186,24 @@ pub trait NativeGraphEpisodeCallback {
         &mut self,
         lease: &mut dyn NativeGraphEpisodeLease,
     ) -> Result<(), EvalExecutionError>;
+
+    /// Transfers one sealed rollout start to the backend before it provisions an adapter.
+    ///
+    /// The default retains ordinary graph callbacks. The returned value is opaque: callback code
+    /// cannot create or inspect the selected worker-local stepper, policy coordinator, or attempt
+    /// authority after the backend has retained it.
+    #[cfg(feature = "engine")]
+    fn take_lease_rollout_start(&mut self) -> Option<NativeGraphLeaseRolloutStart> {
+        None
+    }
+
+    /// Transfers one fully frozen rollout document after a successful callback.
+    ///
+    /// The default keeps non-rollout graph callbacks byte-for-byte behavior-compatible.
+    #[cfg(feature = "engine")]
+    fn take_rollout_evidence(&mut self) -> Option<FrozenRolloutEvidence> {
+        None
+    }
 }
 
 /// Invokes an authorized NativeGraph callback before collection and verification.

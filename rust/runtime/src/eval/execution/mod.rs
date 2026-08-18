@@ -49,6 +49,10 @@ pub use native_graph_episode::{
     NativeGraphEnvironmentAdapterStart, NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback,
     NativeGraphEpisodeLease, run_native_graph_episode_callback,
 };
+#[cfg(feature = "engine")]
+pub use native_graph_episode::{
+    NativeGraphEnvironmentRolloutSession, NativeGraphLeaseRolloutStart,
+};
 pub use plan::{
     ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectPlan,
     ComposeServiceName, ContainerResources, EnvBinding, EnvironmentPlan, HealthcheckPlan,

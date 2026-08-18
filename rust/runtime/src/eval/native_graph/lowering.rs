@@ -584,11 +584,6 @@ fn generation_request_body(generation: &GenerationDefaults) -> Map<String, Value
 pub fn validate_native_graph_trace_plan(
     plan: &GraphTracePlan,
 ) -> Result<(), NativeGraphLoweringError> {
-    if plan.graph.nodes.is_empty() {
-        return Err(NativeGraphLoweringError::InvalidClosure(
-            "graph has no executable nodes".into(),
-        ));
-    }
     let node_ids = plan.graph.nodes.keys().cloned().collect::<BTreeSet<_>>();
     for (node_id, node) in &plan.graph.nodes {
         if node_id.is_empty() || node_id == START_NODE_ID || node_id == "END" {
@@ -703,8 +698,7 @@ pub(crate) fn validate_control_flow_contract(
             "control-flow contract has an invalid immutable projection identity".into(),
         ));
     }
-    if control_flow.stage_node_ids.is_empty()
-        || !is_sorted_unique(&control_flow.stage_node_ids)
+    if !is_sorted_unique(&control_flow.stage_node_ids)
         || !is_sorted_unique(&control_flow.stage_channel_ids)
         || !is_sorted_unique(&control_flow.terminal_outputs)
     {

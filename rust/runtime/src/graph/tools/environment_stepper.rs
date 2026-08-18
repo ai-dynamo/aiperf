@@ -186,6 +186,7 @@ pub struct EnvironmentStepperBinding {
     horizon: u32,
     artifacts: EnvironmentArtifactBindings,
     selected_action_encoder: Option<SelectedActionEncoder>,
+    defer_terminal_cleanup: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -223,6 +224,7 @@ impl EnvironmentStepperBinding {
             horizon: policy.horizon(),
             artifacts,
             selected_action_encoder: None,
+            defer_terminal_cleanup: false,
         })
     }
 
@@ -249,6 +251,17 @@ impl EnvironmentStepperBinding {
         });
         self
     }
+
+    /// Defers terminal adapter cleanup to the owner of the surrounding task lease.
+    ///
+    /// Docker uses this only after it has admitted its exact task-minted spawn request, so
+    /// declared artifact collection and verification can complete before the adapter client
+    /// is cancelled and reaped. Ordinary worker-local steppers retain immediate terminal
+    /// cleanup.
+    pub(crate) fn with_deferred_terminal_cleanup(mut self) -> Self {
+        self.defer_terminal_cleanup = true;
+        self
+    }
 }
 
 /// Worker-local environment reset and transition operations.
@@ -265,6 +278,9 @@ pub trait EnvironmentStepper {
         &mut self,
         request: EnvironmentStepRequest,
     ) -> Result<EnvironmentTransitionRecord, EnvironmentStepperError>;
+
+    /// Reaps a still-live child when the host ends the rollout before its terminal transition.
+    async fn cancel_and_reap(&mut self) -> Result<(), EnvironmentStepperError>;
 }
 
 /// Factory for one worker-local supervised environment stepper.
@@ -320,6 +336,7 @@ impl EnvironmentStepperFactory for SupervisedEnvironmentStepperFactory {
             .start(request)
             .await
             .map_err(EnvironmentStepperError::Supervision)?;
+        let defer_terminal_cleanup = binding.defer_terminal_cleanup;
         Ok(Box::new(SupervisedEnvironmentStepper {
             adapter,
             binding,
@@ -333,6 +350,7 @@ impl EnvironmentStepperFactory for SupervisedEnvironmentStepperFactory {
             is_terminal: false,
             is_invalidated: false,
             cleanup: CleanupState::Active,
+            defer_terminal_cleanup,
         }))
     }
 }
@@ -350,6 +368,7 @@ struct SupervisedEnvironmentStepper {
     is_terminal: bool,
     is_invalidated: bool,
     cleanup: CleanupState,
+    defer_terminal_cleanup: bool,
 }
 
 enum EnvironmentInput<'a> {
@@ -957,7 +976,7 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
         };
         self.step_count = next_step_count;
         self.is_terminal = terminated || transition.is_truncated();
-        if self.is_terminal {
+        if self.is_terminal && !self.defer_terminal_cleanup {
             if let Err(cleanup) = self.finish_cleanup(CancelReason::HostShutdown).await {
                 return Err(EnvironmentStepperError::Cleanup {
                     primary: Box::new(EnvironmentStepperError::EpisodeTerminal),
@@ -966,6 +985,12 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
             }
         }
         Ok(transition)
+    }
+
+    async fn cancel_and_reap(&mut self) -> Result<(), EnvironmentStepperError> {
+        self.finish_cleanup(CancelReason::HostShutdown)
+            .await
+            .map_err(EnvironmentStepperError::Supervision)
     }
 }
 

@@ -5,10 +5,12 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fs,
+    future::Future,
     io::{self, Read},
     num::NonZeroUsize,
+    pin::Pin,
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -17,25 +19,30 @@ use std::{
 };
 
 use aiperf_runtime::eval::{
-    AgentVariantRef, ArtifactDigest, AttemptId, DockerBuildRequest, DockerCopyRequest,
-    DockerCreateRequest, DockerExecRequest, DockerNativeGraphEpisodeExecutor, DockerProcessSandbox,
-    DockerRemoveRequest, DockerRuntime, DockerStartRequest, EngineNativeGraphEpisodeCallback,
-    EpisodeAssignment, EpisodeExecutionError, EvalExecutionError, EvalNodeRecordArtifact,
-    EvidenceEvent, EvidenceKind, FrozenAttemptBundle, HarborEpisodeEvaluatorFactory,
-    HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
-    HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource,
+    AdapterEnvelope, AdapterExit, AdapterMessage, AdapterProcess, AdapterSpawnRequest,
+    AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError, AgentVariantRef,
+    ArtifactDigest, AttemptId, CancelReason, DockerAdapterSpawnerRequest, DockerBuildRequest,
+    DockerCopyRequest, DockerCreateRequest, DockerExecRequest, DockerNativeGraphEpisodeExecutor,
+    DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
+    EngineNativeGraphEpisodeCallback, EpisodeAssignment, EpisodeExecutionError, EvalExecutionError,
+    EvalNodeRecordArtifact, EvidenceEvent, EvidenceKind, FrozenArtifactReference,
+    FrozenAttemptBundle, HarborEpisodeEvaluatorFactory, HarborEvaluationCoordinator,
+    HarborImporter, HarborLifecycleAgentContract, HarborLifecycleRequest,
+    HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource, HostEnvelope, HostMessage,
     LocalNativeGraphSuiteScheduler, ModelCapacityKey, ModelEndpointIsolationProof, ModelIdentity,
-    ModelRuntimeConfig, NativeGraphCompletedAttempt, NativeGraphEpisodeBackendLease,
-    NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor, NativeGraphEpisodeLease,
-    NativeGraphEpisodeRunner, NativeGraphPackagePlan, NativeGraphSuiteManifest,
-    NativeSourceAcquirer, PolicyIdentity, ProviderCapabilities, ProviderCapability,
-    ProviderProfile, RegradeRequest, ResourceLeaseRequest, RewardDocument, RuntimeIdentity,
-    ScoreVersion, SecretProvider, SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec,
-    VerifierResult, regrade, run_native_graph_episode_callback, run_resolved_suite,
+    ModelRuntimeConfig, NativeGraphCompletedAttempt, NativeGraphEnvironmentAdapterStart,
+    NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor,
+    NativeGraphEpisodeLease, NativeGraphEpisodeRunner, NativeGraphPackagePlan,
+    NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity, ProtocolCapability,
+    ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
+    ResourceLeaseRequest, RewardDocument, RuntimeIdentity, ScoreVersion, SecretProvider,
+    SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult, regrade,
+    run_native_graph_episode_callback, run_resolved_suite,
 };
 use aiperf_runtime::{engine::application::Application, eval::EnvName};
 use async_trait::async_trait;
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{Json, Router, extract::State, http::header, routing::post};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 #[tokio::test(flavor = "current_thread")]
 async fn callback_runs_only_after_authorized_environment_acquisition_and_before_collection() {
@@ -83,6 +90,44 @@ async fn callback_failure_is_returned_before_collection_can_start() {
         matches!(error, EvalExecutionError::ProcessFailure(reason) if reason == "graph failed")
     );
     assert!(!collection_started.get());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn callback_failure_reaps_a_resource_owning_non_docker_lease() {
+    let collection_started = Cell::new(false);
+    let adapter_started = Cell::new(false);
+    let adapter_reaped = Cell::new(false);
+    let mut lease = ResourceOwningLease {
+        adapter: ResourceOwningAdapterStart {
+            started: &adapter_started,
+        },
+        reaped: &adapter_reaped,
+    };
+    let mut callback = StartsAdapterThenFails;
+
+    let error = run_native_graph_episode_callback(&mut callback, &mut lease, &mut || {
+        collection_started.set(true);
+        Ok(())
+    })
+    .await
+    .expect_err("a failed callback must reap an adapter owned by every backend lease");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ProcessFailure(reason) if reason == "resource-owning callback failed"
+    ));
+    assert!(
+        adapter_started.get(),
+        "the callback started the owned adapter"
+    );
+    assert!(
+        adapter_reaped.get(),
+        "the backend reaped the started adapter"
+    );
+    assert!(
+        !collection_started.get(),
+        "callback failure must not begin collection before cleanup"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -426,6 +471,106 @@ async fn docker_episode_executor_appends_two_suite_episodes_to_one_record_artifa
     assert_eq!(rows.lines().count(), 2);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn docker_rollout_only_episode_appends_bounded_policy_lifecycle_evidence() {
+    let execution = tokio::task::LocalSet::new()
+        .run_until(execute_rollout_only_episode())
+        .await;
+    let completed = execution.completed;
+
+    assert_eq!(
+        execution.model_calls, 1,
+        "one reset observation drives one selected model call"
+    );
+    let rollout = completed
+        .rollout()
+        .expect("the rollout evidence is retained");
+    let policy_calls = rollout
+        .live_policy_calls()
+        .expect("a live rollout retains bounded policy timing facts");
+    assert_eq!(policy_calls.call_count(), 1);
+    assert_eq!(policy_calls.first_token_count(), 1);
+    assert!(policy_calls.total_first_token_ns() >= policy_calls.max_first_token_ns());
+    let lifecycle = completed.frozen_attempt().lifecycle_evidence();
+    assert!(
+        lifecycle.len() >= 2,
+        "the ordinary Harbor lifecycle precedes rollout evidence"
+    );
+    assert_eq!(
+        lifecycle[lifecycle.len() - 2..]
+            .iter()
+            .map(|event| event.kind.clone())
+            .collect::<Vec<_>>(),
+        vec![EvidenceKind::Artifact, EvidenceKind::Llm],
+        "the live call is represented only by one following lifecycle digest"
+    );
+    let policy_digest = &lifecycle
+        .last()
+        .expect("the policy lifecycle event exists")
+        .payload;
+    assert!(
+        !completed
+            .frozen_attempt()
+            .verifier_result()
+            .evidence
+            .contains(policy_digest),
+        "live policy facts do not become verifier evidence"
+    );
+    assert_eq!(
+        completed
+            .frozen_attempt()
+            .verifier_result()
+            .reward
+            .metrics
+            .get("reward"),
+        Some(&1.0)
+    );
+
+    let labels = execution.runtime.adapter_spawner_labels.borrow();
+    let labels = labels
+        .first()
+        .expect("the trusted rollout adapter is bound to one ownership-labelled container");
+    let creates = execution.runtime.creates.borrow();
+    let create = creates
+        .first()
+        .expect("the trusted rollout provisions its task container");
+    for (name, value) in labels {
+        assert!(
+            create
+                .windows(2)
+                .any(|arguments| arguments == ["--label", &format!("{name}={value}")]),
+            "the task container carries the adapter's exact ownership label"
+        );
+    }
+
+    let timeline = execution.runtime.events.borrow();
+    let position = |event: &str| {
+        timeline
+            .iter()
+            .position(|actual| *actual == event)
+            .expect("trusted rollout lifecycle event")
+    };
+    assert!(position("verifier") < position("client-cancel"));
+    assert!(position("client-cancel") < position("client-reap"));
+    assert!(position("client-reap") < position("remove"));
+    assert_eq!(
+        timeline
+            .iter()
+            .filter(|event| **event == "client-cancel")
+            .count(),
+        1,
+        "the lease cancels its trusted child exactly once"
+    );
+    assert_eq!(
+        timeline
+            .iter()
+            .filter(|event| **event == "client-reap")
+            .count(),
+        1,
+        "the lease reaps its trusted child exactly once"
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "current_thread")]
 async fn episode_fails_on_record_append_error_without_exposing_record_content() {
@@ -678,7 +823,77 @@ impl NativeGraphEpisodeLease for RecordingLease<'_> {
     }
 }
 
-impl NativeGraphEpisodeBackendLease for RecordingLease<'_> {}
+impl NativeGraphEpisodeBackendLease for RecordingLease<'_> {
+    fn reap_environment_adapter<'lease>(
+        &'lease mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), EvalExecutionError>> + 'lease>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct ResourceOwningLease<'a> {
+    adapter: ResourceOwningAdapterStart<'a>,
+    reaped: &'a Cell<bool>,
+}
+
+impl NativeGraphEpisodeLease for ResourceOwningLease<'_> {
+    fn is_authorized(&self) -> bool {
+        true
+    }
+
+    fn is_environment_acquired(&self) -> bool {
+        true
+    }
+
+    fn instruction(&self) -> &str {
+        "resource-owning lease"
+    }
+
+    fn environment_adapter_start(
+        &mut self,
+    ) -> Result<&mut dyn NativeGraphEnvironmentAdapterStart, EvalExecutionError> {
+        Ok(&mut self.adapter)
+    }
+}
+
+impl NativeGraphEpisodeBackendLease for ResourceOwningLease<'_> {
+    fn reap_environment_adapter<'lease>(
+        &'lease mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), EvalExecutionError>> + 'lease>> {
+        let reaped = self.reaped;
+        Box::pin(async move {
+            reaped.set(true);
+            Ok(())
+        })
+    }
+}
+
+struct ResourceOwningAdapterStart<'a> {
+    started: &'a Cell<bool>,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEnvironmentAdapterStart for ResourceOwningAdapterStart<'_> {
+    async fn start(&mut self) -> Result<(), EvalExecutionError> {
+        self.started.set(true);
+        Ok(())
+    }
+}
+
+struct StartsAdapterThenFails;
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeCallback for StartsAdapterThenFails {
+    async fn run(
+        &mut self,
+        lease: &mut dyn NativeGraphEpisodeLease,
+    ) -> Result<(), EvalExecutionError> {
+        lease.environment_adapter_start()?.start().await?;
+        Err(EvalExecutionError::ProcessFailure(
+            "resource-owning callback failed".to_owned(),
+        ))
+    }
+}
 
 struct RecordingCallback<'a> {
     callback_ran: &'a Cell<bool>,
@@ -739,6 +954,7 @@ impl NativeGraphEpisodeExecutor for StubFrozenFactsExecutor {
             return Err(EpisodeExecutionError::UnexpectedTransportEvidence {
                 model_records: evidence.model_records(),
                 completed_traces: evidence.completed_traces(),
+                live_policy_calls: evidence.live_policy_calls(),
             });
         }
         let verifier_input = ArtifactDigest::from_bytes(b"declared artifact");
@@ -822,7 +1038,10 @@ fn native_graph_lifecycle_request() -> HarborLifecycleRequest {
 
 #[derive(Default)]
 struct GraphDockerRuntime {
-    events: RefCell<Vec<&'static str>>,
+    events: Rc<RefCell<Vec<&'static str>>>,
+    adapter_spawner_labels: Rc<RefCell<Vec<BTreeMap<String, String>>>>,
+    creates: Rc<RefCell<Vec<Vec<String>>>>,
+    adapter_spawner: Option<Rc<dyn AdapterSpawner>>,
 }
 
 impl DockerRuntime for GraphDockerRuntime {
@@ -870,13 +1089,31 @@ impl DockerRuntime for GraphDockerRuntime {
         Ok(BTreeMap::new())
     }
 
+    fn adapter_spawner(
+        &self,
+        request: &DockerAdapterSpawnerRequest,
+        _: &aiperf_runtime::eval::NativeGraphAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        self.adapter_spawner_labels
+            .borrow_mut()
+            .push(request.project().ownership_labels());
+        self.adapter_spawner
+            .clone()
+            .ok_or(EvalExecutionError::UnsupportedEnforcement(
+                "streaming Docker adapter spawn",
+            ))
+    }
+
     fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
         self.events.borrow_mut().push("build");
         Ok(())
     }
 
-    fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+    fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
         self.events.borrow_mut().push("create");
+        self.creates
+            .borrow_mut()
+            .push(request.public_arguments().to_vec());
         Ok(())
     }
 
@@ -932,6 +1169,279 @@ impl DockerRuntime for GraphDockerRuntime {
 
     fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
         self.events.borrow_mut().push("remove");
+        Ok(())
+    }
+}
+
+struct RolloutAdapterSpawner {
+    events: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl AdapterSpawner for RolloutAdapterSpawner {
+    fn begin_spawn(
+        &self,
+        _: AdapterSpawnRequest,
+    ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        Ok(Box::new(RolloutAdapterTransaction {
+            process: Some(Box::new(RolloutAdapterChild {
+                events: Rc::clone(&self.events),
+                ..RolloutAdapterChild::default()
+            })),
+        }))
+    }
+}
+
+struct RolloutAdapterTransaction {
+    process: Option<Box<dyn AdapterProcess>>,
+}
+
+#[async_trait(?Send)]
+impl AdapterSpawnTransaction for RolloutAdapterTransaction {
+    async fn await_process(&mut self) -> Result<Box<dyn AdapterProcess>, AdapterSupervisionError> {
+        self.process
+            .take()
+            .ok_or(AdapterSupervisionError::AlreadyReaped)
+    }
+
+    async fn abort(&mut self, _: std::time::Duration) -> Result<(), AdapterSupervisionError> {
+        self.process.take();
+        Ok(())
+    }
+
+    fn fence(&mut self) {}
+}
+
+#[derive(Default)]
+struct RolloutAdapterChild {
+    events: Rc<RefCell<Vec<&'static str>>>,
+    stdout: VecDeque<Vec<u8>>,
+    sequence: u64,
+    parent: Option<String>,
+    pending_operation: Option<String>,
+    pending_bytes: Option<Vec<u8>>,
+    outputs: VecDeque<Vec<u8>>,
+    references: Vec<FrozenArtifactReference>,
+    is_reset_complete: bool,
+}
+
+#[async_trait(?Send)]
+impl AdapterProcess for RolloutAdapterChild {
+    async fn write_frame(
+        &mut self,
+        frame: &[u8],
+        _: std::time::Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        let host: HostEnvelope = serde_json::from_slice(frame).map_err(|error| {
+            AdapterSupervisionError::Process(format!("fixture host frame is invalid: {error}"))
+        })?;
+        match host.message {
+            HostMessage::Hello { .. } => self.push(
+                host.episode,
+                "startup",
+                host.operation,
+                AdapterMessage::Ready {
+                    protocol_version: 1,
+                    capabilities: vec![
+                        ProtocolCapability::Environment,
+                        ProtocolCapability::Artifacts,
+                    ],
+                    implementation_digest: ArtifactDigest::from_bytes(b"rollout-only-child"),
+                },
+            )?,
+            HostMessage::ResetEnvironment { .. } => {
+                if self.parent.is_some() || self.is_reset_complete {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                self.parent = Some(host.operation);
+                self.outputs = VecDeque::from([b"rollout-reset-observation".to_vec()]);
+                self.request_output(host.episode)?;
+            }
+            HostMessage::StepEnvironment { .. } => {
+                if self.parent.is_some() || !self.is_reset_complete {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                self.parent = Some(host.operation);
+                self.outputs = VecDeque::from([
+                    b"rollout-transition-observation".to_vec(),
+                    b"rollout-transition-info".to_vec(),
+                ]);
+                self.request_output(host.episode)?;
+            }
+            HostMessage::PutArtifactHandle { upload, .. } => {
+                let operation = self
+                    .pending_operation
+                    .clone()
+                    .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+                if operation != host.operation {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                let bytes = self
+                    .pending_bytes
+                    .as_deref()
+                    .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+                self.push(
+                    host.episode.clone(),
+                    "native-graph-rollout",
+                    operation.clone(),
+                    AdapterMessage::ArtifactUploadChunk {
+                        upload: upload.clone(),
+                        bytes_base64: STANDARD.encode(bytes),
+                    },
+                )?;
+                self.push(
+                    host.episode,
+                    "native-graph-rollout",
+                    operation,
+                    AdapterMessage::ArtifactUploadComplete { upload },
+                )?;
+            }
+            HostMessage::ArtifactCommitted { reference, .. } => {
+                let operation = self
+                    .pending_operation
+                    .take()
+                    .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+                if operation != host.operation {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                self.pending_bytes = None;
+                self.references.push(reference);
+                if self.outputs.is_empty() {
+                    let parent = self
+                        .parent
+                        .clone()
+                        .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+                    self.finish(host.episode, parent)?;
+                } else {
+                    self.request_output(host.episode)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn read_stdout_frame(
+        &mut self,
+        _: usize,
+        _: std::time::Duration,
+    ) -> Result<Vec<u8>, AdapterSupervisionError> {
+        self.stdout
+            .pop_front()
+            .ok_or(AdapterSupervisionError::EndOfStream)
+    }
+
+    async fn drain_stderr(&mut self, _: usize) -> Result<Vec<u8>, AdapterSupervisionError> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel(
+        &mut self,
+        _: CancelReason,
+        _: std::time::Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        self.events.borrow_mut().push("client-cancel");
+        Ok(())
+    }
+
+    async fn reap(
+        &mut self,
+        _: std::time::Duration,
+    ) -> Result<AdapterExit, AdapterSupervisionError> {
+        self.events.borrow_mut().push("client-reap");
+        Ok(AdapterExit::Reaped)
+    }
+
+    fn fence(&mut self) {}
+}
+
+impl RolloutAdapterChild {
+    fn request_output(&mut self, episode: String) -> Result<(), AdapterSupervisionError> {
+        let parent = self
+            .parent
+            .as_ref()
+            .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+        let bytes = self
+            .outputs
+            .pop_front()
+            .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+        let operation = format!("{parent}-output-{}", self.references.len());
+        let declared_bytes = u64::try_from(bytes.len())
+            .map_err(|_| AdapterSupervisionError::InvalidResetTransition)?;
+        self.pending_operation = Some(operation.clone());
+        self.pending_bytes = Some(bytes);
+        self.push(
+            episode,
+            "native-graph-rollout",
+            operation,
+            AdapterMessage::PutArtifactRequest {
+                parent_operation: parent.clone(),
+                declared_bytes,
+            },
+        )
+    }
+
+    fn finish(
+        &mut self,
+        episode: String,
+        operation: String,
+    ) -> Result<(), AdapterSupervisionError> {
+        let parent = self
+            .parent
+            .take()
+            .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+        if parent != operation {
+            return Err(AdapterSupervisionError::InvalidResetTransition);
+        }
+        let references = std::mem::take(&mut self.references);
+        if !self.is_reset_complete {
+            let [observation]: [FrozenArtifactReference; 1] = references
+                .try_into()
+                .map_err(|_| AdapterSupervisionError::InvalidResetTransition)?;
+            self.is_reset_complete = true;
+            self.push(
+                episode,
+                "native-graph-rollout",
+                parent,
+                AdapterMessage::EnvironmentReset {
+                    observation_ref: observation,
+                },
+            )
+        } else {
+            let [observation, info]: [FrozenArtifactReference; 2] = references
+                .try_into()
+                .map_err(|_| AdapterSupervisionError::InvalidResetTransition)?;
+            self.push(
+                episode,
+                "native-graph-rollout",
+                parent,
+                AdapterMessage::Transition {
+                    observation_ref: observation,
+                    reward: 1.0,
+                    terminated: true,
+                    truncated: false,
+                    info_ref: info,
+                },
+            )
+        }
+    }
+
+    fn push(
+        &mut self,
+        episode: String,
+        span: impl Into<String>,
+        operation: String,
+        message: AdapterMessage,
+    ) -> Result<(), AdapterSupervisionError> {
+        let envelope = AdapterEnvelope::new(episode, span, self.sequence, operation, message);
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+        let mut frame = serde_json::to_vec(&envelope).map_err(|error| {
+            AdapterSupervisionError::Process(format!("fixture adapter frame is invalid: {error}"))
+        })?;
+        frame.push(b'\n');
+        self.stdout.push_back(frame);
         Ok(())
     }
 }
@@ -1103,4 +1613,291 @@ repetition_penalty = 1.1
     HarborImporter::new(&NativeSourceAcquirer)
         .import(&source)
         .expect("live NativeGraph fixture imports")
+}
+
+struct RolloutOnlyExecution {
+    completed: NativeGraphCompletedAttempt,
+    model_calls: usize,
+    runtime: Rc<GraphDockerRuntime>,
+}
+
+async fn execute_rollout_only_episode() -> RolloutOnlyExecution {
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post({
+            let model_calls = Arc::clone(&model_calls);
+            move || {
+                let model_calls = Arc::clone(&model_calls);
+                async move {
+                    model_calls.fetch_add(1, Ordering::SeqCst);
+                    let frame = serde_json::json!({
+                        "id": "rollout-only-policy", "object": "chat.completion.chunk",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": r#"{"kind":"move","direction":"north"}"#},
+                            "finish_reason": null
+                        }],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                    });
+                    (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        format!("data: {frame}\n\ndata: [DONE]\n\n"),
+                    )
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind rollout-only model endpoint");
+    let address = listener
+        .local_addr()
+        .expect("read rollout-only model endpoint address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve rollout-only model endpoint");
+    });
+
+    let imported = import_rollout_only_graph_fixture(&format!("http://{address}"));
+    let lifecycle = native_graph_lifecycle_request();
+    let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)
+        .expect("resolve rollout-only trial");
+    let binding = imported
+        .package
+        .native_graph()
+        .expect("rollout-only fixture has NativeGraph package")
+        .model_bindings()
+        .first()
+        .expect("rollout-only fixture has its selected policy binding");
+    let capacity_key = ModelCapacityKey::from_task_binding(&imported.task, binding);
+    let resources = ResourceLeaseRequest::new(1, 64, BTreeMap::from([(capacity_key.clone(), 1)]))
+        .expect("finite rollout-only resources");
+    let suite = NativeGraphSuiteManifest::new(vec![
+        SuiteTrialSpec::from_imported(
+            imported.clone(),
+            trial,
+            NonZeroUsize::new(1).expect("one rollout-only repetition"),
+            resources,
+        )
+        .expect("rollout-only suite trial"),
+    ])
+    .expect("one rollout-only suite trial")
+    .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
+        b"rollout-only-suite",
+    )))
+    .expect("resolve one rollout-only assignment");
+    let runtime_events = Rc::new(RefCell::new(Vec::new()));
+    let runtime = Rc::new(GraphDockerRuntime {
+        events: Rc::clone(&runtime_events),
+        adapter_spawner: Some(Rc::new(RolloutAdapterSpawner {
+            events: runtime_events,
+        })),
+        ..GraphDockerRuntime::default()
+    });
+    let runtime_for_executor: Rc<dyn DockerRuntime> = runtime.clone();
+    let inner = DockerNativeGraphEpisodeExecutor::new_with_runtime(
+        DockerProcessSandbox::new(),
+        runtime_for_executor,
+        HarborSandboxRecipe::for_standard_task(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            None,
+        )
+        .expect("immutable rollout-only Docker recipe"),
+        imported,
+        lifecycle,
+        Rc::new(
+            Application::stock(format!("blake3:{}", "b".repeat(64)))
+                .expect("compose stock application"),
+        ),
+        toml::from_str("version = 1\n").expect("empty model secret mapping"),
+        Rc::new(EmptySecrets),
+        None,
+    )
+    .expect("construct Docker rollout-only executor");
+    let completed = Rc::new(RefCell::new(None));
+    let executor = Rc::new(CapturingExecutor {
+        inner,
+        completed: Rc::clone(&completed),
+    });
+    let scheduler = LocalNativeGraphSuiteScheduler::new(
+        aiperf_runtime::eval::ResourceLimits::new(1, 1, 64, BTreeMap::from([(capacity_key, 1)]))
+            .expect("finite rollout-only scheduler resources"),
+    )
+    .expect("rollout-only scheduler");
+    let runner = Rc::new(NativeGraphEpisodeRunner::new(
+        executor,
+        Rc::new(HarborEpisodeEvaluatorFactory),
+    ));
+    let results = run_resolved_suite(&scheduler, suite, runner)
+        .await
+        .expect("rollout-only episode completes and scores");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].verified_reward(), Some(1.0));
+    let completed = completed
+        .borrow_mut()
+        .take()
+        .expect("capturing executor retains the sealed completed attempt");
+    RolloutOnlyExecution {
+        completed,
+        model_calls: model_calls.load(Ordering::SeqCst),
+        runtime,
+    }
+}
+
+struct CapturingExecutor {
+    inner: DockerNativeGraphEpisodeExecutor,
+    completed: Rc<RefCell<Option<NativeGraphCompletedAttempt>>>,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeExecutor for CapturingExecutor {
+    async fn execute(
+        &self,
+        assignment: &EpisodeAssignment,
+    ) -> Result<NativeGraphCompletedAttempt, EpisodeExecutionError> {
+        let completed = self.inner.execute(assignment).await?;
+        self.completed.replace(Some(completed.clone()));
+        Ok(completed)
+    }
+}
+
+fn import_rollout_only_graph_fixture(endpoint: &str) -> aiperf_runtime::eval::ImportedTask {
+    let task = tempfile::tempdir().expect("temporary rollout-only task root");
+    fs::create_dir_all(task.path().join("environment"))
+        .expect("rollout-only environment directory");
+    fs::create_dir_all(task.path().join("tests")).expect("rollout-only verifier directory");
+    fs::create_dir_all(task.path().join("tools")).expect("rollout-only tools directory");
+    fs::create_dir_all(task.path().join("rollout")).expect("rollout-only policy directory");
+    fs::write(
+        task.path().join("environment/Dockerfile"),
+        b"FROM scratch\n",
+    )
+    .expect("rollout-only Dockerfile");
+    fs::write(
+        task.path().join("instruction.md"),
+        b"Complete the rollout.\n",
+    )
+    .expect("rollout-only instruction");
+    fs::write(task.path().join("tests/test.sh"), b"exit 0\n").expect("rollout-only verifier");
+    fs::write(
+        task.path().join("tools/environment.sh"),
+        b"#!/bin/sh\nexit 0\n",
+    )
+    .expect("rollout-only adapter executable");
+    fs::write(task.path().join("rollout/reset.json"), b"{}\n").expect("rollout-only reset");
+    fs::write(task.path().join("rollout/policy.json"), b"{}\n").expect("rollout-only prompt");
+    fs::write(
+        task.path().join("task.toml"),
+        r#"schema_version = "1.1"
+artifacts = ["/work/result.txt"]
+
+[task]
+name = "example/native-graph-rollout-only"
+
+[native_graph]
+profile = "native_graph"
+program = "agent_graph.json"
+model_bindings = "models.toml"
+adapter_manifest = "adapters.toml"
+"#,
+    )
+    .expect("rollout-only task manifest");
+    fs::write(
+        task.path().join("agent_graph.json"),
+        r#"{
+  "schema_version": "1.0", "trace_id": "rollout-only", "stage_bound": 1,
+  "channels": { "rollout": { "type": "text", "reducer": "overwrite" } },
+  "nodes": [],
+  "edges": [{ "source": "START", "target": "END" }],
+  "terminal_outputs": []
+}"#,
+    )
+    .expect("rollout-only zero-model graph");
+    fs::write(
+        task.path().join("models.toml"),
+        format!(
+            r#"[[model_bindings]]
+id = "primary"
+endpoint_profile_id = "provider-default"
+endpoint_factory_id = "chat"
+transport_factory_id = "http"
+model = "example-model"
+urls = ["{endpoint}"]
+streaming = true
+request_timeout_ms = 30000
+capture = "metadata"
+
+[model_bindings.tokenizer]
+type = "local"
+name = "builtin"
+revision = "main"
+apply_chat_template = false
+
+[model_bindings.generation]
+max_tokens = 17
+"#,
+        ),
+    )
+    .expect("rollout-only model binding");
+    fs::write(
+        task.path().join("adapters.toml"),
+        r#"[[adapters]]
+id = "environment-adapter"
+role = "environment"
+argv = ["tools/environment.sh"]
+executable = "tools/environment.sh"
+"#,
+    )
+    .expect("rollout-only adapter manifest");
+    fs::write(
+        task.path().join("rollout.toml"),
+        r#"[environment]
+adapter_id = "environment-adapter"
+protocol_factory_id = "strict_jsonl"
+runtime_provider_id = "strict_supervised"
+stepper_factory_id = "supervised_environment"
+action_encoder_id = "move_v1"
+operation_deadline_ms = 5000
+reset_source = "rollout/reset.json"
+max_frame_bytes = 4096
+max_identifier_bytes = 128
+max_json_bytes = 2048
+max_json_depth = 4
+max_json_array_entries = 8
+max_json_object_entries = 8
+max_operation_ledger_entries = 16
+max_model_call_lineage_entries = 4
+max_session_model_call_lineage_entries = 16
+max_session_model_call_lineage_bytes = 2048
+max_artifact_handles = 4
+max_artifact_bytes = 4096
+
+[artifacts]
+max_artifacts = 8
+max_total_bytes = 16384
+max_artifact_bytes = 3072
+max_download_handles = 4
+
+[policy]
+environment = "counter-v1"
+model_binding_id = "primary"
+prompt_source = "rollout/policy.json"
+max_decision_bytes = 256
+horizon = 1
+gamma = 0.75
+
+[limits]
+max_environment_bytes = 256
+max_horizon = 8
+max_prompt_bytes = 256
+"#,
+    )
+    .expect("rollout-only policy manifest");
+    let source =
+        HarborSource::local(task.path().to_string_lossy()).expect("rollout-only source path");
+    HarborImporter::new(&NativeSourceAcquirer)
+        .import(&source)
+        .expect("rollout-only NativeGraph fixture imports")
 }

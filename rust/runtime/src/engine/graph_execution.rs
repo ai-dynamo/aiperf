@@ -68,7 +68,9 @@ use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
 use crate::engine::record_lane::EvalNodeRecordArtifact;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::{NativeTransportExecution, RunContext, ValidatedEndpointProfileV2};
-use crate::eval::{GENERATION_METADATA_KEY, validate_native_graph_trace_plan};
+use crate::eval::{
+    GENERATION_METADATA_KEY, NativeGraphLivePolicyCallEvidence, validate_native_graph_trace_plan,
+};
 
 /// Composition seam for whole-trace graph execution placement.
 ///
@@ -559,6 +561,8 @@ pub(crate) struct NativeGraphPolicyEndpointRuntime {
     model: String,
     is_streaming: bool,
     next_session_num: u64,
+    clock: Rc<dyn Clock>,
+    live_policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
 }
 
 impl NativeGraphPolicyEndpointRuntime {
@@ -570,6 +574,7 @@ impl NativeGraphPolicyEndpointRuntime {
         transport: Arc<dyn NativeTransportExecution>,
         model: String,
         raw_enabled: bool,
+        live_policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
     ) -> Result<Self> {
         let profile_id = profile.profile_id.clone();
         let is_streaming = profile.config.streaming;
@@ -588,13 +593,15 @@ impl NativeGraphPolicyEndpointRuntime {
         )?;
         let clock: Rc<dyn Clock> = RealClock::new();
         let run_origin_ns = clock.now_ns();
-        let endpoint_runtime = factory.prepare_worker(clock, run_origin_ns, &model)?;
+        let endpoint_runtime = factory.prepare_worker(clock.clone(), run_origin_ns, &model)?;
         Ok(Self {
             endpoint_runtime,
             profile_id,
             model,
             is_streaming,
             next_session_num: 0,
+            clock,
+            live_policy_summary,
         })
     }
 
@@ -632,7 +639,10 @@ impl NativeGraphPolicyEndpointRuntime {
             endpoint,
             ..
         } = dispatch;
-        let observer = NativeGraphPolicyDecisionObserver;
+        let observer = NativeGraphPolicyDecisionObserver::new(
+            self.clock.clone(),
+            Rc::clone(&self.live_policy_summary),
+        );
         transport
             .dispatch_bounded_decision(
                 PreparedTurn {
@@ -652,20 +662,154 @@ impl NativeGraphPolicyEndpointRuntime {
     }
 }
 
+/// Bounded, non-retaining timing facts collected for one live policy rollout.
+///
+/// Each selected policy runtime dispatches decisions serially, so this retains one active request
+/// identity and scalar timings only. It cannot retain prompts, observations, decision bytes, or
+/// transport records.
+pub(crate) struct NativeGraphLivePolicyCallSummary {
+    call_count: u64,
+    first_token_count: u64,
+    total_first_token_ns: u64,
+    max_first_token_ns: u64,
+    active_request: Option<(Uuid, i64, bool)>,
+    is_invalid: bool,
+}
+
+impl NativeGraphLivePolicyCallSummary {
+    pub(crate) const fn new() -> Self {
+        Self {
+            call_count: 0,
+            first_token_count: 0,
+            total_first_token_ns: 0,
+            max_first_token_ns: 0,
+            active_request: None,
+            is_invalid: false,
+        }
+    }
+
+    fn on_arrival(&mut self, request: Uuid, now_ns: i64) {
+        if self.active_request.is_some() {
+            self.is_invalid = true;
+            return;
+        }
+        let Some(call_count) = self.call_count.checked_add(1) else {
+            self.is_invalid = true;
+            return;
+        };
+        self.call_count = call_count;
+        self.active_request = Some((request, now_ns, false));
+    }
+
+    fn on_admit(&mut self, request: Uuid, now_ns: i64) {
+        match self.active_request {
+            None => self.on_arrival(request, now_ns),
+            Some((active, _, _)) if active == request => {}
+            Some(_) => self.is_invalid = true,
+        }
+    }
+
+    fn on_token(&mut self, request: Uuid, now_ns: i64) {
+        let Some((active, arrival_ns, has_first_token)) = self.active_request else {
+            self.is_invalid = true;
+            return;
+        };
+        if active != request {
+            self.is_invalid = true;
+            return;
+        }
+        if has_first_token {
+            return;
+        }
+        let Some(first_token_ns) = now_ns.checked_sub(arrival_ns) else {
+            self.is_invalid = true;
+            return;
+        };
+        let Ok(first_token_ns) = u64::try_from(first_token_ns) else {
+            self.is_invalid = true;
+            return;
+        };
+        let Some(first_token_count) = self.first_token_count.checked_add(1) else {
+            self.is_invalid = true;
+            return;
+        };
+        let Some(total_first_token_ns) = self.total_first_token_ns.checked_add(first_token_ns)
+        else {
+            self.is_invalid = true;
+            return;
+        };
+        self.first_token_count = first_token_count;
+        self.total_first_token_ns = total_first_token_ns;
+        self.max_first_token_ns = self.max_first_token_ns.max(first_token_ns);
+        self.active_request = Some((active, arrival_ns, true));
+    }
+
+    fn on_terminal(&mut self, request: Uuid) {
+        let Some((active, _, _)) = self.active_request else {
+            self.is_invalid = true;
+            return;
+        };
+        if active != request {
+            self.is_invalid = true;
+            return;
+        }
+        self.active_request = None;
+    }
+
+    pub(crate) fn snapshot(&self) -> Result<NativeGraphLivePolicyCallEvidence> {
+        ensure!(
+            !self.is_invalid && self.active_request.is_none(),
+            "NativeGraph live policy timing observer became inconsistent"
+        );
+        Ok(NativeGraphLivePolicyCallEvidence::new(
+            self.call_count,
+            self.first_token_count,
+            self.total_first_token_ns,
+            self.max_first_token_ns,
+        ))
+    }
+}
+
 /// Deliberately non-retaining request observer for one live policy decision.
 ///
 /// The selected binding still configures the prepared transport, but the decision path must not
 /// create a response record or let prompt, observation, or raw output escape into evidence.
-struct NativeGraphPolicyDecisionObserver;
+struct NativeGraphPolicyDecisionObserver {
+    clock: Rc<dyn Clock>,
+    summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+}
+
+impl NativeGraphPolicyDecisionObserver {
+    fn new(clock: Rc<dyn Clock>, summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>) -> Self {
+        Self { clock, summary }
+    }
+
+    fn observe(&self, operation: impl FnOnce(&mut NativeGraphLivePolicyCallSummary)) {
+        if let Ok(mut summary) = self.summary.try_borrow_mut() {
+            operation(&mut summary);
+        }
+    }
+}
 
 impl RequestObserver for NativeGraphPolicyDecisionObserver {
-    fn on_arrival(&self, _: Uuid, _: f64, _: usize, _: usize) {}
+    fn on_arrival(&self, request: Uuid, _: f64, _: usize, _: usize) {
+        let now_ns = self.clock.now_ns();
+        self.observe(|summary| summary.on_arrival(request, now_ns));
+    }
 
-    fn on_admit(&self, _: Uuid, _: f64, _: usize) {}
+    fn on_admit(&self, request: Uuid, _: f64, _: usize) {
+        let now_ns = self.clock.now_ns();
+        self.observe(|summary| summary.on_admit(request, now_ns));
+    }
 
-    fn on_token(&self, _: Uuid, _: f64) {}
+    fn on_token(&self, request: Uuid, _: f64) {
+        let now_ns = self.clock.now_ns();
+        self.observe(|summary| summary.on_token(request, now_ns));
+    }
 
-    fn on_terminal(&self, _: Uuid, _: ReplayTerminalStatus) {}
+    fn on_terminal(&self, request: Uuid, _: ReplayTerminalStatus) {
+        self.observe(|summary| summary.on_terminal(request));
+    }
 }
 
 /// Bounded transport facts emitted by one imported NativeGraph trace.
@@ -673,6 +817,7 @@ impl RequestObserver for NativeGraphPolicyDecisionObserver {
 pub(crate) struct NativeGraphTransportEvidence {
     pub(crate) model_records: usize,
     pub(crate) completed_traces: usize,
+    pub(crate) live_policy_calls: u64,
 }
 
 const NATIVE_GRAPH_EVIDENCE_CHANNEL_CAPACITY: usize = 64;
@@ -792,6 +937,7 @@ pub(crate) async fn execute_native_graph_trace(
     let mut evidence = NativeGraphTransportEvidence {
         model_records: 0,
         completed_traces: 0,
+        live_policy_calls: 0,
     };
     let execution_result = {
         let execution = placement.execute_trace(program);
@@ -3436,6 +3582,7 @@ executable = "tools/adapter.sh"
         let mut evidence = NativeGraphTransportEvidence {
             model_records: 0,
             completed_traces: 0,
+            live_policy_calls: 0,
         };
 
         observe_native_graph_evidence(
@@ -3450,6 +3597,31 @@ executable = "tools/adapter.sh"
     }
 
     #[test]
+    fn live_policy_summary_counts_one_first_token_without_retaining_response_data() {
+        let clock = Rc::new(SimClock::new());
+        let summary = Rc::new(RefCell::new(NativeGraphLivePolicyCallSummary::new()));
+        let observer = NativeGraphPolicyDecisionObserver::new(clock.clone(), Rc::clone(&summary));
+        let request = Uuid::from_u128(41);
+
+        observer.on_arrival(request, 0.0, 9, 7);
+        observer.on_admit(request, 0.0, 0);
+        clock.advance_to(17);
+        observer.on_token(request, 17.0);
+        clock.advance_to(23);
+        observer.on_token(request, 23.0);
+        observer.on_terminal(request, ReplayTerminalStatus::Completed);
+
+        let observed = summary
+            .borrow()
+            .snapshot()
+            .expect("finite policy timing facts freeze");
+        assert_eq!(observed.call_count(), 1);
+        assert_eq!(observed.first_token_count(), 1);
+        assert_eq!(observed.total_first_token_ns(), 17);
+        assert_eq!(observed.max_first_token_ns(), 17);
+    }
+
+    #[test]
     fn suite_owned_native_graph_record_artifact_appends_across_episodes() {
         let dir = tempfile::tempdir().expect("temporary record artifact directory");
         let path = dir.path().join("records.jsonl");
@@ -3460,6 +3632,7 @@ executable = "tools/adapter.sh"
             let mut episode_evidence = NativeGraphTransportEvidence {
                 model_records: 0,
                 completed_traces: 0,
+                live_policy_calls: 0,
             };
             observe_native_graph_evidence(
                 &mut episode_evidence,
@@ -3485,6 +3658,7 @@ executable = "tools/adapter.sh"
         let mut evidence = NativeGraphTransportEvidence {
             model_records: 0,
             completed_traces: 0,
+            live_policy_calls: 0,
         };
 
         let error = observe_native_graph_evidence(

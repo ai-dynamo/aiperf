@@ -1093,6 +1093,11 @@ impl EnvironmentStepper for DispatchRecordingStepper {
         self.dispatches.fetch_add(1, Ordering::Relaxed);
         Err(EnvironmentStepperError::EpisodeTerminal)
     }
+
+    async fn cancel_and_reap(&mut self) -> Result<(), EnvironmentStepperError> {
+        // This in-memory fake owns no adapter child.
+        Ok(())
+    }
 }
 
 fn adapter_spawn_request(operation: Duration) -> AdapterSpawnRequest {

@@ -547,6 +547,11 @@ impl EnvironmentStepper for LiveTestStepper {
     ) -> Result<aiperf_runtime::eval::EnvironmentTransitionRecord, EnvironmentStepperError> {
         Err(EnvironmentStepperError::EpisodeTerminal)
     }
+
+    async fn cancel_and_reap(&mut self) -> Result<(), EnvironmentStepperError> {
+        // This in-memory fake owns no adapter child.
+        Ok(())
+    }
 }
 
 struct LiveTestSpawner;
