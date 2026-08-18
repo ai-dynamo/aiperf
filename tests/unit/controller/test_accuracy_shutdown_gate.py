@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from aiperf.accuracy.models import AccuracySummary, ProcessAccuracyResult
+from aiperf.common.enums import SystemState
 from aiperf.common.messages import ProcessAccuracyResultMessage
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import AccuracyBenchmarkType
@@ -61,6 +62,9 @@ def _build_controller(benchmark_run, mock_service_manager, *, accuracy: bool):
         controller = SystemController(run=benchmark_run, service_id="test_controller")
 
     controller.stop = AsyncMock()
+    # Not started, so pub_client is unset; _set_system_state publishes.
+    controller.publish = AsyncMock()
+    controller._system_state = SystemState.PROFILING
     return controller
 
 

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -210,7 +211,6 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 "credit_issued_ns": meta.credit_issued_ns,
                 "request_ack_ns": meta.request_ack_ns,
                 "cancellation_time_ns": meta.cancellation_time_ns,
-                "turn_index": meta.turn_index,
             },
             metadata_string={},
             metadata_bool={
@@ -607,8 +607,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         If slice_duration is configured, also computes per-timeslice results
         by partitioning the data into time windows. Always derives the
         coordinated-omission-aware ``effective_latency`` and the
-        ``credit_to_start_latency`` queue-wait metric from stored timestamps,
-        plus a per-``turn_index`` TTFT trend that surfaces KV-cache effectiveness.
+        ``credit_to_start_latency`` queue-wait metric from stored timestamps.
         """
         export_ctx: ExportContext | None = None
         if ctx is not None and (ctx.start_ns or ctx.end_ns or ctx.phase is not None):
@@ -618,7 +617,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 phase=ctx.phase,
                 phase_index=ctx.phase_index,
             )
-        return self._summarize_for_export_context(export_ctx)
+        # _summarize_for_export_context is CPU-bound numpy work on potentially
+        # hundreds of thousands of records. Run in a thread so the event loop
+        # stays responsive (heartbeat tasks can fire between accumulators).
+        return await asyncio.to_thread(self._summarize_for_export_context, export_ctx)
 
     def _summarize_for_export_context(
         self, ctx: ExportContext | None = None
@@ -698,7 +700,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
         """Export final metrics results for the requested phase/window."""
-        return self._summarize_for_export_context(ctx)
+        # _summarize_for_export_context is CPU-bound numpy work; run in a thread
+        # so the event loop stays responsive while computing over large record sets.
+        return await asyncio.to_thread(self._summarize_for_export_context, ctx)
 
     def _inject_sweep_metrics(
         self,

@@ -131,6 +131,22 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 f"Exception setting response future for request {request_id}: {e}"
             )
 
+    async def _send_duplicate_request_error(
+        self, request_id: str, routing_envelope: tuple[bytes, ...]
+    ) -> None:
+        """Reply with an error for a request_id that is already in flight."""
+        error = ErrorMessage(
+            request_id=request_id,
+            error=ErrorDetails(
+                type="DUPLICATE_REQUEST_ID",
+                message=f"request_id {request_id} is already in flight",
+            ),
+        )
+        try:
+            await self.socket.send_multipart([*routing_envelope, error.to_json_bytes()])
+        except Exception as e:  # noqa: BLE001 - best-effort error reply
+            self.exception(f"Failed to send duplicate-request error: {e}")
+
     async def _wait_for_response(
         self, request_id: str, routing_envelope: tuple[bytes, ...]
     ) -> None:
@@ -200,14 +216,31 @@ class ZMQRouterReplyClient(BaseZMQClient):
                     await yield_to_event_loop()
                     continue
 
-                # Create a new response future for this request that will be resolved
-                # when the handler returns a response.
-                self._response_futures[request.request_id] = asyncio.Future()
-                # Handle the request in a new task.
-                self.execute_async(self._handle_request(request.request_id, request))
-                self.execute_async(
-                    self._wait_for_response(request.request_id, routing_envelope)
-                )
+                if request.request_id in self._response_futures:
+                    # Overwriting the in-flight Future would strand the first
+                    # waiter forever and route the response to the second
+                    # request's envelope -- i.e. answer the wrong caller.
+                    # Retries and uuid reuse both produce duplicates, so
+                    # reject inline instead of clobbering.
+                    self.warning(
+                        lambda req_id=request.request_id: f"Duplicate request_id {req_id}, rejecting"
+                    )
+                    self.execute_async(
+                        self._send_duplicate_request_error(
+                            request.request_id, routing_envelope
+                        )
+                    )
+                else:
+                    # Create a new response future for this request that will be
+                    # resolved when the handler returns a response.
+                    self._response_futures[request.request_id] = asyncio.Future()
+                    # Handle the request in a new task.
+                    self.execute_async(
+                        self._handle_request(request.request_id, request)
+                    )
+                    self.execute_async(
+                        self._wait_for_response(request.request_id, routing_envelope)
+                    )
                 self._msg_count += 1
                 # Yield periodically to allow scheduled handlers to run
                 # and prevent event loop starvation during message bursts.

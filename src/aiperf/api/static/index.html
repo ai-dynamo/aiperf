@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIPerf API</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1/themes/prism-tomorrow.min.css">
+    <style>
+        :root {
+            --nvidia-green: #76B900;
+            --nvidia-green-light: #93d50a;
+            --nvidia-green-dark: #5a8f00;
+            --nvidia-green-glow: rgba(118, 185, 0, 0.2);
+            --bg-primary: #0d0d0d;
+            --bg-card: #161616;
+            --bg-dark: #0a0a0a;
+            --bg-highlight: #141f0a;
+            --bg-ws: #0a141f;
+            --border: #2a2a2a;
+            --border-subtle: #222222;
+            --text: #f0f0f0;
+            --text-muted: #999999;
+            --ws-blue: #7aa2f7;
+            --ws-blue-glow: rgba(122, 162, 247, 0.2);
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, #0a0f05 100%);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 2.5rem;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: var(--text);
+            font-size: 2.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        h1::before {
+            content: '';
+            display: inline-block;
+            width: 5px;
+            height: 2rem;
+            background: var(--nvidia-green);
+            border-radius: 3px;
+        }
+        h2 {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-top: 2.5rem;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        h2::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
+        }
+        .subtitle {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+        .endpoint {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 0.75rem;
+            box-shadow: var(--shadow-sm);
+            transition: all 0.2s ease;
+        }
+        .endpoint:hover {
+            border-color: var(--border);
+            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+        }
+        .endpoint.highlight {
+            background: linear-gradient(135deg, var(--bg-highlight) 0%, var(--bg-card) 100%);
+            border-color: var(--nvidia-green-dark);
+            box-shadow: 0 0 20px var(--nvidia-green-glow), var(--shadow-sm);
+        }
+        .endpoint.highlight:hover {
+            box-shadow: 0 0 30px var(--nvidia-green-glow), var(--shadow-md);
+        }
+        .method {
+            display: inline-block;
+            padding: 0.35rem 0.85rem;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.7rem;
+            margin-right: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .method-get {
+            background: rgba(118, 185, 0, 0.15);
+            color: var(--nvidia-green);
+        }
+        .method-ws {
+            background: rgba(122, 162, 247, 0.15);
+            color: var(--ws-blue);
+        }
+        .path {
+            font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+            color: var(--nvidia-green);
+            font-weight: 500;
+        }
+        .description {
+            color: var(--text-muted);
+            margin-top: 0.6rem;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        a {
+            color: var(--nvidia-green);
+            text-decoration: none;
+            transition: color 0.15s ease;
+        }
+        a:hover {
+            color: var(--nvidia-green-light);
+        }
+        code {
+            background: var(--bg-dark);
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
+            font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+            font-size: 0.85rem;
+            color: var(--nvidia-green);
+            border: 1px solid var(--border-subtle);
+        }
+        .example {
+            background: var(--bg-dark);
+            border: 1px solid var(--border-subtle);
+            padding: 1.25rem;
+            border-radius: var(--radius-sm);
+            margin-top: 1rem;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+        .example::-webkit-scrollbar {
+            height: 6px;
+        }
+        .example::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .example::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-top: 1rem;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .tab {
+            padding: 0.4rem 1rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            background: none;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+            cursor: pointer;
+            font-family: inherit;
+            letter-spacing: 0.03em;
+        }
+        .tab:hover { color: var(--text); }
+        .tab.active {
+            color: var(--nvidia-green);
+            background: var(--bg-dark);
+            border-color: var(--border-subtle);
+        }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .tab-panel .example { margin-top: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+        pre, pre[class*="language-"] {
+            font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+            font-size: 0.85rem;
+            color: var(--text);
+            line-height: 1.5;
+            background: none;
+            margin: 0;
+            padding: 0;
+        }
+        code[class*="language-"] {
+            background: none;
+            border: none;
+            padding: 0;
+            font-family: inherit;
+            font-size: inherit;
+        }
+        strong {
+            color: var(--text);
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AIPerf API</h1>
+        <p class="subtitle">Real-time benchmark monitoring via HTTP and WebSocket</p>
+
+        <div class="endpoint highlight">
+            <span class="method method-get">GET</span>
+            <span class="path"><a href="/dashboard">/dashboard</a></span>
+            <p class="description">Live dashboard with real-time progress and metrics via WebSocket.</p>
+        </div>
+
+        <h2>HTTP Endpoints</h2>
+
+        <div class="endpoint">
+            <span class="method method-get">GET</span>
+            <span class="path"><a href="/docs">/docs</a></span>
+            <p class="description">Interactive API documentation with all available endpoints.</p>
+        </div>
+
+        <h2>WebSocket Endpoint</h2>
+
+        <div class="endpoint">
+            <span class="method method-ws">WS</span>
+            <span class="path">/ws</span>
+            <p class="description">Real-time ZMQ message stream with dynamic subscriptions.</p>
+        </div>
+
+        <h2>Usage Examples</h2>
+
+        <div class="endpoint">
+            <p><strong>Prometheus Scraping</strong></p>
+            <div class="example">
+                <pre><code class="language-bash">curl http://localhost:9090/metrics</code></pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <p><strong>JSON Metrics</strong></p>
+            <div class="example">
+                <pre><code class="language-bash">curl http://localhost:9090/api/metrics | jq</code></pre>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <p><strong>WebSocket Client</strong></p>
+            <div class="tabs" role="tablist">
+                <button class="tab active" data-tab="js" role="tab" aria-selected="true" aria-controls="panel-js" id="tab-js">JavaScript</button>
+                <button class="tab" data-tab="python" role="tab" aria-selected="false" aria-controls="panel-python" id="tab-python">Python</button>
+            </div>
+            <div class="tab-panel active" data-tab="js">
+                <div class="example">
+                    <pre><code class="language-javascript">const ws = new WebSocket("ws://localhost:9090/ws");
+
+ws.onopen = () => ws.send(JSON.stringify({
+    type: "subscribe",
+    message_types: [
+        "realtime_metrics", "realtime_telemetry_metrics",
+        "credit_phase_progress", "credit_phase_start",
+        "credit_phase_sending_complete", "credit_phase_complete",
+        "processing_stats", "all_records_received",
+        "worker_health", "worker_status_summary",
+    ]
+}));
+
+ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    console.log(msg.message_type, msg);
+};</code></pre>
+                </div>
+            </div>
+            <div class="tab-panel" data-tab="python">
+                <div class="example">
+                    <pre><code class="language-python">import asyncio
+import websockets
+import json
+
+async def stream_metrics():
+    async with websockets.connect("ws://localhost:9090/ws") as ws:
+        await ws.send(json.dumps({
+            "type": "subscribe",
+            "message_types": [
+                "realtime_metrics", "realtime_telemetry_metrics",
+                "credit_phase_progress", "credit_phase_start",
+                "credit_phase_sending_complete", "credit_phase_complete",
+                "processing_stats", "all_records_received",
+                "worker_health", "worker_status_summary",
+            ],
+        }))
+        async for message in ws:
+            print(json.loads(message))
+
+asyncio.run(stream_metrics())</code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/prism.min.js" data-manual></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-python.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-bash.min.js"></script>
+    <script>
+        const base = `${location.protocol}//${location.host}`;
+        const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
+        document.querySelectorAll('code[class*="language-"]').forEach(code => {
+            code.textContent = code.textContent
+                .replaceAll('http://localhost:9090', base)
+                .replaceAll('ws://localhost:9090', wsBase);
+        });
+        Prism.highlightAll();
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const parent = tab.closest('.endpoint');
+                parent.querySelectorAll('.tab, .tab-panel').forEach(el => el.classList.remove('active'));
+                tab.classList.add('active');
+                parent.querySelector(`.tab-panel[data-tab="${tab.dataset.tab}"]`).classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>

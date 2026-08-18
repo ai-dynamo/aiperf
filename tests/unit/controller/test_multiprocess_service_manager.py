@@ -171,12 +171,18 @@ class TestMultiProcessServiceManager:
         monkeypatch: pytest.MonkeyPatch,
     ):
         """Every child Process must receive the controller's PID so bootstrap
-        can arm the PR_SET_PDEATHSIG parent-death guard against it (and detect
-        the reparent race where the controller died before the guard armed)."""
+        can arm the parent-death guard against it (and detect the race where
+        the controller died before the guard armed).
+
+        The Process class comes from get_mp_context(), not the module-level
+        multiprocessing.Process: the default start method on Linux through
+        3.13 is fork, which would duplicate a controller holding live ZMQ
+        contexts, a running event loop and executor threads.
+        """
         mock_process_cls = MagicMock(return_value=MagicMock(spec=Process))
         monkeypatch.setattr(
-            "aiperf.controller.multiprocess_service_manager.Process",
-            mock_process_cls,
+            "aiperf.controller.multiprocess_service_manager.get_mp_context",
+            lambda: MagicMock(Process=mock_process_cls),
         )
 
         await service_manager.run_service(ServiceType.DATASET_MANAGER)

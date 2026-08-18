@@ -4,6 +4,7 @@
 Shared fixtures for testing AIPerf controller.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from aiperf.common.enums import CommandType
 from aiperf.common.messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails
+from aiperf.controller.protocols import KubernetesServiceManagerProtocol
 from aiperf.controller.system_controller import SystemController
 
 
@@ -21,8 +23,11 @@ class MockTestException(Exception):
 @pytest.fixture
 def mock_service_manager() -> AsyncMock:
     """Mock service manager."""
-    mock_manager = AsyncMock()
+    mock_manager = AsyncMock(spec=KubernetesServiceManagerProtocol)
     mock_manager.service_id_map = {"test_service_1": MagicMock()}
+    mock_manager.service_map = {}
+    mock_manager.pod_failure_abort_event = asyncio.Event()
+    mock_manager.pod_failure_abort_reason = ""
     return mock_manager
 
 
@@ -63,6 +68,10 @@ def system_controller(
         )
         # Mock the stop method to avoid actual shutdown
         controller.stop = AsyncMock()
+        # Stub the bus publish — _set_system_state and other handlers fan out
+        # via publish, but the controller fixture isn't started so pub_client
+        # is unset. Tests that want to assert on publish overwrite this.
+        controller.publish = AsyncMock()
         return controller
 
 

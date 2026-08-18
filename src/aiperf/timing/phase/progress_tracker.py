@@ -128,8 +128,10 @@ class PhaseProgressTracker:
         self,
         is_final_turn: bool,
         cancelled: bool,
-        errored: bool = False,
         *,
+        session_ended: bool | None = None,
+        session_cancelled: bool | None = None,
+        errored: bool = False,
         is_child: bool = False,
         no_request: bool = False,
     ) -> bool:
@@ -138,6 +140,9 @@ class PhaseProgressTracker:
         Args:
             is_final_turn: Whether this turn is the final turn of a session.
             cancelled: Whether the credit was cancelled.
+            session_ended: Whether this return ended the session. Defaults to
+                ``is_final_turn and not is_child``.
+            session_cancelled: Whether an ended session counts as cancelled.
             errored: Whether the request returned with a non-None error. Bumps
                 ``request_errors`` (request-level; ticks for children too).
             is_child: True when the returned credit is a DAG descendant
@@ -167,6 +172,8 @@ class PhaseProgressTracker:
         return self._counter.increment_returned(
             is_final_turn,
             cancelled,
+            session_ended=session_ended,
+            session_cancelled=session_cancelled,
             errored=errored,
             is_child=is_child,
             no_request=no_request,
@@ -194,6 +201,20 @@ class PhaseProgressTracker:
         CRITICAL: No async calls in this method - preserves atomicity.
         """
         self._counter.account_lane_session(session_turns)
+
+    def retire_unsent_session_turns(self, unsent_turns: int) -> bool:
+        """Drop a truncated session's never-to-be-issued turns from the plan.
+
+        Delegates to :meth:`CreditCounter.retire_unsent_session_turns`. Called
+        by ``CreditCallbackHandler`` when worker loss ends a root session before
+        its final turn. Returns True when the shrunken plan is now fully issued,
+        in which case the caller must ``freeze_sent_counts()`` and set
+        ``all_credits_sent_event`` -- the same pair ``CreditIssuer`` performs on
+        ``is_final_credit``.
+
+        CRITICAL: No async calls in this method - preserves atomicity.
+        """
+        return self._counter.retire_unsent_session_turns(unsent_turns)
 
     # =========================================================================
     # Freezing Methods

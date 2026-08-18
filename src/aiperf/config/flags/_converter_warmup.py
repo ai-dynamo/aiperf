@@ -120,8 +120,7 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
             "warmup_request_count": 50, "warmup_concurrency": 10,
         })
         build_warmup(cli)
-        # -> {"exclude_from_results": True, "type": PhaseType.CONCURRENCY,
-        #     "concurrency": 10, "requests": 50}
+        # -> {"type": PhaseType.CONCURRENCY, "concurrency": 10, "requests": 50}
     """
     s = cli.model_fields_set
     if not ({"warmup_request_count", "warmup_num_sessions", "warmup_duration"} & s):
@@ -139,7 +138,7 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
                 "the grace period, or drop --warmup-grace-period."
             )
         return None
-    w: dict[str, Any] = {"exclude_from_results": True}
+    w: dict[str, Any] = {}
     _warmup_count_field(w, cli)
     _warmup_pattern_type(w, cli, s)
     _warmup_ramps(w, cli, s)

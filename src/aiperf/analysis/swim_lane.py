@@ -353,12 +353,12 @@ def _load_bench_config(run_dir: Path) -> tuple[float | None, float | None]:
     # v2: the concurrency ramp lives on the profiling phase
     # (phases[].concurrency_ramp.duration); v1 carried it flat under
     # ``loadgen.concurrency_ramp_duration``. Read the v2 location (skipping
-    # warmup, exclude_from_results=True), then fall back to the v1 shape so old
-    # exports still render the ramp-done marker.
+    # warmup-kind phases), then fall back to the retired exclusion field and v1
+    # shape so old exports still render the ramp-done marker.
     loadgen = input_config.get("loadgen", {}) or {}
     ramp = None
     for phase in input_config.get("phases", []) or []:
-        if phase.get("exclude_from_results"):
+        if phase.get("kind") == "warmup" or phase.get("exclude_from_results"):
             continue
         concurrency_ramp = phase.get("concurrency_ramp")
         if isinstance(concurrency_ramp, dict):

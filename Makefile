@@ -21,11 +21,17 @@
 		test-verbose setup-venv install-mock-server install-mock-amdsmi test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
+		kubernetes-tests-ci test-kubernetes-ci \
+		kubernetes-audit-tests-ci test-kubernetes-audit-ci \
+		kubernetes-chaos-tests-ci test-kubernetes-chaos-ci \
+		kubernetes-chaos-aiperf-tests-ci test-kubernetes-chaos-aiperf-ci \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
 		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
+		generate-crd check-crd check-chart-consistency crd-release \
+		helm-lint helm-template helm-package \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync
@@ -309,6 +315,27 @@ integration-tests-slow test-integration-slow: #? run only the slow-marked integr
 	$(activate_venv) && pytest tests/integration/ -m 'integration and slow and not performance and not ffmpeg and not stress' -n auto -v --tb=long --no-looptime $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server slow integration tests passed!$(reset)\n"
 
+kubernetes-tests-ci test-kubernetes-ci: #? run the serial Kubernetes PR gate on an isolated Kind cluster.
+	$(activate_venv) && pytest tests/kubernetes/ \
+		--ignore=tests/kubernetes/gpu \
+		--ignore=tests/kubernetes/audit \
+		--ignore=tests/kubernetes/chaos \
+		--ignore=tests/kubernetes/chaos_aiperf \
+		-m 'k8s and not gpu and not k8s_slow and not k8s_audit and not slow' \
+		-n 0 -v --tb=long $(args)
+
+kubernetes-audit-tests-ci test-kubernetes-audit-ci: #? run the serial Kubernetes operator-vs-bare-pod audit suite.
+	$(activate_venv) && pytest tests/kubernetes/audit/ \
+		-m 'k8s and k8s_audit' -n 0 -v --tb=long $(args)
+
+kubernetes-chaos-tests-ci test-kubernetes-chaos-ci: #? run the legacy Kubernetes fault-injection scenarios serially.
+	$(activate_venv) && pytest tests/kubernetes/chaos/ \
+		-m 'k8s and k8s_slow' -n 0 -v --tb=long $(args)
+
+kubernetes-chaos-aiperf-tests-ci test-kubernetes-chaos-aiperf-ci: #? run the unified-API Kubernetes fault-injection scenarios serially.
+	$(activate_venv) && pytest tests/kubernetes/chaos_aiperf/ \
+		-m 'k8s and k8s_slow' -n 0 -v --tb=long $(args)
+
 component-integration-tests test-component-integration: #? run component integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running Fake Component Integration tests...$(reset)\n"
 	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'component_integration and not stress and not performance and not slow' -n auto --dist=worksteal --tb=short $(args)
@@ -374,6 +401,36 @@ validate-plugin-schemas: #? validate categories.yaml and plugins.yaml against th
 
 generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py
+
+generate-crd: #? generate Kubernetes CRD YAML from the AIPerfJob/AIPerfSweep spec models.
+	$(activate_venv) && python -m tools.generate_crd $(args)
+
+check-crd: #? check if the generated CRD YAML is up-to-date.
+	$(activate_venv) && python -m tools.generate_crd --check $(args)
+
+check-chart-consistency: #? assert operator code-side defaults match the Helm chart's values.yaml.
+	$(activate_venv) && python tools/check_chart_consistency.py
+
+HELM_DIST_DIR ?= dist
+
+crd-release: #? render standalone AIPerfJob and AIPerfSweep CRDs into HELM_DIST_DIR.
+	mkdir -p "$(HELM_DIST_DIR)"
+	helm template aiperf-operator deploy/helm/aiperf-operator \
+		--show-only templates/crd-aiperfjob.yaml \
+		> "$(HELM_DIST_DIR)/aiperfjob-crd.yaml"
+	helm template aiperf-operator deploy/helm/aiperf-operator \
+		--show-only templates/crd-aiperfsweep.yaml \
+		> "$(HELM_DIST_DIR)/aiperfsweep-crd.yaml"
+
+helm-lint: #? lint the aiperf-operator Helm chart.
+	helm lint deploy/helm/aiperf-operator
+
+helm-template: #? smoke-check Helm chart rendering (no cluster required).
+	helm template test deploy/helm/aiperf-operator > /dev/null
+
+helm-package: #? package the aiperf-operator Helm chart into HELM_DIST_DIR.
+	mkdir -p "$(HELM_DIST_DIR)"
+	helm package deploy/helm/aiperf-operator --destination "$(HELM_DIST_DIR)"
 
 generate-all-docs: #? generate all documentation files.
 	$(activate_venv) && ./tools/generate_cli_docs.py

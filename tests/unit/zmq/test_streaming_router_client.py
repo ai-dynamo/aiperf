@@ -13,7 +13,7 @@ import zmq
 from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import (
-    WorkerReady,
+    WorkerDispatchable,
     WorkerToRouterMessage,
 )
 from aiperf.credit.structs import (
@@ -181,7 +181,7 @@ class TestZMQStreamingRouterClientReceiver:
     async def test_receiver_calls_handler_on_worker_ready(
         self, streaming_router_test_helper, sample_worker_ready, create_callback_tracker
     ):
-        """Test that receiver calls handler when WorkerReady arrives."""
+        """Test that receiver calls handler when WorkerDispatchable arrives."""
         identity = "worker-1"
         callback, event, received = create_callback_tracker()
 
@@ -206,7 +206,7 @@ class TestZMQStreamingRouterClientReceiver:
             assert len(received) == 1
             recv_identity, recv_message = received[0]
             assert recv_identity == identity
-            assert isinstance(recv_message, WorkerReady)
+            assert isinstance(recv_message, WorkerDispatchable)
             assert recv_message.worker_id == sample_worker_ready.worker_id
 
     @pytest.mark.asyncio

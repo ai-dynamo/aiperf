@@ -461,6 +461,7 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
+            allow_worker_migration=turn.allow_worker_migration,
             agent_depth=turn.agent_depth,
             parent_correlation_id=turn.parent_correlation_id,
             root_correlation_id=turn.root_correlation_id,

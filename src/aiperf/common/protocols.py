@@ -189,6 +189,25 @@ class StreamingRouterClientProtocol(CommunicationClientProtocol, Protocol):
         """
         ...
 
+    async def request_to(self, identity: str, message: MessageT, timeout: float) -> Any:
+        """
+        Send a request to one DEALER and await the reply correlated by ``cid``.
+
+        The peer must echo the request's ``cid`` on its response. Used by the
+        worker-pod lifecycle channel to fan a ``GroupPeerCommand`` out to sibling
+        containers and collect each ``GroupPeerCommandAck``.
+
+        Args:
+            identity: The DEALER client's identity (routing key)
+            message: The request message; must carry a non-empty ``cid``
+            timeout: Maximum seconds to wait for the reply
+
+        Raises:
+            ValueError: If ``message`` has no ``cid`` to correlate on
+            TimeoutError: If no matching reply arrives within ``timeout``
+        """
+        ...
+
 
 @runtime_checkable
 class StreamingDealerClientProtocol(CommunicationClientProtocol, Protocol):
@@ -346,23 +365,34 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     def create_streaming_router_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
     ) -> StreamingRouterClientProtocol:
         """Create a STREAMING_ROUTER client for the given address, which will be automatically
-        started and stopped with the CommunicationProtocol instance."""
+        started and stopped with the CommunicationProtocol instance.
+
+        ``decode_type`` selects the msgspec type (or tagged union) used to decode
+        incoming messages; None keeps the credit plane's ``WorkerToRouterMessage``."""
         ...
 
     def create_streaming_dealer_client(
         self,
         address: CommAddressType,
+        *,
         identity: str,
         bind: bool = False,
         socket_ops: dict | None = None,
+        decode_type: Any = None,
     ) -> StreamingDealerClientProtocol:
         """Create a STREAMING_DEALER client for the given address and identity, which will be automatically
-        started and stopped with the CommunicationProtocol instance."""
+        started and stopped with the CommunicationProtocol instance.
+
+        ``decode_type`` selects the msgspec type (or tagged union) used to decode
+        incoming messages; None keeps the default credit-channel union.
+        """
         ...
 
     def create_streaming_push_client(

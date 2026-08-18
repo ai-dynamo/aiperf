@@ -28,6 +28,8 @@ repos:
         exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-toml
       - id: check-yaml
+        args: ['--allow-multiple-documents']
+        exclude: ^deploy/helm/.*/templates/.*\.yaml$
       - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]
@@ -61,7 +63,7 @@ repos:
         name: generate-env-vars-docs
         entry: make generate-env-vars-docs
         language: python
-        files: ^(src/aiperf/common/environment\.py|tools/generate_env_vars_docs\.py)$
+        files: ^(src/aiperf/(common|kubernetes|operator)/environment\.py|tools/generate_env_vars_docs\.py)$
         pass_filenames: false
         args: []
       - id: generate-plugin-artifacts
@@ -83,6 +85,26 @@ repos:
         entry: make generate-config-schema
         language: python
         files: (^src/aiperf/config/.*\.py$|^tools/generate_config_schema\.py$)
+        pass_filenames: false
+        args: []
+      - id: generate-crd
+        name: generate-crd
+        entry: make generate-crd
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^src/aiperf/operator/models\.py$|^src/aiperf/kubernetes/enums\.py$|^tools/generate_crd\.py$|^pyproject\.toml$)
+        pass_filenames: false
+        args: []
+      - id: helm-lint
+        name: helm-lint
+        entry: helm lint deploy/helm/aiperf-operator
+        language: system
+        files: ^deploy/helm/
+        pass_filenames: false
+      - id: check-chart-consistency
+        name: check-chart-consistency
+        entry: make check-chart-consistency
+        language: python
+        files: (^deploy/helm/aiperf-operator/values\.yaml$|^src/aiperf/operator/environment\.py$|^src/aiperf/kubernetes/(constants|results_operator)\.py$|^deploy/helm/aiperf-operator/README\.md$)
         pass_filenames: false
         args: []
       - id: test-imports

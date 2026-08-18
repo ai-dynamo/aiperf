@@ -71,9 +71,10 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             **kwargs,
         )
 
-        # Counter of records dropped by the fast-path due to non-JSON
-        # payload_bytes or serialisation failures. Exposed so operators can
-        # see silent-drop volume instead of it hiding behind a log line.
+        # Counter of records rejected by the fast path. The first failure is
+        # also retained in ``_write_error`` so the explicit artifact-finalize
+        # barrier fails closed instead of acknowledging an incomplete RAW
+        # export.
         self.dropped_record_count: int = 0
 
         self.info(
@@ -166,6 +167,8 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         except Exception as e:
             self.error(f"Failed to write raw record: {e!r}")
             self.dropped_record_count += 1
+            if self._write_error is None:
+                self._write_error = e
 
     async def observe(self, ctx: RecordObserverContext) -> None:
         """Write the raw request/response data for a single record."""

@@ -123,6 +123,13 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
 
         # Task for delayed shutdown, created when no endpoints are reachable
         self._shutdown_task: asyncio.Task[None] | None = None
+        # Records and the terminal marker share one PUSH socket and one lock.
+        # Closing admission under that lock makes the marker a causal boundary:
+        # every accepted record is queued before it and none can follow it.
+        self._records_push_lock = asyncio.Lock()
+        self._telemetry_records_closed = False
+        self._completion_marker_sent = False
+        self._telemetry_sequence = 0
 
     @staticmethod
     def _normalize_dcgm_url(url: str) -> str:
@@ -400,6 +407,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             message: Profile cancel command from SystemController
         """
         await self._stop_all_collectors()
+        await self._send_collection_complete_marker()
 
     @on_command(CommandType.PROFILE_COMPLETE)
     async def _handle_profile_complete_command(
@@ -417,6 +425,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         """
         if not self._collectors:
             self.debug("GPU Telemetry: Already stopped, skipping final scrape")
+            await self._send_collection_complete_marker()
             return
 
         self.info("GPU Telemetry: Profiling complete, capturing final metrics...")
@@ -433,6 +442,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                 )
 
         await self._stop_all_collectors()
+        await self._send_collection_complete_marker()
 
     @on_stop
     async def _telemetry_manager_stop(self) -> None:
@@ -451,6 +461,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         has time to be published and transmitted to the SystemController.
         """
         await asyncio.sleep(Environment.GPU.SHUTDOWN_DELAY)
+        await self._send_collection_complete_marker()
         await asyncio.shield(self.stop())
 
     async def _stop_all_collectors(self) -> None:
@@ -490,19 +501,53 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             return
 
         try:
-            telemetry_source_url = self._collector_id_to_url.get(collector_id, "")
-            message = TelemetryRecordsMessage(
-                service_id=self.service_id,
-                collector_id=collector_id,
-                telemetry_source_url=telemetry_source_url,
-                records=records,
-                error=None,
-            )
-
-            await self.records_push_client.push(message)
+            async with self._records_push_lock:
+                if self._telemetry_records_closed:
+                    self.debug(
+                        "GPU Telemetry: Ignoring a collector callback after the "
+                        "completion boundary"
+                    )
+                    return
+                telemetry_source_url = self._collector_id_to_url.get(collector_id, "")
+                sequence = self._telemetry_sequence + 1
+                message = TelemetryRecordsMessage(
+                    service_id=self.service_id,
+                    collector_id=collector_id,
+                    telemetry_source_url=telemetry_source_url,
+                    records=records,
+                    error=None,
+                    sequence=sequence,
+                )
+                await self.records_push_client.push(message)
+                self._telemetry_sequence = sequence
 
         except Exception as e:
             self.error(f"Failed to send telemetry records: {e}")
+
+    async def _send_collection_complete_marker(self) -> None:
+        """Close record admission and queue an in-band completion marker.
+
+        The command response travels over PUB/SUB and can overtake telemetry on
+        the records PUSH/PULL socket. This marker shares the records socket, so
+        RecordsManager can wait for a causal boundary before finalizing its
+        JSONL stream exporters.
+        """
+        async with self._records_push_lock:
+            if self._completion_marker_sent:
+                return
+            self._telemetry_records_closed = True
+            await self.records_push_client.push(
+                TelemetryRecordsMessage(
+                    service_id=self.service_id,
+                    collector_id=self.service_id,
+                    telemetry_source_url="",
+                    records=[],
+                    error=None,
+                    sequence=self._telemetry_sequence,
+                    collection_complete=True,
+                )
+            )
+            self._completion_marker_sent = True
 
     async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
         """Async callback for receiving telemetry errors from collectors.
@@ -516,16 +561,26 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         """
 
         try:
-            telemetry_source_url = self._collector_id_to_url.get(collector_id, "")
-            error_message = TelemetryRecordsMessage(
-                service_id=self.service_id,
-                collector_id=collector_id,
-                telemetry_source_url=telemetry_source_url,
-                records=[],
-                error=error,
-            )
+            async with self._records_push_lock:
+                if self._telemetry_records_closed:
+                    self.debug(
+                        "GPU Telemetry: Ignoring a collector error after the "
+                        "completion boundary"
+                    )
+                    return
+                telemetry_source_url = self._collector_id_to_url.get(collector_id, "")
+                sequence = self._telemetry_sequence + 1
+                error_message = TelemetryRecordsMessage(
+                    service_id=self.service_id,
+                    collector_id=collector_id,
+                    telemetry_source_url=telemetry_source_url,
+                    records=[],
+                    error=error,
+                    sequence=sequence,
+                )
 
-            await self.records_push_client.push(error_message)
+                await self.records_push_client.push(error_message)
+                self._telemetry_sequence = sequence
 
         except Exception as e:
             self.error(f"Failed to send telemetry error message: {e}")

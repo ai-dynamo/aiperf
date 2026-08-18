@@ -147,6 +147,23 @@ class RuntimeConfig(BaseConfig):
         ),
     ]
 
+    # Why pod packing exists at all, and where the sizing numbers come from.
+    #
+    # A node has roughly 65k ephemeral ports, which caps the concurrent
+    # connections any one node can hold open. That ceiling -- not CPU, not
+    # memory -- is the reason the worker fleet is split across pods rather
+    # than scaled up in place; it is the original motivation for the entire
+    # Kubernetes deployment mode.
+    #
+    # The two ratios the design was sized against:
+    #   ~500 concurrent connections per worker
+    #   1 record processor per 4 workers  (see RECORD.PROCESSOR_SCALE_FACTOR)
+    #
+    # Both are starting points, not invariants -- they are recorded here
+    # because the derivation had otherwise survived only in a design document
+    # that no longer exists in any branch, leaving the defaults below looking
+    # arbitrary.
+
     workers_per_pod: Annotated[
         int | None,
         Field(
@@ -156,7 +173,9 @@ class RuntimeConfig(BaseConfig):
             description="Worker containers packed into each Kubernetes worker pod "
             "(Kubernetes mode only). The total number of worker containers cluster-wide "
             "is `workers` (or auto-detected); this knob controls how that total is "
-            "fanned across pods. Ignored in multiprocessing mode.",
+            "fanned across pods. Ignored in multiprocessing mode. Sizing guide: each "
+            "worker was designed around ~500 concurrent connections, and a node's "
+            "~65k ephemeral ports is the ceiling this fan-out exists to work around.",
         ),
     ]
 
@@ -168,7 +187,8 @@ class RuntimeConfig(BaseConfig):
             le=100,
             description="Record-processor containers packed into each Kubernetes worker pod "
             "(Kubernetes mode only). Sibling of `workers_per_pod`; controls per-pod "
-            "fan-out, not the cluster-wide total. Ignored in multiprocessing mode.",
+            "fan-out, not the cluster-wide total. Ignored in multiprocessing mode. "
+            "Sizing guide: the design ratio is 1 record processor per 4 workers.",
         ),
     ]
 

@@ -59,6 +59,48 @@ class ConversationTurnResponseMessage(BaseServiceMessage):
     turn: Turn = Field(..., description="The turn data")
 
 
+class DatasetDownloadedNotification(BaseServiceMessage):
+    """Notification that a worker pod finished materializing the dataset locally.
+
+    Kubernetes only. The DatasetManager's DatasetConfiguredNotification
+    describes files on the controller pod; a worker pod cannot open those. The
+    pod's WorkerGroupManager downloads them to its own emptyDir and publishes
+    this so its sibling workers know when the pod-local files exist and where.
+    Workers must not open the mmap before this arrives -- the download finishes
+    tens of milliseconds after the configured notification, so an eager open
+    reliably fails with "Data file not found".
+    """
+
+    message_type: MessageTypeT = MessageType.DATASET_DOWNLOADED_NOTIFICATION
+
+    client_metadata: SerializeAsAny[DatasetClientMetadata] = Field(
+        ...,
+        description="Pod-local client access metadata: the mmap paths inside this "
+        "pod, decompressed and ready to open.",
+    )
+    pod_index: str | None = Field(
+        default=None,
+        description="Index of the worker pod that downloaded the dataset. Workers "
+        "ignore notifications from other pods, whose files they cannot see.",
+    )
+    success: bool = Field(
+        default=True,
+        description="False when the download failed; the paths are placeholders.",
+    )
+    error_message: str | None = Field(
+        default=None,
+        description="Failure detail when success is False.",
+    )
+
+    @field_validator("client_metadata", mode="before")
+    @classmethod
+    def route_client_metadata(cls, v: Any) -> DatasetClientMetadata:
+        """Route the nested AutoRoutedModel field to its concrete subclass."""
+        if isinstance(v, dict):
+            return DatasetClientMetadata.from_json(v)
+        return v
+
+
 class DatasetConfiguredNotification(BaseServiceMessage):
     """Notification sent to notify other services that the dataset has been configured.
 
@@ -76,6 +118,18 @@ class DatasetConfiguredNotification(BaseServiceMessage):
     client_metadata: SerializeAsAny[DatasetClientMetadata] = Field(
         ...,
         description="Client access metadata (e.g., mmap file paths) for workers to read dataset.",
+    )
+    benchmark_generation: str | None = Field(
+        default=None,
+        description="Identity of the benchmark this dataset was built for. Worker pods "
+        "and the API dataset router tag their state with it so a stale pod can be "
+        "told apart from one serving the current benchmark.",
+    )
+    dataset_generation: str | None = Field(
+        default=None,
+        description="Identity of the dataset itself. Changes whenever the dataset is "
+        "rebuilt, so a pod can tell whether the files it already downloaded are the "
+        "ones this notification describes.",
     )
 
     @field_validator("client_metadata", mode="before")

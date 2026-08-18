@@ -1,2 +1,6 @@
-# Auto-generated baseline of metric-named float fields not yet FiniteFloat-annotated.
+# Baseline of metric-named float fields not yet FiniteFloat-annotated.
+# Currently EMPTY -- every metric-named float field is FiniteFloat-annotated or
+# listed in FINITE_FIELD_WHITELIST with a reason. Do not delete this file: with
+# no baseline present, test_every_metric_field_is_finite_or_optional would
+# silently self-initialize from the first new violation instead of failing.
 # Adding a new violation must either fix the field, whitelist it in code, or add it here with a follow-up issue.

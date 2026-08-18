@@ -4,6 +4,8 @@
 
 import re
 from collections.abc import Sequence
+from copy import deepcopy
+from typing import Any
 
 REDACTED_VALUE = "<redacted>"
 
@@ -170,6 +172,21 @@ _STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@
 # X-User-Email:alice@example.com`` or ``--mlflow-tag owner:alice@acme.com``.
 _STRAY_BARE_USERINFO_PATTERN = re.compile(r"(^|[\s'\"])([^\s:@'\"/?#]+:[^\s@'\"/?#]+)@")
 
+# Query parameters that conventionally carry credentials. Match the complete
+# parameter name so ordinary values such as ``token_count`` and ``monkey`` are
+# preserved. The replacement is deliberately textual rather than parse/rebuild:
+# URL parsing helpers can normalize escaping, parameter ordering, and path bytes.
+_SENSITIVE_URL_QUERY_PARAMETER_PATTERN = re.compile(
+    r"([?&])((?:"
+    r"api[-_]?key|apikey|key|token|access[-_]?token|auth[-_]?token|"
+    r"bearer[-_]?token|id[-_]?token|refresh[-_]?token|secret|"
+    r"client[-_]?secret|password|passwd|credential|access[-_]?key[-_]?id|"
+    r"awsaccesskeyid|sig|signature|x-amz-signature|x-amz-security-token|"
+    r"x-amz-credential|x-goog-signature|x-goog-credential"
+    r"))=([^&#]*)",
+    re.IGNORECASE,
+)
+
 # Flag tokens that open a ``consume_multiple=True`` URL-value window. Only
 # these flags have the multi-value leak — ``--otel-url`` / ``--mlflow-tracking-uri``
 # take a single value and are already covered by ``_URL_FLAG_PATTERN``.
@@ -322,7 +339,7 @@ def build_cli_command() -> str:
 
 
 def redact_url(url: str) -> str:
-    """Strip userinfo (user:password@) from a URL to prevent credential leakage.
+    """Redact credentials in URL userinfo and sensitive query parameters.
 
     Handles URIs of any scheme (http, https, postgresql, mysql, sqlite, file,
     etc.) plus bare ``user:pass@host`` URLs. Returns the URL unchanged if no
@@ -340,10 +357,42 @@ def redact_url(url: str) -> str:
         r"\1" + REDACTED_VALUE + "@",
         url,
     )
-    # Once a scheme is present, do not fall through to the bare-userinfo regex:
-    # that regex matches on ``^[^@:]+:[^@]+@`` which would eat ``https://host/?a@b``
-    # starting from the ``https:`` prefix.
-    if result != url or "://" in url:
-        return result
-    # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
-    return re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", url)
+    if result == url and "://" not in url:
+        # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
+        result = re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", result)
+    return _SENSITIVE_URL_QUERY_PARAMETER_PATTERN.sub(rf"\1\2={REDACTED_VALUE}", result)
+
+
+def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Return a credential-safe copy of a CR spec or benchmark configuration.
+
+    Kubernetes CRs use the public ``apiKey`` spelling while Python model dumps
+    may use ``api_key``. Both shapes cross persistence and API boundaries, so
+    the canonical redactor intentionally handles both without normalizing the
+    rest of the user-authored document.
+    """
+    redacted = deepcopy(spec)
+    benchmark = redacted.get("benchmark", redacted)
+    if not isinstance(benchmark, dict):
+        return redacted
+    endpoint = benchmark.get("endpoint")
+    if not isinstance(endpoint, dict):
+        return redacted
+
+    for key in ("apiKey", "api_key"):
+        if endpoint.get(key) is not None:
+            endpoint[key] = REDACTED_VALUE
+
+    headers = endpoint.get("headers")
+    if isinstance(headers, dict):
+        endpoint["headers"] = redact_headers(headers) or {}
+
+    for key in ("urls", "url"):
+        urls = endpoint.get(key)
+        if isinstance(urls, str):
+            endpoint[key] = redact_url(urls)
+        elif isinstance(urls, list):
+            endpoint[key] = [
+                redact_url(url) if isinstance(url, str) else url for url in urls
+            ]
+    return redacted

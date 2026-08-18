@@ -7,7 +7,7 @@
 # category: Getting Started
 # tags: warmup, two-phase, best-practice
 # difficulty: beginner
-# features: multi-phase, exclude_from_results
+# features: multi-phase, phase-kind
 #
 # Two-Phase Benchmark: Warmup + Profiling
 # =======================================

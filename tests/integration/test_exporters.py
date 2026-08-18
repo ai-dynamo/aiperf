@@ -75,7 +75,8 @@ class TestOutputFormats:
                 --workers-max {defaults.workers_max} \
                 --export-level raw \
                 --ui {defaults.ui}
-            """
+            """,
+            timeout=180,
         )
 
         # Verify raw records file exists

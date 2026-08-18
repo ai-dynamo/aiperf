@@ -509,6 +509,11 @@ def reset() -> None:
     _manager = None
 
 
+# Largest value representable by a signed 64-bit integer. This is the ceiling the
+# Kubernetes apiserver enforces for an OpenAPI `type: integer` field, not a tunable.
+_INT64_MAX = (1 << 63) - 1
+
+
 def derive_variation_seed(
     root_seed: int | None,
     variation_label: str,
@@ -521,8 +526,18 @@ def derive_variation_seed(
     # parameter point yields the same seed → comparable measurements.
     # Used only on the adaptive overflow path; grid/zip/scenario keep the
     # additive `base + idx` derivation in `_apply_sweep_seed_derivation`.
+    #
+    # The result is masked into the signed-64-bit range. Eight hash bytes give an
+    # unsigned 64-bit value, and roughly half of those exceed 2**63-1. Under the
+    # Kubernetes executor this seed is written to `AIPerfJob.spec.randomSeed`,
+    # which the CRD declares `type: integer` — an int64. The apiserver decodes an
+    # out-of-range literal as a float and rejects the child with HTTP 422
+    # ("must be of type integer: \"number\""), which crash-loops the
+    # sweep-controller and kills the whole adaptive run on the first unlucky
+    # variation. Masking keeps the value deterministic per label and still gives
+    # 63 bits of seed entropy.
     if root_seed is None:
         return None
     seed_string = f"{root_seed}:variation:{variation_label}"
     hash_bytes = hashlib.sha256(seed_string.encode("utf-8")).digest()
-    return int.from_bytes(hash_bytes[:8], byteorder="big")
+    return int.from_bytes(hash_bytes[:8], byteorder="big") & _INT64_MAX

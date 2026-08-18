@@ -14,6 +14,7 @@ from aiperf.common.models import CreditPhaseStats
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.record_models import (
     MetricRecordMetadata,
+    PhaseProfileResults,
     ProfileResults,
     RequestInfo,
     RequestRecord,
@@ -192,6 +193,20 @@ class TestBranchStatsExport:
         restored = ProfileResults.model_validate_json(results.model_dump_json())
         assert restored.branch_stats is None
 
+    def test_phase_profile_results_roundtrip_branch_stats(self):
+        stats = BranchStats(children_spawned=3, children_completed=2)
+        phase = PhaseProfileResults(
+            phase_index=2,
+            profiling_index=1,
+            phase_name="burst",
+            phase_kind="profiling",
+            branch_stats=stats,
+        )
+
+        restored = PhaseProfileResults.model_validate_json(phase.model_dump_json())
+
+        assert restored.branch_stats == stats
+
 
 class TestRecordsManagerSnapshotBranchStats:
     """RecordsManager._snapshot_branch_stats returns stats stored per phase."""
@@ -204,9 +219,11 @@ class TestRecordsManagerSnapshotBranchStats:
     def test_snapshot_returns_stats_for_phase(self):
         stats = BranchStats(children_spawned=7, parents_resumed=2)
         mgr = MagicMock(spec=RecordsManager)
-        mgr._phase_branch_stats = {CreditPhase.PROFILING: stats}
+        mgr._phase_branch_stats = {(CreditPhase.PROFILING, 3): stats}
 
-        snapshot = RecordsManager._snapshot_branch_stats(mgr, CreditPhase.PROFILING)
+        snapshot = RecordsManager._snapshot_branch_stats(
+            mgr, CreditPhase.PROFILING, phase_index=3
+        )
         assert snapshot is stats
 
     def test_snapshot_isolates_phases(self):
@@ -214,14 +231,39 @@ class TestRecordsManagerSnapshotBranchStats:
         profiling = BranchStats(children_spawned=5)
         mgr = MagicMock(spec=RecordsManager)
         mgr._phase_branch_stats = {
-            CreditPhase.WARMUP: warmup,
-            CreditPhase.PROFILING: profiling,
+            (CreditPhase.WARMUP, 0): warmup,
+            (CreditPhase.PROFILING, 1): profiling,
         }
         assert (
-            RecordsManager._snapshot_branch_stats(mgr, CreditPhase.PROFILING)
+            RecordsManager._snapshot_branch_stats(
+                mgr, CreditPhase.PROFILING, phase_index=1
+            )
             is profiling
         )
-        assert RecordsManager._snapshot_branch_stats(mgr, CreditPhase.WARMUP) is warmup
+        assert (
+            RecordsManager._snapshot_branch_stats(
+                mgr, CreditPhase.WARMUP, phase_index=0
+            )
+            is warmup
+        )
+
+    def test_aggregate_sums_same_kind_named_phases(self):
+        mgr = MagicMock(spec=RecordsManager)
+        mgr._phase_branch_stats = {
+            (CreditPhase.PROFILING, 1): BranchStats(
+                children_spawned=2, children_completed=1
+            ),
+            (CreditPhase.PROFILING, 3): BranchStats(
+                children_spawned=5, children_completed=4
+            ),
+            (CreditPhase.WARMUP, 0): BranchStats(children_spawned=11),
+        }
+
+        aggregate = RecordsManager._aggregate_branch_stats(mgr, CreditPhase.PROFILING)
+
+        assert aggregate is not None
+        assert aggregate.children_spawned == 7
+        assert aggregate.children_completed == 5
 
 
 class TestRecordsManagerOnCreditPhaseComplete:
@@ -259,7 +301,7 @@ class TestRecordsManagerOnCreditPhaseComplete:
 
         await RecordsManager._on_credit_phase_complete(mgr, message)
 
-        assert mgr._phase_branch_stats[phase_stats.phase] == stats
+        assert mgr._phase_branch_stats[(phase_stats.phase, None)] == stats
 
     @pytest.mark.asyncio
     async def test_no_op_when_branch_stats_absent(self):

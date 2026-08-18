@@ -10,17 +10,15 @@ the three runtime objects that drive multi-run execution:
   variation's trial loop has run enough trials.
 * :func:`_build_convergence_criterion` - the criterion the adaptive
   strategy consults each trial (plugin-dispatched).
-* :func:`_build_search_planner` - the outer-loop planner for adaptive
-  search sweeps (plugin-dispatched, returns ``None`` outside adaptive search).
-
 :func:`validate_convergence_config` rejects plan configurations the
 multi-run path can't honor before any setup work begins.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
+
+from aiperf.orchestrator.search_planner import build_search_planner
 
 if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
@@ -28,8 +26,6 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.orchestrator.strategies import ExecutionStrategy
-
-logger = logging.getLogger(__name__)
 
 
 def validate_convergence_config(plan: BenchmarkPlan) -> None:
@@ -119,51 +115,5 @@ def _build_convergence_criterion(plan: BenchmarkPlan) -> ConvergenceCriterion:
 
 
 def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
-    """Build the outer-loop SearchPlanner for adaptive search.
-
-    Returns None when ``plan.is_adaptive_search`` is False. Dispatches via the
-    plugin registry so third-party planners (registered in plugins.yaml under
-    the `search_planner` category) are reachable through the same code path
-    as the built-in `bayesian` planner.
-
-    When 2+ SLO tiers are configured (via ``--search-sla-tier``), the
-    ``MultiTierPlanner`` is instantiated instead of the single-tier planner.
-    Single-tier behavior (no ``--search-sla-tier``) remains unchanged.
-
-    The planner class is responsible for raising a clear ImportError if an
-    explicitly requested optional sampler is unavailable.
-    """
-    from aiperf.config.sweep import AdaptiveSearchSweep
-
-    if not isinstance(plan.sweep, AdaptiveSearchSweep):
-        return None
-
-    cfg = plan.sweep
-
-    # Multi-tier override: when 2+ tiers are configured, activate the
-    # MultiTierPlanner regardless of the underlying planner selection.
-    # Single-tier behavior is preserved: existing planners run unmodified.
-    if len(cfg.sla_tiers) >= 2:
-        from aiperf.orchestrator.search_planner.multi_tier_planner import (
-            MultiTierPlanner,
-        )
-        from aiperf.plugin.enums import SearchPlannerType
-
-        # The search style's *algorithm* is not used by multi-tier (it runs its
-        # own bracket/bisection); warn so the user isn't surprised. The style's
-        # precision and warmup settings ARE still applied.
-        if cfg.planner != SearchPlannerType.SMOOTH_ISOTONIC:
-            logger.warning(
-                "The search algorithm for --search-style %s is not used when "
-                "--search-sla-tier is active; multi-tier uses its own "
-                "bracket/bisection method. The style's precision and warmup "
-                "settings still apply.",
-                cfg.planner,
-            )
-        return MultiTierPlanner(plan.configs[0], cfg, cfg.sla_tiers)
-
-    from aiperf.plugin import plugins
-    from aiperf.plugin.enums import PluginType
-
-    planner_cls = plugins.get_class(PluginType.SEARCH_PLANNER, str(cfg.planner))
-    return planner_cls(plan.configs[0], cfg)
+    """Compatibility wrapper for the planner factory's former location."""
+    return build_search_planner(plan)

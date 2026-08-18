@@ -206,6 +206,61 @@ navigation:
   - page: Conversation DAG Benchmarks
     path: benchmark-modes/dag.md
 
+- section: Kubernetes
+  collapsed: true
+  contents:
+  - page: Getting Started on Kubernetes
+    path: kubernetes/getting-started.md
+  - page: Deploy from Source Checkout
+    path: kubernetes/source-checkout-deploy.md
+  - page: End-to-End Workflow
+    path: kubernetes/workflow.md
+  - page: Config Init and Manifest Generation
+    path: kubernetes/init-and-generate.md
+  - page: Kubernetes Configuration Reference
+    path: kubernetes/configuration.md
+  - page: Production Deployment
+    path: kubernetes/production.md
+  - page: RBAC and Security
+    path: kubernetes/rbac-security.md
+  - page: Monitoring and Observability
+    path: kubernetes/monitoring.md
+  - page: Config Validation
+    path: kubernetes/validate.md
+  - page: CRD Validation Rules
+    path: kubernetes/crd-validation.md
+  - page: Preflight Checks
+    path: kubernetes/preflight.md
+  - page: Debug Command
+    path: kubernetes/debug-command.md
+  - page: Attach to a Running Benchmark
+    path: kubernetes/attach.md
+  - page: Logs
+    path: kubernetes/logs.md
+  - page: Results Server API Reference
+    path: kubernetes/results-api.md
+  - page: Web Dashboard
+    path: kubernetes/dashboard-ui.md
+  - page: Controller Pod Sidecars
+    path: kubernetes/sidecars.md
+  - page: Memory Estimator
+    path: kubernetes/memory-estimator.md
+  - page: Kueue Integration
+    path: kubernetes/kueue.md
+  - page: GPU Telemetry on Kubernetes
+    path: kubernetes/gpu-telemetry.md
+  - page: Direct Mode (no operator)
+    path: kubernetes/direct-mode.md
+  - page: Adaptive Search on Kubernetes
+    path: kubernetes/adaptive-search.md
+  - page: Parameter Sweeps on Kubernetes
+    path: kubernetes/sweeps.md
+  - page: User-Defined Output Files
+    path: kubernetes/user-files.md
+  - page: AI-Assisted Debugging Guide
+    path: kubernetes/ai-debugging-guide.md
+
+
 - section: Accuracy
   collapsed: true
   contents:
@@ -301,6 +356,8 @@ navigation:
     path: dev/sweep-orchestrator.md
   - page: YAML Config Future Goals
     path: dev/yaml-config-future-goals.md
+  - page: Kubernetes Flow
+    path: dev/kubernetes-flow.md
 
 - section: Troubleshooting
   collapsed: true
