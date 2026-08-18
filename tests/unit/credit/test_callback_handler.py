@@ -629,14 +629,14 @@ async def test_overflow_skips_intercept_and_runs_terminal_path(
 
 
 @pytest.mark.asyncio
-async def test_overflow_with_intercept_true_still_records_warmup_failure(
+async def test_overflow_with_intercept_true_bypasses_warmup_failure_recording(
     mock_concurrency,
     mock_progress,
     mock_lifecycle,
     mock_stop_checker,
     mock_branch_orchestrator,
 ):
-    """Overflow must reach ``_handle_warmup_failure`` despite gated intercept (R4)."""
+    """Overflow reaches ``_handle_warmup_failure`` but bypasses warmup failure recording (R4)."""
     registry = MagicMock()
     registry.has_tree.return_value = True
     mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
@@ -665,7 +665,7 @@ async def test_overflow_with_intercept_true_still_records_warmup_failure(
     )
 
     mock_branch_orchestrator.intercept.assert_not_awaited()
-    strategy.record_warmup_failure.assert_called_once_with(credit.conversation_id)
+    strategy.record_warmup_failure.assert_not_called()
     strategy.handle_credit_return.assert_awaited_once()
 
 

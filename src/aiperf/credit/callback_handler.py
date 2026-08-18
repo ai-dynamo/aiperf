@@ -300,6 +300,11 @@ class CreditCallbackHandler:
             and (credit_return.error is not None or credit_return.cancelled)
         ):
             return
+        # A context overflow response during warmup indicates a workload/window mismatch,
+        # not a degraded/sick pool. Allow it to bypass warmup failure recording so that
+        # CONTEXT_OVERFLOW_RATE_LIMIT can govern it during export.
+        if credit_return.error is not None and is_context_overflow_response(body=credit_return.error):
+            return
         record_warmup_failure = getattr(handler.strategy, "record_warmup_failure", None)
         if record_warmup_failure is None:
             return
