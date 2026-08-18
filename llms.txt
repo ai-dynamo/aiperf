@@ -543,6 +543,11 @@ Transports:
   correlation, absent-value output rules, turn-serialized versus duplex drivers,
   replay-safe recovery, public Config-v2 validation, and an interleaved-stream
   validity boundary.
+- [`docs/specs/websocket-mock-server.md`](docs/specs/websocket-mock-server.md) — planned
+  deterministic WS/WSS target for the WebSocket transport: typed serialized-turn
+  and duplex-Realtime scenarios, analytic application-event timing,
+  fragmentation and control-frame injection, exact replay/failure boundaries,
+  bounded sanitized captures, and standalone product verification.
 - [`docs/specs/sagemaker-runtime-endpoint.md`](docs/specs/sagemaker-runtime-endpoint.md) —
   AWS SageMaker Runtime dialect: `InvokeEndpoint`/
   `InvokeEndpointWithResponseStream` mock-server routes, the AWS
