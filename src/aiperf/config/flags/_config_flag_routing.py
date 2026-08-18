@@ -238,6 +238,7 @@ DATASET_FIELDS_OUTSIDE_INPUT: frozenset[str] = frozenset(
         "replay_speedup",
         "system_prompt",
         "system_prompt_file",
+        "trace_idle_gap_cap_seconds",
         "trace_session_sample_ratio",
     }
 )
@@ -311,6 +312,7 @@ def _build_routed_under_config() -> frozenset[str]:
         | whole_sections
         | sweeping
         | _ROUTED_OUTSIDE_SECTIONS
+        | DATASET_FIELDS_OUTSIDE_INPUT
     )
 
 
@@ -380,7 +382,6 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         "request_rate_ramp_duration",
         "request_cancellation_delay",
         "request_cancellation_rate",
-        "trace_idle_gap_cap_seconds",
     }
 )
 

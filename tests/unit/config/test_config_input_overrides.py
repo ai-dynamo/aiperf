@@ -505,3 +505,40 @@ benchmark:
     assert resolved.images.batch_size == 4
     assert resolved.turns.stddev == 2
     assert resolved.entries == 16
+
+
+def test_trace_idle_gap_cap_routes_on_a_trace_dataset(tmp_path: Path) -> None:
+    """--trace-idle-gap-cap-seconds is carried by build_dataset for traces.
+
+    It was classified unrouted from a probe run only against a synthetic
+    dataset, where it correctly emits nothing -- so this PR hard-rejected a
+    flag that works.
+    """
+    trace = tmp_path / "t.jsonl"
+    trace.write_text('{"text": "hi"}\n')
+    cfg = tmp_path / "trace.yaml"
+    cfg.write_text(
+        f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: mooncake_trace
+    path: {trace}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    resolved = dataset(resolve_config(cli(trace_idle_gap_cap_seconds=3.0), cfg))
+    assert resolved.trace_idle_gap_cap_seconds == 3.0
+
+
+def test_trace_idle_gap_cap_still_errors_on_synthetic(synthetic_yaml: Path) -> None:
+    """On a synthetic dataset it genuinely carries nothing, so it must be loud."""
+    with pytest.raises(ConfigurationError, match=r"--trace-idle-gap-cap-seconds"):
+        resolve_config(cli(trace_idle_gap_cap_seconds=3.0), synthetic_yaml)
