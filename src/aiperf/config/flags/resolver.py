@@ -124,6 +124,7 @@ def resolve_config(
     merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
+    _apply_warmup_overrides(merged, cli_config)
     promote_benchmark_magic_lists(
         merged,
         cli_config,
@@ -734,6 +735,80 @@ def _apply_phase_shaping_overrides(target: dict[str, Any], cli: CLIConfig) -> No
     apply_cancellation(target, cli)
     if "type" in target:
         _apply_phase_specific_routes(target, cli)
+
+
+# CLI flags that shape the warmup phase. Derived from the section frozenset
+# rather than restated so a new warmup_* flag is covered automatically.
+_WARMUP_FIELDS: frozenset[str] = frozenset(
+    field for field in LOADGEN_FIELDS if field.startswith("warmup_")
+)
+
+
+def _find_warmup_phase(phases: list[Any]) -> dict[str, Any] | None:
+    """Return the YAML-declared warmup phase, if there is one."""
+    for entry in phases:
+        if not isinstance(entry, dict):
+            continue
+        kind = infer_legacy_phase_kind(entry.get("name"), entry.get("kind"))
+        if kind == "warmup":
+            return entry
+    return None
+
+
+def _apply_warmup_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    """Overlay explicitly-set ``--warmup-*`` flags onto the warmup phase.
+
+    ``_apply_phase_loadgen_overrides`` deliberately targets only the profiling
+    phase, so that ``--request-count`` cannot clobber a warmup ramp. That left
+    the warmup flags with nowhere to go: they were dropped before the
+    classification gate and rejected after it.
+
+    Three cases, matching what the CLI-only path does where it can:
+
+    - the config file declares a warmup phase -> merge the set flags onto it,
+      leaving everything the user did not mention alone;
+    - it does not, but a trigger flag (--warmup-request-count /
+      --warmup-num-sessions / --warmup-duration) is set -> build the phase, as
+      ``convert_cli_to_aiperf`` does;
+    - neither -> raise, because a secondary flag such as
+      ``--warmup-concurrency`` has nothing to attach to and would otherwise be
+      silently ignored.
+    """
+    from aiperf.config.flags._converter_warmup import build_warmup
+    from aiperf.config.loader.errors import ConfigurationError
+
+    warmup_set = cli.model_fields_set & _WARMUP_FIELDS
+    if not warmup_set:
+        return
+
+    benchmark = merged.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return
+    phases = benchmark.get("phases")
+    if not isinstance(phases, list) or not phases:
+        return
+
+    existing = _find_warmup_phase(phases)
+    built = build_warmup(cli, base_warmup=existing is not None)
+    if built is None:
+        from aiperf.config.flags._config_flag_routing import flag_names_for
+
+        names = sorted("/".join(flag_names_for(f) or (f,)) for f in warmup_set)
+        raise ConfigurationError(
+            f"{', '.join(names)} needs a warmup phase to apply to. Declare one "
+            f"in the config file, or pass a warmup trigger "
+            f"(--warmup-request-count / --warmup-num-sessions / "
+            f"--warmup-duration)."
+        )
+
+    if existing is None:
+        phases.insert(0, {"name": "warmup", "kind": "warmup", **built})
+        return
+
+    _drop_alias_spellings(existing, built)
+    merged_warmup = deep_merge(existing, built)
+    existing.clear()
+    existing.update(merged_warmup)
 
 
 def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:

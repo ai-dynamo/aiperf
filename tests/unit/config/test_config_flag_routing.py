@@ -84,10 +84,13 @@ def test_unrouted_input_flag_raises_naming_the_flag(
         resolve_config(CLIConfig(input_file=str(pool)), base_yaml)
 
 
-def test_unrouted_loadgen_flag_raises(base_yaml: Path) -> None:
-    """Warmup flags are unrouted under --config and must error, not no-op."""
-    with pytest.raises(ConfigurationError, match=r"--warmup-request-count"):
-        resolve_config(cli(warmup_request_count=10), base_yaml)
+def test_unrouted_sweeping_flag_raises(base_yaml: Path) -> None:
+    """Sweep bounds resolve cleanly and change nothing, so they must error.
+
+    (The warmup flags this used to check are routed now.)
+    """
+    with pytest.raises(ConfigurationError, match=r"--concurrency-min"):
+        resolve_config(cli(concurrency_min=2), base_yaml)
 
 
 def test_unrouted_endpoint_flag_raises(base_yaml: Path) -> None:
@@ -99,16 +102,16 @@ def test_unrouted_endpoint_flag_raises(base_yaml: Path) -> None:
 def test_error_names_every_offending_flag(base_yaml: Path) -> None:
     """All unrouted flags are reported at once, not one per run."""
     with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(cli(warmup_request_count=3, reset_kv_cache=True), base_yaml)
+        resolve_config(cli(concurrency_min=2, reset_kv_cache=True), base_yaml)
     message = str(excinfo.value)
-    assert "--warmup-request-count" in message
+    assert "--concurrency-min" in message
     assert "--reset-kv-cache" in message
 
 
 def test_error_mentions_config_flag_as_the_cause(base_yaml: Path) -> None:
     """The message must tell users WHY the flag was rejected."""
     with pytest.raises(ConfigurationError, match=r"--config"):
-        resolve_config(cli(warmup_request_count=3), base_yaml)
+        resolve_config(cli(concurrency_min=2), base_yaml)
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +281,11 @@ def test_error_lists_every_spelling_of_a_multi_alias_flag(base_yaml: Path) -> No
     """Naming only the first declared spelling sends users looking for a flag
     they never typed.
 
-    ``--num-warmup-requests`` was reported as ``--warmup-request-count``;
-    ``--num-conversations`` as ``--conversation-num``. Since the resolver
+    ``--sweep-variant`` was reported as ``--variant``. Since the resolver
     cannot see which spelling was typed, it names them all.
     """
     with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(cli(warmup_request_count=3), base_yaml)
+        resolve_config(cli(sweep_variants=["concurrency=2"]), base_yaml)
     message = str(excinfo.value)
-    assert "--warmup-request-count" in message
-    assert "--num-warmup-requests" in message
+    assert "--variant" in message
+    assert "--sweep-variant" in message
