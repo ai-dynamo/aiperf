@@ -415,9 +415,17 @@ def flag_names_for(field: str) -> tuple[str, ...]:
 
 
 def _describe(field: str) -> str:
-    """Render a field as its primary flag spelling, falling back to the name."""
+    """Render a field as every spelling it accepts, falling back to the name.
+
+    Naming only the first declared spelling meant a user who typed
+    ``--num-warmup-requests`` was told about ``--warmup-request-count``, and
+    ``--num-conversations`` was reported as ``--conversation-num`` -- flags
+    absent from their shell history. This layer cannot see which spelling was
+    typed (the CLIConfig it receives has already been parsed), so it names
+    them all rather than guessing.
+    """
     names = flag_names_for(field)
-    return names[0] if names else field
+    return "/".join(names) if names else field
 
 
 def reject_unrouted_cli_flags(cli: CLIConfig) -> None:
