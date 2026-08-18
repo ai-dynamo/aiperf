@@ -365,8 +365,9 @@ capture, and cellular extensions use those same contracts. A package may now
 retain strict rollout environment selectors, including its action-encoder id;
 Rust resolves those selectors exactly and refuses missing or incompatible
 registrations before adapter provisioning. The current action-encoder seam
-freezes a selected decision into a Rust-owned artifact, but does not yet run a
-live policy-to-environment loop.
+freezes a selected decision into a Rust-owned artifact and runs the bounded
+live policy-to-environment loop. The adapter must read the selected action
+through Rust's one-shot artifact grant before it can return that transition.
 
 Controller-local cellular execution now has sealed, bounded result receipts
 that bind a completed-attempt digest to the issued plan, grant, cell, task,
