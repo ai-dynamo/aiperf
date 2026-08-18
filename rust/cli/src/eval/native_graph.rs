@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! CLI composition for the first scored NativeGraph episode.
+//! CLI composition for scored NativeGraph episodes, including sealed live rollouts.
 
 //! A task invocation becomes a one-trial suite. A suite document is accepted
 //! only when its already-resolved shape has exactly one lifecycle-addressable
