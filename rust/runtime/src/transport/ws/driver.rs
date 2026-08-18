@@ -26,6 +26,7 @@ use crate::body_plan::{
 use crate::clock::Clock;
 
 const CONTROL_QUEUE_CAPACITY: usize = 4;
+const PEER_CLOSE_HANDSHAKE_NS: i64 = 1_000_000_000;
 
 /// Count and byte bounds for one socket's outbound application queue.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -166,6 +167,7 @@ pub(crate) enum WsDriverError {
     OperationDeadline,
     RequestCancellation,
     ConnectionRotation,
+    CloseHandshakeTimeout,
     Reunite,
 }
 
@@ -221,6 +223,9 @@ impl Display for WsDriverError {
             Self::ConnectionRotation => {
                 formatter.write_str("websocket connection reached its rotation boundary")
             }
+            Self::CloseHandshakeTimeout => {
+                formatter.write_str("websocket reciprocal close handshake reached its deadline")
+            }
             Self::Reunite => formatter.write_str("websocket split halves could not be reunited"),
         }
     }
@@ -230,7 +235,21 @@ impl std::error::Error for WsDriverError {}
 
 enum ControlCommand {
     Send(Message),
+    FlushPeerClose,
     Finish,
+}
+
+#[derive(Default)]
+struct ControlProgress {
+    needs_finish: bool,
+    has_flushed_peer_close: bool,
+}
+
+impl ControlProgress {
+    fn merge(&mut self, other: Self) {
+        self.needs_finish |= other.needs_finish;
+        self.has_flushed_peer_close |= other.has_flushed_peer_close;
+    }
 }
 
 enum WriterNotice<S>
@@ -241,6 +260,7 @@ where
         role: PreparedWsMessageRole,
         timestamp_ns: i64,
     },
+    PeerCloseFlushed,
     Finished(SplitSink<S, Message>),
     Failed(WsDriverError),
 }
@@ -273,6 +293,8 @@ where
     response_bytes: usize,
     max_response_bytes: usize,
     finished_sink: Option<SplitSink<S, Message>>,
+    peer_close_deadline_ns: Option<i64>,
+    has_flushed_peer_close: bool,
 }
 
 impl<S> SocketOperationDriver<S>
@@ -340,6 +362,8 @@ where
             response_bytes: 0,
             max_response_bytes,
             finished_sink: None,
+            peer_close_deadline_ns: None,
+            has_flushed_peer_close: false,
         })
     }
 
@@ -347,6 +371,9 @@ where
     pub(crate) async fn next(&mut self) -> Result<DriverEvent, WsDriverError> {
         loop {
             self.drain_notices()?;
+            if self.has_flushed_peer_close {
+                return Err(WsDriverError::PeerClosed);
+            }
             if let Some(event) = self.pending.pop_front() {
                 return Ok(event);
             }
@@ -354,6 +381,7 @@ where
             if let Some(error) = self.boundary_error(now_ns) {
                 return Err(error);
             }
+            let can_read_or_ping = self.peer_close_deadline_ns.is_none();
             let read = self.read.as_mut().ok_or(WsDriverError::WriterStopped)?;
             let notice = self.notice.notified();
             let ping = self
@@ -375,20 +403,23 @@ where
                 .clock
                 .clone()
                 .sleep(self.timing.rotation_deadline_ns.saturating_sub(now_ns));
+            let peer_close =
+                deadline_sleep(self.clock.clone(), self.peer_close_deadline_ns, now_ns);
             tokio::select! {
                 biased;
                 () = deadline => return Err(WsDriverError::OperationDeadline),
                 () = cancellation => return Err(WsDriverError::RequestCancellation),
                 () = rotation => return Err(WsDriverError::ConnectionRotation),
                 () = idle => return Err(WsDriverError::StreamIdleTimeout),
+                () = peer_close => return Err(WsDriverError::CloseHandshakeTimeout),
                 () = notice => {}
-                message = read.next() => {
+                message = read.next(), if can_read_or_ping => {
                     if let Some(error) = self.boundary_error(self.clock.now_ns()) {
                         return Err(error);
                     }
                     self.on_message(message)?;
                 }
-                () = ping => {
+                () = ping, if can_read_or_ping => {
                     self.control_tx
                         .try_send(ControlCommand::Send(Message::Ping(bytes::Bytes::new())))
                         .map_err(|_| WsDriverError::ControlQueueFull)?;
@@ -414,6 +445,12 @@ where
         }
         if now_ns >= self.timing.rotation_deadline_ns {
             return Some(WsDriverError::ConnectionRotation);
+        }
+        if self
+            .peer_close_deadline_ns
+            .is_some_and(|deadline_ns| now_ns >= deadline_ns)
+        {
+            return Some(WsDriverError::CloseHandshakeTimeout);
         }
         if self.has_input_completed
             && now_ns
@@ -443,7 +480,14 @@ where
                 .try_send(ControlCommand::Send(Message::Pong(payload)))
                 .map_err(|_| WsDriverError::ControlQueueFull),
             Message::Pong(_) => Ok(()),
-            Message::Close(_) => Err(WsDriverError::PeerClosed),
+            Message::Close(_) => {
+                self.control_tx
+                    .try_send(ControlCommand::FlushPeerClose)
+                    .map_err(|_| WsDriverError::ControlQueueFull)?;
+                self.peer_close_deadline_ns =
+                    Some(self.clock.now_ns().saturating_add(PEER_CLOSE_HANDSHAKE_NS));
+                Ok(())
+            }
             Message::Frame(_) => Ok(()),
         }
     }
@@ -495,6 +539,7 @@ where
                     self.pending
                         .push_back(DriverEvent::Flushed { role, timestamp_ns });
                 }
+                WriterNotice::PeerCloseFlushed => self.has_flushed_peer_close = true,
                 WriterNotice::Finished(sink) => self.finished_sink = Some(sink),
                 WriterNotice::Failed(error) => return Err(error),
             }
@@ -584,6 +629,15 @@ async fn writer_loop<S>(
             biased;
             command = control_rx.recv() => match command {
                 Some(ControlCommand::Send(message)) => sink.send(message).await.map(|_| None).map_err(WsDriverError::Write),
+                Some(ControlCommand::FlushPeerClose) => {
+                    match sink.flush().await {
+                        Ok(()) => {
+                            push_notice(&notices, &notice, WriterNotice::PeerCloseFlushed);
+                            Ok(None)
+                        }
+                        Err(error) => Err(WsDriverError::Write(error)),
+                    }
+                }
                 Some(ControlCommand::Finish) => {
                     needs_finish = true;
                     Ok(None)
@@ -607,13 +661,16 @@ async fn writer_loop<S>(
             }
         };
         match result {
-            Ok(Some((role, timestamp_ns, finish_requested))) => {
-                needs_finish |= finish_requested;
+            Ok(Some((role, timestamp_ns, progress))) => {
+                needs_finish |= progress.needs_finish;
                 push_notice(
                     &notices,
                     &notice,
                     WriterNotice::Flushed { role, timestamp_ns },
                 );
+                if progress.has_flushed_peer_close {
+                    push_notice(&notices, &notice, WriterNotice::PeerCloseFlushed);
+                }
             }
             Ok(None) => {}
             Err(error) => {
@@ -630,7 +687,7 @@ async fn send_application<S>(
     control_rx: &mut mpsc::Receiver<ControlCommand>,
     clock: &Rc<dyn Clock>,
     max_frame_bytes: usize,
-) -> Result<(PreparedWsMessageRole, i64, bool), WsDriverError>
+) -> Result<(PreparedWsMessageRole, i64, ControlProgress), WsDriverError>
 where
     S: Sink<Message, Error = TungsteniteError> + Unpin,
 {
@@ -638,7 +695,7 @@ where
     if message.opcode() == PreparedWsOpcode::Text {
         std::str::from_utf8(message.payload()).map_err(|_| WsDriverError::InvalidTextMessage)?;
     }
-    let mut finish_requested = false;
+    let mut progress = ControlProgress::default();
     if message.payload().is_empty() {
         let data = match message.opcode() {
             PreparedWsOpcode::Text => Data::Text,
@@ -651,8 +708,8 @@ where
         )))
         .await
         .map_err(WsDriverError::Write)?;
-        finish_requested |= flush_servicing_controls(sink, control_rx).await?;
-        return Ok((role, clock.now_ns(), finish_requested));
+        progress.merge(flush_servicing_controls(sink, control_rx).await?);
+        return Ok((role, clock.now_ns(), progress));
     }
     let payload = message.payload().clone();
     let mut offset = 0_usize;
@@ -677,20 +734,20 @@ where
         )))
         .await
         .map_err(WsDriverError::Write)?;
-        finish_requested |= flush_servicing_controls(sink, control_rx).await?;
+        progress.merge(flush_servicing_controls(sink, control_rx).await?);
         offset = end;
     }
-    Ok((role, clock.now_ns(), finish_requested))
+    Ok((role, clock.now_ns(), progress))
 }
 
 async fn flush_servicing_controls<S>(
     sink: &mut SplitSink<S, Message>,
     control_rx: &mut mpsc::Receiver<ControlCommand>,
-) -> Result<bool, WsDriverError>
+) -> Result<ControlProgress, WsDriverError>
 where
     S: Sink<Message, Error = TungsteniteError> + Unpin,
 {
-    let mut finish_requested = false;
+    let mut progress = ControlProgress::default();
     loop {
         tokio::select! {
             biased;
@@ -698,12 +755,16 @@ where
                 Some(ControlCommand::Send(control)) => {
                     sink.feed(control).await.map_err(WsDriverError::Write)?;
                 }
-                Some(ControlCommand::Finish) => finish_requested = true,
+                Some(ControlCommand::FlushPeerClose) => {
+                    sink.flush().await.map_err(WsDriverError::Write)?;
+                    progress.has_flushed_peer_close = true;
+                }
+                Some(ControlCommand::Finish) => progress.needs_finish = true,
                 None => return Err(WsDriverError::WriterStopped),
             },
             result = sink.flush() => {
                 result.map_err(WsDriverError::Write)?;
-                return Ok(finish_requested);
+                return Ok(progress);
             }
         }
     }
@@ -743,7 +804,9 @@ mod tests {
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
-    use super::{ApplicationQueueLimits, DriverEvent, DriverTiming, SocketOperationDriver};
+    use super::{
+        ApplicationQueueLimits, DriverEvent, DriverTiming, SocketOperationDriver, WsDriverError,
+    };
     use crate::body_plan::{PreparedWsMessage, PreparedWsMessageRole, PreparedWsOperation};
     use crate::clock::{Clock, RealClock};
     use crate::transport::http::config::ClientConfig;
@@ -1024,6 +1087,90 @@ mod tests {
             assert!(matches!(event, DriverEvent::Flushed { .. }));
             assert!(state.borrow().has_pong, "peer ping must be answered");
             let _ = driver.finish().await.expect("driver reunites socket");
+        });
+    }
+
+    #[test]
+    fn peer_initiated_close_is_flushed_before_driver_reports_peer_closed() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("test listener binds");
+            let address = listener.local_addr().expect("listener has an address");
+            let (reply_seen, reply_result) = oneshot::channel();
+            tokio::task::spawn_local(async move {
+                let (stream, _) = listener.accept().await.expect("server accepts client");
+                let mut socket = accept_async(stream).await.expect("server upgrades client");
+                loop {
+                    match socket.next().await {
+                        Some(Ok(Message::Text(_))) => break,
+                        Some(Ok(_)) => {}
+                        Some(Err(error)) => panic!("server read failed: {error}"),
+                        None => panic!("client closed before its application message"),
+                    }
+                }
+                socket
+                    .send(Message::Close(None))
+                    .await
+                    .expect("server sends Close");
+                let saw_reply = matches!(socket.next().await, Some(Ok(Message::Close(_))));
+                let _ = reply_seen.send(saw_reply);
+            });
+
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let url = url::Url::parse(&format!("ws://{address}/v1/responses"))
+                .expect("test URL is valid");
+            let socket = connector::connect(
+                &url,
+                &BTreeMap::new(),
+                &ClientConfig::default(),
+                WebSocketConfig::default(),
+                clock.clone(),
+                None,
+            )
+            .await
+            .expect("client upgrades server");
+            let operation = PreparedWsOperation::new(
+                [PreparedWsMessage::text(
+                    bytes::Bytes::from_static(b"request"),
+                    PreparedWsMessageRole::MeasuredInput,
+                )],
+                None,
+            );
+            let now_ns = clock.now_ns();
+            let mut driver = SocketOperationDriver::start(
+                socket,
+                clock,
+                &operation,
+                ApplicationQueueLimits::new(1, 64),
+                DriverTiming {
+                    deadline_ns: Some(now_ns.saturating_add(1_000_000_000)),
+                    rotation_deadline_ns: now_ns.saturating_add(1_000_000_000),
+                    ping_interval_ns: 1_000_000_000,
+                    stream_idle_timeout_ns: 1_000_000_000,
+                    cancel_after_ns: None,
+                },
+                64,
+            )
+            .expect("driver starts");
+            let error = loop {
+                match driver.next().await {
+                    Ok(_) => {}
+                    Err(error) => break error,
+                }
+            };
+
+            assert!(matches!(error, WsDriverError::PeerClosed));
+            assert!(
+                tokio::time::timeout(Duration::from_secs(1), reply_result)
+                    .await
+                    .expect("server observes reciprocal Close")
+                    .expect("client flushed reciprocal Close")
+            );
         });
     }
 

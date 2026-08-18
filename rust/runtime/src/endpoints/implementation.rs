@@ -599,7 +599,7 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
             dialect: WebSocketDialect::Responses,
             connection_model: WebSocketConnectionModel::TurnSerialized,
             application_opcode: PreparedWsOpcode::Text,
-            has_affinity_state: false,
+            has_affinity_state: true,
             supports_full_history_replay: true,
             supports_http_sse_fallback: true,
             supports_round_trip_metrics: true,
@@ -692,7 +692,8 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
                 PreparedWsMessageRole::MeasuredInput,
             )],
             Some(fallback_body),
-        ))
+        )
+        .with_input_projection(body))
     }
 
     fn renders_all_turns(&self) -> bool {
@@ -816,15 +817,23 @@ impl PreparedEndpointBehavior for RealtimeEndpoint {
         let items = input.as_array().ok_or_else(|| {
             EndpointError::Serialization("Realtime request input must be an array".to_owned())
         })?;
-        let mut messages = Vec::with_capacity(items.len() + 2);
-        let mut has_audio = false;
-        for item in items {
+        let current_start = items
+            .iter()
+            .rposition(|item| item.get("role").and_then(Value::as_str) == Some("assistant"))
+            .map_or(0, |index| index + 1);
+        let mut messages = Vec::with_capacity(items.len().saturating_sub(current_start) + 2);
+        for item in &items[current_start..] {
             let item = item.as_object().ok_or_else(|| {
                 EndpointError::InvalidRequest(
                     "Realtime request input items must be JSON objects".to_owned(),
                 )
             })?;
             let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
+            if !matches!(role, "user" | "system") {
+                return Err(EndpointError::InvalidRequest(format!(
+                    "Realtime live input role {role:?} is not supported"
+                )));
+            }
             let content = item.get("content").ok_or_else(|| {
                 EndpointError::InvalidRequest(
                     "Realtime request input item has no content".to_owned(),
@@ -840,6 +849,7 @@ impl PreparedEndpointBehavior for RealtimeEndpoint {
                 }
             };
             let mut text_parts = Vec::new();
+            let mut has_item_audio = false;
             for part in parts {
                 if let Some(text) = part
                     .as_str()
@@ -855,6 +865,11 @@ impl PreparedEndpointBehavior for RealtimeEndpoint {
                         "Realtime input supports only text and input_audio content".to_owned(),
                     ));
                 };
+                if role != "user" {
+                    return Err(EndpointError::InvalidRequest(
+                        "Realtime live audio input requires the user role".to_owned(),
+                    ));
+                }
                 let encoded = audio.get("data").and_then(Value::as_str).ok_or_else(|| {
                     EndpointError::InvalidRequest(
                         "Realtime input_audio content has no base64 data".to_owned(),
@@ -881,7 +896,12 @@ impl PreparedEndpointBehavior for RealtimeEndpoint {
                     ),
                     PreparedWsMessageRole::MeasuredInput,
                 ));
-                has_audio = true;
+                has_item_audio = true;
+            }
+            if has_item_audio && !text_parts.is_empty() {
+                return Err(EndpointError::InvalidRequest(
+                    "Realtime mixed text and audio content ordering is unsupported".to_owned(),
+                ));
             }
             if !text_parts.is_empty() {
                 let event = json!({
@@ -900,12 +920,12 @@ impl PreparedEndpointBehavior for RealtimeEndpoint {
                     PreparedWsMessageRole::MeasuredInput,
                 ));
             }
-        }
-        if has_audio {
-            messages.push(PreparedWsMessage::text(
-                Bytes::from_static(br#"{"type":"input_audio_buffer.commit"}"#),
-                PreparedWsMessageRole::MeasuredInput,
-            ));
+            if has_item_audio {
+                messages.push(PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"input_audio_buffer.commit"}"#),
+                    PreparedWsMessageRole::MeasuredInput,
+                ));
+            }
         }
         if messages.is_empty() {
             return Err(EndpointError::InvalidRequest(
@@ -921,7 +941,12 @@ impl PreparedEndpointBehavior for RealtimeEndpoint {
             ),
             PreparedWsMessageRole::Control,
         ));
-        Ok(PreparedWsOperation::new(messages, None))
+        let operation = PreparedWsOperation::new(messages, None).with_input_projection(body);
+        Ok(if current_start > 0 {
+            operation.requiring_affinity_state()
+        } else {
+            operation
+        })
     }
 
     fn renders_all_turns(&self) -> bool {
@@ -2337,6 +2362,7 @@ mod lowering_tests {
             )
             .unwrap();
         assert_eq!(operation.messages().len(), 2);
+        assert!(!operation.requires_affinity_state());
         let input: Value = serde_json::from_slice(operation.messages()[0].payload()).unwrap();
         assert_eq!(input["type"], "conversation.item.create");
         assert_eq!(input["item"]["type"], "message");
@@ -2430,6 +2456,96 @@ mod lowering_tests {
     }
 
     #[test]
+    fn realtime_mixed_text_and_audio_turn_fails_closed() {
+        let mut turn = text_turn();
+        turn.audios = vec![Media::new(vec!["data:audio/wav;base64,AAE=".to_owned()])];
+        let turns = [turn];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let store = SegmentPool::new().freeze();
+        let body = RealtimeEndpoint
+            .format_prepared_payload(&request, &RawEndpointConfig::default())
+            .unwrap();
+
+        let error = RealtimeEndpoint
+            .prepare_ws_operation(
+                &request,
+                &RawEndpointConfig::default(),
+                &body,
+                &store,
+                &Overrides::new(),
+            )
+            .expect_err("mixed media ordering must fail closed");
+
+        assert!(error.to_string().contains("mixed text and audio"));
+    }
+
+    #[test]
+    fn realtime_history_sends_only_current_client_input_and_keeps_its_audio_commit_order() {
+        let mut historical_user = text_turn();
+        historical_user.texts.clear();
+        historical_user.audios = vec![Media::new(vec!["data:audio/wav;base64,AAE=".to_owned()])];
+        let assistant = Turn {
+            role: Some("assistant".into()),
+            texts: vec![Media::new(vec!["prior answer".to_owned()])],
+            ..Turn::default()
+        };
+        let mut current_user = text_turn();
+        current_user.texts.clear();
+        current_user.audios = vec![Media::new(vec!["data:audio/wav;base64,AgM=".to_owned()])];
+        let turns = [historical_user, assistant, current_user];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let store = SegmentPool::new().freeze();
+        let body = RealtimeEndpoint
+            .format_prepared_payload(&request, &RawEndpointConfig::default())
+            .unwrap();
+
+        let operation = RealtimeEndpoint
+            .prepare_ws_operation(
+                &request,
+                &RawEndpointConfig::default(),
+                &body,
+                &store,
+                &Overrides::new(),
+            )
+            .unwrap();
+        let events = operation
+            .messages()
+            .iter()
+            .map(|message| serde_json::from_slice::<Value>(message.payload()).unwrap())
+            .collect::<Vec<_>>();
+
+        assert!(operation.requires_affinity_state());
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0]["type"], "input_audio_buffer.append");
+        assert_eq!(events[0]["audio"], "AgM=");
+        assert_eq!(events[1]["type"], "input_audio_buffer.commit");
+        assert_eq!(events[2]["type"], "response.create");
+        assert!(
+            events
+                .iter()
+                .all(|event| event["item"]["role"] != "assistant")
+        );
+    }
+
+    #[test]
     fn realtime_audio_delta_decodes_to_audio_response_data() {
         let parsed = RealtimeEndpoint
             .parse_response(&ServerResponse::from_json(
@@ -2458,7 +2574,7 @@ mod lowering_tests {
         );
         assert!(responses.supports_full_history_replay);
         assert!(responses.supports_http_sse_fallback);
-        assert!(!responses.has_affinity_state);
+        assert!(responses.has_affinity_state);
 
         let realtime = RealtimeEndpoint
             .websocket_capabilities()

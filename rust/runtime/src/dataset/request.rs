@@ -672,6 +672,17 @@ fn materialize_websocket_prepared(
         overrides,
     )?;
     let operation = endpoint.prepare_ws_operation(&request, &plan, store, overrides)?;
+    let extracted = operation
+        .input_projection()
+        .map(|body| {
+            serde_json::from_slice(body).map(|value| endpoint.extract_payload_inputs(&value))
+        })
+        .transpose()
+        .map_err(|error| {
+            DatasetError::Validation(format!(
+                "WebSocket input-counting projection is not valid JSON: {error}"
+            ))
+        })?;
     let mut headers = endpoint.headers().clone();
     headers.extend(raw_string_map(
         store,
@@ -699,7 +710,7 @@ fn materialize_websocket_prepared(
         accuracy: conversation.accuracy.clone(),
         turn_index,
         is_final_turn: turn_index + 1 == conversation.turns.len(),
-        extracted: None,
+        extracted,
     })
 }
 
@@ -3428,6 +3439,14 @@ mod tests {
         assert_eq!(fallback["model"], "override-model");
         assert_eq!(fallback["input"][0]["content"], "hello world");
         assert_eq!(fallback["stream"], true);
+        assert_eq!(
+            request
+                .extracted
+                .as_ref()
+                .map(|input| input.texts.as_slice()),
+            Some(["hello world".to_owned()].as_slice()),
+            "WebSocket token counting must retain endpoint input rather than parse the artifact envelope"
+        );
     }
 
     #[test]

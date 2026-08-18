@@ -12,8 +12,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
 use tokio::sync::Semaphore;
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 use url::Url;
 
 use crate::body_plan::{PreparedWsMessageRole, PreparedWsOperation, RequestBody};
@@ -47,7 +48,7 @@ use crate::transport::measure::{self, WorkerMeasurement};
 use crate::transport::ws::connector::{ConnectFailure, WebSocket, connect};
 use crate::transport::ws::dialect::{
     ResponsesEvent, TurnOperationState, classify_realtime_event, classify_responses_event,
-    full_history_retry, incremental_realtime_operation, with_previous_response_id,
+    full_history_retry, with_previous_response_id,
 };
 use crate::transport::ws::driver::{
     ApplicationQueueLimits, DriverEvent, DriverTiming, FallbackReason, SocketOperationDriver,
@@ -655,6 +656,7 @@ impl WebSocketTransportSink {
             WebSocketDialect::Responses => checked_out
                 .continuation_id
                 .as_deref()
+                .filter(|_| checked_out.has_affinity_state)
                 .map(|response_id| {
                     with_previous_response_id(&prepared_operation, response_id).ok_or_else(|| {
                         anyhow!(
@@ -664,14 +666,14 @@ impl WebSocketTransportSink {
                 })
                 .transpose()?
                 .unwrap_or_else(|| prepared_operation.as_ref().clone()),
-            WebSocketDialect::Realtime if checked_out.has_affinity_state => {
-                incremental_realtime_operation(&prepared_operation).ok_or_else(|| {
-                    anyhow!(
-                        "Realtime affinity-owned socket could not select incremental input"
-                    )
-                })?
+            WebSocketDialect::Realtime => {
+                ensure!(
+                    !prepared_operation.requires_affinity_state()
+                        || checked_out.has_affinity_state,
+                    "Realtime continuation requires its affinity-owned socket"
+                );
+                prepared_operation.as_ref().clone()
             }
-            WebSocketDialect::Realtime => prepared_operation.as_ref().clone(),
         };
         ensure!(
             operation
@@ -830,6 +832,7 @@ impl WebSocketTransportSink {
                 capabilities.dialect, completed.terminal
             );
             record.error = Some(if completed.terminal == ReplayTerminalStatus::Canceled {
+                record.cancellation_ns = cancellation_timestamp(completed.terminal, end_ns);
                 ErrorDetails::cancelled(message)
             } else {
                 ErrorDetails {
@@ -883,18 +886,19 @@ impl WebSocketTransportSink {
     ) -> Result<DispatchResult> {
         let end_ns = self.clock.now_ns();
         let error = failure.into_details();
+        let terminal = failure_terminal(error.kind);
         if error.kind == ErrorKind::Cancelled {
             record.cancellation_ns = Some(end_ns);
         }
         record.end_ns = Some(end_ns);
         record.error = Some(error.clone());
         record.reusable_connection = false;
-        observer.on_terminal(request.uuid, ReplayTerminalStatus::Failed);
+        observer.on_terminal(request.uuid, terminal);
         Ok(DispatchResult {
             outcome: TurnDispatchOutcome {
                 start_ns,
                 end_ns,
-                terminal: ReplayTerminalStatus::Failed,
+                terminal,
                 response_text: String::new(),
                 model_response: ModelResponseMetadata {
                     error_kind: Some(websocket_error_kind(error.kind).to_owned()),
@@ -979,11 +983,22 @@ impl WebSocketTransportSink {
         let mut response_bytes = 0_usize;
         let mut has_first_token = false;
         let mut terminal = ReplayTerminalStatus::Failed;
+        let mut has_terminal = false;
+        let mut pending_response = None;
         loop {
-            let event = driver
-                .next()
-                .await
-                .map_err(|error| AttemptFailure::from_driver(error, &state))?;
+            if pending_response.is_none() && has_terminal {
+                break;
+            }
+            let Some(event) = next_while_delivering_response(
+                &mut driver,
+                &mut pending_response,
+                responses,
+                &state,
+            )
+            .await?
+            else {
+                continue;
+            };
             match event {
                 DriverEvent::Flushed { role, timestamp_ns }
                     if role == PreparedWsMessageRole::MeasuredInput =>
@@ -996,6 +1011,19 @@ impl WebSocketTransportSink {
                     is_text,
                     timestamp_ns,
                 } => {
+                    if has_terminal {
+                        return Err(AttemptFailure::protocol(anyhow!(
+                            "websocket application event arrived after terminal"
+                        )));
+                    }
+                    let event = (match dialect {
+                        WebSocketDialect::Responses => classify_responses_event(&payload, is_text),
+                        WebSocketDialect::Realtime => classify_realtime_event(&payload, is_text),
+                    })
+                    .map_err(AttemptFailure::protocol)?;
+                    let is_terminal = state
+                        .on_event(&event, timestamp_ns)
+                        .map_err(AttemptFailure::protocol)?;
                     response_bytes =
                         response_bytes.checked_add(payload.len()).ok_or_else(|| {
                             AttemptFailure::protocol(anyhow!(
@@ -1025,7 +1053,7 @@ impl WebSocketTransportSink {
                             content_type: Some("application/json".to_owned()),
                         }));
                     }
-                    if let Some(responses) = responses {
+                    if responses.is_some() {
                         let perf_ns = u64::try_from(timestamp_ns).map_err(|error| {
                             AttemptFailure::protocol(anyhow!(
                                 "websocket response timestamp was negative: {error}"
@@ -1040,19 +1068,13 @@ impl WebSocketTransportSink {
                             .parse_response(&server_response)
                             .map_err(|error| AttemptFailure::protocol(error.into()))?
                         {
-                            poll_fn(|context| responses.poll_ready(context))
-                                .await
-                                .map_err(AttemptFailure::terminal)?;
-                            responses
-                                .start_send(parsed)
-                                .map_err(AttemptFailure::terminal)?;
+                            if pending_response.replace(parsed).is_some() {
+                                return Err(AttemptFailure::protocol(anyhow!(
+                                    "websocket response observer queue is full"
+                                )));
+                            }
                         }
                     }
-                    let event = (match dialect {
-                        WebSocketDialect::Responses => classify_responses_event(&payload, is_text),
-                        WebSocketDialect::Realtime => classify_realtime_event(&payload, is_text),
-                    })
-                    .map_err(AttemptFailure::protocol)?;
                     if let Some(content) = state
                         .content_for_observation(&event, timestamp_ns)
                         .map_err(AttemptFailure::protocol)?
@@ -1074,14 +1096,16 @@ impl WebSocketTransportSink {
                         }
                     }
                     match &event {
-                        ResponsesEvent::Content(_) => {}
-                        ResponsesEvent::Reasoning => observer.on_classified_token(
+                        ResponsesEvent::Created { .. } | ResponsesEvent::Content { .. } => {}
+                        ResponsesEvent::Reasoning { .. } => observer.on_classified_token(
                             request.uuid,
                             timestamp_ns.saturating_sub(self.start_ns.get()) as f64 / 1_000_000.0,
                             ObservedTokenKind::Reasoning,
                         ),
-                        ResponsesEvent::Audio => {}
-                        ResponsesEvent::Usage(usage) => observer.on_usage(request.uuid, *usage),
+                        ResponsesEvent::Audio { .. } => {}
+                        ResponsesEvent::Usage { usage, .. } => {
+                            observer.on_usage(request.uuid, *usage)
+                        }
                         ResponsesEvent::Terminal {
                             response_id: id,
                             usage,
@@ -1089,7 +1113,7 @@ impl WebSocketTransportSink {
                             ..
                         } => {
                             observer.on_usage(request.uuid, *usage);
-                            response_id = id.clone();
+                            response_id = Some(id.clone());
                             terminal = *status;
                         }
                         ResponsesEvent::RetriableContinuationRejection => {
@@ -1100,8 +1124,8 @@ impl WebSocketTransportSink {
                         }
                         ResponsesEvent::Ignored => {}
                     }
-                    if state.on_event(&event, timestamp_ns) {
-                        break;
+                    if is_terminal {
+                        has_terminal = true;
                     }
                 }
             }
@@ -1142,6 +1166,42 @@ impl WebSocketTransportSink {
                 .map(|cached| close_socket(cached.socket, self.clock.clone(), None)),
         )
         .await;
+    }
+}
+
+async fn next_while_delivering_response(
+    driver: &mut SocketOperationDriver<WebSocket>,
+    pending_response: &mut Option<crate::endpoints::ParsedResponse>,
+    responses: Option<&dyn TurnResponseObserver>,
+    state: &TurnOperationState,
+) -> std::result::Result<Option<DriverEvent>, AttemptFailure> {
+    if pending_response.is_none() {
+        return driver
+            .next()
+            .await
+            .map(Some)
+            .map_err(|error| AttemptFailure::from_driver(error, state));
+    }
+    let responses = responses.ok_or_else(|| {
+        AttemptFailure::protocol(anyhow!("websocket response delivery lost its observer"))
+    })?;
+    tokio::select! {
+        biased;
+        ready = poll_fn(|context| responses.poll_ready(context)) => {
+            ready.map_err(AttemptFailure::terminal)?;
+            let response = pending_response.take().ok_or_else(|| {
+                AttemptFailure::protocol(anyhow!(
+                    "websocket response delivery lost its pending frame"
+                ))
+            })?;
+            responses
+                .start_send(response)
+                .map_err(AttemptFailure::terminal)?;
+            Ok(None)
+        }
+        event = driver.next() => event
+            .map(Some)
+            .map_err(|error| AttemptFailure::from_driver(error, state)),
     }
 }
 
@@ -1203,12 +1263,14 @@ impl AttemptFailure {
             WsDriverError::Write(_)
                 | WsDriverError::Read(_)
                 | WsDriverError::PeerClosed
+                | WsDriverError::CloseHandshakeTimeout
                 | WsDriverError::StreamIdleTimeout
                 | WsDriverError::ConnectionRotation
         );
         let kind = match &error {
             WsDriverError::OperationDeadline
             | WsDriverError::StreamIdleTimeout
+            | WsDriverError::CloseHandshakeTimeout
             | WsDriverError::ConnectionRotation => ErrorKind::Timeout,
             WsDriverError::RequestCancellation => ErrorKind::Cancelled,
             WsDriverError::Write(_) | WsDriverError::Read(_) | WsDriverError::PeerClosed => {
@@ -1246,6 +1308,22 @@ const fn websocket_error_kind(kind: ErrorKind) -> &'static str {
         ErrorKind::Protocol => "protocol",
         ErrorKind::Timeout => "timeout",
         ErrorKind::Other => "other",
+    }
+}
+
+const fn failure_terminal(kind: ErrorKind) -> ReplayTerminalStatus {
+    if matches!(kind, ErrorKind::Cancelled) {
+        ReplayTerminalStatus::Canceled
+    } else {
+        ReplayTerminalStatus::Failed
+    }
+}
+
+const fn cancellation_timestamp(status: ReplayTerminalStatus, end_ns: i64) -> Option<i64> {
+    if matches!(status, ReplayTerminalStatus::Canceled) {
+        Some(end_ns)
+    } else {
+        None
     }
 }
 
@@ -1290,8 +1368,30 @@ async fn close_socket(
     let deadline_ns = operation_deadline_ns
         .unwrap_or_else(|| now_ns.saturating_add(CLOSE_HANDSHAKE_NS))
         .min(now_ns.saturating_add(CLOSE_HANDSHAKE_NS));
+    if now_ns >= deadline_ns {
+        tracing::trace!(
+            component = "websocket",
+            "websocket close handshake reached its deadline"
+        );
+        return;
+    }
+    let handshake = async {
+        socket.send(Message::Close(None)).await?;
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Close(_))) => {
+                    socket.flush().await?;
+                    return Ok::<(), tokio_tungstenite::tungstenite::Error>(());
+                }
+                Some(Ok(Message::Ping(_))) => socket.flush().await?,
+                Some(Ok(_)) => {}
+                Some(Err(error)) => return Err(error),
+                None => return Err(tokio_tungstenite::tungstenite::Error::ConnectionClosed),
+            }
+        }
+    };
     tokio::select! {
-        result = socket.close(None) => {
+        result = handshake => {
             if let Err(error) = result {
                 tracing::trace!(component = "websocket", error = %error, "websocket close handshake did not complete");
             }
@@ -1481,6 +1581,8 @@ impl RequestExecutor for WebSocketTransportSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::task::{Context, Poll};
+
     use crate::body_plan::PreparedWsMessage;
     use crate::clock::RealClock;
     use futures::StreamExt;
@@ -1489,6 +1591,18 @@ mod tests {
     use tokio::sync::oneshot;
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
+
+    struct StalledResponseObserver;
+
+    impl TurnResponseObserver for StalledResponseObserver {
+        fn poll_ready(&self, _context: &mut Context<'_>) -> Poll<Result<()>> {
+            Poll::Pending
+        }
+
+        fn start_send(&self, _response: crate::endpoints::ParsedResponse) -> Result<()> {
+            anyhow::bail!("stalled observer must never accept a response")
+        }
+    }
 
     #[test]
     fn fallback_url_preserves_authority_and_path() {
@@ -1568,11 +1682,17 @@ mod tests {
                 .expect("test listener binds");
             let address = listener.local_addr().expect("listener has an address");
             let (close_seen, close_result) = oneshot::channel();
+            let (allow_reply, reply_allowed) = oneshot::channel();
             tokio::task::spawn_local(async move {
                 let (stream, _) = listener.accept().await.expect("server accepts client");
                 let mut socket = accept_async(stream).await.expect("server upgrades client");
                 let is_close = matches!(socket.next().await, Some(Ok(Message::Close(_))));
                 let _ = close_seen.send(is_close);
+                reply_allowed.await.expect("test releases reciprocal close");
+                socket
+                    .flush()
+                    .await
+                    .expect("server flushes reciprocal Close");
             });
 
             let clock: Rc<dyn Clock> = RealClock::new();
@@ -1608,15 +1728,181 @@ mod tests {
                 socket,
             });
 
-            WorkerSink::shutdown(&sink)
+            let shutdown = WorkerSink::shutdown(&sink);
+            tokio::pin!(shutdown);
+            let has_close = tokio::select! {
+                result = &mut shutdown => panic!(
+                    "shutdown completed before reciprocal Close was allowed: {result:?}"
+                ),
+                result = tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    close_result,
+                ) => result
+                    .expect("server observes shutdown")
+                    .expect("server reports close"),
+            };
+            assert!(has_close);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), &mut shutdown)
+                    .await
+                    .is_err(),
+                "shutdown must wait for the reciprocal Close rather than only flush its own frame"
+            );
+            allow_reply.send(()).expect("test releases server reply");
+            tokio::time::timeout(std::time::Duration::from_secs(1), &mut shutdown)
                 .await
+                .expect("reciprocal close completes before the Clock bound")
                 .expect("worker shutdown succeeds");
             assert!(sink.idle.borrow().is_empty());
+        });
+    }
+
+    #[test]
+    fn close_handshake_stops_at_the_clock_deadline_when_peer_is_silent() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("test listener binds");
+            let address = listener.local_addr().expect("listener has an address");
+            let (close_seen, close_result) = oneshot::channel();
+            tokio::task::spawn_local(async move {
+                let (stream, _) = listener.accept().await.expect("server accepts client");
+                let mut socket = accept_async(stream).await.expect("server upgrades client");
+                let is_close = matches!(socket.next().await, Some(Ok(Message::Close(_))));
+                let _ = close_seen.send(is_close);
+                std::future::pending::<()>().await;
+            });
+
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let url =
+                Url::parse(&format!("ws://{address}/v1/responses")).expect("test URL is valid");
+            let socket = connect(
+                &url,
+                &BTreeMap::new(),
+                &crate::transport::http::config::ClientConfig::default(),
+                WebSocketConfig::default(),
+                clock.clone(),
+                None,
+            )
+            .await
+            .expect("client upgrades server");
+            let deadline_ns = clock.now_ns().saturating_add(20_000_000);
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                close_socket(socket, clock, Some(deadline_ns)),
+            )
+            .await
+            .expect("silent peer cannot hold shutdown past its Clock deadline");
             assert!(
-                tokio::time::timeout(std::time::Duration::from_secs(1), close_result)
+                close_result
                     .await
-                    .expect("server observes shutdown")
-                    .expect("server reports close")
+                    .expect("server reports whether it received Close")
+            );
+        });
+    }
+
+    #[test]
+    fn stalled_response_observer_does_not_suspend_pong_or_operation_deadline() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("test listener binds");
+            let address = listener.local_addr().expect("listener has an address");
+            let (pong_seen, pong_result) = oneshot::channel();
+            tokio::task::spawn_local(async move {
+                let (stream, _) = listener.accept().await.expect("server accepts client");
+                let mut socket = accept_async(stream).await.expect("server upgrades client");
+                loop {
+                    match socket.next().await {
+                        Some(Ok(Message::Text(_))) => break,
+                        Some(Ok(_)) => {}
+                        Some(Err(error)) => panic!("server read failed: {error}"),
+                        None => panic!("client closed before its application message"),
+                    }
+                }
+                socket
+                    .send(Message::Ping(Bytes::from_static(b"observer")))
+                    .await
+                    .expect("server sends Ping");
+                let has_pong = loop {
+                    match socket.next().await {
+                        Some(Ok(Message::Pong(payload))) => {
+                            break payload == Bytes::from_static(b"observer");
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(_)) | None => break false,
+                    }
+                };
+                let _ = pong_seen.send(has_pong);
+                std::future::pending::<()>().await;
+            });
+
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let url =
+                Url::parse(&format!("ws://{address}/v1/responses")).expect("test URL is valid");
+            let socket = connect(
+                &url,
+                &BTreeMap::new(),
+                &crate::transport::http::config::ClientConfig::default(),
+                WebSocketConfig::default(),
+                clock.clone(),
+                None,
+            )
+            .await
+            .expect("client upgrades server");
+            let operation = PreparedWsOperation::new(
+                [PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"response.create"}"#),
+                    PreparedWsMessageRole::MeasuredInput,
+                )],
+                None,
+            );
+            let now_ns = clock.now_ns();
+            let mut driver = SocketOperationDriver::start(
+                socket,
+                clock,
+                &operation,
+                ApplicationQueueLimits::new(1, 64),
+                DriverTiming {
+                    deadline_ns: Some(now_ns.saturating_add(50_000_000)),
+                    rotation_deadline_ns: now_ns.saturating_add(1_000_000_000),
+                    ping_interval_ns: 1_000_000_000,
+                    stream_idle_timeout_ns: 1_000_000_000,
+                    cancel_after_ns: None,
+                },
+                64,
+            )
+            .expect("driver starts");
+            while !matches!(driver.next().await.unwrap(), DriverEvent::Flushed { .. }) {}
+            let mut pending = Some(crate::endpoints::ParsedResponse {
+                perf_ns: 1,
+                data: None,
+                usage: None,
+                sources: None,
+            });
+            let failure = next_while_delivering_response(
+                &mut driver,
+                &mut pending,
+                Some(&StalledResponseObserver),
+                &TurnOperationState::default(),
+            )
+            .await
+            .expect_err("operation deadline must remain live");
+
+            assert_eq!(failure.kind, ErrorKind::Timeout);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), pong_result)
+                    .await
+                    .expect("server observes control progress")
+                    .expect("server received the Pong")
             );
         });
     }
@@ -1639,6 +1925,29 @@ mod tests {
             transport_fallback_reason(FallbackReason::UnsupportedUpgrade).as_str(),
             "unsupported_upgrade"
         );
+    }
+
+    #[test]
+    fn cancellation_has_canceled_terminal_and_raw_timestamp() {
+        assert_eq!(
+            failure_terminal(ErrorKind::Cancelled),
+            ReplayTerminalStatus::Canceled
+        );
+        assert_eq!(
+            cancellation_timestamp(ReplayTerminalStatus::Canceled, 42),
+            Some(42)
+        );
+        assert_eq!(
+            failure_terminal(ErrorKind::Timeout),
+            ReplayTerminalStatus::Failed
+        );
+        assert_eq!(
+            cancellation_timestamp(ReplayTerminalStatus::Failed, 42),
+            None
+        );
+        let mut raw_record = RequestRecord::started(1);
+        raw_record.cancellation_ns = cancellation_timestamp(ReplayTerminalStatus::Canceled, 42);
+        assert!(raw_record.was_cancelled());
     }
 
     #[test]

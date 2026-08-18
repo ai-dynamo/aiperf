@@ -1828,6 +1828,7 @@ pub(crate) struct ConnectionScenario {
     has_uncommitted_realtime_audio: bool,
     realtime_commit_ns: Option<i64>,
     has_interleaved_output: bool,
+    realtime_response_id: Option<String>,
     content_events: u32,
     first_content_delay_ns: i64,
     content_interval_ns: i64,
@@ -1848,6 +1849,7 @@ impl ConnectionScenario {
             has_uncommitted_realtime_audio: false,
             realtime_commit_ns: None,
             has_interleaved_output: false,
+            realtime_response_id: None,
             content_events: config.websocket_content_events,
             first_content_delay_ns: ms_to_ns(config.websocket_first_content_delay_ms),
             content_interval_ns: ms_to_ns(config.websocket_content_interval_ms),
@@ -1929,7 +1931,11 @@ impl ConnectionScenario {
                             first_content_ns.saturating_add(
                                 self.content_interval_ns.saturating_mul(i64::from(index)),
                             ),
-                            serde_json::json!({"type":"response.output_text.delta","delta":"mock"}),
+                            serde_json::json!({
+                                "type":"response.output_text.delta",
+                                "response_id":response_id.clone(),
+                                "delta":"mock"
+                            }),
                         ));
                     }
                 }
@@ -2002,10 +2008,27 @@ impl ConnectionScenario {
                     && !self.has_interleaved_output
                 {
                     self.has_interleaved_output = true;
-                    return Ok(vec![self.text_action(
-                        input_complete_ns,
-                        serde_json::json!({"type":"response.output_text.delta","delta":"mock"}),
-                    )]);
+                    self.next_turn = self.next_turn.saturating_add(1);
+                    let response_id =
+                        format!("mock-realtime-{}-{}", self.connection_id, self.next_turn);
+                    self.realtime_response_id = Some(response_id.clone());
+                    return Ok(vec![
+                        self.text_action(
+                            input_complete_ns,
+                            serde_json::json!({
+                                "type":"response.created",
+                                "response":{"id":response_id,"status":"in_progress"}
+                            }),
+                        ),
+                        self.text_action(
+                            input_complete_ns,
+                            serde_json::json!({
+                                "type":"response.output_text.delta",
+                                "response_id":response_id,
+                                "delta":"mock"
+                            }),
+                        ),
+                    ]);
                 }
                 Ok(Vec::new())
             }
@@ -2025,6 +2048,25 @@ impl ConnectionScenario {
                 })?;
                 let first_content_ns = commit_ns.saturating_add(self.first_content_delay_ns);
                 let mut actions = Vec::new();
+                let response_id = match self.realtime_response_id.clone() {
+                    Some(response_id) => response_id,
+                    None => {
+                        self.next_turn = self.next_turn.saturating_add(1);
+                        let response_id =
+                            format!("mock-realtime-{}-{}", self.connection_id, self.next_turn);
+                        self.realtime_response_id = Some(response_id.clone());
+                        response_id
+                    }
+                };
+                if !self.has_interleaved_output {
+                    actions.push(self.text_action(
+                        input_complete_ns,
+                        serde_json::json!({
+                            "type":"response.created",
+                            "response":{"id":response_id,"status":"in_progress"}
+                        }),
+                    ));
+                }
                 self.append_control(&mut actions);
                 if self.scenario != WebSocketScenario::DoneOnly {
                     for index in 0..self.content_events.max(1) {
@@ -2032,7 +2074,11 @@ impl ConnectionScenario {
                             first_content_ns.saturating_add(
                                 self.content_interval_ns.saturating_mul(i64::from(index)),
                             ),
-                            serde_json::json!({"type":"response.output_text.delta","delta":"mock"}),
+                            serde_json::json!({
+                                "type":"response.output_text.delta",
+                                "response_id":response_id,
+                                "delta":"mock"
+                            }),
                         ));
                     }
                     actions.push(
@@ -2041,7 +2087,11 @@ impl ConnectionScenario {
                                 self.content_interval_ns
                                     .saturating_mul(i64::from(self.content_events.max(1))),
                             ),
-                            serde_json::json!({"type":"response.output_audio.delta","delta":"AAE="}),
+                            serde_json::json!({
+                                "type":"response.output_audio.delta",
+                                "response_id":response_id,
+                                "delta":"AAE="
+                            }),
                         ),
                     );
                 }
@@ -2060,7 +2110,7 @@ impl ConnectionScenario {
                     serde_json::json!({
                         "type":"response.done",
                         "response":{
-                            "id":"mock-realtime",
+                            "id":response_id,
                             "object":"realtime.response",
                             "status":"completed",
                             "output":[{
@@ -2082,6 +2132,7 @@ impl ConnectionScenario {
                 self.has_realtime_input = false;
                 self.has_uncommitted_realtime_audio = false;
                 self.has_interleaved_output = false;
+                self.realtime_response_id = None;
                 Ok(actions)
             }
             _ => Err(ProtocolError::new("event is invalid for Realtime")),

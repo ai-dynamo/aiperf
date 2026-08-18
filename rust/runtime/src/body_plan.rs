@@ -789,6 +789,8 @@ impl PreparedWsMessage {
 pub struct PreparedWsOperation {
     messages: Box<[PreparedWsMessage]>,
     http_sse_fallback_body: Option<Bytes>,
+    input_projection: Option<Bytes>,
+    requires_affinity_state: bool,
 }
 
 /// Failure to serialize one prepared WebSocket operation for an artifact.
@@ -835,7 +837,15 @@ impl PreparedWsOperation {
         Self {
             messages: messages.into_iter().collect(),
             http_sse_fallback_body,
+            input_projection: None,
+            requires_affinity_state: false,
         }
+    }
+
+    /// Retain the endpoint request body used for input extraction and counting.
+    pub fn with_input_projection(mut self, input_projection: Bytes) -> Self {
+        self.input_projection = Some(input_projection);
+        self
     }
 
     /// Borrow the complete application messages in send order.
@@ -846,6 +856,35 @@ impl PreparedWsOperation {
     /// Borrow the equivalent HTTP/SSE request body when the dialect prepared one.
     pub fn http_sse_fallback_body(&self) -> Option<&Bytes> {
         self.http_sse_fallback_body.as_ref()
+    }
+
+    /// Borrow the endpoint request body used for input extraction and counting.
+    pub fn input_projection(&self) -> Option<&Bytes> {
+        self.input_projection.as_ref()
+    }
+
+    /// Mark that this operation contains only a continuation turn.
+    pub fn requiring_affinity_state(mut self) -> Self {
+        self.requires_affinity_state = true;
+        self
+    }
+
+    /// Whether dispatch must use the logical session's affinity-bound socket.
+    pub fn requires_affinity_state(&self) -> bool {
+        self.requires_affinity_state
+    }
+
+    /// Replace the application messages while retaining operation metadata.
+    pub(crate) fn with_messages(
+        &self,
+        messages: impl IntoIterator<Item = PreparedWsMessage>,
+    ) -> Self {
+        Self {
+            messages: messages.into_iter().collect(),
+            http_sse_fallback_body: self.http_sse_fallback_body.clone(),
+            input_projection: self.input_projection.clone(),
+            requires_affinity_state: self.requires_affinity_state,
+        }
     }
 
     /// Serialize the complete ordered operation into the canonical artifact envelope.

@@ -1273,7 +1273,11 @@ impl NativeSessionBackend {
                 let (_, endpoint) = &prepared_endpoint;
                 // Opaque bodies report absent as 0 at the u64 counter boundary for now.
                 let materialized_body = match &materialized.body {
-                    RequestBody::WebSocket(operation) => operation.to_artifact_bytes()?,
+                    RequestBody::WebSocket(operation) => {
+                        operation.input_projection().cloned().ok_or_else(|| {
+                            anyhow!("WebSocket operation has no input-counting projection")
+                        })?
+                    }
                     body => body.to_wire()?,
                 };
                 let counted = self.input_token_counter.count_materialized_input_tokens(

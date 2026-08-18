@@ -17,25 +17,44 @@ use crate::transport::ws::RoundTripTimingState;
 /// One complete Responses application event.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ResponsesEvent {
+    /// The server-assigned identity for this logical response.
+    Created { response_id: String },
     /// Non-empty user-visible content.
-    Content(Bytes),
+    Content { response_id: String, content: Bytes },
     /// Non-visible reasoning delta.
-    Reasoning,
+    Reasoning { response_id: String },
     /// Binary audio carried inside a Realtime JSON event.
-    Audio,
+    Audio { response_id: String },
     /// Endpoint usage envelope.
-    Usage(ObservedUsage),
+    Usage {
+        response_id: String,
+        usage: ObservedUsage,
+    },
     /// A continuation identity was rejected before visible output.
     RetriableContinuationRejection,
     /// Logical operation completion.
     Terminal {
-        response_id: Option<String>,
+        response_id: String,
         usage: ObservedUsage,
         content: Bytes,
         status: ReplayTerminalStatus,
     },
     /// A control or irrelevant application envelope.
     Ignored,
+}
+
+fn response_id(event: &Value, context: &str) -> anyhow::Result<String> {
+    event
+        .get("response_id")
+        .or_else(|| {
+            event
+                .get("response")
+                .and_then(|response| response.get("id"))
+        })
+        .and_then(Value::as_str)
+        .filter(|identity| !identity.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("{context} has no response identity"))
 }
 
 /// Classify one complete Responses text message.
@@ -52,20 +71,25 @@ pub(crate) fn classify_responses_event(
         .and_then(Value::as_str)
         .unwrap_or_default();
     match kind {
-        "response.output_text.delta" => Ok(event
-            .get("delta")
-            .and_then(Value::as_str)
-            .filter(|delta| !delta.is_empty())
-            .map_or(ResponsesEvent::Ignored, |delta| {
-                ResponsesEvent::Content(Bytes::copy_from_slice(delta.as_bytes()))
-            })),
-        "response.reasoning.delta" => Ok(ResponsesEvent::Reasoning),
-        "response.completed" => Ok(ResponsesEvent::Terminal {
-            response_id: event
-                .get("response")
-                .and_then(|response| response.get("id"))
+        "response.created" => Ok(ResponsesEvent::Created {
+            response_id: response_id(&event, "response.created")?,
+        }),
+        "response.output_text.delta" => {
+            let response_id = response_id(&event, "response.output_text.delta")?;
+            Ok(event
+                .get("delta")
                 .and_then(Value::as_str)
-                .map(str::to_owned),
+                .filter(|delta| !delta.is_empty())
+                .map_or(ResponsesEvent::Ignored, |delta| ResponsesEvent::Content {
+                    response_id,
+                    content: Bytes::copy_from_slice(delta.as_bytes()),
+                }))
+        }
+        "response.reasoning.delta" => Ok(ResponsesEvent::Reasoning {
+            response_id: response_id(&event, "response.reasoning.delta")?,
+        }),
+        "response.completed" => Ok(ResponsesEvent::Terminal {
+            response_id: response_id(&event, "response.completed")?,
             usage: observed_usage(event.get("usage").or_else(|| {
                 event
                     .get("response")
@@ -74,13 +98,8 @@ pub(crate) fn classify_responses_event(
             content: terminal_content(&event),
             status: ReplayTerminalStatus::Completed,
         }),
-        "response.failed" | "error" => anyhow::bail!("Responses WebSocket operation failed"),
-        "response.incomplete" => Ok(ResponsesEvent::Terminal {
-            response_id: event
-                .get("response")
-                .and_then(|response| response.get("id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+        "response.failed" => Ok(ResponsesEvent::Terminal {
+            response_id: response_id(&event, "response.failed")?,
             usage: observed_usage(event.get("usage").or_else(|| {
                 event
                     .get("response")
@@ -89,13 +108,25 @@ pub(crate) fn classify_responses_event(
             content: terminal_content(&event),
             status: ReplayTerminalStatus::Failed,
         }),
-        "response.usage" => Ok(ResponsesEvent::Usage(observed_usage(
-            event.get("usage").or_else(|| {
+        "error" => anyhow::bail!("Responses WebSocket operation failed"),
+        "response.incomplete" => Ok(ResponsesEvent::Terminal {
+            response_id: response_id(&event, "response.incomplete")?,
+            usage: observed_usage(event.get("usage").or_else(|| {
                 event
                     .get("response")
                     .and_then(|response| response.get("usage"))
-            }),
-        ))),
+            })),
+            content: terminal_content(&event),
+            status: ReplayTerminalStatus::Failed,
+        }),
+        "response.usage" => Ok(ResponsesEvent::Usage {
+            response_id: response_id(&event, "response.usage")?,
+            usage: observed_usage(event.get("usage").or_else(|| {
+                event
+                    .get("response")
+                    .and_then(|response| response.get("usage"))
+            })),
+        }),
         "response.continuation_rejected" => Ok(ResponsesEvent::RetriableContinuationRejection),
         _ => Ok(ResponsesEvent::Ignored),
     }
@@ -117,14 +148,23 @@ pub(crate) fn classify_realtime_event(
         .and_then(Value::as_str)
         .unwrap_or_default()
     {
-        "response.output_text.delta" => Ok(event
-            .get("delta")
-            .and_then(Value::as_str)
-            .filter(|delta| !delta.is_empty())
-            .map_or(ResponsesEvent::Ignored, |delta| {
-                ResponsesEvent::Content(Bytes::copy_from_slice(delta.as_bytes()))
-            })),
-        "response.output_audio.delta" => Ok(ResponsesEvent::Audio),
+        "response.created" => Ok(ResponsesEvent::Created {
+            response_id: response_id(&event, "response.created")?,
+        }),
+        "response.output_text.delta" => {
+            let response_id = response_id(&event, "response.output_text.delta")?;
+            Ok(event
+                .get("delta")
+                .and_then(Value::as_str)
+                .filter(|delta| !delta.is_empty())
+                .map_or(ResponsesEvent::Ignored, |delta| ResponsesEvent::Content {
+                    response_id,
+                    content: Bytes::copy_from_slice(delta.as_bytes()),
+                }))
+        }
+        "response.output_audio.delta" => Ok(ResponsesEvent::Audio {
+            response_id: response_id(&event, "response.output_audio.delta")?,
+        }),
         "response.done" => {
             let response = event
                 .get("response")
@@ -139,10 +179,7 @@ pub(crate) fn classify_realtime_event(
                 None => anyhow::bail!("Realtime response.done has no response status"),
             };
             Ok(ResponsesEvent::Terminal {
-                response_id: response
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
+                response_id: response_id(&event, "response.done")?,
                 usage: observed_usage(event.get("usage").or_else(|| response.get("usage"))),
                 content: terminal_content(&event),
                 status,
@@ -173,10 +210,7 @@ pub(crate) fn full_history_retry(request: &PreparedWsOperation) -> Option<Prepar
             ))
         })
         .collect::<Option<Vec<_>>>()?;
-    Some(PreparedWsOperation::new(
-        messages,
-        request.http_sse_fallback_body().cloned(),
-    ))
+    Some(request.with_messages(messages))
 }
 
 /// Bind a prepared Responses operation to the preceding response on its
@@ -212,46 +246,7 @@ pub(crate) fn with_previous_response_id(
             ))
         })
         .collect::<Option<Vec<_>>>()?;
-    Some(PreparedWsOperation::new(
-        messages,
-        request.http_sse_fallback_body().cloned(),
-    ))
-}
-
-/// Select only the input added after the last assistant item for a Realtime
-/// conversation already resident on its exact affinity-owned socket.
-pub(crate) fn incremental_realtime_operation(
-    request: &PreparedWsOperation,
-) -> Option<PreparedWsOperation> {
-    let last_assistant = request
-        .messages()
-        .iter()
-        .rposition(is_realtime_assistant_item)?;
-    let messages = request.messages().get(last_assistant.saturating_add(1)..)?;
-    messages
-        .iter()
-        .any(|message| message.role() == PreparedWsMessageRole::MeasuredInput)
-        .then(|| {
-            PreparedWsOperation::new(
-                messages.iter().cloned(),
-                request.http_sse_fallback_body().cloned(),
-            )
-        })
-}
-
-fn is_realtime_assistant_item(message: &PreparedWsMessage) -> bool {
-    if message.opcode() != PreparedWsOpcode::Text {
-        return false;
-    }
-    let Ok(event) = serde_json::from_slice::<Value>(message.payload()) else {
-        return false;
-    };
-    event.get("type").and_then(Value::as_str) == Some("conversation.item.create")
-        && event
-            .get("item")
-            .and_then(|item| item.get("role"))
-            .and_then(Value::as_str)
-            == Some("assistant")
+    Some(request.with_messages(messages))
 }
 
 /// Scalar lifecycle state for one turn-serialized operation.
@@ -262,6 +257,7 @@ pub(crate) struct TurnOperationState {
     visible_content_digest: blake3::Hasher,
     has_observer_fact: bool,
     has_terminal: bool,
+    response_id: Option<String>,
 }
 
 impl TurnOperationState {
@@ -269,13 +265,46 @@ impl TurnOperationState {
         self.timing.on_measured_input_flushed(timestamp_ns);
     }
 
-    pub(crate) fn on_event(&mut self, event: &ResponsesEvent, _timestamp_ns: i64) -> bool {
+    pub(crate) fn on_event(
+        &mut self,
+        event: &ResponsesEvent,
+        _timestamp_ns: i64,
+    ) -> anyhow::Result<bool> {
+        match event {
+            ResponsesEvent::Created { response_id } => match self.response_id.as_deref() {
+                None => self.response_id = Some(response_id.clone()),
+                Some(bound) if bound == response_id => {
+                    anyhow::bail!("websocket response identity {response_id:?} was created twice")
+                }
+                Some(bound) => anyhow::bail!(
+                    "websocket response identity changed from {bound:?} to {response_id:?}"
+                ),
+            },
+            ResponsesEvent::Content { response_id, .. }
+            | ResponsesEvent::Reasoning { response_id }
+            | ResponsesEvent::Audio { response_id }
+            | ResponsesEvent::Usage { response_id, .. }
+            | ResponsesEvent::Terminal { response_id, .. } => {
+                let bound = self.response_id.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "websocket response event {response_id:?} arrived before response.created"
+                    )
+                })?;
+                if bound != response_id {
+                    anyhow::bail!(
+                        "websocket response identity mismatch: expected {bound:?}, received {response_id:?}"
+                    );
+                }
+            }
+            ResponsesEvent::RetriableContinuationRejection | ResponsesEvent::Ignored => {}
+        }
         if matches!(
             event,
-            ResponsesEvent::Content(_)
-                | ResponsesEvent::Reasoning
-                | ResponsesEvent::Audio
-                | ResponsesEvent::Usage(_)
+            ResponsesEvent::Created { .. }
+                | ResponsesEvent::Content { .. }
+                | ResponsesEvent::Reasoning { .. }
+                | ResponsesEvent::Audio { .. }
+                | ResponsesEvent::Usage { .. }
                 | ResponsesEvent::Terminal { .. }
         ) {
             self.has_observer_fact = true;
@@ -283,7 +312,7 @@ impl TurnOperationState {
         if matches!(event, ResponsesEvent::Terminal { .. }) {
             self.has_terminal = true;
         }
-        self.has_terminal
+        Ok(self.has_terminal)
     }
 
     /// Return only content bytes not already emitted by earlier deltas.
@@ -296,7 +325,7 @@ impl TurnOperationState {
             return Ok(None);
         };
         let visible = match event {
-            ResponsesEvent::Content(_) => content.clone(),
+            ResponsesEvent::Content { .. } => content.clone(),
             ResponsesEvent::Terminal { .. } => {
                 if content.len() < self.visible_content_bytes {
                     anyhow::bail!(
@@ -304,7 +333,7 @@ impl TurnOperationState {
                     );
                 }
                 let terminal_prefix = blake3::hash(&content[..self.visible_content_bytes]);
-                if terminal_prefix != self.visible_content_digest.clone().finalize() {
+                if terminal_prefix != self.visible_content_digest.finalize() {
                     anyhow::bail!("websocket terminal snapshot does not match its streamed prefix");
                 }
                 content.slice(self.visible_content_bytes..)
@@ -342,7 +371,7 @@ impl TurnOperationState {
 impl ResponsesEvent {
     pub(crate) fn content(&self) -> Option<&Bytes> {
         match self {
-            Self::Content(content) | Self::Terminal { content, .. } => Some(content),
+            Self::Content { content, .. } | Self::Terminal { content, .. } => Some(content),
             _ => None,
         }
     }
@@ -398,11 +427,14 @@ mod tests {
     fn responses_content_and_terminal_are_distinct() {
         assert_eq!(
             classify_responses_event(
-                br#"{"type":"response.output_text.delta","delta":"hello"}"#,
+                br#"{"type":"response.output_text.delta","response_id":"r1","delta":"hello"}"#,
                 true,
             )
             .expect("content event is valid"),
-            ResponsesEvent::Content(Bytes::from_static(b"hello"))
+            ResponsesEvent::Content {
+                response_id: "r1".to_owned(),
+                content: Bytes::from_static(b"hello"),
+            }
         );
         assert!(matches!(
             classify_responses_event(
@@ -411,6 +443,64 @@ mod tests {
             ),
             Ok(ResponsesEvent::Terminal { .. })
         ));
+    }
+
+    #[test]
+    fn response_created_is_not_ignored_before_correlated_output() {
+        let created = classify_responses_event(
+            br#"{"type":"response.created","response":{"id":"r1","status":"in_progress"}}"#,
+            true,
+        )
+        .expect("created event is valid");
+
+        assert_ne!(created, ResponsesEvent::Ignored);
+    }
+
+    #[test]
+    fn output_delta_without_response_identity_is_rejected() {
+        let error = classify_responses_event(
+            br#"{"type":"response.output_text.delta","delta":"hello"}"#,
+            true,
+        )
+        .expect_err("uncorrelated output must not be attributed by socket order");
+
+        assert!(error.to_string().contains("response identity"));
+    }
+
+    #[test]
+    fn response_identity_mismatch_is_rejected_before_attribution() {
+        let mut state = TurnOperationState::default();
+        state
+            .on_event(
+                &ResponsesEvent::Created {
+                    response_id: "expected".to_owned(),
+                },
+                1,
+            )
+            .expect("created identity binds");
+        let error = state
+            .on_event(
+                &ResponsesEvent::Content {
+                    response_id: "stale".to_owned(),
+                    content: Bytes::from_static(b"wrong"),
+                },
+                2,
+            )
+            .expect_err("stale socket output must not be attributed");
+
+        assert!(error.to_string().contains("identity mismatch"));
+        assert!(
+            state
+                .content_for_observation(
+                    &ResponsesEvent::Content {
+                        response_id: "expected".to_owned(),
+                        content: Bytes::from_static(b"right"),
+                    },
+                    3,
+                )
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -472,9 +562,12 @@ mod tests {
     #[test]
     fn streamed_text_is_not_repeated_by_terminal_snapshot() {
         let mut state = TurnOperationState::default();
-        let delta = ResponsesEvent::Content(Bytes::from_static(b"hello "));
+        let delta = ResponsesEvent::Content {
+            response_id: "r1".to_owned(),
+            content: Bytes::from_static(b"hello "),
+        };
         let terminal = ResponsesEvent::Terminal {
-            response_id: Some("r1".to_owned()),
+            response_id: "r1".to_owned(),
             usage: ObservedUsage::default(),
             content: Bytes::from_static(b"hello world"),
             status: ReplayTerminalStatus::Completed,
@@ -492,9 +585,12 @@ mod tests {
     #[test]
     fn terminal_snapshot_must_extend_the_exact_streamed_prefix() {
         let mut state = TurnOperationState::default();
-        let delta = ResponsesEvent::Content(Bytes::from_static(b"hello"));
+        let delta = ResponsesEvent::Content {
+            response_id: "r1".to_owned(),
+            content: Bytes::from_static(b"hello"),
+        };
         let terminal = ResponsesEvent::Terminal {
-            response_id: Some("r1".to_owned()),
+            response_id: "r1".to_owned(),
             usage: ObservedUsage::default(),
             content: Bytes::from_static(b"jello world"),
             status: ReplayTerminalStatus::Completed,
@@ -546,42 +642,6 @@ mod tests {
     }
 
     #[test]
-    fn realtime_affinity_reuse_sends_only_items_after_last_assistant() {
-        let request = PreparedWsOperation::new(
-            [
-                PreparedWsMessage::text(
-                    Bytes::from_static(br#"{"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":"old"}]}}"#),
-                    PreparedWsMessageRole::MeasuredInput,
-                ),
-                PreparedWsMessage::text(
-                    Bytes::from_static(br#"{"type":"conversation.item.create","item":{"type":"message","role":"assistant","content":[{"type":"input_text","text":"answer"}]}}"#),
-                    PreparedWsMessageRole::MeasuredInput,
-                ),
-                PreparedWsMessage::text(
-                    Bytes::from_static(br#"{"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":"new"}]}}"#),
-                    PreparedWsMessageRole::MeasuredInput,
-                ),
-                PreparedWsMessage::text(
-                    Bytes::from_static(br#"{"type":"response.create"}"#),
-                    PreparedWsMessageRole::Control,
-                ),
-            ],
-            None,
-        );
-
-        let incremental = incremental_realtime_operation(&request)
-            .expect("full history contains an incremental Realtime suffix");
-        assert_eq!(incremental.messages().len(), 2);
-        let input: Value = serde_json::from_slice(incremental.messages()[0].payload())
-            .expect("incremental item is JSON");
-        assert_eq!(input["item"]["role"], "user");
-        assert_eq!(input["item"]["content"][0]["text"], "new");
-        let response: Value = serde_json::from_slice(incremental.messages()[1].payload())
-            .expect("response request is JSON");
-        assert_eq!(response["type"], "response.create");
-    }
-
-    #[test]
     fn incomplete_terminal_is_failed_and_never_retryable() {
         let event = classify_responses_event(
             br#"{"type":"response.incomplete","response":{"id":"r1"}}"#,
@@ -596,7 +656,15 @@ mod tests {
             }
         ));
         let mut state = TurnOperationState::default();
-        assert!(state.on_event(&event, 10));
+        state
+            .on_event(
+                &ResponsesEvent::Created {
+                    response_id: "r1".to_owned(),
+                },
+                9,
+            )
+            .unwrap();
+        assert!(state.on_event(&event, 10).unwrap());
         assert!(!state.can_retry());
         assert_eq!(
             state.finish(ReplayTerminalStatus::Failed),
@@ -607,11 +675,24 @@ mod tests {
     #[test]
     fn reasoning_or_usage_disables_automatic_replay() {
         for event in [
-            ResponsesEvent::Reasoning,
-            ResponsesEvent::Usage(ObservedUsage::default()),
+            ResponsesEvent::Reasoning {
+                response_id: "r1".to_owned(),
+            },
+            ResponsesEvent::Usage {
+                response_id: "r1".to_owned(),
+                usage: ObservedUsage::default(),
+            },
         ] {
             let mut state = TurnOperationState::default();
-            state.on_event(&event, 10);
+            state
+                .on_event(
+                    &ResponsesEvent::Created {
+                        response_id: "r1".to_owned(),
+                    },
+                    9,
+                )
+                .unwrap();
+            state.on_event(&event, 10).unwrap();
             assert!(!state.can_retry());
         }
     }
@@ -620,11 +701,14 @@ mod tests {
     fn realtime_text_and_terminal_events_are_distinct() {
         assert_eq!(
             classify_realtime_event(
-                br#"{"type":"response.output_text.delta","delta":"hello"}"#,
+                br#"{"type":"response.output_text.delta","response_id":"r1","delta":"hello"}"#,
                 true,
             )
             .expect("Realtime text event is valid"),
-            ResponsesEvent::Content(Bytes::from_static(b"hello"))
+            ResponsesEvent::Content {
+                response_id: "r1".to_owned(),
+                content: Bytes::from_static(b"hello"),
+            }
         );
         assert!(matches!(
             classify_realtime_event(
@@ -642,11 +726,13 @@ mod tests {
     fn realtime_audio_is_an_observer_fact_without_a_text_token() {
         assert_eq!(
             classify_realtime_event(
-                br#"{"type":"response.output_audio.delta","delta":"AAE="}"#,
+                br#"{"type":"response.output_audio.delta","response_id":"r1","delta":"AAE="}"#,
                 true,
             )
             .expect("Realtime audio event is valid"),
-            ResponsesEvent::Audio
+            ResponsesEvent::Audio {
+                response_id: "r1".to_owned(),
+            }
         );
     }
 
