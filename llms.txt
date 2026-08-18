@@ -536,8 +536,13 @@ Transports:
   conforming implementation of the existing plugin seam, and the
   `cp311-abi3-<platform>` wheel retag it forces.
 - [`docs/specs/websocket-transport.md`](docs/specs/websocket-transport.md) — built reusable
-  content, SSE, bidirectional framing, measurement, placement, and registration
-  prerequisites plus the future Clock-injected WebSocket transport contract.
+  content, SSE, bidirectional message decoding, measurement, placement, and
+  registration prerequisites plus the future Clock-injected WebSocket driver
+  and bounded-state application-event lag contract: compatibility-named
+  last/average round-trip estimators with precise post-flush semantics, dialect
+  correlation, absent-value output rules, turn-serialized versus duplex drivers,
+  replay-safe recovery, public Config-v2 validation, and an interleaved-stream
+  validity boundary.
 - [`docs/specs/sagemaker-runtime-endpoint.md`](docs/specs/sagemaker-runtime-endpoint.md) —
   AWS SageMaker Runtime dialect: `InvokeEndpoint`/
   `InvokeEndpointWithResponseStream` mock-server routes, the AWS
