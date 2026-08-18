@@ -47,20 +47,22 @@ the merged code rather than inferred from PR prose.
 
 ## Future requirements
 
-A Clock-injected `transport_ws` implementation registered alongside the existing
-native transports. It reuses the segment content IR and `BodyPlan` lowering
+A Clock-injected `transport::ws` implementation registered alongside the
+existing native transports. It reuses the segment content IR and `BodyPlan` lowering
 contract (see [dataset.md](dataset.md) and
 [endpoint-body-construction.md](endpoint-body-construction.md)), but it cannot
 defer a handle-bearing `BodyPlan` to `WorkerSink`: the current dispatch boundary
 rejects such a plan because the segment store no longer accompanies it. While
-the store is still in scope, the endpoint-specific lowerer therefore produces a
-transport-neutral `WebSocketRequestPlan` containing immutable, complete
-application messages and their logical roles. A new
-`RequestBody::WebSocket(Arc<WebSocketRequestPlan>)` variant carries that
-handle-free result across dispatch and is accepted only by `transport_ws`;
-`RequestBody::to_wire` and non-WebSocket sinks reject it rather than inventing a
-JSON-body representation. Store-free plans may continue to cross the existing
-`RequestBody::Plan` seam; handle-bearing plans are resolved before it.
+the store is still in scope, a dialect-owned `WsRequestMaterializer` therefore
+produces a handle-free `PreparedWsOperation`: ordered immutable
+`PreparedWsMessage` buffers with their logical roles, plus an independently
+prepared HTTP/SSE request only when the dialect authorizes fallback. The worker
+sink consumes this operation directly; it never reconstructs WebSocket messages
+from `RequestBody::Wire`. Store-free HTTP plans continue to cross the existing
+`RequestBody::Plan` seam; every text/token/media conversion and JSON escaping
+happens before the segment store leaves scope. Realtime audio is first validated
+as base64 wire data rather than assumed to be encoded merely because it is a
+`Payload::Media`.
 
 A dialect may splice bytes already serialized as valid JSON values into an event
 envelope; arbitrary text must be escaped during lowering or emission. The hot
@@ -72,21 +74,22 @@ single-`Full<Bytes>` / `SendCompletion` rule stays HTTP-local and does not apply
 The transport is dialect-neutral; each protocol is its own binding behind the
 registry and must not be conflated:
 
-- **Codex** — the reference turn-serialized dialect. One affinity-bound
-  connection carries one in-flight turn at a time: a request event, streamed
-  output/reasoning events, a terminal event, and an optional terminal
-  acknowledgement. A clean connection is cached across turns. Continuation may
-  use server-side response identity only while the binding can prove that the
-  preceding connection and response state remain usable. It is not the generic
-  OpenAI Responses API.
+- **Responses** — the reference turn-serialized dialect at
+  `wss://api.openai.com/v1/responses`. One affinity-bound connection carries
+  exactly one in-flight `response.create` operation. Its request fields mirror
+  the Responses create body; continuation uses `previous_response_id`; and its
+  streamed event ordering matches the existing Responses SSE decoder. A socket
+  is rotated before sixty minutes and parallel operations use a bounded
+  connection pool.
 - **Realtime** — a distinct dialect: OpenAI's bidirectional voice/text WS with its
   own client/server event schema, response/item correlation, and base64 audio
   inside JSON events (see the
   [Realtime conversations guide](https://developers.openai.com/api/docs/guides/realtime-conversations)).
 
 They share transport mechanics and measurement plumbing — not an event schema,
-connection-affinity rule, recovery contract, or logical-operation identity. The
-generic Responses API, if added, is its own dialect.
+connection-affinity rule, recovery contract, or logical-operation identity.
+Responses may select its equivalent HTTP/SSE fallback before any application
+message is flushed. Realtime has no HTTP/SSE fallback in this contract.
 
 ### Standards constraints
 
@@ -110,19 +113,20 @@ generic Responses API, if added, is its own dialect.
 
 ### Realization onto the seams
 
-- Transport: `tokio-tungstenite` runs in a worker-local connection driver on the
-  worker's `LocalSet`. Driver shape is a dialect property. A turn-serialized
-  binding may keep an unsplit `WebSocketStream`, send one request, and receive
-  until terminal while continuing to service Ping/Pong and cancellation. A
-  genuinely duplex binding must independently poll inbound data and bounded
-  outbound commands, using split halves or an equivalent `select!` driver so a
-  blocked write cannot prevent reads and a pending read cannot prevent audio,
-  control, or cancellation sends. Dialect correlation routes decoded events to
-  in-flight dispatches. The driver owns backpressure, connection-death fanout,
-  and benign-close classification. A binding chooses connection count and
-  session/thread affinity; one socket per worker is not a universal invariant.
-- Security: WSS reuses the authored TLS policy and verification semantics, not
-  an assumed shared HTTP/gRPC connector implementation.
+- Transport: `tokio-tungstenite` is a direct rustls/WebPKI-root dependency and
+  runs in a worker-local connection driver on the worker's `LocalSet`. The
+  driver continuously progresses reads, writes, control frames, cancellation,
+  and deadlines. It uses split read/write halves with bounded byte-accounted
+  queues, or one owner poll state machine that explicitly advances both
+  `Stream::poll_next` and `Sink::{poll_ready,start_send,poll_flush}` in each
+  poll cycle. It must not await `SinkExt::send` in a way that prevents receives.
+  A dispatch drop guard marks its route cancelled and wakes the driver through a
+  nonblocking path independent of the data queue. Shutdown closes admission,
+  fails unsent work, terminates routed operations once, and runs a Clock-bounded
+  close handshake. A binding chooses connection count and session/thread
+  affinity; one socket per worker is not a universal invariant.
+- Security: WSS and any permitted HTTPS fallback share the resolved HTTP TLS
+  verification, custom trust, mTLS, proxy, authentication, and redaction policy.
 - Recovery: first-class and dialect-scoped. Connect/upgrade failure uses the
   shared bounded retry policy. A cached-socket send failure, close before a
   terminal event, idle timeout, or lost continuation state invalidates that
@@ -134,12 +138,15 @@ generic Responses API, if added, is its own dialect.
   attributed, automatic replay is forbidden unless the dialect supplies an
   explicit idempotency contract. A replay starts a new measurement epoch; send
   timestamps from the abandoned attempt do not enter the successful record.
-- Alternative transport: HTTP/SSE is not a universal WebSocket fallback. A
-  binding may declare an equivalent HTTP/SSE operation, in which case selection
-  is allowed only before an application message is successfully sent. It never
-  resumes a partial WebSocket operation. WS-only bindings fail closed. A shared
-  event decoder may consume WS and SSE only after their distinct wire framing is
-  removed.
+- Alternative transport: HTTP/SSE is not a universal WebSocket fallback. One
+  Clock-bounded operation deadline covers retry and fallback. Only allowlisted
+  pre-application network and unsupported-upgrade failures may select a
+  dialect-declared equivalent HTTP/SSE operation. Certificate/hostname errors,
+  authentication/authorization failures, malformed handshakes, required
+  subprotocol mismatches, and application protocol failures fail closed. A
+  continuation unavailable on a fresh socket is rematerialized as full history
+  or fails; incremental input never carries an unusable response identity. Each
+  record reports its actual route and stable fallback reason.
 - Content: `message`/`text`/`token-ids` segments splice into event JSON; Realtime
   audio is a `media` segment base64-encoded once at lowering and spliced by
   reference. Dialects declare whether application messages are text or binary;
@@ -149,8 +156,8 @@ generic Responses API, if added, is its own dialect.
 
 ### Public configuration and capability checks
 
-Config v2 adds this strict transport variant; `fallback` defaults to `disabled`,
-and the two positive finite durations use seconds:
+Config v2 adds this strict transport variant. Every duration and size is finite
+and positive; `fallback` defaults to `disabled`:
 
 ```yaml
 transport:
@@ -158,6 +165,11 @@ transport:
   fallback: disabled        # disabled | http_sse
   ping_interval_seconds: 30
   stream_idle_timeout_seconds: 900
+  max_queued_commands: 64
+  max_queued_bytes: 1048576
+  max_frame_bytes: 1048576
+  max_message_bytes: 8388608
+  max_response_bytes: 67108864
 ```
 
 The existing `endpoint.type` selects a WebSocket-capable dialect. Endpoint URL
@@ -168,7 +180,11 @@ idle cached connection and is distinct from the Ping interval and active-stream
 idle bound above. Protocol v2 carries the same fields plus its existing
 `max_connect_retries` connect policy. UDS is accepted only when the WebSocket
 connector implements it. `endpoint.streaming` does not select WebSocket; the
-transport does.
+transport does. The runtime and CLI expose an explicit `websocket` feature;
+feature-off builds reject `transport.type: websocket`. The first supported
+workloads are scheduled single/multi-turn execution and cellular scheduled
+execution. Graph execution and unsupported artifacts fail closed until their
+own WebSocket contracts are implemented.
 
 Each registered dialect advertises its transport support, connection model
 (`turn_serialized` or `duplex`), supported application opcodes, continuation and

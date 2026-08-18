@@ -537,12 +537,11 @@ Transports:
   `cp311-abi3-<platform>` wheel retag it forces.
 - [`docs/specs/websocket-transport.md`](docs/specs/websocket-transport.md) — built reusable
   content, SSE, bidirectional message decoding, measurement, placement, and
-  registration prerequisites plus the future Clock-injected WebSocket driver
-  and bounded-state application-event lag contract: compatibility-named
-  last/average round-trip estimators with precise post-flush semantics, dialect
-  correlation, absent-value output rules, turn-serialized versus duplex drivers,
-  replay-safe recovery, public Config-v2 validation, and an interleaved-stream
-  validity boundary.
+  registration prerequisites plus the planned Clock-injected WebSocket transport:
+  Responses WS and separate Realtime, pre-dispatch message lowering, bounded
+  read/write/cancellation progress, resource and fallback policy, compatibility-
+  named post-flush application-event lag estimators, Config-v2 validation, and
+  an interleaved-stream validity boundary.
 - [`docs/specs/websocket-mock-server.md`](docs/specs/websocket-mock-server.md) — planned
   deterministic WS/WSS target for the WebSocket transport: typed serialized-turn
   and duplex-Realtime scenarios, analytic application-event timing,
