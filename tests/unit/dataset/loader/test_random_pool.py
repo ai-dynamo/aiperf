@@ -1225,6 +1225,51 @@ class TestRandomPoolBatchSizeWithFileDataset:
             assert turn.texts == []
             assert len(turn.images) == 1
 
+    def test_prompt_batch_size_zero_on_text_only_pool_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """prompt_batch_size=0 against a text-only pool must warn: every modality
+        is suppressed or absent, so every turn is empty and every request will
+        fail downstream with empty content.
+        """
+        run, pool_path = self._make_file_run(tmp_path, prompt_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        data = {"pool.jsonl": [RandomPool(text="query1"), RandomPool(text="query2")]}
+        with caplog.at_level("WARNING", logger="aiperf.dataset.loader.random_pool"):
+            conversations = loader.convert_to_conversations(data)
+
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert turn.texts == []
+            assert turn.images == []
+            assert turn.audios == []
+            assert turn.videos == []
+        assert "no content in any modality" in caplog.text
+
+    def test_prompt_batch_size_zero_with_images_present_does_not_warn(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """prompt_batch_size=0 must not warn when another modality still produces
+        content -- this is the legitimate image/audio/video-only workload case.
+        """
+        run, pool_path = self._make_file_run(
+            tmp_path, prompt_batch_size=0, image_batch_size=1
+        )
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(image="https://example.com/img1.png", text="query1"),
+            ]
+        }
+        with caplog.at_level("WARNING", logger="aiperf.dataset.loader.random_pool"):
+            loader.convert_to_conversations(data)
+
+        assert "no content in any modality" not in caplog.text
+
 
 def _extract_heredoc_lines(doc: str, heredoc_target: str) -> list[str]:
     """Return the body lines of a `cat > <heredoc_target> << 'EOF' ... EOF` block."""

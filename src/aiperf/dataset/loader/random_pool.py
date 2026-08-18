@@ -400,6 +400,24 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         audio_pool = self._build_flat_pool(data, "audio", "audios")
         video_pool = self._build_flat_pool(data, "video", "videos")
 
+        if not (
+            (image_pool and self.batch_size_image > 0)
+            or (text_pool and self.batch_size_text > 0)
+            or (audio_pool and self.batch_size_audio > 0)
+            or (video_pool and self.batch_size_video > 0)
+        ):
+            logger.warning(
+                "random_pool dataset produces turns with no content in any modality: "
+                "every modality is either absent from the pool or has batch_size=0 "
+                "(batch_size_text=%d, batch_size_image=%d, batch_size_audio=%d, "
+                "batch_size_video=%d). Requests will be sent with empty content and "
+                "fail downstream.",
+                self.batch_size_text,
+                self.batch_size_image,
+                self.batch_size_audio,
+                self.batch_size_video,
+            )
+
         conversations = []
         for _ in range(self.num_conversations):
             images: list[Image] = []
