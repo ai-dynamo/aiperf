@@ -1,7 +1,3 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
 ---
 name: aiperf-flow-diagrams
 description: >-
@@ -14,6 +10,10 @@ description: >-
   Covers the full component vocabulary (diagram nodes, prose primitives,
   layout, animation, state), design rules, and a worked example.
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Authoring `apps/aiperf-flow` decks
 

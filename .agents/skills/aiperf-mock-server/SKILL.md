@@ -1,7 +1,3 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
 ---
 name: aiperf-mock-server
 description: >-
@@ -19,6 +15,10 @@ description: >-
   guessing flags the server has many knobs and non-obvious startup gotchas
   (HF tokenizer download, IPv6-vs-IPv4 localhost) that this captures.
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Running the AIPerf Rust mock server
 
