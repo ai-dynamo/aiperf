@@ -167,8 +167,42 @@ The invariant now in force:
 > config, or raises an error naming the flag. It is never silently
 > ignored.
 
-`CLIConfig` is the source of truth. Every one of its fields must be
-classified in
+### `CLIConfig` is the source of truth
+
+The guarantee is scoped to what `resolve_config` can see, and its
+signature is the boundary:
+
+```python
+def resolve_config(cli_config: CLIConfig, config_file: Path | None = None) -> AIPerfConfig
+```
+
+Both entry points — `aiperf profile` and `aiperf service` — call it with
+nothing but their `CLIConfig` and a path. So a CLI option can influence
+the resolved `AIPerfConfig` **only** by being a field on `CLIConfig`,
+and that is a structural property of the call, not a convention someone
+has to remember. It is what lets the classification test enumerate
+`CLIConfig.model_fields` and claim completeness: there is no second
+source of flags for it to miss.
+
+Two consequences worth stating plainly:
+
+- **Command-level parameters are out of scope, by construction.**
+  `aiperf service` declares `--service-id`, `--health-host`,
+  `--health-port` and its `service_type` argument directly on the
+  command function rather than on `CLIConfig`. They are service-instance
+  plumbing, never passed to `resolve_config`, and so cannot be dropped
+  by this mechanism — they never enter it. Anything that *is* benchmark
+  configuration belongs on `CLIConfig`, precisely so this guarantee
+  covers it.
+- **The assumption is falsifiable, and this is how it would break.**
+  Giving `resolve_config` another parameter that carries user intent, or
+  having it read flags from module state or the environment, puts values
+  into the resolved config that no test enumerates. If you need to do
+  that, extend the classification to cover the new source in the same
+  breath — otherwise the suite will keep reporting a completeness it no
+  longer has.
+
+Every field on `CLIConfig` must be classified in
 [`_config_flag_routing.py`](https://github.com/ai-dynamo/aiperf/tree/main/src/aiperf/config/flags/_config_flag_routing.py):
 
 | Set | Meaning |

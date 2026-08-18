@@ -9,6 +9,17 @@ flag outside that subset used to be discarded without a word: a user running
 they asked for and no diagnostic. For a benchmarking tool that silently
 corrupts published numbers.
 
+``CLIConfig`` is the source of truth, and that is structural rather than a
+convention: ``resolve_config`` takes a ``CLIConfig`` and a path, and both
+``aiperf profile`` and ``aiperf service`` call it with nothing else. A flag
+can therefore reach ``AIPerfConfig`` only by being a field on ``CLIConfig``,
+which is what lets the classification test enumerate ``model_fields`` and
+claim completeness. Give ``resolve_config`` another source of user intent
+and that claim quietly stops holding -- extend the classification in the
+same change. (``aiperf service``'s own ``--service-id`` / ``--health-*``
+parameters live on the command, never reach this path, and are out of scope
+by construction.)
+
 This module makes the boundary explicit and enforceable:
 
 ``ROUTED_UNDER_CONFIG``
