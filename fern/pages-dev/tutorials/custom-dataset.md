@@ -466,6 +466,60 @@ benchmark:
 
 ---
 
+## Adding a System Prompt
+
+`--system-prompt` and `--system-prompt-file` attach a fixed system message to every
+conversation. Unlike `--shared-system-prompt-length`, which generates synthetic filler of a
+target token length, these take the **exact text** — so prefix-cache hit rates and TTFT
+reflect the system prompt your deployment actually sends.
+
+They work with every dataset kind: synthetic, file-based, and public.
+
+```bash
+# Inline, for short prompts
+aiperf profile -m Qwen/Qwen3-0.6B --url http://localhost:8000 \
+    --input-file ./data.jsonl \
+    --system-prompt "You are a terse assistant."
+
+# From a file, for real production prompts
+aiperf profile -m Qwen/Qwen3-0.6B --url http://localhost:8000 \
+    --input-file ./data.jsonl \
+    --system-prompt-file ./prod_system.txt
+```
+
+Or in YAML:
+
+```yaml
+dataset:
+  type: file
+  path: ./data.jsonl
+  system_prompt_file: ./prod_system.txt
+```
+
+Behavior worth knowing:
+
+- **Tokens are additive.** With `--isl 1000` and a 350-token system prompt, the request
+  carries roughly 1350 tokens: `--isl` continues to size the generated user prompt only.
+- **A dataset's own system message is kept.** If the dataset already authors one, your text
+  is prepended to it, separated by a blank line, and both are sent as a single system
+  message. Repeated system roles are mishandled by many OpenAI-compatible servers.
+- **The file is read once at startup**, so a missing or unreadable path fails immediately
+  rather than mid-benchmark. Paths containing a symlinked component are rejected — note that
+  on macOS this includes anything under `/tmp` or `$TMPDIR`, since `/var` is itself a symlink.
+- **Supported on `chat`, `responses`, `messages`, and `chat_embeddings`.** Endpoints with no
+  system role (`completions`, `embeddings`, the rankings endpoints) reject the option at
+  startup rather than silently dropping it.
+- **Mutually exclusive** with `--shared-system-prompt-length` and with
+  `--num-prefix-prompts`/`--prefix-prompt-length`, all of which fill the same slot. Setting
+  two of them is rejected at startup rather than one taking precedence, so a misconfigured
+  run fails before sending any requests. It does combine with
+  `--user-context-prompt-length` for a two-tier shared/per-session structure.
+
+> **Note:** `--num-prefix-prompts` and `--prefix-prompt-length` apply only to synthetic
+> datasets — they are dropped for file and public datasets. `--system-prompt` is not.
+
+---
+
 ## Related
 
 - [Multi-Turn Conversations](multi-turn.md) - Multi-turn conversation benchmarking
