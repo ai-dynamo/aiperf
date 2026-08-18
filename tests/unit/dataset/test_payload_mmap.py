@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import orjson
 import pytest
@@ -99,8 +101,8 @@ async def test_conversation_format_returns_none_for_payload_bytes(
 
 @pytest.mark.asyncio
 async def test_concurrent_conversation_reads_do_not_share_mmap_position(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Executor reads must use offsets directly instead of shared seek state."""
     monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
 
@@ -121,29 +123,30 @@ async def test_concurrent_conversation_reads_do_not_share_mmap_position(
     base_mmap = client.data_mmap
 
     class InterleavingMmap:
-        def __init__(self):
+        def __init__(self) -> None:
             self.position = 0
             self.barrier = threading.Barrier(2)
 
-        def __getitem__(self, key):
+        def __getitem__(self, key: int | slice) -> int | bytes:
             return base_mmap[key]
 
-        def seek(self, offset):
+        def seek(self, offset: int) -> None:
             self.position = offset
             self.barrier.wait(timeout=5)
 
-        def read(self, size):
+        def read(self, size: int) -> bytes:
             start = self.position
             self.position += size
             return base_mmap[start : start + size]
 
-        def close(self):
+        def close(self) -> None:
             base_mmap.close()
 
     client.data_mmap = InterleavingMmap()
     with ThreadPoolExecutor(max_workers=2) as executor:
-        conversations = list(
-            executor.map(client.get_conversation, ("conv-a", "conv-b"))
+        conversations = await asyncio.gather(
+            asyncio.wrap_future(executor.submit(client.get_conversation, "conv-a")),
+            asyncio.wrap_future(executor.submit(client.get_conversation, "conv-b")),
         )
 
     assert [conversation.session_id for conversation in conversations] == [
