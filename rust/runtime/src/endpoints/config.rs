@@ -531,22 +531,22 @@ fn validate_url(raw: &str) -> EndpointResult<()> {
     }
     let parsed = Url::parse(raw).map_err(|_| {
         EndpointError::InvalidConfig(format!(
-            "URL {raw:?} is missing scheme or host. Expected an http(s) or grpc(s) URL."
+            "URL {raw:?} is missing scheme or host. Expected an http(s), ws(s), or grpc(s) URL."
         ))
     })?;
     // `dynosim://offline` materializes in process and opens no socket.
     if !matches!(
         parsed.scheme(),
-        "http" | "https" | "grpc" | "grpcs" | "dynosim"
+        "http" | "https" | "ws" | "wss" | "grpc" | "grpcs" | "dynosim"
     ) {
         return Err(EndpointError::InvalidConfig(format!(
-            "URL {raw:?} has unsupported scheme {:?}. Expected 'http', 'https', 'grpc', 'grpcs', or 'dynosim'.",
+            "URL {raw:?} has unsupported scheme {:?}. Expected 'http', 'https', 'ws', 'wss', 'grpc', 'grpcs', or 'dynosim'.",
             parsed.scheme()
         )));
     }
     if parsed.host_str().is_none() {
         return Err(EndpointError::InvalidConfig(format!(
-            "URL {raw:?} is missing scheme or host. Expected an http(s) or grpc(s) URL."
+            "URL {raw:?} is missing scheme or host. Expected an http(s), ws(s), or grpc(s) URL."
         )));
     }
     if let Some(port) = parsed.port()
@@ -629,5 +629,12 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(error.contains("relative"), "{error}");
+    }
+
+    #[test]
+    fn websocket_urls_are_valid_endpoint_targets() {
+        for url in ["ws://127.0.0.1:8080", "wss://example.test/v1/realtime"] {
+            validate_url(url).expect("WebSocket URL is valid");
+        }
     }
 }

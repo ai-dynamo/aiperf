@@ -27,7 +27,7 @@ use crate::endpoints::VllmGenerateFactory;
 use crate::endpoints::config::{EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig};
 use crate::endpoints::implementation::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
-    ResponsesEndpoint,
+    RealtimeEndpoint, ResponsesEndpoint,
 };
 use crate::endpoints::kserve::{
     KServeChatFactory, KServeCompletionsFactory, KServeEmbeddingsFactory, KServeV1PredictFactory,
@@ -678,6 +678,7 @@ impl EndpointRegistryBuilder {
         builder.register_endpoint(ChatEndpoint)?;
         builder.register_endpoint(CompletionsEndpoint)?;
         builder.register_endpoint(ResponsesEndpoint)?;
+        builder.register_endpoint(RealtimeEndpoint)?;
         builder.register_endpoint(MessagesEndpoint)?;
         builder.register_endpoint(EmbeddingsEndpoint)?;
         builder.register_endpoint(ChatEmbeddingsEndpoint)?;

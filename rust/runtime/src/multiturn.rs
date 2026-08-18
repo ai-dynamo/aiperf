@@ -1272,9 +1272,17 @@ impl NativeSessionBackend {
             } else {
                 let (_, endpoint) = &prepared_endpoint;
                 // Opaque bodies report absent as 0 at the u64 counter boundary for now.
+                let materialized_body = match &materialized.body {
+                    RequestBody::WebSocket(operation) => operation
+                        .messages()
+                        .first()
+                        .map(|message| message.payload().clone())
+                        .unwrap_or_default(),
+                    body => body.to_wire()?,
+                };
                 let counted = self.input_token_counter.count_materialized_input_tokens(
                     *endpoint,
-                    &materialized.body.to_wire()?,
+                    &materialized_body,
                     materialized.extracted.as_ref(),
                     materialized.input_tokens.unwrap_or(0),
                 )?;
@@ -1855,29 +1863,22 @@ impl NativeDatasetConversationSource {
             }
             let mut payloads = Vec::with_capacity(num_turns);
             let mut current = session.build_first_turn(None)?;
-            payloads.push(
-                current
-                    .request_body
-                    .as_ref()
-                    .ok_or_else(|| {
+            payloads.push(input_artifact_body(
+                current.request_body.as_ref().ok_or_else(|| {
+                    anyhow!(
+                        "materialized turn for conversation {conversation_id:?} produced no body"
+                    )
+                })?,
+            )?);
+            for _ in 1..num_turns {
+                let next = session.build_next_turn(&current, no_capture_reply())?;
+                payloads.push(input_artifact_body(
+                    next.request_body.as_ref().ok_or_else(|| {
                         anyhow!(
                             "materialized turn for conversation {conversation_id:?} produced no body"
                         )
-                    })?
-                    .to_wire()?,
-            );
-            for _ in 1..num_turns {
-                let next = session.build_next_turn(&current, no_capture_reply())?;
-                payloads.push(
-                    next.request_body
-                        .as_ref()
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "materialized turn for conversation {conversation_id:?} produced no body"
-                            )
-                        })?
-                        .to_wire()?,
-                );
+                    })?,
+                )?);
                 current = next;
             }
             sessions.insert(conversation_id.to_string(), payloads);
@@ -1891,6 +1892,21 @@ impl NativeDatasetConversationSource {
                 })
                 .collect(),
         ))
+    }
+}
+
+fn input_artifact_body(body: &RequestBody) -> Result<Bytes> {
+    match body {
+        RequestBody::WebSocket(operation) => operation
+            .messages()
+            .iter()
+            .find(|message| {
+                message.role() == crate::body_plan::PreparedWsMessageRole::MeasuredInput
+            })
+            .or_else(|| operation.messages().first())
+            .map(|message| message.payload().clone())
+            .ok_or_else(|| anyhow!("websocket operation has no application messages")),
+        body => Ok(body.to_wire()?),
     }
 }
 

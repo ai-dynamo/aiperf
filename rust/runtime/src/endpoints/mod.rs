@@ -38,7 +38,8 @@ pub use dynosim::DynosimEndpointFactory;
 pub use extraction::extract_payload;
 pub use implementation::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
-    ResponsesEndpoint, ShapeLowerer, TurnMessageLowerer, WARMUP_SYSTEM_MESSAGE_PREFIX,
+    RealtimeEndpoint, ResponsesEndpoint, ShapeLowerer, TurnMessageLowerer,
+    WARMUP_SYSTEM_MESSAGE_PREFIX,
 };
 pub use kserve::{
     KServeChatFactory, KServeCompletionsFactory, KServeEmbeddingsFactory, KServeV1PredictFactory,

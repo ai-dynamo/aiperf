@@ -769,6 +769,7 @@ impl TransportSink {
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<DispatchResult> {
         let PreparedTurn {
+            runtime_session_id: _,
             mut request,
             model,
             endpoint,

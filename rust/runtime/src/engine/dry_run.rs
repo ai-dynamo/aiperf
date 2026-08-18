@@ -1234,6 +1234,7 @@ mod tests {
 
     fn fixture_turn(uuid: Uuid, isl: usize, osl: usize) -> PreparedTurn {
         PreparedTurn {
+            runtime_session_id: uuid.to_string(),
             request: Request {
                 uuid,
                 input_length: isl,

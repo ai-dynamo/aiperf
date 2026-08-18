@@ -5,6 +5,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 use serde_json::{Map, Value, json};
 use smallvec::SmallVec;
@@ -18,8 +20,8 @@ use crate::endpoints::config::{EndpointConfig, RawEndpointConfig};
 use crate::endpoints::extraction::{PartTypes, extract_inputs};
 use crate::endpoints::metadata::{EndpointDescriptor, Modality};
 use crate::endpoints::models::{
-    CreditPhase, EndpointError, EndpointResult, ExtractedPayload, Media, ParsedResponse,
-    RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
+    AudioResponseData, CreditPhase, EndpointError, EndpointResult, ExtractedPayload, Media,
+    ParsedResponse, RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
 };
 use crate::endpoints::registry::{
     PreparedEndpointBehavior, PreparedReadinessRequest, PreparedRequest, ReadinessMethod,
@@ -121,6 +123,10 @@ pub struct ChatEndpoint;
 /// OpenAI Responses endpoint.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ResponsesEndpoint;
+
+/// OpenAI Realtime WebSocket endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RealtimeEndpoint;
 /// OpenAI Completions endpoint.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CompletionsEndpoint;
@@ -170,6 +176,25 @@ const RESPONSES_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     requires_inline_media: false,
     input_modalities: &[Modality::Text, Modality::Image, Modality::Audio],
     output_modalities: &[Modality::Tokens],
+    metrics_title: "LLM Metrics",
+    service_kind: "llm",
+};
+
+const REALTIME_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "realtime",
+    aliases: &[],
+    description: "OpenAI Realtime WebSocket API",
+    endpoint_path: Some("/v1/realtime"),
+    streaming_path: None,
+    supports_streaming: true,
+    produces_tokens: true,
+    tokenizes_input: true,
+    requires_raw_token_ids: false,
+    requires_form_data: false,
+    requires_polling: false,
+    requires_inline_media: true,
+    input_modalities: &[Modality::Text, Modality::Audio],
+    output_modalities: &[Modality::Tokens, Modality::Audio],
     metrics_title: "LLM Metrics",
     service_kind: "llm",
 };
@@ -665,6 +690,141 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
     }
 }
 
+impl Endpoint for RealtimeEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &REALTIME_DESCRIPTOR
+    }
+
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
+        ResponsesEndpoint.format_payload(request_info)
+    }
+
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        let Some(object) = response.json.as_ref().and_then(Value::as_object) else {
+            return Ok(None);
+        };
+        let data = match object.get("type").and_then(Value::as_str) {
+            Some("response.text.delta") => object
+                .get("delta")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .map(|text| ResponseData::Text {
+                    text: text.to_owned(),
+                }),
+            Some("response.audio.delta") => {
+                let encoded = object
+                    .get("delta")
+                    .or_else(|| object.get("audio"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        EndpointError::InvalidResponse(
+                            "Realtime audio delta has no base64 payload".to_owned(),
+                        )
+                    })?;
+                let audio_bytes = STANDARD.decode(encoded).map_err(|error| {
+                    EndpointError::InvalidResponse(format!(
+                        "Realtime audio delta is not valid base64: {error}"
+                    ))
+                })?;
+                let duration_ms = u64::try_from(audio_bytes.len()).ok().map(|bytes| {
+                    // Realtime's default PCM output is mono signed 16-bit at 24 kHz.
+                    bytes as f64 * 1000.0 / (2.0 * 24_000.0)
+                });
+                Some(ResponseData::Audio(AudioResponseData {
+                    audio_bytes,
+                    sample_rate_hz: 24_000,
+                    encoding: "pcm16".to_owned(),
+                    duration_ms,
+                }))
+            }
+            _ => None,
+        };
+        Ok(data.map(|data| ParsedResponse {
+            perf_ns: response.perf_ns,
+            data: Some(data),
+            usage: None,
+            sources: None,
+        }))
+    }
+
+    fn extract_payload_inputs(&self, body: &Value) -> ExtractedPayload {
+        ResponsesEndpoint.extract_payload_inputs(body)
+    }
+
+    fn part_types(&self) -> PartTypes {
+        PartTypes::responses()
+    }
+
+    fn captures_assistant_turn(&self) -> bool {
+        true
+    }
+}
+
+impl PreparedEndpointBehavior for RealtimeEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        endpoint: &RawEndpointConfig,
+    ) -> EndpointResult<BodyPlan> {
+        ResponsesEndpoint.format_prepared_payload(request, endpoint)
+    }
+
+    fn prepare_ws_operation(
+        &self,
+        _request: &PreparedRequest<'_>,
+        _endpoint: &RawEndpointConfig,
+        body: &BodyPlan,
+        store: &dyn SegmentStore,
+        overrides: &Overrides,
+    ) -> EndpointResult<PreparedWsOperation> {
+        let body = JsonBodyMaterializer::materialize(body, store, overrides)
+            .map_err(|error| EndpointError::Serialization(error.to_string()))?;
+        let mut request: Value = serde_json::from_slice(&body)
+            .map_err(|error| EndpointError::Serialization(error.to_string()))?;
+        let object = request.as_object_mut().ok_or_else(|| {
+            EndpointError::Serialization("Realtime request body must be a JSON object".to_owned())
+        })?;
+        let input = object.remove("input").ok_or_else(|| {
+            EndpointError::Serialization("Realtime request body has no input items".to_owned())
+        })?;
+        let items = input.as_array().ok_or_else(|| {
+            EndpointError::Serialization("Realtime request input must be an array".to_owned())
+        })?;
+        let mut messages = Vec::with_capacity(items.len() + 2);
+        for item in items {
+            messages.push(PreparedWsMessage::text(
+                Bytes::from(
+                    serde_json::to_vec(&json!({"type":"conversation.item.create","item":item}))
+                        .map_err(|error| EndpointError::Serialization(error.to_string()))?,
+                ),
+                PreparedWsMessageRole::MeasuredInput,
+            ));
+        }
+        messages.push(PreparedWsMessage::text(
+            Bytes::from_static(br#"{"type":"input_audio_buffer.commit"}"#),
+            PreparedWsMessageRole::MeasuredInput,
+        ));
+        messages.push(PreparedWsMessage::text(
+            Bytes::from(
+                serde_json::to_vec(
+                    &json!({"type":"response.create","response":{"modalities":["text","audio"]}}),
+                )
+                .map_err(|error| EndpointError::Serialization(error.to_string()))?,
+            ),
+            PreparedWsMessageRole::Control,
+        ));
+        Ok(PreparedWsOperation::new(messages, None))
+    }
+
+    fn renders_all_turns(&self) -> bool {
+        true
+    }
+
+    fn splices_lowered_wires(&self) -> bool {
+        true
+    }
+}
+
 impl Endpoint for CompletionsEndpoint {
     fn descriptor(&self) -> &'static EndpointDescriptor {
         &COMPLETIONS_DESCRIPTOR
@@ -1054,7 +1214,7 @@ impl ShapeLowerer {
     pub fn for_descriptor_id(id: &str) -> Option<Self> {
         let shape = match id {
             "chat" | "chat_embeddings" => PartShape::Chat,
-            "responses" => PartShape::Responses,
+            "realtime" | "responses" => PartShape::Responses,
             "messages" => PartShape::Messages,
             _ => return None,
         };
@@ -2042,6 +2202,72 @@ mod lowering_tests {
         assert!(error.to_string().contains("reserved WebSocket event field"));
     }
 
+    #[test]
+    fn realtime_websocket_lowering_commits_items_before_response_create() {
+        let turns = [text_turn()];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let store = SegmentPool::new().freeze();
+        let body = RealtimeEndpoint
+            .format_prepared_payload(&request, &RawEndpointConfig::default())
+            .unwrap();
+        let operation = RealtimeEndpoint
+            .prepare_ws_operation(
+                &request,
+                &RawEndpointConfig::default(),
+                &body,
+                &store,
+                &Overrides::new(),
+            )
+            .unwrap();
+        assert_eq!(operation.messages().len(), 3);
+        let input: Value = serde_json::from_slice(operation.messages()[0].payload()).unwrap();
+        assert_eq!(input["type"], "conversation.item.create");
+        assert_eq!(
+            operation.messages()[0].role(),
+            PreparedWsMessageRole::MeasuredInput
+        );
+        let commit: Value = serde_json::from_slice(operation.messages()[1].payload()).unwrap();
+        assert_eq!(commit["type"], "input_audio_buffer.commit");
+        assert_eq!(
+            operation.messages()[1].role(),
+            PreparedWsMessageRole::MeasuredInput
+        );
+        let response: Value = serde_json::from_slice(operation.messages()[2].payload()).unwrap();
+        assert_eq!(response["type"], "response.create");
+        assert_eq!(response["response"]["modalities"], json!(["text", "audio"]));
+        assert_eq!(
+            operation.messages()[2].role(),
+            PreparedWsMessageRole::Control
+        );
+        assert!(operation.http_sse_fallback_body().is_none());
+    }
+
+    #[test]
+    fn realtime_audio_delta_decodes_to_audio_response_data() {
+        let parsed = RealtimeEndpoint
+            .parse_response(&ServerResponse::from_json(
+                7,
+                json!({"type":"response.audio.delta","delta":"AAE="}),
+            ))
+            .unwrap()
+            .unwrap();
+        let Some(ResponseData::Audio(audio)) = parsed.data else {
+            panic!("expected Realtime audio response");
+        };
+        assert_eq!(audio.audio_bytes, vec![0, 1]);
+        assert_eq!(audio.sample_rate_hz, 24_000);
+        assert_eq!(audio.encoding, "pcm16");
+    }
+
     /// The two halves of "this dialect splices lowered wires" must agree for
     /// every registered endpoint: the load-time predicate that *produces* the
     /// wires ([`ShapeLowerer`]) and the dispatch-time capability that consumes
@@ -2078,7 +2304,13 @@ mod lowering_tests {
         lowerable.sort_unstable();
         assert_eq!(
             lowerable,
-            ["chat", "chat_embeddings", "messages", "responses"]
+            [
+                "chat",
+                "chat_embeddings",
+                "messages",
+                "realtime",
+                "responses"
+            ]
         );
         // Rendering every turn is a different capability: these two compose their
         // own message parts and must never be treated as splicing lowered wires.
@@ -2118,6 +2350,7 @@ mod lowering_tests {
         };
         for (id, shape) in [
             ("chat", PartShape::Chat),
+            ("realtime", PartShape::Responses),
             ("responses", PartShape::Responses),
             ("messages", PartShape::Messages),
         ] {

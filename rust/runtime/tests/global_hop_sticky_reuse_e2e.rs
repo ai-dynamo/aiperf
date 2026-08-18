@@ -231,6 +231,7 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
 /// releases the sticky connection so only the last turn of a session drops it.
 fn streaming_turn(correlation_id: &str, is_final_turn: bool) -> PreparedTurn {
     PreparedTurn {
+        runtime_session_id: correlation_id.to_owned(),
         request: Request {
             uuid: Uuid::new_v4(),
             input_length: 5,

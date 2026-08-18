@@ -1,25 +1,33 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Worker-local native WebSocket execution for the Responses endpoint.
+//! Worker-local native WebSocket execution for Responses and Realtime endpoints.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::future::poll_fn;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
-use futures::SinkExt;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use bytes::Bytes;
+use serde_json::Value;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use url::Url;
 
-use crate::body_plan::{PreparedWsMessageRole, PreparedWsOperation, RequestBody};
+use crate::body_plan::{PreparedWsMessageRole, PreparedWsOpcode, PreparedWsOperation, RequestBody};
 use crate::clock::Clock;
 use crate::config::model::transport::{WebSocketFallback, WebSocketTransportConfig};
 use crate::dispatch::collector::ReplayTerminalStatus;
-use crate::dispatch::sink::{ObservedTokenKind, RequestObserver};
+use crate::dispatch::sink::{
+    ObservedTokenKind, ObservedTransportRoute, RequestObserver, TransportFallbackReason,
+    TransportRoute,
+};
+use crate::engine::protocol::HopRouting;
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::registry::{NativeTransportExecution, RunContext};
 use crate::engine::turn_execution::{
@@ -32,12 +40,13 @@ use crate::multiturn::TurnToSend;
 use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnResponseObserver};
 use crate::transport::core::{
     ConnectionReuseStrategy, DispatchResult, MeasuredContext, MeasuredOutcome,
-    PreparedEndpointBinding, PreparedTurn, RequestExecutor, RequestRecord,
+    PreparedEndpointBinding, PreparedTurn, RequestExecutor, RequestRecord, Response, TextResponse,
 };
 use crate::transport::measure::{self, WorkerMeasurement};
 use crate::transport::ws::connector::{ConnectFailure, WebSocket, connect};
 use crate::transport::ws::dialect::{
-    ResponsesEvent, TurnOperationState, classify_responses_event, full_history_retry,
+    ResponsesEvent, TurnOperationState, classify_realtime_event, classify_responses_event,
+    full_history_retry, with_previous_response_id,
 };
 use crate::transport::ws::driver::{
     ApplicationQueueLimits, DriverEvent, DriverTiming, FallbackReason, SocketOperationDriver,
@@ -48,11 +57,38 @@ const SOCKET_ROTATION_NS: i64 = 55 * 60 * 1_000_000_000;
 const CLOSE_HANDSHAKE_NS: i64 = 1_000_000_000;
 
 struct CachedSocket {
+    affinity_key: Option<String>,
+    continuation_id: Option<String>,
     url: String,
     headers: BTreeMap<String, String>,
     connected_ns: i64,
     retained_ns: i64,
     socket: WebSocket,
+}
+
+struct CheckedOutSocket {
+    socket: WebSocket,
+    connected_ns: i64,
+    continuation_id: Option<String>,
+}
+
+struct AffinityGateCleanup<'a> {
+    gates: &'a RefCell<BTreeMap<String, Rc<Semaphore>>>,
+    affinity_key: &'a str,
+    gate: Rc<Semaphore>,
+}
+
+impl Drop for AffinityGateCleanup<'_> {
+    fn drop(&mut self) {
+        let mut gates = self.gates.borrow_mut();
+        let is_current = gates
+            .get(self.affinity_key)
+            .is_some_and(|current| Rc::ptr_eq(current, &self.gate));
+        // Map + dispatch local + cleanup guard. Any waiter owns another handle.
+        if is_current && Rc::strong_count(&self.gate) == 3 {
+            gates.remove(self.affinity_key);
+        }
+    }
 }
 
 /// Native WebSocket execution factory with immutable per-run policy.
@@ -61,7 +97,7 @@ pub struct WebSocketExecutionFactory {
     config: WebSocketTransportConfig,
 }
 
-/// Registry execution binding for Responses over WebSocket.
+/// Registry execution binding for native WebSocket endpoint dialects.
 #[derive(Clone, Debug)]
 pub struct WebSocketNativeExecution {
     config: WebSocketTransportConfig,
@@ -108,8 +144,8 @@ impl NativeTransportExecution for WebSocketNativeExecution {
 
     fn validate_run(&self, run: &AuthoredRunSpecV2, context: &RunContext) -> Result<()> {
         ensure!(
-            run.artifacts.raw_path.is_none() && !run.artifacts.trace,
-            "websocket execution does not support raw exchange or HTTP trace artifacts"
+            !run.artifacts.trace,
+            "websocket execution does not support HTTP trace artifacts"
         );
         ensure!(
             run.sidecars.content_server.is_none()
@@ -121,8 +157,13 @@ impl NativeTransportExecution for WebSocketNativeExecution {
         );
         for (profile_id, profile) in context.endpoint_profiles() {
             ensure!(
-                profile.endpoint_id.as_str() == "responses",
-                "websocket endpoint profile {profile_id:?} requires endpoint type responses"
+                matches!(profile.endpoint_id.as_str(), "responses" | "realtime"),
+                "websocket endpoint profile {profile_id:?} requires endpoint type responses or realtime"
+            );
+            ensure!(
+                self.config.fallback == WebSocketFallback::Disabled
+                    || profile.endpoint_id.as_str() == "responses",
+                "websocket HTTP/SSE fallback is supported only by the responses endpoint"
             );
             ensure!(
                 !profile.config.urls.is_empty(),
@@ -160,14 +201,10 @@ impl RequestExecutorFactory for WebSocketExecutionFactory {
             config.prepared_endpoints.is_some(),
             "native websocket execution requires prepared endpoints"
         );
-        ensure!(
-            !config.raw_enabled,
-            "native websocket execution does not support raw exchange artifacts"
-        );
         let workers = config.workers;
         let clock = config.coordinator_clock.clone();
         let anchor = config.real_clock_anchor;
-        let hop_routing = config.hop_routing;
+        let hop_routing = HopRouting::Sticky;
         let labels = config.worker_labels.clone();
         build_native(
             WebSocketSinkBuilder::from_config(&config, self.config.clone())?,
@@ -186,6 +223,7 @@ struct WebSocketSinkBuilder {
     transport: crate::transport::http::TransportSinkConfig,
     endpoints: Arc<dyn PreparedEndpointTableFactory>,
     config: WebSocketTransportConfig,
+    capture_raw: bool,
 }
 
 impl WebSocketSinkBuilder {
@@ -202,6 +240,7 @@ impl WebSocketSinkBuilder {
                 .clone()
                 .ok_or_else(|| anyhow!("native websocket execution requires prepared endpoints"))?,
             config: websocket,
+            capture_raw: config.raw_enabled,
         })
     }
 }
@@ -221,6 +260,7 @@ impl ExecutionSinkBuilder for WebSocketSinkBuilder {
             self.transport.clone(),
             self.config.clone(),
             self.endpoints.prepare_worker()?,
+            self.capture_raw,
         )
     }
 }
@@ -235,10 +275,12 @@ struct WebSocketTransportSink {
     config: WebSocketTransportConfig,
     endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
     idle: RefCell<Vec<CachedSocket>>,
+    affinity_gates: RefCell<BTreeMap<String, Rc<Semaphore>>>,
     slots: Semaphore,
     fallback: Option<crate::transport::http::TransportSink>,
     start_ns: Cell<i64>,
     measurement: WorkerMeasurement,
+    capture_raw: bool,
 }
 
 impl WebSocketTransportSink {
@@ -249,6 +291,7 @@ impl WebSocketTransportSink {
         transport: crate::transport::http::TransportSinkConfig,
         config: WebSocketTransportConfig,
         endpoints: crate::endpoints::PreparedEndpointTable,
+        capture_raw: bool,
     ) -> Result<Self> {
         ensure!(!base_urls.is_empty(), "websocket execution requires a URL");
         ensure!(
@@ -283,10 +326,12 @@ impl WebSocketTransportSink {
             config,
             endpoints,
             idle: RefCell::new(Vec::with_capacity(slot_count)),
+            affinity_gates: RefCell::new(BTreeMap::new()),
             slots: Semaphore::new(slot_count),
             fallback,
             start_ns: Cell::new(0),
             measurement: WorkerMeasurement::default(),
+            capture_raw,
         })
     }
 
@@ -352,6 +397,7 @@ impl WebSocketTransportSink {
 
     fn take_cached(
         &self,
+        affinity_key: &str,
         url: &str,
         headers: &BTreeMap<String, String>,
         now_ns: i64,
@@ -374,7 +420,18 @@ impl WebSocketTransportSink {
             None
         } else {
             idle.iter()
-                .position(|cached| cached.url == url && cached.headers == *headers)
+                .position(|cached| {
+                    cached.affinity_key.as_deref() == Some(affinity_key)
+                        && cached.url == url
+                        && cached.headers == *headers
+                })
+                .or_else(|| {
+                    idle.iter().position(|cached| {
+                        cached.affinity_key.is_none()
+                            && cached.url == url
+                            && cached.headers == *headers
+                    })
+                })
                 .map(|index| idle.swap_remove(index))
         };
         if cached.is_none() && !idle.is_empty() {
@@ -391,17 +448,22 @@ impl WebSocketTransportSink {
 
     async fn checkout(
         &self,
+        affinity_key: &str,
         url: &Url,
         headers: &BTreeMap<String, String>,
         deadline_ns: Option<i64>,
-    ) -> Result<(WebSocket, i64), ConnectFailure> {
+    ) -> Result<CheckedOutSocket, ConnectFailure> {
         let now_ns = self.clock.now_ns();
-        let (cached, expired) = self.take_cached(url.as_str(), headers, now_ns);
+        let (cached, expired) = self.take_cached(affinity_key, url.as_str(), headers, now_ns);
         for cached in expired {
             close_socket(cached.socket, self.clock.clone(), deadline_ns).await;
         }
         if let Some(cached) = cached {
-            return Ok((cached.socket, cached.connected_ns));
+            return Ok(CheckedOutSocket {
+                socket: cached.socket,
+                connected_ns: cached.connected_ns,
+                continuation_id: cached.continuation_id,
+            });
         }
         let socket = connect(
             url,
@@ -412,10 +474,25 @@ impl WebSocketTransportSink {
             deadline_ns,
         )
         .await?;
-        Ok((socket, self.clock.now_ns()))
+        Ok(CheckedOutSocket {
+            socket,
+            connected_ns: self.clock.now_ns(),
+            continuation_id: None,
+        })
     }
 
-    fn validate_endpoint(&self, turn: &PreparedTurn) -> Result<()> {
+    fn affinity_gate(&self, affinity_key: &str) -> Rc<Semaphore> {
+        self.affinity_gates
+            .borrow_mut()
+            .entry(affinity_key.to_owned())
+            .or_insert_with(|| Rc::new(Semaphore::new(1)))
+            .clone()
+    }
+
+    fn validate_endpoint(
+        &self,
+        turn: &PreparedTurn,
+    ) -> Result<&dyn crate::endpoints::PreparedEndpoint> {
         let PreparedEndpointBinding::Prepared(reference) = &turn.endpoint;
         let endpoint = self.endpoints.get(reference.key)?;
         ensure!(
@@ -426,11 +503,11 @@ impl WebSocketTransportSink {
             reference.endpoint_id.as_str()
         );
         ensure!(
-            endpoint.descriptor().id == "responses",
-            "websocket execution requires the responses endpoint, got {:?}",
+            matches!(endpoint.descriptor().id, "responses" | "realtime"),
+            "websocket execution requires a websocket-capable endpoint, got {:?}",
             endpoint.descriptor().id
         );
-        Ok(())
+        Ok(endpoint)
     }
 
     async fn dispatch_inner(
@@ -438,17 +515,23 @@ impl WebSocketTransportSink {
         turn: PreparedTurn,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
+        responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<DispatchResult> {
-        self.validate_endpoint(&turn)?;
-        let operation = match turn.request.body.as_ref() {
+        let endpoint = self.validate_endpoint(&turn)?;
+        let endpoint_id = endpoint.descriptor().id;
+        let prepared_operation = match turn.request.body.as_ref() {
             Some(RequestBody::WebSocket(operation)) => operation.clone(),
             _ => anyhow::bail!("websocket execution requires a prepared websocket operation"),
         };
-        let fallback_turn = operation.http_sse_fallback_body().map(|body| {
-            let mut fallback = turn.clone();
-            fallback.request.body = Some(RequestBody::wire(body.clone()));
-            fallback
-        });
+        let fallback_turn = (endpoint_id == "responses")
+            .then(|| prepared_operation.http_sse_fallback_body())
+            .flatten()
+            .map(|body| {
+                let mut fallback = turn.clone();
+                fallback.request.body = Some(RequestBody::wire(body.clone()));
+                fallback
+            });
+        let affinity_key = turn.runtime_session_id.clone();
         let request = turn.request;
         let url = self.selected_url(
             request.url_index,
@@ -456,15 +539,33 @@ impl WebSocketTransportSink {
             &request.parameters,
         )?;
         let start_ns = self.clock.now_ns();
+        observer.on_transport_route(
+            request.uuid,
+            ObservedTransportRoute {
+                actual_route: TransportRoute::Websocket,
+                fallback_reason: None,
+            },
+        );
         let deadline_ns = self
             .transport
             .client
             .total_timeout_ns
             .and_then(|timeout_ns| start_ns.checked_add(timeout_ns));
+        let affinity_gate = self.affinity_gate(&affinity_key);
+        let _affinity =
+            acquire_before_deadline(affinity_gate.as_ref(), self.clock.clone(), deadline_ns)
+                .await?;
+        let _gate_cleanup = AffinityGateCleanup {
+            gates: &self.affinity_gates,
+            affinity_key: &affinity_key,
+            gate: affinity_gate.clone(),
+        };
         let _slot = acquire_before_deadline(&self.slots, self.clock.clone(), deadline_ns).await?;
         let mut record = RequestRecord::started(start_ns);
         record.request_headers = request.headers.clone();
-        let (socket, connected_ns) = match self.checkout(&url, &request.headers, deadline_ns).await
+        let checked_out = match self
+            .checkout(&affinity_key, &url, &request.headers, deadline_ns)
+            .await
         {
             Ok(value) => value,
             Err(error)
@@ -475,7 +576,15 @@ impl WebSocketTransportSink {
                 let reason = error
                     .fallback_reason()
                     .ok_or_else(|| anyhow!("fallback failure lost its stable reason"))?;
+                observer.on_transport_route(
+                    request.uuid,
+                    ObservedTransportRoute {
+                        actual_route: TransportRoute::HttpSse,
+                        fallback_reason: Some(transport_fallback_reason(reason)),
+                    },
+                );
                 tracing::debug!(
+                    component = "websocket",
                     fallback_reason = reason.as_str(),
                     error = %error,
                     "using declared HTTP/SSE fallback"
@@ -498,34 +607,56 @@ impl WebSocketTransportSink {
             }
             Err(error) => return Err(error.into()),
         };
+        let operation = if endpoint_id == "responses" {
+            checked_out
+                .continuation_id
+                .as_deref()
+                .map(|response_id| {
+                    with_previous_response_id(&prepared_operation, response_id).ok_or_else(|| {
+                        anyhow!(
+                            "websocket continuation could not be injected into the prepared operation"
+                        )
+                    })
+                })
+                .transpose()?
+                .unwrap_or_else(|| prepared_operation.as_ref().clone())
+        } else {
+            prepared_operation.as_ref().clone()
+        };
         let attempt = self
             .run_attempt(
-                socket,
+                checked_out.socket,
+                endpoint,
                 &operation,
                 &request,
+                &mut record,
                 observer,
                 on_first_token,
+                responses,
                 start_ns,
                 deadline_ns,
-                connected_ns,
+                checked_out.connected_ns,
             )
             .await;
         let completed = match attempt {
             Ok(completed) => completed,
-            Err(failure) if failure.can_retry => {
-                let replay = full_history_retry(&operation).ok_or_else(|| {
+            Err(failure) if endpoint_id == "responses" && failure.can_retry => {
+                let replay = full_history_retry(&prepared_operation).ok_or_else(|| {
                     anyhow!("websocket operation cannot rebuild a self-contained retry")
                 })?;
-                tracing::debug!(error = %failure.error, "retrying websocket operation before visible output");
+                tracing::debug!(component = "websocket", error = %failure.error, "retrying websocket operation before visible output");
                 let (socket, retry_connected_ns) = self
                     .checkout_fresh(&url, &request.headers, deadline_ns)
                     .await?;
                 self.run_attempt(
                     socket,
+                    endpoint,
                     &replay,
                     &request,
+                    &mut record,
                     observer,
                     on_first_token,
+                    responses,
                     start_ns,
                     deadline_ns,
                     retry_connected_ns,
@@ -536,11 +667,20 @@ impl WebSocketTransportSink {
             Err(failure) => return Err(failure.error),
         };
         let end_ns = self.clock.now_ns();
-        observer.on_round_trip_metrics(request.uuid, completed.state.finish());
-        observer.on_terminal(request.uuid, ReplayTerminalStatus::Completed);
-        let reusable = self.transport.connection_reuse != ConnectionReuseStrategy::Never;
+        if endpoint_id == "responses" {
+            observer
+                .on_round_trip_metrics(request.uuid, completed.state.finish(completed.terminal));
+        }
+        observer.on_terminal(request.uuid, completed.terminal);
+        let reusable = completed.terminal == ReplayTerminalStatus::Completed
+            && self.transport.connection_reuse != ConnectionReuseStrategy::Never
+            && (endpoint_id == "responses" || !request.is_final_turn);
         if reusable {
             self.idle.borrow_mut().push(CachedSocket {
+                affinity_key: (!request.is_final_turn).then(|| affinity_key.clone()),
+                continuation_id: (endpoint_id == "responses" && !request.is_final_turn)
+                    .then(|| completed.response_id.clone())
+                    .flatten(),
                 url: url.to_string(),
                 headers: request.headers.clone(),
                 connected_ns: completed.connected_ns,
@@ -556,11 +696,15 @@ impl WebSocketTransportSink {
             outcome: TurnDispatchOutcome {
                 start_ns,
                 end_ns,
-                terminal: ReplayTerminalStatus::Completed,
+                terminal: completed.terminal,
                 response_text: completed.output.clone(),
                 model_response: ModelResponseMetadata {
                     content: (!completed.output.is_empty()).then_some(completed.output),
                     response_id: completed.response_id,
+                    error_kind: (completed.terminal != ReplayTerminalStatus::Completed)
+                        .then_some("incomplete".to_owned()),
+                    error_message: (completed.terminal != ReplayTerminalStatus::Completed)
+                        .then_some("Responses operation ended incomplete".to_owned()),
                     ..ModelResponseMetadata::default()
                 },
                 prompt_tokens: None,
@@ -571,7 +715,11 @@ impl WebSocketTransportSink {
                     ..RequestTrace::default()
                 },
             },
-            request_payload: bytes::Bytes::new(),
+            request_payload: if self.capture_raw {
+                capture_operation(&operation)?
+            } else {
+                Bytes::new()
+            },
             record,
         })
     }
@@ -598,20 +746,28 @@ impl WebSocketTransportSink {
     async fn run_attempt(
         &self,
         socket: WebSocket,
+        endpoint: &dyn crate::endpoints::PreparedEndpoint,
         operation: &PreparedWsOperation,
         request: &crate::transport::core::Request,
+        record: &mut RequestRecord,
         observer: &dyn RequestObserver,
         on_first_token: &dyn Fn(i64),
+        responses: Option<&dyn TurnResponseObserver>,
         start_ns: i64,
         deadline_ns: Option<i64>,
         connected_ns: i64,
     ) -> std::result::Result<CompletedAttempt, AttemptFailure> {
+        let endpoint_id = endpoint.descriptor().id;
         let timing = DriverTiming {
             deadline_ns,
+            // Checkout rotates aged idle sockets; an active operation is never
+            // aborted merely because the connection crosses the age boundary.
+            rotation_deadline_ns: i64::MAX,
             ping_interval_ns: seconds_to_ns(self.config.ping_interval_seconds)
                 .map_err(AttemptFailure::terminal)?,
             stream_idle_timeout_ns: seconds_to_ns(self.config.stream_idle_timeout_seconds)
                 .map_err(AttemptFailure::terminal)?,
+            cancel_after_ns: request.cancel_after_ns,
         };
         let mut driver = SocketOperationDriver::start(
             socket,
@@ -620,7 +776,8 @@ impl WebSocketTransportSink {
             ApplicationQueueLimits::new(
                 self.config.max_queued_commands,
                 self.config.max_queued_bytes,
-            ),
+            )
+            .with_max_frame_bytes(self.config.max_frame_bytes),
             timing,
             self.config.max_response_bytes,
         )
@@ -630,6 +787,7 @@ impl WebSocketTransportSink {
         let mut response_id = None;
         let mut response_bytes = 0_usize;
         let mut has_first_token = false;
+        let mut terminal = ReplayTerminalStatus::Failed;
         loop {
             let event = driver
                 .next()
@@ -654,43 +812,107 @@ impl WebSocketTransportSink {
                                 can_retry: false,
                             }
                         })?;
-                    let event = classify_responses_event(&payload, is_text).map_err(|error| {
-                        AttemptFailure {
-                            error,
-                            can_retry: false,
-                        }
-                    })?;
-                    match &event {
-                        ResponsesEvent::Content(content) => {
-                            let text =
-                                std::str::from_utf8(content).map_err(|error| AttemptFailure {
-                                    error: anyhow!("Responses content was not UTF-8: {error}"),
+                    record.recv_start_ns.get_or_insert(timestamp_ns);
+                    let parsed_json = if is_text && responses.is_some() {
+                        Some(
+                            serde_json::from_slice(&payload).map_err(|error| AttemptFailure {
+                                error: anyhow!(
+                                    "websocket application message was not JSON: {error}"
+                                ),
+                                can_retry: false,
+                            })?,
+                        )
+                    } else {
+                        None
+                    };
+                    if self.capture_raw && is_text {
+                        let text =
+                            std::str::from_utf8(&payload).map_err(|error| AttemptFailure {
+                                error: anyhow!("websocket text frame was not UTF-8: {error}"),
+                                can_retry: false,
+                            })?;
+                        record.responses.push(Response::Text(TextResponse {
+                            perf_ns: timestamp_ns,
+                            body: payload.clone(),
+                            text: text.to_owned(),
+                            content_type: Some("application/json".to_owned()),
+                        }));
+                    }
+                    if let Some(responses) = responses {
+                        let perf_ns =
+                            u64::try_from(timestamp_ns).map_err(|error| AttemptFailure {
+                                error: anyhow!(
+                                    "websocket response timestamp was negative: {error}"
+                                ),
+                                can_retry: false,
+                            })?;
+                        let server_response = crate::endpoints::ServerResponse {
+                            perf_ns,
+                            json: parsed_json,
+                            raw: None,
+                        };
+                        if let Some(parsed) =
+                            endpoint.parse_response(&server_response).map_err(|error| {
+                                AttemptFailure {
+                                    error: error.into(),
                                     can_retry: false,
-                                })?;
-                            output.push_str(text);
-                            observer.on_classified_token(
-                                request.uuid,
-                                timestamp_ns.saturating_sub(self.start_ns.get()) as f64
-                                    / 1_000_000.0,
-                                ObservedTokenKind::Output,
-                            );
-                            if !has_first_token {
-                                has_first_token = true;
-                                on_first_token(timestamp_ns.saturating_sub(start_ns));
-                            }
+                                }
+                            })?
+                        {
+                            poll_fn(|context| responses.poll_ready(context))
+                                .await
+                                .map_err(AttemptFailure::terminal)?;
+                            responses
+                                .start_send(parsed)
+                                .map_err(AttemptFailure::terminal)?;
                         }
+                    }
+                    let event = (if endpoint_id == "responses" {
+                        classify_responses_event(&payload, is_text)
+                    } else {
+                        classify_realtime_event(&payload, is_text)
+                    })
+                    .map_err(|error| AttemptFailure {
+                        error,
+                        can_retry: false,
+                    })?;
+                    if let Some(content) = state.content_for_observation(&event, timestamp_ns) {
+                        let text =
+                            std::str::from_utf8(&content).map_err(|error| AttemptFailure {
+                                error: anyhow!(
+                                    "websocket classified content was not UTF-8: {error}"
+                                ),
+                                can_retry: false,
+                            })?;
+                        output.push_str(text);
+                        observer.on_classified_token(
+                            request.uuid,
+                            timestamp_ns.saturating_sub(self.start_ns.get()) as f64 / 1_000_000.0,
+                            ObservedTokenKind::Output,
+                        );
+                        if !has_first_token {
+                            has_first_token = true;
+                            on_first_token(timestamp_ns.saturating_sub(start_ns));
+                        }
+                    }
+                    match &event {
+                        ResponsesEvent::Content(_) => {}
                         ResponsesEvent::Reasoning => observer.on_classified_token(
                             request.uuid,
                             timestamp_ns.saturating_sub(self.start_ns.get()) as f64 / 1_000_000.0,
                             ObservedTokenKind::Reasoning,
                         ),
+                        ResponsesEvent::Audio => {}
                         ResponsesEvent::Usage(usage) => observer.on_usage(request.uuid, *usage),
                         ResponsesEvent::Terminal {
                             response_id: id,
                             usage,
+                            status,
+                            ..
                         } => {
                             observer.on_usage(request.uuid, *usage);
                             response_id = id.clone();
+                            terminal = *status;
                         }
                         ResponsesEvent::RetriableContinuationRejection => {
                             return Err(AttemptFailure {
@@ -723,6 +945,7 @@ impl WebSocketTransportSink {
             socket,
             connected_ns,
             state,
+            terminal,
             output,
             response_id,
             response_bytes,
@@ -738,6 +961,7 @@ struct CompletedAttempt {
     socket: WebSocket,
     connected_ns: i64,
     state: TurnOperationState,
+    terminal: ReplayTerminalStatus,
     output: String,
     response_id: Option<String>,
     response_bytes: usize,
@@ -763,6 +987,7 @@ impl AttemptFailure {
                 | WsDriverError::Read(_)
                 | WsDriverError::PeerClosed
                 | WsDriverError::StreamIdleTimeout
+                | WsDriverError::ConnectionRotation
         );
         Self {
             error: error.into(),
@@ -808,11 +1033,11 @@ async fn close_socket(
     tokio::select! {
         result = socket.close(None) => {
             if let Err(error) = result {
-                tracing::trace!(error = %error, "websocket close handshake did not complete");
+                tracing::trace!(component = "websocket", error = %error, "websocket close handshake did not complete");
             }
         }
         () = clock.sleep(deadline_ns.saturating_sub(now_ns)) => {
-            tracing::trace!("websocket close handshake reached its deadline");
+            tracing::trace!(component = "websocket", "websocket close handshake reached its deadline");
         }
     }
 }
@@ -848,6 +1073,40 @@ fn seconds_to_ns(seconds: f64) -> Result<i64> {
     Ok(nanoseconds.round() as i64)
 }
 
+fn capture_operation(operation: &PreparedWsOperation) -> Result<Bytes> {
+    let messages = operation
+        .messages()
+        .iter()
+        .map(|message| {
+            let opcode = match message.opcode() {
+                PreparedWsOpcode::Text => "text",
+                PreparedWsOpcode::Binary => "binary",
+            };
+            let role = match message.role() {
+                PreparedWsMessageRole::MeasuredInput => "measured_input",
+                PreparedWsMessageRole::Control => "control",
+                PreparedWsMessageRole::TerminalAck => "terminal_ack",
+            };
+            let payload = match message.opcode() {
+                PreparedWsOpcode::Text => Value::String(
+                    std::str::from_utf8(message.payload())
+                        .context("capturing websocket text operation")?
+                        .to_owned(),
+                ),
+                PreparedWsOpcode::Binary => Value::String(STANDARD.encode(message.payload())),
+            };
+            Ok(serde_json::json!({
+                "opcode": opcode,
+                "role": role,
+                "payload": payload,
+            }))
+        })
+        .collect::<Result<Vec<Value>>>()?;
+    Ok(Bytes::from(serde_json::to_vec(
+        &serde_json::json!({"transport":"websocket","messages":messages}),
+    )?))
+}
+
 fn websocket_fallback_url(url: &str) -> Result<String> {
     let mut url = Url::parse(url).with_context(|| format!("parsing fallback URL {url:?}"))?;
     match url.scheme() {
@@ -860,6 +1119,13 @@ fn websocket_fallback_url(url: &str) -> Result<String> {
         scheme => anyhow::bail!("fallback requires ws:// or wss://, got {scheme}://"),
     }
     Ok(url.to_string())
+}
+
+const fn transport_fallback_reason(reason: FallbackReason) -> TransportFallbackReason {
+    match reason {
+        FallbackReason::NetworkConnect => TransportFallbackReason::NetworkConnect,
+        FallbackReason::UnsupportedUpgrade => TransportFallbackReason::UnsupportedUpgrade,
+    }
 }
 
 #[async_trait(?Send)]
@@ -888,13 +1154,17 @@ impl WorkerSink for WebSocketTransportSink {
         }
     }
 
+    fn supports_response_streaming(&self) -> bool {
+        true
+    }
+
     async fn dispatch_measured(
         &self,
         observer: &NativeMetricsObserver,
         turn: PreparedTurn,
         context: &MeasuredContext,
         on_first_token: &dyn Fn(i64),
-        _responses: Option<&dyn TurnResponseObserver>,
+        responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<DispatchResult> {
         let uuid = turn.request.uuid;
         measure::measure_dispatch(
@@ -902,7 +1172,7 @@ impl WorkerSink for WebSocketTransportSink {
             self.clock.as_ref(),
             uuid,
             context,
-            self.dispatch_inner(turn, observer, on_first_token),
+            self.dispatch_inner(turn, observer, on_first_token, responses),
         )
         .await
     }
@@ -953,6 +1223,7 @@ impl RequestExecutor for WebSocketTransportSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::body_plan::PreparedWsMessage;
 
     #[test]
     fn fallback_url_preserves_authority_and_path() {
@@ -966,5 +1237,50 @@ mod tests {
     fn rotation_happens_before_the_sixty_minute_service_limit() {
         assert!(SOCKET_ROTATION_NS < 60 * 60 * 1_000_000_000);
         assert_eq!(SOCKET_ROTATION_NS, 55 * 60 * 1_000_000_000);
+    }
+
+    #[test]
+    fn driver_fallback_reasons_map_to_closed_transport_facts() {
+        assert_eq!(
+            transport_fallback_reason(FallbackReason::NetworkConnect),
+            TransportFallbackReason::NetworkConnect
+        );
+        assert_eq!(
+            transport_fallback_reason(FallbackReason::NetworkConnect).as_str(),
+            "network_connect"
+        );
+        assert_eq!(
+            transport_fallback_reason(FallbackReason::UnsupportedUpgrade),
+            TransportFallbackReason::UnsupportedUpgrade
+        );
+        assert_eq!(
+            transport_fallback_reason(FallbackReason::UnsupportedUpgrade).as_str(),
+            "unsupported_upgrade"
+        );
+    }
+
+    #[test]
+    fn raw_operation_capture_preserves_every_message_and_role() {
+        let operation = PreparedWsOperation::new(
+            [
+                PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"conversation.item.create"}"#),
+                    PreparedWsMessageRole::MeasuredInput,
+                ),
+                PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"response.create"}"#),
+                    PreparedWsMessageRole::Control,
+                ),
+            ],
+            None,
+        );
+        let captured: Value = serde_json::from_slice(
+            &capture_operation(&operation).expect("operation capture serializes"),
+        )
+        .expect("operation capture is JSON");
+        assert_eq!(captured["transport"], "websocket");
+        assert_eq!(captured["messages"].as_array().map(Vec::len), Some(2));
+        assert_eq!(captured["messages"][0]["role"], "measured_input");
+        assert_eq!(captured["messages"][1]["role"], "control");
     }
 }

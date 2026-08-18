@@ -173,7 +173,12 @@ impl EndpointType {
 impl EndpointDescriptor {
     /// Closed-enum view for protocol-v1 [`crate::endpoints::EndpointConfig`] and dataset paths.
     pub fn legacy_type(self) -> Option<EndpointType> {
-        EndpointType::from_canonical_id(self.id)
+        match self.id {
+            // Realtime lowers the same authored turn shape as Responses before
+            // translating it into WebSocket conversation events.
+            "realtime" => Some(EndpointType::Responses),
+            id => EndpointType::from_canonical_id(id),
+        }
     }
 
     /// Whether this endpoint emits `conversation.system` as an on-the-wire

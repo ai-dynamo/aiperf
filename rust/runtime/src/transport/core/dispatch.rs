@@ -186,6 +186,8 @@ pub struct MeasuredOutcome {
 /// Consumed by HTTP, gRPC, graph, and dry-run execution.
 #[derive(Clone)]
 pub struct PreparedTurn {
+    /// Runtime-owned session identity used for sticky transport affinity.
+    pub runtime_session_id: String,
     /// Transport-ready request fields.
     pub request: Request,
     /// Effective model selected for this turn.
@@ -207,6 +209,7 @@ impl fmt::Debug for PreparedTurn {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PreparedTurn")
+            .field("runtime_session_id", &self.runtime_session_id)
             .field("request", &self.request)
             .field("model", &self.model)
             .field("endpoint", &self.endpoint)
@@ -238,6 +241,7 @@ impl PreparedTurn {
     /// Remove scheduler-local session state and build one owned execution command.
     pub fn from_turn(turn: TurnToSend, model: &str) -> Self {
         let is_final_turn = turn.is_final_turn();
+        let runtime_session_id = turn.x_correlation_id.clone();
         let deferred = turn.deferred_body.then(|| CreditIdentity {
             conversation_id: turn.conversation_id.clone(),
             x_correlation_id: turn.x_correlation_id.clone(),
@@ -256,6 +260,7 @@ impl PreparedTurn {
             TurnEndpoint::Prepared(reference) => PreparedEndpointBinding::Prepared(reference),
         };
         Self {
+            runtime_session_id,
             request: Request {
                 uuid: turn.uuid,
                 input_length: turn.input_length,

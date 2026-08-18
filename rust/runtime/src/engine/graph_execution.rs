@@ -1895,6 +1895,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
         let collected = transport
             .dispatch_collect(
                 PreparedTurn {
+                    runtime_session_id: self.trace_id.clone(),
                     request,
                     model,
                     endpoint,

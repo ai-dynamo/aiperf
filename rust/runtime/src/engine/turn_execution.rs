@@ -979,7 +979,7 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
             let index = pick_worker(
                 self.routing,
                 senders.len(),
-                context.metadata.correlation_id.as_deref(),
+                Some(turn.runtime_session_id.as_str()),
                 turn.request.is_final_turn,
                 &self.inflight,
                 &mut self.sticky.borrow_mut(),
@@ -1112,7 +1112,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             let index = pick_worker(
                 self.routing,
                 senders.len(),
-                context.metadata.correlation_id.as_deref(),
+                Some(turn.runtime_session_id.as_str()),
                 turn.request.is_final_turn,
                 &self.inflight,
                 &mut self.sticky.borrow_mut(),
@@ -2106,6 +2106,7 @@ mod tests {
 
     fn streaming_turn() -> PreparedTurn {
         PreparedTurn {
+            runtime_session_id: "evaluation-unit".to_owned(),
             request: Request {
                 uuid: Uuid::new_v4(),
                 input_length: 1,
