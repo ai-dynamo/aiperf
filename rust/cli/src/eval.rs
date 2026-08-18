@@ -69,6 +69,9 @@ struct EvalFlags {
     /// Strict versioned JSON request that persists the full immutable evaluation lifecycle.
     #[arg(long)]
     lifecycle_request: Option<PathBuf>,
+    /// Destination for canonical schema-1.1 NativeGraph node records in JSONL format.
+    #[arg(long)]
+    records_output: Option<PathBuf>,
     /// Destination for the canonical lifecycle record; defaults to `aiperf-eval-lifecycle.json`.
     #[arg(long, requires = "lifecycle_request")]
     lifecycle_output: Option<PathBuf>,
@@ -237,6 +240,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         requested_verifier_mode: flags.verifier_mode.map(VerifierMode::from),
         has_external_agent_command,
         lifecycle_output_explicit,
+        records_output: flags.records_output.clone(),
     };
     if let Some(suite) = flags.suite.as_deref() {
         let model_runtime = flags.model_runtime.as_deref().ok_or_else(|| {
@@ -279,6 +283,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             anyhow::anyhow!("--lifecycle-request is required for scored NativeGraph evaluation")
         })?;
         return native_graph::run_task(imported, model_runtime, lifecycle, native_options);
+    }
+    if flags.records_output.is_some() {
+        anyhow::bail!("--records-output is available only for schema-1.1 NativeGraph evaluation");
     }
     let requested_verifier_mode = flags.verifier_mode.map(VerifierMode::from);
     let verifier_mode = requested_verifier_mode.unwrap_or_else(|| imported.package.verifier_mode());

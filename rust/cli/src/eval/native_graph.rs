@@ -8,18 +8,25 @@
 //! trial; the future suite lifecycle schema will carry independent provenance
 //! for larger matrices rather than letting this boundary invent it.
 
-use std::{collections::BTreeMap, fs, num::NonZeroUsize, path::Path, rc::Rc};
+use std::{
+    collections::BTreeMap,
+    fs,
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use aiperf_runtime::{
     engine::{application::Application, distribution_identity::current_distribution_id},
     eval::{
         DockerNativeGraphEpisodeExecutor, DockerProcessSandbox, EngineNativeGraphEpisodeCallback,
-        EnvName, HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
-        HarborLifecycleRequest, HarborSandboxRecipe, ImportedTask, ModelCapacityKey,
-        ModelRuntimeConfig, NativeGraphEpisodeRunner, NativeGraphProfile, NativeGraphSuiteManifest,
-        NativeSourceAcquirer, ResourceLeaseRequest, ResourceLimits, SecretProvider, SecretValue,
-        SuiteRunId, SuiteTrialSpec, VerifierMode, parse_native_graph_suite_toml,
-        run_resolved_suite, select_native_graph_scheduler,
+        DockerNativeGraphEpisodeExecutor, DockerProcessSandbox, EngineNativeGraphEpisodeCallback,
+        EnvName, EvalNodeRecordArtifact, HarborEvaluationCoordinator, HarborImporter,
+        HarborLifecycleAgentContract, HarborLifecycleRequest, HarborSandboxRecipe, ImportedTask,
+        ModelCapacityKey, ModelRuntimeConfig, NativeGraphEpisodeRunner, NativeGraphProfile,
+        NativeGraphSuiteManifest, NativeSourceAcquirer, ResourceLeaseRequest, ResourceLimits,
+        SecretProvider, SecretValue, SuiteRunId, SuiteTrialSpec, VerifierMode,
+        parse_native_graph_suite_toml, run_resolved_suite, select_native_graph_scheduler,
     },
 };
 use anyhow::Context as _;
@@ -39,6 +46,7 @@ pub(super) struct NativeGraphCliOptions {
     pub(super) requested_verifier_mode: Option<VerifierMode>,
     pub(super) has_external_agent_command: bool,
     pub(super) lifecycle_output_explicit: bool,
+    pub(super) records_output: Option<PathBuf>,
 }
 
 /// Runs one imported NativeGraph task as exactly one resolved suite trial.
@@ -130,6 +138,11 @@ fn validate_native_graph_invocation(
             }
         }
         NativeGraphProfile::ExternallyDriven => {
+            if options.records_output.is_some() {
+                anyhow::bail!(
+                    "--records-output is available only for schema-1.1 NativeGraph evaluation"
+                );
+            }
             if lifecycle.agent_contract != HarborLifecycleAgentContract::ExternallyDriven {
                 anyhow::bail!(
                     "externally driven NativeGraph evaluation requires an externally_driven lifecycle contract"
@@ -211,6 +224,11 @@ fn run_resolved_native_graph_suite(
     suite: aiperf_runtime::eval::ResolvedNativeGraphSuite,
     limits: ResourceLimits,
 ) -> anyhow::Result<i32> {
+    let record_artifact = options
+        .records_output
+        .as_deref()
+        .map(EvalNodeRecordArtifact::open)
+        .transpose()?;
     let image = options.image.unwrap_or_else(|| {
         "sha256:0000000000000000000000000000000000000000000000000000000000".to_owned()
     });
@@ -229,6 +247,7 @@ fn run_resolved_native_graph_suite(
         native,
         &model_runtime,
         secrets.as_ref(),
+        record_artifact.clone(),
     )?;
     let scheduler = select_native_graph_scheduler(
         application.product_registry(),
@@ -243,6 +262,7 @@ fn run_resolved_native_graph_suite(
         application.clone(),
         model_runtime,
         secrets,
+        record_artifact.clone(),
     )?);
     let runner = Rc::new(NativeGraphEpisodeRunner::with_registered_evaluator(
         executor,
@@ -253,6 +273,9 @@ fn run_resolved_native_graph_suite(
         .enable_all()
         .build()?;
     let results = runtime.block_on(run_resolved_suite(scheduler.as_ref(), suite, runner))?;
+    if let Some(record_artifact) = &record_artifact {
+        record_artifact.finish()?;
+    }
     emit_results(imported.task.id.as_str(), lifecycle, &results)?;
     Ok(0)
 }

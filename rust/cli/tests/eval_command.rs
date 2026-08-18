@@ -179,6 +179,195 @@ fn native_eval_refuses_standard_multi_step_tasks_locally_before_starting_the_age
 }
 
 #[test]
+fn eval_command_without_records_output_retains_reward_json_contract() {
+    let temporary = tempfile::tempdir().unwrap();
+    let package_path = temporary.path().join("task.json");
+    fs::write(
+        &package_path,
+        br#"{"id":"repair-1","instruction":"Fix","environment":"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verifier":"blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","agent_command":["true"],"verifier_command":["sh","-c","printf '{\"reward\":1.0}' > reward.json"],"declared_artifacts":[]}"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aiperf"))
+        .args(["eval", "--task"])
+        .arg(&package_path)
+        .args([
+            "--image",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--verifier-mode",
+            "shared",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "eval failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reward: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        reward
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        ["artifacts", "reward", "task"]
+    );
+    assert_eq!(reward["reward"]["reward"], 1.0);
+}
+
+#[test]
+fn eval_command_rejects_records_output_for_non_native_graph_before_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("standard-task");
+    let started = temporary.path().join("agent-started");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.0\"\n[task]\nname = \"example/standard\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(
+        task_root.join("environment/Dockerfile"),
+        "not a Dockerfile\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--agent-command".to_owned(),
+        format!("touch {}", started.display()),
+        "--records-output".to_owned(),
+        temporary
+            .path()
+            .join("records.jsonl")
+            .to_string_lossy()
+            .into_owned(),
+    ])
+    .expect_err("record output is available only to schema-1.1 NativeGraph evaluation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("--records-output is available only for schema-1.1 NativeGraph evaluation"),
+        "unexpected records-output refusal: {error:#}"
+    );
+    assert!(!started.exists());
+}
+
+#[test]
+fn eval_command_rejects_invalid_records_output_before_docker_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("native-graph");
+    write_native_graph_task(
+        &task_root,
+        "https://provider.example/v1",
+        "not a Dockerfile\n",
+    );
+    let runtime_path = temporary.path().join("model-runtime.toml");
+    fs::write(&runtime_path, "version = 1\n").unwrap();
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    write_native_graph_lifecycle(&lifecycle_path);
+    let parent_file = temporary.path().join("not-a-directory");
+    fs::write(&parent_file, "blocking file\n").unwrap();
+    let records_path = parent_file.join("records.jsonl");
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--model-runtime".to_owned(),
+        runtime_path.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+        "--records-output".to_owned(),
+        records_path.to_string_lossy().into_owned(),
+    ])
+    .expect_err("an invalid record destination must fail before Docker provisioning");
+
+    assert!(
+        error
+            .to_string()
+            .contains("native eval node record export directory"),
+        "unexpected record destination error: {error:#}"
+    );
+}
+
+#[test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+fn eval_command_native_graph_records_output_preserves_reward_stdout() {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 8192];
+        let _ = stream.read(&mut request).unwrap();
+        let body = br#"{"id":"completion-1","object":"chat.completion","created":1,"model":"example-model","choices":[{"index":0,"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+    });
+
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("native-graph");
+    write_native_graph_task(&task_root, &endpoint, "FROM alpine:3.20\n");
+    let runtime_path = temporary.path().join("model-runtime.toml");
+    fs::write(&runtime_path, "version = 1\n").unwrap();
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    write_native_graph_lifecycle(&lifecycle_path);
+    let records_path = temporary.path().join("records.jsonl");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aiperf"))
+        .args(["eval", "--task"])
+        .arg(&task_root)
+        .arg("--model-runtime")
+        .arg(&runtime_path)
+        .arg("--lifecycle-request")
+        .arg(&lifecycle_path)
+        .arg("--records-output")
+        .arg(&records_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "eval failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reward: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        reward
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        ["artifacts", "episodes", "reward", "task"]
+    );
+    let rows = fs::read_to_string(&records_path).unwrap();
+    let rows = rows
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
 fn native_eval_requires_model_runtime_for_schema_1_1_before_provisioning() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("native-graph");
@@ -1028,6 +1217,80 @@ fn assert_task_containers_absent() {
         remaining.is_empty(),
         "task containers remained after the evaluation API returned: {remaining:?}"
     );
+}
+
+fn write_native_graph_task(task_root: &Path, endpoint: &str, dockerfile: &str) {
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        r#"schema_version = "1.1"
+[task]
+name = "example/native-graph-records"
+[native_graph]
+profile = "native_graph"
+program = "agent_graph.json"
+model_bindings = "models.toml"
+adapter_manifest = "adapters.toml"
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Complete the graph.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), dockerfile).unwrap();
+    fs::write(
+        task_root.join("tests/test.sh"),
+        "mkdir -p /logs/verifier\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("agent_graph.json"),
+        r#"{
+  "schema_version": "1.0", "trace_id": "cli-records", "stage_bound": 1,
+  "channels": { "output": { "type": "messages", "reducer": "add_messages" } },
+  "nodes": [{ "id": "model", "kind": "model", "binding": "primary", "output": "output", "streaming": false }],
+  "edges": [{ "source": "START", "target": "model" }, { "source": "model", "target": "END" }],
+  "terminal_outputs": []
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("models.toml"),
+        format!(
+            r#"[[model_bindings]]
+id = "primary"
+endpoint_profile_id = "provider-default"
+endpoint_factory_id = "chat"
+transport_factory_id = "http"
+model = "example-model"
+urls = ["{endpoint}"]
+streaming = false
+request_timeout_ms = 30000
+capture = "metadata"
+[model_bindings.tokenizer]
+type = "local"
+name = "builtin"
+revision = "main"
+apply_chat_template = false
+[model_bindings.generation]
+"#
+        ),
+    )
+    .unwrap();
+    fs::write(task_root.join("adapters.toml"), "").unwrap();
+}
+
+fn write_native_graph_lifecycle(path: &Path) {
+    let policy = ArtifactDigest::from_bytes(b"native-graph-policy");
+    fs::write(
+        path,
+        format!(
+            r#"{{"version":1,"agent_variant":"native-graph","model":{{"provider":"provider-default","model":"example-model"}},"seed":11,"policy":"{policy}","runtime":"native","attempt":"caller-attempt","budget":{{"execution_seconds":30.0,"verifier_seconds":30.0}},"agent_contract":"native_graph","command":["aiperf-native-graph"],"initial_score":{{"metric":"reward","rationale":"{initial}"}},"regrade":{{"metric":"reward","rationale":"{regrade}"}}}}"#,
+            policy = policy.as_str(),
+            initial = ArtifactDigest::from_bytes(b"initial rationale").as_str(),
+            regrade = ArtifactDigest::from_bytes(b"regrade rationale").as_str(),
+        ),
+    )
+    .unwrap();
 }
 
 fn run_git<const N: usize>(repository: &std::path::Path, arguments: [&str; N]) {
