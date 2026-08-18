@@ -105,6 +105,8 @@ pub enum HarborLifecycleAgentContract {
     External,
     /// The runtime executes a native graph agent.
     NativeGraph,
+    /// A package-declared compatibility driver owns the opaque episode loop.
+    ExternallyDriven,
 }
 
 /// Immutable score selection supplied for one lifecycle revision.

@@ -3,6 +3,7 @@
 
 //! NativeGraph package, protocol, artifact, result, and suite contracts.
 
+mod action_encoder;
 mod artifacts;
 mod cellular;
 #[cfg(feature = "engine")]

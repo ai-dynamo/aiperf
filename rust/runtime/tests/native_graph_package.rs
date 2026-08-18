@@ -237,6 +237,391 @@ fn executable_adapter_mutation_changes_package_identity() {
 }
 
 #[test]
+fn native_graph_rollout_import_retains_environment_selection_and_seals_every_authored_fact() {
+    let baseline = rollout_task_fixture(b"{\"seed\":7}\n");
+    let baseline_imported = import_native_task(baseline.path()).unwrap();
+    let rollout = baseline_imported
+        .package
+        .native_graph()
+        .and_then(|native| native.rollout())
+        .expect("the strict rollout selection is retained from the acquired package snapshot");
+    assert_eq!(
+        rollout.environment().adapter_id().as_str(),
+        "environment-adapter"
+    );
+    assert_eq!(
+        rollout.environment().protocol_factory_id().as_str(),
+        "strict_jsonl"
+    );
+    assert_eq!(
+        rollout.environment().runtime_provider_id().as_str(),
+        "strict_supervised"
+    );
+    assert_eq!(
+        rollout.environment().stepper_factory_id().as_str(),
+        "supervised_environment"
+    );
+    assert_eq!(rollout.environment().operation_deadline_ms().get(), 5_000);
+    assert_eq!(rollout.policy().environment(), "counter-v1");
+    assert_eq!(rollout.policy().horizon(), 4);
+    assert_eq!(rollout.policy().gamma(), 0.75);
+    assert_eq!(rollout.limits().max_environment_bytes(), 256);
+    assert_eq!(rollout.limits().max_horizon(), 8);
+    assert_eq!(
+        rollout.environment().reset_source().bytes(),
+        b"{\"seed\":7}\n"
+    );
+    assert_eq!(
+        rollout.environment().protocol_limits().max_frame_bytes(),
+        4_096
+    );
+    assert_eq!(
+        rollout.environment().artifact_limits().max_total_bytes(),
+        16_384
+    );
+
+    for (selection, path, from, to) in [
+        (
+            "environment policy identity",
+            "rollout.toml",
+            "environment = \"counter-v1\"",
+            "environment = \"counter-v2\"",
+        ),
+        (
+            "rollout horizon",
+            "rollout.toml",
+            "horizon = 4",
+            "horizon = 3",
+        ),
+        (
+            "discount factor",
+            "rollout.toml",
+            "gamma = 0.75",
+            "gamma = 0.5",
+        ),
+        (
+            "environment byte cap",
+            "rollout.toml",
+            "max_environment_bytes = 256",
+            "max_environment_bytes = 128",
+        ),
+        (
+            "environment horizon cap",
+            "rollout.toml",
+            "max_horizon = 8",
+            "max_horizon = 4",
+        ),
+        (
+            "environment adapter selection",
+            "rollout.toml",
+            "adapter_id = \"environment-adapter\"",
+            "adapter_id = \"alternate-environment-adapter\"",
+        ),
+        (
+            "operation deadline",
+            "rollout.toml",
+            "operation_deadline_ms = 5000",
+            "operation_deadline_ms = 4000",
+        ),
+        (
+            "protocol factory selection",
+            "rollout.toml",
+            "protocol_factory_id = \"strict_jsonl\"",
+            "protocol_factory_id = \"alternate_jsonl\"",
+        ),
+        (
+            "runtime provider selection",
+            "rollout.toml",
+            "runtime_provider_id = \"strict_supervised\"",
+            "runtime_provider_id = \"alternate_supervised\"",
+        ),
+        (
+            "stepper factory selection",
+            "rollout.toml",
+            "stepper_factory_id = \"supervised_environment\"",
+            "stepper_factory_id = \"alternate_environment\"",
+        ),
+        (
+            "protocol frame cap",
+            "rollout.toml",
+            "max_frame_bytes = 4096",
+            "max_frame_bytes = 2048",
+        ),
+        (
+            "protocol identifier cap",
+            "rollout.toml",
+            "max_identifier_bytes = 128",
+            "max_identifier_bytes = 64",
+        ),
+        (
+            "protocol JSON byte cap",
+            "rollout.toml",
+            "max_json_bytes = 2048",
+            "max_json_bytes = 1024",
+        ),
+        (
+            "protocol JSON depth cap",
+            "rollout.toml",
+            "max_json_depth = 4",
+            "max_json_depth = 3",
+        ),
+        (
+            "protocol JSON array cap",
+            "rollout.toml",
+            "max_json_array_entries = 8",
+            "max_json_array_entries = 7",
+        ),
+        (
+            "protocol JSON object cap",
+            "rollout.toml",
+            "max_json_object_entries = 8",
+            "max_json_object_entries = 7",
+        ),
+        (
+            "protocol operation-ledger cap",
+            "rollout.toml",
+            "max_operation_ledger_entries = 16",
+            "max_operation_ledger_entries = 15",
+        ),
+        (
+            "protocol per-operation lineage cap",
+            "rollout.toml",
+            "max_model_call_lineage_entries = 4",
+            "max_model_call_lineage_entries = 3",
+        ),
+        (
+            "protocol session lineage entry cap",
+            "rollout.toml",
+            "max_session_model_call_lineage_entries = 16",
+            "max_session_model_call_lineage_entries = 15",
+        ),
+        (
+            "protocol session lineage byte cap",
+            "rollout.toml",
+            "max_session_model_call_lineage_bytes = 2048",
+            "max_session_model_call_lineage_bytes = 1024",
+        ),
+        (
+            "protocol artifact-handle cap",
+            "rollout.toml",
+            "max_artifact_handles = 4",
+            "max_artifact_handles = 3",
+        ),
+        (
+            "protocol artifact-byte cap",
+            "rollout.toml",
+            "max_artifact_bytes = 4096",
+            "max_artifact_bytes = 2048",
+        ),
+        (
+            "artifact-count cap",
+            "rollout.toml",
+            "max_artifacts = 8",
+            "max_artifacts = 7",
+        ),
+        (
+            "artifact total-byte cap",
+            "rollout.toml",
+            "max_total_bytes = 16384",
+            "max_total_bytes = 8192",
+        ),
+        (
+            "artifact per-entry cap",
+            "rollout.toml",
+            "max_artifact_bytes = 3072",
+            "max_artifact_bytes = 2048",
+        ),
+        (
+            "artifact download-handle cap",
+            "rollout.toml",
+            "max_download_handles = 4",
+            "max_download_handles = 3",
+        ),
+        (
+            "reset source path",
+            "rollout.toml",
+            "reset_source = \"rollout/reset.json\"",
+            "reset_source = \"rollout/alternate-reset.json\"",
+        ),
+        (
+            "reset bytes",
+            "rollout/reset.json",
+            "{\"seed\":7}",
+            "{\"seed\":8}",
+        ),
+    ] {
+        let altered = rollout_task_fixture(b"{\"seed\":7}\n");
+        replace(&altered.path().join(path), from, to);
+        let altered_imported = import_native_task(altered.path()).unwrap();
+
+        assert_ne!(
+            baseline_imported.task.digest, altered_imported.task.digest,
+            "{selection} must be sealed into the NativeGraph package identity"
+        );
+    }
+}
+
+#[test]
+fn native_graph_rollout_rejects_invalid_or_incompatible_authoring_before_provisioning() {
+    let external = externally_driven_task_fixture();
+    fs::write(external.path().join("rollout.toml"), valid_rollout_toml()).unwrap();
+    assert_invalid_package(external.path());
+
+    let malformed = rollout_task_fixture(b"{\"seed\":7}\n");
+    append(&malformed.path().join("rollout.toml"), "unknown = true\n");
+    assert_invalid_package(malformed.path());
+
+    let zero_deadline = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &zero_deadline.path().join("rollout.toml"),
+        "operation_deadline_ms = 5000",
+        "operation_deadline_ms = 0",
+    );
+    assert_invalid_package(zero_deadline.path());
+
+    let invalid_gamma = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &invalid_gamma.path().join("rollout.toml"),
+        "gamma = 0.75",
+        "gamma = nan",
+    );
+    assert_invalid_package(invalid_gamma.path());
+
+    let noncanonical_reset = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &noncanonical_reset.path().join("rollout.toml"),
+        "reset_source = \"rollout/reset.json\"",
+        "reset_source = \"rollout/../rollout/reset.json\"",
+    );
+    assert_invalid_package(noncanonical_reset.path());
+
+    let external_reset = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &external_reset.path().join("rollout.toml"),
+        "reset_source = \"rollout/reset.json\"",
+        "reset_source = \"/outside-the-package/reset.json\"",
+    );
+    assert_invalid_package(external_reset.path());
+
+    let missing_reset = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &missing_reset.path().join("rollout.toml"),
+        "reset_source = \"rollout/reset.json\"",
+        "reset_source = \"rollout/missing.json\"",
+    );
+    assert_invalid_package(missing_reset.path());
+
+    let role_mismatch = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &role_mismatch.path().join("rollout.toml"),
+        "adapter_id = \"environment-adapter\"",
+        "adapter_id = \"tool-adapter\"",
+    );
+    assert_invalid_package(role_mismatch.path());
+}
+
+#[test]
+fn rollout_manifest_and_reset_bytes_each_change_the_executable_source_projection() {
+    let baseline = rollout_task_fixture(b"{\"seed\":7}\n");
+    let baseline_digest = import_native_task(baseline.path())
+        .unwrap()
+        .package
+        .native_graph()
+        .unwrap()
+        .executable_source_digest()
+        .clone();
+
+    let manifest_mutation = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &manifest_mutation.path().join("rollout.toml"),
+        "gamma = 0.75",
+        "gamma = 0.5",
+    );
+    let manifest_digest = import_native_task(manifest_mutation.path())
+        .unwrap()
+        .package
+        .native_graph()
+        .unwrap()
+        .executable_source_digest()
+        .clone();
+    assert_ne!(baseline_digest, manifest_digest);
+
+    let reset_mutation = rollout_task_fixture(b"{\"seed\":8}\n");
+    let reset_digest = import_native_task(reset_mutation.path())
+        .unwrap()
+        .package
+        .native_graph()
+        .unwrap()
+        .executable_source_digest()
+        .clone();
+    assert_ne!(baseline_digest, reset_digest);
+}
+
+#[test]
+fn native_graph_rollout_retains_the_acquired_reset_snapshot_after_origin_mutation() {
+    let task = rollout_task_fixture(b"{\"seed\":7}\n");
+    let imported = import_native_task(task.path()).unwrap();
+
+    fs::write(task.path().join("rollout.toml"), b"not valid TOML\n").unwrap();
+    fs::write(task.path().join("rollout/reset.json"), b"{\"seed\":999}\n").unwrap();
+
+    let rollout = imported
+        .package
+        .native_graph()
+        .and_then(|native| native.rollout())
+        .expect("the imported rollout snapshot remains available after origin mutation");
+    assert_eq!(rollout.policy().gamma(), 0.75);
+    assert_eq!(
+        rollout.environment().reset_source().bytes(),
+        b"{\"seed\":7}\n"
+    );
+}
+
+#[test]
+fn native_graph_without_rollout_preserves_the_pre_rollout_identity_golden() {
+    let task = native_task_fixture(b"print('adapter')\n");
+
+    assert_eq!(
+        import_native_task(task.path())
+            .unwrap()
+            .task
+            .digest
+            .as_str(),
+        "blake3:29a90e3a6e30ac5c9d103912ce3c95baa4bfb3699427f7b575810bb4edb00965"
+    );
+}
+
+#[test]
+fn externally_driven_driver_selection_and_argv_are_immutable_package_identity() {
+    let baseline = externally_driven_task_fixture();
+    let baseline_imported = import_native_task(baseline.path()).unwrap();
+    let baseline_native = baseline_imported.package.native_graph().unwrap();
+    let baseline_driver = baseline_native
+        .driver_adapter()
+        .expect("the declared external driver is retained in the imported snapshot");
+
+    assert_eq!(baseline_driver.id.as_str(), "driver-adapter");
+    assert_eq!(baseline_driver.argv, ["tools/driver.sh"]);
+
+    let altered = externally_driven_task_fixture();
+    replace(
+        &altered.path().join("adapters.toml"),
+        "argv = [\"tools/driver.sh\"]",
+        "argv = [\"tools/driver.sh\", \"--strict\"]",
+    );
+    let altered_imported = import_native_task(altered.path()).unwrap();
+    let altered_driver = altered_imported
+        .package
+        .native_graph()
+        .unwrap()
+        .driver_adapter()
+        .expect("the altered driver is retained in the imported snapshot");
+
+    assert_eq!(altered_driver.argv, ["tools/driver.sh", "--strict"]);
+    assert_ne!(baseline_imported.task.digest, altered_imported.task.digest);
+}
+
+#[test]
 fn native_graph_plan_retains_the_validated_program_source_snapshot() {
     let task = native_task_fixture(b"print('adapter')\n");
     let program_path = task.path().join("agent_graph.json");
@@ -579,6 +964,80 @@ policy = ["tools/policy.toml"]
     fs::write(task.path().join("tools/config.toml"), b"enabled = true\n").unwrap();
     fs::write(task.path().join("tools/policy.toml"), b"allow = true\n").unwrap();
     task
+}
+
+fn rollout_task_fixture(reset: &[u8]) -> tempfile::TempDir {
+    let task = native_task_fixture(b"print('adapter')\n");
+    append(
+        &task.path().join("adapters.toml"),
+        r#"
+[[adapters]]
+id = "environment-adapter"
+role = "environment"
+argv = ["tools/environment.py"]
+executable = "tools/environment.py"
+
+[[adapters]]
+id = "alternate-environment-adapter"
+role = "environment"
+argv = ["tools/alternate-environment.py"]
+executable = "tools/alternate-environment.py"
+"#,
+    );
+    fs::write(
+        task.path().join("tools/environment.py"),
+        b"print('environment')\n",
+    )
+    .unwrap();
+    fs::write(
+        task.path().join("tools/alternate-environment.py"),
+        b"print('alternate environment')\n",
+    )
+    .unwrap();
+    fs::create_dir_all(task.path().join("rollout")).unwrap();
+    fs::write(task.path().join("rollout/reset.json"), reset).unwrap();
+    fs::write(task.path().join("rollout/alternate-reset.json"), reset).unwrap();
+    fs::write(task.path().join("rollout.toml"), valid_rollout_toml()).unwrap();
+    task
+}
+
+fn valid_rollout_toml() -> &'static str {
+    r#"
+[environment]
+adapter_id = "environment-adapter"
+protocol_factory_id = "strict_jsonl"
+runtime_provider_id = "strict_supervised"
+stepper_factory_id = "supervised_environment"
+operation_deadline_ms = 5000
+reset_source = "rollout/reset.json"
+max_frame_bytes = 4096
+max_identifier_bytes = 128
+max_json_bytes = 2048
+max_json_depth = 4
+max_json_array_entries = 8
+max_json_object_entries = 8
+max_operation_ledger_entries = 16
+max_model_call_lineage_entries = 4
+max_session_model_call_lineage_entries = 16
+max_session_model_call_lineage_bytes = 2048
+max_artifact_handles = 4
+max_artifact_bytes = 4096
+
+[artifacts]
+max_artifacts = 8
+max_total_bytes = 16384
+max_artifact_bytes = 3072
+max_download_handles = 4
+
+[policy]
+environment = "counter-v1"
+horizon = 4
+gamma = 0.75
+
+[limits]
+max_environment_bytes = 256
+max_horizon = 8
+"#
 }
 
 fn externally_driven_task_fixture() -> tempfile::TempDir {

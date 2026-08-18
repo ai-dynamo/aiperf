@@ -75,17 +75,25 @@ silently add an unbounded loop or direct network model call.
 
 ### Supervised external episode, the compatibility profile
 
-An external process may run an opaque user-language loop under Rust supervision.
-Rust still owns task identity, process lifecycle, environment, budgets,
-artifacts, verifier, score, and outer episode timing, but it does not claim
-native scheduling or full internal model/tool visibility. This profile is
-explicitly classified as `externally_driven` and cannot be reported as an exact
-NativeGraph result.
+`externally_driven` is currently an import and preflight-only compatibility
+profile, not an executable agent runtime. Single-task preflight validates the
+immutable driver selection and lifecycle command provenance, rejects
+`--agent-command`, and reaches the unavailable compatibility-runner boundary
+without requiring `--model-runtime`. It fails closed before environment
+provisioning and cannot report an episode result.
 
-An optional AIPerf-native capture proxy may improve observability of declared
-HTTP(S) model or tool calls in this profile. Proxy evidence is observation, not
-control: TLS-pinned, in-process, non-HTTP, or bypassed traffic lowers the
-fidelity classification rather than being silently described as fully observed.
+The planned compatibility runner will supervise an opaque user-language loop.
+It will let Rust own task identity, process lifecycle, environment, budgets,
+artifacts, verifier, score, and outer episode timing while reporting lower
+observability than NativeGraph: it will not claim native scheduling or full
+internal model/tool visibility. Any result will be classified as
+`externally_driven`, never an exact NativeGraph result.
+
+A planned optional AIPerf-native capture proxy and capture executor will
+improve observability of declared HTTP(S) model or tool calls in this profile.
+Proxy evidence will be observation, not control: TLS-pinned, in-process,
+non-HTTP, or bypassed traffic will lower the fidelity classification rather
+than being silently described as fully observed.
 
 ## Trait and seam composition
 
@@ -190,7 +198,7 @@ and redaction behavior. URLs, endpoint and transport factory ids, tokenizer,
 retry, timeout, generation, and capture policy are package identity. Secret ids
 are identity; secret values are not.
 
-Both `aiperf eval --task` and `aiperf eval --suite` require one strict
+The `native_graph` profile requires one strict
 `--model-runtime <model-runtime.toml>`. That file maps logical `ModelSecretId`
 values to host environment-variable names; it cannot override any pinned model,
 URL, endpoint, transport, tokenizer, retry, timeout, or capture field. The CLI
@@ -202,8 +210,18 @@ existing worker-local graph endpoint runtime under `RealClock`. Resolution and
 credential stripping complete before any task environment or adapter process is
 provisioned. Adapters receive only binding ids and correlated model results.
 
-The compatibility profile uses the same schema revision but names its sole
-supervised driver explicitly:
+The `externally_driven` profile has no Rust-owned model binding or secret
+mapping. Its lifecycle record uses the distinct `externally_driven` contract,
+must exactly match the immutable manifest driver argv, and cannot use
+`--agent-command`. A single-task invocation currently supports only this
+import and preflight boundary: it reaches the unavailable compatibility-runner
+boundary without requiring `--model-runtime` and fails closed before
+environment provisioning. It launches neither a driver nor a capture executor.
+The existing suite grammar still requires Rust model-binding axes, so it has no
+valid externally driven suite shape yet.
+
+The current import contract uses the same schema revision and names its sole
+declared driver explicitly; the planned compatibility runner will supervise it:
 
 ```toml
 schema_version = "1.1"
@@ -287,11 +305,12 @@ correlated `DeliverModelResult`. `InvokeTool` gives a tool adapter a frozen inpu
 snapshot and returns a typed `ToolResult`. Every response carries the operation,
 episode, span, and sequence ids it satisfies.
 
-Only an `externally_driven` episode driver may emit an
-`EpisodeTerminalCandidate`. NativeGraph tool, environment, heuristic, and policy
-adapters terminate only their correlated operation; Rust alone evaluates graph
-terminality and emits the canonical episode terminal record. RL reset produces
-the initial observation through `EnvironmentReset`. Each
+When the planned compatibility runner executes an `externally_driven` episode,
+only its driver will be permitted to emit an `EpisodeTerminalCandidate`.
+NativeGraph tool, environment, heuristic, and policy adapters terminate only
+their correlated operation; Rust alone evaluates graph terminality and emits
+the canonical episode terminal record. RL reset produces the initial observation
+through `EnvironmentReset`. Each
 `StepEnvironment`/`Transition` pair advances exactly one declared environment
 step. Rust derives discounted and undiscounted return from this authoritative
 transition stream and gives the frozen stream to the verifier for an independent

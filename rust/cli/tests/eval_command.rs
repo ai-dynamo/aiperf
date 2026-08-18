@@ -4,7 +4,7 @@
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{collections::BTreeMap, fs};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use aiperf_runtime::eval::{
     ArtifactDigest, HarborImporter, HarborSource, LocalExecutionResult, MultiStepExecutionResult,
@@ -13,6 +13,39 @@ use aiperf_runtime::eval::{
 use serde_json::json;
 
 static DOCKER_TIMEOUT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn write_externally_driven_task(task_root: &Path) {
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("tools")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        "schema_version = \"1.1\"\n[task]\nname = \"example/external-driver\"\n[native_graph]\nprofile = \"externally_driven\"\nadapter_manifest = \"adapters.toml\"\ndriver = \"driver-adapter\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(
+        task_root.join("adapters.toml"),
+        "[[adapters]]\nid = \"driver-adapter\"\nrole = \"driver\"\nargv = [\"tools/driver.sh\"]\nexecutable = \"tools/driver.sh\"\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("tools/driver.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+}
+
+fn write_externally_driven_lifecycle(path: &Path, command: &[&str]) {
+    let policy = ArtifactDigest::from_bytes(b"external-policy");
+    let command = serde_json::to_string(command).unwrap();
+    fs::write(
+        path,
+        format!(
+            r#"{{"version":1,"agent_variant":"external-driver","model":{{"provider":"external","model":"opaque"}},"seed":7,"policy":"{policy}","runtime":"external:v1","attempt":"attempt-1","budget":{{"execution_seconds":2.0,"verifier_seconds":3.0}},"agent_contract":"externally_driven","command":{command},"initial_score":{{"metric":"reward","rationale":"{policy}"}},"regrade":{{"metric":"reward","rationale":"{policy}"}}}}"#,
+            policy = policy.as_str(),
+        ),
+    )
+    .unwrap();
+}
 
 fn reward<const N: usize>(metrics: [(&str, f64); N]) -> RewardDocument {
     RewardDocument::new(
@@ -190,6 +223,91 @@ fn native_eval_requires_model_runtime_for_schema_1_1_before_provisioning() {
         "unexpected NativeGraph refusal: {error:#}"
     );
     assert!(!started.exists());
+}
+
+#[test]
+fn externally_driven_eval_rejects_agent_command_before_model_runtime_or_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("external-driver");
+    let started = temporary.path().join("agent-started");
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    write_externally_driven_task(&task_root);
+    write_externally_driven_lifecycle(&lifecycle_path, &["tools/driver.sh"]);
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+        "--agent-command".to_owned(),
+        format!("touch {}", started.display()),
+    ])
+    .expect_err("the immutable external driver argv must reject a caller command before Docker");
+
+    assert!(
+        error
+            .to_string()
+            .contains("NativeGraph lifecycle contracts do not accept --agent-command"),
+        "unexpected external-profile refusal: {error:#}"
+    );
+    assert!(!started.exists());
+}
+
+#[test]
+fn externally_driven_eval_reaches_compatibility_runner_preflight_without_model_runtime() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("external-driver");
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    write_externally_driven_task(&task_root);
+    write_externally_driven_lifecycle(&lifecycle_path, &["tools/driver.sh"]);
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+    ])
+    .expect_err(
+        "the unavailable compatibility runner must reject without asking for model runtime",
+    );
+
+    assert!(
+        error
+            .to_string()
+            .contains("externally driven NativeGraph compatibility runner is not enabled"),
+        "unexpected external-profile refusal: {error:#}"
+    );
+    assert!(
+        !error.to_string().contains("--model-runtime is required"),
+        "external compatibility preflight must not require a Rust model runtime: {error:#}"
+    );
+}
+
+#[test]
+fn externally_driven_eval_rejects_lifecycle_command_that_disagrees_with_manifest_driver() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("external-driver");
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    write_externally_driven_task(&task_root);
+    write_externally_driven_lifecycle(&lifecycle_path, &["tools/other-driver.sh"]);
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+    ])
+    .expect_err("the lifecycle record must bind the manifest-selected external driver argv");
+
+    assert!(
+        error
+            .to_string()
+            .contains("lifecycle command provenance disagrees with the manifest driver"),
+        "unexpected external-profile refusal: {error:#}"
+    );
 }
 
 #[test]

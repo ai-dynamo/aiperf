@@ -10,7 +10,6 @@
 
 use std::{collections::BTreeMap, fs, num::NonZeroUsize, path::Path, rc::Rc};
 
-use anyhow::Context as _;
 use aiperf_runtime::{
     engine::{application::Application, distribution_identity::current_distribution_id},
     eval::{
@@ -23,6 +22,7 @@ use aiperf_runtime::{
         run_resolved_suite, select_native_graph_scheduler,
     },
 };
+use anyhow::Context as _;
 use serde::Serialize;
 
 use super::SandboxFlag;

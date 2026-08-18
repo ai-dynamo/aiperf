@@ -427,6 +427,21 @@ impl EpisodeArtifactStore {
         Ok(handle)
     }
 
+    /// Checks whether one more immutable reference can be issued without mutating store state.
+    ///
+    /// Callers that retain this store's exclusive mutable borrow through `issue_reference` can
+    /// use this preflight before publishing a new artifact, avoiding a frozen artifact whose
+    /// reference cannot be granted.
+    pub(crate) fn preflight_reference(&self) -> Result<(), ArtifactError> {
+        self.ensure_open()?;
+        if self.downloads.len() >= self.quota.max_download_handles {
+            return Err(ArtifactError::DownloadHandleLimit {
+                limit: self.quota.max_download_handles,
+            });
+        }
+        Ok(())
+    }
+
     /// Issues one immutable reference whose capability and descriptor came from this store.
     pub fn issue_reference(
         &mut self,

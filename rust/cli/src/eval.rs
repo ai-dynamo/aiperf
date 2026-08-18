@@ -256,9 +256,25 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let (_pinned_tree, source) = materialize_pinned_directory(&requested_source)?;
     let imported = HarborImporter::new(&NativeSourceAcquirer).import(&source)?;
     if imported.package.native_graph().is_some() {
-        let model_runtime = flags.model_runtime.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("--model-runtime is required for schema-1.1 NativeGraph evaluation")
-        })?;
+        let profile = imported
+            .package
+            .native_graph()
+            .map(|native| native.profile())
+            .ok_or_else(|| {
+                anyhow::anyhow!("NativeGraph task snapshot disappeared before execution")
+            })?;
+        let model_runtime = match profile {
+            aiperf_runtime::eval::NativeGraphProfile::NativeGraph => {
+                Some(flags.model_runtime.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--model-runtime is required for schema-1.1 NativeGraph evaluation"
+                    )
+                })?)
+            }
+            aiperf_runtime::eval::NativeGraphProfile::ExternallyDriven => {
+                flags.model_runtime.as_deref()
+            }
+        };
         let lifecycle = lifecycle.as_ref().ok_or_else(|| {
             anyhow::anyhow!("--lifecycle-request is required for scored NativeGraph evaluation")
         })?;
@@ -477,6 +493,11 @@ fn validate_lifecycle_execution(
         HarborLifecycleAgentContract::NativeGraph => {
             anyhow::bail!(
                 "native_graph lifecycle contracts are not executable through --agent-command"
+            )
+        }
+        HarborLifecycleAgentContract::ExternallyDriven => {
+            anyhow::bail!(
+                "externally_driven lifecycle contracts are not executable through --agent-command"
             )
         }
         HarborLifecycleAgentContract::External | HarborLifecycleAgentContract::Installed => {}

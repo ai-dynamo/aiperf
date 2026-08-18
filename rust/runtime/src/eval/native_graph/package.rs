@@ -72,6 +72,18 @@ native_graph_id!(
     ModelSecretId,
     "Logical identifier for a NativeGraph model secret, never its value."
 );
+native_graph_id!(
+    AdapterProtocolFactoryId,
+    "Canonical identifier for a NativeGraph adapter-protocol factory."
+);
+native_graph_id!(
+    AdapterRuntimeProviderId,
+    "Canonical identifier for a NativeGraph adapter-runtime provider."
+);
+native_graph_id!(
+    EnvironmentStepperFactoryId,
+    "Canonical identifier for a NativeGraph environment-stepper factory."
+);
 
 /// Exact execution profile selected by a schema-1.1 task.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
@@ -280,6 +292,267 @@ pub struct NativeGraphProgramSource {
     digest: ArtifactDigest,
 }
 
+/// Immutable reset-source bytes selected from the acquired rollout snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeGraphRolloutResetSource {
+    path: String,
+    bytes: Arc<[u8]>,
+    digest: ArtifactDigest,
+}
+
+impl NativeGraphRolloutResetSource {
+    /// Returns the canonical package-relative reset-source path.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Returns the exact reset-source bytes retained at import time.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Returns the digest of the retained reset-source bytes.
+    pub fn digest(&self) -> &ArtifactDigest {
+        &self.digest
+    }
+}
+
+/// Bounded protocol values selected for one environment adapter session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeGraphEnvironmentProtocolLimits {
+    max_frame_bytes: u64,
+    max_identifier_bytes: u64,
+    max_json_bytes: u64,
+    max_json_depth: u64,
+    max_json_array_entries: u64,
+    max_json_object_entries: u64,
+    max_operation_ledger_entries: u64,
+    max_model_call_lineage_entries: u64,
+    max_session_model_call_lineage_entries: u64,
+    max_session_model_call_lineage_bytes: u64,
+    max_artifact_handles: u64,
+    max_artifact_bytes: u64,
+}
+
+impl NativeGraphEnvironmentProtocolLimits {
+    /// Returns the maximum JSONL frame bytes admitted for the environment session.
+    pub const fn max_frame_bytes(&self) -> u64 {
+        self.max_frame_bytes
+    }
+
+    /// Returns the maximum bytes in a typed identifier.
+    pub const fn max_identifier_bytes(&self) -> u64 {
+        self.max_identifier_bytes
+    }
+
+    /// Returns the maximum JSON payload bytes.
+    pub const fn max_json_bytes(&self) -> u64 {
+        self.max_json_bytes
+    }
+
+    /// Returns the maximum JSON nesting depth.
+    pub const fn max_json_depth(&self) -> u64 {
+        self.max_json_depth
+    }
+
+    /// Returns the maximum entries in one JSON array.
+    pub const fn max_json_array_entries(&self) -> u64 {
+        self.max_json_array_entries
+    }
+
+    /// Returns the maximum entries in one JSON object.
+    pub const fn max_json_object_entries(&self) -> u64 {
+        self.max_json_object_entries
+    }
+
+    /// Returns the maximum retained protocol operation correlations.
+    pub const fn max_operation_ledger_entries(&self) -> u64 {
+        self.max_operation_ledger_entries
+    }
+
+    /// Returns the maximum model-call lineage entries per pending policy decision.
+    pub const fn max_model_call_lineage_entries(&self) -> u64 {
+        self.max_model_call_lineage_entries
+    }
+
+    /// Returns the maximum model-call lineage entries retained by the environment session.
+    pub const fn max_session_model_call_lineage_entries(&self) -> u64 {
+        self.max_session_model_call_lineage_entries
+    }
+
+    /// Returns the maximum model-call lineage bytes retained by the environment session.
+    pub const fn max_session_model_call_lineage_bytes(&self) -> u64 {
+        self.max_session_model_call_lineage_bytes
+    }
+
+    /// Returns the maximum artifact capabilities carried by the environment protocol.
+    pub const fn max_artifact_handles(&self) -> u64 {
+        self.max_artifact_handles
+    }
+
+    /// Returns the maximum bytes in one protocol artifact operation.
+    pub const fn max_artifact_bytes(&self) -> u64 {
+        self.max_artifact_bytes
+    }
+}
+
+/// Bounded Rust-owned artifact-store values selected for one environment episode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeGraphEnvironmentArtifactLimits {
+    max_artifacts: u64,
+    max_total_bytes: u64,
+    max_artifact_bytes: u64,
+    max_download_handles: u64,
+}
+
+impl NativeGraphEnvironmentArtifactLimits {
+    /// Returns the maximum frozen artifacts plus upload reservations.
+    pub const fn max_artifacts(&self) -> u64 {
+        self.max_artifacts
+    }
+
+    /// Returns the maximum bytes retained or reserved by the episode store.
+    pub const fn max_total_bytes(&self) -> u64 {
+        self.max_total_bytes
+    }
+
+    /// Returns the maximum bytes in one artifact upload.
+    pub const fn max_artifact_bytes(&self) -> u64 {
+        self.max_artifact_bytes
+    }
+
+    /// Returns the maximum live artifact-download capabilities.
+    pub const fn max_download_handles(&self) -> u64 {
+        self.max_download_handles
+    }
+}
+
+/// Immutable RL policy facts selected by one NativeGraph rollout package.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeGraphRolloutPolicy {
+    environment: String,
+    horizon: u32,
+    gamma: f64,
+}
+
+impl NativeGraphRolloutPolicy {
+    /// Returns the declared environment identity.
+    pub fn environment(&self) -> &str {
+        &self.environment
+    }
+
+    /// Returns the maximum rollout horizon.
+    pub const fn horizon(&self) -> u32 {
+        self.horizon
+    }
+
+    /// Returns the finite discount factor.
+    pub const fn gamma(&self) -> f64 {
+        self.gamma
+    }
+}
+
+/// Immutable bounds selected for a NativeGraph rollout policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeGraphRolloutLimits {
+    max_environment_bytes: u64,
+    max_horizon: u32,
+}
+
+impl NativeGraphRolloutLimits {
+    /// Returns the maximum environment-identity bytes.
+    pub const fn max_environment_bytes(&self) -> u64 {
+        self.max_environment_bytes
+    }
+
+    /// Returns the maximum rollout horizon allowed by the package.
+    pub const fn max_horizon(&self) -> u32 {
+        self.max_horizon
+    }
+}
+
+/// Immutable environment-adapter selection retained by an imported rollout.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeGraphRolloutEnvironment {
+    adapter_id: AdapterId,
+    protocol_factory_id: AdapterProtocolFactoryId,
+    runtime_provider_id: AdapterRuntimeProviderId,
+    stepper_factory_id: EnvironmentStepperFactoryId,
+    operation_deadline_ms: NonZeroU64,
+    protocol_limits: NativeGraphEnvironmentProtocolLimits,
+    artifact_limits: NativeGraphEnvironmentArtifactLimits,
+    reset_source: NativeGraphRolloutResetSource,
+}
+
+impl NativeGraphRolloutEnvironment {
+    /// Returns the declared adapter that must have the `environment` role.
+    pub fn adapter_id(&self) -> &AdapterId {
+        &self.adapter_id
+    }
+
+    /// Returns the canonical protocol-factory selection.
+    pub fn protocol_factory_id(&self) -> &AdapterProtocolFactoryId {
+        &self.protocol_factory_id
+    }
+
+    /// Returns the canonical runtime-provider selection.
+    pub fn runtime_provider_id(&self) -> &AdapterRuntimeProviderId {
+        &self.runtime_provider_id
+    }
+
+    /// Returns the canonical environment-stepper factory selection.
+    pub fn stepper_factory_id(&self) -> &EnvironmentStepperFactoryId {
+        &self.stepper_factory_id
+    }
+
+    /// Returns the positive per-operation deadline selected by the package.
+    pub const fn operation_deadline_ms(&self) -> NonZeroU64 {
+        self.operation_deadline_ms
+    }
+
+    /// Returns the exact environment protocol caps selected by the package.
+    pub fn protocol_limits(&self) -> &NativeGraphEnvironmentProtocolLimits {
+        &self.protocol_limits
+    }
+
+    /// Returns the exact Rust-owned artifact-store caps selected by the package.
+    pub fn artifact_limits(&self) -> &NativeGraphEnvironmentArtifactLimits {
+        &self.artifact_limits
+    }
+
+    /// Returns the acquired reset-source snapshot.
+    pub fn reset_source(&self) -> &NativeGraphRolloutResetSource {
+        &self.reset_source
+    }
+}
+
+/// Immutable optional rollout selection retained by a NativeGraph package.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeGraphRolloutPlan {
+    environment: NativeGraphRolloutEnvironment,
+    policy: NativeGraphRolloutPolicy,
+    limits: NativeGraphRolloutLimits,
+}
+
+impl Eq for NativeGraphRolloutPlan {}
+
+impl NativeGraphRolloutPlan {
+    /// Returns the environment adapter and capability selection.
+    pub fn environment(&self) -> &NativeGraphRolloutEnvironment {
+        &self.environment
+    }
+
+    /// Returns the rollout policy selected at import time.
+    pub fn policy(&self) -> &NativeGraphRolloutPolicy {
+        &self.policy
+    }
+
+    /// Returns the bounds selected for the rollout policy.
+    pub const fn limits(&self) -> NativeGraphRolloutLimits {
+        self.limits
+    }
+}
+
 impl NativeGraphProgramSource {
     /// Returns the canonical package-relative program path.
     pub fn path(&self) -> &str {
@@ -305,6 +578,7 @@ pub struct NativeGraphPackagePlan {
     model_bindings: Vec<ModelBindingSpec>,
     adapters: Vec<AdapterSpec>,
     driver: Option<AdapterId>,
+    rollout: Option<NativeGraphRolloutPlan>,
     executable_source_digest: ArtifactDigest,
 }
 
@@ -339,6 +613,17 @@ impl NativeGraphPackagePlan {
     /// Returns the explicit compatibility driver when selected.
     pub fn driver(&self) -> Option<&AdapterId> {
         self.driver.as_ref()
+    }
+
+    /// Returns the immutable adapter selected to drive an externally driven episode.
+    pub fn driver_adapter(&self) -> Option<&AdapterSpec> {
+        let driver = self.driver.as_ref()?;
+        self.adapters.iter().find(|adapter| adapter.id == *driver)
+    }
+
+    /// Returns the optional strict rollout selection retained from `rollout.toml`.
+    pub fn rollout(&self) -> Option<&NativeGraphRolloutPlan> {
+        self.rollout.as_ref()
     }
 
     /// Returns the executable-source projection retained by the package.
@@ -378,6 +663,9 @@ impl NativeGraphPackagePlan {
             "native-graph-package.driver",
             self.driver.as_ref().map(AdapterId::as_str),
         );
+        if let Some(rollout) = &self.rollout {
+            append_rollout_identity(material, rollout);
+        }
         append_identity_field(
             material,
             "native-graph-package.executable-source-digest",
@@ -404,6 +692,7 @@ pub(crate) struct NativeGraphPackageDraft {
     model_bindings: Vec<ModelBindingSpec>,
     adapters: Vec<AdapterSpec>,
     driver: Option<AdapterId>,
+    rollout: Option<NativeGraphRolloutPlan>,
     executable_source_paths: BTreeSet<String>,
 }
 
@@ -424,6 +713,7 @@ impl NativeGraphPackageDraft {
             model_bindings: self.model_bindings,
             adapters: self.adapters,
             driver: self.driver,
+            rollout: self.rollout,
             executable_source_digest,
         }
     }
@@ -444,6 +734,11 @@ pub(crate) fn resolve_native_graph_package(
         executable_source_paths.insert(adapter.executable.clone());
         executable_source_paths.extend(adapter.config.iter().cloned());
         executable_source_paths.extend(adapter.policy.iter().cloned());
+    }
+    let rollout = resolve_rollout(source, section.profile, &adapters)?;
+    if let Some(rollout) = &rollout {
+        executable_source_paths.insert(ROLLOUT_MANIFEST_PATH.to_owned());
+        executable_source_paths.insert(rollout.environment.reset_source.path.clone());
     }
 
     match section.profile {
@@ -480,6 +775,7 @@ pub(crate) fn resolve_native_graph_package(
                 model_bindings,
                 adapters,
                 driver: None,
+                rollout,
                 executable_source_paths,
             })
         }
@@ -488,6 +784,9 @@ pub(crate) fn resolve_native_graph_package(
                 return invalid(
                     "externally_driven profile must not declare a graph program or model bindings",
                 );
+            }
+            if rollout.is_some() {
+                return invalid("rollout.toml requires the native_graph profile");
             }
             let driver = section.driver.ok_or_else(|| {
                 HarborImportError::InvalidPackage(
@@ -508,10 +807,208 @@ pub(crate) fn resolve_native_graph_package(
                 model_bindings: Vec::new(),
                 adapters,
                 driver: Some(driver),
+                rollout: None,
                 executable_source_paths,
             })
         }
     }
+}
+
+const ROLLOUT_MANIFEST_PATH: &str = "rollout.toml";
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutManifestDto {
+    environment: RolloutEnvironmentDto,
+    artifacts: RolloutArtifactLimitsDto,
+    policy: RolloutPolicyDto,
+    limits: RolloutLimitsDto,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutEnvironmentDto {
+    adapter_id: AdapterId,
+    protocol_factory_id: AdapterProtocolFactoryId,
+    runtime_provider_id: AdapterRuntimeProviderId,
+    stepper_factory_id: EnvironmentStepperFactoryId,
+    operation_deadline_ms: NonZeroU64,
+    reset_source: String,
+    max_frame_bytes: u64,
+    max_identifier_bytes: u64,
+    max_json_bytes: u64,
+    max_json_depth: u64,
+    max_json_array_entries: u64,
+    max_json_object_entries: u64,
+    max_operation_ledger_entries: u64,
+    max_model_call_lineage_entries: u64,
+    max_session_model_call_lineage_entries: u64,
+    max_session_model_call_lineage_bytes: u64,
+    max_artifact_handles: u64,
+    max_artifact_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutArtifactLimitsDto {
+    max_artifacts: u64,
+    max_total_bytes: u64,
+    max_artifact_bytes: u64,
+    max_download_handles: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutPolicyDto {
+    environment: String,
+    horizon: u32,
+    gamma: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RolloutLimitsDto {
+    max_environment_bytes: u64,
+    max_horizon: u32,
+}
+
+fn resolve_rollout(
+    source: &AcquiredSource,
+    profile: NativeGraphProfile,
+    adapters: &[AdapterSpec],
+) -> Result<Option<NativeGraphRolloutPlan>, HarborImportError> {
+    let rollout_bytes = match source.read(ROLLOUT_MANIFEST_PATH) {
+        Ok(bytes) => bytes,
+        Err(HarborImportError::InvalidPackage(message))
+            if message == "source file is missing: \"rollout.toml\"" =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    if profile != NativeGraphProfile::NativeGraph {
+        return invalid("rollout.toml requires the native_graph profile");
+    }
+    let manifest: RolloutManifestDto = decode_toml(ROLLOUT_MANIFEST_PATH, rollout_bytes)?;
+    let limits = NativeGraphRolloutLimits {
+        max_environment_bytes: manifest.limits.max_environment_bytes,
+        max_horizon: manifest.limits.max_horizon,
+    };
+    if limits.max_environment_bytes == 0 || limits.max_horizon == 0 {
+        return invalid("rollout.limits must be positive");
+    }
+    let policy_environment =
+        required_text("rollout.policy.environment", manifest.policy.environment)?;
+    if u64::try_from(policy_environment.len()).map_err(|_| {
+        HarborImportError::InvalidPackage("rollout.policy.environment is too long".to_owned())
+    })? > limits.max_environment_bytes
+    {
+        return invalid("rollout.policy.environment exceeds rollout.limits.max_environment_bytes");
+    }
+    if manifest.policy.horizon == 0 || manifest.policy.horizon > limits.max_horizon {
+        return invalid(
+            "rollout.policy.horizon must be positive and within rollout.limits.max_horizon",
+        );
+    }
+    if !manifest.policy.gamma.is_finite() || !(0.0..=1.0).contains(&manifest.policy.gamma) {
+        return invalid("rollout.policy.gamma must be finite and within [0, 1]");
+    }
+    let environment =
+        resolve_rollout_environment(source, manifest.environment, manifest.artifacts, adapters)?;
+    Ok(Some(NativeGraphRolloutPlan {
+        environment,
+        policy: NativeGraphRolloutPolicy {
+            environment: policy_environment,
+            horizon: manifest.policy.horizon,
+            gamma: manifest.policy.gamma,
+        },
+        limits,
+    }))
+}
+
+fn resolve_rollout_environment(
+    source: &AcquiredSource,
+    environment: RolloutEnvironmentDto,
+    artifacts: RolloutArtifactLimitsDto,
+    adapters: &[AdapterSpec],
+) -> Result<NativeGraphRolloutEnvironment, HarborImportError> {
+    match adapters
+        .iter()
+        .find(|adapter| adapter.id == environment.adapter_id)
+    {
+        Some(adapter) if adapter.role == AdapterRole::Environment => {}
+        Some(_) => {
+            return invalid("rollout.environment.adapter_id must select an environment adapter");
+        }
+        None => return invalid("rollout.environment.adapter_id is not declared"),
+    }
+    let protocol_limits = NativeGraphEnvironmentProtocolLimits {
+        max_frame_bytes: environment.max_frame_bytes,
+        max_identifier_bytes: environment.max_identifier_bytes,
+        max_json_bytes: environment.max_json_bytes,
+        max_json_depth: environment.max_json_depth,
+        max_json_array_entries: environment.max_json_array_entries,
+        max_json_object_entries: environment.max_json_object_entries,
+        max_operation_ledger_entries: environment.max_operation_ledger_entries,
+        max_model_call_lineage_entries: environment.max_model_call_lineage_entries,
+        max_session_model_call_lineage_entries: environment.max_session_model_call_lineage_entries,
+        max_session_model_call_lineage_bytes: environment.max_session_model_call_lineage_bytes,
+        max_artifact_handles: environment.max_artifact_handles,
+        max_artifact_bytes: environment.max_artifact_bytes,
+    };
+    if [
+        protocol_limits.max_frame_bytes,
+        protocol_limits.max_identifier_bytes,
+        protocol_limits.max_json_bytes,
+        protocol_limits.max_json_depth,
+        protocol_limits.max_json_array_entries,
+        protocol_limits.max_json_object_entries,
+        protocol_limits.max_operation_ledger_entries,
+        protocol_limits.max_model_call_lineage_entries,
+        protocol_limits.max_session_model_call_lineage_entries,
+        protocol_limits.max_session_model_call_lineage_bytes,
+        protocol_limits.max_artifact_handles,
+        protocol_limits.max_artifact_bytes,
+    ]
+    .contains(&0)
+    {
+        return invalid("rollout.environment protocol limits must be positive");
+    }
+    let artifact_limits = NativeGraphEnvironmentArtifactLimits {
+        max_artifacts: artifacts.max_artifacts,
+        max_total_bytes: artifacts.max_total_bytes,
+        max_artifact_bytes: artifacts.max_artifact_bytes,
+        max_download_handles: artifacts.max_download_handles,
+    };
+    if [
+        artifact_limits.max_artifacts,
+        artifact_limits.max_total_bytes,
+        artifact_limits.max_artifact_bytes,
+        artifact_limits.max_download_handles,
+    ]
+    .contains(&0)
+        || artifact_limits.max_artifact_bytes > artifact_limits.max_total_bytes
+    {
+        return invalid("rollout.artifacts limits are invalid");
+    }
+    let reset_path =
+        canonical_relative_path("rollout.environment.reset_source", environment.reset_source)?;
+    let reset_bytes = source.read_owned(&reset_path)?;
+    let reset_source = NativeGraphRolloutResetSource {
+        path: reset_path,
+        digest: ArtifactDigest::from_bytes(&reset_bytes),
+        bytes: reset_bytes,
+    };
+    Ok(NativeGraphRolloutEnvironment {
+        adapter_id: environment.adapter_id,
+        protocol_factory_id: environment.protocol_factory_id,
+        runtime_provider_id: environment.runtime_provider_id,
+        stepper_factory_id: environment.stepper_factory_id,
+        operation_deadline_ms: environment.operation_deadline_ms,
+        protocol_limits,
+        artifact_limits,
+        reset_source,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1049,6 +1546,132 @@ fn append_adapter_identity(material: &mut Vec<u8>, adapter: &AdapterSpec) {
     );
     append_path_list_identity(material, "native-graph-adapter.config", &adapter.config);
     append_path_list_identity(material, "native-graph-adapter.policy", &adapter.policy);
+}
+
+fn append_rollout_identity(material: &mut Vec<u8>, rollout: &NativeGraphRolloutPlan) {
+    append_identity_field(material, "native-graph-rollout.format", b"1");
+    append_identity_field(
+        material,
+        "native-graph-rollout.environment.adapter-id",
+        rollout.environment.adapter_id.as_str().as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.environment.protocol-factory-id",
+        rollout.environment.protocol_factory_id.as_str().as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.environment.runtime-provider-id",
+        rollout.environment.runtime_provider_id.as_str().as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.environment.stepper-factory-id",
+        rollout.environment.stepper_factory_id.as_str().as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.environment.operation-deadline-ms",
+        &rollout
+            .environment
+            .operation_deadline_ms
+            .get()
+            .to_le_bytes(),
+    );
+    append_environment_protocol_limits_identity(material, &rollout.environment.protocol_limits);
+    append_environment_artifact_limits_identity(material, &rollout.environment.artifact_limits);
+    append_identity_field(
+        material,
+        "native-graph-rollout.environment.reset-source-path",
+        rollout.environment.reset_source.path.as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.environment.reset-source-digest",
+        rollout.environment.reset_source.digest.as_str().as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.policy.environment",
+        rollout.policy.environment.as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.policy.horizon",
+        &rollout.policy.horizon.to_le_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.policy.gamma",
+        &rollout.policy.gamma.to_bits().to_le_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.limits.max-environment-bytes",
+        &rollout.limits.max_environment_bytes.to_le_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.limits.max-horizon",
+        &rollout.limits.max_horizon.to_le_bytes(),
+    );
+}
+
+fn append_environment_protocol_limits_identity(
+    material: &mut Vec<u8>,
+    limits: &NativeGraphEnvironmentProtocolLimits,
+) {
+    for (field, value) in [
+        ("max-frame-bytes", limits.max_frame_bytes),
+        ("max-identifier-bytes", limits.max_identifier_bytes),
+        ("max-json-bytes", limits.max_json_bytes),
+        ("max-json-depth", limits.max_json_depth),
+        ("max-json-array-entries", limits.max_json_array_entries),
+        ("max-json-object-entries", limits.max_json_object_entries),
+        (
+            "max-operation-ledger-entries",
+            limits.max_operation_ledger_entries,
+        ),
+        (
+            "max-model-call-lineage-entries",
+            limits.max_model_call_lineage_entries,
+        ),
+        (
+            "max-session-model-call-lineage-entries",
+            limits.max_session_model_call_lineage_entries,
+        ),
+        (
+            "max-session-model-call-lineage-bytes",
+            limits.max_session_model_call_lineage_bytes,
+        ),
+        ("max-artifact-handles", limits.max_artifact_handles),
+        ("max-artifact-bytes", limits.max_artifact_bytes),
+    ] {
+        append_identity_field(
+            material,
+            &format!("native-graph-rollout.environment.protocol-limits.{field}"),
+            &value.to_le_bytes(),
+        );
+    }
+}
+
+fn append_environment_artifact_limits_identity(
+    material: &mut Vec<u8>,
+    limits: &NativeGraphEnvironmentArtifactLimits,
+) {
+    for (field, value) in [
+        ("max-artifacts", limits.max_artifacts),
+        ("max-total-bytes", limits.max_total_bytes),
+        ("max-artifact-bytes", limits.max_artifact_bytes),
+        ("max-download-handles", limits.max_download_handles),
+    ] {
+        append_identity_field(
+            material,
+            &format!("native-graph-rollout.environment.artifact-limits.{field}"),
+            &value.to_le_bytes(),
+        );
+    }
 }
 
 fn append_path_list_identity(material: &mut Vec<u8>, field: &str, paths: &[String]) {
