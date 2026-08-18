@@ -58,6 +58,8 @@ pub enum EvidenceKind {
     Evaluator,
     /// Security-policy evidence.
     Security,
+    /// Bounded observation evidence from an externally driven compatibility episode.
+    Compatibility,
 }
 
 impl EvidenceKind {
@@ -71,6 +73,7 @@ impl EvidenceKind {
             Self::Artifact => "artifact",
             Self::Evaluator => "evaluator",
             Self::Security => "security",
+            Self::Compatibility => "compatibility",
         }
     }
 }
