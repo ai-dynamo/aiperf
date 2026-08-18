@@ -202,7 +202,7 @@ fn attribute_event(
                 event,
                 ClientEvent::AppendAudio { .. }
                     | ClientEvent::AddConversationItem
-                    | ClientEvent::RequestResponse
+                    | ClientEvent::RequestResponse { .. }
             );
     if starts_turn {
         *next_turn = next_turn.saturating_add(1);
@@ -1568,6 +1568,7 @@ pub(crate) enum ClientEvent {
     StartTurn {
         model: String,
         continuation: Option<String>,
+        operation_id: Option<String>,
     },
     /// Configures a Realtime session.
     ConfigureSession,
@@ -1578,14 +1579,14 @@ pub(crate) enum ClientEvent {
     /// Commits Realtime input.
     CommitInput,
     /// Requests a Realtime response.
-    RequestResponse,
+    RequestResponse { operation_id: Option<String> },
 }
 
 impl ClientEvent {
     fn operation_model(&self, route: RouteKind) -> Option<&str> {
         match (route, self) {
             (RouteKind::Turns, Self::StartTurn { model, .. }) => Some(model),
-            (RouteKind::Realtime, Self::RequestResponse) => Some("mock-realtime"),
+            (RouteKind::Realtime, Self::RequestResponse { .. }) => Some("mock-realtime"),
             _ => None,
         }
     }
@@ -1637,6 +1638,8 @@ pub(crate) fn parse_client_event(
                 input: Value,
                 #[serde(default)]
                 previous_response_id: Option<String>,
+                #[serde(default)]
+                metadata: Option<Value>,
             }
 
             let create: ResponsesCreate = serde_json::from_value(value).map_err(|error| {
@@ -1658,6 +1661,7 @@ pub(crate) fn parse_client_event(
             Ok(ClientEvent::StartTurn {
                 model: create.model,
                 continuation: create.previous_response_id,
+                operation_id: operation_id_from_metadata(create.metadata.as_ref()),
             })
         }
         (RouteKind::Realtime, "session.update") => Ok(ClientEvent::ConfigureSession),
@@ -1673,12 +1677,29 @@ pub(crate) fn parse_client_event(
         }
         (RouteKind::Realtime, "conversation.item.create") => Ok(ClientEvent::AddConversationItem),
         (RouteKind::Realtime, "input_audio_buffer.commit") => Ok(ClientEvent::CommitInput),
-        (RouteKind::Realtime, "response.create") => Ok(ClientEvent::RequestResponse),
+        (RouteKind::Realtime, "response.create") => Ok(ClientEvent::RequestResponse {
+            operation_id: object
+                .get("response")
+                .and_then(|response| response.get("metadata"))
+                .and_then(operation_id_from_metadata_value),
+        }),
         _ => Err(ProtocolError::new(format!(
             "event type {event_type:?} is not valid for {}",
             route.endpoint_label()
         ))),
     }
+}
+
+fn operation_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
+    metadata.and_then(operation_id_from_metadata_value)
+}
+
+fn operation_id_from_metadata_value(metadata: &Value) -> Option<String> {
+    metadata
+        .get("_aiperf_ws_operation")
+        .and_then(Value::as_str)
+        .filter(|identity| !identity.is_empty())
+        .map(str::to_owned)
 }
 
 /// One server action at an absolute mock-clock target.
@@ -1878,6 +1899,7 @@ impl ConnectionScenario {
             ClientEvent::StartTurn {
                 model,
                 continuation,
+                operation_id,
             } => {
                 if self.has_in_flight_turn {
                     return Err(ProtocolError::new(
@@ -1919,6 +1941,7 @@ impl ConnectionScenario {
                             "object":"response",
                             "status":"in_progress",
                             "model":model,
+                            "metadata": operation_metadata(operation_id.as_deref()),
                         },
                     }),
                 )];
@@ -1959,6 +1982,7 @@ impl ConnectionScenario {
                             "object":"response",
                             "status":"completed",
                             "model":model,
+                            "metadata": operation_metadata(operation_id.as_deref()),
                             "output":[{
                                 "type":"message",
                                 "role":"assistant",
@@ -2042,7 +2066,7 @@ impl ConnectionScenario {
                 self.realtime_commit_ns = Some(input_complete_ns);
                 Ok(Vec::new())
             }
-            ClientEvent::RequestResponse => {
+            ClientEvent::RequestResponse { operation_id } => {
                 let commit_ns = self.realtime_commit_ns.take().ok_or_else(|| {
                     ProtocolError::new("Realtime response requires committed input")
                 })?;
@@ -2063,7 +2087,11 @@ impl ConnectionScenario {
                         input_complete_ns,
                         serde_json::json!({
                             "type":"response.created",
-                            "response":{"id":response_id,"status":"in_progress"}
+                            "response":{
+                                "id":response_id,
+                                "status":"in_progress",
+                                "metadata": operation_metadata(operation_id.as_deref()),
+                            }
                         }),
                     ));
                 }
@@ -2113,6 +2141,7 @@ impl ConnectionScenario {
                             "id":response_id,
                             "object":"realtime.response",
                             "status":"completed",
+                            "metadata": operation_metadata(operation_id.as_deref()),
                             "output":[{
                                 "type":"message",
                                 "role":"assistant",
@@ -2161,6 +2190,17 @@ impl ConnectionScenario {
             payload: Bytes::from(value.to_string()),
         }
     }
+}
+
+fn operation_metadata(operation_id: Option<&str>) -> Value {
+    operation_id.map_or_else(
+        || Value::Object(Default::default()),
+        |operation_id| {
+            serde_json::json!({
+                "_aiperf_ws_operation": operation_id,
+            })
+        },
+    )
 }
 
 fn ms_to_ns(milliseconds: f64) -> i64 {
@@ -2424,7 +2464,7 @@ mod tests {
             .expect("session configuration is valid");
         assert!(
             scenario
-                .on_event(ClientEvent::RequestResponse, 200)
+                .on_event(ClientEvent::RequestResponse { operation_id: None }, 200,)
                 .is_err()
         );
         scenario
@@ -2434,7 +2474,7 @@ mod tests {
             .on_event(ClientEvent::CommitInput, 400)
             .expect("input commit is valid");
         let first_text_at = scenario
-            .on_event(ClientEvent::RequestResponse, 10_000)
+            .on_event(ClientEvent::RequestResponse { operation_id: None }, 10_000)
             .expect("response after commit is valid")
             .into_iter()
             .find_map(|action| match action {
@@ -2460,12 +2500,42 @@ mod tests {
                 ClientEvent::StartTurn {
                     model: "mock-model".to_owned(),
                     continuation: None,
+                    operation_id: None,
                 },
                 1_000,
             )
             .expect("normal turn is valid");
         assert!(actions.iter().any(ServerAction::is_scheduled_content));
         assert!(actions.iter().any(ServerAction::is_terminal));
+    }
+
+    #[test]
+    fn response_created_echoes_the_client_operation_marker() {
+        let config = MockServerConfig::default();
+        let mut scenario = ConnectionScenario::new(RouteKind::Turns, 1, &config);
+        let created = scenario
+            .on_event(
+                ClientEvent::StartTurn {
+                    model: "mock-model".to_owned(),
+                    continuation: None,
+                    operation_id: Some("operation-1".to_owned()),
+                },
+                1_000,
+            )
+            .expect("normal turn is valid")
+            .into_iter()
+            .find_map(|action| match action {
+                ServerAction::SendText { payload, .. } => serde_json::from_slice::<Value>(&payload)
+                    .ok()
+                    .filter(|event| event["type"] == "response.created"),
+                _ => None,
+            })
+            .expect("normal turn has response.created");
+
+        assert_eq!(
+            created["response"]["metadata"]["_aiperf_ws_operation"],
+            "operation-1"
+        );
     }
 
     #[test]
@@ -2480,6 +2550,7 @@ mod tests {
                 ClientEvent::StartTurn {
                     model: "mock-model".to_owned(),
                     continuation: None,
+                    operation_id: None,
                 },
                 1_000,
             )
@@ -2510,6 +2581,7 @@ mod tests {
                 ClientEvent::StartTurn {
                     model: "mock-model".to_owned(),
                     continuation: None,
+                    operation_id: None,
                 },
                 1_000,
             )
@@ -2529,6 +2601,7 @@ mod tests {
                 ClientEvent::StartTurn {
                     model: "mock-model".to_owned(),
                     continuation: Some(response_id),
+                    operation_id: None,
                 },
                 2_000,
             )
@@ -2553,6 +2626,7 @@ mod tests {
                 ClientEvent::StartTurn {
                     model: "mock-model".to_owned(),
                     continuation: None,
+                    operation_id: None,
                 },
                 1_000,
             )
@@ -2588,7 +2662,7 @@ mod tests {
             .on_event(ClientEvent::CommitInput, 1_000)
             .expect("input commit is valid");
         let (terminal_at, terminal) = scenario
-            .on_event(ClientEvent::RequestResponse, 10_000)
+            .on_event(ClientEvent::RequestResponse { operation_id: None }, 10_000)
             .expect("response after commit is valid")
             .into_iter()
             .find_map(|action| match action {
@@ -2637,6 +2711,7 @@ mod tests {
                 ClientEvent::StartTurn {
                     model: "mock-model".to_owned(),
                     continuation: None,
+                    operation_id: None,
                 },
                 10,
             )

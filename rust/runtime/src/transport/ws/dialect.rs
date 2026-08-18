@@ -12,13 +12,144 @@ use crate::body_plan::{
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::ObservedUsage;
 use crate::endpoints::UsageView;
+use crate::endpoints::WebSocketDialect;
 use crate::transport::ws::RoundTripTimingState;
+
+const OPERATION_METADATA_KEY: &str = "_aiperf_ws_operation";
+
+#[derive(Clone, Debug)]
+pub(crate) struct OperationCorrelation {
+    operation_id: String,
+    client_event_ids: Box<[String]>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CorrelatedOperation {
+    operation: PreparedWsOperation,
+    correlation: OperationCorrelation,
+}
+
+impl CorrelatedOperation {
+    pub(crate) fn operation(&self) -> &PreparedWsOperation {
+        &self.operation
+    }
+
+    pub(crate) fn correlation(&self) -> &OperationCorrelation {
+        &self.correlation
+    }
+}
+
+pub(crate) fn correlate_operation(
+    request: &PreparedWsOperation,
+    dialect: WebSocketDialect,
+    operation_id: &str,
+) -> anyhow::Result<CorrelatedOperation> {
+    anyhow::ensure!(
+        !operation_id.is_empty(),
+        "websocket operation correlation identity must not be empty"
+    );
+    let mut client_event_ids = Vec::with_capacity(request.messages().len());
+    let messages = request
+        .messages()
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            anyhow::ensure!(
+                message.opcode() == PreparedWsOpcode::Text,
+                "websocket operation correlation requires text JSON messages"
+            );
+            let mut value: Value = serde_json::from_slice(message.payload())?;
+            let object = value
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("websocket client event must be a JSON object"))?;
+            let event_type = object
+                .get("type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("websocket client event has no string type"))?
+                .to_owned();
+            match dialect {
+                WebSocketDialect::Responses => {
+                    anyhow::ensure!(
+                        event_type == "response.create",
+                        "Responses websocket operation contains unsupported client event {event_type:?}"
+                    );
+                    insert_operation_metadata(object, operation_id)?;
+                }
+                WebSocketDialect::Realtime => {
+                    let client_event_id = format!("{operation_id}:{index}");
+                    anyhow::ensure!(
+                        !object.contains_key("event_id"),
+                        "Realtime event_id is reserved for operation correlation"
+                    );
+                    object.insert("event_id".to_owned(), Value::String(client_event_id.clone()));
+                    client_event_ids.push(client_event_id);
+                    if event_type == "response.create" {
+                        let response = object
+                            .entry("response")
+                            .or_insert_with(|| Value::Object(Default::default()))
+                            .as_object_mut()
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Realtime response.create response must be an object"
+                                )
+                            })?;
+                        insert_operation_metadata(response, operation_id)?;
+                    }
+                }
+            }
+            let payload = serde_json::to_vec(&value)?;
+            Ok(PreparedWsMessage::new(
+                message.opcode(),
+                Bytes::from(payload),
+                message.role(),
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(CorrelatedOperation {
+        operation: request.with_messages(messages),
+        correlation: OperationCorrelation {
+            operation_id: operation_id.to_owned(),
+            client_event_ids: client_event_ids.into_boxed_slice(),
+        },
+    })
+}
+
+fn insert_operation_metadata(
+    object: &mut serde_json::Map<String, Value>,
+    operation_id: &str,
+) -> anyhow::Result<()> {
+    let metadata = object
+        .entry("metadata")
+        .or_insert_with(|| Value::Object(Default::default()))
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("websocket response metadata must be an object"))?;
+    anyhow::ensure!(
+        !metadata.contains_key(OPERATION_METADATA_KEY),
+        "websocket response metadata key {OPERATION_METADATA_KEY:?} is reserved"
+    );
+    metadata.insert(
+        OPERATION_METADATA_KEY.to_owned(),
+        Value::String(operation_id.to_owned()),
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EventDisposition {
+    Attributed { is_terminal: bool },
+    AttributedError,
+    Unattributed,
+    UnsafeUnattributedError,
+}
 
 /// One complete Responses application event.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ResponsesEvent {
     /// The server-assigned identity for this logical response.
-    Created { response_id: String },
+    Created {
+        response_id: String,
+        operation_id: Option<String>,
+    },
     /// Non-empty user-visible content.
     Content { response_id: String, content: Bytes },
     /// Non-visible reasoning delta.
@@ -32,6 +163,11 @@ pub(crate) enum ResponsesEvent {
     },
     /// A continuation identity was rejected before visible output.
     RetriableContinuationRejection,
+    /// Application error, optionally correlated to a client event.
+    Error {
+        client_event_id: Option<String>,
+        message: String,
+    },
     /// Logical operation completion.
     Terminal {
         response_id: String,
@@ -57,6 +193,26 @@ fn response_id(event: &Value, context: &str) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow::anyhow!("{context} has no response identity"))
 }
 
+fn operation_id(event: &Value) -> Option<String> {
+    event
+        .get("response")
+        .and_then(|response| response.get("metadata"))
+        .and_then(|metadata| metadata.get(OPERATION_METADATA_KEY))
+        .and_then(Value::as_str)
+        .filter(|identity| !identity.is_empty())
+        .map(str::to_owned)
+}
+
+fn error_message(event: &Value, dialect: &str) -> String {
+    event
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .filter(|message| !message.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{dialect} WebSocket operation failed"))
+}
+
 /// Classify one complete Responses text message.
 pub(crate) fn classify_responses_event(
     payload: &[u8],
@@ -73,6 +229,7 @@ pub(crate) fn classify_responses_event(
     match kind {
         "response.created" => Ok(ResponsesEvent::Created {
             response_id: response_id(&event, "response.created")?,
+            operation_id: operation_id(&event),
         }),
         "response.output_text.delta" => {
             let response_id = response_id(&event, "response.output_text.delta")?;
@@ -108,7 +265,14 @@ pub(crate) fn classify_responses_event(
             content: terminal_content(&event),
             status: ReplayTerminalStatus::Failed,
         }),
-        "error" => anyhow::bail!("Responses WebSocket operation failed"),
+        "error" => Ok(ResponsesEvent::Error {
+            client_event_id: event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .filter(|identity| !identity.is_empty())
+                .map(str::to_owned),
+            message: error_message(&event, "Responses"),
+        }),
         "response.incomplete" => Ok(ResponsesEvent::Terminal {
             response_id: response_id(&event, "response.incomplete")?,
             usage: observed_usage(event.get("usage").or_else(|| {
@@ -150,6 +314,7 @@ pub(crate) fn classify_realtime_event(
     {
         "response.created" => Ok(ResponsesEvent::Created {
             response_id: response_id(&event, "response.created")?,
+            operation_id: operation_id(&event),
         }),
         "response.output_text.delta" => {
             let response_id = response_id(&event, "response.output_text.delta")?;
@@ -185,7 +350,14 @@ pub(crate) fn classify_realtime_event(
                 status,
             })
         }
-        "error" => anyhow::bail!("Realtime WebSocket operation failed"),
+        "error" => Ok(ResponsesEvent::Error {
+            client_event_id: event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .filter(|identity| !identity.is_empty())
+                .map(str::to_owned),
+            message: error_message(&event, "Realtime"),
+        }),
         _ => Ok(ResponsesEvent::Ignored),
     }
 }
@@ -258,9 +430,106 @@ pub(crate) struct TurnOperationState {
     has_observer_fact: bool,
     has_terminal: bool,
     response_id: Option<String>,
+    operation_id: Option<String>,
+    client_event_ids: Box<[String]>,
+    is_reused_socket: bool,
+    has_verified_correlation: bool,
+    unattributed_response_id: Option<String>,
 }
 
 impl TurnOperationState {
+    pub(crate) fn new(correlation: &OperationCorrelation, is_reused_socket: bool) -> Self {
+        Self {
+            operation_id: Some(correlation.operation_id.clone()),
+            client_event_ids: correlation.client_event_ids.clone(),
+            is_reused_socket,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn on_correlated_event(
+        &mut self,
+        event: &ResponsesEvent,
+        timestamp_ns: i64,
+    ) -> anyhow::Result<EventDisposition> {
+        match event {
+            ResponsesEvent::Created {
+                response_id,
+                operation_id,
+            } if self.operation_id.as_deref() == operation_id.as_deref() => {
+                self.has_verified_correlation = true;
+            }
+            ResponsesEvent::Created {
+                operation_id: None, ..
+            } if !self.is_reused_socket => {}
+            ResponsesEvent::Created {
+                response_id,
+                operation_id: _,
+            } => {
+                anyhow::ensure!(
+                    self.response_id.is_none(),
+                    "websocket response identity changed after the correlated response was created"
+                );
+                match self.unattributed_response_id.as_deref() {
+                    None => self.unattributed_response_id = Some(response_id.clone()),
+                    Some(stale) if stale == response_id => {
+                        anyhow::bail!(
+                            "uncorrelated websocket response identity {response_id:?} was created twice"
+                        )
+                    }
+                    Some(stale) => anyhow::bail!(
+                        "uncorrelated websocket response identity changed from {stale:?} to {response_id:?}"
+                    ),
+                }
+                return Ok(EventDisposition::Unattributed);
+            }
+            ResponsesEvent::Content { response_id, .. }
+            | ResponsesEvent::Reasoning { response_id }
+            | ResponsesEvent::Audio { response_id }
+            | ResponsesEvent::Usage { response_id, .. }
+            | ResponsesEvent::Terminal { response_id, .. }
+                if self.response_id.is_none()
+                    && self.unattributed_response_id.as_deref() == Some(response_id) =>
+            {
+                if matches!(event, ResponsesEvent::Terminal { .. }) {
+                    self.unattributed_response_id = None;
+                }
+                return Ok(EventDisposition::Unattributed);
+            }
+            ResponsesEvent::Error {
+                client_event_id, ..
+            } => {
+                if let Some(client_event_id) = client_event_id {
+                    return Ok(
+                        if self
+                            .client_event_ids
+                            .iter()
+                            .any(|expected| expected == client_event_id)
+                        {
+                            EventDisposition::AttributedError
+                        } else {
+                            EventDisposition::Unattributed
+                        },
+                    );
+                }
+                return Ok(if self.response_id.is_some() || !self.is_reused_socket {
+                    EventDisposition::AttributedError
+                } else {
+                    EventDisposition::UnsafeUnattributedError
+                });
+            }
+            ResponsesEvent::Ignored => return Ok(EventDisposition::Unattributed),
+            ResponsesEvent::RetriableContinuationRejection
+                if self.is_reused_socket && self.response_id.is_none() =>
+            {
+                return Ok(EventDisposition::UnsafeUnattributedError);
+            }
+            _ => {}
+        }
+        self.on_event(event, timestamp_ns)
+            .map(|is_terminal| EventDisposition::Attributed { is_terminal })
+    }
+
     pub(crate) fn on_send(&mut self, timestamp_ns: i64) {
         self.timing.on_measured_input_flushed(timestamp_ns);
     }
@@ -271,7 +540,7 @@ impl TurnOperationState {
         _timestamp_ns: i64,
     ) -> anyhow::Result<bool> {
         match event {
-            ResponsesEvent::Created { response_id } => match self.response_id.as_deref() {
+            ResponsesEvent::Created { response_id, .. } => match self.response_id.as_deref() {
                 None => self.response_id = Some(response_id.clone()),
                 Some(bound) if bound == response_id => {
                     anyhow::bail!("websocket response identity {response_id:?} was created twice")
@@ -296,7 +565,9 @@ impl TurnOperationState {
                     );
                 }
             }
-            ResponsesEvent::RetriableContinuationRejection | ResponsesEvent::Ignored => {}
+            ResponsesEvent::RetriableContinuationRejection
+            | ResponsesEvent::Error { .. }
+            | ResponsesEvent::Ignored => {}
         }
         if matches!(
             event,
@@ -306,6 +577,7 @@ impl TurnOperationState {
                 | ResponsesEvent::Audio { .. }
                 | ResponsesEvent::Usage { .. }
                 | ResponsesEvent::Terminal { .. }
+                | ResponsesEvent::Error { .. }
         ) {
             self.has_observer_fact = true;
         }
@@ -356,6 +628,10 @@ impl TurnOperationState {
         !self.has_observer_fact && !self.has_terminal
     }
 
+    pub(crate) const fn has_verified_correlation(&self) -> bool {
+        self.has_verified_correlation
+    }
+
     pub(crate) fn finish(
         &self,
         status: ReplayTerminalStatus,
@@ -369,6 +645,13 @@ impl TurnOperationState {
 }
 
 impl ResponsesEvent {
+    pub(crate) fn error_message(&self) -> Option<&str> {
+        match self {
+            Self::Error { message, .. } => Some(message),
+            _ => None,
+        }
+    }
+
     pub(crate) fn content(&self) -> Option<&Bytes> {
         match self {
             Self::Content { content, .. } | Self::Terminal { content, .. } => Some(content),
@@ -474,6 +757,7 @@ mod tests {
             .on_event(
                 &ResponsesEvent::Created {
                     response_id: "expected".to_owned(),
+                    operation_id: None,
                 },
                 1,
             )
@@ -500,6 +784,169 @@ mod tests {
                 )
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn reused_socket_ignores_stale_response_before_correlated_response() {
+        let request = PreparedWsOperation::new(
+            [PreparedWsMessage::text(
+                Bytes::from_static(
+                    br#"{"type":"response.create","model":"model","input":"current"}"#,
+                ),
+                PreparedWsMessageRole::MeasuredInput,
+            )],
+            None,
+        );
+        let correlated =
+            correlate_operation(&request, WebSocketDialect::Responses, "current-operation")
+                .expect("Responses request accepts operation correlation");
+        let mut state = TurnOperationState::new(correlated.correlation(), true);
+        for payload in [
+            br#"{"type":"response.created","response":{"id":"stale","metadata":{"_aiperf_ws_operation":"stale-operation"}}}"#.as_slice(),
+            br#"{"type":"response.output_text.delta","response_id":"stale","delta":"wrong"}"#.as_slice(),
+            br#"{"type":"response.completed","response":{"id":"stale"}}"#.as_slice(),
+        ] {
+            let event = classify_responses_event(payload, true).expect("stale event parses");
+            assert_eq!(
+                state
+                    .on_correlated_event(&event, 1)
+                    .expect("stale event is quarantined"),
+                EventDisposition::Unattributed,
+            );
+        }
+
+        let created = classify_responses_event(
+            br#"{"type":"response.created","response":{"id":"current","metadata":{"_aiperf_ws_operation":"current-operation"}}}"#,
+            true,
+        )
+        .expect("current response.created parses");
+        assert_eq!(
+            state
+                .on_correlated_event(&created, 2)
+                .expect("current marker arms response identity"),
+            EventDisposition::Attributed { is_terminal: false },
+        );
+        let content = classify_responses_event(
+            br#"{"type":"response.output_text.delta","response_id":"current","delta":"right"}"#,
+            true,
+        )
+        .expect("current output parses");
+        assert_eq!(
+            state
+                .on_correlated_event(&content, 3)
+                .expect("current output is attributed"),
+            EventDisposition::Attributed { is_terminal: false },
+        );
+        assert_eq!(
+            state
+                .content_for_observation(&content, 3)
+                .expect("current content is observable"),
+            Some(Bytes::from_static(b"right")),
+        );
+    }
+
+    #[test]
+    fn correlation_is_injected_without_discarding_authored_metadata() {
+        let responses = PreparedWsOperation::new(
+            [PreparedWsMessage::text(
+                Bytes::from_static(
+                    br#"{"type":"response.create","model":"model","input":"hello","metadata":{"tenant":"alpha"}}"#,
+                ),
+                PreparedWsMessageRole::MeasuredInput,
+            )],
+            None,
+        );
+        let correlated =
+            correlate_operation(&responses, WebSocketDialect::Responses, "operation-1")
+                .expect("Responses metadata accepts the reserved marker");
+        let payload: Value = serde_json::from_slice(correlated.operation().messages()[0].payload())
+            .expect("correlated Responses event remains JSON");
+        assert_eq!(payload["metadata"]["tenant"], "alpha");
+        assert_eq!(payload["metadata"]["_aiperf_ws_operation"], "operation-1");
+
+        let realtime = PreparedWsOperation::new(
+            [
+                PreparedWsMessage::text(
+                    Bytes::from_static(
+                        br#"{"type":"conversation.item.create","item":{"type":"message"}}"#,
+                    ),
+                    PreparedWsMessageRole::MeasuredInput,
+                ),
+                PreparedWsMessage::text(
+                    Bytes::from_static(
+                        br#"{"type":"response.create","response":{"metadata":{"tenant":"alpha"}}}"#,
+                    ),
+                    PreparedWsMessageRole::Control,
+                ),
+            ],
+            None,
+        );
+        let correlated = correlate_operation(&realtime, WebSocketDialect::Realtime, "operation-2")
+            .expect("Realtime events accept operation correlation");
+        let input: Value = serde_json::from_slice(correlated.operation().messages()[0].payload())
+            .expect("correlated Realtime input remains JSON");
+        let create: Value = serde_json::from_slice(correlated.operation().messages()[1].payload())
+            .expect("correlated Realtime create remains JSON");
+        assert_eq!(input["event_id"], "operation-2:0");
+        assert_eq!(create["event_id"], "operation-2:1");
+        assert_eq!(create["response"]["metadata"]["tenant"], "alpha");
+        assert_eq!(
+            create["response"]["metadata"]["_aiperf_ws_operation"],
+            "operation-2"
+        );
+    }
+
+    #[test]
+    fn uncorrelated_error_is_never_attributed_to_reused_operation() {
+        let request = PreparedWsOperation::new(
+            [PreparedWsMessage::text(
+                Bytes::from_static(br#"{"type":"response.create","response":{}}"#),
+                PreparedWsMessageRole::Control,
+            )],
+            None,
+        );
+        let correlated = correlate_operation(&request, WebSocketDialect::Realtime, "operation-3")
+            .expect("Realtime request accepts correlation");
+        let mut state = TurnOperationState::new(correlated.correlation(), true);
+        let stale = classify_realtime_event(
+            br#"{"type":"error","event_id":"older-operation:0","error":{"message":"stale"}}"#,
+            true,
+        )
+        .expect("Realtime error envelope parses");
+        assert_eq!(
+            state
+                .on_correlated_event(&stale, 1)
+                .expect("stale error is quarantined"),
+            EventDisposition::Unattributed,
+        );
+        let created = classify_realtime_event(
+            br#"{"type":"response.created","response":{"id":"current","metadata":{"_aiperf_ws_operation":"operation-3"}}}"#,
+            true,
+        )
+        .expect("correlated response.created parses");
+        assert_eq!(
+            state
+                .on_correlated_event(&created, 2)
+                .expect("correlated response is armed"),
+            EventDisposition::Attributed { is_terminal: false },
+        );
+        assert_eq!(
+            state
+                .on_correlated_event(&stale, 3)
+                .expect("explicitly stale error remains quarantined after creation"),
+            EventDisposition::Unattributed,
+        );
+        let current = classify_realtime_event(
+            br#"{"type":"error","event_id":"operation-3:0","error":{"message":"current"}}"#,
+            true,
+        )
+        .expect("correlated Realtime error envelope parses");
+        assert_eq!(
+            state
+                .on_correlated_event(&current, 4)
+                .expect("current error is attributed"),
+            EventDisposition::AttributedError,
         );
     }
 
@@ -660,6 +1107,7 @@ mod tests {
             .on_event(
                 &ResponsesEvent::Created {
                     response_id: "r1".to_owned(),
+                    operation_id: None,
                 },
                 9,
             )
@@ -688,6 +1136,7 @@ mod tests {
                 .on_event(
                     &ResponsesEvent::Created {
                         response_id: "r1".to_owned(),
+                        operation_id: None,
                     },
                     9,
                 )

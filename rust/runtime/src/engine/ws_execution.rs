@@ -47,8 +47,9 @@ use crate::transport::core::{
 use crate::transport::measure::{self, WorkerMeasurement};
 use crate::transport::ws::connector::{ConnectFailure, WebSocket, connect};
 use crate::transport::ws::dialect::{
-    ResponsesEvent, TurnOperationState, classify_realtime_event, classify_responses_event,
-    full_history_retry, with_previous_response_id,
+    EventDisposition, OperationCorrelation, ResponsesEvent, TurnOperationState,
+    classify_realtime_event, classify_responses_event, correlate_operation, full_history_retry,
+    with_previous_response_id,
 };
 use crate::transport::ws::driver::{
     ApplicationQueueLimits, DriverEvent, DriverTiming, FallbackReason, SocketOperationDriver,
@@ -74,6 +75,7 @@ struct CheckedOutSocket {
     connected_ns: i64,
     continuation_id: Option<String>,
     has_affinity_state: bool,
+    is_reused: bool,
 }
 
 struct AffinityGateCleanup<'a> {
@@ -492,6 +494,7 @@ impl WebSocketTransportSink {
                 connected_ns: cached.connected_ns,
                 continuation_id: cached.continuation_id,
                 has_affinity_state,
+                is_reused: true,
             });
         }
         let socket = connect(
@@ -508,6 +511,7 @@ impl WebSocketTransportSink {
             connected_ns: self.clock.now_ns(),
             continuation_id: None,
             has_affinity_state: false,
+            is_reused: false,
         })
     }
 
@@ -652,6 +656,22 @@ impl WebSocketTransportSink {
             }
         };
         record.status = Some(101);
+        if capabilities.dialect == WebSocketDialect::Realtime
+            && prepared_operation.requires_affinity_state()
+            && !checked_out.has_affinity_state
+        {
+            close_socket(checked_out.socket, self.clock.clone(), deadline_ns).await;
+            return self.failed_dispatch_result(
+                &request,
+                &prepared_operation,
+                record,
+                observer,
+                start_ns,
+                AttemptFailure::protocol(anyhow!(
+                    "Realtime continuation lost its affinity-owned socket"
+                )),
+            );
+        }
         let operation = match capabilities.dialect {
             WebSocketDialect::Responses => checked_out
                 .continuation_id
@@ -666,14 +686,7 @@ impl WebSocketTransportSink {
                 })
                 .transpose()?
                 .unwrap_or_else(|| prepared_operation.as_ref().clone()),
-            WebSocketDialect::Realtime => {
-                ensure!(
-                    !prepared_operation.requires_affinity_state()
-                        || checked_out.has_affinity_state,
-                    "Realtime continuation requires its affinity-owned socket"
-                );
-                prepared_operation.as_ref().clone()
-            }
+            WebSocketDialect::Realtime => prepared_operation.as_ref().clone(),
         };
         ensure!(
             operation
@@ -683,11 +696,31 @@ impl WebSocketTransportSink {
             "websocket endpoint {:?} prepared an unregistered application opcode",
             endpoint.descriptor().id
         );
+        let correlated = match correlate_operation(
+            &operation,
+            capabilities.dialect,
+            &format!("{}:0", request.uuid),
+        ) {
+            Ok(correlated) => correlated,
+            Err(error) => {
+                close_socket(checked_out.socket, self.clock.clone(), deadline_ns).await;
+                return self.failed_dispatch_result(
+                    &request,
+                    &operation,
+                    record,
+                    observer,
+                    start_ns,
+                    AttemptFailure::protocol(error),
+                );
+            }
+        };
         let attempt = self
             .run_attempt(
                 checked_out.socket,
                 endpoint,
-                &operation,
+                correlated.operation(),
+                correlated.correlation(),
+                checked_out.is_reused,
                 &request,
                 &mut record,
                 observer,
@@ -700,11 +733,28 @@ impl WebSocketTransportSink {
             )
             .await;
         let (completed, executed_operation) = match attempt {
-            Ok(completed) => (completed, operation.clone()),
+            Ok(completed) => (completed, correlated.operation().clone()),
             Err(failure) if capabilities.supports_full_history_replay && failure.can_retry => {
                 let replay = full_history_retry(&prepared_operation).ok_or_else(|| {
                     anyhow!("websocket operation cannot rebuild a self-contained retry")
                 })?;
+                let correlated_replay = match correlate_operation(
+                    &replay,
+                    capabilities.dialect,
+                    &format!("{}:1", request.uuid),
+                ) {
+                    Ok(correlated) => correlated,
+                    Err(error) => {
+                        return self.failed_dispatch_result(
+                            &request,
+                            &replay,
+                            record,
+                            observer,
+                            start_ns,
+                            AttemptFailure::protocol(error),
+                        );
+                    }
+                };
                 tracing::debug!(component = "websocket", error = %failure.error, "retrying websocket operation before visible output");
                 // Raw capture follows the winning-attempt policy: an abandoned
                 // replay-safe attempt contributes neither receive timing nor
@@ -756,7 +806,7 @@ impl WebSocketTransportSink {
                     Err(error) => {
                         return self.failed_dispatch_result(
                             &request,
-                            &replay,
+                            correlated_replay.operation(),
                             record,
                             observer,
                             start_ns,
@@ -769,7 +819,9 @@ impl WebSocketTransportSink {
                     .run_attempt(
                         socket,
                         endpoint,
-                        &replay,
+                        correlated_replay.operation(),
+                        correlated_replay.correlation(),
+                        false,
                         &request,
                         &mut record,
                         observer,
@@ -785,15 +837,25 @@ impl WebSocketTransportSink {
                     Ok(completed) => completed,
                     Err(failure) => {
                         return self.failed_dispatch_result(
-                            &request, &replay, record, observer, start_ns, failure,
+                            &request,
+                            correlated_replay.operation(),
+                            record,
+                            observer,
+                            start_ns,
+                            failure,
                         );
                     }
                 };
-                (completed, replay)
+                (completed, correlated_replay.operation().clone())
             }
             Err(failure) => {
                 return self.failed_dispatch_result(
-                    &request, &operation, record, observer, start_ns, failure,
+                    &request,
+                    correlated.operation(),
+                    record,
+                    observer,
+                    start_ns,
+                    failure,
                 );
             }
         };
@@ -804,6 +866,7 @@ impl WebSocketTransportSink {
         }
         observer.on_terminal(request.uuid, completed.terminal);
         let reusable = completed.terminal == ReplayTerminalStatus::Completed
+            && completed.state.has_verified_correlation()
             && self.transport.connection_reuse != ConnectionReuseStrategy::Never
             && (capabilities.connection_model == WebSocketConnectionModel::TurnSerialized
                 || !request.is_final_turn);
@@ -945,6 +1008,8 @@ impl WebSocketTransportSink {
         socket: WebSocket,
         endpoint: &dyn crate::endpoints::PreparedEndpoint,
         operation: &PreparedWsOperation,
+        correlation: &OperationCorrelation,
+        is_reused_socket: bool,
         request: &crate::transport::core::Request,
         record: &mut RequestRecord,
         observer: &dyn RequestObserver,
@@ -977,7 +1042,7 @@ impl WebSocketTransportSink {
             self.config.max_response_bytes,
         )
         .map_err(|error| AttemptFailure::terminal(error.into()))?;
-        let mut state = TurnOperationState::default();
+        let mut state = TurnOperationState::new(correlation, is_reused_socket);
         let mut output = String::new();
         let mut response_id = None;
         let mut response_bytes = 0_usize;
@@ -1021,9 +1086,32 @@ impl WebSocketTransportSink {
                         WebSocketDialect::Realtime => classify_realtime_event(&payload, is_text),
                     })
                     .map_err(AttemptFailure::protocol)?;
-                    let is_terminal = state
-                        .on_event(&event, timestamp_ns)
+                    let disposition = state
+                        .on_correlated_event(&event, timestamp_ns)
                         .map_err(AttemptFailure::protocol)?;
+                    let is_terminal = match disposition {
+                        EventDisposition::Attributed { is_terminal } => is_terminal,
+                        EventDisposition::AttributedError => {
+                            return Err(AttemptFailure::retryable_protocol(
+                                anyhow!(
+                                    "{}",
+                                    event
+                                        .error_message()
+                                        .unwrap_or("correlated websocket application error")
+                                ),
+                                state.can_retry(),
+                            ));
+                        }
+                        EventDisposition::Unattributed => continue,
+                        EventDisposition::UnsafeUnattributedError => {
+                            return Err(AttemptFailure::retryable_protocol(
+                                anyhow!(
+                                    "websocket application error could not be correlated to the current operation"
+                                ),
+                                state.can_retry(),
+                            ));
+                        }
+                    };
                     response_bytes =
                         response_bytes.checked_add(payload.len()).ok_or_else(|| {
                             AttemptFailure::protocol(anyhow!(
@@ -1121,6 +1209,11 @@ impl WebSocketTransportSink {
                                 anyhow!("websocket continuation identity was rejected"),
                                 state.can_retry(),
                             ));
+                        }
+                        ResponsesEvent::Error { .. } => {
+                            return Err(AttemptFailure::protocol(anyhow!(
+                                "correlated websocket error was not handled before observation"
+                            )));
                         }
                         ResponsesEvent::Ignored => {}
                     }
@@ -1585,12 +1678,15 @@ mod tests {
 
     use crate::body_plan::PreparedWsMessage;
     use crate::clock::RealClock;
+    use crate::endpoints::{EndpointId, EndpointRegistry, RawEndpointConfig};
+    use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
     use futures::StreamExt;
     use serde_json::Value;
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
+    use uuid::Uuid;
 
     struct StalledResponseObserver;
 
@@ -1602,6 +1698,427 @@ mod tests {
         fn start_send(&self, _response: crate::endpoints::ParsedResponse) -> Result<()> {
             anyhow::bail!("stalled observer must never accept a response")
         }
+    }
+
+    #[derive(Default)]
+    struct TerminalObserver(RefCell<Vec<ReplayTerminalStatus>>);
+
+    impl RequestObserver for TerminalObserver {
+        fn on_arrival(&self, _uuid: Uuid, _at_ms: f64, _input: usize, _output: usize) {}
+
+        fn on_admit(&self, _uuid: Uuid, _at_ms: f64, _reused: usize) {}
+
+        fn on_token(&self, _uuid: Uuid, _at_ms: f64) {}
+
+        fn on_terminal(&self, _uuid: Uuid, status: ReplayTerminalStatus) {
+            self.0.borrow_mut().push(status);
+        }
+    }
+
+    fn realtime_sink(
+        clock: Rc<dyn Clock>,
+        url: String,
+        transport: crate::transport::http::TransportSinkConfig,
+    ) -> (WebSocketTransportSink, PreparedEndpointReference) {
+        let endpoint_id = EndpointId::new("realtime").expect("Realtime endpoint id is valid");
+        let endpoint = EndpointRegistry::builtin()
+            .expect("builtin endpoints register")
+            .prepare(&endpoint_id, RawEndpointConfig::default())
+            .expect("Realtime endpoint prepares");
+        let mut endpoints = crate::endpoints::PreparedEndpointTable::new();
+        let key = endpoints
+            .push(endpoint)
+            .expect("Realtime endpoint is stored");
+        let sink = WebSocketTransportSink::new(
+            clock,
+            vec![url],
+            "model".to_owned(),
+            transport,
+            WebSocketTransportConfig::default(),
+            endpoints,
+            true,
+        )
+        .expect("Realtime sink builds");
+        (sink, PreparedEndpointReference { key, endpoint_id })
+    }
+
+    fn responses_sink(
+        clock: Rc<dyn Clock>,
+        url: String,
+    ) -> (WebSocketTransportSink, PreparedEndpointReference) {
+        let endpoint_id = EndpointId::new("responses").expect("Responses endpoint id is valid");
+        let endpoint = EndpointRegistry::builtin()
+            .expect("builtin endpoints register")
+            .prepare(&endpoint_id, RawEndpointConfig::default())
+            .expect("Responses endpoint prepares");
+        let mut endpoints = crate::endpoints::PreparedEndpointTable::new();
+        let key = endpoints
+            .push(endpoint)
+            .expect("Responses endpoint is stored");
+        let sink = WebSocketTransportSink::new(
+            clock,
+            vec![url],
+            "model".to_owned(),
+            crate::transport::http::TransportSinkConfig::default(),
+            WebSocketTransportConfig::default(),
+            endpoints,
+            true,
+        )
+        .expect("Responses sink builds");
+        (sink, PreparedEndpointReference { key, endpoint_id })
+    }
+
+    fn responses_turn(reference: PreparedEndpointReference) -> PreparedTurn {
+        let operation = PreparedWsOperation::new(
+            [PreparedWsMessage::text(
+                Bytes::from_static(
+                    br#"{"type":"response.create","model":"model","input":[{"role":"user","content":"hi"}]}"#,
+                ),
+                PreparedWsMessageRole::MeasuredInput,
+            )],
+            None,
+        );
+        PreparedTurn {
+            runtime_session_id: "request".to_owned(),
+            request: crate::transport::core::Request {
+                uuid: Uuid::from_u128(43),
+                input_length: 1,
+                max_output_tokens: 1,
+                prompt_text: None,
+                body: Some(RequestBody::WebSocket(Arc::new(operation))),
+                headers: BTreeMap::new(),
+                parameters: BTreeMap::new(),
+                endpoint_path: None,
+                streaming: true,
+                x_correlation_id: None,
+                is_final_turn: true,
+                cancel_after_ns: None,
+                url_index: None,
+                image_count: None,
+                recorded_api_time_ns: None,
+                recorded_ttft_ns: None,
+            },
+            model: "model".to_owned(),
+            endpoint: PreparedEndpointBinding::Prepared(reference),
+            endpoint_aware: true,
+            data_policy: TurnDataPolicy::ordinary(),
+            deferred: None,
+        }
+    }
+
+    #[test]
+    fn reused_responses_socket_quarantines_stale_response_before_raw_attribution() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("test listener binds");
+            let address = listener.local_addr().expect("listener has an address");
+            let server = tokio::task::spawn_local(async move {
+                let (stream, _) = listener.accept().await.expect("server accepts client");
+                let mut socket = accept_async(stream).await.expect("server upgrades client");
+                let request = match socket.next().await {
+                    Some(Ok(Message::Text(payload))) => {
+                        serde_json::from_str::<Value>(&payload).expect("request is JSON")
+                    }
+                    message => panic!("expected correlated text request, got {message:?}"),
+                };
+                let operation_id = request["metadata"]["_aiperf_ws_operation"]
+                    .as_str()
+                    .expect("request has an operation marker");
+                for event in [
+                    serde_json::json!({
+                        "type":"response.created",
+                        "response":{"id":"stale","metadata":{"_aiperf_ws_operation":"previous"}},
+                    }),
+                    serde_json::json!({
+                        "type":"response.output_text.delta",
+                        "response_id":"stale",
+                        "delta":"wrong",
+                    }),
+                    serde_json::json!({
+                        "type":"response.completed",
+                        "response":{"id":"stale","status":"completed"},
+                    }),
+                    serde_json::json!({
+                        "type":"response.created",
+                        "response":{"id":"current","metadata":{"_aiperf_ws_operation":operation_id}},
+                    }),
+                    serde_json::json!({
+                        "type":"response.output_text.delta",
+                        "response_id":"current",
+                        "delta":"right",
+                    }),
+                    serde_json::json!({
+                        "type":"response.completed",
+                        "response":{
+                            "id":"current",
+                            "status":"completed",
+                            "output":[{"content":[{"text":"right"}]}],
+                        },
+                    }),
+                ] {
+                    socket
+                        .send(Message::Text(event.to_string().into()))
+                        .await
+                        .expect("server sends event");
+                }
+                while let Some(message) = socket.next().await {
+                    if matches!(message, Ok(Message::Close(_))) {
+                        socket.flush().await.expect("server flushes Close");
+                        break;
+                    }
+                }
+            });
+
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let url = format!("ws://{address}/v1/responses");
+            let cached = connect(
+                &Url::parse(&url).expect("test URL is valid"),
+                &BTreeMap::new(),
+                &crate::transport::http::config::ClientConfig::default(),
+                WebSocketConfig::default(),
+                clock.clone(),
+                None,
+            )
+            .await
+            .expect("cached socket upgrades");
+            let (sink, reference) = responses_sink(clock, url.clone());
+            let now_ns = sink.clock.now_ns();
+            sink.idle.borrow_mut().push(CachedSocket {
+                affinity_key: None,
+                continuation_id: None,
+                url,
+                headers: BTreeMap::new(),
+                connected_ns: now_ns,
+                retained_ns: now_ns,
+                socket: cached,
+            });
+            let observer = TerminalObserver::default();
+            let result = sink
+                .dispatch_inner(responses_turn(reference), &observer, &|_| {}, None)
+                .await
+                .expect("correlated response completes");
+
+            assert_eq!(result.outcome.response_text, "right");
+            assert_eq!(result.record.responses.len(), 3);
+            assert!(result.record.responses.iter().all(|response| match response {
+                Response::Text(response) => !response.text.contains("stale"),
+                _ => true,
+            }));
+            assert_eq!(
+                observer.0.borrow().as_slice(),
+                [ReplayTerminalStatus::Completed]
+            );
+            server.abort();
+        });
+    }
+
+    fn realtime_continuation(reference: PreparedEndpointReference) -> PreparedTurn {
+        let operation = PreparedWsOperation::new(
+            [
+                PreparedWsMessage::text(
+                    Bytes::from_static(
+                        br#"{"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}}"#,
+                    ),
+                    PreparedWsMessageRole::MeasuredInput,
+                ),
+                PreparedWsMessage::text(
+                    Bytes::from_static(
+                        br#"{"type":"response.create","response":{"modalities":["text"]}}"#,
+                    ),
+                    PreparedWsMessageRole::Control,
+                ),
+            ],
+            None,
+        )
+        .requiring_affinity_state();
+        PreparedTurn {
+            runtime_session_id: "session".to_owned(),
+            request: crate::transport::core::Request {
+                uuid: Uuid::from_u128(42),
+                input_length: 1,
+                max_output_tokens: 1,
+                prompt_text: None,
+                body: Some(RequestBody::WebSocket(Arc::new(operation))),
+                headers: BTreeMap::new(),
+                parameters: BTreeMap::new(),
+                endpoint_path: None,
+                streaming: true,
+                x_correlation_id: Some("session".to_owned()),
+                is_final_turn: true,
+                cancel_after_ns: None,
+                url_index: None,
+                image_count: None,
+                recorded_api_time_ns: None,
+                recorded_ttft_ns: None,
+            },
+            model: "model".to_owned(),
+            endpoint: PreparedEndpointBinding::Prepared(reference),
+            endpoint_aware: true,
+            data_policy: TurnDataPolicy::ordinary(),
+            deferred: None,
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum RealtimeAffinityLoss {
+        Rotation,
+        KeepaliveExpiry,
+        Eviction,
+        RouteChange,
+    }
+
+    async fn assert_realtime_affinity_loss_is_a_failed_dispatch(loss: RealtimeAffinityLoss) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener binds");
+        let address = listener.local_addr().expect("listener has an address");
+        let expected_connections = match loss {
+            RealtimeAffinityLoss::Rotation
+            | RealtimeAffinityLoss::KeepaliveExpiry
+            | RealtimeAffinityLoss::RouteChange => 2,
+            RealtimeAffinityLoss::Eviction => 1,
+        };
+        let server = tokio::task::spawn_local(async move {
+            for _ in 0..expected_connections {
+                let (stream, _) = listener.accept().await.expect("server accepts client");
+                tokio::task::spawn_local(async move {
+                    let mut socket = accept_async(stream).await.expect("server upgrades client");
+                    while let Some(message) = socket.next().await {
+                        if matches!(message, Ok(Message::Close(_))) {
+                            socket
+                                .flush()
+                                .await
+                                .expect("server flushes reciprocal Close");
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        let clock: Rc<dyn Clock> = RealClock::new();
+        let url = format!("ws://{address}/v1/realtime");
+        let mut transport = crate::transport::http::TransportSinkConfig::default();
+        if matches!(loss, RealtimeAffinityLoss::KeepaliveExpiry) {
+            transport.client.keepalive_ns = Some(1);
+        }
+        let (sink, reference) = realtime_sink(clock.clone(), url.clone(), transport);
+        if !matches!(loss, RealtimeAffinityLoss::Eviction) {
+            let cached = connect(
+                &Url::parse(&url).expect("test URL is valid"),
+                &BTreeMap::new(),
+                &crate::transport::http::config::ClientConfig::default(),
+                WebSocketConfig::default(),
+                clock.clone(),
+                None,
+            )
+            .await
+            .expect("cached socket upgrades");
+            let now_ns = clock.now_ns();
+            let connected_ns = if matches!(loss, RealtimeAffinityLoss::Rotation) {
+                now_ns.saturating_sub(SOCKET_ROTATION_NS)
+            } else {
+                now_ns
+            };
+            let retained_ns = if matches!(loss, RealtimeAffinityLoss::KeepaliveExpiry) {
+                now_ns.saturating_sub(2)
+            } else {
+                now_ns
+            };
+            let cached_url = if matches!(loss, RealtimeAffinityLoss::RouteChange) {
+                "ws://previous-route.invalid/v1/realtime".to_owned()
+            } else {
+                url.clone()
+            };
+            sink.idle.borrow_mut().push(CachedSocket {
+                affinity_key: Some("session".to_owned()),
+                continuation_id: None,
+                url: cached_url,
+                headers: BTreeMap::new(),
+                connected_ns,
+                retained_ns,
+                socket: cached,
+            });
+        }
+        let observer = TerminalObserver::default();
+        let result = sink
+            .dispatch_inner(realtime_continuation(reference), &observer, &|_| {}, None)
+            .await
+            .expect("lost affinity is a per-request failed dispatch");
+
+        assert_eq!(result.outcome.terminal, ReplayTerminalStatus::Failed);
+        assert_eq!(
+            result.record.error.as_ref().map(|error| error.kind),
+            Some(ErrorKind::Protocol)
+        );
+        assert!(result.record.end_ns.is_some(), "failed record is terminal");
+        assert!(
+            !result.request_payload.is_empty(),
+            "raw failed request is retained"
+        );
+        assert_eq!(
+            observer.0.borrow().as_slice(),
+            [ReplayTerminalStatus::Failed]
+        );
+        sink.shutdown_idle_sockets().await;
+        server
+            .await
+            .expect("server accepts every expected connection");
+    }
+
+    #[test]
+    fn rotated_realtime_affinity_is_a_typed_failed_dispatch() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            assert_realtime_affinity_loss_is_a_failed_dispatch(RealtimeAffinityLoss::Rotation)
+                .await;
+        });
+    }
+
+    #[test]
+    fn expired_realtime_affinity_is_a_typed_failed_dispatch() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            assert_realtime_affinity_loss_is_a_failed_dispatch(
+                RealtimeAffinityLoss::KeepaliveExpiry,
+            )
+            .await;
+        });
+    }
+
+    #[test]
+    fn evicted_realtime_affinity_is_a_typed_failed_dispatch() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            assert_realtime_affinity_loss_is_a_failed_dispatch(RealtimeAffinityLoss::Eviction)
+                .await;
+        });
+    }
+
+    #[test]
+    fn route_changed_realtime_affinity_is_a_typed_failed_dispatch() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            assert_realtime_affinity_loss_is_a_failed_dispatch(RealtimeAffinityLoss::RouteChange)
+                .await;
+        });
     }
 
     #[test]
