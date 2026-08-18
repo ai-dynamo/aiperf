@@ -157,8 +157,9 @@ PROFILING the payload is clean — no marker anywhere.
 
 > **Synthetic datasets only — requires a shared system prompt.**
 > For synthetic datasets, `warmup_isolation_system` is rejected at config validation time
-> if no system message is statically present. This means `--shared-system-prompt-length`
-> must be set. If you are using `--user-context-prompt-length` or `--num-prefix-prompts`
+> if no system message is statically present. This means either
+> `--shared-system-prompt-length` or `--system-prompt`/`--system-prompt-file` must be set.
+> If you are using `--user-context-prompt-length` or `--num-prefix-prompts`
 > without a shared system prompt, switch to `warmup_isolation_first_turn` instead.
 >
 > File and public datasets are not checked statically — system-message presence depends
@@ -260,6 +261,27 @@ A synthetic system message is created and shared identically across all sessions
 
 `warmup_isolation_system` makes profiling fully cold (system poisoned during warmup).
 `warmup_isolation_first_turn` keeps the system prompt pre-warmed; only user-turn tokens are cold.
+
+### Verbatim system prompt (`--system-prompt` / `--system-prompt-file`)
+
+A user-supplied system message, identical across all sessions, works with synthetic **and**
+file/public datasets.
+
+It is **mutually exclusive** with `--shared-system-prompt-length`: both fill the same
+system-message slot, so setting both is rejected at config-validation time rather than one
+silently taking precedence. There is no ordering between them — the run fails before any
+request is sent. The same exclusivity applies to
+`--num-prefix-prompts`/`--prefix-prompt-length`.
+
+For marker routing the verbatim prompt behaves exactly like
+`--shared-system-prompt-length`: the `system_*` and `warmup_isolation_system` targets land
+on it rather than falling through to the first user turn.
+
+One difference in token accounting: the synthetic system prompt is shrunk by the marker's
+token cost so its wire length still matches the configured `--shared-system-prompt-length`.
+Verbatim text has no target length to compensate against, so the marker is simply **additive**
+— consistent with the system prompt's own tokens, which sit on top of `--isl` rather than
+inside it.
 
 ### User context prefix (`--user-context-prompt-length`)
 

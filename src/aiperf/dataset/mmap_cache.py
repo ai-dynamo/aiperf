@@ -756,8 +756,21 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         if records
         else None
     )
+    # The composer bakes the verbatim system prompt into
+    # ``Conversation.system_message``, which round-trips through the stored mmap
+    # (model_dump_json on write, model_validate_json on read). A cache HIT skips
+    # the composer entirely, so two runs differing only in
+    # --system-prompt/--system-prompt-file must NOT share an entry or the second
+    # silently replays the first one's prompt. Hashed rather than inlined because
+    # production system prompts run to many KB.
+    #
+    # The key is OMITTED (not set to None) when no system prompt is configured:
+    # ``compute_cache_key`` orjson-dumps this payload, which would serialize an
+    # explicit None as ``null`` and shift every existing key, needlessly cold-
+    # starting warm caches for runs that never touch the feature.
+    system_prompt = cfg.get_system_prompt()
 
-    return {
+    payload: dict[str, object] = {
         "num_dataset_entries": getattr(dataset, "entries", None),
         "dataset_sampling_strategy": str(getattr(dataset, "sampling", "")),
         "custom_dataset_type": (
@@ -853,6 +866,13 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "max_context_length": getattr(dataset, "max_context_length", None),
         "entries_explicit": getattr(dataset, "entries_explicit", False),
     }
+
+    if system_prompt is not None:
+        payload["system_prompt_sha256"] = hashlib.sha256(
+            system_prompt.encode("utf-8")
+        ).hexdigest()
+
+    return payload
 
 
 def compute_cache_key_from_run(run: BenchmarkRun) -> str | None:

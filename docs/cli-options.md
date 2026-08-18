@@ -711,6 +711,14 @@ Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (sy
 
 ### Prefix Prompt
 
+#### `--system-prompt` `<str>`
+
+Verbatim system prompt text, identical across every conversation. Sent as a system-role message ahead of all turns. Works with both synthetic and file/public datasets; when the dataset already carries its own system message, this text is prepended to it. Tokens are additive: `--isl` continues to size the generated user prompt only. Mutually exclusive with `--system-prompt-file`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
+
+#### `--system-prompt-file` `<str>`
+
+Path to a UTF-8 text file holding the verbatim system prompt. Preferred over `--system-prompt` for real production prompts, which are long enough that shell quoting mangles them. Read once at startup, so a missing or unreadable file fails immediately rather than mid-run. Mutually exclusive with `--system-prompt`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
+
 #### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
 
 Number of distinct prefix prompts to generate for K-V cache testing. Each prefix is prepended to user prompts, simulating cached context scenarios. Prefixes randomly selected from pool per request. Set to 0 to disable prefix prompts. Mutually exclusive with `--shared-system-prompt-length`/`--user-context-prompt-length`.
@@ -2272,6 +2280,14 @@ Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (sy
 <br/>_Default: `none`_
 
 ### Prefix Prompt
+
+#### `--system-prompt` `<str>`
+
+Verbatim system prompt text, identical across every conversation. Sent as a system-role message ahead of all turns. Works with both synthetic and file/public datasets; when the dataset already carries its own system message, this text is prepended to it. Tokens are additive: `--isl` continues to size the generated user prompt only. Mutually exclusive with `--system-prompt-file`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
+
+#### `--system-prompt-file` `<str>`
+
+Path to a UTF-8 text file holding the verbatim system prompt. Preferred over `--system-prompt` for real production prompts, which are long enough that shell quoting mangles them. Read once at startup, so a missing or unreadable file fails immediately rather than mid-run. Mutually exclusive with `--system-prompt`, `--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`.
 
 #### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
 
