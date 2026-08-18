@@ -123,27 +123,35 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     match state.config.websocket_mode {
         WebSocketMode::Disabled => {}
         WebSocketMode::TurnSerialized => {
-            router = router.route(
-                "/mock/websocket/turns",
-                get(crate::websocket::turns_upgrade),
-            );
+            let route = if state.config.websocket_fragment_bytes > 0 {
+                get(crate::websocket::turns_raw_upgrade)
+            } else {
+                get(crate::websocket::turns_upgrade)
+            };
+            router = router.route("/mock/websocket/turns", route);
         }
         WebSocketMode::Realtime => {
-            router = router.route(
-                "/mock/websocket/realtime",
-                get(crate::websocket::realtime_upgrade),
-            );
+            let route = if state.config.websocket_fragment_bytes > 0 {
+                get(crate::websocket::realtime_raw_upgrade)
+            } else {
+                get(crate::websocket::realtime_upgrade)
+            };
+            router = router.route("/mock/websocket/realtime", route);
         }
         WebSocketMode::Both => {
+            let turns_route = if state.config.websocket_fragment_bytes > 0 {
+                get(crate::websocket::turns_raw_upgrade)
+            } else {
+                get(crate::websocket::turns_upgrade)
+            };
+            let realtime_route = if state.config.websocket_fragment_bytes > 0 {
+                get(crate::websocket::realtime_raw_upgrade)
+            } else {
+                get(crate::websocket::realtime_upgrade)
+            };
             router = router
-                .route(
-                    "/mock/websocket/turns",
-                    get(crate::websocket::turns_upgrade),
-                )
-                .route(
-                    "/mock/websocket/realtime",
-                    get(crate::websocket::realtime_upgrade),
-                );
+                .route("/mock/websocket/turns", turns_route)
+                .route("/mock/websocket/realtime", realtime_route);
         }
     }
     if state.config.websocket_enabled() {

@@ -10,13 +10,12 @@ use std::sync::Arc;
 
 use aiperf_runtime::clock::sleep_ns;
 use axum::Json;
-use axum::extract::State;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::{Request, State};
 use axum::response::Response;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
-use futures::StreamExt;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +24,10 @@ use crate::config::{MockServerConfig, WebSocketControl, WebSocketScenario};
 use crate::metrics::MetricRecorder;
 use crate::models::Usage;
 use crate::state::AppState;
+
+mod wire;
+
+use wire::{ConnectionSocket, InboundMessage, OutboundControl, RawUpgrade};
 
 const MAX_CAPTURE_EVENTS_PER_CONNECTION: usize = 16_384;
 
@@ -208,7 +211,17 @@ pub(crate) async fn turns_upgrade(
     websocket
         .max_message_size(max_message_bytes)
         .max_frame_size(max_message_bytes)
-        .on_upgrade(move |socket| serve_connection(state, socket, RouteKind::Turns))
+        .on_upgrade(move |socket| {
+            serve_connection(state, ConnectionSocket::from_axum(socket), RouteKind::Turns)
+        })
+}
+
+/// Upgrade the serialized Responses route through the raw-frame writer.
+pub(crate) async fn turns_raw_upgrade(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Response {
+    raw_upgrade(state, request, RouteKind::Turns)
 }
 
 /// Upgrade the duplex Realtime mock route.
@@ -220,7 +233,29 @@ pub(crate) async fn realtime_upgrade(
     websocket
         .max_message_size(max_message_bytes)
         .max_frame_size(max_message_bytes)
-        .on_upgrade(move |socket| serve_connection(state, socket, RouteKind::Realtime))
+        .on_upgrade(move |socket| {
+            serve_connection(
+                state,
+                ConnectionSocket::from_axum(socket),
+                RouteKind::Realtime,
+            )
+        })
+}
+
+/// Upgrade the duplex Realtime route through the raw-frame writer.
+pub(crate) async fn realtime_raw_upgrade(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+) -> Response {
+    raw_upgrade(state, request, RouteKind::Realtime)
+}
+
+fn raw_upgrade(state: Arc<AppState>, request: Request, route: RouteKind) -> Response {
+    let max_message_bytes = state.config.websocket_max_message_bytes;
+    match RawUpgrade::from_request(request, max_message_bytes) {
+        Ok(upgrade) => upgrade.on_upgrade(move |socket| serve_connection(state, socket, route)),
+        Err(response) => response,
+    }
 }
 
 /// Return sanitized completed WebSocket connection captures.
@@ -228,7 +263,7 @@ pub(crate) async fn captures(State(state): State<Arc<AppState>>) -> Json<Vec<Web
     Json(state.websocket_captures.snapshot())
 }
 
-async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: RouteKind) {
+async fn serve_connection(state: Arc<AppState>, mut socket: ConnectionSocket, route: RouteKind) {
     let connection_id = state
         .websocket_connections
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -250,7 +285,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
     let mut next_capture_turn = 0u64;
     let mut attribution: Option<CaptureAttribution> = None;
 
-    while let Some(message) = socket.next().await {
+    while let Some(message) = socket.recv().await {
         let now_ns = state.clock_anchor.now_ns();
         let message = match message {
             Ok(message) => message,
@@ -261,8 +296,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
             }
         };
         match message {
-            Message::Text(text) => {
-                let payload = text.as_bytes();
+            InboundMessage::Text(payload) => {
                 if let Some(operation) = operation.as_mut() {
                     operation.add_request_bytes(payload.len());
                 } else {
@@ -272,7 +306,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                     capture.push_event(capture_event_with_attribution(
                         "in",
                         "text",
-                        payload,
+                        &payload,
                         attribution.as_ref(),
                         now_ns,
                         started_ns,
@@ -283,6 +317,8 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                         state.clock_anchor,
                         started_ns,
                         attribution.as_ref(),
+                        state.config.websocket_fragment_bytes,
+                        state.config.websocket_max_message_bytes,
                         "application message exceeds configured size",
                     )
                     .await;
@@ -291,13 +327,13 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                     }
                     break;
                 }
-                let event = match parse_client_event(payload, route) {
+                let event = match parse_client_event(&payload, route) {
                     Ok(event) => event,
                     Err(error) => {
                         capture.push_event(capture_event_with_attribution(
                             "in",
                             "text",
-                            payload,
+                            &payload,
                             attribution.as_ref(),
                             now_ns,
                             started_ns,
@@ -308,6 +344,8 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                             state.clock_anchor,
                             started_ns,
                             attribution.as_ref(),
+                            state.config.websocket_fragment_bytes,
+                            state.config.websocket_max_message_bytes,
                             &error.to_string(),
                         )
                         .await;
@@ -326,7 +364,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                 capture.push_event(capture_event_with_attribution(
                     "in",
                     "text",
-                    payload,
+                    &payload,
                     attribution.as_ref(),
                     now_ns,
                     started_ns,
@@ -340,6 +378,8 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                             state.clock_anchor,
                             started_ns,
                             attribution.as_ref(),
+                            state.config.websocket_fragment_bytes,
+                            state.config.websocket_max_message_bytes,
                             "connection already has an in-flight operation",
                         )
                         .await;
@@ -366,6 +406,8 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                             state.clock_anchor,
                             started_ns,
                             attribution.as_ref(),
+                            state.config.websocket_fragment_bytes,
+                            state.config.websocket_max_message_bytes,
                             &error.to_string(),
                         )
                         .await;
@@ -413,7 +455,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                     break;
                 }
             }
-            Message::Binary(payload) => {
+            InboundMessage::Binary(payload) => {
                 capture.push_event(capture_event_with_attribution(
                     "in",
                     "binary",
@@ -428,6 +470,8 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                     state.clock_anchor,
                     started_ns,
                     attribution.as_ref(),
+                    state.config.websocket_fragment_bytes,
+                    state.config.websocket_max_message_bytes,
                     "binary application messages are not supported",
                 )
                 .await;
@@ -437,7 +481,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                 }
                 break;
             }
-            Message::Ping(payload) => {
+            InboundMessage::Ping(payload) => {
                 capture.push_event(capture_event_with_attribution(
                     "in",
                     "ping",
@@ -454,14 +498,18 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
-                if socket.send(Message::Pong(payload)).await.is_err() {
+                if socket
+                    .send_control(&OutboundControl::Pong(payload))
+                    .await
+                    .is_err()
+                {
                     capture.close = CloseClassification::SendError;
                     break;
                 }
                 event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
                 capture.push_event(event);
             }
-            Message::Pong(payload) => {
+            InboundMessage::Pong(payload) => {
                 capture.push_event(capture_event_with_attribution(
                     "in",
                     "pong",
@@ -471,7 +519,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                     started_ns,
                 ));
             }
-            Message::Close(_) => {
+            InboundMessage::Close => {
                 capture.push_event(capture_event_with_attribution(
                     "in",
                     "close",
@@ -517,13 +565,14 @@ impl Default for ActionResult {
 
 async fn send_actions(
     state: &AppState,
-    socket: &mut WebSocket,
+    socket: &mut ConnectionSocket,
     capture: &mut WebSocketCapture,
     started_ns: i64,
     attribution: Option<&CaptureAttribution>,
     actions: Vec<ServerAction>,
 ) -> ActionResult {
     let mut result = ActionResult::default();
+    let mut pending_control: Option<OutboundControl> = None;
     for action in actions {
         match action {
             ServerAction::SendText { at_ns, payload } => {
@@ -531,33 +580,48 @@ async fn send_actions(
                 if delay_ns > 0 {
                     sleep_ns(delay_ns).await;
                 }
-                let text = match std::str::from_utf8(&payload) {
-                    Ok(text) => text.to_owned(),
-                    Err(error) => {
-                        tracing::error!(component = "websocket_mock", error = %error, "scenario emitted invalid UTF-8");
-                        result.keep_connection = false;
-                        result.close = Some(CloseClassification::SendError);
-                        return result;
-                    }
-                };
                 let mut event = capture_event_with_attribution(
                     "out",
                     "text",
-                    text.as_bytes(),
+                    &payload,
                     attribution,
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
-                if socket.send(Message::Text(text.into())).await.is_err() {
+                let payload_len = payload.len();
+                if let Err(error) = socket
+                    .send_text(
+                        payload,
+                        state.config.websocket_fragment_bytes,
+                        state.config.websocket_max_message_bytes,
+                        pending_control.as_ref(),
+                    )
+                    .await
+                {
+                    tracing::debug!(component = "websocket_mock", error = %error, "WebSocket send failed");
                     result.keep_connection = false;
                     result.close = Some(CloseClassification::SendError);
                     return result;
                 }
                 event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
-                result.response_bytes = result.response_bytes.saturating_add(payload.len());
+                result.response_bytes = result.response_bytes.saturating_add(payload_len);
+                if let Some(control) = pending_control.take() {
+                    capture.push_event(capture_event_with_attribution(
+                        "out",
+                        control.opcode(),
+                        control.payload(),
+                        attribution,
+                        state.clock_anchor.now_ns(),
+                        started_ns,
+                    ));
+                }
                 capture.push_event(event);
             }
             ServerAction::SendPing(payload) => {
+                if state.config.websocket_fragment_bytes > 0 {
+                    pending_control = Some(OutboundControl::Ping(payload));
+                    continue;
+                }
                 let mut event = capture_event_with_attribution(
                     "out",
                     "ping",
@@ -566,7 +630,11 @@ async fn send_actions(
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
-                if socket.send(Message::Ping(payload)).await.is_err() {
+                if socket
+                    .send_control(&OutboundControl::Ping(payload))
+                    .await
+                    .is_err()
+                {
                     result.keep_connection = false;
                     result.close = Some(CloseClassification::SendError);
                     return result;
@@ -575,6 +643,10 @@ async fn send_actions(
                 capture.push_event(event);
             }
             ServerAction::SendPong(payload) => {
+                if state.config.websocket_fragment_bytes > 0 {
+                    pending_control = Some(OutboundControl::Pong(payload));
+                    continue;
+                }
                 let mut event = capture_event_with_attribution(
                     "out",
                     "pong",
@@ -583,7 +655,11 @@ async fn send_actions(
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
-                if socket.send(Message::Pong(payload)).await.is_err() {
+                if socket
+                    .send_control(&OutboundControl::Pong(payload))
+                    .await
+                    .is_err()
+                {
                     result.keep_connection = false;
                     result.close = Some(CloseClassification::SendError);
                     return result;
@@ -593,7 +669,7 @@ async fn send_actions(
             }
             ServerAction::Close => {
                 result.keep_connection = false;
-                result.close = Some(if socket.send(Message::Close(None)).await.is_ok() {
+                result.close = Some(if socket.send_close().await.is_ok() {
                     capture.push_event(capture_event_with_attribution(
                         "out",
                         "close",
@@ -621,15 +697,32 @@ async fn send_actions(
             }
         }
     }
+    if let Some(control) = pending_control {
+        if socket.send_control(&control).await.is_err() {
+            result.keep_connection = false;
+            result.close = Some(CloseClassification::SendError);
+        } else {
+            capture.push_event(capture_event_with_attribution(
+                "out",
+                control.opcode(),
+                control.payload(),
+                attribution,
+                state.clock_anchor.now_ns(),
+                started_ns,
+            ));
+        }
+    }
     result
 }
 
 async fn protocol_error(
-    socket: &mut WebSocket,
+    socket: &mut ConnectionSocket,
     capture: &mut WebSocketCapture,
     clock_anchor: aiperf_runtime::clock::RealClockAnchor,
     started_ns: i64,
     attribution: Option<&CaptureAttribution>,
+    fragment_bytes: usize,
+    max_message_bytes: usize,
     message: &str,
 ) -> usize {
     let payload = serde_json::json!({"type":"error","error":{"message":message}}).to_string();
@@ -642,14 +735,23 @@ async fn protocol_error(
         clock_anchor.now_ns(),
         started_ns,
     );
-    if socket.send(Message::Text(payload.into())).await.is_ok() {
+    if socket
+        .send_text(
+            Bytes::from(payload),
+            fragment_bytes,
+            max_message_bytes,
+            None,
+        )
+        .await
+        .is_ok()
+    {
         event.relative_ns = clock_anchor.now_ns().saturating_sub(started_ns);
         capture.push_event(event);
     } else {
         capture.close = CloseClassification::SendError;
         return 0;
     }
-    let is_close_sent = socket.send(Message::Close(None)).await.is_ok();
+    let is_close_sent = socket.send_close().await.is_ok();
     if is_close_sent {
         capture.push_event(capture_event_with_attribution(
             "out",
