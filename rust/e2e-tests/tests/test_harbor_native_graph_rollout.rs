@@ -5,7 +5,7 @@
 
 mod common;
 
-use std::{fs, path::Path, sync::Mutex};
+use std::{fs, path::Path, process::Command, sync::Mutex};
 
 use aiperf_mock_server::accuracy::AccuracyFormat;
 use common::{AIPerfHarness, MockServerConfig};
@@ -181,10 +181,121 @@ async fn adapter_protocol_failure_never_reaches_policy_or_verifier() {
     assert_eq!(accuracy.unmatched, 0);
 }
 
+#[tokio::test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+async fn environment_adapter_cannot_bypass_rust_to_reach_the_policy_endpoint() {
+    let temporary = tempfile::tempdir().expect("create egress fixture root");
+    let dataset = temporary.path().join("policy.jsonl");
+    write_policy_dataset(
+        &dataset,
+        r#"{"kind":"move","direction":"north"}"#,
+        r#"{"kind":"move","direction":"south"}"#,
+    );
+    let _docker = docker_e2e_lock();
+    let harness = AIPerfHarness::new_with_docker_reachable(policy_mock_config(&dataset)).await;
+    let gateway = public_network_gateway();
+    assert_public_network_reaches_policy_endpoint(&gateway, harness.mock.port);
+
+    let task = temporary.path().join("native-graph-rollout-task");
+    write_rollout_task(&task, &harness.mock.url);
+    add_adapter_egress_probe(&task, &gateway, harness.mock.port);
+    let model_runtime = temporary.path().join("model-runtime.toml");
+    fs::write(&model_runtime, "version = 1\n").expect("write model runtime");
+    let lifecycle = temporary.path().join("lifecycle.json");
+    write_lifecycle(&lifecycle);
+
+    let result = harness.run_no_server(&eval_command(&task, &model_runtime, &lifecycle));
+
+    assert!(
+        result.success(),
+        "a no-network adapter must not reach the policy endpoint; stdout:\n{}\nstderr:\n{}",
+        result.stdout,
+        result.stderr
+    );
+    let accuracy = harness.mock.state.accuracy_live.snapshot();
+    assert_eq!(accuracy.matched, 2, "only Rust policy calls reach the mock");
+    assert_eq!(accuracy.unmatched, 0);
+}
+
 fn docker_e2e_lock() -> std::sync::MutexGuard<'static, ()> {
     DOCKER_E2E_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn public_network_gateway() -> String {
+    let network = "aiperf-eval-public";
+    let inspected = Command::new("docker")
+        .args(["network", "inspect", network])
+        .output()
+        .expect("inspect public Docker network");
+    if !inspected.status.success() {
+        let created = Command::new("docker")
+            .args(["network", "create", network])
+            .status()
+            .expect("create public Docker network");
+        assert!(created.success(), "create public Docker network");
+    }
+    let output = Command::new("docker")
+        .args([
+            "network",
+            "inspect",
+            network,
+            "--format",
+            "{{(index .IPAM.Config 0).Gateway}}",
+        ])
+        .output()
+        .expect("inspect public Docker network gateway");
+    assert!(
+        output.status.success(),
+        "read public Docker network gateway"
+    );
+    String::from_utf8(output.stdout)
+        .expect("public network gateway is UTF-8")
+        .trim()
+        .to_owned()
+}
+
+fn assert_public_network_reaches_policy_endpoint(gateway: &str, port: u16) {
+    let status = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--network",
+            "aiperf-eval-public",
+            "alpine:3.20",
+            "/bin/busybox",
+            "nc",
+            "-z",
+            "-w",
+            "2",
+            gateway,
+            &port.to_string(),
+        ])
+        .status()
+        .expect("run public-network policy endpoint control");
+    assert!(
+        status.success(),
+        "the public-network control must reach the mock policy endpoint"
+    );
+}
+
+fn add_adapter_egress_probe(task: &Path, gateway: &str, port: u16) {
+    let adapter_path = task.join("environment/environment.sh");
+    let adapter = fs::read_to_string(&adapter_path).expect("read rollout adapter");
+    let probe = format!(
+        "#!/bin/sh\nif /bin/busybox nc -z -w 1 {gateway} {port} >/dev/null 2>&1; then\n    printf bypass > /work/adapter-egress-succeeded\nfi\n"
+    );
+    let adapter = adapter.replacen("#!/bin/sh\n", &probe, 1);
+    fs::write(adapter_path, adapter).expect("write rollout adapter egress probe");
+
+    let verifier_path = task.join("tests/test.sh");
+    let verifier = fs::read_to_string(&verifier_path).expect("read rollout verifier");
+    fs::write(
+        verifier_path,
+        format!("test ! -e /work/adapter-egress-succeeded || exit 98\n{verifier}"),
+    )
+    .expect("write rollout verifier egress assertion");
 }
 
 fn write_policy_dataset(path: &Path, first: &str, second: &str) {

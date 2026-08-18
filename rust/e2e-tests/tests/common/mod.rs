@@ -51,7 +51,7 @@ pub const DEFAULT_REQUEST_COUNT: u32 = 10;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
-/// An in-process `aiperf-mock-server` server bound to a random loopback port.
+/// An in-process `aiperf-mock-server` server bound to a random test port.
 ///
 /// The Axum router runs on the `MockServer`'s own multi-threaded tokio runtime,
 /// not the ambient `#[tokio::test]` runtime. That decoupling is deliberate: the
@@ -62,7 +62,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 300;
 pub struct MockServer {
     /// Base URL, e.g. `http://127.0.0.1:<port>`.
     pub url: String,
-    /// The bound loopback port.
+    /// The bound test port.
     pub port: u16,
     /// KServe gRPC URL, e.g. `grpc://127.0.0.1:<grpc_port>`, when the server was
     /// started with the gRPC listener enabled ([`MockServer::start_with_grpc`]).
@@ -89,22 +89,29 @@ impl MockServer {
     /// Start a mock server from an explicit config. The `port`/`host` fields are
     /// overridden: the harness always binds `127.0.0.1:0` (random free port).
     pub fn start_with(cfg: MockServerConfig) -> Self {
-        Self::start_inner(cfg, false)
+        Self::start_inner(cfg, false, "127.0.0.1")
+    }
+
+    /// Start a mock that remains addressed by loopback from Rust but also
+    /// accepts a Docker bridge control connection. This is test-only: callers
+    /// must still assert that the workload itself has no network route.
+    pub fn start_with_docker_reachable(cfg: MockServerConfig) -> Self {
+        Self::start_inner(cfg, false, "0.0.0.0")
     }
 
     /// Like [`start_with`](Self::start_with) but additionally serves the KServe
     /// OIP v2 gRPC service on a second random loopback port, exposed as
     /// [`grpc_url`](Self::grpc_url). Both listeners share one `AppState`.
     pub fn start_with_grpc(cfg: MockServerConfig) -> Self {
-        Self::start_inner(cfg, true)
+        Self::start_inner(cfg, true, "127.0.0.1")
     }
 
-    fn start_inner(mut cfg: MockServerConfig, with_grpc: bool) -> Self {
+    fn start_inner(mut cfg: MockServerConfig, with_grpc: bool, bind_host: &str) -> Self {
         cfg = cfg.apply_flags();
 
         // Bind synchronously so the port is known and already listening before
         // we hand the socket to axum's accept loop.
-        let std_listener = StdTcpListener::bind("127.0.0.1:0").expect("bind mock server listener");
+        let std_listener = StdTcpListener::bind((bind_host, 0)).expect("bind mock server listener");
         let port = std_listener.local_addr().expect("listener addr").port();
         std_listener
             .set_nonblocking(true)
@@ -266,6 +273,13 @@ impl AIPerfHarness {
     /// Start a mock from an explicit config plus a temp dir.
     pub async fn new_with(cfg: MockServerConfig) -> Self {
         Self::from_mock(MockServer::start_with(cfg))
+    }
+
+    /// Start a Docker-reachable mock plus a temp dir for an egress-isolation
+    /// test. The exposed URL remains loopback so the benchmark runtime never
+    /// receives a Docker bridge endpoint.
+    pub async fn new_with_docker_reachable(cfg: MockServerConfig) -> Self {
+        Self::from_mock(MockServer::start_with_docker_reachable(cfg))
     }
 
     /// Start a default mock with the KServe gRPC listener enabled, plus a temp
