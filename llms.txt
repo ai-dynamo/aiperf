@@ -154,7 +154,7 @@ AIPERF_CONTENT_SERVER_ENABLED=true \
 # the SAME cell executor as http — the cell issuer + records shipper live above the
 # transport); a run seed and single URL are NOT required (seedless auto-derives a shared
 # seed, multi-URL round-robins cell-locally, ramps/rate/cancellation aggregate-equivalent,
-# warned). Graph programs (dag_jsonl/weka_trace/dynamo_trace) also partition across cells
+# warned). Graph programs (dag_jsonl/weka_trace/dynamo_trace/otlp_genai) also partition across cells
 # (trace-level, concatenation-merged; a --sketch-metrics graph cell ships a folded sketch
 # store, merged like exact-fold). Fails closed on the dynosim offline/online transport +
 # scheduled duration/adaptive. E2e: test_cellular.rs + test_grpc_cellular.rs (scheduled) +
@@ -175,7 +175,7 @@ requires the selected runner image to advertise the exact pair and never
 resolves or converts the run to protocol v1. Explicit open workloads delegate
 phase-stop semantics to their registered Rust factory; implicit built-in
 workloads retain Python's generic stop validation. `dag_jsonl`, `weka_trace`,
-and `dynamo_trace` enter the runner-owned Graph-IR input adapter once and invoke
+`dynamo_trace`, and `otlp_genai` enter the runner-owned Graph-IR input adapter once and invoke
 exactly one selected compiler, lowering directly to graph plans plus one frozen
 segment store without a second registry or linear dataset intermediate.
 Recorded formats accept `synthesis.max_osl`, `max_context_length`,
@@ -644,6 +644,10 @@ Inputs, endpoints, and graph:
   `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden
   (branch-on-live-output) line, and the built `conditional_graph` eager-conditional
   compiler (`rust/runtime/src/graph/conditional/`).
+- [`docs/specs/otlp-genai-graph-input.md`](docs/specs/otlp-genai-graph-input.md) —
+  native OTLP/HTTP JSON OpenInference and GenAI graph input, including strict
+  decoding, trace-local span topology, and replay-span folding into static
+  Graph-IR state and timing.
 - [`docs/specs/agentx-rust-port.md`](docs/specs/agentx-rust-port.md) — the standalone,
   always-compiled byte-exact Rust port of the Python AgentX (WEKA replay +
   agentic-replay timing + scenario locks); parallel to and switchable against

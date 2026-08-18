@@ -89,6 +89,7 @@ read the record for the subsystem you are touching.
 | [benchmark-compose-environments.md](benchmark-compose-environments.md) | Built strict Docker Compose benchmark sidecars: generated-main authority, validated public-only overlays, final-step service evidence, frozen separate-verifier transfer, and labelled cleanup. |
 | [graph-ir-system-idle-gap.md](graph-ir-system-idle-gap.md) | Graph-IR system idle-gap cap at the centralized node firing gate. |
 | [conditional-graph-lowering.md](conditional-graph-lowering.md) | The model-independent-branching contract: how pinned/recorded/weighted conditional branching and recorded non-LLM content resolve and fold into the flat `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden (branch-on-live-output) line, and the built `conditional_graph` eager-conditional compiler. |
+| [otlp-genai-graph-input.md](otlp-genai-graph-input.md) | Native OTLP/HTTP JSON OpenInference and GenAI input: strict source decoding, trace topology reconstruction, span classification, and replay-span folding into flat Graph-IR state and timing. |
 
 ### Measurement and output
 

@@ -45,6 +45,9 @@ use crate::engine::protocol::{
     PublicDatasetSpec, TraceSynthesisSpec,
 };
 
+mod otlp_genai;
+use otlp_genai::OtlpGenaiRunnerGraphInputAdapter;
+
 /// Recorded-graph trajectory-start (`t*`) window bound to a prepared input.
 ///
 /// A `[0.0, 0.0]` window yields full replay with `t* = 0`.
@@ -241,13 +244,14 @@ impl Default for BuiltinRunnerGraphInputAdapterResolver {
 impl BuiltinRunnerGraphInputAdapterResolver {
     /// Compose the built-in direct Graph-IR formats.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn GraphInputAdapter>; 6] = [
+        let adapters: [Arc<dyn GraphInputAdapter>; 7] = [
             Arc::new(DagJsonlRunnerGraphInputAdapter),
             Arc::new(ConditionalGraphRunnerGraphInputAdapter),
             Arc::new(WekaTraceRunnerGraphInputAdapter),
             Arc::new(DynamoTraceRunnerGraphInputAdapter),
             Arc::new(AIPerfTraceRunnerGraphInputAdapter),
             Arc::new(RecordedAgentRunnerGraphInputAdapter),
+            Arc::new(OtlpGenaiRunnerGraphInputAdapter),
         ];
         Self {
             adapters: adapters
@@ -1600,7 +1604,10 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use crate::dataset::{Payload, TiktokenTokenizer};
+    use flate2::{Compression, write::GzEncoder};
     use serde_json::json;
 
     use super::*;
@@ -1639,6 +1646,236 @@ mod tests {
                 "path": "recording.json"
             })))
             .expect("stock composition registers agent_recording");
+    }
+
+    #[tokio::test]
+    async fn otlp_genai_adapter_lowers_openinference_and_genai_spans_to_graph_ir() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file",
+            "format": "otlp_genai",
+            "sampling": "sequential",
+            "records": {
+                "resourceSpans": [{
+                    "scopeSpans": [{
+                        "spans": [
+                            {
+                                "traceId": "0123456789abcdef0123456789abcdef",
+                                "spanId": "0000000000000001",
+                                "name": "agent run",
+                                "kind": 1,
+                                "attributes": [{
+                                    "key": "openinference.span.kind",
+                                    "value": {"stringValue": "AGENT"}
+                                }]
+                            },
+                            {
+                                "traceId": "0123456789abcdef0123456789abcdef",
+                                "spanId": "0000000000000002",
+                                "parentSpanId": "0000000000000001",
+                                "name": "chat completion",
+                                "kind": 3,
+                                "attributes": [
+                                    {
+                                        "key": "gen_ai.operation.name",
+                                        "value": {"stringValue": "chat"}
+                                    },
+                                    {
+                                        "key": "gen_ai.input.messages",
+                                        "value": {"stringValue": "[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"hello\\\"}]"}
+                                    },
+                                    {
+                                        "key": "gen_ai.system",
+                                        "value": {"stringValue": "openai"}
+                                    },
+                                    {
+                                        "key": "server.address",
+                                        "value": {"stringValue": "example.test"}
+                                    }
+                                ],
+                                "events": [{"name": "gen_ai.choice"}]
+                            }
+                        ]
+                    }]
+                }]
+            }
+        }));
+
+        let prepared = resolver
+            .load(
+                &input,
+                &GraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect("OTLP GenAI input lowers through the stock adapter");
+
+        assert_eq!(prepared.bundle.metadata.format, "otlp_genai");
+        assert_eq!(prepared.bundle.metadata.root_count, 1);
+        assert_eq!(prepared.bundle.metadata.node_count, 2);
+        let graph = &prepared.bundle.programs[0].profiling.graph;
+        assert_eq!(graph.llm_node_count(), 2);
+        let llm = graph
+            .nodes
+            .values()
+            .filter_map(|node| node.as_llm())
+            .find(|node| {
+                node.metadata.get("otlp.span_id") == Some(&Value::String("0000000000000002".into()))
+            })
+            .expect("GenAI chat span lowers to an LLM node");
+        assert!(llm.streaming);
+        assert_eq!(llm.items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn otlp_genai_adapter_reads_gzipped_jsonl_and_typed_message_attributes() {
+        let fixture = tempfile::Builder::new()
+            .suffix(".jsonl.gz")
+            .tempfile()
+            .expect("temporary OTLP fixture");
+        let mut encoder = GzEncoder::new(
+            fixture.reopen().expect("reopen fixture"),
+            Compression::default(),
+        );
+        writeln!(encoder, "{}", json!({
+            "resourceSpans": [{"scopeSpans": [{"spans": [{
+                "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "spanId": "0000000000000001",
+                "name": "typed chat",
+                "kind": 3,
+                "attributes": [
+                    {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                    {"key": "gen_ai.input.messages", "value": {"arrayValue": {"values": [{"kvlistValue": {"values": [
+                        {"key": "role", "value": {"stringValue": "user"}},
+                        {"key": "content", "value": {"stringValue": "hello"}}
+                    ]}}]}}}
+                ]
+            }]}]}]
+        }))
+        .expect("write gzipped OTLP JSONL");
+        encoder.finish().expect("finish gzip fixture");
+
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file", "format": "otlp_genai", "path": fixture.path()
+        }));
+        let prepared = resolver
+            .load(
+                &input,
+                &GraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: None,
+                },
+            )
+            .await
+            .expect("gzipped OTLP JSONL lowers");
+        assert_eq!(prepared.bundle.metadata.root_count, 1);
+        assert_eq!(prepared.bundle.metadata.node_count, 1);
+    }
+
+    #[tokio::test]
+    async fn otlp_genai_adapter_folds_recorded_non_llm_spans_into_state_and_delay() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let input = raw(json!({
+            "type": "file", "format": "otlp_genai", "records": {
+                "resourceSpans": [{"scopeSpans": [{"spans": [
+                    {
+                        "traceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "spanId": "0000000000000001", "name": "retrieval",
+                        "kind": 1, "startTimeUnixNano": "1000000", "endTimeUnixNano": "51000000",
+                        "attributes": [
+                            {"key": "gen_ai.operation.name", "value": {"stringValue": "retrieve"}},
+                            {"key": "output.value", "value": {"stringValue": "{\"documents\":[\"a\"]}"}}
+                        ]
+                    },
+                    {
+                        "traceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "spanId": "0000000000000005", "parentSpanId": "0000000000000001",
+                        "name": "nested retrieval", "kind": 1,
+                        "startTimeUnixNano": "20000000", "endTimeUnixNano": "31000000",
+                        "attributes": [{"key": "gen_ai.operation.name", "value": {"stringValue": "retrieve"}}]
+                    },
+                    {
+                        "traceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "spanId": "0000000000000002", "parentSpanId": "0000000000000005",
+                        "name": "chat", "kind": 3,
+                        "attributes": [
+                            {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                            {"key": "gen_ai.request.max_tokens", "value": {"intValue": "9"}}
+                        ]
+                    },
+                    {
+                        "traceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "spanId": "0000000000000003", "parentSpanId": "0000000000000002",
+                        "name": "guardrail", "kind": 1, "startTimeUnixNano": "60000000", "endTimeUnixNano": "80000000",
+                        "attributes": [{"key": "gen_ai.operation.name", "value": {"stringValue": "guardrail"}}]
+                    },
+                    {
+                        "traceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "spanId": "0000000000000004", "parentSpanId": "0000000000000003",
+                        "name": "second chat", "kind": 3,
+                        "attributes": [{"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}}]
+                    }
+                ]}]}]
+            }
+        }));
+        let prepared = resolver
+            .load(
+                &input,
+                &GraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: None,
+                },
+            )
+            .await
+            .expect("OTLP replay ancestors lower through state and edges");
+        let plan = &prepared.bundle.programs[0].profiling;
+        assert_eq!(plan.graph.llm_node_count(), 2);
+        assert_eq!(
+            plan.trace
+                .initial_state
+                .get("otlp_replay_0000000000000001_output"),
+            Some(&json!({"documents":["a"]}))
+        );
+        let first = plan
+            .graph
+            .nodes
+            .iter()
+            .find_map(|(id, node)| {
+                (node.as_llm()?.metadata.get("otlp.span_id") == Some(&json!("0000000000000002")))
+                    .then_some(id)
+            })
+            .expect("first chat node");
+        let second = plan
+            .graph
+            .nodes
+            .iter()
+            .find_map(|(id, node)| {
+                (node.as_llm()?.metadata.get("otlp.span_id") == Some(&json!("0000000000000004")))
+                    .then_some(id)
+            })
+            .expect("second chat node");
+        let leading = plan
+            .graph
+            .edges
+            .iter()
+            .find(|edge| edge.target == *first)
+            .expect("leading replay chain reaches first LLM");
+        assert_eq!(leading.source, crate::graph::model::START_NODE_ID);
+        assert_eq!(leading.min_start_delay_us, Some(50_000.0));
+        assert_eq!(
+            plan.graph.nodes[first].as_llm().unwrap().max_tokens,
+            Some(9)
+        );
+        let rerouted = plan
+            .graph
+            .edges
+            .iter()
+            .find(|edge| edge.source == *first && edge.target == *second)
+            .expect("intermediate replay span is folded into direct edge");
+        assert_eq!(rerouted.delay_after_predecessor_us, Some(20_000.0));
     }
 
     #[tokio::test]
