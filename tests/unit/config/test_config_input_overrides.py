@@ -291,3 +291,55 @@ def test_request_count_does_not_become_dataset_entries(synthetic_yaml: Path) -> 
     """
     resolved = resolve_config(cli(request_count=50), synthetic_yaml)
     assert dataset(resolved).entries == 16  # the YAML value
+
+
+# ---------------------------------------------------------------------------
+# Per-flag reconciliation: a flag is not excused by its neighbours
+# ---------------------------------------------------------------------------
+
+
+def test_inert_flag_paired_with_routable_one_still_errors(
+    synthetic_yaml: Path,
+) -> None:
+    """An unroutable dataset flag must be caught even in company.
+
+    The guard used to fire only when build_dataset produced nothing at all,
+    so pairing an inert flag with a working one left the result non-empty
+    and the inert flag was discarded exactly as before this work. Every
+    multi-flag command line touching the dataset escaped the guarantee.
+    """
+    with pytest.raises(ConfigurationError, match=r"--synthesis-max-isl"):
+        resolve_config(
+            cli(prompt_input_tokens_mean=128, synthesis_max_isl=512), synthetic_yaml
+        )
+
+
+def test_inert_media_flag_paired_on_file_dataset_errors(
+    random_pool_yaml: Path,
+) -> None:
+    """Same, for the media flags against a file dataset."""
+    with pytest.raises(ConfigurationError, match=r"--image-width-mean"):
+        resolve_config(cli(prompt_batch_size=4, image_width_mean=128), random_pool_yaml)
+
+
+def test_two_routable_flags_together_are_fine(synthetic_yaml: Path) -> None:
+    """The reconciliation must not reject flags that do take effect."""
+    resolved = dataset(
+        resolve_config(
+            cli(prompt_input_tokens_mean=128, image_width_mean=64), synthetic_yaml
+        )
+    )
+    assert resolved.prompts.isl.mean == 128
+    assert resolved.images.width.mean == 64
+
+
+def test_dataset_flag_outside_input_fields_is_reconciled(
+    synthetic_yaml: Path,
+) -> None:
+    """--inter-turn-delay-cap-seconds is dataset-carried but not INPUT_FIELDS.
+
+    Fields outside INPUT_FIELDS were never considered by the guard at all,
+    so this one no-oped silently on a synthetic dataset.
+    """
+    with pytest.raises(ConfigurationError, match=r"--inter-turn-delay-cap-seconds"):
+        resolve_config(cli(inter_turn_delay_cap_seconds=3.0), synthetic_yaml)
