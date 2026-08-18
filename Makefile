@@ -44,7 +44,7 @@ COV ?= 1
 # The path to the virtual environment
 VENV_PATH ?= .venv
 # The python version to use
-PYTHON_VERSION ?= 3.12
+PYTHON_VERSION ?= 3.13
 # The command to activate the virtual environment
 activate_venv = . $(VENV_PATH)/bin/activate
 
@@ -171,6 +171,19 @@ install-mock-server: #? install the mock server in editable mode.
 install-mock-amdsmi: #? install the fake amdsmi bindings for testing the AMD telemetry path.
 	$(activate_venv) && uv pip install -e "tests/aiperf_mock_amdsmi[dev]"
 
+install-hooks: #? write the no-stash pre-commit hook and pre-install hook environments.
+	@hooks_dir=$$(git rev-parse --git-common-dir)/hooks && \
+	mkdir -p "$$hooks_dir" && \
+	printf '%s\n' \
+		'#!/usr/bin/env bash' \
+		'mapfile -t staged < <(git diff --cached --name-only --diff-filter=ACM)' \
+		'if (( $${#staged[@]} )); then' \
+		'    exec $(VENV_PATH)/bin/pre-commit run --files "$${staged[@]}"' \
+		'fi' \
+		> "$$hooks_dir/pre-commit" && \
+	chmod +x "$$hooks_dir/pre-commit"
+	$(activate_venv) && pre-commit install-hooks
+
 check-mock-server-install: #? verify the mock server package and CLI entry point are installed.
 	$(activate_venv) && python -c "import aiperf_mock_server" && command -v aiperf-mock-server >/dev/null
 
@@ -220,9 +233,13 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	@printf "$(bold)$(green)Generating plugin overloads...$(reset)\n"
 	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory generate-plugin-overloads
 
-	@# Install pre-commit hooks
+	@# Install pre-commit hooks.
+	@# We write the hook manually instead of using `pre-commit install` so the hook
+	@# passes only staged files via --files, which bypasses pre-commit's internal
+	@# stash (staged_files_only). `pre-commit install-hooks` still pre-installs
+	@# tool environments without overwriting the hook file.
 	@printf "$(bold)$(green)Installing pre-commit hooks...$(reset)\n"
-	$(activate_venv) && pre-commit install --install-hooks
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory install-hooks
 
 	@# Print a success message
 	@printf "$(bold)$(green)Done!$(reset)\n"
