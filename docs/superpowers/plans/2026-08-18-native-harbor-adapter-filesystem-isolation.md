@@ -175,7 +175,7 @@ git add rust/runtime/src/eval/execution/docker_process.rs rust/runtime/src/eval/
 git commit -m "fix(eval): reap isolated Harbor adapters before verification"
 ```
 
-### Task 4: Require image-resident adapter executables and close E2E
+### Task 4: Require an image-resident Docker adapter command and close E2E
 
 **Files:**
 - Modify: `rust/runtime/src/eval/native_graph/package.rs`
@@ -185,12 +185,12 @@ git commit -m "fix(eval): reap isolated Harbor adapters before verification"
 - Modify only if applicable: `llms.txt`
 
 **Interfaces:**
-- Consumes: immutable selected environment adapter argv and isolated Docker start.
-- Produces: preflight refusal for task-worktree adapters and current documentation of filesystem isolation.
+- Consumes: immutable selected environment adapter `argv` and `executable`, and isolated Docker start.
+- Produces: preflight refusal for non-image Docker commands and current documentation of filesystem isolation.
 
 - [ ] **Step 1: Write package RED**
 
-Add a rollout fixture whose environment adapter executable is `/work/adapter.sh` and assert preflight returns `NativeGraphPackageError::InvalidAdapterExecutableLocation`. Keep `/usr/local/bin/environment-adapter` valid.
+Add a rollout fixture whose environment adapter `argv[0]` is `environment/adapter.sh` or `/work/adapter.sh` and assert preflight returns `NativeGraphPackageError::InvalidAdapterExecutableLocation`. Keep `argv = ["/environment/environment.sh"]` with `executable = "environment/environment.sh"` valid.
 
 - [ ] **Step 2: Verify RED**
 
@@ -202,11 +202,11 @@ cd rust
 RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_package image_resident_environment_adapter -- --nocapture
 ```
 
-Expected: importer currently accepts the worktree executable.
+Expected: importer currently accepts relative and `/work` Docker commands.
 
 - [ ] **Step 3: Add immutable location validation**
 
-Validate the selected environment adapter before provisioning:
+For Docker rollout environments, validate the selected runtime command before provisioning while retaining `executable` as source provenance:
 
 ```rust
 if path.starts_with("/work/") || !path.starts_with('/') {
@@ -214,7 +214,7 @@ if path.starts_with("/work/") || !path.starts_with('/') {
 }
 ```
 
-Keep raw source paths out of public errors. Do not introduce an adapter-image registry.
+Keep raw source paths out of public errors. Do not add a manifest field or an adapter-image registry.
 
 - [ ] **Step 4: Rebuild the CLI and verify product GREEN**
 

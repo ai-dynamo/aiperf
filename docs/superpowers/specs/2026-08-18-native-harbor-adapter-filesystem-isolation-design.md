@@ -60,12 +60,13 @@ same labels and immutable ID to compensate uncertain adapter-container creates.
 ## Adapter inputs and capabilities
 
 The first implementation uses the task image for the adapter container, but
-does not mount the task worktree. The adapter's declared executable must be
-available from the image itself. A task whose environment adapter depends on a
-mutable `/work` checkout is rejected during sealed-start preflight rather than
-silently receiving that mount. Read-only package inputs may be added only via a
-future explicitly declared immutable snapshot capability; this slice does not
-add one.
+does not mount the task worktree. The existing sealed adapter fields have
+separate roles: `executable` remains the package-relative source-provenance
+file, while Docker rollout `argv[0]` must be an absolute path available in the
+built image. A task whose Docker rollout command is relative or under mutable
+`/work` is rejected during sealed-start preflight rather than silently receiving
+a mount. Read-only package inputs may be added only via an explicitly declared
+immutable snapshot capability; this slice does not add one.
 
 The adapter has no host Docker socket, task-container ID, model endpoint,
 credential, or artifact filesystem path. It can obtain a frozen selected action
