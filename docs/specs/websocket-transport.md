@@ -7,35 +7,37 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Purpose
 
-Benchmark WebSocket inference over persistent WS/WSS connections. The WebSocket
-transport is a future capability; this record separates
-its requirements from the reusable transport, content, streaming, and
-measurement prerequisites already present in the runtime. It also defines the
-WebSocket application-event lag metrics that the HTTP trace and existing audio
-endpoint support do not provide.
+Benchmark WebSocket inference over persistent WS/WSS connections. The native
+transport composes the runtime's worker-local transport, content-lowering, and
+measurement seams, and defines WebSocket application-event lag metrics that
+the HTTP trace and existing audio endpoint support do not provide.
 
 ## Built
 
-The runtime provides the prerequisites the future transport must compose over:
+The runtime provides the WebSocket transport and the seams it composes over:
 
 - `Clock`, worker-local `WorkerSink`, `ExecutionSinkBuilder`, and `LocalSet`
   execution define transport timing and placement.
 - The segment store and `BodyPlan` preserve content as handles and
   pre-serialized bytes while dataset materialization still owns the store.
 - The HTTP transport provides a byte-preserving SSE decoder and streaming
-  response path that the future fallback can reuse.
+  response path used by the explicitly declared Responses fallback.
 - The gRPC transport provides worker-local bidirectional message encoding and
   response decoding through endpoint bindings. It is not a persistent,
   cross-request multiplexing or round-trip-measurement precedent.
 - `RequestObserver` supplies token, classified-token, usage, endpoint-metric,
   and terminal observations shared by transports. TTFT is derived from the first
   token observation; there is no separate first-token callback.
-- The extension registry provides open transport and endpoint registration with
-  duplicate rejection and a frozen application inventory.
-
-No WebSocket transport, WebSocket endpoint binding, or WS-frame `BodyPlan`
-materializer is registered. Consequently, no runtime path records WebSocket
-send/receive timing or reports WebSocket round-trip metrics.
+- The extension registry registers the `websocket` transport plus `responses`
+  and `realtime` endpoint bindings, with duplicate rejection and a frozen
+  application inventory.
+- `WsRequestMaterializer` lowers handle-bearing body plans while the segment
+  store remains available. The worker receives ordered immutable
+  `PreparedWsOperation` application messages, never a handle-bearing plan.
+- The worker-local split driver keeps read, write, control, deadline, and
+  Clock-driven keepalive progress live behind bounded application queues. It
+  records post-flush input and complete decoded application-event timing for
+  eligible turn-serialized operations.
 
 <!--
 Provenance: external backend issue #706 and PR #713, squash
@@ -45,9 +47,9 @@ sampling boundaries, output behavior, and test coverage were verified against
 the merged code rather than inferred from PR prose.
 -->
 
-## Future requirements
+## Current contract
 
-A Clock-injected `transport::ws` implementation registered alongside the
+A Clock-injected `transport::ws` implementation is registered alongside the
 existing native transports. It reuses the segment content IR and `BodyPlan` lowering
 contract (see [dataset.md](dataset.md) and
 [endpoint-body-construction.md](endpoint-body-construction.md)), but it cannot
@@ -355,6 +357,8 @@ instrument name, unit, buckets, attributes, and per-record accumulation path.
 
 ## Source anchors
 
+- WebSocket implementation: `rust/runtime/src/engine/ws_execution.rs` and
+  `rust/runtime/src/transport/ws/{connector,dialect,driver}.rs`.
 - Reusable prerequisites: `rust/runtime/src/transport/grpc/binding.rs`
   (bidirectional message binding), `rust/runtime/src/transport/http/sse/` (SSE
   decoder), `rust/runtime/src/body_plan.rs` (`BodyEmitter` materializer contract),

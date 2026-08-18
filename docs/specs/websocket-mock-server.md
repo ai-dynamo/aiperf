@@ -34,9 +34,11 @@ the server behavior needed to prove them.
 - TLS uses the same router and advertises HTTP/1.1, so a WSS upgrade follows the
   existing certificate and `--tls-self-signed` paths.
 
-No WebSocket route, application-event codec, scenario configuration, connection
-state, or WebSocket capture store exists. The `--ludicrous-speed`, `--blocking`,
-and `--uring` engines do not drive Hyper upgrades and cannot host this feature.
+The Axum router now conditionally exposes the turn and Realtime upgrade routes,
+with a typed route codec, connection-local scenario state, absolute clock
+scheduling, configured inbound message bounds, and a bounded metadata-only
+capture store. The `--ludicrous-speed`, `--blocking`, and `--uring` engines do
+not drive Hyper upgrades and cannot host this feature.
 
 ## Scope
 
