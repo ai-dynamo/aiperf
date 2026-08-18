@@ -1291,6 +1291,12 @@ gamma = 0.75
 max_environment_bytes = 256
 max_horizon = 8
 max_prompt_bytes = 256
+
+[workspace_patch]
+mutable_paths = ["result.txt"]
+max_patches = 4
+max_patch_bytes = 4096
+max_total_patch_bytes = 8192
 "#,
     )
     .expect("rollout manifest");
