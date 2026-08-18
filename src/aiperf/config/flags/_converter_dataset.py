@@ -780,7 +780,11 @@ _BASETEN_ONLY_TRACE_BOOL_FLAGS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
+def _reject_baseten_only_trace_flags(
+    cli: CLIConfig,
+    *,
+    declared_format: Any = None,
+) -> None:
     """Reject baseten_trace-only replay knobs on incompatible datasets.
 
     These knobs are only consumed by the baseten_trace loader; on any other
@@ -805,6 +809,15 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
     if not set_flags:
         return
     msg = f"{', '.join(set_flags)} is only supported by the baseten_trace loader"
+    if declared_format is not None:
+        # A config file declared the loader, and --input-file /
+        # --custom-dataset-type are rejected on that path, so inferring from
+        # them would reject a combination the YAML explicitly supports.
+        if declared_format == CustomDatasetType.BASETEN_TRACE:
+            return
+        raise ValueError(
+            f"{msg}, but the config file declares format: {declared_format}."
+        )
     if _implies_public_dataset(cli) or not cli.input_file:
         raise ValueError(
             f"{msg}; provide --input-file and --custom-dataset-type baseten_trace."
@@ -881,7 +894,11 @@ def _reject_baseten_trace_unsupported_synthesis(
         )
 
 
-def _reject_baseten_trace_extra_input_collisions(cli: CLIConfig) -> None:
+def _reject_baseten_trace_extra_input_collisions(
+    cli: CLIConfig,
+    *,
+    declared_format: Any = None,
+) -> None:
     """Reject --extra-inputs keys the baseten_trace loader injects per-turn.
 
     Loader-injected per-turn values (``min_tokens`` from the recorded output
@@ -893,7 +910,13 @@ def _reject_baseten_trace_extra_input_collisions(cli: CLIConfig) -> None:
     """
     from aiperf.plugin.enums import CustomDatasetType
 
-    if cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE:
+    # The format can come from the CLI or from a config file; the loader
+    # injects the same per-turn values either way, so the collision is the
+    # same collision.
+    resolved_format = (
+        declared_format if declared_format is not None else cli.custom_dataset_type
+    )
+    if resolved_format != CustomDatasetType.BASETEN_TRACE:
         return
     extra = dict(cli.extra_inputs or ())
     collisions: list[tuple[str, str]] = []
@@ -1236,7 +1259,9 @@ def _run_dataset_rejections(
     _reject_file_dataset_incompatible(
         cli, declared_type=declared_type, declared_format=declared_format
     )
-    _reject_baseten_only_trace_flags(cli)
+    _reject_baseten_only_trace_flags(
+        cli, declared_format=declared_format if override_mode else None
+    )
     if override_mode:
         _reject_baseten_trace_unsupported_synthesis(
             cli,
@@ -1245,7 +1270,9 @@ def _run_dataset_rejections(
         )
     else:
         _reject_baseten_trace_unsupported_synthesis(cli, cli.custom_dataset_type)
-    _reject_baseten_trace_extra_input_collisions(cli)
+    _reject_baseten_trace_extra_input_collisions(
+        cli, declared_format=declared_format if override_mode else None
+    )
 
     if cli.dataset_filters and not (
         _implies_public_dataset(cli) or declared_type == DatasetType.PUBLIC
