@@ -267,3 +267,23 @@ def test_every_unrouted_field_has_a_real_flag_name() -> None:
 
     missing = sorted(f for f in UNROUTED_UNDER_CONFIG if not flag_names_for(f))
     assert not missing, f"No CLIParameter flag name found for: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Error messages must name a flag the user can find in their shell history
+# ---------------------------------------------------------------------------
+
+
+def test_error_lists_every_spelling_of_a_multi_alias_flag(base_yaml: Path) -> None:
+    """Naming only the first declared spelling sends users looking for a flag
+    they never typed.
+
+    ``--num-warmup-requests`` was reported as ``--warmup-request-count``;
+    ``--num-conversations`` as ``--conversation-num``. Since the resolver
+    cannot see which spelling was typed, it names them all.
+    """
+    with pytest.raises(ConfigurationError) as excinfo:
+        resolve_config(cli(warmup_request_count=3), base_yaml)
+    message = str(excinfo.value)
+    assert "--warmup-request-count" in message
+    assert "--num-warmup-requests" in message
