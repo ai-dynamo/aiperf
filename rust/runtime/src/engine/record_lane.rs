@@ -196,12 +196,15 @@ impl EvalNodeRecordArtifact {
         &self.destination
     }
 
-    /// Append one completed node record using the canonical record-row projection.
+    /// Append and flush one completed node record using the canonical record-row projection.
     pub(crate) fn append(&self, captured: &CapturedRecord) -> Result<()> {
         let mut inner = self.inner.borrow_mut();
         let EvalNodeRecordWriter { writer, metrics } = &mut *inner;
         write_record_jsonl_row(writer, captured, metrics, false)
-            .context("writing eval node record export row")
+            .context("writing eval node record export row")?;
+        writer
+            .flush()
+            .context("flushing eval node record export row")
     }
 
     /// Flush all appended rows. Repeated calls are harmless.

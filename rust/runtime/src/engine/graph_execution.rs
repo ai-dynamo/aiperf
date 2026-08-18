@@ -3329,9 +3329,8 @@ executable = "tools/adapter.sh"
     fn suite_owned_native_graph_record_artifact_appends_across_episodes() {
         let dir = tempfile::tempdir().expect("temporary record artifact directory");
         let path = dir.path().join("records.jsonl");
-        let artifact = Rc::new(RefCell::new(
-            EvalNodeRecordArtifact::open(&path).expect("open suite-owned record artifact"),
-        ));
+        let artifact =
+            EvalNodeRecordArtifact::open(&path).expect("open suite-owned record artifact");
 
         for _ in 0..2 {
             let mut episode_evidence = NativeGraphTransportEvidence {
@@ -3347,7 +3346,6 @@ executable = "tools/adapter.sh"
             assert_eq!(episode_evidence.model_records, 1);
         }
         artifact
-            .borrow_mut()
             .finish()
             .expect("flush suite-owned record artifact");
 
@@ -3358,14 +3356,8 @@ executable = "tools/adapter.sh"
     #[cfg(target_os = "linux")]
     #[test]
     fn native_graph_record_append_failure_does_not_complete_evidence() {
-        let artifact = Rc::new(RefCell::new(
-            EvalNodeRecordArtifact::open(std::path::Path::new("/dev/full"))
-                .expect("open deterministic full-device writer"),
-        ));
-        let mut record = completed_evidence_record();
-        let oversized_output = "x".repeat(16 * 1024);
-        record.output =
-            CapturedModelOutput::from_parts(&oversized_output, Some(&oversized_output), None);
+        let artifact = EvalNodeRecordArtifact::open(std::path::Path::new("/dev/full"))
+            .expect("open deterministic full-device writer");
         let mut evidence = NativeGraphTransportEvidence {
             model_records: 0,
             completed_traces: 0,
@@ -3373,16 +3365,14 @@ executable = "tools/adapter.sh"
 
         let error = observe_native_graph_evidence(
             &mut evidence,
-            NativeGraphEvidenceEvent::Record(Box::new(record)),
+            NativeGraphEvidenceEvent::Record(Box::new(completed_evidence_record())),
             Some(&artifact),
         )
-        .expect_err("record append failure must fail the episode evidence drain");
+        .expect_err("record append flush failure must fail the episode evidence drain");
+        let message = error.to_string();
 
-        assert!(
-            error
-                .to_string()
-                .contains("exporting completed native graph node record")
-        );
+        assert!(message.contains("appending completed native graph node record to full"));
+        assert!(!message.contains("/dev/full"));
         assert_eq!(evidence.model_records, 0);
         assert_eq!(evidence.completed_traces, 0);
     }
