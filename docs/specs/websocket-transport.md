@@ -180,11 +180,13 @@ idle cached connection and is distinct from the Ping interval and active-stream
 idle bound above. Protocol v2 carries the same fields plus its existing
 `max_connect_retries` connect policy. UDS is accepted only when the WebSocket
 connector implements it. `endpoint.streaming` does not select WebSocket; the
-transport does. The runtime and CLI expose an explicit `websocket` feature;
-feature-off builds reject `transport.type: websocket`. The first supported
-workloads are scheduled single/multi-turn execution and cellular scheduled
-execution. Graph execution and unsupported artifacts fail closed until their
-own WebSocket contracts are implemented.
+transport does. The runtime and CLI expose an explicit `websocket` feature.
+Configuration deserializes `transport.type: websocket` unconditionally;
+feature-off builds fail closed when execution registry selection finds no
+registered WebSocket transport, and never fall back to HTTP. The first
+supported workloads are scheduled single/multi-turn execution and cellular
+scheduled execution. Graph execution and unsupported artifacts fail closed
+until their own WebSocket contracts are implemented.
 
 Each registered dialect advertises its transport support, connection model
 (`turn_serialized` or `duplex`), supported application opcodes, continuation and

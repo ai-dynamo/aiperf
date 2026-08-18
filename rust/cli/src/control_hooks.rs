@@ -29,9 +29,11 @@ pub(crate) fn validate_supported_control_hook_transport(run: &BenchmarkRun) -> R
         return Ok(());
     }
     match run.cfg.transport.as_ref() {
-        None | Some(Transport::Http) | Some(Transport::Grpc) | Some(Transport::Websocket(_)) => {
-            Ok(())
-        }
+        None | Some(Transport::Http) | Some(Transport::Grpc) => Ok(()),
+        Some(Transport::Websocket(_)) => bail!(
+            "endpoint.reset_kv_cache / endpoint.server_profiler are unsupported for the websocket transport; \
+             no separate HTTP control origin is configured"
+        ),
         Some(Transport::DryRun(_)) => bail!(
             "endpoint.reset_kv_cache / endpoint.server_profiler require a live HTTP or gRPC target; \
              the dry_run transport has no server control plane"
@@ -162,6 +164,16 @@ mod tests {
         let error = validate_supported_control_hook_transport(&run)
             .expect_err("dry_run should reject endpoint-local control hooks");
         assert!(error.to_string().contains("dry_run transport"));
+    }
+
+    #[test]
+    fn websocket_transport_rejects_control_hooks_without_http_control_origin() {
+        let mut run = run_with_endpoint(endpoint());
+        run.cfg.transport = Some(Transport::Websocket(Default::default()));
+
+        let error = validate_supported_control_hook_transport(&run)
+            .expect_err("websocket should reject HTTP-only endpoint control hooks");
+        assert!(error.to_string().contains("websocket transport"));
     }
 
     #[test]

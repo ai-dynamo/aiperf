@@ -3,7 +3,9 @@
 
 //! Public WebSocket transport-configuration contract.
 
-use aiperf_runtime::config::model::transport::Transport;
+use aiperf_runtime::config::model::transport::{
+    Transport, WebSocketTransportConfig, WebSocketTransportConfigError,
+};
 
 #[test]
 fn websocket_transport_defaults_serialize_and_round_trip() {
@@ -89,5 +91,27 @@ fn websocket_transport_rejects_unknown_field() {
             "unknown": true,
         }))
         .is_err()
+    );
+}
+
+#[test]
+fn websocket_transport_validation_returns_a_typed_error() {
+    let config = WebSocketTransportConfig {
+        max_queued_bytes: 0,
+        ..WebSocketTransportConfig::default()
+    };
+
+    let error = config
+        .validate()
+        .expect_err("zero queue byte limit must be rejected");
+    assert_eq!(
+        error,
+        WebSocketTransportConfigError::NonPositiveLimit {
+            field: "max_queued_bytes",
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "websocket max_queued_bytes must be positive"
     );
 }

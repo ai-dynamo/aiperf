@@ -5,6 +5,8 @@
 //! The wire uses a `type`-discriminated union and omits unset optional fields.
 //! DynoSim configuration fields are flattened onto the transport object.
 
+use std::fmt::{self, Display, Formatter};
+
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Inline transport selection discriminated by `type`.
@@ -114,6 +116,46 @@ pub struct WebSocketTransportConfig {
     pub max_response_bytes: usize,
 }
 
+/// Invalid WebSocket transport policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebSocketTransportConfigError {
+    /// A duration is zero, negative, or non-finite.
+    InvalidDuration {
+        /// Name of the invalid duration field.
+        field: &'static str,
+    },
+    /// A count or byte limit is zero.
+    NonPositiveLimit {
+        /// Name of the invalid limit field.
+        field: &'static str,
+    },
+    /// The frame limit exceeds the reassembled message limit.
+    FrameExceedsMessage,
+    /// The reassembled message limit exceeds the response limit.
+    MessageExceedsResponse,
+}
+
+impl Display for WebSocketTransportConfigError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDuration { field } => {
+                write!(formatter, "websocket {field} must be finite and positive")
+            }
+            Self::NonPositiveLimit { field } => {
+                write!(formatter, "websocket {field} must be positive")
+            }
+            Self::FrameExceedsMessage => {
+                formatter.write_str("websocket max_frame_bytes cannot exceed max_message_bytes")
+            }
+            Self::MessageExceedsResponse => {
+                formatter.write_str("websocket max_message_bytes cannot exceed max_response_bytes")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WebSocketTransportConfigError {}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WebSocketTransportConfigRaw {
@@ -185,11 +227,14 @@ where
     validate_websocket_seconds("duration", seconds).map_err(serde::de::Error::custom)
 }
 
-fn validate_websocket_seconds(field: &str, seconds: f64) -> Result<f64, String> {
+fn validate_websocket_seconds(
+    field: &'static str,
+    seconds: f64,
+) -> Result<f64, WebSocketTransportConfigError> {
     if seconds.is_finite() && seconds > 0.0 {
         Ok(seconds)
     } else {
-        Err(format!("websocket {field} must be finite and positive"))
+        Err(WebSocketTransportConfigError::InvalidDuration { field })
     }
 }
 
@@ -201,11 +246,14 @@ where
     validate_websocket_positive_usize("limit", value).map_err(serde::de::Error::custom)
 }
 
-fn validate_websocket_positive_usize(field: &str, value: usize) -> Result<usize, String> {
+fn validate_websocket_positive_usize(
+    field: &'static str,
+    value: usize,
+) -> Result<usize, WebSocketTransportConfigError> {
     if value > 0 {
         Ok(value)
     } else {
-        Err(format!("websocket {field} must be positive"))
+        Err(WebSocketTransportConfigError::NonPositiveLimit { field })
     }
 }
 
@@ -226,7 +274,7 @@ impl Default for WebSocketTransportConfig {
 
 impl WebSocketTransportConfig {
     /// Validate the policy shared by every configuration frontend.
-    pub fn validate(self) -> Result<Self, String> {
+    pub fn validate(self) -> Result<Self, WebSocketTransportConfigError> {
         for (field, seconds) in [
             ("ping_interval_seconds", self.ping_interval_seconds),
             (
@@ -246,10 +294,10 @@ impl WebSocketTransportConfig {
             validate_websocket_positive_usize(field, value)?;
         }
         if self.max_frame_bytes > self.max_message_bytes {
-            return Err("websocket max_frame_bytes cannot exceed max_message_bytes".into());
+            return Err(WebSocketTransportConfigError::FrameExceedsMessage);
         }
         if self.max_message_bytes > self.max_response_bytes {
-            return Err("websocket max_message_bytes cannot exceed max_response_bytes".into());
+            return Err(WebSocketTransportConfigError::MessageExceedsResponse);
         }
         Ok(self)
     }
