@@ -357,6 +357,30 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
             "max_prompt_bytes = 128",
         ),
         (
+            "workspace patch mutable path",
+            "rollout.toml",
+            "mutable_paths = [\"result.txt\"]",
+            "mutable_paths = [\"state.txt\"]",
+        ),
+        (
+            "workspace patch count cap",
+            "rollout.toml",
+            "max_patches = 4",
+            "max_patches = 3",
+        ),
+        (
+            "workspace patch byte cap",
+            "rollout.toml",
+            "max_patch_bytes = 4096",
+            "max_patch_bytes = 2048",
+        ),
+        (
+            "workspace patch total byte cap",
+            "rollout.toml",
+            "max_total_patch_bytes = 8192",
+            "max_total_patch_bytes = 4096",
+        ),
+        (
             "environment adapter selection",
             "rollout.toml",
             "adapter_id = \"environment-adapter\"",
@@ -519,6 +543,23 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
 }
 
 #[test]
+fn native_graph_rollout_import_retains_sealed_workspace_patch_contract() {
+    let task = rollout_task_fixture(b"{\"seed\":7}\n");
+    let imported = import_native_task(task.path())
+        .expect("sealed workspace patch authoring is retained from the package snapshot");
+    let rollout = imported
+        .package
+        .native_graph()
+        .and_then(|native| native.rollout())
+        .expect("fixture selects a rollout");
+
+    assert_eq!(rollout.workspace_patch().mutable_paths(), ["result.txt"]);
+    assert_eq!(rollout.workspace_patch().max_patches(), 4);
+    assert_eq!(rollout.workspace_patch().max_patch_bytes(), 4_096);
+    assert_eq!(rollout.workspace_patch().max_total_patch_bytes(), 8_192);
+}
+
+#[test]
 fn rollout_policy_prompt_exceeding_the_selected_cap_is_refused_at_import() {
     let task = rollout_task_fixture(b"{\"seed\":7}\n");
     replace(
@@ -603,6 +644,30 @@ fn native_graph_rollout_rejects_invalid_or_incompatible_authoring_before_provisi
         "max_decision_bytes = 0",
     );
     assert_invalid_package(zero_decision_limit.path());
+
+    let unsafe_patch_path = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &unsafe_patch_path.path().join("rollout.toml"),
+        "mutable_paths = [\"result.txt\"]",
+        "mutable_paths = [\"../result.txt\"]",
+    );
+    assert_invalid_package(unsafe_patch_path.path());
+
+    let duplicate_patch_path = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &duplicate_patch_path.path().join("rollout.toml"),
+        "mutable_paths = [\"result.txt\"]",
+        "mutable_paths = [\"result.txt\", \"result.txt\"]",
+    );
+    assert_invalid_package(duplicate_patch_path.path());
+
+    let zero_patch_limit = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &zero_patch_limit.path().join("rollout.toml"),
+        "max_patches = 4",
+        "max_patches = 0",
+    );
+    assert_invalid_package(zero_patch_limit.path());
 
     let noncanonical_reset = rollout_task_fixture(b"{\"seed\":7}\n");
     replace(
@@ -1273,6 +1338,12 @@ gamma = 0.75
 max_environment_bytes = 256
 max_horizon = 8
 max_prompt_bytes = 256
+
+[workspace_patch]
+mutable_paths = ["result.txt"]
+max_patches = 4
+max_patch_bytes = 4096
+max_total_patch_bytes = 8192
 "#
 }
 

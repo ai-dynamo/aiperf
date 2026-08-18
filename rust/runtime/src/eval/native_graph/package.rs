@@ -511,6 +511,37 @@ pub struct NativeGraphRolloutLimits {
     max_prompt_bytes: u64,
 }
 
+/// Immutable bounds and destination paths for host-committed environment patches.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeGraphWorkspacePatchContract {
+    mutable_paths: Vec<String>,
+    max_patches: u64,
+    max_patch_bytes: u64,
+    max_total_patch_bytes: u64,
+}
+
+impl NativeGraphWorkspacePatchContract {
+    /// Returns the only task-relative files a rollout patch may update.
+    pub fn mutable_paths(&self) -> &[String] {
+        &self.mutable_paths
+    }
+
+    /// Returns the maximum accepted patches for one rollout.
+    pub const fn max_patches(&self) -> u64 {
+        self.max_patches
+    }
+
+    /// Returns the maximum bytes in one accepted patch archive.
+    pub const fn max_patch_bytes(&self) -> u64 {
+        self.max_patch_bytes
+    }
+
+    /// Returns the maximum aggregate bytes in accepted patch archives.
+    pub const fn max_total_patch_bytes(&self) -> u64 {
+        self.max_total_patch_bytes
+    }
+}
+
 impl NativeGraphRolloutLimits {
     /// Returns the maximum environment-identity bytes.
     pub const fn max_environment_bytes(&self) -> u64 {
@@ -595,6 +626,7 @@ pub struct NativeGraphRolloutPlan {
     environment: NativeGraphRolloutEnvironment,
     policy: NativeGraphRolloutPolicy,
     limits: NativeGraphRolloutLimits,
+    workspace_patch: NativeGraphWorkspacePatchContract,
 }
 
 impl Eq for NativeGraphRolloutPlan {}
@@ -613,6 +645,11 @@ impl NativeGraphRolloutPlan {
     /// Returns the bounds selected for the rollout policy.
     pub const fn limits(&self) -> NativeGraphRolloutLimits {
         self.limits
+    }
+
+    /// Returns the sealed host-committed workspace-patch contract.
+    pub fn workspace_patch(&self) -> &NativeGraphWorkspacePatchContract {
+        &self.workspace_patch
     }
 
     /// Returns the immutable digest of every imported rollout selection fact.
@@ -923,6 +960,7 @@ struct RolloutManifestDto {
     artifacts: RolloutArtifactLimitsDto,
     policy: RolloutPolicyDto,
     limits: RolloutLimitsDto,
+    workspace_patch: WorkspacePatchDto,
 }
 
 #[derive(Debug, Deserialize)]
@@ -977,6 +1015,15 @@ struct RolloutLimitsDto {
     max_prompt_bytes: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspacePatchDto {
+    mutable_paths: Vec<String>,
+    max_patches: u64,
+    max_patch_bytes: u64,
+    max_total_patch_bytes: u64,
+}
+
 fn resolve_rollout(
     source: &AcquiredSource,
     profile: NativeGraphProfile,
@@ -1005,6 +1052,29 @@ fn resolve_rollout(
     {
         return invalid("rollout.limits must be positive");
     }
+    let mut mutable_path_set = BTreeSet::new();
+    let mut mutable_paths = Vec::with_capacity(manifest.workspace_patch.mutable_paths.len());
+    for path in manifest.workspace_patch.mutable_paths {
+        let path = canonical_relative_path("rollout.workspace_patch.mutable_paths", path)?;
+        if !mutable_path_set.insert(path.clone()) {
+            return invalid("rollout.workspace_patch.mutable_paths must be unique");
+        }
+        mutable_paths.push(path);
+    }
+    if mutable_paths.is_empty()
+        || manifest.workspace_patch.max_patches == 0
+        || manifest.workspace_patch.max_patch_bytes == 0
+        || manifest.workspace_patch.max_total_patch_bytes == 0
+        || manifest.workspace_patch.max_patch_bytes > manifest.workspace_patch.max_total_patch_bytes
+    {
+        return invalid("rollout.workspace_patch limits are invalid");
+    }
+    let workspace_patch = NativeGraphWorkspacePatchContract {
+        mutable_paths,
+        max_patches: manifest.workspace_patch.max_patches,
+        max_patch_bytes: manifest.workspace_patch.max_patch_bytes,
+        max_total_patch_bytes: manifest.workspace_patch.max_total_patch_bytes,
+    };
     let policy_environment =
         required_text("rollout.policy.environment", manifest.policy.environment)?;
     if u64::try_from(policy_environment.len()).map_err(|_| {
@@ -1059,6 +1129,7 @@ fn resolve_rollout(
             gamma: manifest.policy.gamma,
         },
         limits,
+        workspace_patch,
     }))
 }
 
@@ -1782,6 +1853,33 @@ fn append_rollout_identity(material: &mut Vec<u8>, rollout: &NativeGraphRolloutP
         material,
         "native-graph-rollout.limits.max-prompt-bytes",
         &rollout.limits.max_prompt_bytes.to_le_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.workspace-patch.path-count",
+        &(rollout.workspace_patch.mutable_paths.len() as u64).to_le_bytes(),
+    );
+    for path in &rollout.workspace_patch.mutable_paths {
+        append_identity_field(
+            material,
+            "native-graph-rollout.workspace-patch.mutable-path",
+            path.as_bytes(),
+        );
+    }
+    append_identity_field(
+        material,
+        "native-graph-rollout.workspace-patch.max-patches",
+        &rollout.workspace_patch.max_patches.to_le_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.workspace-patch.max-patch-bytes",
+        &rollout.workspace_patch.max_patch_bytes.to_le_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.workspace-patch.max-total-patch-bytes",
+        &rollout.workspace_patch.max_total_patch_bytes.to_le_bytes(),
     );
 }
 
