@@ -5,6 +5,7 @@
 
 use std::collections::VecDeque;
 use std::fmt::{self, Display, Formatter};
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use aiperf_runtime::clock::sleep_ns;
@@ -12,6 +13,8 @@ use axum::Json;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -24,10 +27,9 @@ use crate::models::Usage;
 use crate::state::AppState;
 
 const MAX_CAPTURE_EVENTS_PER_CONNECTION: usize = 16_384;
-const MAX_CAPTURE_EVENT_TYPE_BYTES: usize = 128;
 
 /// Sanitized metadata for one completed WebSocket connection.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct WebSocketCapture {
     connection_id: u64,
     route: &'static str,
@@ -86,6 +88,7 @@ enum CloseClassification {
     ReceiveError,
     SendError,
     ProtocolError,
+    Cancelled,
 }
 
 /// Sanitized metadata for one direction of a WebSocket message.
@@ -93,7 +96,9 @@ enum CloseClassification {
 pub(crate) struct WebSocketCaptureEvent {
     direction: &'static str,
     opcode: &'static str,
-    event_type: Option<String>,
+    event_type: Option<&'static str>,
+    turn: Option<u64>,
+    operation_id: Option<String>,
     bytes: usize,
     payload_digest: String,
     relative_ns: i64,
@@ -110,7 +115,7 @@ impl WebSocketCaptureStore {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
             capacity,
-            entries: Mutex::new(VecDeque::with_capacity(capacity)),
+            entries: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -127,6 +132,70 @@ impl WebSocketCaptureStore {
 
     fn snapshot(&self) -> Vec<WebSocketCapture> {
         self.entries.lock().iter().cloned().collect()
+    }
+}
+
+struct CapturePublication<'a> {
+    store: &'a WebSocketCaptureStore,
+    capture: WebSocketCapture,
+}
+
+impl<'a> CapturePublication<'a> {
+    fn new(store: &'a WebSocketCaptureStore, capture: WebSocketCapture) -> Self {
+        Self { store, capture }
+    }
+}
+
+impl Deref for CapturePublication<'_> {
+    type Target = WebSocketCapture;
+
+    fn deref(&self) -> &Self::Target {
+        &self.capture
+    }
+}
+
+impl DerefMut for CapturePublication<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.capture
+    }
+}
+
+impl Drop for CapturePublication<'_> {
+    fn drop(&mut self) {
+        let mut capture = std::mem::take(&mut self.capture);
+        if matches!(capture.close, CloseClassification::Open) {
+            capture.close = CloseClassification::Cancelled;
+        }
+        self.store.push(capture);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CaptureAttribution {
+    turn: u64,
+    operation_id: String,
+}
+
+fn attribute_event(
+    event: &ClientEvent,
+    connection_id: u64,
+    next_turn: &mut u64,
+    attribution: &mut Option<CaptureAttribution>,
+) {
+    let starts_turn = matches!(event, ClientEvent::StartTurn { .. })
+        || attribution.is_none()
+            && matches!(
+                event,
+                ClientEvent::AppendAudio { .. }
+                    | ClientEvent::AddConversationItem
+                    | ClientEvent::RequestResponse
+            );
+    if starts_turn {
+        *next_turn = next_turn.saturating_add(1);
+        *attribution = Some(CaptureAttribution {
+            turn: *next_turn,
+            operation_id: format!("mock-ws-operation-{connection_id}-{next_turn}"),
+        });
     }
 }
 
@@ -164,17 +233,22 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
         .websocket_connections
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let started_ns = state.clock_anchor.now_ns();
-    let mut capture = WebSocketCapture::new(
-        connection_id,
-        route,
-        state.config.websocket_scenario,
-        usize::try_from(state.config.websocket_content_events)
-            .unwrap_or(MAX_CAPTURE_EVENTS_PER_CONNECTION)
-            .saturating_add(8),
+    let mut capture = CapturePublication::new(
+        &state.websocket_captures,
+        WebSocketCapture::new(
+            connection_id,
+            route,
+            state.config.websocket_scenario,
+            usize::try_from(state.config.websocket_content_events)
+                .unwrap_or(MAX_CAPTURE_EVENTS_PER_CONNECTION)
+                .saturating_add(8),
+        ),
     );
     let mut scenario = ConnectionScenario::new(route, connection_id, &state.config);
     let mut operation: Option<OperationAccounting<'_>> = None;
     let mut pending_request_bytes = 0usize;
+    let mut next_capture_turn = 0u64;
+    let mut attribution: Option<CaptureAttribution> = None;
 
     while let Some(message) = socket.next().await {
         let now_ns = state.clock_anchor.now_ns();
@@ -189,18 +263,26 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
         match message {
             Message::Text(text) => {
                 let payload = text.as_bytes();
-                capture.push_event(capture_event("in", "text", payload, now_ns, started_ns));
                 if let Some(operation) = operation.as_mut() {
                     operation.add_request_bytes(payload.len());
                 } else {
                     pending_request_bytes = pending_request_bytes.saturating_add(payload.len());
                 }
                 if payload.len() > state.config.websocket_max_message_bytes {
+                    capture.push_event(capture_event_with_attribution(
+                        "in",
+                        "text",
+                        payload,
+                        attribution.as_ref(),
+                        now_ns,
+                        started_ns,
+                    ));
                     let response_bytes = protocol_error(
                         &mut socket,
                         &mut capture,
                         state.clock_anchor,
                         started_ns,
+                        attribution.as_ref(),
                         "application message exceeds configured size",
                     )
                     .await;
@@ -212,11 +294,20 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                 let event = match parse_client_event(payload, route) {
                     Ok(event) => event,
                     Err(error) => {
+                        capture.push_event(capture_event_with_attribution(
+                            "in",
+                            "text",
+                            payload,
+                            attribution.as_ref(),
+                            now_ns,
+                            started_ns,
+                        ));
                         let response_bytes = protocol_error(
                             &mut socket,
                             &mut capture,
                             state.clock_anchor,
                             started_ns,
+                            attribution.as_ref(),
                             &error.to_string(),
                         )
                         .await;
@@ -226,6 +317,20 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                         break;
                     }
                 };
+                attribute_event(
+                    &event,
+                    connection_id,
+                    &mut next_capture_turn,
+                    &mut attribution,
+                );
+                capture.push_event(capture_event_with_attribution(
+                    "in",
+                    "text",
+                    payload,
+                    attribution.as_ref(),
+                    now_ns,
+                    started_ns,
+                ));
                 let operation_model = event.operation_model(route).map(str::to_owned);
                 if let Some(model) = operation_model {
                     if operation.is_some() {
@@ -234,6 +339,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                             &mut capture,
                             state.clock_anchor,
                             started_ns,
+                            attribution.as_ref(),
                             "connection already has an in-flight operation",
                         )
                         .await;
@@ -245,7 +351,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                     operation = Some(OperationAccounting::begin(
                         &state.recorder,
                         route,
-                        &model,
+                        model,
                         now_ns,
                         pending_request_bytes,
                     ));
@@ -259,6 +365,7 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                             &mut capture,
                             state.clock_anchor,
                             started_ns,
+                            attribution.as_ref(),
                             &error.to_string(),
                         )
                         .await;
@@ -268,11 +375,19 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                         break;
                     }
                 };
-                let result =
-                    send_actions(&state, &mut socket, &mut capture, started_ns, actions).await;
+                let result = send_actions(
+                    &state,
+                    &mut socket,
+                    &mut capture,
+                    started_ns,
+                    attribution.as_ref(),
+                    actions,
+                )
+                .await;
                 if let Some(operation) = operation.as_mut() {
                     operation.add_response_bytes(result.response_bytes);
                 }
+                let operation_finished = result.operation.is_some();
                 match result.operation {
                     Some(OperationResult::Completed { completion_tokens }) => {
                         capture.terminal = TerminalClassification::Completed;
@@ -291,17 +406,28 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                 if let Some(close) = result.close {
                     capture.close = close;
                 }
+                if operation_finished {
+                    attribution = None;
+                }
                 if !result.keep_connection {
                     break;
                 }
             }
             Message::Binary(payload) => {
-                capture.push_event(capture_event("in", "binary", &payload, now_ns, started_ns));
+                capture.push_event(capture_event_with_attribution(
+                    "in",
+                    "binary",
+                    &payload,
+                    attribution.as_ref(),
+                    now_ns,
+                    started_ns,
+                ));
                 let response_bytes = protocol_error(
                     &mut socket,
                     &mut capture,
                     state.clock_anchor,
                     started_ns,
+                    attribution.as_ref(),
                     "binary application messages are not supported",
                 )
                 .await;
@@ -312,11 +438,19 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                 break;
             }
             Message::Ping(payload) => {
-                capture.push_event(capture_event("in", "ping", &payload, now_ns, started_ns));
-                let mut event = capture_event(
+                capture.push_event(capture_event_with_attribution(
+                    "in",
+                    "ping",
+                    &payload,
+                    attribution.as_ref(),
+                    now_ns,
+                    started_ns,
+                ));
+                let mut event = capture_event_with_attribution(
                     "out",
                     "pong",
                     &payload,
+                    attribution.as_ref(),
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
@@ -328,10 +462,24 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
                 capture.push_event(event);
             }
             Message::Pong(payload) => {
-                capture.push_event(capture_event("in", "pong", &payload, now_ns, started_ns));
+                capture.push_event(capture_event_with_attribution(
+                    "in",
+                    "pong",
+                    &payload,
+                    attribution.as_ref(),
+                    now_ns,
+                    started_ns,
+                ));
             }
             Message::Close(_) => {
-                capture.push_event(capture_event("in", "close", &[], now_ns, started_ns));
+                capture.push_event(capture_event_with_attribution(
+                    "in",
+                    "close",
+                    &[],
+                    attribution.as_ref(),
+                    now_ns,
+                    started_ns,
+                ));
                 capture.close = CloseClassification::ClientClose;
                 break;
             }
@@ -341,7 +489,6 @@ async fn serve_connection(state: Arc<AppState>, mut socket: WebSocket, route: Ro
         capture.close = CloseClassification::ReceiveError;
     }
     drop(operation);
-    state.websocket_captures.push(capture);
 }
 
 #[derive(Clone, Copy)]
@@ -373,6 +520,7 @@ async fn send_actions(
     socket: &mut WebSocket,
     capture: &mut WebSocketCapture,
     started_ns: i64,
+    attribution: Option<&CaptureAttribution>,
     actions: Vec<ServerAction>,
 ) -> ActionResult {
     let mut result = ActionResult::default();
@@ -392,10 +540,11 @@ async fn send_actions(
                         return result;
                     }
                 };
-                let mut event = capture_event(
+                let mut event = capture_event_with_attribution(
                     "out",
                     "text",
                     text.as_bytes(),
+                    attribution,
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
@@ -409,10 +558,11 @@ async fn send_actions(
                 capture.push_event(event);
             }
             ServerAction::SendPing(payload) => {
-                let mut event = capture_event(
+                let mut event = capture_event_with_attribution(
                     "out",
                     "ping",
                     &payload,
+                    attribution,
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
@@ -425,10 +575,11 @@ async fn send_actions(
                 capture.push_event(event);
             }
             ServerAction::SendPong(payload) => {
-                let mut event = capture_event(
+                let mut event = capture_event_with_attribution(
                     "out",
                     "pong",
                     &payload,
+                    attribution,
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
@@ -443,10 +594,11 @@ async fn send_actions(
             ServerAction::Close => {
                 result.keep_connection = false;
                 result.close = Some(if socket.send(Message::Close(None)).await.is_ok() {
-                    capture.push_event(capture_event(
+                    capture.push_event(capture_event_with_attribution(
                         "out",
                         "close",
                         &[],
+                        attribution,
                         state.clock_anchor.now_ns(),
                         started_ns,
                     ));
@@ -477,14 +629,16 @@ async fn protocol_error(
     capture: &mut WebSocketCapture,
     clock_anchor: aiperf_runtime::clock::RealClockAnchor,
     started_ns: i64,
+    attribution: Option<&CaptureAttribution>,
     message: &str,
 ) -> usize {
     let payload = serde_json::json!({"type":"error","error":{"message":message}}).to_string();
     let bytes = payload.len();
-    let mut event = capture_event(
+    let mut event = capture_event_with_attribution(
         "out",
         "text",
         payload.as_bytes(),
+        attribution,
         clock_anchor.now_ns(),
         started_ns,
     );
@@ -495,20 +649,27 @@ async fn protocol_error(
         capture.close = CloseClassification::SendError;
         return 0;
     }
-    if socket.send(Message::Close(None)).await.is_ok() {
-        capture.push_event(capture_event(
+    let is_close_sent = socket.send(Message::Close(None)).await.is_ok();
+    if is_close_sent {
+        capture.push_event(capture_event_with_attribution(
             "out",
             "close",
             &[],
+            attribution,
             clock_anchor.now_ns(),
             started_ns,
         ));
     }
     capture.terminal = TerminalClassification::ProtocolError;
-    capture.close = CloseClassification::ProtocolError;
+    capture.close = if is_close_sent {
+        CloseClassification::ProtocolError
+    } else {
+        CloseClassification::SendError
+    };
     bytes
 }
 
+#[cfg(test)]
 fn capture_event(
     direction: &'static str,
     opcode: &'static str,
@@ -516,23 +677,49 @@ fn capture_event(
     now_ns: i64,
     started_ns: i64,
 ) -> WebSocketCaptureEvent {
-    let event_type = serde_json::from_slice::<Value>(payload)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("type")
-                .and_then(Value::as_str)
-                .filter(|event_type| event_type.len() <= MAX_CAPTURE_EVENT_TYPE_BYTES)
-                .map(str::to_owned)
-        });
+    capture_event_with_attribution(direction, opcode, payload, None, now_ns, started_ns)
+}
+
+fn capture_event_with_attribution(
+    direction: &'static str,
+    opcode: &'static str,
+    payload: &[u8],
+    attribution: Option<&CaptureAttribution>,
+    now_ns: i64,
+    started_ns: i64,
+) -> WebSocketCaptureEvent {
+    let event_type = canonical_event_type(payload);
     WebSocketCaptureEvent {
         direction,
         opcode,
         event_type,
+        turn: attribution.map(|attribution| attribution.turn),
+        operation_id: attribution.map(|attribution| attribution.operation_id.clone()),
         bytes: payload.len(),
         payload_digest: blake3::hash(payload).to_hex().to_string(),
         relative_ns: now_ns.saturating_sub(started_ns),
     }
+}
+
+fn canonical_event_type(payload: &[u8]) -> Option<&'static str> {
+    let value = serde_json::from_slice::<Value>(payload).ok()?;
+    let event_type = value.get("type")?.as_str()?;
+    Some(match event_type {
+        "response.create" => "response.create",
+        "session.update" => "session.update",
+        "input_audio_buffer.append" => "input_audio_buffer.append",
+        "conversation.item.create" => "conversation.item.create",
+        "input_audio_buffer.commit" => "input_audio_buffer.commit",
+        "response.created" => "response.created",
+        "response.output_text.delta" => "response.output_text.delta",
+        "response.completed" => "response.completed",
+        "response.continuation_rejected" => "response.continuation_rejected",
+        "response.text.delta" => "response.text.delta",
+        "response.audio.delta" => "response.audio.delta",
+        "response.done" => "response.done",
+        "error" => "error",
+        _ => "unknown",
+    })
 }
 
 /// The mock WebSocket route selected during HTTP upgrade.
@@ -659,6 +846,9 @@ pub(crate) fn parse_client_event(
                 .get("audio")
                 .and_then(Value::as_str)
                 .ok_or_else(|| ProtocolError::new("audio append requires audio"))?;
+            let audio = BASE64_STANDARD
+                .decode(audio)
+                .map_err(|error| ProtocolError::new(format!("invalid base64 audio: {error}")))?;
             Ok(ClientEvent::AppendAudio { bytes: audio.len() })
         }
         (RouteKind::Realtime, "conversation.item.create") => Ok(ClientEvent::AddConversationItem),
@@ -721,17 +911,17 @@ impl<'a> OperationAccounting<'a> {
     fn begin(
         recorder: &'a MetricRecorder,
         route: RouteKind,
-        model: &str,
+        model: String,
         started_ns: i64,
         request_bytes: usize,
     ) -> Self {
-        recorder.init_model_config(model);
-        recorder.record_streaming_start(route.endpoint_label(), model);
-        recorder.record_request_start(route.endpoint_label(), model);
+        recorder.init_model_config(&model);
+        recorder.record_streaming_start(route.endpoint_label(), &model);
+        recorder.record_request_start(route.endpoint_label(), &model);
         Self {
             recorder,
             route,
-            model: model.to_owned(),
+            model,
             started_ns,
             request_bytes: usize_to_u64(request_bytes),
             response_bytes: 0,
@@ -815,7 +1005,7 @@ pub(crate) struct ConnectionScenario {
     last_completed_response_id: Option<String>,
     has_in_flight_turn: bool,
     has_realtime_input: bool,
-    has_realtime_commit: bool,
+    realtime_commit_ns: Option<i64>,
     has_interleaved_output: bool,
     content_events: u32,
     first_content_delay_ns: i64,
@@ -834,7 +1024,7 @@ impl ConnectionScenario {
             last_completed_response_id: None,
             has_in_flight_turn: false,
             has_realtime_input: false,
-            has_realtime_commit: false,
+            realtime_commit_ns: None,
             has_interleaved_output: false,
             content_events: config.websocket_content_events,
             first_content_delay_ns: ms_to_ns(config.websocket_first_content_delay_ms),
@@ -931,11 +1121,7 @@ impl ConnectionScenario {
                         .saturating_mul(i64::from(self.content_events)),
                 );
                 let output_tokens = self.content_events.max(1) as usize;
-                let terminal_text = if self.scenario == WebSocketScenario::DoneOnly {
-                    "mock"
-                } else {
-                    ""
-                };
+                let output_text = "mock".repeat(output_tokens);
                 actions.push(self.text_action_at(
                     terminal_at_ns,
                     serde_json::json!({
@@ -948,7 +1134,7 @@ impl ConnectionScenario {
                             "output":[{
                                 "type":"message",
                                 "role":"assistant",
-                                "content":[{"type":"output_text","text":terminal_text}],
+                                "content":[{"type":"output_text","text":output_text}],
                             }],
                             "usage":{
                                 "input_tokens":1,
@@ -978,7 +1164,8 @@ impl ConnectionScenario {
         input_complete_ns: i64,
     ) -> Result<Vec<ServerAction>, ProtocolError> {
         match event {
-            ClientEvent::ConfigureSession | ClientEvent::AddConversationItem => {
+            ClientEvent::ConfigureSession => Ok(Vec::new()),
+            ClientEvent::AddConversationItem => {
                 self.has_realtime_input = true;
                 Ok(Vec::new())
             }
@@ -999,15 +1186,14 @@ impl ConnectionScenario {
                 if !self.has_realtime_input {
                     return Err(ProtocolError::new("cannot commit empty Realtime input"));
                 }
-                self.has_realtime_commit = true;
+                self.realtime_commit_ns = Some(input_complete_ns);
                 Ok(Vec::new())
             }
             ClientEvent::RequestResponse => {
-                if !self.has_realtime_input {
-                    return Err(ProtocolError::new("Realtime response requires input"));
-                }
-                let first_content_ns =
-                    input_complete_ns.saturating_add(self.first_content_delay_ns);
+                let commit_ns = self.realtime_commit_ns.take().ok_or_else(|| {
+                    ProtocolError::new("Realtime response requires committed input")
+                })?;
+                let first_content_ns = commit_ns.saturating_add(self.first_content_delay_ns);
                 let mut actions = Vec::new();
                 self.append_control(&mut actions);
                 if self.scenario != WebSocketScenario::DoneOnly {
@@ -1029,18 +1215,42 @@ impl ConnectionScenario {
                         ),
                     );
                 }
-                let terminal_at_ns = first_content_ns.saturating_add(
-                    self.content_interval_ns
-                        .saturating_mul(i64::from(self.content_events.max(1))),
-                );
+                let output_tokens = self.content_events.max(1) as usize;
+                let output_text = "mock".repeat(output_tokens);
+                let terminal_at_ns = if self.scenario == WebSocketScenario::DoneOnly {
+                    first_content_ns
+                } else {
+                    first_content_ns.saturating_add(
+                        self.content_interval_ns
+                            .saturating_mul(i64::from(self.content_events.max(1))),
+                    )
+                };
                 actions.push(self.text_action_at(
                     terminal_at_ns,
-                    serde_json::json!({"type":"response.done","response":{"id":"mock-realtime"}}),
+                    serde_json::json!({
+                        "type":"response.done",
+                        "response":{
+                            "id":"mock-realtime",
+                            "object":"realtime.response",
+                            "status":"completed",
+                            "output":[{
+                                "type":"message",
+                                "role":"assistant",
+                                "content":[{"type":"output_text","text":output_text}],
+                            }],
+                            "usage":{
+                                "input_tokens":1,
+                                "output_tokens":output_tokens,
+                                "total_tokens":output_tokens + 1,
+                            },
+                        },
+                    }),
                 ));
                 actions.push(ServerAction::CompleteOperation {
-                    completion_tokens: self.content_events.max(1) as usize,
+                    completion_tokens: output_tokens,
                 });
-                self.has_realtime_commit = false;
+                self.has_realtime_input = false;
+                self.has_interleaved_output = false;
                 Ok(actions)
             }
             _ => Err(ProtocolError::new("event is invalid for Realtime")),
@@ -1078,6 +1288,80 @@ fn ms_to_ns(milliseconds: f64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::SinkExt;
+    use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+    type ClientSocket = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+    struct TestServer {
+        address: std::net::SocketAddr,
+        state: Arc<AppState>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl TestServer {
+        async fn start(config: MockServerConfig) -> Self {
+            let state = AppState::build(config);
+            let router = crate::app::build_router(state.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind test listener");
+            let address = listener.local_addr().expect("test listener address");
+            let task = tokio::spawn(async move {
+                let _ = axum::serve(listener, router).await;
+            });
+            Self {
+                address,
+                state,
+                task,
+            }
+        }
+
+        async fn connect(&self, path: &str) -> ClientSocket {
+            let url = format!("ws://{}{path}", self.address);
+            connect_async(url).await.expect("upgrade mock route").0
+        }
+
+        async fn wait_for_captures(&self, count: usize) -> Vec<WebSocketCapture> {
+            for _ in 0..100 {
+                let captures = self.state.websocket_captures.snapshot();
+                if captures.len() >= count {
+                    return captures;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            self.state.websocket_captures.snapshot()
+        }
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    async fn send_json(socket: &mut ClientSocket, payload: &str) {
+        socket
+            .send(ClientMessage::Text(payload.into()))
+            .await
+            .expect("send mock request event");
+    }
+
+    async fn read_json_event(socket: &mut ClientSocket, expected_type: &str) -> Value {
+        while let Some(message) = socket.next().await {
+            let message = message.expect("read mock response");
+            let ClientMessage::Text(payload) = message else {
+                continue;
+            };
+            let event: Value = serde_json::from_str(&payload).expect("mock output is JSON");
+            if event["type"] == expected_type {
+                return event;
+            }
+        }
+        panic!("socket ended before {expected_type}");
+    }
 
     #[test]
     fn turn_codec_accepts_response_create_and_rejects_invented_acknowledgement() {
@@ -1124,6 +1408,56 @@ mod tests {
     }
 
     #[test]
+    fn realtime_codec_rejects_invalid_base64_audio() {
+        assert!(
+            parse_client_event(
+                br#"{"type":"input_audio_buffer.append","audio":"not base64"}"#,
+                RouteKind::Realtime,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn realtime_response_requires_input_commit_and_anchors_to_it() {
+        let config = MockServerConfig {
+            websocket_first_content_delay_ms: 2.0,
+            ..MockServerConfig::default()
+        };
+        let mut scenario = ConnectionScenario::new(RouteKind::Realtime, 1, &config);
+        scenario
+            .on_event(ClientEvent::ConfigureSession, 100)
+            .expect("session configuration is valid");
+        assert!(
+            scenario
+                .on_event(ClientEvent::RequestResponse, 200)
+                .is_err()
+        );
+        scenario
+            .on_event(ClientEvent::AppendAudio { bytes: 2 }, 300)
+            .expect("audio append is valid");
+        scenario
+            .on_event(ClientEvent::CommitInput, 400)
+            .expect("input commit is valid");
+        let first_text_at = scenario
+            .on_event(ClientEvent::RequestResponse, 10_000)
+            .expect("response after commit is valid")
+            .into_iter()
+            .find_map(|action| match action {
+                ServerAction::SendText { at_ns, payload }
+                    if payload
+                        .windows(b"response.text.delta".len())
+                        .any(|window| window == b"response.text.delta") =>
+                {
+                    Some(at_ns)
+                }
+                _ => None,
+            })
+            .expect("response has a text delta");
+        assert_eq!(first_text_at, 2_000_400);
+    }
+
+    #[test]
     fn normal_turn_schedules_content_then_completed() {
         let config = MockServerConfig::default();
         let mut scenario = ConnectionScenario::new(RouteKind::Turns, 1, &config);
@@ -1138,6 +1472,36 @@ mod tests {
             .expect("normal turn is valid");
         assert!(actions.iter().any(ServerAction::is_scheduled_content));
         assert!(actions.iter().any(ServerAction::is_terminal));
+    }
+
+    #[test]
+    fn normal_turn_terminal_repeats_the_complete_streamed_text() {
+        let config = MockServerConfig {
+            websocket_content_events: 2,
+            ..MockServerConfig::default()
+        };
+        let mut scenario = ConnectionScenario::new(RouteKind::Turns, 1, &config);
+        let terminal = scenario
+            .on_event(
+                ClientEvent::StartTurn {
+                    model: "mock-model".to_owned(),
+                    continuation: None,
+                },
+                1_000,
+            )
+            .expect("normal turn is valid")
+            .into_iter()
+            .find_map(|action| match action {
+                ServerAction::SendText { payload, .. } => serde_json::from_slice::<Value>(&payload)
+                    .ok()
+                    .filter(|event| event["type"] == "response.completed"),
+                _ => None,
+            })
+            .expect("normal turn has a terminal event");
+        assert_eq!(
+            terminal["response"]["output"][0]["content"][0]["text"],
+            "mockmock"
+        );
     }
 
     #[test]
@@ -1214,6 +1578,45 @@ mod tests {
     }
 
     #[test]
+    fn realtime_done_only_terminal_carries_content_usage_and_uses_commit_target() {
+        let config = MockServerConfig {
+            websocket_scenario: WebSocketScenario::DoneOnly,
+            websocket_content_events: 0,
+            websocket_first_content_delay_ms: 2.0,
+            websocket_content_interval_ms: 3.0,
+            ..MockServerConfig::default()
+        };
+        let mut scenario = ConnectionScenario::new(RouteKind::Realtime, 1, &config);
+        scenario
+            .on_event(ClientEvent::AppendAudio { bytes: 2 }, 100)
+            .expect("audio append is valid");
+        scenario
+            .on_event(ClientEvent::CommitInput, 1_000)
+            .expect("input commit is valid");
+        let (terminal_at, terminal) = scenario
+            .on_event(ClientEvent::RequestResponse, 10_000)
+            .expect("response after commit is valid")
+            .into_iter()
+            .find_map(|action| match action {
+                ServerAction::SendText { at_ns, payload } => {
+                    serde_json::from_slice::<Value>(&payload)
+                        .ok()
+                        .filter(|event| event["type"] == "response.done")
+                        .map(|event| (at_ns, event))
+                }
+                _ => None,
+            })
+            .expect("done-only response has a terminal event");
+        assert_eq!(terminal_at, 2_001_000);
+        assert_eq!(terminal["response"]["status"], "completed");
+        assert_eq!(
+            terminal["response"]["output"][0]["content"][0]["text"],
+            "mock"
+        );
+        assert_eq!(terminal["response"]["usage"]["output_tokens"], 1);
+    }
+
+    #[test]
     fn realtime_interleaving_emits_output_after_audio_before_commit() {
         let config = MockServerConfig {
             websocket_scenario: WebSocketScenario::InterleavedRealtime,
@@ -1280,6 +1683,255 @@ mod tests {
         assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
     }
 
+    #[tokio::test]
+    async fn realtime_wire_requires_commit_and_done_only_carries_terminal_content() {
+        let server = TestServer::start(MockServerConfig {
+            websocket_mode: crate::config::WebSocketMode::Realtime,
+            websocket_scenario: WebSocketScenario::DoneOnly,
+            websocket_content_events: 0,
+            websocket_first_content_delay_ms: 0.0,
+            websocket_content_interval_ms: 0.0,
+            no_tokenizer: true,
+            ..MockServerConfig::default()
+        })
+        .await;
+
+        let mut rejected = server.connect("/mock/websocket/realtime").await;
+        send_json(&mut rejected, r#"{"type":"session.update"}"#).await;
+        send_json(&mut rejected, r#"{"type":"response.create"}"#).await;
+        let error = read_json_event(&mut rejected, "error").await;
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("committed input"))
+        );
+
+        let mut socket = server.connect("/mock/websocket/realtime").await;
+        send_json(
+            &mut socket,
+            r#"{"type":"input_audio_buffer.append","audio":"AAE="}"#,
+        )
+        .await;
+        send_json(&mut socket, r#"{"type":"input_audio_buffer.commit"}"#).await;
+        send_json(&mut socket, r#"{"type":"response.create"}"#).await;
+        let done = read_json_event(&mut socket, "response.done").await;
+        assert_eq!(done["response"]["status"], "completed");
+        assert_eq!(done["response"]["output"][0]["content"][0]["text"], "mock");
+        assert_eq!(done["response"]["usage"]["output_tokens"], 1);
+
+        let endpoint = RouteKind::Realtime.endpoint_label();
+        assert_eq!(
+            server
+                .state
+                .recorder
+                .metrics
+                .aiperf
+                .REQUESTS_TOTAL
+                .with_label_values(&[endpoint, "POST", "500"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            server
+                .state
+                .recorder
+                .metrics
+                .aiperf
+                .REQUESTS_TOTAL
+                .with_label_values(&[endpoint, "POST", "200"])
+                .get(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn reused_turns_wire_attributes_rejection_and_full_history_recovery() {
+        let server = TestServer::start(MockServerConfig {
+            websocket_mode: crate::config::WebSocketMode::TurnSerialized,
+            websocket_scenario: WebSocketScenario::RejectContinuation,
+            websocket_first_content_delay_ms: 0.0,
+            websocket_content_interval_ms: 0.0,
+            no_tokenizer: true,
+            ..MockServerConfig::default()
+        })
+        .await;
+        let mut socket = server.connect("/mock/websocket/turns").await;
+
+        send_json(
+            &mut socket,
+            r#"{"type":"response.create","model":"mock-model","input":[]}"#,
+        )
+        .await;
+        let first = read_json_event(&mut socket, "response.completed").await;
+        let response_id = first["response"]["id"]
+            .as_str()
+            .expect("completed response has an id");
+        send_json(
+            &mut socket,
+            &format!(
+                r#"{{"type":"response.create","model":"mock-model","input":[],"previous_response_id":"{response_id}"}}"#
+            ),
+        )
+        .await;
+        read_json_event(&mut socket, "response.continuation_rejected").await;
+        send_json(
+            &mut socket,
+            r#"{"type":"response.create","model":"mock-model","input":[]}"#,
+        )
+        .await;
+        read_json_event(&mut socket, "response.completed").await;
+        socket
+            .send(ClientMessage::Close(None))
+            .await
+            .expect("close reused connection");
+
+        let captures = server.wait_for_captures(1).await;
+        let value = serde_json::to_value(&captures[0]).expect("capture serializes");
+        let requests = value["events"]
+            .as_array()
+            .expect("capture events are an array")
+            .iter()
+            .filter(|event| event["direction"] == "in" && event["event_type"] == "response.create")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            requests
+                .iter()
+                .map(|event| event["turn"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2), Some(3)]
+        );
+        let operation_ids = requests
+            .iter()
+            .filter_map(|event| event["operation_id"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(operation_ids.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn wire_close_boundaries_finalize_request_accounting() {
+        for (scenario, status, terminal, close) in [
+            (
+                WebSocketScenario::CloseBeforeTerminal,
+                "500",
+                None,
+                "clean_server_close",
+            ),
+            (
+                WebSocketScenario::DirtyCloseAfterTerminal,
+                "200",
+                Some("response.completed"),
+                "dirty_transport_drop",
+            ),
+        ] {
+            let server = TestServer::start(MockServerConfig {
+                websocket_mode: crate::config::WebSocketMode::TurnSerialized,
+                websocket_scenario: scenario,
+                websocket_first_content_delay_ms: 0.0,
+                websocket_content_interval_ms: 0.0,
+                no_tokenizer: true,
+                ..MockServerConfig::default()
+            })
+            .await;
+            let mut socket = server.connect("/mock/websocket/turns").await;
+            send_json(
+                &mut socket,
+                r#"{"type":"response.create","model":"mock-model","input":[]}"#,
+            )
+            .await;
+            if let Some(terminal) = terminal {
+                read_json_event(&mut socket, terminal).await;
+            } else {
+                while let Some(message) = socket.next().await {
+                    match message {
+                        Ok(ClientMessage::Close(_)) | Err(_) => break,
+                        _ => {}
+                    }
+                }
+            }
+            let endpoint = RouteKind::Turns.endpoint_label();
+            assert_eq!(
+                server
+                    .state
+                    .recorder
+                    .metrics
+                    .aiperf
+                    .REQUESTS_TOTAL
+                    .with_label_values(&[endpoint, "POST", status])
+                    .get(),
+                1
+            );
+            assert_eq!(
+                server
+                    .state
+                    .recorder
+                    .metrics
+                    .aiperf
+                    .REQUESTS_IN_PROGRESS
+                    .with_label_values(&[endpoint])
+                    .get(),
+                0
+            );
+            let captures = server.wait_for_captures(1).await;
+            let value = serde_json::to_value(&captures[0]).expect("capture serializes");
+            assert_eq!(value["close"], close);
+        }
+    }
+
+    #[tokio::test]
+    async fn wire_enforces_message_limit_and_delivers_configured_control() {
+        let limited = TestServer::start(MockServerConfig {
+            websocket_mode: crate::config::WebSocketMode::TurnSerialized,
+            websocket_max_message_bytes: 64,
+            no_tokenizer: true,
+            ..MockServerConfig::default()
+        })
+        .await;
+        let mut oversized = limited.connect("/mock/websocket/turns").await;
+        oversized
+            .send(ClientMessage::Text("x".repeat(65).into()))
+            .await
+            .expect("send oversized message");
+        while let Some(message) = oversized.next().await {
+            match message {
+                Ok(ClientMessage::Close(_)) | Err(_) => break,
+                _ => {}
+            }
+        }
+        let captures = limited.wait_for_captures(1).await;
+        let value = serde_json::to_value(&captures[0]).expect("capture serializes");
+        assert_eq!(value["close"], "receive_error");
+
+        let controlled = TestServer::start(MockServerConfig {
+            websocket_mode: crate::config::WebSocketMode::TurnSerialized,
+            websocket_control_before_content: WebSocketControl::Ping,
+            websocket_first_content_delay_ms: 0.0,
+            websocket_content_interval_ms: 0.0,
+            no_tokenizer: true,
+            ..MockServerConfig::default()
+        })
+        .await;
+        let mut socket = controlled.connect("/mock/websocket/turns").await;
+        send_json(
+            &mut socket,
+            r#"{"type":"response.create","model":"mock-model","input":[]}"#,
+        )
+        .await;
+        let mut has_ping = false;
+        while let Some(message) = socket.next().await {
+            match message.expect("read controlled response") {
+                ClientMessage::Ping(_) => has_ping = true,
+                ClientMessage::Text(payload) => {
+                    let event: Value = serde_json::from_str(&payload).expect("mock output is JSON");
+                    if event["type"] == "response.completed" {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(has_ping);
+    }
+
     #[test]
     fn captures_evict_the_oldest_completed_connection() {
         let store = WebSocketCaptureStore::new(1);
@@ -1317,6 +1969,19 @@ mod tests {
     }
 
     #[test]
+    fn capture_event_canonicalizes_unknown_types() {
+        let capture = capture_event(
+            "in",
+            "text",
+            br#"{"type":"secret-controlled-value"}"#,
+            20,
+            10,
+        );
+        let value = serde_json::to_value(capture).expect("capture serializes");
+        assert_eq!(value["event_type"], "unknown");
+    }
+
+    #[test]
     fn one_connection_capture_has_a_hard_event_metadata_bound() {
         let mut capture = WebSocketCapture::new(1, RouteKind::Turns, WebSocketScenario::Normal, 0);
         for index in 0..=MAX_CAPTURE_EVENTS_PER_CONNECTION {
@@ -1337,8 +2002,13 @@ mod tests {
         let recorder = crate::metrics::MetricRecorder::new();
         let endpoint = RouteKind::Turns.endpoint_label();
         {
-            let _operation =
-                OperationAccounting::begin(&recorder, RouteKind::Turns, "mock-model", 10, 39);
+            let _operation = OperationAccounting::begin(
+                &recorder,
+                RouteKind::Turns,
+                "mock-model".to_owned(),
+                10,
+                39,
+            );
             assert_eq!(
                 recorder
                     .metrics
