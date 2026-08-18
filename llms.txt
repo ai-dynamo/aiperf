@@ -23,7 +23,11 @@ purpose for each, so an agent knows which file to open for a given question.
   provenance, task and agent Docker networks set to `no-network`, host-owned
   AIPerf model transport, and a plan-bound Docker `NoAdapterEgress` proof; it
   runs as one scored matrix trial with invocation-owned branch workspaces and
-  typed control receipts. The `externally_driven` profile instead validates an
+  typed control receipts. Optional rollout imports seal exact environment,
+  protocol/runtime/stepper, and action-encoder selectors before provisioning;
+  controller-local bounded receipts preserve completed-attempt identity for
+  cellular folding, but neither a live policy/environment loop nor cross-host
+  episode transport is runnable yet. The `externally_driven` profile instead validates an
   `externally_driven` lifecycle record against its immutable manifest driver,
   rejects `--agent-command`, and a single-task invocation reaches its
   unavailable compatibility-runner preflight without `--model-runtime`; it

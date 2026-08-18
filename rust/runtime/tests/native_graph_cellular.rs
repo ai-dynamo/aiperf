@@ -12,10 +12,15 @@ use std::{
 use aiperf_runtime::{
     cellular::{CellPartition, ModuloCellPartition},
     eval::{
-        AgentVariantRef, ArtifactDigest, CellularFoldError, ModelIdentity,
-        NativeGraphCellLeaseAuthority, NativeGraphCellLeaseError, NativeGraphCellularPlan,
-        NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity, ResourceLeaseRequest,
-        ResourceLimits, RuntimeIdentity, SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec,
+        AgentVariantRef, ArtifactDigest, CellularFoldError, EpisodeComparability, EpisodeExecution,
+        EpisodeIntegrity, EpisodeResult, EpisodeScoreState, EvidenceEvent, EvidenceKind,
+        FrozenAttemptBundle, ModelIdentity, NativeGraphAttemptAuthority,
+        NativeGraphCellLeaseAuthority, NativeGraphCellLeaseError, NativeGraphCellResultAuthority,
+        NativeGraphCellResultReceipt, NativeGraphCellularPlan, NativeGraphCellularReceiptError,
+        NativeGraphCellularReceiptLimits, NativeGraphCompletedAttempt, NativeGraphSuiteManifest,
+        NativeSourceAcquirer, PolicyIdentity, RegradeRequest, ResolvedEpisodeTrial,
+        ResourceLeaseRequest, ResourceLimits, RewardDocument, RuntimeIdentity, ScoreVersion,
+        SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult, regrade,
     },
 };
 
@@ -285,6 +290,192 @@ fn controller_preflights_every_planned_resource_request_before_issuing() {
     ));
 }
 
+#[test]
+fn sealed_cell_receipts_fold_in_controller_order_and_preserve_zero_score() {
+    let suite = resolved_suite(b"cellular-sealed-order");
+    let plan = NativeGraphCellularPlan::from_suite(&suite, 2).expect("two cells are valid");
+    let mut authority = NativeGraphCellResultAuthority::new(
+        plan.clone(),
+        ResourceLimits::new(4, 4, 256, BTreeMap::new()).expect("limits are valid"),
+        receipt_limits(1),
+    )
+    .expect("controller receipt authority initializes");
+    let mut assignments = plan
+        .placements()
+        .iter()
+        .map(|placement| {
+            authority
+                .issue_for_cell(placement.cell_id())
+                .expect("known cell is valid")
+                .expect("capacity admits every placement")
+        })
+        .collect::<Vec<_>>();
+    assignments.reverse();
+
+    for assignment in assignments {
+        let trial = &suite.trials()[assignment.output_index()];
+        let reward = assignment.output_index() as f64;
+        let completed = completed_attempt(trial, reward);
+        let result = completed_result(&completed, reward);
+        let receipt = NativeGraphCellResultReceipt::from_completed(
+            &assignment,
+            &completed,
+            result,
+            &receipt_limits(1),
+        )
+        .expect("the sealed attempt binds the exact assignment");
+        authority
+            .complete_from_cell(assignment.cell_id(), receipt)
+            .expect("controller accepts the exact issued receipt");
+    }
+
+    let results = authority.finish().expect("every issued receipt folded");
+    assert_eq!(results.len(), plan.placements().len());
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result.attempt_id())
+            .collect::<Vec<_>>(),
+        suite
+            .trials()
+            .iter()
+            .map(|trial| trial.attempt_id())
+            .collect::<Vec<_>>(),
+        "arrival order must not change controller order"
+    );
+    assert_eq!(results[0].verified_reward(), Some(0.0));
+}
+
+#[test]
+fn sealed_cell_receipt_refuses_a_completed_attempt_from_another_assignment() {
+    let suite = resolved_suite(b"cellular-sealed-identity");
+    let plan = NativeGraphCellularPlan::from_suite(&suite, 2).expect("two cells are valid");
+    let mut authority = NativeGraphCellResultAuthority::new(
+        plan.clone(),
+        ResourceLimits::new(2, 2, 128, BTreeMap::new()).expect("limits are valid"),
+        receipt_limits(1),
+    )
+    .expect("controller receipt authority initializes");
+    let assignment = authority
+        .issue_for_cell(plan.placements()[0].cell_id())
+        .expect("known cell is valid")
+        .expect("first assignment is issued");
+    let foreign = completed_attempt(&suite.trials()[1], 1.0);
+    let foreign_result = completed_result(&foreign, 1.0);
+
+    let error = NativeGraphCellResultReceipt::from_completed(
+        &assignment,
+        &foreign,
+        foreign_result,
+        &receipt_limits(1),
+    )
+    .expect_err("a cell cannot relabel another sealed completion");
+
+    assert!(matches!(
+        error,
+        NativeGraphCellularReceiptError::CompletedTrialMismatch { .. }
+            | NativeGraphCellularReceiptError::CompletedAttemptMismatch { .. }
+    ));
+}
+
+#[test]
+fn controller_receipt_boundary_rejects_excess_evidence_wrong_cell_and_replay() {
+    let suite = resolved_suite(b"cellular-sealed-adversarial");
+    let plan = NativeGraphCellularPlan::from_suite(&suite, 2).expect("two cells are valid");
+    let mut authority = NativeGraphCellResultAuthority::new(
+        plan.clone(),
+        ResourceLimits::new(1, 1, 64, BTreeMap::new()).expect("limits are valid"),
+        receipt_limits(1),
+    )
+    .expect("controller receipt authority initializes");
+    let assignment = authority
+        .issue_for_cell(plan.placements()[0].cell_id())
+        .expect("known cell is valid")
+        .expect("assignment is issued");
+    let completed = completed_attempt(&suite.trials()[0], 0.0);
+    let mut excessive = completed_result(&completed, 0.0);
+    excessive = EpisodeResult::new(
+        excessive.trial_digest().clone(),
+        excessive.attempt_id().clone(),
+        excessive.integrity(),
+        excessive.execution(),
+        excessive.score(),
+        excessive.comparability(),
+        vec![
+            completed.frozen_attempt().identity_digest(),
+            ArtifactDigest::from_bytes(b"extra-cell-evidence"),
+        ],
+    )
+    .expect("finite fixture result is valid");
+    let error = NativeGraphCellResultReceipt::from_completed(
+        &assignment,
+        &completed,
+        excessive,
+        &receipt_limits(1),
+    )
+    .expect_err("receipt evidence must respect the controller-selected cap");
+    assert!(matches!(
+        error,
+        NativeGraphCellularReceiptError::EvidenceLimitExceeded { .. }
+    ));
+
+    let error = NativeGraphCellResultReceipt::from_completed(
+        &assignment,
+        &completed,
+        completed_result(&completed, 0.0),
+        &NativeGraphCellularReceiptLimits::new(
+            4_096,
+            assignment.attempt_id().as_str().len() - 1,
+            1,
+        )
+        .expect("fixture attempt limit is valid"),
+    )
+    .expect_err("receipt attempt identity must respect the controller-selected cap");
+    assert!(matches!(
+        error,
+        NativeGraphCellularReceiptError::AttemptIdLimitExceeded { .. }
+    ));
+
+    let error = NativeGraphCellResultReceipt::from_completed(
+        &assignment,
+        &completed,
+        completed_result(&completed, 0.0),
+        &NativeGraphCellularReceiptLimits::new(1, 256, 1).expect("fixture byte limit is valid"),
+    )
+    .expect_err("receipt retained identity bytes must be bounded before the fold");
+    assert!(matches!(
+        error,
+        NativeGraphCellularReceiptError::ReceiptByteLimitExceeded { .. }
+    ));
+
+    let receipt = NativeGraphCellResultReceipt::from_completed(
+        &assignment,
+        &completed,
+        completed_result(&completed, 0.0),
+        &receipt_limits(1),
+    )
+    .expect("valid sealed completion becomes one receipt");
+    let wrong_cell = (assignment.cell_id() + 1) % plan.cell_count();
+    let error = authority
+        .complete_from_cell(wrong_cell, receipt.clone())
+        .expect_err("only the controller-minted cell may complete its receipt");
+    assert!(matches!(
+        error,
+        NativeGraphCellularReceiptError::WrongCell { .. }
+    ));
+
+    authority
+        .complete_from_cell(assignment.cell_id(), receipt.clone())
+        .expect("the issuing cell completes once");
+    let error = authority
+        .complete_from_cell(assignment.cell_id(), receipt)
+        .expect_err("a consumed receipt grant is never reusable");
+    assert!(matches!(
+        error,
+        NativeGraphCellularReceiptError::ReplayedGrant { .. }
+    ));
+}
+
 fn resolved_suite(run: &[u8]) -> aiperf_runtime::eval::ResolvedNativeGraphSuite {
     resolved_suite_with_seeds(run, [3, 5, 7, 11])
 }
@@ -332,6 +523,73 @@ fn trial(task: aiperf_runtime::eval::EvalTaskRef, seed: u64) -> TrialSpec {
         RuntimeIdentity::new("native").expect("runtime is valid"),
     )
     .expect("trial is valid")
+}
+
+fn receipt_limits(max_evidence_digests: usize) -> NativeGraphCellularReceiptLimits {
+    NativeGraphCellularReceiptLimits::new(4_096, 256, max_evidence_digests)
+        .expect("fixture receipt limits are valid")
+}
+
+fn completed_attempt(trial: &ResolvedEpisodeTrial, reward: f64) -> NativeGraphCompletedAttempt {
+    let authority = NativeGraphAttemptAuthority::from_resolved_trial(trial);
+    NativeGraphCompletedAttempt::freeze(&authority, frozen_harbor_attempt(&authority, reward), None)
+        .expect("fixture completion freezes")
+}
+
+fn frozen_harbor_attempt(
+    authority: &NativeGraphAttemptAuthority,
+    reward: f64,
+) -> FrozenAttemptBundle {
+    let attempt = authority.attempt_id().clone();
+    let verifier = VerifierResult::new(
+        attempt.clone(),
+        ArtifactDigest::from_bytes(b"cellular-verifier"),
+        vec![ArtifactDigest::from_bytes(b"cellular-declared-artifact")],
+        RewardDocument::parse(Some(format!(r#"{{"reward":{reward}}}"#).as_bytes()), None)
+            .expect("fixture reward document is valid"),
+        ArtifactDigest::from_bytes(b"cellular-rationale"),
+    )
+    .expect("fixture verifier result is valid");
+    let initial = ScoreVersion::initial(
+        attempt.clone(),
+        verifier.verifier.clone(),
+        verifier.evidence.clone(),
+        "reward",
+        reward,
+        ArtifactDigest::from_bytes(b"cellular-initial-score"),
+    )
+    .expect("fixture initial score is valid");
+    let rescored = regrade(
+        RegradeRequest::new(initial.clone(), verifier.clone(), "reward")
+            .expect("fixture regrade request is valid"),
+    )
+    .expect("fixture regrade is valid");
+    FrozenAttemptBundle::new(
+        authority.trial_digest().clone(),
+        verifier,
+        vec![EvidenceEvent::new(
+            attempt,
+            0,
+            EvidenceKind::Evaluator,
+            ArtifactDigest::from_bytes(b"cellular-lifecycle"),
+            None,
+        )],
+        vec![initial, rescored],
+    )
+    .expect("fixture attempt freezes")
+}
+
+fn completed_result(completed: &NativeGraphCompletedAttempt, reward: f64) -> EpisodeResult {
+    EpisodeResult::new(
+        completed.frozen_attempt().trial_digest().clone(),
+        completed.frozen_attempt().attempt().clone(),
+        EpisodeIntegrity::Valid,
+        EpisodeExecution::Completed,
+        EpisodeScoreState::Verified { reward },
+        EpisodeComparability::Scored,
+        vec![completed.frozen_attempt().identity_digest()],
+    )
+    .expect("fixture result is valid")
 }
 
 fn native_task_fixture() -> tempfile::TempDir {

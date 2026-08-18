@@ -354,9 +354,20 @@ The bounded matrix scheduler is established around the first independently
 scored single-episode vertical slice. Bounded dynamic controls enter through
 the same `EpisodeRunner`, resource-lease, stable-order, attempt, and aggregation
 contracts; they do not add alternate direct-execution paths. RL, compatibility
-capture, and cellular extensions remain separate work on those same contracts.
-Cellular execution adds a placement and associative-fold implementation to that
-scheduler shape.
+capture, and cellular extensions use those same contracts. A package may now
+retain strict rollout environment selectors, including its action-encoder id;
+Rust resolves those selectors exactly and refuses missing or incompatible
+registrations before adapter provisioning. The current action-encoder seam
+freezes a selected decision into a Rust-owned artifact, but does not yet run a
+live policy-to-environment loop.
+
+Controller-local cellular execution now has sealed, bounded result receipts
+that bind a completed-attempt digest to the issued plan, grant, cell, task,
+trial, and attempt before one ordered fold can release capacity. It remains a
+local controller boundary: Velo transport, remote artifact transfer, and cell
+launch integration are not yet implemented. External compatibility likewise
+has only a bounded digest/counter observation profile that can emit lifecycle
+evidence; it does not execute or capture an external driver.
 
 ## Results, verifier, and RL authority
 

@@ -261,6 +261,10 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
         rollout.environment().stepper_factory_id().as_str(),
         "supervised_environment"
     );
+    assert_eq!(
+        rollout.environment().action_encoder_id().as_str(),
+        "move_v1"
+    );
     assert_eq!(rollout.environment().operation_deadline_ms().get(), 5_000);
     assert_eq!(rollout.policy().environment(), "counter-v1");
     assert_eq!(rollout.policy().horizon(), 4);
@@ -340,6 +344,12 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
             "rollout.toml",
             "stepper_factory_id = \"supervised_environment\"",
             "stepper_factory_id = \"alternate_environment\"",
+        ),
+        (
+            "action encoder selection",
+            "rollout.toml",
+            "action_encoder_id = \"move_v1\"",
+            "action_encoder_id = \"alternate_move\"",
         ),
         (
             "protocol frame cap",
@@ -1008,6 +1018,7 @@ adapter_id = "environment-adapter"
 protocol_factory_id = "strict_jsonl"
 runtime_provider_id = "strict_supervised"
 stepper_factory_id = "supervised_environment"
+action_encoder_id = "move_v1"
 operation_deadline_ms = 5000
 reset_source = "rollout/reset.json"
 max_frame_bytes = 4096

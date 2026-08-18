@@ -84,6 +84,10 @@ native_graph_id!(
     EnvironmentStepperFactoryId,
     "Canonical identifier for a NativeGraph environment-stepper factory."
 );
+native_graph_id!(
+    ActionEncoderFactoryId,
+    "Canonical identifier for a NativeGraph policy-decision action encoder."
+);
 
 /// Exact execution profile selected by a schema-1.1 task.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
@@ -478,6 +482,7 @@ pub struct NativeGraphRolloutEnvironment {
     protocol_factory_id: AdapterProtocolFactoryId,
     runtime_provider_id: AdapterRuntimeProviderId,
     stepper_factory_id: EnvironmentStepperFactoryId,
+    action_encoder_id: ActionEncoderFactoryId,
     operation_deadline_ms: NonZeroU64,
     protocol_limits: NativeGraphEnvironmentProtocolLimits,
     artifact_limits: NativeGraphEnvironmentArtifactLimits,
@@ -503,6 +508,11 @@ impl NativeGraphRolloutEnvironment {
     /// Returns the canonical environment-stepper factory selection.
     pub fn stepper_factory_id(&self) -> &EnvironmentStepperFactoryId {
         &self.stepper_factory_id
+    }
+
+    /// Returns the canonical Rust-owned action-encoder selection.
+    pub fn action_encoder_id(&self) -> &ActionEncoderFactoryId {
+        &self.action_encoder_id
     }
 
     /// Returns the positive per-operation deadline selected by the package.
@@ -832,6 +842,7 @@ struct RolloutEnvironmentDto {
     protocol_factory_id: AdapterProtocolFactoryId,
     runtime_provider_id: AdapterRuntimeProviderId,
     stepper_factory_id: EnvironmentStepperFactoryId,
+    action_encoder_id: ActionEncoderFactoryId,
     operation_deadline_ms: NonZeroU64,
     reset_source: String,
     max_frame_bytes: u64,
@@ -1004,6 +1015,7 @@ fn resolve_rollout_environment(
         protocol_factory_id: environment.protocol_factory_id,
         runtime_provider_id: environment.runtime_provider_id,
         stepper_factory_id: environment.stepper_factory_id,
+        action_encoder_id: environment.action_encoder_id,
         operation_deadline_ms: environment.operation_deadline_ms,
         protocol_limits,
         artifact_limits,
@@ -1569,6 +1581,11 @@ fn append_rollout_identity(material: &mut Vec<u8>, rollout: &NativeGraphRolloutP
         material,
         "native-graph-rollout.environment.stepper-factory-id",
         rollout.environment.stepper_factory_id.as_str().as_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.environment.action-encoder-id",
+        rollout.environment.action_encoder_id.as_str().as_bytes(),
     );
     append_identity_field(
         material,

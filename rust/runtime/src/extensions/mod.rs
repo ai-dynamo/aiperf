@@ -35,7 +35,8 @@ use crate::engine::registry::{TransportFactory, WorkloadFactory};
 use crate::eval::{
     AdapterProtocolFactory, ConfirmedNativeGraphProviderRecoveryFactory, EpisodeEvaluatorFactory,
     ExactNativeGraphFidelityObserverFactory, HarborEpisodeEvaluatorFactory,
-    LocalNativeGraphSuiteSchedulerFactory, NativeGraphAdapterRuntimeProvider,
+    LocalNativeGraphSuiteSchedulerFactory, MoveV1ActionEncoderFactory,
+    NativeGraphActionEncoderFactory, NativeGraphAdapterRuntimeProvider,
     NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriverFactory,
     NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
     NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
@@ -306,6 +307,10 @@ impl AIPerfExtension for BuiltinNativeGraphExtension {
                     as Arc<dyn NativeGraphEnvironmentStepperFactory>,
             )
             .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry.register_native_graph_action_encoder(
+            "move_v1",
+            Arc::new(MoveV1ActionEncoderFactory) as Arc<dyn NativeGraphActionEncoderFactory>,
+        )?;
         registry
             .native_graph_external_drivers
             .insert(
@@ -383,6 +388,10 @@ pub struct AIPerfRegistry {
     #[cfg(feature = "engine")]
     pub(crate) native_graph_environment_steppers:
         TransactionalRegistry<Arc<dyn NativeGraphEnvironmentStepperFactory>>,
+    /// Package-selected Rust-owned policy-decision action encoders.
+    #[cfg(feature = "engine")]
+    pub(crate) native_graph_action_encoders:
+        TransactionalRegistry<Arc<dyn NativeGraphActionEncoderFactory>>,
     /// Compatibility-only externally driven episode factories.
     #[cfg(feature = "engine")]
     pub(crate) native_graph_external_drivers:
@@ -423,6 +432,8 @@ impl AIPerfRegistry {
             native_graph_adapter_runtimes: TransactionalRegistry::new(),
             #[cfg(feature = "engine")]
             native_graph_environment_steppers: TransactionalRegistry::new(),
+            #[cfg(feature = "engine")]
+            native_graph_action_encoders: TransactionalRegistry::new(),
             #[cfg(feature = "engine")]
             native_graph_external_drivers: TransactionalRegistry::new(),
             #[cfg(feature = "engine")]
@@ -668,6 +679,32 @@ impl AIPerfRegistry {
         name: &str,
     ) -> Option<&Arc<dyn NativeGraphEnvironmentStepperFactory>> {
         self.native_graph_environment_steppers.get(name)
+    }
+
+    /// Registers a package-selectable Rust-owned policy-decision action encoder.
+    #[cfg(feature = "engine")]
+    pub fn register_native_graph_action_encoder(
+        &mut self,
+        name: &str,
+        factory: Arc<dyn NativeGraphActionEncoderFactory>,
+    ) -> Result<(), ExtensionError> {
+        if factory.id() != name {
+            return Err(ExtensionError::rejected(
+                "NativeGraph action encoder registry name does not match its declared identifier",
+            ));
+        }
+        self.native_graph_action_encoders
+            .insert(name, factory)
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+
+    /// Resolves a NativeGraph action encoder only by its sealed package selector.
+    #[cfg(feature = "engine")]
+    pub fn native_graph_action_encoder(
+        &self,
+        name: &str,
+    ) -> Option<&Arc<dyn NativeGraphActionEncoderFactory>> {
+        self.native_graph_action_encoders.get(name)
     }
 
     /// Registers a NativeGraph external-driver factory.

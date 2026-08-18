@@ -22,13 +22,13 @@ use aiperf_runtime::{
         AdapterExit, AdapterLifecycleDeadlines, AdapterProtocolConfig, AdapterProtocolFactory,
         AdapterRole, AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawner,
         AdapterSupervisionError, AgentVariantRef, ArtifactDigest, ArtifactQuota, CancelReason,
-        HarborImporter, HarborSource, ModelIdentity, NativeGraphAdapterRuntimeProvider,
-        NativeGraphAdapterRuntimeResolution, NativeGraphEnvironmentStepperFactory,
-        NativeGraphFactoryError, NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity,
-        ProtocolCapability, ProtocolLimits, ResourceLeaseRequest, RuntimeIdentity,
-        StrictAdapterProtocolFactory, SuiteRunId, SuiteTrialSpec, SupervisedAdapter,
-        SupervisedEnvironmentStepperBinder, TrialBudget, TrialSpec,
-        bind_native_graph_environment_stepper,
+        HarborImporter, HarborSource, ModelIdentity, MoveV1ActionEncoderFactory,
+        NativeGraphAdapterRuntimeProvider, NativeGraphAdapterRuntimeResolution,
+        NativeGraphEnvironmentStepperFactory, NativeGraphFactoryError, NativeGraphSuiteManifest,
+        NativeSourceAcquirer, PolicyIdentity, ProtocolCapability, ProtocolLimits,
+        ResourceLeaseRequest, RuntimeIdentity, StrictAdapterProtocolFactory, SuiteRunId,
+        SuiteTrialSpec, SupervisedAdapter, SupervisedEnvironmentStepperBinder, TrialBudget,
+        TrialSpec, bind_native_graph_environment_stepper,
     },
     extensions::{AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory},
 };
@@ -64,6 +64,12 @@ fn builtin_registry_resolves_every_sealed_rollout_environment_selector() {
             .native_graph_environment_stepper(environment.stepper_factory_id().as_str())
             .is_some(),
         "the sealed stepper selector must resolve from the frozen registry"
+    );
+    assert!(
+        registry
+            .native_graph_action_encoder(environment.action_encoder_id().as_str())
+            .is_some(),
+        "the sealed action encoder selector must resolve from the frozen registry"
     );
 }
 
@@ -108,7 +114,9 @@ fn incompatible_runtime_admission_refuses_before_stepper_or_adapter_start() {
             }),
         )
         .expect("test stepper registration succeeds");
-
+    registry
+        .register_native_graph_action_encoder("move_v1", Arc::new(MoveV1ActionEncoderFactory))
+        .expect("test action encoder registration succeeds");
     let error = bind_native_graph_environment_stepper(&registry, &trial)
         .err()
         .expect("a non-environment runtime configuration must be rejected");
@@ -116,6 +124,42 @@ fn incompatible_runtime_admission_refuses_before_stepper_or_adapter_start() {
     assert!(error.to_string().contains("runtime protocol configuration"));
     assert_eq!(runtime_starts.load(Ordering::Relaxed), 0);
     assert_eq!(runtime_binds.load(Ordering::Relaxed), 0);
+    assert_eq!(stepper_binds.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn missing_selected_action_encoder_refuses_before_runtime_or_stepper_binding() {
+    let imported = import_rollout_fixture();
+    let trial = resolve_rollout_trial(imported);
+    let runtime_starts = Arc::new(AtomicUsize::new(0));
+    let stepper_binds = Arc::new(AtomicUsize::new(0));
+    let mut registry = aiperf_runtime::extensions::AIPerfRegistry::empty_or_base();
+    registry
+        .register_native_graph_protocol("strict_jsonl", Arc::new(StrictAdapterProtocolFactory))
+        .expect("test protocol registration succeeds");
+    registry
+        .register_native_graph_adapter_runtime(
+            "strict_supervised",
+            Arc::new(RecordingRuntimeProvider {
+                starts: Arc::clone(&runtime_starts),
+            }),
+        )
+        .expect("test runtime registration succeeds");
+    registry
+        .register_native_graph_environment_stepper(
+            "supervised_environment",
+            Arc::new(CountingStepperBinder {
+                binds: Arc::clone(&stepper_binds),
+            }),
+        )
+        .expect("test stepper registration succeeds");
+
+    let error = bind_native_graph_environment_stepper(&registry, &trial)
+        .err()
+        .expect("a missing package-selected action encoder must fail closed");
+
+    assert!(error.to_string().contains("action encoder"));
+    assert_eq!(runtime_starts.load(Ordering::Relaxed), 0);
     assert_eq!(stepper_binds.load(Ordering::Relaxed), 0);
 }
 
@@ -142,6 +186,9 @@ async fn selected_worker_local_components_preserve_rollout_admission_through_ste
             Arc::new(SupervisedEnvironmentStepperBinder),
         )
         .expect("test stepper registration succeeds");
+    registry
+        .register_native_graph_action_encoder("move_v1", Arc::new(MoveV1ActionEncoderFactory))
+        .expect("test action encoder registration succeeds");
     let spawner = Rc::new(CountingSpawner::default());
     let bound = bind_native_graph_environment_stepper(&registry, &trial)
         .expect("the selected components bind one worker-local environment stepper");
@@ -169,6 +216,8 @@ async fn selected_worker_local_components_preserve_rollout_admission_through_ste
 
     assert_eq!(bound.adapter().id.as_str(), "environment-adapter");
     assert_eq!(bound.package_identity(), &imported.task.digest);
+    assert_eq!(bound.action_encoder_id().as_str(), "move_v1");
+    assert_eq!(bound.action_encoder().id(), "move_v1");
     assert_eq!(bound.operation_deadline(), Duration::from_secs(5));
     assert_eq!(runtime_starts.load(Ordering::Relaxed), 1);
     assert_eq!(spawner.starts.get(), 0);
@@ -202,6 +251,9 @@ async fn sealed_start_mints_adapter_request_without_caller_argv_or_model_secret(
             Arc::new(SupervisedEnvironmentStepperBinder),
         )
         .expect("test stepper registration succeeds");
+    registry
+        .register_native_graph_action_encoder("move_v1", Arc::new(MoveV1ActionEncoderFactory))
+        .expect("test action encoder registration succeeds");
     let spawner = Rc::new(CapturingSpawner::default());
     let bound =
         bind_native_graph_environment_stepper(&registry, &trial).expect("selected components bind");
@@ -641,6 +693,7 @@ adapter_id = "environment-adapter"
 protocol_factory_id = "strict_jsonl"
 runtime_provider_id = "strict_supervised"
 stepper_factory_id = "supervised_environment"
+action_encoder_id = "move_v1"
 operation_deadline_ms = 5000
 reset_source = "rollout/reset.json"
 max_frame_bytes = 4096

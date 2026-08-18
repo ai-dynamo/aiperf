@@ -5,6 +5,7 @@
 
 mod action_encoder;
 mod artifacts;
+mod capture;
 mod cellular;
 mod completed_attempt;
 #[cfg(feature = "engine")]
@@ -30,10 +31,16 @@ pub use artifacts::{
     ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
     EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest, FrozenArtifactReference,
 };
+pub use capture::{
+    CaptureError, CaptureFidelity, CapturePolicy, CompatibilityObservation,
+    CompatibilityObservationReport,
+};
 pub use cellular::{
-    CellularFoldError, NativeGraphCellLease, NativeGraphCellLeaseAuthority,
-    NativeGraphCellLeaseError, NativeGraphCellLeaseId, NativeGraphCellPlacement,
-    NativeGraphCellularFold, NativeGraphCellularPlan,
+    CellularFoldError, NativeGraphCellAssignment, NativeGraphCellLease,
+    NativeGraphCellLeaseAuthority, NativeGraphCellLeaseError, NativeGraphCellLeaseId,
+    NativeGraphCellPlacement, NativeGraphCellResultAuthority, NativeGraphCellResultReceipt,
+    NativeGraphCellularFold, NativeGraphCellularPlan, NativeGraphCellularReceiptError,
+    NativeGraphCellularReceiptLimits,
 };
 pub use completed_attempt::{
     NativeGraphAttemptAuthority, NativeGraphCompletedAttempt, NativeGraphCompletedAttemptError,
@@ -54,8 +61,9 @@ pub use factories::{
 };
 pub use factories::{
     ConfirmedNativeGraphProviderRecoveryFactory, ExactNativeGraphFidelityObserverFactory,
-    NativeGraphAdapterRuntimeProvider, NativeGraphAdapterRuntimeResolution,
-    NativeGraphEnvironmentStepper, NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriver,
+    MoveV1ActionEncoderFactory, NativeGraphActionEncoderFactory, NativeGraphAdapterRuntimeProvider,
+    NativeGraphAdapterRuntimeResolution, NativeGraphEnvironmentStepper,
+    NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriver,
     NativeGraphExternalDriverFactory, NativeGraphFactoryError, NativeGraphFidelityObserver,
     NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
     NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
@@ -108,9 +116,9 @@ pub use suite::{
 };
 
 pub use package::{
-    AdapterId, AdapterRole, AdapterSpec, GenerationDefaults, HeaderSecretRef, ModelBindingId,
-    ModelBindingSpec, ModelCapturePolicy, ModelSecretId, NativeGraphPackagePlan,
-    NativeGraphProfile, NativeGraphProgramSource, TokenizerBindingSpec,
+    ActionEncoderFactoryId, AdapterId, AdapterRole, AdapterSpec, GenerationDefaults,
+    HeaderSecretRef, ModelBindingId, ModelBindingSpec, ModelCapturePolicy, ModelSecretId,
+    NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource, TokenizerBindingSpec,
 };
 pub(crate) use package::{
     NativeGraphPackageDraft, NativeGraphSectionDto, resolve_native_graph_package,

@@ -32,7 +32,9 @@ use crate::{
 };
 
 #[cfg(feature = "engine")]
-use super::package::{NativeGraphRolloutEnvironment, NativeGraphRolloutResetSource};
+use super::package::{
+    ActionEncoderFactoryId, NativeGraphRolloutEnvironment, NativeGraphRolloutResetSource,
+};
 use super::{
     AdapterLifecycleDeadlines, AdapterProtocolConfig, AdapterProtocolFactory,
     AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawner, ArtifactError, ArtifactQuota,
@@ -146,6 +148,28 @@ impl NativeGraphAdapterRuntimeResolution for StrictAdapterRuntimeResolution {
     }
 }
 
+/// Stateless Rust-owned action-encoder implementation selected by an imported package.
+///
+/// This seam establishes exact package-to-registry selection only. A later live-runner slice
+/// binds declared policy output to this selected implementation before action freezing.
+pub trait NativeGraphActionEncoderFactory: Send + Sync {
+    /// Returns the canonical selector this factory permits.
+    fn id(&self) -> &str;
+}
+
+/// Built-in marker for the schema-1 `move_v1` decision/action contract.
+///
+/// It is selected and retained here, but no model decision reaches it until the live action
+/// dispatch boundary is introduced.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MoveV1ActionEncoderFactory;
+
+impl NativeGraphActionEncoderFactory for MoveV1ActionEncoderFactory {
+    fn id(&self) -> &str {
+        "move_v1"
+    }
+}
+
 /// Factory that binds a selected adapter runtime to one worker-local environment stepper.
 pub trait NativeGraphEnvironmentStepperFactory: Send + Sync {
     /// Creates a worker-local environment-stepper factory over the selected runtime.
@@ -199,6 +223,8 @@ pub struct BoundNativeGraphEnvironmentStepper {
     adapter: AdapterSpec,
     package_identity: ArtifactDigest,
     protocol: AdapterProtocolConfig,
+    action_encoder_id: ActionEncoderFactoryId,
+    action_encoder: Arc<dyn NativeGraphActionEncoderFactory>,
     policy: RlEvaluationPolicy,
     artifact_quota: ArtifactQuota,
     operation_deadline: Duration,
@@ -222,6 +248,16 @@ impl BoundNativeGraphEnvironmentStepper {
     /// Returns the exact protocol admission configuration selected by the package.
     pub fn protocol(&self) -> &AdapterProtocolConfig {
         &self.protocol
+    }
+
+    /// Returns the exact action-encoder selector retained from the imported package.
+    pub fn action_encoder_id(&self) -> &ActionEncoderFactoryId {
+        &self.action_encoder_id
+    }
+
+    /// Borrows the exact registered action encoder selected before spawn authority exists.
+    pub fn action_encoder(&self) -> &Arc<dyn NativeGraphActionEncoderFactory> {
+        &self.action_encoder
     }
 
     /// Returns the sealed environment operation deadline.
@@ -455,6 +491,19 @@ pub fn bind_native_graph_environment_stepper(
                 environment.stepper_factory_id().as_str()
             ))
         })?;
+    let action_encoder = registry
+        .native_graph_action_encoder(environment.action_encoder_id().as_str())
+        .ok_or_else(|| {
+            NativeGraphFactoryError::new(format!(
+                "NativeGraph rollout selected unknown action encoder {:?}",
+                environment.action_encoder_id().as_str()
+            ))
+        })?;
+    if action_encoder.id() != environment.action_encoder_id().as_str() {
+        return Err(NativeGraphFactoryError::new(
+            "NativeGraph action encoder registration does not match the sealed selector",
+        ));
+    }
     let protocol = environment_protocol_config(
         environment,
         ArtifactDigest::from_bytes(trial.attempt_id().as_str().as_bytes())
@@ -482,6 +531,8 @@ pub fn bind_native_graph_environment_stepper(
         adapter: adapter.clone(),
         package_identity: trial.imported().task.digest.clone(),
         protocol,
+        action_encoder_id: environment.action_encoder_id().clone(),
+        action_encoder: Arc::clone(action_encoder),
         policy: RlEvaluationPolicy::new(
             rollout.policy().environment(),
             rollout.policy().horizon(),
