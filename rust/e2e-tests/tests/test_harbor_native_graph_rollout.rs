@@ -61,7 +61,7 @@ async fn native_graph_rollout_uses_mock_selected_policy_decisions_end_to_end() {
     )
     .expect("final scored summary is JSON");
     assert_eq!(summary["task"], "example/harbor-native-graph-rollout");
-    assert_eq!(summary["reward"]["reward"], 1.0);
+    assert_eq!(summary["reward"]["reward"], 0.75);
     assert_eq!(summary["episodes"], 1);
 
     let accuracy = harness.mock.state.accuracy_live.snapshot();
@@ -75,6 +75,25 @@ async fn native_graph_rollout_uses_mock_selected_policy_decisions_end_to_end() {
     );
     assert_eq!(accuracy.tasks["policy-zero"].matched, 1);
     assert_eq!(accuracy.tasks["policy-one"].matched, 1);
+}
+
+#[tokio::test]
+#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
+async fn selected_policy_actions_produce_distinct_verified_rewards_end_to_end() {
+    let _docker = docker_e2e_lock();
+    let north_reward = run_rollout_for_actions(
+        r#"{"kind":"move","direction":"north"}"#,
+        r#"{"kind":"move","direction":"north"}"#,
+    )
+    .await;
+    let south_reward = run_rollout_for_actions(
+        r#"{"kind":"move","direction":"south"}"#,
+        r#"{"kind":"move","direction":"south"}"#,
+    )
+    .await;
+
+    assert_eq!(north_reward, 0.25);
+    assert_eq!(south_reward, 0.75);
 }
 
 #[tokio::test]
@@ -190,6 +209,42 @@ fn eval_command(task: &Path, model_runtime: &Path, lifecycle: &Path) -> String {
     )
 }
 
+async fn run_rollout_for_actions(first_action: &str, second_action: &str) -> f64 {
+    let temporary = tempfile::tempdir().expect("create action-selected rollout fixture root");
+    let dataset = temporary.path().join("policy.jsonl");
+    write_policy_dataset(&dataset, first_action, second_action);
+    let harness = AIPerfHarness::new_with(policy_mock_config(&dataset)).await;
+    let task = temporary.path().join("native-graph-rollout-task");
+    write_rollout_task(&task, &harness.mock.url);
+    let model_runtime = temporary.path().join("model-runtime.toml");
+    fs::write(&model_runtime, "version = 1\n").expect("write model runtime");
+    let lifecycle = temporary.path().join("lifecycle.json");
+    write_lifecycle(&lifecycle);
+
+    let result = harness.run_no_server(&eval_command(&task, &model_runtime, &lifecycle));
+    assert!(
+        result.success(),
+        "native rollout eval failed with {}\nstdout:\n{}\nstderr:\n{}",
+        result.exit_code,
+        result.stdout,
+        result.stderr
+    );
+    let summary: Value = serde_json::from_str(
+        result
+            .stdout
+            .lines()
+            .last()
+            .expect("scored eval prints a final summary"),
+    )
+    .expect("final scored summary is JSON");
+    let accuracy = harness.mock.state.accuracy_live.snapshot();
+    assert_eq!(accuracy.matched, 2);
+    assert_eq!(accuracy.unmatched, 0);
+    summary["reward"]["reward"]
+        .as_f64()
+        .expect("verifier reward is finite")
+}
+
 fn policy_mock_config(dataset: &Path) -> MockServerConfig {
     MockServerConfig {
         fast: true,
@@ -239,7 +294,14 @@ adapter_manifest = "adapters.toml"
     .expect("write Dockerfile");
     fs::write(
         task.join("tests/test.sh"),
-        "test -f /environment/environment.sh\nprintf '{\"reward\":1.0}' > /logs/verifier/reward.json\n",
+        r#"test -f /environment/environment.sh
+case "$(cat /work/result.txt)" in
+  north) reward=0.25 ;;
+  south) reward=0.75 ;;
+  *) exit 96 ;;
+esac
+printf '{"reward":%s}' "$reward" > /logs/verifier/reward.json
+"#,
     )
     .expect("write verifier");
     fs::write(
@@ -303,6 +365,8 @@ artifact_phase=""
 current_bytes=""
 output_operation=""
 first_reference=""
+pending_download=""
+action_bytes=""
 
 field() {
     printf '%s\n' "$1" | sed -n "s/.*\"$2\":\"\\([^\"]*\\)\".*/\\1/p"
@@ -344,6 +408,31 @@ while IFS= read -r line; do
             parent_span=$host_span
             step_count=$((step_count + 1))
             stage=step
+            action_reference=$(printf '%s\n' "$line" | sed -n 's/.*"action_ref":\(.*\)}}$/\1/p')
+            [ -n "$action_reference" ] || exit 1
+            emit "$parent_span" "${parent}-read" \
+                "{\"type\":\"get_artifact_request\",\"parent_operation\":\"$parent\",\"request\":$action_reference}"
+            ;;
+        *'"type":"get_artifact_handle"'*)
+            pending_download=$(field "$line" download)
+            [ -n "$pending_download" ] || exit 1
+            action_bytes=""
+            ;;
+        *'"type":"artifact_download_chunk"'*)
+            download=$(field "$line" download)
+            [ "$download" = "$pending_download" ] || exit 1
+            chunk=$(field "$line" bytes_base64)
+            action_bytes="${action_bytes}$(printf '%s' "$chunk" | base64 -d)"
+            ;;
+        *'"type":"artifact_download_complete"'*)
+            download=$(field "$line" download)
+            [ "$download" = "$pending_download" ] || exit 1
+            pending_download=""
+            case "$action_bytes" in
+                *'"direction":"north"'*) printf north > /work/result.txt ;;
+                *'"direction":"south"'*) printf south > /work/result.txt ;;
+                *) exit 1 ;;
+            esac
             artifact_phase=observation
             if [ "$step_count" -eq 1 ]; then
                 current_bytes=state-one
