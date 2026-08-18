@@ -272,3 +272,31 @@ class TestSafeReadTemplatePathDecodeFailures:
         bad.write_bytes(b"\xff\xfe binary template body")
 
         assert safe_read_template_path(str(bad)) is None
+
+
+class TestEndpointFieldPropagation:
+    """Regression: fields set on CLIConfig must reach the endpoint config.
+
+    A field can be wired on CLIConfig, the endpoint model, and the converter map
+    yet still be silently dropped if it is missing from ``ENDPOINT_FIELDS`` (which
+    ``build_endpoint`` intersects against ``model_fields_set``). These tests
+    exercise the full CLI-to-endpoint hop so such a gap fails loudly.
+    """
+
+    def test_per_chunk_usage_propagates_to_endpoint(self) -> None:
+        from aiperf.config.flags._converter_endpoint import build_endpoint
+        from aiperf.config.flags.cli_config import CLIConfig
+
+        cli = CLIConfig(per_chunk_usage=True, use_server_token_count=True)
+        endpoint = build_endpoint(cli)
+
+        assert endpoint["per_chunk_usage"] is True
+        assert endpoint["use_server_token_count"] is True
+
+    def test_per_chunk_usage_absent_when_not_set(self) -> None:
+        from aiperf.config.flags._converter_endpoint import build_endpoint
+        from aiperf.config.flags.cli_config import CLIConfig
+
+        endpoint = build_endpoint(CLIConfig())
+
+        assert "per_chunk_usage" not in endpoint
