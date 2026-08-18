@@ -212,7 +212,12 @@ def build_cli_overrides(
     # config file was supplied. They gate on model_fields_set, so an unset
     # flag leaves the YAML block alone.
     _apply_optional_section(out, "network_latency", build_network_latency(cli))
-    _apply_optional_section(out, "otel", build_otel(cli))
+    otel_base_url = benchmark_config is not None and bool(
+        benchmark_config.otel.metrics_url
+    )
+    _apply_optional_section(
+        out, "otel", build_otel(cli, base_metrics_url=otel_base_url)
+    )
     mlflow_base_uri = benchmark_config is not None and bool(
         benchmark_config.mlflow.tracking_uri
     )
