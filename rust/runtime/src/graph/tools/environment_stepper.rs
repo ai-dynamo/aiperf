@@ -501,10 +501,13 @@ impl SupervisedEnvironmentStepper {
                     .await;
             }
         };
-        if let Err(error) = self.consume_dispatched_input(input) {
-            return self
-                .invalidate(CancelReason::IntegrityViolation, error)
-                .await;
+        let mut input_consumed = matches!(input, EnvironmentInput::Declared(_));
+        if input_consumed {
+            if let Err(error) = self.consume_dispatched_input(&input) {
+                return self
+                    .invalidate(CancelReason::IntegrityViolation, error)
+                    .await;
+            }
         }
         loop {
             let response = match self.receive_adapter(&envelope).await {
@@ -530,20 +533,128 @@ impl SupervisedEnvironmentStepper {
                 }
                 continue;
             }
+            if matches!(response.message, AdapterMessage::GetArtifactRequest { .. }) {
+                if input_consumed {
+                    return self
+                        .invalidate(
+                            CancelReason::IntegrityViolation,
+                            EnvironmentStepperError::UnexpectedResponse(
+                                "replayed artifact read request",
+                            ),
+                        )
+                        .await;
+                }
+                if let Err(error) = self
+                    .complete_input_download(&envelope, &input, response)
+                    .await
+                {
+                    return self
+                        .invalidate(CancelReason::IntegrityViolation, error)
+                        .await;
+                }
+                input_consumed = true;
+                continue;
+            }
             if let Err(error) = self.validate_response(&envelope, &response) {
                 return self
                     .invalidate(CancelReason::IntegrityViolation, error)
                     .await;
             }
+            if !input_consumed {
+                if matches!(&input, EnvironmentInput::Admitted(_)) {
+                    if let Err(error) = self.consume_dispatched_input(&input) {
+                        return self
+                            .invalidate(CancelReason::IntegrityViolation, error)
+                            .await;
+                    }
+                    return self
+                        .invalidate(
+                            CancelReason::IntegrityViolation,
+                            EnvironmentStepperError::ActionDownloadRequired,
+                        )
+                        .await;
+                }
+                if let Err(error) = self.consume_dispatched_input(&input) {
+                    return self
+                        .invalidate(CancelReason::IntegrityViolation, error)
+                        .await;
+                }
+            }
             return Ok(response);
         }
     }
 
+    async fn complete_input_download(
+        &mut self,
+        root: &HostEnvelope,
+        input: &EnvironmentInput<'_>,
+        request: AdapterEnvelope,
+    ) -> Result<(), EnvironmentStepperError> {
+        let AdapterMessage::GetArtifactRequest {
+            parent_operation,
+            request: selector,
+        } = request.message
+        else {
+            return Err(EnvironmentStepperError::UnexpectedResponse(
+                "get_artifact_request",
+            ));
+        };
+        if parent_operation != root.operation {
+            return Err(EnvironmentStepperError::Correlation("artifact read parent"));
+        }
+        let requested = serde_json::from_value::<FrozenArtifactReference>(selector)
+            .map_err(|_| EnvironmentStepperError::UnexpectedResponse("artifact read selector"))?;
+        if requested != *input.reference() {
+            return Err(EnvironmentStepperError::UndeclaredInput);
+        }
+        let mut bytes = Vec::new();
+        self.artifacts
+            .borrow_mut()
+            .copy_download(input.reference().download(), &mut bytes)
+            .map_err(EnvironmentStepperError::Artifact)?;
+        let length = u64::try_from(bytes.len())
+            .map_err(|_| EnvironmentStepperError::UnexpectedResponse("artifact read length"))?;
+        self.send_host(
+            &request.operation,
+            HostMessage::GetArtifactHandle {
+                download: input.reference().download().clone(),
+                length,
+            },
+        )
+        .await?;
+        let chunk_len = self
+            .binding
+            .protocol
+            .max_frame_bytes()
+            .saturating_div(8)
+            .max(1);
+        for chunk in bytes.chunks(chunk_len) {
+            self.send_host(
+                &request.operation,
+                HostMessage::ArtifactDownloadChunk {
+                    download: input.reference().download().clone(),
+                    bytes_base64: STANDARD.encode(chunk),
+                },
+            )
+            .await?;
+        }
+        self.send_host(
+            &request.operation,
+            HostMessage::ArtifactDownloadComplete {
+                download: input.reference().download().clone(),
+            },
+        )
+        .await?;
+        self.adapter
+            .release_download_handle(input.reference().download())
+            .map_err(EnvironmentStepperError::Supervision)
+    }
+
     fn consume_dispatched_input(
         &mut self,
-        input: EnvironmentInput<'_>,
+        input: &EnvironmentInput<'_>,
     ) -> Result<(), EnvironmentStepperError> {
-        if matches!(&input, EnvironmentInput::Declared(_))
+        if matches!(input, EnvironmentInput::Declared(_))
             && !self.binding.artifacts.consume_input(input.reference())
         {
             return Err(EnvironmentStepperError::UndeclaredInput);
@@ -1023,6 +1134,8 @@ pub enum EnvironmentStepperError {
     ActionEncoderMismatch,
     /// An admitted action was not issued for this exact started environment session.
     ActionSessionMismatch,
+    /// A selected action reached the adapter but was not read through its one-shot Rust grant.
+    ActionDownloadRequired,
     /// An adapter response named no immutable output reference Rust generated for this operation.
     UndeclaredOutput,
     /// The adapter completed a different upload capability than Rust granted.
@@ -1109,6 +1222,9 @@ impl Display for EnvironmentStepperError {
             }
             Self::ActionSessionMismatch => formatter
                 .write_str("environment action capability was not issued for this started session"),
+            Self::ActionDownloadRequired => formatter.write_str(
+                "environment adapter must download the selected action before transition",
+            ),
             Self::UndeclaredOutput => {
                 formatter.write_str("environment response reference was not generated by Rust")
             }

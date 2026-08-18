@@ -317,7 +317,9 @@ their correlated operation; Rust alone evaluates graph terminality and emits
 the canonical episode terminal record. RL reset produces the initial observation
 through `EnvironmentReset`. Each
 `StepEnvironment`/`Transition` pair advances exactly one declared environment
-step. Rust derives discounted and undiscounted return from this authoritative
+step. For a package-selected encoder, the adapter must consume that action from
+Rust through its one-shot bounded artifact-read grant before Rust accepts the
+transition. Rust derives discounted and undiscounted return from this authoritative
 transition stream and gives the frozen stream to the verifier for an independent
 return check.
 

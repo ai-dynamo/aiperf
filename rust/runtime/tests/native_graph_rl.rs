@@ -72,6 +72,8 @@ struct StoreBackedEnvironmentState {
     plans: VecDeque<StoreBackedEnvironmentPlan>,
     active: Option<StoreBackedEnvironmentPlan>,
     pending_bytes: Option<Vec<u8>>,
+    pending_action_reference: Option<FrozenArtifactReference>,
+    pending_action_download: Option<ArtifactDownloadHandle>,
     upload: Option<aiperf_runtime::eval::ArtifactUploadHandle>,
     references: Vec<FrozenArtifactReference>,
     stage: StoreBackedEnvironmentStage,
@@ -90,6 +92,7 @@ struct StoreBackedEnvironmentPlan {
     operation: String,
     response_operation: String,
     response: StoreBackedEnvironmentResponse,
+    reads_selected_action: bool,
     outputs: VecDeque<Vec<u8>>,
 }
 
@@ -104,6 +107,9 @@ enum StoreBackedEnvironmentResponse {
 
 enum StoreBackedEnvironmentStage {
     AwaitRoot,
+    RequestActionDownload,
+    AwaitActionHandle,
+    AwaitActionDownloadComplete,
     RequestUpload,
     UploadChunk,
     CompleteUpload,
@@ -151,6 +157,9 @@ struct StrictUploadChildState {
     queued_outputs: VecDeque<Vec<u8>>,
     pending_operation: Option<String>,
     pending_bytes: Option<Vec<u8>>,
+    pending_read_parent: Option<String>,
+    pending_download: Option<ArtifactDownloadHandle>,
+    downloaded_action: Vec<u8>,
     response_references: Vec<FrozenArtifactReference>,
     committed_references: Vec<FrozenArtifactReference>,
 }
@@ -167,6 +176,9 @@ impl Default for StrictUploadChildState {
             queued_outputs: VecDeque::new(),
             pending_operation: None,
             pending_bytes: None,
+            pending_read_parent: None,
+            pending_download: None,
+            downloaded_action: Vec::new(),
             response_references: Vec::new(),
             committed_references: Vec::new(),
         }
@@ -177,6 +189,7 @@ impl Default for StrictUploadChildState {
 enum StrictUploadMode {
     ResetOnly,
     ResetThenTerminalStep,
+    ReadActionThenTerminalStep,
 }
 
 #[derive(Clone, Copy)]
@@ -266,6 +279,54 @@ impl AdapterProcess for StrictUploadChild {
                 strict_upload_begin_parent(
                     &mut state,
                     host.operation,
+                    [
+                        b"strict-transition-observation".to_vec(),
+                        b"strict-transition-info".to_vec(),
+                    ],
+                )?;
+            }
+            HostMessage::StepEnvironment { action_ref }
+                if state.mode == StrictUploadMode::ReadActionThenTerminalStep =>
+            {
+                state.pending_read_parent = Some(host.operation.clone());
+                let read = strict_upload_next(
+                    &mut state,
+                    "root",
+                    format!("{}-read", host.operation),
+                    AdapterMessage::GetArtifactRequest {
+                        parent_operation: host.operation,
+                        request: serde_json::to_value(action_ref)
+                            .expect("fixture action serializes"),
+                    },
+                );
+                strict_upload_push(&mut state, read)?;
+            }
+            HostMessage::GetArtifactHandle { download, .. } => {
+                state.pending_download = Some(download);
+            }
+            HostMessage::ArtifactDownloadChunk {
+                download,
+                bytes_base64,
+            } => {
+                if state.pending_download.as_ref() != Some(&download) {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                let bytes = STANDARD.decode(bytes_base64).map_err(|_| {
+                    AdapterSupervisionError::Process("fixture download chunk is invalid".to_owned())
+                })?;
+                state.downloaded_action.extend(bytes);
+            }
+            HostMessage::ArtifactDownloadComplete { download } => {
+                if state.pending_download.take() != Some(download) {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                let parent = state
+                    .pending_read_parent
+                    .take()
+                    .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+                strict_upload_begin_parent(
+                    &mut state,
+                    parent,
                     [
                         b"strict-transition-observation".to_vec(),
                         b"strict-transition-info".to_vec(),
@@ -453,7 +514,12 @@ fn strict_upload_finish_parent(
         AdapterMessage::EnvironmentReset {
             observation_ref: observation,
         }
-    } else if parent == "step-1" && state.mode == StrictUploadMode::ResetThenTerminalStep {
+    } else if parent == "step-1"
+        && matches!(
+            state.mode,
+            StrictUploadMode::ResetThenTerminalStep | StrictUploadMode::ReadActionThenTerminalStep
+        )
+    {
         let [observation, info]: [FrozenArtifactReference; 2] = references
             .try_into()
             .map_err(|_| AdapterSupervisionError::InvalidResetTransition)?;
@@ -531,7 +597,46 @@ impl SupervisedAdapter for StoreBackedEnvironmentAdapter {
                 if plan.operation != message.operation {
                     return Err(AdapterSupervisionError::InvalidResetTransition);
                 }
+                let selected_action = match &message.message {
+                    HostMessage::StepEnvironment { action_ref } if plan.reads_selected_action => {
+                        Some(action_ref.clone())
+                    }
+                    _ => None,
+                };
                 state.active = Some(plan);
+                if let Some(action_ref) = selected_action {
+                    state.pending_action_reference = Some(action_ref);
+                    state.stage = StoreBackedEnvironmentStage::RequestActionDownload;
+                } else {
+                    state.stage = StoreBackedEnvironmentStage::RequestUpload;
+                }
+            }
+            HostMessage::GetArtifactHandle { download, .. } => {
+                if !matches!(state.stage, StoreBackedEnvironmentStage::AwaitActionHandle) {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                state.pending_action_download = Some(download.clone());
+                state.stage = StoreBackedEnvironmentStage::AwaitActionDownloadComplete;
+            }
+            HostMessage::ArtifactDownloadChunk { download, .. } => {
+                if !matches!(
+                    state.stage,
+                    StoreBackedEnvironmentStage::AwaitActionDownloadComplete
+                ) || state.pending_action_download.as_ref() != Some(download)
+                {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+            }
+            HostMessage::ArtifactDownloadComplete { download } => {
+                if !matches!(
+                    state.stage,
+                    StoreBackedEnvironmentStage::AwaitActionDownloadComplete
+                ) || state.pending_action_download.as_ref() != Some(download)
+                {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                state.pending_action_reference = None;
+                state.pending_action_download = None;
                 state.stage = StoreBackedEnvironmentStage::RequestUpload;
             }
             HostMessage::PutArtifactHandle { upload, .. } => {
@@ -565,8 +670,40 @@ impl SupervisedAdapter for StoreBackedEnvironmentAdapter {
             return Err(error);
         }
         match state.stage {
-            StoreBackedEnvironmentStage::AwaitRoot | StoreBackedEnvironmentStage::AwaitCommit => {
+            StoreBackedEnvironmentStage::AwaitRoot
+            | StoreBackedEnvironmentStage::AwaitActionHandle
+            | StoreBackedEnvironmentStage::AwaitActionDownloadComplete
+            | StoreBackedEnvironmentStage::AwaitCommit => {
                 Err(AdapterSupervisionError::InvalidResetTransition)
+            }
+            StoreBackedEnvironmentStage::RequestActionDownload => {
+                let parent_operation = state
+                    .active
+                    .as_ref()
+                    .ok_or(AdapterSupervisionError::InvalidResetTransition)?
+                    .operation
+                    .clone();
+                let action_ref = state
+                    .pending_action_reference
+                    .clone()
+                    .ok_or(AdapterSupervisionError::InvalidResetTransition)?;
+                state.stage = StoreBackedEnvironmentStage::AwaitActionHandle;
+                let envelope = AdapterEnvelope::new(
+                    "episode-1",
+                    "root",
+                    state.next_adapter_sequence,
+                    format!("{parent_operation}-read"),
+                    AdapterMessage::GetArtifactRequest {
+                        parent_operation,
+                        request: serde_json::to_value(action_ref).map_err(|error| {
+                            AdapterSupervisionError::Process(format!(
+                                "fixture action reference is invalid: {error}"
+                            ))
+                        })?,
+                    },
+                );
+                state.next_adapter_sequence += 1;
+                Ok(envelope)
             }
             StoreBackedEnvironmentStage::RequestUpload => {
                 let output_index = state.references.len();
@@ -1106,6 +1243,8 @@ fn store_backed_state(
         plans: plans.into_iter().collect(),
         active: None,
         pending_bytes: None,
+        pending_action_reference: None,
+        pending_action_download: None,
         upload: None,
         references: Vec::new(),
         stage: StoreBackedEnvironmentStage::AwaitRoot,
@@ -1130,7 +1269,15 @@ fn store_backed_plan(
         operation: operation.to_owned(),
         response_operation: operation.to_owned(),
         response,
+        reads_selected_action: false,
         outputs: outputs.into_iter().map(ToOwned::to_owned).collect(),
+    }
+}
+
+impl StoreBackedEnvironmentPlan {
+    fn reads_selected_action(mut self) -> Self {
+        self.reads_selected_action = true;
+        self
     }
 }
 
@@ -1166,6 +1313,7 @@ fn store_backed_plan_from_response(
         operation: operation.to_owned(),
         response_operation,
         response,
+        reads_selected_action: false,
         outputs,
     }
 }
@@ -1497,11 +1645,15 @@ async fn start_strict_upload_stepper(
     (stepper, store, child, input_ref, store_root)
 }
 
-async fn start_strict_terminal_rollout_stepper() -> (
+async fn start_strict_terminal_rollout_stepper_with_mode(
+    mode: StrictUploadMode,
+    selects_action_encoder: bool,
+) -> (
     Box<dyn aiperf_runtime::graph::tools::EnvironmentStepper>,
     Rc<RefCell<EpisodeArtifactStore>>,
     Rc<RefCell<StrictUploadChildState>>,
     EnvironmentTestInputs,
+    Option<BoundNativeGraphActionEncoder>,
     tempfile::TempDir,
 ) {
     let package = ArtifactDigest::from_bytes(b"imported-package");
@@ -1528,18 +1680,34 @@ async fn start_strict_terminal_rollout_stepper() -> (
         limits,
     )
     .expect("strict environment protocol configuration is valid");
+    let declared_inputs = if selects_action_encoder {
+        vec![inputs.reset.clone()]
+    } else {
+        vec![inputs.reset.clone(), inputs.action.clone()]
+    };
     let binding = EnvironmentStepperBinding::new(
         config.clone(),
         EnvironmentEpisodeIdentity::new(package.clone(), "episode-1", Duration::from_secs(7))
             .expect("episode identity is valid"),
         "root",
         RlEvaluationPolicy::new("env:v1", 1, 0.5).expect("valid policy"),
-        EnvironmentArtifactBindings::new([inputs.reset.clone(), inputs.action.clone()])
-            .expect("artifact input binding is valid"),
+        EnvironmentArtifactBindings::new(declared_inputs).expect("artifact input binding is valid"),
     )
     .expect("environment binding is valid");
+    let selected_encoder = selects_action_encoder.then(|| {
+        let id: ActionEncoderFactoryId =
+            serde_json::from_str("\"move_v1\"").expect("fixture encoder selector is valid");
+        MoveV1ActionEncoderFactory
+            .bind(&id)
+            .expect("fixture selected encoder binds")
+    });
+    let binding = if let Some(encoder) = selected_encoder.as_ref() {
+        binding.with_selected_action_encoder(encoder)
+    } else {
+        binding
+    };
     let child = Rc::new(RefCell::new(StrictUploadChildState {
-        mode: StrictUploadMode::ResetThenTerminalStep,
+        mode,
         ..Default::default()
     }));
     let runtime = ProtocolAdapterRuntimeFactory::new(
@@ -1557,7 +1725,47 @@ async fn start_strict_terminal_rollout_stepper() -> (
         )
         .await
         .expect("strict JSONL rollout adapter starts");
-    (stepper, store, child, inputs, store_root)
+    (stepper, store, child, inputs, selected_encoder, store_root)
+}
+
+async fn start_strict_terminal_rollout_stepper() -> (
+    Box<dyn aiperf_runtime::graph::tools::EnvironmentStepper>,
+    Rc<RefCell<EpisodeArtifactStore>>,
+    Rc<RefCell<StrictUploadChildState>>,
+    EnvironmentTestInputs,
+    tempfile::TempDir,
+) {
+    let (stepper, store, child, inputs, _encoder, root) =
+        start_strict_terminal_rollout_stepper_with_mode(
+            StrictUploadMode::ResetThenTerminalStep,
+            false,
+        )
+        .await;
+    (stepper, store, child, inputs, root)
+}
+
+async fn start_strict_action_read_rollout_stepper() -> (
+    Box<dyn aiperf_runtime::graph::tools::EnvironmentStepper>,
+    Rc<RefCell<EpisodeArtifactStore>>,
+    Rc<RefCell<StrictUploadChildState>>,
+    EnvironmentTestInputs,
+    BoundNativeGraphActionEncoder,
+    tempfile::TempDir,
+) {
+    let (stepper, store, child, inputs, encoder, root) =
+        start_strict_terminal_rollout_stepper_with_mode(
+            StrictUploadMode::ReadActionThenTerminalStep,
+            true,
+        )
+        .await;
+    (
+        stepper,
+        store,
+        child,
+        inputs,
+        encoder.expect("selected fixture supplies an encoder"),
+        root,
+    )
 }
 
 #[tokio::test]
@@ -1623,6 +1831,82 @@ async fn strict_rollout_releases_each_admitted_output_before_the_next_bounded_gr
         ));
     }
     assert_eq!(child.borrow().reaps, 1);
+}
+
+#[tokio::test]
+async fn strict_environment_reads_the_current_action_before_its_transition() {
+    let (mut stepper, store, child, inputs, encoder, _store_root) =
+        start_strict_action_read_rollout_stepper().await;
+    stepper
+        .reset(EnvironmentResetRequest::new("reset-1", inputs.reset))
+        .await
+        .expect("reset completes before the action read");
+    let limits = ActionEncodingLimits::new(128, 256).expect("fixture limits are valid");
+    let action = encoder
+        .admit(
+            DeclaredPolicyDecision::from_json_bytes(
+                encoder.id().clone(),
+                br#"{"kind":"move","direction":"north"}"#,
+                limits,
+            )
+            .expect("fixture decision is valid"),
+            &mut store.borrow_mut(),
+            limits,
+        )
+        .expect("selected encoder admits the action");
+    stepper
+        .step(EnvironmentStepRequest::admitted("step-1", action))
+        .await
+        .expect("the child receives the Rust-owned action before transitioning");
+
+    assert_eq!(
+        child.borrow().downloaded_action,
+        br#"{"direction":"north","kind":"move"}"#
+    );
+}
+
+#[tokio::test]
+async fn selected_environment_cannot_transition_without_downloading_its_action() {
+    let (mut stepper, store, _child, inputs, encoder, _store_root) = {
+        let (stepper, store, child, inputs, encoder, root) =
+            start_strict_terminal_rollout_stepper_with_mode(
+                StrictUploadMode::ResetThenTerminalStep,
+                true,
+            )
+            .await;
+        (
+            stepper,
+            store,
+            child,
+            inputs,
+            encoder.expect("selected fixture supplies an encoder"),
+            root,
+        )
+    };
+    stepper
+        .reset(EnvironmentResetRequest::new("reset-1", inputs.reset))
+        .await
+        .expect("reset is admitted before the selected action");
+
+    let limits = ActionEncodingLimits::new(128, 256).expect("fixture limits are valid");
+    let action = encoder
+        .admit(
+            DeclaredPolicyDecision::from_json_bytes(
+                encoder.id().clone(),
+                br#"{"kind":"move","direction":"north"}"#,
+                limits,
+            )
+            .expect("fixture decision is valid"),
+            &mut store.borrow_mut(),
+            limits,
+        )
+        .expect("selected encoder admits the action");
+    assert!(matches!(
+        stepper
+            .step(EnvironmentStepRequest::admitted("step-1", action))
+            .await,
+        Err(EnvironmentStepperError::ActionDownloadRequired)
+    ));
 }
 
 #[tokio::test]
@@ -1816,7 +2100,8 @@ async fn selected_stepper_dispatches_only_an_admitted_action_and_revokes_it_once
                 b"next-observation".as_slice(),
                 b"transition-info".as_slice(),
             ],
-        ),
+        )
+        .reads_selected_action(),
     ])));
     let factory =
         SupervisedEnvironmentStepperFactory::new(Rc::new(StoreBackedEnvironmentRuntime {
