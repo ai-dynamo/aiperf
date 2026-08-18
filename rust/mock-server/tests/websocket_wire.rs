@@ -20,6 +20,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream, UnixStream};
 
 const TEST_WEBSOCKET_KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
+const TEST_WEBSOCKET_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+const MAX_TEST_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
 trait TestIo: AsyncRead + AsyncWrite + Send + Unpin {}
 
@@ -96,6 +98,18 @@ impl TestServer {
         RawWebSocketClient::upgrade(io, path).await
     }
 
+    async fn raw_request(&self, request: &[u8]) -> String {
+        let mut stream = TcpStream::connect(self.address)
+            .await
+            .expect("connect raw-upgrade listener");
+        stream
+            .write_all(request)
+            .await
+            .expect("write raw upgrade request");
+        stream.flush().await.expect("flush raw upgrade request");
+        read_http_headers(&mut stream).await
+    }
+
     async fn wait_for_captures(&self, count: usize) -> Vec<Value> {
         for _ in 0..100 {
             let request = http::Request::builder()
@@ -157,10 +171,10 @@ impl RawWebSocketClient {
             "upgrade must switch protocols: {headers:?}"
         );
         assert!(
-            headers
-                .to_ascii_lowercase()
-                .contains("sec-websocket-accept:"),
-            "upgrade must sign the client key: {headers:?}"
+            headers.lines().any(|line| {
+                line.eq_ignore_ascii_case(&format!("Sec-WebSocket-Accept: {TEST_WEBSOCKET_ACCEPT}"))
+            }),
+            "upgrade must return the exact RFC accept value: {headers:?}"
         );
         Self { io }
     }
@@ -197,11 +211,22 @@ impl RawWebSocketClient {
         self.io.flush().await.expect("flush client text frame");
     }
 
+    async fn send_ping(&mut self, payload: &[u8]) {
+        self.send_data_frame(true, 0x9, payload).await;
+    }
+
+    async fn send_close(&mut self) {
+        self.send_data_frame(true, 0x8, &[]).await;
+    }
+
     async fn read_frame(&mut self) -> WireFrame {
+        self.read_frame_result().await.expect("read server frame")
+    }
+
+    async fn read_frame_result(&mut self) -> std::io::Result<WireFrame> {
         tokio::time::timeout(Duration::from_secs(5), read_server_frame(&mut self.io))
             .await
             .expect("server frame timeout")
-            .expect("read server frame")
     }
 }
 
@@ -220,6 +245,12 @@ async fn read_http_headers(io: &mut (impl AsyncRead + Unpin)) -> String {
 async fn read_server_frame(io: &mut (impl AsyncRead + Unpin)) -> std::io::Result<WireFrame> {
     let first = io.read_u8().await?;
     let second = io.read_u8().await?;
+    if first & 0x70 != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "server frame sets an unsupported RSV bit",
+        ));
+    }
     let is_final = first & 0x80 != 0;
     let opcode = first & 0x0f;
     assert_eq!(second & 0x80, 0, "server frames must not be masked");
@@ -230,6 +261,18 @@ async fn read_server_frame(io: &mut (impl AsyncRead + Unpin)) -> std::io::Result
         _ => unreachable!(),
     };
     let payload_len = usize::try_from(payload_len).expect("test frame length fits usize");
+    if payload_len > MAX_TEST_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "server frame exceeds the test reader bound",
+        ));
+    }
+    if opcode & 0x08 != 0 && (!is_final || payload_len > 125) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "server emitted an invalid control frame",
+        ));
+    }
     let mut payload = vec![0; payload_len];
     io.read_exact(&mut payload).await?;
     Ok(WireFrame {
@@ -394,20 +437,189 @@ async fn raw_upgrade_enforces_frame_and_reassembled_message_limits() {
 #[tokio::test]
 async fn raw_upgrade_rejects_a_handshake_without_a_client_key() {
     let server = TestServer::start(fragmented_config(), false).await;
-    let mut stream = TcpStream::connect(server.address)
-        .await
-        .expect("connect raw-upgrade listener");
-    stream
-        .write_all(
+    let headers = server
+        .raw_request(
             b"GET /mock/websocket/turns HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\r\n",
         )
-        .await
-        .expect("write invalid upgrade");
-    let headers = read_http_headers(&mut stream).await;
+        .await;
     assert!(
         headers.starts_with("HTTP/1.1 400 "),
         "missing key must fail before upgrade: {headers:?}"
     );
+}
+
+#[tokio::test]
+async fn raw_upgrade_rejects_ambiguous_or_body_framed_handshakes() {
+    let server = TestServer::start(fragmented_config(), false).await;
+    let invalid_headers = [
+        "Sec-WebSocket-Key: invalid\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nUpgrade: websocket\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nContent-Length: 1\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nTransfer-Encoding: chunked\r\n",
+    ];
+    for (index, extra) in invalid_headers.into_iter().enumerate() {
+        let mut request = format!(
+            "GET /mock/websocket/turns HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n{extra}\r\n"
+        );
+        if index == 4 {
+            request.push('x');
+        } else if index == 5 {
+            request.push_str("0\r\n\r\n");
+        }
+        let headers = server.raw_request(request.as_bytes()).await;
+        assert!(
+            headers.starts_with("HTTP/1.1 400 "),
+            "invalid handshake case {index} must fail before upgrade: {headers:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn realtime_reads_upload_and_ping_while_output_is_scheduled() {
+    let server = TestServer::start(
+        MockServerConfig {
+            websocket_mode: WebSocketMode::Realtime,
+            websocket_scenario: WebSocketScenario::Normal,
+            websocket_fragment_bytes: 5,
+            websocket_first_content_delay_ms: 250.0,
+            websocket_content_interval_ms: 0.0,
+            no_tokenizer: true,
+            ..MockServerConfig::default()
+        },
+        false,
+    )
+    .await;
+    let mut client = server.connect(false, "/mock/websocket/realtime").await;
+    client
+        .send_text(r#"{"type":"conversation.item.create"}"#)
+        .await;
+    client
+        .send_text(r#"{"type":"input_audio_buffer.commit"}"#)
+        .await;
+    client.send_text(r#"{"type":"response.create"}"#).await;
+    client
+        .send_text(r#"{"type":"input_audio_buffer.append","audio":"AA=="}"#)
+        .await;
+    client.send_ping(b"duplex").await;
+
+    let pong = tokio::time::timeout(Duration::from_millis(100), client.read_frame())
+        .await
+        .expect("Realtime must keep reading control while content is scheduled");
+    assert_eq!(pong.opcode, 0xa);
+    assert_eq!(pong.payload, b"duplex");
+}
+
+#[tokio::test]
+async fn client_close_is_answered_over_ws_and_wss() {
+    for is_tls in [false, true] {
+        let server = TestServer::start(fragmented_config(), is_tls).await;
+        let mut client = server.connect(is_tls, "/mock/websocket/turns").await;
+        client.send_close().await;
+        assert_eq!(client.read_frame().await.opcode, 0x8);
+        let captures = server.wait_for_captures(1).await;
+        assert_eq!(captures[0]["close"], "client_close");
+    }
+}
+
+#[tokio::test]
+async fn preterminal_server_close_waits_for_peer_over_ws_and_wss() {
+    for is_tls in [false, true] {
+        let server = TestServer::start(
+            MockServerConfig {
+                websocket_mode: WebSocketMode::TurnSerialized,
+                websocket_scenario: WebSocketScenario::CloseBeforeTerminal,
+                websocket_fragment_bytes: 5,
+                websocket_first_content_delay_ms: 0.0,
+                websocket_content_interval_ms: 0.0,
+                no_tokenizer: true,
+                ..MockServerConfig::default()
+            },
+            is_tls,
+        )
+        .await;
+        let mut client = server.connect(is_tls, "/mock/websocket/turns").await;
+        client
+            .send_text(r#"{"type":"response.create","model":"mock","input":"hello"}"#)
+            .await;
+        let mut has_terminal = false;
+        loop {
+            let frame = client.read_frame().await;
+            if frame.opcode == 0x8 {
+                break;
+            }
+            if frame.opcode == 0x1 || frame.opcode == 0x0 {
+                has_terminal |= frame
+                    .payload
+                    .windows(b"response.completed".len())
+                    .any(|window| window == b"response.completed");
+            }
+        }
+        assert!(!has_terminal, "pre-terminal close must not complete");
+        client.send_close().await;
+        let captures = server.wait_for_captures(1).await;
+        assert_eq!(captures[0]["close"], "clean_server_close");
+        assert!(captures[0]["events"].as_array().is_some_and(|events| {
+            events
+                .iter()
+                .any(|event| event["direction"] == "in" && event["opcode"] == "close")
+        }));
+    }
+}
+
+#[tokio::test]
+async fn postterminal_dirty_drop_has_no_close_frame_over_ws_and_wss() {
+    for is_tls in [false, true] {
+        let server = TestServer::start(
+            MockServerConfig {
+                websocket_mode: WebSocketMode::TurnSerialized,
+                websocket_scenario: WebSocketScenario::DirtyCloseAfterTerminal,
+                websocket_fragment_bytes: 5,
+                websocket_first_content_delay_ms: 0.0,
+                websocket_content_interval_ms: 0.0,
+                no_tokenizer: true,
+                ..MockServerConfig::default()
+            },
+            is_tls,
+        )
+        .await;
+        let mut client = server.connect(is_tls, "/mock/websocket/turns").await;
+        client
+            .send_text(r#"{"type":"response.create","model":"mock","input":"hello"}"#)
+            .await;
+        let mut wire = Vec::new();
+        loop {
+            match client.read_frame_result().await {
+                Ok(frame) => {
+                    assert_ne!(frame.opcode, 0x8, "dirty drop must not send Close");
+                    wire.extend_from_slice(&frame.payload);
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(
+            wire.windows(b"response.completed".len())
+                .any(|window| window == b"response.completed"),
+            "dirty drop must follow terminal completion"
+        );
+        let captures = server.wait_for_captures(1).await;
+        assert_eq!(captures[0]["close"], "dirty_transport_drop");
+        assert_eq!(captures[0]["terminal"], "completed");
+    }
+}
+
+#[tokio::test]
+async fn raw_reader_rejects_oversized_or_invalid_server_frames_before_allocation() {
+    let (mut writer, mut reader) = tokio::io::duplex(64);
+    writer
+        .write_all(&[0x82, 0x7f, 0, 0, 0, 0, 0, 128, 0, 1])
+        .await
+        .expect("write oversized frame header");
+    let error = read_server_frame(&mut reader)
+        .await
+        .expect_err("oversized frame must fail before payload allocation");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
 }
 
 #[cfg(unix)]

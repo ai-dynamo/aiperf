@@ -6,14 +6,19 @@
 use std::fmt::{self, Display, Formatter};
 use std::future::Future;
 
+use aiperf_runtime::clock::RealClockAnchor;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::extract::ws::{Message as AxumMessage, WebSocket};
 use axum::response::Response;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
+use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use http::header::{
-    CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION, UPGRADE,
+    CONNECTION, CONTENT_LENGTH, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION,
+    TRANSFER_ENCODING, UPGRADE,
 };
 use http::{HeaderMap, HeaderValue, Method, StatusCode, Version};
 use hyper::upgrade::OnUpgrade;
@@ -88,6 +93,30 @@ impl ConnectionSocket {
         Self::Raw(socket)
     }
 
+    pub(super) fn split(self) -> (ConnectionReader, ConnectionWriter) {
+        match self {
+            Self::Axum(socket) => {
+                let (writer, reader) = socket.split();
+                (
+                    ConnectionReader::Axum(reader),
+                    ConnectionWriter::Axum(writer),
+                )
+            }
+            Self::Raw(socket) => {
+                let (writer, reader) = socket.split();
+                (ConnectionReader::Raw(reader), ConnectionWriter::Raw(writer))
+            }
+        }
+    }
+}
+
+/// Read half continuously driven by the connection coordinator.
+pub(super) enum ConnectionReader {
+    Axum(SplitStream<WebSocket>),
+    Raw(SplitStream<RawWebSocket>),
+}
+
+impl ConnectionReader {
     pub(super) async fn recv(&mut self) -> Option<Result<InboundMessage, WireError>> {
         match self {
             Self::Axum(socket) => socket.next().await.map(|result| {
@@ -102,14 +131,28 @@ impl ConnectionSocket {
             }),
         }
     }
+}
 
+/// Write half exclusively owned by the bounded connection writer task.
+pub(super) enum ConnectionWriter {
+    Axum(SplitSink<WebSocket, AxumMessage>),
+    Raw(SplitSink<RawWebSocket, TungsteniteMessage>),
+}
+
+/// Actual wire-send timing for one logical text message.
+pub(super) struct TextSend {
+    pub(super) interjected_control_ns: Option<i64>,
+}
+
+impl ConnectionWriter {
     pub(super) async fn send_text(
         &mut self,
         payload: Bytes,
         fragment_bytes: usize,
         max_message_bytes: usize,
         interjected: Option<&OutboundControl>,
-    ) -> Result<(), WireError> {
+        clock_anchor: RealClockAnchor,
+    ) -> Result<TextSend, WireError> {
         if payload.len() > max_message_bytes {
             return Err(WireError::new(format!(
                 "outbound application message is {} bytes, exceeding configured maximum {max_message_bytes}",
@@ -121,35 +164,55 @@ impl ConnectionSocket {
                 "fragment size must be zero or at least four bytes".to_owned(),
             ));
         }
-        let text = std::str::from_utf8(&payload)
-            .map_err(|error| WireError::new(format!("outbound text is not UTF-8: {error}")))?;
         match self {
             Self::Axum(socket) => {
+                let text = outbound_text(&payload)?;
+                let mut interjected_control_ns = None;
                 if let Some(control) = interjected {
                     socket
                         .send(control.axum_message())
                         .await
                         .map_err(|error| WireError::new(error.to_string()))?;
+                    interjected_control_ns = Some(clock_anchor.now_ns());
                 }
                 socket
-                    .send(AxumMessage::Text(text.to_owned().into()))
+                    .send(AxumMessage::Text(text.into()))
                     .await
-                    .map_err(|error| WireError::new(error.to_string()))
+                    .map_err(|error| WireError::new(error.to_string()))?;
+                Ok(TextSend {
+                    interjected_control_ns,
+                })
             }
             Self::Raw(socket) if fragment_bytes > 0 => {
-                send_fragmented_text(socket, payload, text.len(), fragment_bytes, interjected).await
+                outbound_text(&payload)?;
+                let text_len = payload.len();
+                send_fragmented_text(
+                    socket,
+                    payload,
+                    text_len,
+                    fragment_bytes,
+                    interjected,
+                    clock_anchor,
+                )
+                .await
             }
             Self::Raw(socket) => {
+                let text = outbound_text(&payload)?;
+                let mut interjected_control_ns = None;
                 if let Some(control) = interjected {
                     socket
                         .send(control.tungstenite_message())
                         .await
                         .map_err(|error| WireError::new(error.to_string()))?;
+                    interjected_control_ns = Some(clock_anchor.now_ns());
                 }
                 socket
-                    .send(TungsteniteMessage::Text(text.to_owned().into()))
+                    .send(TungsteniteMessage::Text(text.into()))
                     .await
-                    .map_err(|error| WireError::new(error.to_string()))
+                    .map_err(|error| WireError::new(error.to_string()))?;
+                Ok(TextSend {
+                    interjected_control_ns,
+                })
             }
         }
     }
@@ -182,6 +245,25 @@ impl ConnectionSocket {
                 .map_err(|error| WireError::new(error.to_string())),
         }
     }
+
+    pub(super) async fn flush(&mut self) -> Result<(), WireError> {
+        match self {
+            Self::Axum(socket) => socket
+                .flush()
+                .await
+                .map_err(|error| WireError::new(error.to_string())),
+            Self::Raw(socket) => socket
+                .flush()
+                .await
+                .map_err(|error| WireError::new(error.to_string())),
+        }
+    }
+}
+
+fn outbound_text(payload: &Bytes) -> Result<String, WireError> {
+    std::str::from_utf8(payload)
+        .map(str::to_owned)
+        .map_err(|error| WireError::new(format!("outbound text is not UTF-8: {error}")))
 }
 
 fn axum_inbound(message: AxumMessage) -> InboundMessage {
@@ -212,29 +294,35 @@ fn tungstenite_inbound(message: TungsteniteMessage) -> Result<InboundMessage, Wi
 }
 
 async fn send_fragmented_text(
-    socket: &mut RawWebSocket,
+    socket: &mut SplitSink<RawWebSocket, TungsteniteMessage>,
     payload: Bytes,
     text_len: usize,
     fragment_bytes: usize,
     interjected: Option<&OutboundControl>,
-) -> Result<(), WireError> {
+    clock_anchor: RealClockAnchor,
+) -> Result<TextSend, WireError> {
+    let mut interjected_control_ns = None;
     if text_len <= fragment_bytes {
         if let Some(control) = interjected {
             socket
                 .send(control.tungstenite_message())
                 .await
                 .map_err(|error| WireError::new(error.to_string()))?;
+            interjected_control_ns = Some(clock_anchor.now_ns());
         }
     }
     if text_len == 0 {
-        return socket
+        socket
             .send(TungsteniteMessage::Frame(Frame::message(
                 Bytes::new(),
                 OpCode::Data(Data::Text),
                 true,
             )))
             .await
-            .map_err(|error| WireError::new(error.to_string()));
+            .map_err(|error| WireError::new(error.to_string()))?;
+        return Ok(TextSend {
+            interjected_control_ns,
+        });
     }
     let mut start = 0;
     while start < text_len {
@@ -269,10 +357,13 @@ async fn send_fragmented_text(
                 .send(control.tungstenite_message())
                 .await
                 .map_err(|error| WireError::new(error.to_string()))?;
+            interjected_control_ns = Some(clock_anchor.now_ns());
         }
         start = end;
     }
-    Ok(())
+    Ok(TextSend {
+        interjected_control_ns,
+    })
 }
 
 /// Validated HTTP/1 WebSocket upgrade used only when raw framing is authored.
@@ -292,14 +383,22 @@ impl RawUpgrade {
         }
         let headers = request.headers();
         if !header_has_token(headers, CONNECTION, b"upgrade")
-            || !header_eq(headers, UPGRADE, b"websocket")
-            || !header_eq(headers, SEC_WEBSOCKET_VERSION, b"13")
+            || !single_header_eq(headers, UPGRADE, b"websocket")
+            || !single_header_eq(headers, SEC_WEBSOCKET_VERSION, b"13")
+            || headers.contains_key(CONTENT_LENGTH)
+            || headers.contains_key(TRANSFER_ENCODING)
         {
             return Err(rejection(StatusCode::BAD_REQUEST));
         }
-        let Some(key) = headers.get(SEC_WEBSOCKET_KEY).cloned() else {
+        let Some(key) = single_header(headers, SEC_WEBSOCKET_KEY).cloned() else {
             return Err(rejection(StatusCode::BAD_REQUEST));
         };
+        let Ok(decoded_key) = BASE64_STANDARD.decode(key.as_bytes()) else {
+            return Err(rejection(StatusCode::BAD_REQUEST));
+        };
+        if decoded_key.len() != 16 {
+            return Err(rejection(StatusCode::BAD_REQUEST));
+        }
         let Some(on_upgrade) = request.extensions_mut().remove::<OnUpgrade>() else {
             return Err(rejection(StatusCode::UPGRADE_REQUIRED));
         };
@@ -354,10 +453,15 @@ fn rejection(status: StatusCode) -> Response {
     response
 }
 
-fn header_eq(headers: &HeaderMap, name: http::header::HeaderName, expected: &[u8]) -> bool {
-    headers
-        .get(name)
+fn single_header_eq(headers: &HeaderMap, name: http::header::HeaderName, expected: &[u8]) -> bool {
+    single_header(headers, name)
         .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(expected))
+}
+
+fn single_header(headers: &HeaderMap, name: http::header::HeaderName) -> Option<&HeaderValue> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
 }
 
 fn header_has_token(headers: &HeaderMap, name: http::header::HeaderName, expected: &[u8]) -> bool {

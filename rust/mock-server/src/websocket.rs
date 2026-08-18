@@ -19,6 +19,7 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 use crate::config::{MockServerConfig, WebSocketControl, WebSocketScenario};
 use crate::metrics::MetricRecorder;
@@ -27,9 +28,16 @@ use crate::state::AppState;
 
 mod wire;
 
-use wire::{ConnectionSocket, InboundMessage, OutboundControl, RawUpgrade};
+use wire::{
+    ConnectionReader, ConnectionSocket, ConnectionWriter, InboundMessage, OutboundControl,
+    RawUpgrade,
+};
 
 const MAX_CAPTURE_EVENTS_PER_CONNECTION: usize = 16_384;
+const ACTION_QUEUE_CAPACITY: usize = 2;
+const CONTROL_QUEUE_CAPACITY: usize = 8;
+const WRITER_EVENT_CAPACITY: usize = 16;
+const CLOSE_HANDSHAKE_TIMEOUT_NS: i64 = 1_000_000_000;
 
 /// Sanitized metadata for one completed WebSocket connection.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -88,6 +96,7 @@ enum CloseClassification {
     ClientClose,
     CleanServerClose,
     DirtyTransportDrop,
+    CloseHandshakeTimeout,
     ReceiveError,
     SendError,
     ProtocolError,
@@ -263,7 +272,42 @@ pub(crate) async fn captures(State(state): State<Arc<AppState>>) -> Json<Vec<Web
     Json(state.websocket_captures.snapshot())
 }
 
-async fn serve_connection(state: Arc<AppState>, mut socket: ConnectionSocket, route: RouteKind) {
+struct WriterBatch {
+    actions: Vec<ServerAction>,
+    attribution: Option<CaptureAttribution>,
+    close_classification: CloseClassification,
+}
+
+enum WriterControl {
+    Frame {
+        control: OutboundControl,
+        attribution: Option<CaptureAttribution>,
+    },
+    CloseReply {
+        attribution: Option<CaptureAttribution>,
+    },
+}
+
+enum WriterEvent {
+    Actions(ActionResult),
+    Control(WebSocketCaptureEvent),
+    CloseReply(Result<WebSocketCaptureEvent, ()>),
+}
+
+struct WriterTaskGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for WriterTaskGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+enum DriverEvent {
+    Inbound(Option<Result<InboundMessage, wire::WireError>>),
+    Writer(Option<WriterEvent>),
+}
+
+async fn serve_connection(state: Arc<AppState>, socket: ConnectionSocket, route: RouteKind) {
     let connection_id = state
         .websocket_connections
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -284,148 +328,45 @@ async fn serve_connection(state: Arc<AppState>, mut socket: ConnectionSocket, ro
     let mut pending_request_bytes = 0usize;
     let mut next_capture_turn = 0u64;
     let mut attribution: Option<CaptureAttribution> = None;
+    let mut is_protocol_closing = false;
+    let (mut reader, writer) = socket.split();
+    let (action_tx, action_rx) = mpsc::channel(ACTION_QUEUE_CAPACITY);
+    let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
+    let (writer_event_tx, mut writer_event_rx) = mpsc::channel(WRITER_EVENT_CAPACITY);
+    let _writer_task = WriterTaskGuard(tokio::spawn(run_connection_writer(
+        state.clone(),
+        writer,
+        action_rx,
+        control_rx,
+        writer_event_tx,
+        started_ns,
+    )));
 
-    while let Some(message) = socket.recv().await {
-        let now_ns = state.clock_anchor.now_ns();
-        let message = match message {
-            Ok(message) => message,
-            Err(error) => {
-                tracing::debug!(component = "websocket_mock", error = %error, "WebSocket receive failed");
-                capture.close = CloseClassification::ReceiveError;
+    loop {
+        let driver_event = tokio::select! {
+            biased;
+            event = writer_event_rx.recv() => DriverEvent::Writer(event),
+            message = reader.recv() => DriverEvent::Inbound(message),
+        };
+        let message = match driver_event {
+            DriverEvent::Writer(Some(WriterEvent::Control(event))) => {
+                capture.push_event(event);
+                continue;
+            }
+            DriverEvent::Writer(Some(WriterEvent::CloseReply(result))) => {
+                match result {
+                    Ok(event) => {
+                        capture.push_event(event);
+                        capture.close = CloseClassification::ClientClose;
+                    }
+                    Err(()) => capture.close = CloseClassification::SendError,
+                }
                 break;
             }
-        };
-        match message {
-            InboundMessage::Text(payload) => {
-                if let Some(operation) = operation.as_mut() {
-                    operation.add_request_bytes(payload.len());
-                } else {
-                    pending_request_bytes = pending_request_bytes.saturating_add(payload.len());
+            DriverEvent::Writer(Some(WriterEvent::Actions(result))) => {
+                for event in result.events {
+                    capture.push_event(event);
                 }
-                if payload.len() > state.config.websocket_max_message_bytes {
-                    capture.push_event(capture_event_with_attribution(
-                        "in",
-                        "text",
-                        &payload,
-                        attribution.as_ref(),
-                        now_ns,
-                        started_ns,
-                    ));
-                    let response_bytes = protocol_error(
-                        &mut socket,
-                        &mut capture,
-                        state.clock_anchor,
-                        started_ns,
-                        attribution.as_ref(),
-                        state.config.websocket_fragment_bytes,
-                        state.config.websocket_max_message_bytes,
-                        "application message exceeds configured size",
-                    )
-                    .await;
-                    if let Some(operation) = operation.as_mut() {
-                        operation.add_response_bytes(response_bytes);
-                    }
-                    break;
-                }
-                let event = match parse_client_event(&payload, route) {
-                    Ok(event) => event,
-                    Err(error) => {
-                        capture.push_event(capture_event_with_attribution(
-                            "in",
-                            "text",
-                            &payload,
-                            attribution.as_ref(),
-                            now_ns,
-                            started_ns,
-                        ));
-                        let response_bytes = protocol_error(
-                            &mut socket,
-                            &mut capture,
-                            state.clock_anchor,
-                            started_ns,
-                            attribution.as_ref(),
-                            state.config.websocket_fragment_bytes,
-                            state.config.websocket_max_message_bytes,
-                            &error.to_string(),
-                        )
-                        .await;
-                        if let Some(operation) = operation.as_mut() {
-                            operation.add_response_bytes(response_bytes);
-                        }
-                        break;
-                    }
-                };
-                attribute_event(
-                    &event,
-                    connection_id,
-                    &mut next_capture_turn,
-                    &mut attribution,
-                );
-                capture.push_event(capture_event_with_attribution(
-                    "in",
-                    "text",
-                    &payload,
-                    attribution.as_ref(),
-                    now_ns,
-                    started_ns,
-                ));
-                let operation_model = event.operation_model(route).map(str::to_owned);
-                if let Some(model) = operation_model {
-                    if operation.is_some() {
-                        let response_bytes = protocol_error(
-                            &mut socket,
-                            &mut capture,
-                            state.clock_anchor,
-                            started_ns,
-                            attribution.as_ref(),
-                            state.config.websocket_fragment_bytes,
-                            state.config.websocket_max_message_bytes,
-                            "connection already has an in-flight operation",
-                        )
-                        .await;
-                        if let Some(operation) = operation.as_mut() {
-                            operation.add_response_bytes(response_bytes);
-                        }
-                        break;
-                    }
-                    operation = Some(OperationAccounting::begin(
-                        &state.recorder,
-                        route,
-                        model,
-                        now_ns,
-                        pending_request_bytes,
-                    ));
-                    pending_request_bytes = 0;
-                }
-                let actions = match scenario.on_event(event, now_ns) {
-                    Ok(actions) => actions,
-                    Err(error) => {
-                        let response_bytes = protocol_error(
-                            &mut socket,
-                            &mut capture,
-                            state.clock_anchor,
-                            started_ns,
-                            attribution.as_ref(),
-                            state.config.websocket_fragment_bytes,
-                            state.config.websocket_max_message_bytes,
-                            &error.to_string(),
-                        )
-                        .await;
-                        if let Some(operation) = operation.as_mut() {
-                            operation.add_response_bytes(response_bytes);
-                        }
-                        break;
-                    }
-                };
-                let result = send_actions(
-                    &state,
-                    &mut socket,
-                    &mut capture,
-                    started_ns,
-                    attribution.as_ref(),
-                    actions,
-                )
-                .await;
                 if let Some(operation) = operation.as_mut() {
                     operation.add_response_bytes(result.response_bytes);
                 }
@@ -445,14 +386,175 @@ async fn serve_connection(state: Arc<AppState>, mut socket: ConnectionSocket, ro
                     }
                     None => {}
                 }
-                if let Some(close) = result.close {
-                    capture.close = close;
-                }
                 if operation_finished {
                     attribution = None;
                 }
-                if !result.keep_connection {
+                if let Some(close) = result.close {
+                    capture.close = close;
                     break;
+                }
+                if let Some(close) = result.close_after_handshake {
+                    capture.close = await_server_close(
+                        &state,
+                        &mut reader,
+                        &control_tx,
+                        &mut writer_event_rx,
+                        &mut capture,
+                        started_ns,
+                        attribution.as_ref(),
+                        close,
+                    )
+                    .await;
+                    break;
+                }
+                continue;
+            }
+            DriverEvent::Writer(None) => {
+                capture.close = CloseClassification::SendError;
+                break;
+            }
+            DriverEvent::Inbound(Some(message)) => message,
+            DriverEvent::Inbound(None) => {
+                if matches!(capture.close, CloseClassification::Open) {
+                    capture.close = CloseClassification::ReceiveError;
+                }
+                break;
+            }
+        };
+        let now_ns = state.clock_anchor.now_ns();
+        let message = match message {
+            Ok(message) => message,
+            Err(error) => {
+                tracing::debug!(component = "websocket_mock", error = %error, "WebSocket receive failed");
+                capture.close = CloseClassification::ReceiveError;
+                break;
+            }
+        };
+        match message {
+            InboundMessage::Text(payload) => {
+                if is_protocol_closing {
+                    continue;
+                }
+                if let Some(operation) = operation.as_mut() {
+                    operation.add_request_bytes(payload.len());
+                } else {
+                    pending_request_bytes = pending_request_bytes.saturating_add(payload.len());
+                }
+                if payload.len() > state.config.websocket_max_message_bytes {
+                    capture.push_event(capture_event_with_attribution(
+                        "in",
+                        "text",
+                        &payload,
+                        attribution.as_ref(),
+                        now_ns,
+                        started_ns,
+                    ));
+                    if !queue_protocol_error(
+                        &action_tx,
+                        attribution.clone(),
+                        now_ns,
+                        "application message exceeds configured size",
+                    ) {
+                        capture.close = CloseClassification::SendError;
+                        break;
+                    }
+                    capture.terminal = TerminalClassification::ProtocolError;
+                    is_protocol_closing = true;
+                    continue;
+                }
+                let event = match parse_client_event(&payload, route) {
+                    Ok(event) => event,
+                    Err(error) => {
+                        capture.push_event(capture_event_with_attribution(
+                            "in",
+                            "text",
+                            &payload,
+                            attribution.as_ref(),
+                            now_ns,
+                            started_ns,
+                        ));
+                        if !queue_protocol_error(
+                            &action_tx,
+                            attribution.clone(),
+                            now_ns,
+                            &error.to_string(),
+                        ) {
+                            capture.close = CloseClassification::SendError;
+                            break;
+                        }
+                        capture.terminal = TerminalClassification::ProtocolError;
+                        is_protocol_closing = true;
+                        continue;
+                    }
+                };
+                attribute_event(
+                    &event,
+                    connection_id,
+                    &mut next_capture_turn,
+                    &mut attribution,
+                );
+                capture.push_event(capture_event_with_attribution(
+                    "in",
+                    "text",
+                    &payload,
+                    attribution.as_ref(),
+                    now_ns,
+                    started_ns,
+                ));
+                let operation_model = event.operation_model(route).map(str::to_owned);
+                if let Some(model) = operation_model {
+                    if operation.is_some() {
+                        if !queue_protocol_error(
+                            &action_tx,
+                            attribution.clone(),
+                            now_ns,
+                            "connection already has an in-flight operation",
+                        ) {
+                            capture.close = CloseClassification::SendError;
+                            break;
+                        }
+                        capture.terminal = TerminalClassification::ProtocolError;
+                        is_protocol_closing = true;
+                        continue;
+                    }
+                    operation = Some(OperationAccounting::begin(
+                        &state.recorder,
+                        route,
+                        model,
+                        now_ns,
+                        pending_request_bytes,
+                    ));
+                    pending_request_bytes = 0;
+                }
+                let actions = match scenario.on_event(event, now_ns) {
+                    Ok(actions) => actions,
+                    Err(error) => {
+                        if !queue_protocol_error(
+                            &action_tx,
+                            attribution.clone(),
+                            now_ns,
+                            &error.to_string(),
+                        ) {
+                            capture.close = CloseClassification::SendError;
+                            break;
+                        }
+                        capture.terminal = TerminalClassification::ProtocolError;
+                        is_protocol_closing = true;
+                        continue;
+                    }
+                };
+                if !actions.is_empty() {
+                    if action_tx
+                        .try_send(WriterBatch {
+                            actions,
+                            attribution: attribution.clone(),
+                            close_classification: CloseClassification::CleanServerClose,
+                        })
+                        .is_err()
+                    {
+                        capture.close = CloseClassification::SendError;
+                        break;
+                    }
                 }
             }
             InboundMessage::Binary(payload) => {
@@ -464,22 +566,20 @@ async fn serve_connection(state: Arc<AppState>, mut socket: ConnectionSocket, ro
                     now_ns,
                     started_ns,
                 ));
-                let response_bytes = protocol_error(
-                    &mut socket,
-                    &mut capture,
-                    state.clock_anchor,
-                    started_ns,
-                    attribution.as_ref(),
-                    state.config.websocket_fragment_bytes,
-                    state.config.websocket_max_message_bytes,
-                    "binary application messages are not supported",
-                )
-                .await;
                 if let Some(operation) = operation.as_mut() {
                     operation.add_request_bytes(payload.len());
-                    operation.add_response_bytes(response_bytes);
                 }
-                break;
+                if !queue_protocol_error(
+                    &action_tx,
+                    attribution.clone(),
+                    now_ns,
+                    "binary application messages are not supported",
+                ) {
+                    capture.close = CloseClassification::SendError;
+                    break;
+                }
+                capture.terminal = TerminalClassification::ProtocolError;
+                is_protocol_closing = true;
             }
             InboundMessage::Ping(payload) => {
                 capture.push_event(capture_event_with_attribution(
@@ -490,24 +590,16 @@ async fn serve_connection(state: Arc<AppState>, mut socket: ConnectionSocket, ro
                     now_ns,
                     started_ns,
                 ));
-                let mut event = capture_event_with_attribution(
-                    "out",
-                    "pong",
-                    &payload,
-                    attribution.as_ref(),
-                    state.clock_anchor.now_ns(),
-                    started_ns,
-                );
-                if socket
-                    .send_control(&OutboundControl::Pong(payload))
-                    .await
+                if control_tx
+                    .try_send(WriterControl::Frame {
+                        control: OutboundControl::Pong(payload),
+                        attribution: attribution.clone(),
+                    })
                     .is_err()
                 {
                     capture.close = CloseClassification::SendError;
                     break;
                 }
-                event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
-                capture.push_event(event);
             }
             InboundMessage::Pong(payload) => {
                 capture.push_event(capture_event_with_attribution(
@@ -528,7 +620,14 @@ async fn serve_connection(state: Arc<AppState>, mut socket: ConnectionSocket, ro
                     now_ns,
                     started_ns,
                 ));
-                capture.close = CloseClassification::ClientClose;
+                capture.close = await_client_close_reply(
+                    &state,
+                    &control_tx,
+                    &mut writer_event_rx,
+                    &mut capture,
+                    attribution.clone(),
+                )
+                .await;
                 break;
             }
         }
@@ -546,76 +645,95 @@ enum OperationResult {
 }
 
 struct ActionResult {
-    keep_connection: bool,
     operation: Option<OperationResult>,
     response_bytes: usize,
     close: Option<CloseClassification>,
+    close_after_handshake: Option<CloseClassification>,
+    events: Vec<WebSocketCaptureEvent>,
 }
 
 impl Default for ActionResult {
     fn default() -> Self {
         Self {
-            keep_connection: true,
             operation: None,
             response_bytes: 0,
             close: None,
+            close_after_handshake: None,
+            events: Vec::new(),
         }
     }
 }
 
 async fn send_actions(
     state: &AppState,
-    socket: &mut ConnectionSocket,
-    capture: &mut WebSocketCapture,
+    writer: &mut ConnectionWriter,
     started_ns: i64,
-    attribution: Option<&CaptureAttribution>,
-    actions: Vec<ServerAction>,
-) -> ActionResult {
+    batch: WriterBatch,
+    control_rx: &mut mpsc::Receiver<WriterControl>,
+    event_tx: &mpsc::Sender<WriterEvent>,
+) -> Option<ActionResult> {
     let mut result = ActionResult::default();
     let mut pending_control: Option<OutboundControl> = None;
-    for action in actions {
+    for action in batch.actions {
+        if service_queued_controls(writer, control_rx, event_tx, state.clock_anchor, started_ns)
+            .await
+        {
+            return None;
+        }
         match action {
             ServerAction::SendText { at_ns, payload } => {
-                let delay_ns = at_ns.saturating_sub(state.clock_anchor.now_ns());
-                if delay_ns > 0 {
-                    sleep_ns(delay_ns).await;
+                if !wait_until_with_controls(
+                    writer,
+                    control_rx,
+                    event_tx,
+                    state.clock_anchor,
+                    started_ns,
+                    at_ns,
+                )
+                .await
+                {
+                    return None;
                 }
                 let mut event = capture_event_with_attribution(
                     "out",
                     "text",
                     &payload,
-                    attribution,
+                    batch.attribution.as_ref(),
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
                 let payload_len = payload.len();
-                if let Err(error) = socket
+                let sent = match writer
                     .send_text(
                         payload,
                         state.config.websocket_fragment_bytes,
                         state.config.websocket_max_message_bytes,
                         pending_control.as_ref(),
+                        state.clock_anchor,
                     )
                     .await
                 {
-                    tracing::debug!(component = "websocket_mock", error = %error, "WebSocket send failed");
-                    result.keep_connection = false;
-                    result.close = Some(CloseClassification::SendError);
-                    return result;
-                }
+                    Ok(sent) => sent,
+                    Err(error) => {
+                        tracing::debug!(component = "websocket_mock", error = %error, "WebSocket send failed");
+                        result.close = Some(CloseClassification::SendError);
+                        return Some(result);
+                    }
+                };
                 event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
                 result.response_bytes = result.response_bytes.saturating_add(payload_len);
                 if let Some(control) = pending_control.take() {
-                    capture.push_event(capture_event_with_attribution(
+                    result.events.push(capture_event_with_attribution(
                         "out",
                         control.opcode(),
                         control.payload(),
-                        attribution,
-                        state.clock_anchor.now_ns(),
+                        batch.attribution.as_ref(),
+                        sent.interjected_control_ns
+                            .unwrap_or_else(|| state.clock_anchor.now_ns()),
                         started_ns,
                     ));
                 }
-                capture.push_event(event);
+                result.events.push(event);
             }
             ServerAction::SendPing(payload) => {
                 if state.config.websocket_fragment_bytes > 0 {
@@ -626,21 +744,20 @@ async fn send_actions(
                     "out",
                     "ping",
                     &payload,
-                    attribution,
+                    batch.attribution.as_ref(),
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
-                if socket
+                if writer
                     .send_control(&OutboundControl::Ping(payload))
                     .await
                     .is_err()
                 {
-                    result.keep_connection = false;
                     result.close = Some(CloseClassification::SendError);
-                    return result;
+                    return Some(result);
                 }
                 event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
-                capture.push_event(event);
+                result.events.push(event);
             }
             ServerAction::SendPong(payload) => {
                 if state.config.websocket_fragment_bytes > 0 {
@@ -651,43 +768,40 @@ async fn send_actions(
                     "out",
                     "pong",
                     &payload,
-                    attribution,
+                    batch.attribution.as_ref(),
                     state.clock_anchor.now_ns(),
                     started_ns,
                 );
-                if socket
+                if writer
                     .send_control(&OutboundControl::Pong(payload))
                     .await
                     .is_err()
                 {
-                    result.keep_connection = false;
                     result.close = Some(CloseClassification::SendError);
-                    return result;
+                    return Some(result);
                 }
                 event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
-                capture.push_event(event);
+                result.events.push(event);
             }
             ServerAction::Close => {
-                result.keep_connection = false;
-                result.close = Some(if socket.send_close().await.is_ok() {
-                    capture.push_event(capture_event_with_attribution(
+                if writer.send_close().await.is_ok() {
+                    result.events.push(capture_event_with_attribution(
                         "out",
                         "close",
                         &[],
-                        attribution,
+                        batch.attribution.as_ref(),
                         state.clock_anchor.now_ns(),
                         started_ns,
                     ));
-                    CloseClassification::CleanServerClose
+                    result.close_after_handshake = Some(batch.close_classification);
                 } else {
-                    CloseClassification::SendError
-                });
-                return result;
+                    result.close = Some(CloseClassification::SendError);
+                }
+                return Some(result);
             }
             ServerAction::DropTransport => {
-                result.keep_connection = false;
                 result.close = Some(CloseClassification::DirtyTransportDrop);
-                return result;
+                return Some(result);
             }
             ServerAction::CompleteOperation { completion_tokens } => {
                 result.operation = Some(OperationResult::Completed { completion_tokens });
@@ -698,77 +812,320 @@ async fn send_actions(
         }
     }
     if let Some(control) = pending_control {
-        if socket.send_control(&control).await.is_err() {
-            result.keep_connection = false;
+        if writer.send_control(&control).await.is_err() {
             result.close = Some(CloseClassification::SendError);
         } else {
-            capture.push_event(capture_event_with_attribution(
+            result.events.push(capture_event_with_attribution(
                 "out",
                 control.opcode(),
                 control.payload(),
-                attribution,
+                batch.attribution.as_ref(),
                 state.clock_anchor.now_ns(),
                 started_ns,
             ));
         }
     }
-    result
+    Some(result)
 }
 
-async fn protocol_error(
-    socket: &mut ConnectionSocket,
-    capture: &mut WebSocketCapture,
+async fn run_connection_writer(
+    state: Arc<AppState>,
+    mut writer: ConnectionWriter,
+    mut action_rx: mpsc::Receiver<WriterBatch>,
+    mut control_rx: mpsc::Receiver<WriterControl>,
+    event_tx: mpsc::Sender<WriterEvent>,
+    started_ns: i64,
+) {
+    loop {
+        tokio::select! {
+            biased;
+            control = control_rx.recv() => {
+                let Some(control) = control else {
+                    return;
+                };
+                if handle_writer_control(
+                    &mut writer,
+                    control,
+                    &event_tx,
+                    state.clock_anchor,
+                    started_ns,
+                )
+                .await
+                {
+                    return;
+                }
+            }
+            batch = action_rx.recv() => {
+                let Some(batch) = batch else {
+                    return;
+                };
+                let Some(result) = send_actions(
+                    &state,
+                    &mut writer,
+                    started_ns,
+                    batch,
+                    &mut control_rx,
+                    &event_tx,
+                )
+                .await else {
+                    return;
+                };
+                let should_drop = result.close.is_some();
+                if event_tx.send(WriterEvent::Actions(result)).await.is_err() {
+                    return;
+                }
+                if should_drop {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+async fn service_queued_controls(
+    writer: &mut ConnectionWriter,
+    control_rx: &mut mpsc::Receiver<WriterControl>,
+    event_tx: &mpsc::Sender<WriterEvent>,
     clock_anchor: aiperf_runtime::clock::RealClockAnchor,
     started_ns: i64,
-    attribution: Option<&CaptureAttribution>,
-    fragment_bytes: usize,
-    max_message_bytes: usize,
-    message: &str,
-) -> usize {
-    let payload = serde_json::json!({"type":"error","error":{"message":message}}).to_string();
-    let bytes = payload.len();
-    let mut event = capture_event_with_attribution(
-        "out",
-        "text",
-        payload.as_bytes(),
-        attribution,
-        clock_anchor.now_ns(),
-        started_ns,
-    );
-    if socket
-        .send_text(
-            Bytes::from(payload),
-            fragment_bytes,
-            max_message_bytes,
-            None,
-        )
-        .await
-        .is_ok()
-    {
-        event.relative_ns = clock_anchor.now_ns().saturating_sub(started_ns);
-        capture.push_event(event);
-    } else {
-        capture.close = CloseClassification::SendError;
-        return 0;
+) -> bool {
+    loop {
+        match control_rx.try_recv() {
+            Ok(control) => {
+                if handle_writer_control(writer, control, event_tx, clock_anchor, started_ns).await
+                {
+                    return true;
+                }
+            }
+            Err(mpsc::error::TryRecvError::Empty) => return false,
+            Err(mpsc::error::TryRecvError::Disconnected) => return true,
+        }
     }
-    let is_close_sent = socket.send_close().await.is_ok();
-    if is_close_sent {
-        capture.push_event(capture_event_with_attribution(
-            "out",
-            "close",
-            &[],
+}
+
+async fn wait_until_with_controls(
+    writer: &mut ConnectionWriter,
+    control_rx: &mut mpsc::Receiver<WriterControl>,
+    event_tx: &mpsc::Sender<WriterEvent>,
+    clock_anchor: aiperf_runtime::clock::RealClockAnchor,
+    started_ns: i64,
+    target_ns: i64,
+) -> bool {
+    loop {
+        let delay_ns = target_ns.saturating_sub(clock_anchor.now_ns());
+        if delay_ns <= 0 {
+            return true;
+        }
+        tokio::select! {
+            _ = sleep_ns(delay_ns) => return true,
+            control = control_rx.recv() => {
+                let Some(control) = control else {
+                    return false;
+                };
+                if handle_writer_control(
+                    writer,
+                    control,
+                    event_tx,
+                    clock_anchor,
+                    started_ns,
+                )
+                .await
+                {
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+async fn handle_writer_control(
+    writer: &mut ConnectionWriter,
+    control: WriterControl,
+    event_tx: &mpsc::Sender<WriterEvent>,
+    clock_anchor: aiperf_runtime::clock::RealClockAnchor,
+    started_ns: i64,
+) -> bool {
+    match control {
+        WriterControl::Frame {
+            control,
             attribution,
-            clock_anchor.now_ns(),
-            started_ns,
-        ));
+        } => {
+            if writer.send_control(&control).await.is_err() {
+                return true;
+            }
+            let event = capture_event_with_attribution(
+                "out",
+                control.opcode(),
+                control.payload(),
+                attribution.as_ref(),
+                clock_anchor.now_ns(),
+                started_ns,
+            );
+            event_tx.send(WriterEvent::Control(event)).await.is_err()
+        }
+        WriterControl::CloseReply { attribution } => {
+            let result = if writer.flush().await.is_ok() {
+                Ok(capture_event_with_attribution(
+                    "out",
+                    "close",
+                    &[],
+                    attribution.as_ref(),
+                    clock_anchor.now_ns(),
+                    started_ns,
+                ))
+            } else {
+                Err(())
+            };
+            let _ = event_tx.send(WriterEvent::CloseReply(result)).await;
+            true
+        }
     }
-    capture.terminal = TerminalClassification::ProtocolError;
-    capture.close = if is_close_sent {
-        CloseClassification::ProtocolError
-    } else {
-        CloseClassification::SendError
-    };
-    bytes
+}
+
+async fn await_server_close(
+    state: &AppState,
+    reader: &mut ConnectionReader,
+    control_tx: &mpsc::Sender<WriterControl>,
+    writer_event_rx: &mut mpsc::Receiver<WriterEvent>,
+    capture: &mut WebSocketCapture,
+    started_ns: i64,
+    attribution: Option<&CaptureAttribution>,
+    completed_close: CloseClassification,
+) -> CloseClassification {
+    let timeout = sleep_ns(CLOSE_HANDSHAKE_TIMEOUT_NS);
+    tokio::pin!(timeout);
+    loop {
+        tokio::select! {
+            biased;
+            event = writer_event_rx.recv() => match event {
+                Some(WriterEvent::Control(event)) => capture.push_event(event),
+                Some(WriterEvent::Actions(result)) => {
+                    for event in result.events {
+                        capture.push_event(event);
+                    }
+                    if let Some(close) = result.close {
+                        return close;
+                    }
+                }
+                Some(WriterEvent::CloseReply(result)) => {
+                    if let Ok(event) = result {
+                        capture.push_event(event);
+                    }
+                }
+                None => return CloseClassification::SendError,
+            },
+            message = reader.recv() => match message {
+                Some(Ok(InboundMessage::Close)) => {
+                    capture.push_event(capture_event_with_attribution(
+                        "in",
+                        "close",
+                        &[],
+                        attribution,
+                        state.clock_anchor.now_ns(),
+                        started_ns,
+                    ));
+                    return completed_close;
+                }
+                Some(Ok(InboundMessage::Ping(payload))) => {
+                    capture.push_event(capture_event_with_attribution(
+                        "in",
+                        "ping",
+                        &payload,
+                        attribution,
+                        state.clock_anchor.now_ns(),
+                        started_ns,
+                    ));
+                    if control_tx.try_send(WriterControl::Frame {
+                        control: OutboundControl::Pong(payload),
+                        attribution: attribution.cloned(),
+                    }).is_err() {
+                        return CloseClassification::SendError;
+                    }
+                }
+                Some(Ok(InboundMessage::Pong(payload))) => capture.push_event(
+                    capture_event_with_attribution(
+                        "in",
+                        "pong",
+                        &payload,
+                        attribution,
+                        state.clock_anchor.now_ns(),
+                        started_ns,
+                    )
+                ),
+                Some(Ok(InboundMessage::Text(_) | InboundMessage::Binary(_)))
+                | Some(Err(_))
+                | None => return CloseClassification::ReceiveError,
+            },
+            _ = &mut timeout => return CloseClassification::CloseHandshakeTimeout,
+        }
+    }
+}
+
+async fn await_client_close_reply(
+    state: &AppState,
+    control_tx: &mpsc::Sender<WriterControl>,
+    writer_event_rx: &mut mpsc::Receiver<WriterEvent>,
+    capture: &mut WebSocketCapture,
+    attribution: Option<CaptureAttribution>,
+) -> CloseClassification {
+    if control_tx
+        .try_send(WriterControl::CloseReply { attribution })
+        .is_err()
+    {
+        return CloseClassification::SendError;
+    }
+    let timeout = sleep_ns(CLOSE_HANDSHAKE_TIMEOUT_NS);
+    tokio::pin!(timeout);
+    loop {
+        tokio::select! {
+            biased;
+            event = writer_event_rx.recv() => match event {
+                Some(WriterEvent::CloseReply(Ok(event))) => {
+                    capture.push_event(event);
+                    return CloseClassification::ClientClose;
+                }
+                Some(WriterEvent::CloseReply(Err(()))) | None => {
+                    return CloseClassification::SendError;
+                }
+                Some(WriterEvent::Control(event)) => capture.push_event(event),
+                Some(WriterEvent::Actions(result)) => {
+                    for event in result.events {
+                        capture.push_event(event);
+                    }
+                    if let Some(close) = result.close {
+                        return close;
+                    }
+                }
+            },
+            _ = &mut timeout => {
+                tracing::debug!(component = "websocket_mock", now_ns = state.clock_anchor.now_ns(), "WebSocket close reply timed out");
+                return CloseClassification::CloseHandshakeTimeout;
+            }
+        }
+    }
+}
+
+fn queue_protocol_error(
+    action_tx: &mpsc::Sender<WriterBatch>,
+    attribution: Option<CaptureAttribution>,
+    now_ns: i64,
+    message: &str,
+) -> bool {
+    action_tx
+        .try_send(WriterBatch {
+            actions: vec![
+                ServerAction::SendText {
+                    at_ns: now_ns,
+                    payload: Bytes::from(
+                        serde_json::json!({"type":"error","error":{"message":message}}).to_string(),
+                    ),
+                },
+                ServerAction::Close,
+            ],
+            attribution,
+            close_classification: CloseClassification::ProtocolError,
+        })
+        .is_ok()
 }
 
 #[cfg(test)]
@@ -1390,7 +1747,7 @@ fn ms_to_ns(milliseconds: f64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::SinkExt;
+    use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::WebSocketStream;
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::Message as ClientMessage;
@@ -1436,6 +1793,23 @@ mod tests {
             }
             self.state.websocket_captures.snapshot()
         }
+
+        async fn wait_for_request_total(&self, endpoint: &str, status: &str, expected: u64) {
+            for _ in 0..100 {
+                let actual = self
+                    .state
+                    .recorder
+                    .metrics
+                    .aiperf
+                    .REQUESTS_TOTAL
+                    .with_label_values(&[endpoint, "POST", status])
+                    .get();
+                if actual == expected {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        }
     }
 
     impl Drop for TestServer {
@@ -1463,6 +1837,19 @@ mod tests {
             }
         }
         panic!("socket ended before {expected_type}");
+    }
+
+    async fn answer_server_close(socket: &mut ClientSocket) {
+        while let Some(message) = socket.next().await {
+            match message.expect("read server close") {
+                ClientMessage::Close(_) => {
+                    socket.flush().await.expect("flush reciprocal close");
+                    return;
+                }
+                _ => continue,
+            }
+        }
+        panic!("socket ended before server close");
     }
 
     #[test]
@@ -1807,6 +2194,7 @@ mod tests {
                 .as_str()
                 .is_some_and(|message| message.contains("committed input"))
         );
+        answer_server_close(&mut rejected).await;
 
         let mut socket = server.connect("/mock/websocket/realtime").await;
         send_json(
@@ -1822,6 +2210,8 @@ mod tests {
         assert_eq!(done["response"]["usage"]["output_tokens"], 1);
 
         let endpoint = RouteKind::Realtime.endpoint_label();
+        server.wait_for_request_total(endpoint, "500", 1).await;
+        server.wait_for_request_total(endpoint, "200", 1).await;
         assert_eq!(
             server
                 .state
@@ -1943,14 +2333,11 @@ mod tests {
             if let Some(terminal) = terminal {
                 read_json_event(&mut socket, terminal).await;
             } else {
-                while let Some(message) = socket.next().await {
-                    match message {
-                        Ok(ClientMessage::Close(_)) | Err(_) => break,
-                        _ => {}
-                    }
-                }
+                answer_server_close(&mut socket).await;
             }
             let endpoint = RouteKind::Turns.endpoint_label();
+            let captures = server.wait_for_captures(1).await;
+            server.wait_for_request_total(endpoint, status, 1).await;
             assert_eq!(
                 server
                     .state
@@ -1973,7 +2360,6 @@ mod tests {
                     .get(),
                 0
             );
-            let captures = server.wait_for_captures(1).await;
             let value = serde_json::to_value(&captures[0]).expect("capture serializes");
             assert_eq!(value["close"], close);
         }

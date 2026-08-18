@@ -45,7 +45,7 @@ futures = { workspace = true }
 bytes = { workspace = true }
 blake3 = { workspace = true }
 axum = { workspace = true, features = ["macros", "multipart", "ws"] }
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
 tower = { version = "0.5", features = ["util"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 # `client-legacy` adds the pooled HTTP client used by `--fetch-content-urls` to
@@ -91,6 +91,7 @@ uring = ["dep:monoio"]
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 futures = { workspace = true }
+tokio-tungstenite = { workspace = true }
 
 [[example]]
 name = "loadgen"
