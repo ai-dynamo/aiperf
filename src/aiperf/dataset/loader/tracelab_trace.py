@@ -368,12 +368,18 @@ class TraceLabTraceDatasetLoader(BaseFileLoader):
             max_context_length=max_ctx,
         )
         if not kept:
-            raise DatasetLoaderError(
+            msg = (
                 f"No eligible TraceLab traces in '{self.filename}' after "
                 f"filter-then-cap (scanned {stats.scanned}, "
                 f"--max-context-length={max_ctx}, "
                 f"--num-dataset-entries={num_entries})."
             )
+            if stats.smallest_observed > 0:
+                msg += (
+                    f"\nSmallest trace requires {stats.smallest_observed:,} tokens; "
+                    f"raise --max-context-length to at least that to admit any trace."
+                )
+            raise DatasetLoaderError(msg)
         return {tid: [trace] for tid, trace in kept}
 
     def convert_to_conversations(
