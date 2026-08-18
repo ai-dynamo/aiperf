@@ -4,6 +4,7 @@
 //! Matrix episode execution over a Rust-owned NativeGraph callback and verifier facts.
 
 use std::{
+    cell::RefCell,
     fmt::{self, Display, Formatter},
     rc::Rc,
     sync::Arc,
@@ -12,7 +13,10 @@ use std::{
 use async_trait::async_trait;
 
 use crate::{
-    engine::application::Application,
+    engine::{
+        application::Application,
+        record_lane::EvalNodeRecordArtifact,
+    },
     eval::{
         DockerProcessSandbox, DockerRuntime, HarborCompletedEvaluation,
         HarborEvaluationCoordinator, HarborLifecycleAgentContract, HarborLifecycleRequest,
@@ -56,6 +60,7 @@ pub struct DockerNativeGraphEpisodeExecutor {
     application: Rc<Application>,
     model_runtime: ModelRuntimeConfig,
     secrets: Rc<dyn SecretProvider>,
+    record_artifact: Option<Rc<RefCell<EvalNodeRecordArtifact>>>,
 }
 
 enum DockerExecutorRuntime {
@@ -146,7 +151,17 @@ impl DockerNativeGraphEpisodeExecutor {
             application,
             model_runtime,
             secrets,
+            record_artifact: None,
         })
+    }
+
+    /// Attaches one suite-owned coordinator artifact to every episode callback.
+    pub(crate) fn with_record_artifact(
+        mut self,
+        artifact: Rc<RefCell<EvalNodeRecordArtifact>>,
+    ) -> Self {
+        self.record_artifact = Some(artifact);
+        self
     }
 
     fn lifecycle_for_assignment(
@@ -194,6 +209,9 @@ impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
                 error.to_string(),
             ))
         })?;
+        if let Some(artifact) = &self.record_artifact {
+            callback = callback.with_record_artifact(artifact.clone());
+        }
         let execution = match &self.runtime {
             DockerExecutorRuntime::Host => {
                 self.sandbox

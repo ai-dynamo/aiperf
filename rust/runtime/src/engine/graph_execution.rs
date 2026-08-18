@@ -62,6 +62,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::engine::execute::DEFAULT_ENDPOINT_PROFILE_ID;
+use crate::engine::record_lane::EvalNodeRecordArtifact;
 use crate::engine::records::{CapturedHttpExchange, CapturedModelOutput, CapturedRecord};
 use crate::engine::registry::{NativeTransportExecution, RunContext, ValidatedEndpointProfileV2};
 use crate::eval::{GENERATION_METADATA_KEY, validate_native_graph_trace_plan};
@@ -614,6 +615,7 @@ pub(crate) async fn execute_native_graph_trace(
     default_model: String,
     raw_enabled: bool,
     program: GraphTraceProgram,
+    record_artifact: Option<Rc<RefCell<EvalNodeRecordArtifact>>>,
 ) -> Result<NativeGraphTransportEvidence> {
     let clock_anchor = RealClockAnchor::now();
     let clock: Rc<dyn Clock> = RealClock::from_anchor(clock_anchor);
@@ -678,14 +680,14 @@ pub(crate) async fn execute_native_graph_trace(
                     let event = event.ok_or_else(|| {
                         anyhow!("native graph evidence receiver closed before trace completion")
                     })?;
-                    observe_native_graph_evidence(&mut evidence, event)?;
+                    observe_native_graph_evidence(&mut evidence, event, record_artifact.as_ref())?;
                 }
             }
         }
     };
     execution_result.map_err(|error| anyhow!(error.to_string()))?;
     while let Ok(event) = receiver.try_recv() {
-        observe_native_graph_evidence(&mut evidence, event)?;
+        observe_native_graph_evidence(&mut evidence, event, record_artifact.as_ref())?;
     }
     ensure!(
         evidence.completed_traces == 1,
@@ -698,9 +700,16 @@ pub(crate) async fn execute_native_graph_trace(
 fn observe_native_graph_evidence(
     evidence: &mut NativeGraphTransportEvidence,
     event: NativeGraphEvidenceEvent,
+    record_artifact: Option<&Rc<RefCell<EvalNodeRecordArtifact>>>,
 ) -> Result<()> {
     match event {
-        NativeGraphEvidenceEvent::Record(_record) => {
+        NativeGraphEvidenceEvent::Record(record) => {
+            if let Some(artifact) = record_artifact {
+                artifact
+                    .borrow_mut()
+                    .append(&record)
+                    .context("exporting completed native graph node record")?;
+            }
             evidence.model_records = evidence
                 .model_records
                 .checked_add(1)

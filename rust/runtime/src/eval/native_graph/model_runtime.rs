@@ -4,8 +4,10 @@
 //! Resolution of immutable NativeGraph model bindings through product seams.
 
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -21,6 +23,7 @@ use crate::{
         application::Application,
         execute::load_tokenizer,
         graph_execution::{NativeGraphTransportEvidence, execute_native_graph_trace},
+        record_lane::EvalNodeRecordArtifact,
         registry::{NativeTransportExecution, WorkloadRequirements},
     },
     eval::GraphLoweringRequest,
@@ -483,6 +486,7 @@ struct NativeGraphModelStageInputs {
 pub struct EngineNativeGraphEpisodeCallback {
     inputs: NativeGraphModelStageInputs,
     program: crate::graph::model::GraphTraceProgram,
+    record_artifact: Option<Rc<RefCell<EvalNodeRecordArtifact>>>,
     evidence: Option<NativeGraphTransportEvidence>,
 }
 
@@ -547,8 +551,18 @@ impl EngineNativeGraphEpisodeCallback {
         Ok(Self {
             inputs,
             program,
+            record_artifact: None,
             evidence: None,
         })
+    }
+
+    /// Attaches a suite-owned coordinator artifact for completed model-node records.
+    pub(crate) fn with_record_artifact(
+        mut self,
+        artifact: Rc<RefCell<EvalNodeRecordArtifact>>,
+    ) -> Self {
+        self.record_artifact = Some(artifact);
+        self
     }
 
     /// Returns the completed graph's observed transport facts.
@@ -597,6 +611,7 @@ impl NativeGraphEpisodeCallback for EngineNativeGraphEpisodeCallback {
             self.inputs.default_model.clone(),
             self.inputs.raw_enabled,
             self.program.clone(),
+            self.record_artifact.clone(),
         )
         .await
         .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
