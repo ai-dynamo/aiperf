@@ -116,6 +116,29 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
     return PhaseType.CONCURRENCY
 
 
+def apply_cancellation(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Route --request-cancellation-rate/-delay onto a phase dict.
+
+    Shared with the YAML+CLI resolver so both paths carry the same shape and
+    the same dependency guard.
+    """
+    delay_set = "request_cancellation_delay" in cli.model_fields_set
+    if cli.request_cancellation_rate:
+        cancel: dict[str, Any] = {"rate": cli.request_cancellation_rate}
+        if delay_set:
+            cancel["delay"] = cli.request_cancellation_delay
+        prof["cancellation"] = cancel
+    elif delay_set:
+        # Mirror --arrival-smoothness gating: refuse to silently drop a
+        # user-supplied flag whose dependency wasn't met.
+        raise ValueError(
+            "--request-cancellation-delay requires --request-cancellation-rate "
+            "to be set (cancellation is disabled when rate is unset). "
+            "Pass --request-cancellation-rate > 0 to enable cancellation, or "
+            "drop --request-cancellation-delay."
+        )
+
+
 def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:
     fields_set = cli.model_fields_set
     for field, key in _RAMP_FIELDS:
@@ -283,21 +306,7 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
         # Deliberate override of the PhaseConfig default (which would
         # leave it unbounded).
         prof.setdefault("requests", 10)
-    delay_set = "request_cancellation_delay" in cli.model_fields_set
-    if cli.request_cancellation_rate:
-        cancel: dict[str, Any] = {"rate": cli.request_cancellation_rate}
-        if delay_set:
-            cancel["delay"] = cli.request_cancellation_delay
-        prof["cancellation"] = cancel
-    elif delay_set:
-        # Mirror --arrival-smoothness gating: refuse to silently drop a
-        # user-supplied flag whose dependency wasn't met.
-        raise ValueError(
-            "--request-cancellation-delay requires --request-cancellation-rate "
-            "to be set (cancellation is disabled when rate is unset). "
-            "Pass --request-cancellation-rate > 0 to enable cancellation, or "
-            "drop --request-cancellation-delay."
-        )
+    apply_cancellation(prof, cli)
 
 
 def _maybe_auto_promote_trace(
