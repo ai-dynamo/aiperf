@@ -2,277 +2,80 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prevent a sealed NativeGraph environment adapter from mutating the artifacts the independent verifier will score.
+**Goal:** Preserve real environment actions while preventing a terminal adapter from mutating verifier inputs.
 
-**Architecture:** Replace the rollout adapter's `docker exec` child with a labelled, task-owned adapter container attached over strict stdin/stdout. The task container keeps the sole mutable worktree; the adapter container has no task-worktree mount and is reaped before artifact collection and verification.
+**Architecture:** A sealed rollout adapter runs in a labelled no-network sidecar with a private source-derived workspace. It uploads a bounded workspace patch with each transition. Rust validates and atomically commits the patch to the verifier workspace before accepting the transition. No terminal or later message can commit another patch.
 
-**Tech Stack:** Rust 2024, Tokio, Docker CLI, strict JSONL adapter protocol, `aiperf-runtime`, `aiperf-e2e-tests`.
+**Tech Stack:** Rust 2024, Tokio, Docker CLI, strict JSONL, bounded artifact store, `aiperf-runtime`, `aiperf-e2e-tests`.
 
 **Spec:** `docs/superpowers/specs/2026-08-18-native-harbor-adapter-filesystem-isolation-design.md`
 
 ## Global Constraints
 
-- Apply the isolated-container path only to sealed NativeGraph rollout environment adapters; legacy starts retain their existing path.
-- Preserve exact task-minted authorization, declared argv, empty environment, `no-network`, finite deadlines, full immutable ownership labels, and descriptor-only evidence.
-- Never mount the mutable task worktree into the adapter container or expose Docker, model, secret, task-container, or verifier authority to it.
-- Fail closed and skip verification on adapter start, protocol, identity, or cleanup failure.
-- Commit forward-only and stage complete files only.
+- Only sealed NativeGraph rollout environment adapters use this path.
+- Keep exact authorization, absolute in-image `argv`, empty environment, no-network, finite deadlines, labels, and descriptor-only evidence.
+- Patches have only normalized declared relative paths and bounded regular-file content.
+- Any patch, adapter, protocol, identity, or cleanup error skips verification.
+- Commit complete files through forward-only history.
 
 ---
 
-### Task 1: Capture the artifact-mutation product RED
+### Task 1: Seal workspace patch authoring
 
-**Files:**
-- Modify: `rust/e2e-tests/tests/test_harbor_native_graph_rollout.rs`
-- Modify only if required: `rust/e2e-tests/tests/common/mod.rs`
+**Files:** `runtime/src/eval/native_graph/{package.rs,rollout_evidence.rs}`, `runtime/tests/{native_graph_package.rs,native_graph_rl_scored.rs}`.
 
-**Interfaces:**
-- Consumes: `write_rollout_task`, `AIPerfHarness`, and the existing selected-action environment adapter fixture.
-- Produces: `environment_adapter_cannot_mutate_declared_task_artifacts_after_terminal`.
+**Interfaces:** Produces immutable `WorkspacePatchLimits`, declared mutable paths, and `FrozenWorkspacePatch { digest, transition_operation, action, observation }` owned by the rollout receipt.
 
-- [ ] **Step 1: Write the failing Docker E2E**
+- [ ] Write RED tests: an imported rollout requires positive patch limits and unique normalized paths; an accepted transition has exactly one patch whose action, operation, and observation match.
+- [ ] Run `RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_package workspace_patch -- --nocapture` and `native_graph_rl_scored workspace_patch`; expect missing contract/types.
+- [ ] Add plan identity material and a private receipt method that accepts the patch descriptor only once before the matching transition.
+- [ ] Re-run both tests green; commit full files as `feat(eval): seal Harbor workspace patch evidence`.
 
-Make the terminal-transition adapter immediately execute `printf north > /work/result.txt`. Configure the selected policy to produce `south`; verifier scores `south` as `0.75` and `north` as `0.25`.
+### Task 2: Parse and apply patch archives without unsafe filesystem effects
 
-```rust
-assert_eq!(result.reward(), 0.75);
-assert_eq!(result.execution(), EpisodeExecution::Completed);
-assert_eq!(policy_calls.load(Ordering::Relaxed), 2);
-```
+**Files:** Create `runtime/src/eval/native_graph/workspace_patch.rs`; modify `runtime/src/eval/native_graph/{mod.rs,factories.rs}`; create `runtime/tests/native_graph_workspace_patch.rs`.
 
-- [ ] **Step 2: Verify RED**
+**Interfaces:** `apply_workspace_patch(root, artifact, limits, mutable_paths) -> Result<ArtifactDigest, NativeGraphWorkspacePatchError>` reads only from the bounded artifact store and returns no payload/path.
 
-Run:
+- [ ] Write RED tests for a valid `result.txt` patch and unchanged workspace after `../x`, `/work/x`, symlink, device, duplicate path, undeclared path, size overflow, count overflow, and total overflow.
+- [ ] Run `RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_workspace_patch -- --nocapture`; expect missing parser/apply API.
+- [ ] Parse into a fresh staging directory, reject all invalid entries before destination writes, fsync regular files, then atomically rename only declared paths.
+- [ ] Re-run green; commit full files as `feat(eval): apply sealed Harbor workspace patches`.
 
-```bash
-source .venv/bin/activate
-cd rust
-AIPERF_E2E_BIN=$PWD/target/release/aiperf cargo test -p aiperf-e2e-tests --test test_harbor_native_graph_rollout environment_adapter_cannot_mutate_declared_task_artifacts_after_terminal -- --ignored --exact --nocapture
-```
+### Task 3: Make patch commit part of strict transition admission
 
-Expected: verifier sees the late `north` write and returns `0.25`.
+**Files:** `runtime/src/eval/native_graph/supervision.rs`, `runtime/src/graph/tools/environment_stepper.rs`, `runtime/tests/{native_graph_rl.rs,native_graph_scored_episode.rs}`.
 
-- [ ] **Step 3: Commit the whole RED test file**
+**Interfaces:** Strict `Transition` carries an uploaded workspace-patch reference. The host applies it before the transition is committed to rollout evidence.
 
-```bash
-git add rust/e2e-tests/tests/test_harbor_native_graph_rollout.rs
-git commit -m "test(eval): expose Harbor adapter artifact mutation"
-```
+- [ ] Write RED tests for missing, foreign-operation, replayed, and post-terminal patch references; each must fail before transition/evidence mutation.
+- [ ] Run `RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_rl workspace_patch -- --nocapture`; expect no transition field/admission path.
+- [ ] Add the strict DTO/state-machine field, require an existing bounded artifact, and invoke the host-owned apply callback before accepting the transition.
+- [ ] Re-run `native_graph_rl` and `native_graph_scored_episode` green; commit full files as `feat(eval): commit Harbor transition workspace patches`.
 
-### Task 2: Add an isolated, ownership-safe adapter-container spawner
+### Task 4: Run rollout adapter in an isolated sidecar
 
-**Files:**
-- Modify: `rust/runtime/src/eval/execution/docker_process.rs:2823-2975`
-- Modify: `rust/runtime/src/eval/execution/docker_process.rs:4412-4495`
-- Test: `rust/runtime/tests/harbor_docker_runtime.rs`
+**Files:** `runtime/src/eval/execution/{docker_runtime.rs,docker_process.rs,native_graph_episode.rs}`, `runtime/tests/harbor_docker_runtime.rs`.
 
-**Interfaces:**
-- Consumes: `DockerAdapterSpawnerRequest`, `NativeGraphAdapterAuthorization`, `AdapterSpawnRequest`, and exact ownership labels.
-- Produces: `DockerCliIsolatedAdapterSpawner` and `DockerCliIsolatedAdapterLease` with a full immutable `adapter_container_id`.
+**Interfaces:** A Docker rollout lease starts a labelled sidecar from exact authorization, with a private source-derived workspace and full immutable sidecar ID. Task-container workspace is never a sidecar mount.
 
-- [ ] **Step 1: Write focused RED tests**
+- [ ] Write RED tests asserting `--network none`, exact labels plus `aiperf.adapter-role=environment`, private-only workspace mount, no verifier-workspace mount, and no attach/kill on label mismatch.
+- [ ] Run `RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test harbor_docker_runtime isolated_adapter_ -- --nocapture`; expect current `docker exec` behavior.
+- [ ] Add the dedicated builder/spawner/lease. Attach strict stdio and make fence/reap target only the stored sidecar ID. Reap sealed sidecars before collection; leave legacy ordering alone.
+- [ ] Re-run green; commit full files as `feat(eval): isolate Harbor environment adapter containers`.
 
-Use the fake `DockerRuntime` to inspect the new create request:
+### Task 5: Prove terminal immutability in product execution
 
-```rust
-assert!(args.windows(2).any(|pair| pair == ["--network", "none"]));
-assert!(!args.iter().any(|arg| arg.contains(":/work")));
-assert!(args.iter().any(|arg| arg == "aiperf.adapter-role=environment"));
-```
+**Files:** `rust/e2e-tests/tests/test_harbor_native_graph_rollout.rs`, `docs/specs/native-harbor-agentic-benchmarking.md`, and `llms.txt` if its architecture entry changes.
 
-Then return missing or foreign ownership labels and assert no attach, kill, or verifier call occurs.
+**Interfaces:** The E2E adapter uploads a `south` patch, sends terminal, then writes `north` to its private workspace. The verifier must receive `south` and reward `0.75`.
 
-- [ ] **Step 2: Verify RED**
+- [ ] Write the ignored Docker RED and run it with the current release CLI; expect failure until Tasks 1–4 are wired.
+- [ ] Rebuild CLI and run the ignored suite. Assert two selected model calls, no adapter secret/egress, sidecar reaped before collection, verifier then task removal, and reward `0.75`.
+- [ ] Update current-truth docs; run `check_agent_files_sync.py` and `check_docs_current.py`; commit full files as `test(eval): prove Harbor verifier artifact immutability`.
 
-Run:
+### Task 6: Final verification and review
 
-```bash
-source .venv/bin/activate
-cd rust
-RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test harbor_docker_runtime isolated_adapter_ -- --nocapture
-```
-
-Expected: current code uses `docker exec -i` in the task container and has no isolated create request.
-
-- [ ] **Step 3: Implement the smallest dedicated builder**
-
-Add this private Docker boundary; do not reuse `ContainerWorkspace`:
-
-```rust
-fn create_isolated_adapter_container(
-    runtime: &dyn DockerRuntime,
-    name: &str,
-    image: &str,
-    labels: &BTreeMap<String, String>,
-    resources: Option<&ResourceLimits>,
-    deadline: Duration,
-) -> Result<(), EvalExecutionError>
-```
-
-Build `docker create --network none` with exact labels, the role label, optional resource caps, `image`, and `sleep infinity`. Reject any request containing a workspace mount, workdir, or environment. Resolve the complete labelled ID before start/attach. Make terminate/fence target only the stored adapter ID.
-
-- [ ] **Step 4: Verify GREEN and commit**
-
-Run the Task 2 test command, then:
-
-```bash
-git add rust/runtime/src/eval/execution/docker_process.rs rust/runtime/tests/harbor_docker_runtime.rs
-git commit -m "feat(eval): isolate Harbor environment adapters"
-```
-
-### Task 3: Change sealed rollout cleanup order
-
-**Files:**
-- Modify: `rust/runtime/src/eval/execution/docker_process.rs:350-475`
-- Modify: `rust/runtime/src/eval/execution/native_graph_episode.rs:215-260`
-- Test: `rust/runtime/tests/native_graph_scored_episode.rs`
-- Test: `rust/runtime/tests/harbor_docker_runtime.rs`
-
-**Interfaces:**
-- Consumes: `NativeGraphLeaseRolloutStart`, Docker rollout lease, and the isolated spawner from Task 2.
-- Produces: a rollout-only cleanup capability that reaps the adapter before collection while leaving the task container running.
-
-- [ ] **Step 1: Write lifecycle RED tests**
-
-Record trusted rollout events and assert:
-
-```rust
-assert!(adapter_kill < artifact_collection);
-assert!(artifact_collection < verifier);
-assert!(verifier < task_container_remove);
-```
-
-For callback/protocol failure assert one adapter kill, no collection, no verifier, and task reverse cleanup.
-
-- [ ] **Step 2: Verify RED**
-
-Run:
-
-```bash
-source .venv/bin/activate
-cd rust
-RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_scored_episode docker_rollout_only_episode_ -- --nocapture
-```
-
-Expected: callback lifecycle currently verifies before adapter cleanup.
-
-- [ ] **Step 3: Implement an explicit lease capability**
-
-Add:
-
-```rust
-fn reaps_adapter_before_artifact_lifecycle(&self) -> bool;
-```
-
-The isolated Docker rollout lease returns `true`; legacy leases return `false`. In `run_native_graph_episode_callback`, reap successful `true` leases after callback success and before `after_callback`; retain immediate callback-error cleanup. Do not condition on package names.
-
-- [ ] **Step 4: Verify GREEN and commit**
-
-Run the Task 3 test command and the Task 2 tests, then:
-
-```bash
-git add rust/runtime/src/eval/execution/docker_process.rs rust/runtime/src/eval/execution/native_graph_episode.rs rust/runtime/tests/native_graph_scored_episode.rs rust/runtime/tests/harbor_docker_runtime.rs
-git commit -m "fix(eval): reap isolated Harbor adapters before verification"
-```
-
-### Task 4: Require an image-resident Docker adapter command and close E2E
-
-**Files:**
-- Modify: `rust/runtime/src/eval/native_graph/package.rs`
-- Modify: `rust/runtime/tests/native_graph_package.rs`
-- Modify: `rust/e2e-tests/tests/test_harbor_native_graph_rollout.rs`
-- Modify: `docs/specs/native-harbor-agentic-benchmarking.md`
-- Modify only if applicable: `llms.txt`
-
-**Interfaces:**
-- Consumes: immutable selected environment adapter `argv` and `executable`, and isolated Docker start.
-- Produces: preflight refusal for non-image Docker commands and current documentation of filesystem isolation.
-
-- [ ] **Step 1: Write package RED**
-
-Add a rollout fixture whose environment adapter `argv[0]` is `environment/adapter.sh` or `/work/adapter.sh` and assert preflight returns `NativeGraphPackageError::InvalidAdapterExecutableLocation`. Keep `argv = ["/environment/environment.sh"]` with `executable = "environment/environment.sh"` valid.
-
-- [ ] **Step 2: Verify RED**
-
-Run:
-
-```bash
-source .venv/bin/activate
-cd rust
-RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_package image_resident_environment_adapter -- --nocapture
-```
-
-Expected: importer currently accepts relative and `/work` Docker commands.
-
-- [ ] **Step 3: Add immutable location validation**
-
-For Docker rollout environments, validate the selected runtime command before provisioning while retaining `executable` as source provenance:
-
-```rust
-if path.starts_with("/work/") || !path.starts_with('/') {
-    return Err(NativeGraphPackageError::InvalidAdapterExecutableLocation(selector));
-}
-```
-
-Keep raw source paths out of public errors. Do not add a manifest field or an adapter-image registry.
-
-- [ ] **Step 4: Rebuild the CLI and verify product GREEN**
-
-Run:
-
-```bash
-source .venv/bin/activate
-cd rust
-RUSTC_WRAPPER= cargo build -p aiperf-cli --release
-AIPERF_E2E_BIN=$PWD/target/release/aiperf cargo test -p aiperf-e2e-tests --test test_harbor_native_graph_rollout -- --ignored --nocapture
-```
-
-Expected: mutation regression scores `0.75`; malformed policy and protocol failures still skip verification; egress isolation and selected-action tests stay green.
-
-- [ ] **Step 5: Update current-truth docs and commit**
-
-Describe the environment adapter as an isolated task-owned container, not a process in the mutable task worktree. Run:
-
-```bash
-/usr/bin/python3 tools/check_agent_files_sync.py
-/usr/bin/python3 tools/check_docs_current.py
-```
-
-Then commit complete files:
-
-```bash
-git add rust/runtime/src/eval/native_graph/package.rs rust/runtime/tests/native_graph_package.rs rust/e2e-tests/tests/test_harbor_native_graph_rollout.rs docs/specs/native-harbor-agentic-benchmarking.md llms.txt
-git commit -m "feat(eval): enforce Harbor adapter filesystem isolation"
-```
-
-### Task 5: Final verification and strict review
-
-**Files:**
-- Verify only: all Task 1–4 files.
-
-**Interfaces:**
-- Consumes: the complete isolated rollout path.
-- Produces: reproducible proof that an adapter cannot alter verifier artifacts after terminal.
-
-- [ ] **Step 1: Run focused runtime suites**
-
-```bash
-source .venv/bin/activate
-cd rust
-RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_scored_episode -- --nocapture
-RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test harbor_docker_runtime -- --nocapture
-RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_rl_scored -- --nocapture
-```
-
-- [ ] **Step 2: Run formatting and diff checks**
-
-```bash
-source .venv/bin/activate
-cd rust
-cargo fmt --all --check
-git diff --check
-```
-
-- [ ] **Step 3: Require a fresh strict review**
-
-Review the full diff for task-container kills, raw filesystem/path leaks, unlabelled Docker operations, credential propagation, and lifecycle ordering. Do not claim completion until the mutation E2E, failure paths, formatting, and review are green.
+- [ ] Run `native_graph_workspace_patch`, `native_graph_rl`, `native_graph_scored_episode`, and `harbor_docker_runtime` with `--features engine`; run the ignored rollout E2E with the rebuilt CLI.
+- [ ] Run `cargo fmt --all --check` and `git diff --check`.
+- [ ] Request strict review for archive/path safety, post-terminal commits, sidecar ownership, labels, no secret propagation, and cleanup order.
