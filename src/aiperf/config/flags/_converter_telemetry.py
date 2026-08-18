@@ -333,13 +333,23 @@ def _resolve_stream_domains(value: Any) -> tuple[bool, bool]:
     )
 
 
-def build_otel(cli: CLIConfig) -> dict[str, Any]:
-    """Translate OTel CLI flags into the first-class OTel config dict."""
+def build_otel(cli: CLIConfig, *, base_metrics_url: bool = False) -> dict[str, Any]:
+    """Translate OTel CLI flags into the first-class OTel config dict.
+
+    ``base_metrics_url`` says a YAML config file already supplies
+    ``otel.metrics_url``. Without it, ``-f base.yaml --gen-ai-provider X``
+    is rejected for missing a flag whose value the config file provides --
+    the same shape as ``build_mlflow``'s ``base_tracking_uri``.
+    """
     otel: dict[str, Any] = {}
     cli_set = cli.model_fields_set
 
     if "otel_url" in cli_set and cli.otel_url is not None:
         otel["metrics_url"] = _normalize_otel_metrics_url(cli.otel_url)
+    elif base_metrics_url:
+        # The config file owns metrics_url; emit only the overrides so the
+        # deep-merge leaves it in place.
+        pass
     else:
         # ``--stream`` and ``--gen-ai-provider`` are OTel-only secondary
         # flags: they only take effect when ``--otel-url`` is set. Refuse

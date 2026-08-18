@@ -174,3 +174,28 @@ def test_api_host_without_any_port_still_errors(base_yaml: Path) -> None:
     """The guard stands when neither the CLI nor the YAML supplies a port."""
     with pytest.raises(ValueError, match="api_host requires api_port"):
         resolve_config(cli(api_host="0.0.0.0"), base_yaml)
+
+
+@pytest.fixture
+def otel_yaml(base_yaml: Path, tmp_path: Path) -> Path:
+    cfg = tmp_path / "with_otel.yaml"
+    cfg.write_text(
+        base_yaml.read_text().replace(
+            "  phases:",
+            "  otel:\n    metrics_url: http://yaml-otel:4318/v1/metrics\n  phases:",
+        )
+    )
+    return cfg
+
+
+def test_gen_ai_provider_accepts_otel_url_from_yaml(otel_yaml: Path) -> None:
+    """Secondary OTel flags must not demand a URL the config file supplies."""
+    resolved = resolve_config(cli(gen_ai_provider="nvidia"), otel_yaml)
+    assert resolved.benchmark.otel.gen_ai_provider == "nvidia"
+    assert str(resolved.benchmark.otel.metrics_url).startswith("http://yaml-otel")
+
+
+def test_otel_secondary_flag_without_any_url_still_errors(base_yaml: Path) -> None:
+    """The guard stands when neither source supplies a metrics URL."""
+    with pytest.raises(ValueError, match="requires --otel-url"):
+        resolve_config(cli(gen_ai_provider="nvidia"), base_yaml)
