@@ -152,6 +152,97 @@ When you fix a field, just delete its line from the baseline; the
 test starts enforcing the constraint on that field on the next CI
 run.
 
+## CLI flag routing under `--config`
+
+`resolve_config` merges a YAML config file with explicitly-set CLI
+flags. Historically it only knew how to route a subset of `CLIConfig`
+into the merged dict, and **every other flag was discarded without a
+word** — `aiperf profile -f base.yaml --random-seed 42` ran with a
+different seed than the user asked for and said nothing. For a
+benchmarking tool that silently corrupts published numbers.
+
+The invariant now in force:
+
+> A CLI flag passed alongside `--config` either changes the resolved
+> config, or raises an error naming the flag. It is never silently
+> ignored.
+
+`CLIConfig` is the source of truth. Every one of its fields must be
+classified in
+[`_config_flag_routing.py`](https://github.com/ai-dynamo/aiperf/tree/main/src/aiperf/config/flags/_config_flag_routing.py):
+
+| Set | Meaning |
+| --- | --- |
+| `ROUTED_UNDER_CONFIG` | Reaches `AIPerfConfig`. Derived from the resolver's own routing tables where possible, so it cannot drift from them. |
+| `UNROUTED_UNDER_CONFIG` | Known not to route. Raises `ConfigurationError` naming the flag. |
+| `EXEMPT_FROM_CONFIG_ROUTING` | Not benchmark config at all (`--config` itself). Each entry needs a stated reason. |
+| `COMPANION_ROUTED` | Routes only alongside another flag (`--model-selection-strategy` needs `--model-names`). Rejected when the companion is absent. |
+| `MAGIC_LIST_ONLY_UNDER_CONFIG` | Routes in list form only (`--isl 128 256` becomes a sweep parameter; scalar `--isl 128` goes to the dataset). Decided per value. |
+
+### Why the guarantee holds
+
+Four layers, each covering the previous one's blind spot:
+
+1. **The universe is derived, not maintained.** Every set is
+   subtracted from `frozenset(CLIConfig.model_fields)`. You cannot add
+   a CLI option without adding a field, so nothing is checked against
+   a list someone has to remember to update.
+2. **Runtime is default-deny.** `reject_unrouted_cli_flags` computes
+   `model_fields_set - ROUTED - EXEMPT` and raises on the remainder —
+   "is this known-good?", not "is this known-bad?". It gates on
+   `model_fields_set`, never truthiness, so `--prompt-batch-size 0`
+   counts as set.
+3. **Classification is mandatory.**
+   `test_every_cli_config_field_is_classified` fails when a field
+   belongs to none of the sets, so a new flag fails CI at authoring
+   time.
+4. **The classification is verified, not trusted.** Layer 3 only
+   proves someone applied a label.
+   `test_routed_field_never_silently_no_ops` drives every routed field
+   against both a synthetic and a file dataset and asserts it changes
+   the config or raises. This is what catches whole-section
+   classifications (`OUTPUT`/`TOKENIZER`/`ACCURACY`/`SWEEPING` are
+   marked routed wholesale, so a new member is auto-classified and
+   layer 3 passes vacuously).
+
+Two further invariants guard the merge itself:
+`test_override_emits_no_key_the_user_did_not_set` runs `build_dataset`
+twice with different values for one field — any emitted key identical
+across both runs is a materialized default that would overwrite a YAML
+value the user never mentioned. `test_routed_dataset_field_actually_changes_the_resolved_config`
+covers the dataset block specifically.
+
+### Adding a new CLI flag
+
+1. Add the field to `CLIConfig` as usual. CI now fails with
+   `CLI fields are unclassified for the --config path: [...]`.
+2. Decide what the flag should do under `--config`:
+   - **Route it** (preferred). Dataset-shaping fields flow through
+     `build_dataset` automatically. Otherwise wire it into
+     `build_cli_overrides` — check first whether a builder already
+     exists, as `build_mlflow`/`build_otel`/`build_network_latency`
+     did while going uncalled.
+   - **Or list it in `UNROUTED_UNDER_CONFIG`**, so users get an error
+     naming the flag rather than a wrong benchmark.
+3. If the invariant suite cannot generate a value from the
+   annotation (`typing.Any`, free-form strings), add one to
+   `FIELD_PROBE_VALUES` or list the field in `UNDRIVABLE_FIELDS` with
+   a reason. Do not let it report as skipped — a skip is invisible in
+   CI, which is exactly how a coverage hole hides.
+
+### Known gaps
+
+`--sweep-type` and `--disable-auto-fixed-schedule` are unrouted and
+loud: the first needs a sweep block to attach to, the second is
+consumed during phase construction, which this path does not rebuild.
+
+The flags in `SWEEP_FIELDS_NOT_ROUTED` (`--concurrency-min/max/steps`,
+`--isl-*`/`--osl-*`, the `*-sla-ms` filters, `--parameter-sweep-*`)
+resolve cleanly and change nothing, so they are rejected. Verified
+individually — notably `--ttft-sla-ms` does **not** take effect even
+alongside `--search-recipe` and `--streaming`. Routing them is
+follow-up work; until then the failure is loud.
+
 ## Extending the suite
 
 ### Adding a new mechanical invariant
