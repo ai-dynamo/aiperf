@@ -591,7 +591,7 @@ pub(crate) async fn execute_scheduled_pipeline(
     } else {
         Ok(Vec::new())
     };
-    let shutdown = execution_backend.shutdown();
+    let shutdown = execution_backend.shutdown().await;
     let phased = finish_with_shutdown(execution_result, shutdown, "sharded execution backend")?;
     let drained = drained?;
     let issued_times = phased

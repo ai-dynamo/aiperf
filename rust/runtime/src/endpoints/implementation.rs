@@ -12,7 +12,8 @@ use serde_json::{Map, Value, json};
 use smallvec::SmallVec;
 
 use crate::body_plan::{
-    BodyPlan, JsonBodyMaterializer, PreparedWsMessage, PreparedWsMessageRole, PreparedWsOperation,
+    BodyPlan, JsonBodyMaterializer, PreparedWsMessage, PreparedWsMessageRole, PreparedWsOpcode,
+    PreparedWsOperation,
 };
 use crate::dataset::materialize::Overrides;
 use crate::dataset::segment::SegmentStore;
@@ -25,7 +26,8 @@ use crate::endpoints::models::{
 };
 use crate::endpoints::registry::{
     PreparedEndpointBehavior, PreparedReadinessRequest, PreparedRequest, ReadinessMethod,
-    ReadinessPolicy, ReadinessSuccess, format_legacy_payload,
+    ReadinessPolicy, ReadinessSuccess, WebSocketCapabilities, WebSocketConnectionModel,
+    WebSocketDialect, format_legacy_payload,
 };
 
 /// Warmup prefix used by the completions endpoint.
@@ -592,6 +594,18 @@ impl Endpoint for ResponsesEndpoint {
 }
 
 impl PreparedEndpointBehavior for ResponsesEndpoint {
+    fn websocket_capabilities(&self) -> Option<WebSocketCapabilities> {
+        Some(WebSocketCapabilities {
+            dialect: WebSocketDialect::Responses,
+            connection_model: WebSocketConnectionModel::TurnSerialized,
+            application_opcode: PreparedWsOpcode::Text,
+            has_affinity_state: false,
+            supports_full_history_replay: true,
+            supports_http_sse_fallback: true,
+            supports_round_trip_metrics: true,
+        })
+    }
+
     fn format_prepared_payload(
         &self,
         request: &PreparedRequest<'_>,
@@ -704,14 +718,14 @@ impl Endpoint for RealtimeEndpoint {
             return Ok(None);
         };
         let data = match object.get("type").and_then(Value::as_str) {
-            Some("response.text.delta") => object
+            Some("response.output_text.delta") => object
                 .get("delta")
                 .and_then(Value::as_str)
                 .filter(|text| !text.is_empty())
                 .map(|text| ResponseData::Text {
                     text: text.to_owned(),
                 }),
-            Some("response.audio.delta") => {
+            Some("response.output_audio.delta") => {
                 let encoded = object
                     .get("delta")
                     .or_else(|| object.get("audio"))
@@ -761,6 +775,18 @@ impl Endpoint for RealtimeEndpoint {
 }
 
 impl PreparedEndpointBehavior for RealtimeEndpoint {
+    fn websocket_capabilities(&self) -> Option<WebSocketCapabilities> {
+        Some(WebSocketCapabilities {
+            dialect: WebSocketDialect::Realtime,
+            connection_model: WebSocketConnectionModel::Duplex,
+            application_opcode: PreparedWsOpcode::Text,
+            has_affinity_state: true,
+            supports_full_history_replay: false,
+            supports_http_sse_fallback: false,
+            supports_round_trip_metrics: true,
+        })
+    }
+
     fn format_prepared_payload(
         &self,
         request: &PreparedRequest<'_>,
@@ -791,19 +817,101 @@ impl PreparedEndpointBehavior for RealtimeEndpoint {
             EndpointError::Serialization("Realtime request input must be an array".to_owned())
         })?;
         let mut messages = Vec::with_capacity(items.len() + 2);
+        let mut has_audio = false;
         for item in items {
+            let item = item.as_object().ok_or_else(|| {
+                EndpointError::InvalidRequest(
+                    "Realtime request input items must be JSON objects".to_owned(),
+                )
+            })?;
+            let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
+            let content = item.get("content").ok_or_else(|| {
+                EndpointError::InvalidRequest(
+                    "Realtime request input item has no content".to_owned(),
+                )
+            })?;
+            let parts: Vec<&Value> = match content {
+                Value::Array(parts) => parts.iter().collect(),
+                Value::String(_) => vec![content],
+                _ => {
+                    return Err(EndpointError::InvalidRequest(
+                        "Realtime request item content must be text or an array".to_owned(),
+                    ));
+                }
+            };
+            let mut text_parts = Vec::new();
+            for part in parts {
+                if let Some(text) = part
+                    .as_str()
+                    .or_else(|| part.get("text").and_then(Value::as_str))
+                {
+                    if !text.is_empty() {
+                        text_parts.push(json!({"type":"input_text","text":text}));
+                    }
+                    continue;
+                }
+                let Some(audio) = part.get("input_audio") else {
+                    return Err(EndpointError::InvalidRequest(
+                        "Realtime input supports only text and input_audio content".to_owned(),
+                    ));
+                };
+                let encoded = audio.get("data").and_then(Value::as_str).ok_or_else(|| {
+                    EndpointError::InvalidRequest(
+                        "Realtime input_audio content has no base64 data".to_owned(),
+                    )
+                })?;
+                let decoded = STANDARD.decode(encoded).map_err(|error| {
+                    EndpointError::InvalidRequest(format!(
+                        "Realtime input_audio data is not valid base64: {error}"
+                    ))
+                })?;
+                if decoded.is_empty() {
+                    return Err(EndpointError::InvalidRequest(
+                        "Realtime input_audio data must not be empty".to_owned(),
+                    ));
+                }
+                let event = json!({
+                    "type":"input_audio_buffer.append",
+                    "audio":STANDARD.encode(decoded),
+                });
+                messages.push(PreparedWsMessage::text(
+                    Bytes::from(
+                        serde_json::to_vec(&event)
+                            .map_err(|error| EndpointError::Serialization(error.to_string()))?,
+                    ),
+                    PreparedWsMessageRole::MeasuredInput,
+                ));
+                has_audio = true;
+            }
+            if !text_parts.is_empty() {
+                let event = json!({
+                    "type":"conversation.item.create",
+                    "item":{
+                        "type":"message",
+                        "role":role,
+                        "content":text_parts,
+                    }
+                });
+                messages.push(PreparedWsMessage::text(
+                    Bytes::from(
+                        serde_json::to_vec(&event)
+                            .map_err(|error| EndpointError::Serialization(error.to_string()))?,
+                    ),
+                    PreparedWsMessageRole::MeasuredInput,
+                ));
+            }
+        }
+        if has_audio {
             messages.push(PreparedWsMessage::text(
-                Bytes::from(
-                    serde_json::to_vec(&json!({"type":"conversation.item.create","item":item}))
-                        .map_err(|error| EndpointError::Serialization(error.to_string()))?,
-                ),
+                Bytes::from_static(br#"{"type":"input_audio_buffer.commit"}"#),
                 PreparedWsMessageRole::MeasuredInput,
             ));
         }
-        messages.push(PreparedWsMessage::text(
-            Bytes::from_static(br#"{"type":"input_audio_buffer.commit"}"#),
-            PreparedWsMessageRole::MeasuredInput,
-        ));
+        if messages.is_empty() {
+            return Err(EndpointError::InvalidRequest(
+                "Realtime request contains no non-empty text or audio input".to_owned(),
+            ));
+        }
         messages.push(PreparedWsMessage::text(
             Bytes::from(
                 serde_json::to_vec(
@@ -2203,7 +2311,7 @@ mod lowering_tests {
     }
 
     #[test]
-    fn realtime_websocket_lowering_commits_items_before_response_create() {
+    fn realtime_text_lowering_uses_conversation_item_without_empty_audio_commit() {
         let turns = [text_turn()];
         let request = PreparedRequest::new(
             "gpt-test",
@@ -2228,27 +2336,97 @@ mod lowering_tests {
                 &Overrides::new(),
             )
             .unwrap();
-        assert_eq!(operation.messages().len(), 3);
+        assert_eq!(operation.messages().len(), 2);
         let input: Value = serde_json::from_slice(operation.messages()[0].payload()).unwrap();
         assert_eq!(input["type"], "conversation.item.create");
+        assert_eq!(input["item"]["type"], "message");
+        assert_eq!(input["item"]["role"], "user");
+        assert_eq!(input["item"]["content"][0]["type"], "input_text");
         assert_eq!(
             operation.messages()[0].role(),
             PreparedWsMessageRole::MeasuredInput
         );
-        let commit: Value = serde_json::from_slice(operation.messages()[1].payload()).unwrap();
-        assert_eq!(commit["type"], "input_audio_buffer.commit");
-        assert_eq!(
-            operation.messages()[1].role(),
-            PreparedWsMessageRole::MeasuredInput
-        );
-        let response: Value = serde_json::from_slice(operation.messages()[2].payload()).unwrap();
+        let response: Value = serde_json::from_slice(operation.messages()[1].payload()).unwrap();
         assert_eq!(response["type"], "response.create");
         assert_eq!(response["response"]["modalities"], json!(["text", "audio"]));
         assert_eq!(
-            operation.messages()[2].role(),
+            operation.messages()[1].role(),
             PreparedWsMessageRole::Control
         );
         assert!(operation.http_sse_fallback_body().is_none());
+    }
+
+    #[test]
+    fn realtime_audio_lowering_validates_and_appends_audio_before_commit() {
+        let mut turn = text_turn();
+        turn.texts.clear();
+        turn.audios = vec![Media::new(vec!["data:audio/wav;base64,AAE=".to_owned()])];
+        let turns = [turn];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let store = SegmentPool::new().freeze();
+        let body = RealtimeEndpoint
+            .format_prepared_payload(&request, &RawEndpointConfig::default())
+            .unwrap();
+        let operation = RealtimeEndpoint
+            .prepare_ws_operation(
+                &request,
+                &RawEndpointConfig::default(),
+                &body,
+                &store,
+                &Overrides::new(),
+            )
+            .unwrap();
+
+        assert_eq!(operation.messages().len(), 3);
+        let append: Value = serde_json::from_slice(operation.messages()[0].payload()).unwrap();
+        assert_eq!(append["type"], "input_audio_buffer.append");
+        assert_eq!(append["audio"], "AAE=");
+        let commit: Value = serde_json::from_slice(operation.messages()[1].payload()).unwrap();
+        assert_eq!(commit["type"], "input_audio_buffer.commit");
+        let response: Value = serde_json::from_slice(operation.messages()[2].payload()).unwrap();
+        assert_eq!(response["type"], "response.create");
+    }
+
+    #[test]
+    fn realtime_audio_lowering_rejects_invalid_base64() {
+        let mut turn = text_turn();
+        turn.texts.clear();
+        turn.audios = vec![Media::new(vec!["data:audio/wav;base64,%%%".to_owned()])];
+        let turns = [turn];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let store = SegmentPool::new().freeze();
+        let body = RealtimeEndpoint
+            .format_prepared_payload(&request, &RawEndpointConfig::default())
+            .unwrap();
+
+        let error = RealtimeEndpoint
+            .prepare_ws_operation(
+                &request,
+                &RawEndpointConfig::default(),
+                &body,
+                &store,
+                &Overrides::new(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("valid base64"));
     }
 
     #[test]
@@ -2256,7 +2434,7 @@ mod lowering_tests {
         let parsed = RealtimeEndpoint
             .parse_response(&ServerResponse::from_json(
                 7,
-                json!({"type":"response.audio.delta","delta":"AAE="}),
+                json!({"type":"response.output_audio.delta","delta":"AAE="}),
             ))
             .unwrap()
             .unwrap();
@@ -2266,6 +2444,30 @@ mod lowering_tests {
         assert_eq!(audio.audio_bytes, vec![0, 1]);
         assert_eq!(audio.sample_rate_hz, 24_000);
         assert_eq!(audio.encoding, "pcm16");
+    }
+
+    #[test]
+    fn websocket_dialects_register_closed_transport_capabilities() {
+        let responses = ResponsesEndpoint
+            .websocket_capabilities()
+            .expect("Responses registers websocket capabilities");
+        assert_eq!(responses.dialect, WebSocketDialect::Responses);
+        assert_eq!(
+            responses.connection_model,
+            WebSocketConnectionModel::TurnSerialized
+        );
+        assert!(responses.supports_full_history_replay);
+        assert!(responses.supports_http_sse_fallback);
+        assert!(!responses.has_affinity_state);
+
+        let realtime = RealtimeEndpoint
+            .websocket_capabilities()
+            .expect("Realtime registers websocket capabilities");
+        assert_eq!(realtime.dialect, WebSocketDialect::Realtime);
+        assert_eq!(realtime.connection_model, WebSocketConnectionModel::Duplex);
+        assert!(realtime.has_affinity_state);
+        assert!(!realtime.supports_full_history_replay);
+        assert!(!realtime.supports_http_sse_fallback);
     }
 
     /// The two halves of "this dialect splices lowered wires" must agree for

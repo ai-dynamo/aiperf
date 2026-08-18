@@ -57,6 +57,7 @@ pub use registry::{
     EndpointRegistryBuilder, EndpointRegistryError, EndpointResolver, PreparedEndpoint,
     PreparedEndpointBehavior, PreparedEndpointTable, PreparedReadinessRequest, PreparedRequest,
     ReadinessMethod, ReadinessPolicy, ReadinessSuccess, StatelessEndpointFactory,
+    WebSocketCapabilities, WebSocketConnectionModel, WebSocketDialect,
 };
 pub use riva::{
     RivaAnalyzeEntitiesFactory, RivaAnalyzeIntentFactory, RivaAsrFactory, RivaNaturalQueryFactory,

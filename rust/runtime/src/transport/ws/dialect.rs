@@ -117,28 +117,37 @@ pub(crate) fn classify_realtime_event(
         .and_then(Value::as_str)
         .unwrap_or_default()
     {
-        "response.text.delta" => Ok(event
+        "response.output_text.delta" => Ok(event
             .get("delta")
             .and_then(Value::as_str)
             .filter(|delta| !delta.is_empty())
             .map_or(ResponsesEvent::Ignored, |delta| {
                 ResponsesEvent::Content(Bytes::copy_from_slice(delta.as_bytes()))
             })),
-        "response.audio.delta" => Ok(ResponsesEvent::Audio),
-        "response.done" => Ok(ResponsesEvent::Terminal {
-            response_id: event
+        "response.output_audio.delta" => Ok(ResponsesEvent::Audio),
+        "response.done" => {
+            let response = event
                 .get("response")
-                .and_then(|response| response.get("id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            usage: observed_usage(event.get("usage").or_else(|| {
-                event
-                    .get("response")
-                    .and_then(|response| response.get("usage"))
-            })),
-            content: terminal_content(&event),
-            status: ReplayTerminalStatus::Completed,
-        }),
+                .ok_or_else(|| anyhow::anyhow!("Realtime response.done has no response object"))?;
+            let status = match response.get("status").and_then(Value::as_str) {
+                Some("completed") => ReplayTerminalStatus::Completed,
+                Some("cancelled" | "canceled") => ReplayTerminalStatus::Canceled,
+                Some("failed" | "incomplete") => ReplayTerminalStatus::Failed,
+                Some(status) => {
+                    anyhow::bail!("Realtime response.done has unknown response status {status:?}")
+                }
+                None => anyhow::bail!("Realtime response.done has no response status"),
+            };
+            Ok(ResponsesEvent::Terminal {
+                response_id: response
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                usage: observed_usage(event.get("usage").or_else(|| response.get("usage"))),
+                content: terminal_content(&event),
+                status,
+            })
+        }
         "error" => anyhow::bail!("Realtime WebSocket operation failed"),
         _ => Ok(ResponsesEvent::Ignored),
     }
@@ -209,11 +218,48 @@ pub(crate) fn with_previous_response_id(
     ))
 }
 
+/// Select only the input added after the last assistant item for a Realtime
+/// conversation already resident on its exact affinity-owned socket.
+pub(crate) fn incremental_realtime_operation(
+    request: &PreparedWsOperation,
+) -> Option<PreparedWsOperation> {
+    let last_assistant = request
+        .messages()
+        .iter()
+        .rposition(is_realtime_assistant_item)?;
+    let messages = request.messages().get(last_assistant.saturating_add(1)..)?;
+    messages
+        .iter()
+        .any(|message| message.role() == PreparedWsMessageRole::MeasuredInput)
+        .then(|| {
+            PreparedWsOperation::new(
+                messages.iter().cloned(),
+                request.http_sse_fallback_body().cloned(),
+            )
+        })
+}
+
+fn is_realtime_assistant_item(message: &PreparedWsMessage) -> bool {
+    if message.opcode() != PreparedWsOpcode::Text {
+        return false;
+    }
+    let Ok(event) = serde_json::from_slice::<Value>(message.payload()) else {
+        return false;
+    };
+    event.get("type").and_then(Value::as_str) == Some("conversation.item.create")
+        && event
+            .get("item")
+            .and_then(|item| item.get("role"))
+            .and_then(Value::as_str)
+            == Some("assistant")
+}
+
 /// Scalar lifecycle state for one turn-serialized operation.
 #[derive(Debug, Default)]
 pub(crate) struct TurnOperationState {
     timing: RoundTripTimingState,
     visible_content_bytes: usize,
+    visible_content_digest: blake3::Hasher,
     has_observer_fact: bool,
     has_terminal: bool,
 }
@@ -245,24 +291,36 @@ impl TurnOperationState {
         &mut self,
         event: &ResponsesEvent,
         timestamp_ns: i64,
-    ) -> Option<Bytes> {
-        let content = event.content().filter(|content| !content.is_empty())?;
+    ) -> anyhow::Result<Option<Bytes>> {
+        let Some(content) = event.content().filter(|content| !content.is_empty()) else {
+            return Ok(None);
+        };
         let visible = match event {
             ResponsesEvent::Content(_) => content.clone(),
             ResponsesEvent::Terminal { .. } => {
-                content.slice(self.visible_content_bytes.min(content.len())..)
+                if content.len() < self.visible_content_bytes {
+                    anyhow::bail!(
+                        "websocket terminal snapshot is shorter than its streamed prefix"
+                    );
+                }
+                let terminal_prefix = blake3::hash(&content[..self.visible_content_bytes]);
+                if terminal_prefix != self.visible_content_digest.clone().finalize() {
+                    anyhow::bail!("websocket terminal snapshot does not match its streamed prefix");
+                }
+                content.slice(self.visible_content_bytes..)
             }
-            _ => return None,
+            _ => return Ok(None),
         };
         if visible.is_empty() {
-            return None;
+            return Ok(None);
         }
         self.visible_content_bytes = self
             .visible_content_bytes
             .checked_add(visible.len())
-            .unwrap_or(usize::MAX);
+            .ok_or_else(|| anyhow::anyhow!("websocket visible content byte count overflowed"))?;
+        self.visible_content_digest.update(&visible);
         self.timing.on_content_received(timestamp_ns);
-        Some(visible)
+        Ok(Some(visible))
     }
 
     pub(crate) const fn can_retry(&self) -> bool {
@@ -422,13 +480,33 @@ mod tests {
             status: ReplayTerminalStatus::Completed,
         };
         assert_eq!(
-            state.content_for_observation(&delta, 10),
+            state.content_for_observation(&delta, 10).unwrap(),
             Some(Bytes::from_static(b"hello "))
         );
         assert_eq!(
-            state.content_for_observation(&terminal, 20),
+            state.content_for_observation(&terminal, 20).unwrap(),
             Some(Bytes::from_static(b"world"))
         );
+    }
+
+    #[test]
+    fn terminal_snapshot_must_extend_the_exact_streamed_prefix() {
+        let mut state = TurnOperationState::default();
+        let delta = ResponsesEvent::Content(Bytes::from_static(b"hello"));
+        let terminal = ResponsesEvent::Terminal {
+            response_id: Some("r1".to_owned()),
+            usage: ObservedUsage::default(),
+            content: Bytes::from_static(b"jello world"),
+            status: ReplayTerminalStatus::Completed,
+        };
+        assert_eq!(
+            state.content_for_observation(&delta, 10).unwrap(),
+            Some(Bytes::from_static(b"hello"))
+        );
+        let error = state
+            .content_for_observation(&terminal, 20)
+            .expect_err("a divergent terminal snapshot is a protocol failure");
+        assert!(error.to_string().contains("streamed prefix"));
     }
 
     #[test]
@@ -465,6 +543,42 @@ mod tests {
             None,
         );
         assert!(with_previous_response_id(&request, "response-2").is_none());
+    }
+
+    #[test]
+    fn realtime_affinity_reuse_sends_only_items_after_last_assistant() {
+        let request = PreparedWsOperation::new(
+            [
+                PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":"old"}]}}"#),
+                    PreparedWsMessageRole::MeasuredInput,
+                ),
+                PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"conversation.item.create","item":{"type":"message","role":"assistant","content":[{"type":"input_text","text":"answer"}]}}"#),
+                    PreparedWsMessageRole::MeasuredInput,
+                ),
+                PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":"new"}]}}"#),
+                    PreparedWsMessageRole::MeasuredInput,
+                ),
+                PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"response.create"}"#),
+                    PreparedWsMessageRole::Control,
+                ),
+            ],
+            None,
+        );
+
+        let incremental = incremental_realtime_operation(&request)
+            .expect("full history contains an incremental Realtime suffix");
+        assert_eq!(incremental.messages().len(), 2);
+        let input: Value = serde_json::from_slice(incremental.messages()[0].payload())
+            .expect("incremental item is JSON");
+        assert_eq!(input["item"]["role"], "user");
+        assert_eq!(input["item"]["content"][0]["text"], "new");
+        let response: Value = serde_json::from_slice(incremental.messages()[1].payload())
+            .expect("response request is JSON");
+        assert_eq!(response["type"], "response.create");
     }
 
     #[test]
@@ -505,22 +619,64 @@ mod tests {
     #[test]
     fn realtime_text_and_terminal_events_are_distinct() {
         assert_eq!(
-            classify_realtime_event(br#"{"type":"response.text.delta","delta":"hello"}"#, true)
-                .expect("Realtime text event is valid"),
+            classify_realtime_event(
+                br#"{"type":"response.output_text.delta","delta":"hello"}"#,
+                true,
+            )
+            .expect("Realtime text event is valid"),
             ResponsesEvent::Content(Bytes::from_static(b"hello"))
         );
         assert!(matches!(
-            classify_realtime_event(br#"{"type":"response.done","response":{"id":"r1"}}"#, true),
-            Ok(ResponsesEvent::Terminal { .. })
+            classify_realtime_event(
+                br#"{"type":"response.done","response":{"id":"r1","status":"completed"}}"#,
+                true,
+            ),
+            Ok(ResponsesEvent::Terminal {
+                status: ReplayTerminalStatus::Completed,
+                ..
+            })
         ));
     }
 
     #[test]
     fn realtime_audio_is_an_observer_fact_without_a_text_token() {
         assert_eq!(
-            classify_realtime_event(br#"{"type":"response.audio.delta","delta":"AAE="}"#, true)
-                .expect("Realtime audio event is valid"),
+            classify_realtime_event(
+                br#"{"type":"response.output_audio.delta","delta":"AAE="}"#,
+                true,
+            )
+            .expect("Realtime audio event is valid"),
             ResponsesEvent::Audio
         );
+    }
+
+    #[test]
+    fn realtime_done_maps_non_completed_response_statuses_to_failure() {
+        for status in ["failed", "incomplete", "cancelled"] {
+            let payload = format!(
+                r#"{{"type":"response.done","response":{{"id":"r1","status":"{status}"}}}}"#
+            );
+            let event = classify_realtime_event(payload.as_bytes(), true)
+                .expect("Realtime terminal envelope is valid");
+            let expected = if status == "cancelled" {
+                ReplayTerminalStatus::Canceled
+            } else {
+                ReplayTerminalStatus::Failed
+            };
+            assert!(matches!(
+                event,
+                ResponsesEvent::Terminal { status, .. } if status == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn realtime_done_rejects_missing_or_unknown_response_status() {
+        for payload in [
+            br#"{"type":"response.done","response":{"id":"r1"}}"#.as_slice(),
+            br#"{"type":"response.done","response":{"id":"r1","status":"mystery"}}"#.as_slice(),
+        ] {
+            assert!(classify_realtime_event(payload, true).is_err());
+        }
     }
 }

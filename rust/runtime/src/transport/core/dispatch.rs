@@ -435,7 +435,7 @@ pub trait RequestExecutor {
     /// Drain backend-owned execution resources after all dispatched turns have
     /// reached terminal. In-process direct execution owns no extra resources;
     /// thread pools and remote clients override this lifecycle hook.
-    fn shutdown(&self) -> Result<()> {
+    async fn shutdown(&self) -> Result<()> {
         Ok(())
     }
 }

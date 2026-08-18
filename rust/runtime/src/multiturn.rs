@@ -1273,11 +1273,7 @@ impl NativeSessionBackend {
                 let (_, endpoint) = &prepared_endpoint;
                 // Opaque bodies report absent as 0 at the u64 counter boundary for now.
                 let materialized_body = match &materialized.body {
-                    RequestBody::WebSocket(operation) => operation
-                        .messages()
-                        .first()
-                        .map(|message| message.payload().clone())
-                        .unwrap_or_default(),
+                    RequestBody::WebSocket(operation) => operation.to_artifact_bytes()?,
                     body => body.to_wire()?,
                 };
                 let counted = self.input_token_counter.count_materialized_input_tokens(
@@ -1897,15 +1893,7 @@ impl NativeDatasetConversationSource {
 
 fn input_artifact_body(body: &RequestBody) -> Result<Bytes> {
     match body {
-        RequestBody::WebSocket(operation) => operation
-            .messages()
-            .iter()
-            .find(|message| {
-                message.role() == crate::body_plan::PreparedWsMessageRole::MeasuredInput
-            })
-            .or_else(|| operation.messages().first())
-            .map(|message| message.payload().clone())
-            .ok_or_else(|| anyhow!("websocket operation has no application messages")),
+        RequestBody::WebSocket(operation) => Ok(operation.to_artifact_bytes()?),
         body => Ok(body.to_wire()?),
     }
 }
@@ -2212,6 +2200,33 @@ mod tests {
             .expect("a built turn carries a request body")
             .to_wire()
             .expect("the request body materializes")
+    }
+
+    #[test]
+    fn websocket_input_artifact_preserves_the_complete_ordered_operation() {
+        let operation = crate::body_plan::PreparedWsOperation::new(
+            [
+                crate::body_plan::PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"conversation.item.create"}"#),
+                    crate::body_plan::PreparedWsMessageRole::MeasuredInput,
+                ),
+                crate::body_plan::PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"input_audio_buffer.commit"}"#),
+                    crate::body_plan::PreparedWsMessageRole::MeasuredInput,
+                ),
+                crate::body_plan::PreparedWsMessage::text(
+                    Bytes::from_static(br#"{"type":"response.create"}"#),
+                    crate::body_plan::PreparedWsMessageRole::Control,
+                ),
+            ],
+            None,
+        );
+
+        let artifact = input_artifact_body(&RequestBody::WebSocket(Arc::new(operation)))
+            .expect("WebSocket input artifact serializes");
+        let artifact: Value = serde_json::from_slice(&artifact).expect("artifact is JSON");
+        assert_eq!(artifact["transport"], "websocket");
+        assert_eq!(artifact["messages"].as_array().map(Vec::len), Some(3));
     }
 
     struct FixedTemplateTokenizer;

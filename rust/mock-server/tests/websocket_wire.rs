@@ -660,9 +660,6 @@ async fn realtime_reads_upload_and_ping_while_output_is_scheduled() {
     client
         .send_text(r#"{"type":"conversation.item.create"}"#)
         .await;
-    client
-        .send_text(r#"{"type":"input_audio_buffer.commit"}"#)
-        .await;
     client.send_text(r#"{"type":"response.create"}"#).await;
     client
         .send_text(r#"{"type":"input_audio_buffer.append","audio":"AA=="}"#)

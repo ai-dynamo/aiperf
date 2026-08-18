@@ -1533,10 +1533,9 @@ fn canonical_event_type(payload: &[u8]) -> Option<&'static str> {
         "input_audio_buffer.commit" => "input_audio_buffer.commit",
         "response.created" => "response.created",
         "response.output_text.delta" => "response.output_text.delta",
+        "response.output_audio.delta" => "response.output_audio.delta",
         "response.completed" => "response.completed",
         "response.continuation_rejected" => "response.continuation_rejected",
-        "response.text.delta" => "response.text.delta",
-        "response.audio.delta" => "response.audio.delta",
         "response.done" => "response.done",
         "error" => "error",
         _ => "unknown",
@@ -1714,7 +1713,7 @@ impl ServerAction {
 
     #[cfg(test)]
     fn is_text_delta(&self) -> bool {
-        matches!(self, Self::SendText { payload, .. } if payload.windows(b"response.text.delta".len()).any(|window| window == b"response.text.delta"))
+        matches!(self, Self::SendText { payload, .. } if payload.windows(b"response.output_text.delta".len()).any(|window| window == b"response.output_text.delta"))
     }
 }
 
@@ -1826,6 +1825,7 @@ pub(crate) struct ConnectionScenario {
     last_completed_response_id: Option<String>,
     has_in_flight_turn: bool,
     has_realtime_input: bool,
+    has_uncommitted_realtime_audio: bool,
     realtime_commit_ns: Option<i64>,
     has_interleaved_output: bool,
     content_events: u32,
@@ -1845,6 +1845,7 @@ impl ConnectionScenario {
             last_completed_response_id: None,
             has_in_flight_turn: false,
             has_realtime_input: false,
+            has_uncommitted_realtime_audio: false,
             realtime_commit_ns: None,
             has_interleaved_output: false,
             content_events: config.websocket_content_events,
@@ -1988,25 +1989,33 @@ impl ConnectionScenario {
             ClientEvent::ConfigureSession => Ok(Vec::new()),
             ClientEvent::AddConversationItem => {
                 self.has_realtime_input = true;
+                if !self.has_uncommitted_realtime_audio {
+                    self.realtime_commit_ns = Some(input_complete_ns);
+                }
                 Ok(Vec::new())
             }
             ClientEvent::AppendAudio { .. } => {
                 self.has_realtime_input = true;
+                self.has_uncommitted_realtime_audio = true;
+                self.realtime_commit_ns = None;
                 if self.scenario == WebSocketScenario::InterleavedRealtime
                     && !self.has_interleaved_output
                 {
                     self.has_interleaved_output = true;
                     return Ok(vec![self.text_action(
                         input_complete_ns,
-                        serde_json::json!({"type":"response.text.delta","delta":"mock"}),
+                        serde_json::json!({"type":"response.output_text.delta","delta":"mock"}),
                     )]);
                 }
                 Ok(Vec::new())
             }
             ClientEvent::CommitInput => {
-                if !self.has_realtime_input {
-                    return Err(ProtocolError::new("cannot commit empty Realtime input"));
+                if !self.has_uncommitted_realtime_audio {
+                    return Err(ProtocolError::new(
+                        "cannot commit an empty Realtime audio buffer",
+                    ));
                 }
+                self.has_uncommitted_realtime_audio = false;
                 self.realtime_commit_ns = Some(input_complete_ns);
                 Ok(Vec::new())
             }
@@ -2023,7 +2032,7 @@ impl ConnectionScenario {
                             first_content_ns.saturating_add(
                                 self.content_interval_ns.saturating_mul(i64::from(index)),
                             ),
-                            serde_json::json!({"type":"response.text.delta","delta":"mock"}),
+                            serde_json::json!({"type":"response.output_text.delta","delta":"mock"}),
                         ));
                     }
                     actions.push(
@@ -2032,7 +2041,7 @@ impl ConnectionScenario {
                                 self.content_interval_ns
                                     .saturating_mul(i64::from(self.content_events.max(1))),
                             ),
-                            serde_json::json!({"type":"response.audio.delta","delta":"AAE="}),
+                            serde_json::json!({"type":"response.output_audio.delta","delta":"AAE="}),
                         ),
                     );
                 }
@@ -2071,6 +2080,7 @@ impl ConnectionScenario {
                     completion_tokens: output_tokens,
                 });
                 self.has_realtime_input = false;
+                self.has_uncommitted_realtime_audio = false;
                 self.has_interleaved_output = false;
                 Ok(actions)
             }
@@ -2379,8 +2389,8 @@ mod tests {
             .find_map(|action| match action {
                 ServerAction::SendText { at_ns, payload }
                     if payload
-                        .windows(b"response.text.delta".len())
-                        .any(|window| window == b"response.text.delta") =>
+                        .windows(b"response.output_text.delta".len())
+                        .any(|window| window == b"response.output_text.delta") =>
                 {
                     Some(at_ns)
                 }

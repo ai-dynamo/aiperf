@@ -95,6 +95,9 @@ const fn default_websocket_max_response_bytes() -> usize {
     67_108_864
 }
 
+/// Maximum RFC 6455 client frame header plus one maximum control-frame wire.
+pub(crate) const WEBSOCKET_WRITER_RESERVE_BYTES: usize = 14 + 131;
+
 /// Strict policy for a native WebSocket transport.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WebSocketTransportConfig {
@@ -133,6 +136,8 @@ pub enum WebSocketTransportConfigError {
     FrameExceedsMessage,
     /// The reassembled message limit exceeds the response limit.
     MessageExceedsResponse,
+    /// The authored payload bound leaves no representable writer overhead.
+    QueueExceedsWriterCapacity,
 }
 
 impl Display for WebSocketTransportConfigError {
@@ -150,6 +155,9 @@ impl Display for WebSocketTransportConfigError {
             Self::MessageExceedsResponse => {
                 formatter.write_str("websocket max_message_bytes cannot exceed max_response_bytes")
             }
+            Self::QueueExceedsWriterCapacity => formatter.write_str(
+                "websocket max_queued_bytes leaves no capacity for frame and control overhead",
+            ),
         }
     }
 }
@@ -298,6 +306,13 @@ impl WebSocketTransportConfig {
         }
         if self.max_message_bytes > self.max_response_bytes {
             return Err(WebSocketTransportConfigError::MessageExceedsResponse);
+        }
+        if self
+            .max_queued_bytes
+            .checked_add(WEBSOCKET_WRITER_RESERVE_BYTES)
+            .is_none()
+        {
+            return Err(WebSocketTransportConfigError::QueueExceedsWriterCapacity);
         }
         Ok(self)
     }
@@ -634,6 +649,18 @@ mod tests {
                 "unsupported": true,
             }))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn websocket_queue_limit_reserves_wire_overhead_without_overflow() {
+        let mut config = WebSocketTransportConfig::default();
+        config.max_queued_bytes = usize::MAX;
+        config.max_frame_bytes = config.max_message_bytes;
+
+        assert_eq!(
+            config.validate(),
+            Err(WebSocketTransportConfigError::QueueExceedsWriterCapacity)
         );
     }
 

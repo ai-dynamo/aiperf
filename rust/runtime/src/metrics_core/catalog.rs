@@ -2342,7 +2342,7 @@ mod tests {
     #[test]
     fn catalog_has_unique_acyclic_resolved_dependencies() {
         let order = validate_catalog().unwrap();
-        assert_eq!(CATALOG.len(), 125);
+        assert_eq!(CATALOG.len(), 127);
         assert!(order.contains(&MetricTag::RequestLatency));
         assert!(
             CATALOG

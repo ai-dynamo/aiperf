@@ -151,8 +151,10 @@ pub(crate) enum WsDriverError {
     QueueCommandLimit { actual: usize, limit: usize },
     QueueByteLimit { actual: usize, limit: usize },
     QueueByteOverflow,
+    MissingMeasuredInput,
     InvalidTextMessage,
     ApplicationQueueClosed,
+    UnexpectedMeasuredInputFlush,
     ControlQueueFull,
     WriterStopped,
     Write(TungsteniteError),
@@ -181,12 +183,18 @@ impl Display for WsDriverError {
             Self::QueueByteOverflow => {
                 formatter.write_str("websocket application queue byte count overflowed")
             }
+            Self::MissingMeasuredInput => {
+                formatter.write_str("websocket operation has no measured input message")
+            }
             Self::InvalidTextMessage => {
                 formatter.write_str("websocket text application message is not UTF-8")
             }
             Self::ApplicationQueueClosed => {
                 formatter.write_str("websocket application writer stopped before enqueue")
             }
+            Self::UnexpectedMeasuredInputFlush => formatter.write_str(
+                "websocket writer reported more measured-input flushes than were queued",
+            ),
             Self::ControlQueueFull => formatter.write_str("websocket control queue is full"),
             Self::WriterStopped => {
                 formatter.write_str("websocket writer stopped before returning its socket half")
@@ -258,7 +266,8 @@ where
     pending: VecDeque<DriverEvent>,
     timing: DriverTiming,
     next_ping_ns: i64,
-    has_measured_input_flushed: bool,
+    remaining_measured_inputs: usize,
+    has_input_completed: bool,
     cancellation_deadline_ns: Option<i64>,
     last_application_receive_ns: i64,
     response_bytes: usize,
@@ -283,6 +292,14 @@ where
         max_response_bytes: usize,
     ) -> Result<Self, WsDriverError> {
         validate_application_queue(operation, queue_limits)?;
+        let remaining_measured_inputs = operation
+            .messages()
+            .iter()
+            .filter(|message| message.role() == PreparedWsMessageRole::MeasuredInput)
+            .count();
+        if remaining_measured_inputs == 0 {
+            return Err(WsDriverError::MissingMeasuredInput);
+        }
         let (sink, read) = socket.split();
         let (application_tx, application_rx) = mpsc::channel(queue_limits.max_commands);
         let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
@@ -316,7 +333,8 @@ where
             pending: VecDeque::with_capacity(operation.messages().len()),
             timing,
             next_ping_ns: now_ns.saturating_add(timing.ping_interval_ns),
-            has_measured_input_flushed: false,
+            remaining_measured_inputs,
+            has_input_completed: false,
             cancellation_deadline_ns: None,
             last_application_receive_ns: now_ns,
             response_bytes: 0,
@@ -344,7 +362,7 @@ where
                 .sleep(self.next_ping_ns.saturating_sub(now_ns));
             let idle = deadline_sleep(
                 self.clock.clone(),
-                self.has_measured_input_flushed.then_some(
+                self.has_input_completed.then_some(
                     self.last_application_receive_ns
                         .saturating_add(self.timing.stream_idle_timeout_ns),
                 ),
@@ -397,7 +415,7 @@ where
         if now_ns >= self.timing.rotation_deadline_ns {
             return Some(WsDriverError::ConnectionRotation);
         }
-        if self.has_measured_input_flushed
+        if self.has_input_completed
             && now_ns
                 >= self
                     .last_application_receive_ns
@@ -460,15 +478,19 @@ where
         while let Some(notice) = self.notices.borrow_mut().pop_front() {
             match notice {
                 WriterNotice::Flushed { role, timestamp_ns } => {
-                    if role == PreparedWsMessageRole::MeasuredInput
-                        && !self.has_measured_input_flushed
-                    {
-                        self.has_measured_input_flushed = true;
-                        self.last_application_receive_ns = timestamp_ns;
-                        self.cancellation_deadline_ns = self
-                            .timing
-                            .cancel_after_ns
-                            .map(|delay_ns| timestamp_ns.saturating_add(delay_ns.max(0)));
+                    if role == PreparedWsMessageRole::MeasuredInput {
+                        self.remaining_measured_inputs = self
+                            .remaining_measured_inputs
+                            .checked_sub(1)
+                            .ok_or(WsDriverError::UnexpectedMeasuredInputFlush)?;
+                        if self.remaining_measured_inputs == 0 {
+                            self.has_input_completed = true;
+                            self.last_application_receive_ns = timestamp_ns;
+                            self.cancellation_deadline_ns = self
+                                .timing
+                                .cancel_after_ns
+                                .map(|delay_ns| timestamp_ns.saturating_add(delay_ns.max(0)));
+                        }
                     }
                     self.pending
                         .push_back(DriverEvent::Flushed { role, timestamp_ns });
@@ -632,9 +654,13 @@ where
         finish_requested |= flush_servicing_controls(sink, control_rx).await?;
         return Ok((role, clock.now_ns(), finish_requested));
     }
-    let mut chunks = message.payload().chunks(max_frame_bytes.max(1)).peekable();
+    let payload = message.payload().clone();
+    let mut offset = 0_usize;
     let mut is_first = true;
-    while let Some(chunk) = chunks.next() {
+    while offset < payload.len() {
+        let end = offset
+            .saturating_add(max_frame_bytes.max(1))
+            .min(payload.len());
         let data = if is_first {
             match message.opcode() {
                 PreparedWsOpcode::Text => Data::Text,
@@ -645,13 +671,14 @@ where
         };
         is_first = false;
         sink.feed(Message::Frame(Frame::message(
-            bytes::Bytes::copy_from_slice(chunk),
+            payload.slice(offset..end),
             OpCode::Data(data),
-            chunks.peek().is_none(),
+            end == payload.len(),
         )))
         .await
         .map_err(WsDriverError::Write)?;
         finish_requested |= flush_servicing_controls(sink, control_rx).await?;
+        offset = end;
     }
     Ok((role, clock.now_ns(), finish_requested))
 }
@@ -710,7 +737,9 @@ mod tests {
     use std::time::Duration;
 
     use futures::{Sink, SinkExt, Stream, StreamExt};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+    use tokio::sync::{oneshot, watch};
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
@@ -731,6 +760,156 @@ mod tests {
 
     struct BackpressureSocket {
         state: Rc<RefCell<BackpressureState>>,
+    }
+
+    #[derive(Default)]
+    struct SequencedWriteState {
+        application_frames: usize,
+        is_second_ready: bool,
+        writer: Option<Waker>,
+    }
+
+    struct SequencedWriteSocket {
+        state: Rc<RefCell<SequencedWriteState>>,
+    }
+
+    struct PausedUploadProxy {
+        address: std::net::SocketAddr,
+        is_paused: watch::Sender<bool>,
+        has_upload_data: watch::Sender<bool>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl PausedUploadProxy {
+        async fn start(target: std::net::SocketAddr) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind upload proxy");
+            let address = listener.local_addr().expect("upload proxy address");
+            let (is_paused, mut pause_rx) = watch::channel(false);
+            let (has_upload_data, _) = watch::channel(false);
+            let upload_data_tx = has_upload_data.clone();
+            let task = tokio::task::spawn_local(async move {
+                let (client, _) = listener.accept().await.expect("accept proxy client");
+                let upstream = tokio::net::TcpStream::connect(target)
+                    .await
+                    .expect("connect proxy upstream");
+                let (mut client_read, mut client_write) = client.into_split();
+                let (mut upstream_read, mut upstream_write) = upstream.into_split();
+                let download = tokio::task::spawn_local(async move {
+                    let _ = tokio::io::copy(&mut upstream_read, &mut client_write).await;
+                });
+                let mut buffer = [0_u8; 64 * 1024];
+                loop {
+                    if *pause_rx.borrow() {
+                        tokio::select! {
+                            changed = pause_rx.changed() => {
+                                if changed.is_err() {
+                                    break;
+                                }
+                            }
+                            ready = client_read.readable(), if !*upload_data_tx.borrow() => {
+                                if ready.is_err() {
+                                    break;
+                                }
+                                upload_data_tx.send_replace(true);
+                            }
+                        }
+                        continue;
+                    }
+                    tokio::select! {
+                        biased;
+                        changed = pause_rx.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                        }
+                        read = client_read.read(&mut buffer) => match read {
+                            Ok(0) | Err(_) => break,
+                            Ok(read) => {
+                                if upstream_write.write_all(&buffer[..read]).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                download.abort();
+            });
+            Self {
+                address,
+                is_paused,
+                has_upload_data,
+                task,
+            }
+        }
+
+        fn pause(&self) {
+            self.is_paused.send_replace(true);
+        }
+
+        fn resume(&self) {
+            self.is_paused.send_replace(false);
+        }
+
+        async fn wait_for_upload_data(&self) {
+            let mut data_rx = self.has_upload_data.subscribe();
+            while !*data_rx.borrow_and_update() {
+                data_rx.changed().await.expect("upload proxy data signal");
+            }
+        }
+    }
+
+    impl Drop for PausedUploadProxy {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    impl Stream for SequencedWriteSocket {
+        type Item = Result<Message, tokio_tungstenite::tungstenite::Error>;
+
+        fn poll_next(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Pending
+        }
+    }
+
+    impl Sink<Message> for SequencedWriteSocket {
+        type Error = tokio_tungstenite::tungstenite::Error;
+
+        fn poll_ready(
+            self: Pin<&mut Self>,
+            context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            let mut state = self.state.borrow_mut();
+            if state.application_frames == 0 || state.is_second_ready {
+                Poll::Ready(Ok(()))
+            } else {
+                state.writer = Some(context.waker().clone());
+                Poll::Pending
+            }
+        }
+
+        fn start_send(self: Pin<&mut Self>, message: Message) -> Result<(), Self::Error> {
+            if matches!(message, Message::Frame(_)) {
+                self.state.borrow_mut().application_frames += 1;
+            }
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
     }
 
     impl Stream for BackpressureSocket {
@@ -845,6 +1024,212 @@ mod tests {
             assert!(matches!(event, DriverEvent::Flushed { .. }));
             assert!(state.borrow().has_pong, "peer ping must be answered");
             let _ = driver.finish().await.expect("driver reunites socket");
+        });
+    }
+
+    #[test]
+    fn real_tcp_backpressure_allows_pong_before_remaining_max_sized_frames() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&runtime, async {
+            const FRAME_BYTES: usize = 1024 * 1024;
+            const PAYLOAD_BYTES: usize = 5 * FRAME_BYTES;
+            const WRITER_RESERVE_BYTES: usize = 14 + 131;
+
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("test listener binds");
+            let address = listener.local_addr().expect("listener has an address");
+            let (send_ping, receive_ping) = oneshot::channel();
+            let (pong_before_message, pong_result) = oneshot::channel();
+            tokio::task::spawn_local(async move {
+                let (stream, _) = listener.accept().await.expect("server accepts client");
+                let mut socket = accept_async(stream).await.expect("server upgrades client");
+                receive_ping.await.expect("test requests ping");
+                socket
+                    .send(Message::Ping(bytes::Bytes::from_static(b"pressure")))
+                    .await
+                    .expect("server sends ping");
+                let is_pong_first = loop {
+                    match socket
+                        .next()
+                        .await
+                        .expect("client responds")
+                        .expect("client frame is valid")
+                    {
+                        Message::Pong(payload) => {
+                            assert_eq!(payload, bytes::Bytes::from_static(b"pressure"));
+                            break true;
+                        }
+                        Message::Text(_) | Message::Binary(_) => break false,
+                        _ => {}
+                    }
+                };
+                if is_pong_first {
+                    loop {
+                        match socket
+                            .next()
+                            .await
+                            .expect("client completes the upload")
+                            .expect("client frame is valid")
+                        {
+                            Message::Text(_) | Message::Binary(_) => break,
+                            _ => {}
+                        }
+                    }
+                }
+                let _ = pong_before_message.send(is_pong_first);
+                socket
+                    .send(Message::Text("done".into()))
+                    .await
+                    .expect("server keeps the upgraded socket live");
+                let _ = socket.next().await;
+            });
+
+            let proxy = PausedUploadProxy::start(address).await;
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let url = url::Url::parse(&format!("ws://{}/v1/responses", proxy.address))
+                .expect("test URL is valid");
+            let websocket_config = WebSocketConfig::default()
+                .write_buffer_size(64 * 1024)
+                .max_write_buffer_size(PAYLOAD_BYTES + WRITER_RESERVE_BYTES)
+                .max_frame_size(Some(FRAME_BYTES));
+            let socket = connector::connect(
+                &url,
+                &BTreeMap::new(),
+                &ClientConfig::default(),
+                websocket_config,
+                clock.clone(),
+                None,
+            )
+            .await
+            .expect("client upgrades server");
+            proxy.pause();
+            let operation = PreparedWsOperation::new(
+                [PreparedWsMessage::text(
+                    bytes::Bytes::from(vec![b'x'; PAYLOAD_BYTES]),
+                    PreparedWsMessageRole::MeasuredInput,
+                )],
+                None,
+            );
+            let now_ns = clock.now_ns();
+            let mut driver = SocketOperationDriver::start(
+                socket,
+                clock,
+                &operation,
+                ApplicationQueueLimits::new(1, PAYLOAD_BYTES).with_max_frame_bytes(FRAME_BYTES),
+                DriverTiming {
+                    deadline_ns: Some(now_ns.saturating_add(5_000_000_000)),
+                    rotation_deadline_ns: now_ns.saturating_add(5_000_000_000),
+                    ping_interval_ns: 5_000_000_000,
+                    stream_idle_timeout_ns: 5_000_000_000,
+                    cancel_after_ns: None,
+                },
+                64,
+            )
+            .expect("driver starts");
+
+            tokio::time::timeout(Duration::from_secs(1), proxy.wait_for_upload_data())
+                .await
+                .expect("client upload reaches the paused proxy");
+            send_ping.send(()).expect("server ping request is live");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            proxy.resume();
+
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if matches!(
+                        driver.next().await.expect("writer stays healthy"),
+                        DriverEvent::Flushed { .. }
+                    ) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("writer progresses after pressure releases");
+            assert!(
+                tokio::time::timeout(Duration::from_secs(1), pong_result)
+                    .await
+                    .expect("server observes a client message")
+                    .expect("server reports ordering"),
+                "Pong must overtake the remaining application fragments"
+            );
+            let _ = driver.finish().await.expect("driver reunites socket");
+        });
+    }
+
+    #[test]
+    fn cancellation_arms_only_after_every_measured_input_is_flushed() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&runtime, async {
+            let state = Rc::new(RefCell::new(SequencedWriteState::default()));
+            let socket = SequencedWriteSocket {
+                state: state.clone(),
+            };
+            let operation = PreparedWsOperation::new(
+                [
+                    PreparedWsMessage::text(
+                        bytes::Bytes::from_static(b"first"),
+                        PreparedWsMessageRole::MeasuredInput,
+                    ),
+                    PreparedWsMessage::text(
+                        bytes::Bytes::from_static(b"second"),
+                        PreparedWsMessageRole::MeasuredInput,
+                    ),
+                ],
+                None,
+            );
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let now_ns = clock.now_ns();
+            let mut driver = SocketOperationDriver::start(
+                socket,
+                clock,
+                &operation,
+                ApplicationQueueLimits::new(2, 11),
+                DriverTiming {
+                    deadline_ns: Some(now_ns.saturating_add(1_000_000_000)),
+                    rotation_deadline_ns: now_ns.saturating_add(1_000_000_000),
+                    ping_interval_ns: 1_000_000_000,
+                    stream_idle_timeout_ns: 1_000_000_000,
+                    cancel_after_ns: Some(0),
+                },
+                64,
+            )
+            .expect("driver starts");
+
+            assert!(matches!(
+                driver.next().await,
+                Ok(DriverEvent::Flushed {
+                    role: PreparedWsMessageRole::MeasuredInput,
+                    ..
+                })
+            ));
+            {
+                let mut state = state.borrow_mut();
+                state.is_second_ready = true;
+                if let Some(writer) = state.writer.take() {
+                    writer.wake();
+                }
+            }
+            assert!(matches!(
+                driver.next().await,
+                Ok(DriverEvent::Flushed {
+                    role: PreparedWsMessageRole::MeasuredInput,
+                    ..
+                })
+            ));
+            assert!(matches!(
+                driver.next().await,
+                Err(super::WsDriverError::RequestCancellation)
+            ));
         });
     }
 

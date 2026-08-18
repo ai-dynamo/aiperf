@@ -2141,6 +2141,8 @@ mod tests {
         let mut expected_transports = vec!["http", "dry_run"];
         #[cfg(feature = "grpc")]
         expected_transports.push("grpc");
+        #[cfg(feature = "websocket")]
+        expected_transports.push("websocket");
         #[cfg(feature = "dynosim")]
         {
             expected_transports.push("dynosim_offline");
@@ -2187,6 +2189,8 @@ mod tests {
         let mut expected_transports = vec!["http", "dry_run"];
         #[cfg(feature = "grpc")]
         expected_transports.push("grpc");
+        #[cfg(feature = "websocket")]
+        expected_transports.push("websocket");
         #[cfg(feature = "dynosim")]
         {
             expected_transports.push("dynosim_offline");
@@ -2209,6 +2213,11 @@ mod tests {
         assert_eq!(
             catalog.transport["grpc"].metadata["url_schemes"],
             serde_json::json!(["grpc", "grpcs"])
+        );
+        #[cfg(feature = "websocket")]
+        assert_eq!(
+            catalog.transport["websocket"].metadata["url_schemes"],
+            serde_json::json!(["ws", "wss"])
         );
 
         // The endpoint catalog is a pure projection of the frozen endpoint

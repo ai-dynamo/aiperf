@@ -146,6 +146,11 @@ pub trait WorkerSink {
     async fn prewarm(&self, _turn: PreparedTurn) -> Result<()> {
         Ok(())
     }
+
+    /// Drain worker-local transport resources after all requests reach terminal.
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[async_trait(?Send)]
@@ -1080,7 +1085,7 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
         Ok(records)
     }
 
-    fn shutdown(&self) -> Result<()> {
+    async fn shutdown(&self) -> Result<()> {
         self.shutdown_workers()
     }
 }
@@ -1345,6 +1350,9 @@ async fn run_worker<S: WorkerSink + 'static>(
             }
         }
         let _ = reply.send(records);
+    }
+    if let Err(error) = sink.shutdown().await {
+        tracing::error!(error = %error, "failed to shut down worker-local transport sink");
     }
 }
 
@@ -2247,7 +2255,7 @@ mod tests {
             saw_frame_before_terminal.load(Ordering::SeqCst),
             "cross-thread placement buffered SSE until terminal"
         );
-        backend.shutdown().unwrap();
+        backend.shutdown().await.unwrap();
         server.await.unwrap();
     }
 
@@ -2319,7 +2327,7 @@ mod tests {
             force_close.notify_one();
             worker_closed_socket = closed_rx.await.ok();
         }
-        backend.shutdown().unwrap();
+        backend.shutdown().await.unwrap();
         server.await.unwrap();
         assert_eq!(
             worker_closed_socket,

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::body_plan::{BodyPlan, PreparedWsOperation};
+use crate::body_plan::{BodyPlan, PreparedWsOpcode, PreparedWsOperation};
 use crate::dataset::materialize::Overrides;
 use crate::dataset::segment::SegmentStore;
 use crate::endpoints::DynosimEndpointFactory;
@@ -189,6 +189,11 @@ pub trait EndpointFactory: fmt::Debug + Send + Sync {
     /// Return the canonical descriptor registered with this factory.
     fn descriptor(&self) -> &'static EndpointDescriptor;
 
+    /// WebSocket protocol capabilities registered by this dialect, if any.
+    fn websocket_capabilities(&self) -> Option<WebSocketCapabilities> {
+        None
+    }
+
     /// Apply endpoint-specific validation after generic descriptor policy.
     fn validate_config(&self, _config: &mut RawEndpointConfig) -> EndpointResult<()> {
         Ok(())
@@ -202,6 +207,43 @@ pub trait EndpointFactory: fmt::Debug + Send + Sync {
     fn legacy_endpoint(&self) -> Option<Arc<dyn Endpoint>> {
         None
     }
+}
+
+/// Persistent connection ownership required by a WebSocket dialect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebSocketConnectionModel {
+    /// One correlated operation at a time on a reusable connection.
+    TurnSerialized,
+    /// Stateful bidirectional input and output on one affinity-owned connection.
+    Duplex,
+}
+
+/// Registered event codec selected by a WebSocket endpoint binding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebSocketDialect {
+    /// Responses create/continuation events.
+    Responses,
+    /// Realtime conversation and audio-buffer events.
+    Realtime,
+}
+
+/// Closed capabilities consumed by the dialect-neutral WebSocket transport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WebSocketCapabilities {
+    /// Event codec for application messages.
+    pub dialect: WebSocketDialect,
+    /// Persistent connection ownership model.
+    pub connection_model: WebSocketConnectionModel,
+    /// Application opcode authored by this binding.
+    pub application_opcode: PreparedWsOpcode,
+    /// Whether a cached socket owns reusable server-side conversation state.
+    pub has_affinity_state: bool,
+    /// Whether a replay-safe full-history retry is supported before output.
+    pub supports_full_history_replay: bool,
+    /// Whether the endpoint prepares an equivalent HTTP/SSE operation.
+    pub supports_http_sse_fallback: bool,
+    /// Whether request-wide application-event lag metrics are meaningful.
+    pub supports_round_trip_metrics: bool,
 }
 
 /// Borrowed request view consumed by prepared endpoints.
@@ -328,6 +370,11 @@ pub trait PreparedEndpointBehavior: Endpoint {
         )))
     }
 
+    /// See [`PreparedEndpoint::websocket_capabilities`].
+    fn websocket_capabilities(&self) -> Option<WebSocketCapabilities> {
+        None
+    }
+
     /// See [`PreparedEndpoint::renders_all_turns`].
     fn renders_all_turns(&self) -> bool {
         false
@@ -423,6 +470,11 @@ pub trait PreparedEndpoint: fmt::Debug {
             "endpoint {:?} does not support the websocket transport",
             self.descriptor().id
         )))
+    }
+
+    /// Return the registered WebSocket protocol contract for this binding.
+    fn websocket_capabilities(&self) -> Option<WebSocketCapabilities> {
+        None
     }
 
     /// Whether the body is the concatenation of every turn handed to the
@@ -543,6 +595,10 @@ where
         self.endpoint.descriptor()
     }
 
+    fn websocket_capabilities(&self) -> Option<WebSocketCapabilities> {
+        self.endpoint.websocket_capabilities()
+    }
+
     fn prepare(
         &self,
         config: EffectiveEndpointConfig,
@@ -602,6 +658,10 @@ where
     ) -> EndpointResult<PreparedWsOperation> {
         self.endpoint
             .prepare_ws_operation(request, self.config.as_raw(), body, store, overrides)
+    }
+
+    fn websocket_capabilities(&self) -> Option<WebSocketCapabilities> {
+        self.endpoint.websocket_capabilities()
     }
 
     fn renders_all_turns(&self) -> bool {

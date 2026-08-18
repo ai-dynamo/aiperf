@@ -538,7 +538,7 @@ pub(crate) async fn execute_native_inner(
         } else {
             Ok(Vec::new())
         };
-        let shutdown = execution_backend.shutdown();
+        let shutdown = execution_backend.shutdown().await;
         let phased = finish_with_shutdown(execution_result, shutdown, "execution backend")?;
         let drained = drained?;
         let issued_times = phased

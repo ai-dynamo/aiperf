@@ -24,7 +24,10 @@
 //! `transport::grpc` — instead of assembling JSON only to parse it back.
 
 use std::borrow::Cow;
+use std::fmt::{self, Display, Formatter};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use bytes::{BufMut, Bytes, BytesMut};
 use serde_json::Value;
 use smallvec::SmallVec;
@@ -788,6 +791,41 @@ pub struct PreparedWsOperation {
     http_sse_fallback_body: Option<Bytes>,
 }
 
+/// Failure to serialize one prepared WebSocket operation for an artifact.
+#[derive(Debug)]
+pub enum PreparedWsArtifactError {
+    /// A message declared as text does not contain UTF-8.
+    InvalidText(std::str::Utf8Error),
+    /// The canonical artifact envelope could not be serialized.
+    Serialization(serde_json::Error),
+}
+
+impl Display for PreparedWsArtifactError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidText(error) => write!(
+                formatter,
+                "websocket text application message is not UTF-8: {error}"
+            ),
+            Self::Serialization(error) => {
+                write!(
+                    formatter,
+                    "serializing websocket operation artifact: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PreparedWsArtifactError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidText(error) => Some(error),
+            Self::Serialization(error) => Some(error),
+        }
+    }
+}
+
 impl PreparedWsOperation {
     /// Freeze application messages and an optional independently prepared HTTP/SSE body.
     pub fn new(
@@ -808,6 +846,44 @@ impl PreparedWsOperation {
     /// Borrow the equivalent HTTP/SSE request body when the dialect prepared one.
     pub fn http_sse_fallback_body(&self) -> Option<&Bytes> {
         self.http_sse_fallback_body.as_ref()
+    }
+
+    /// Serialize the complete ordered operation into the canonical artifact envelope.
+    pub fn to_artifact_bytes(&self) -> std::result::Result<Bytes, PreparedWsArtifactError> {
+        let messages = self
+            .messages
+            .iter()
+            .map(|message| {
+                let opcode = match message.opcode {
+                    PreparedWsOpcode::Text => "text",
+                    PreparedWsOpcode::Binary => "binary",
+                };
+                let role = match message.role {
+                    PreparedWsMessageRole::MeasuredInput => "measured_input",
+                    PreparedWsMessageRole::Control => "control",
+                    PreparedWsMessageRole::TerminalAck => "terminal_ack",
+                };
+                let payload = match message.opcode {
+                    PreparedWsOpcode::Text => Value::String(
+                        std::str::from_utf8(&message.payload)
+                            .map_err(PreparedWsArtifactError::InvalidText)?
+                            .to_owned(),
+                    ),
+                    PreparedWsOpcode::Binary => Value::String(STANDARD.encode(&message.payload)),
+                };
+                Ok(serde_json::json!({
+                    "opcode": opcode,
+                    "role": role,
+                    "payload": payload,
+                }))
+            })
+            .collect::<std::result::Result<Vec<Value>, PreparedWsArtifactError>>()?;
+        serde_json::to_vec(&serde_json::json!({
+            "transport":"websocket",
+            "messages":messages,
+        }))
+        .map(Bytes::from)
+        .map_err(PreparedWsArtifactError::Serialization)
     }
 }
 

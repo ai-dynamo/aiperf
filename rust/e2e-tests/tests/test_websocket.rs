@@ -33,6 +33,15 @@ fn request_event_types(record: &Value) -> Vec<String> {
         .collect()
 }
 
+fn response_texts(result: &common::RunResult) -> Vec<String> {
+    result.artifacts.read_json_file("**/outputs.json")["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["response_text"].as_str().map(str::to_owned))
+        .collect()
+}
+
 fn websocket_config(url: &str, endpoint_type: &str, path: &str) -> String {
     format!(
         "schemaVersion: \"2.0\"\n\
@@ -57,6 +66,7 @@ fn websocket_config(url: &str, endpoint_type: &str, path: &str) -> String {
         \x20     concurrency: 1\n\
         \x20 artifacts:\n\
         \x20   raw: true\n\
+        \x20   export_outputs_json: true\n\
         \x20   records: [jsonl]\n\
         \x20 gpuTelemetry: {{enabled: false}}\n\
         \x20 serverMetrics: {{enabled: false}}\n\
@@ -94,10 +104,16 @@ async fn websocket_responses_profile_records_application_events() {
         result.stderr
     );
     assert_eq!(result.artifacts.request_count(), f64::from(REQUESTS));
+    assert_eq!(
+        response_texts(&result),
+        vec!["mock".to_owned(); REQUESTS as usize]
+    );
     let records = result.artifacts.raw_records();
     assert_eq!(records.len(), REQUESTS as usize);
     for record in &records {
         assert_eq!(record["metadata"]["actual_transport_route"], "websocket");
+        assert_eq!(record["status"], 101);
+        assert!(record["error"].is_null());
         assert_eq!(request_event_types(record), ["response.create"]);
         let events = response_event_types(record);
         assert!(
@@ -146,25 +162,43 @@ async fn websocket_realtime_profile_records_text_and_audio_events() {
         result.stderr
     );
     assert_eq!(result.artifacts.request_count(), f64::from(REQUESTS));
+    assert_eq!(
+        response_texts(&result),
+        vec!["mock".to_owned(); REQUESTS as usize]
+    );
     let records = result.artifacts.raw_records();
     assert_eq!(records.len(), REQUESTS as usize);
     for record in &records {
         assert_eq!(record["metadata"]["actual_transport_route"], "websocket");
+        assert_eq!(record["status"], 101);
+        assert!(record["error"].is_null());
         assert_eq!(
             request_event_types(record),
-            [
-                "conversation.item.create",
-                "input_audio_buffer.commit",
-                "response.create"
-            ]
+            ["conversation.item.create", "response.create"]
         );
         let events = response_event_types(record);
-        assert!(events.iter().any(|event| event == "response.text.delta"));
-        assert!(events.iter().any(|event| event == "response.audio.delta"));
+        assert!(
+            events
+                .iter()
+                .any(|event| event == "response.output_text.delta")
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event == "response.output_audio.delta")
+        );
         assert!(events.iter().any(|event| event == "response.done"));
     }
     for record in result.artifacts.jsonl() {
-        assert!(record["metrics"].get("time_to_last_round_trip").is_none());
-        assert!(record["metrics"].get("avg_round_trip_time").is_none());
+        assert!(
+            record["metrics"]["time_to_last_round_trip"]["value"]
+                .as_f64()
+                .is_some_and(|value| value >= 0.0)
+        );
+        assert!(
+            record["metrics"]["avg_round_trip_time"]["value"]
+                .as_f64()
+                .is_some_and(|value| value >= 0.0)
+        );
     }
 }
