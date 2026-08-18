@@ -407,7 +407,10 @@ def test_routed_field_never_silently_no_ops(
         pytest.skip(f"{field} is listed in UNDRIVABLE_FIELDS")
 
     companions = _companions_for(field)
-    changed = silent_noop = False
+    # Assert per YAML, not across the union: a field that works on a trace
+    # dataset and silently no-ops on a synthetic one is a silent drop for
+    # every user of a synthetic config, and accumulating `changed` across
+    # both fixtures hid exactly that.
     for config_yaml in (rich_yaml, trace_yaml):
         try:
             baseline = resolve_config(cli(**companions), config_yaml).model_dump(
@@ -415,6 +418,7 @@ def test_routed_field_never_silently_no_ops(
             )
         except Exception:
             continue
+        changed = silent_noop = False
         for value in candidates:
             try:
                 resolved = resolve_config(
@@ -427,9 +431,69 @@ def test_routed_field_never_silently_no_ops(
             else:
                 silent_noop = True
 
-    assert changed or not silent_noop, (
-        f"--{field.replace('_', '-')} is classified as routed under --config, "
-        f"but setting it resolves successfully and changes nothing -- it is "
-        f"silently ignored. Route it, or move it to UNROUTED_UNDER_CONFIG so "
-        f"the user gets an error naming the flag."
-    )
+        assert changed or not silent_noop, (
+            f"--{field.replace('_', '-')} is classified as routed under "
+            f"--config, but with {config_yaml.name} it resolves successfully "
+            f"and changes nothing -- it is silently ignored. Route it, or move "
+            f"it to UNROUTED_UNDER_CONFIG so the user gets an error naming it."
+        )
+
+
+# One routable flag per dataset type, used as an anchor so the flag under
+# test is never the only thing driving the override.
+_ANCHOR_FLAGS: dict[str, dict[str, Any]] = {
+    "rich": {"random_seed": 4242},
+    "trace": {"random_seed": 4242},
+}
+
+
+@pytest.mark.parametrize("field", sorted(DATASET_OVERRIDE_FIELDS))
+def test_dataset_flag_is_not_excused_by_a_neighbouring_flag(
+    field: str, rich_yaml: Path, trace_yaml: Path
+) -> None:
+    """A flag must not become silently droppable by being passed with others.
+
+    The single-flag parametrization above cannot see this: the guard used to
+    fire only when the whole override came back empty, so any inert flag
+    riding along with a routable one was discarded with no diagnostic. Every
+    multi-flag command line touching the dataset escaped the guarantee.
+    """
+    if field in MAGIC_LIST_ONLY_UNDER_CONFIG or field in SINGLE_VALUED_FIELDS:
+        pytest.skip(f"{field} is covered by the single-flag invariant only")
+    candidates = _candidate_values(field)
+    if not candidates:
+        _require_drivable(field)
+        pytest.skip(f"{field} is listed in UNDRIVABLE_FIELDS")
+
+    companions = _companions_for(field)
+    for label, config_yaml in (("rich", rich_yaml), ("trace", trace_yaml)):
+        anchor = _ANCHOR_FLAGS[label]
+        if field in anchor:
+            continue
+        try:
+            baseline = resolve_config(
+                cli(**anchor, **companions), config_yaml
+            ).model_dump(mode="json")
+        except Exception:
+            continue
+        changed = silent_noop = False
+        # Every candidate, not just one: a bool's False and an enum's first
+        # member frequently ARE the resolved default, and setting a field to
+        # the value it already holds cannot change anything.
+        for value in candidates:
+            try:
+                resolved = resolve_config(
+                    cli(**{field: value}, **anchor, **companions), config_yaml
+                ).model_dump(mode="json")
+            except Exception:
+                continue  # loud: acceptable
+            if resolved != baseline:
+                changed = True
+            else:
+                silent_noop = True
+        assert changed or not silent_noop, (
+            f"--{field.replace('_', '-')} resolves cleanly and changes nothing "
+            f"when passed alongside {sorted(anchor)} against {config_yaml.name}. "
+            f"Paired with another flag it is silently dropped, even though it "
+            f"may error correctly on its own."
+        )
