@@ -98,6 +98,10 @@ pub struct PerRecordRow {
     /// Identity of the worker that executed the request, matching the JSONL
     /// `metadata.worker_id`.
     pub worker_id: String,
+    /// Stable selected inference route, when reported by the transport.
+    pub actual_transport_route: Option<String>,
+    /// Stable pre-application fallback reason, when an alternative route ran.
+    pub transport_fallback_reason: Option<String>,
     /// Dense global dispatch ordinal, matching the JSONL
     /// `metadata.global_dispatch_index`. `None` for a record the workload assigned
     /// no ordinal, which becomes a null cell rather than a fabricated position.
@@ -163,6 +167,8 @@ fn build_schema(columns: &[PerRecordMetricColumn], include_trace: bool) -> Arc<S
         Field::new("request_ack_ns", DataType::Int64, true),
         Field::new("request_end_ns", DataType::Int64, false),
         Field::new("worker_id", DataType::Utf8, false),
+        Field::new("actual_transport_route", DataType::Utf8, true),
+        Field::new("transport_fallback_reason", DataType::Utf8, true),
         Field::new("global_dispatch_index", DataType::Int64, true),
         Field::new("record_processor_id", DataType::Utf8, false),
         Field::new("benchmark_phase", DataType::Utf8, false),
@@ -258,6 +264,12 @@ fn build_record_batch(
     arrays.push(int_column(rows.iter().map(|r| Some(r.request_end_ns))));
     arrays.push(string_column(
         rows.iter().map(|r| Some(r.worker_id.clone())),
+    ));
+    arrays.push(string_column(
+        rows.iter().map(|r| r.actual_transport_route.clone()),
+    ));
+    arrays.push(string_column(
+        rows.iter().map(|r| r.transport_fallback_reason.clone()),
     ));
     arrays.push(int_column(rows.iter().map(|r| r.global_dispatch_index)));
     arrays.push(string_column(
@@ -614,6 +626,8 @@ mod tests {
             request_start_ns: 1_000_000,
             request_end_ns: 11_000_000,
             worker_id: "rust-0".into(),
+            actual_transport_route: Some("http_sse".into()),
+            transport_fallback_reason: Some("unsupported_upgrade".into()),
             global_dispatch_index: Some(7),
             benchmark_phase: "profiling",
             metrics: BTreeMap::from([
@@ -697,6 +711,12 @@ mod tests {
             "rust-3",
             "worker_id must be the row's executing worker, not a file-wide constant"
         );
+        let route = column::<StringArray>(&batch, "actual_transport_route");
+        assert_eq!(route.value(0), "http_sse");
+        assert!(route.is_null(1));
+        let fallback = column::<StringArray>(&batch, "transport_fallback_reason");
+        assert_eq!(fallback.value(0), "unsupported_upgrade");
+        assert!(fallback.is_null(1));
         let dispatch_index = column::<Int64Array>(&batch, "global_dispatch_index");
         assert_eq!(dispatch_index.value(0), 7);
         assert!(

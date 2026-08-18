@@ -269,6 +269,7 @@ impl GraphSink<Msg> for TransportMeteredSink {
                 endpoint_url: Some(self.url.to_string()),
                 model: Some(self.model.clone()),
             },
+            transport: Default::default(),
             phase: Phase::Profiling,
             phase_index: None,
             phase_name: None,

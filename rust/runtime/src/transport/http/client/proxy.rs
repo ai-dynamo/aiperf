@@ -142,9 +142,10 @@ pub async fn connect_via_proxy(
     let status = connect_status_code(&buf)
         .ok_or_else(|| connect_err("proxy CONNECT response had no status line".to_string()))?;
     if status != 200 {
-        return Err(connect_err(format!(
-            "proxy CONNECT to {origin_host}:{origin_port} returned HTTP {status}"
-        )));
+        return Err(proxy_status_err(
+            status,
+            format!("proxy CONNECT to {origin_host}:{origin_port} returned HTTP {status}"),
+        ));
     }
     Ok(stream)
 }
@@ -223,6 +224,14 @@ fn connect_err(message: String) -> ErrorDetails {
     }
 }
 
+fn proxy_status_err(status: u16, message: String) -> ErrorDetails {
+    ErrorDetails {
+        kind: ErrorKind::Http,
+        code: Some(status),
+        message,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +260,9 @@ mod tests {
             connect_status_code(b"HTTP/1.1 407 Proxy Auth\r\n\r\n"),
             Some(407)
         );
+        let error = proxy_status_err(407, "authentication required".to_owned());
+        assert_eq!(error.kind, ErrorKind::Http);
+        assert_eq!(error.code, Some(407));
     }
 
     #[test]

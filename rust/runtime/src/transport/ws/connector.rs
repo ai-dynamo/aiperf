@@ -15,6 +15,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use url::Url;
 
 use crate::clock::Clock;
+use crate::transport::core::ErrorDetails;
 use crate::transport::http::config::{ClientConfig, apply_socket_opts};
 use crate::transport::ws::driver::{FallbackReason, classify_upgrade_failure};
 
@@ -113,6 +114,11 @@ fn request(
         let name = http::header::HeaderName::try_from(name.as_str()).map_err(|error| {
             ConnectFailure::closed(format!("invalid websocket header name {name:?}: {error}"))
         })?;
+        if is_reserved_handshake_header(&name) {
+            return Err(ConnectFailure::closed(format!(
+                "websocket header {name:?} is reserved for the upgrade handshake"
+            )));
+        }
         let value = http::header::HeaderValue::try_from(value.as_str()).map_err(|error| {
             ConnectFailure::closed(format!(
                 "invalid websocket header value for {name}: {error}"
@@ -168,9 +174,7 @@ async fn connect_attempt_inner(
     let tcp = if let Some(proxy) = &client.proxy {
         crate::transport::http::client::proxy::connect_via_proxy(proxy, host, port)
             .await
-            .map_err(|error| {
-                ConnectFailure::network(format!("websocket proxy tunnel failed: {}", error.message))
-            })?
+            .map_err(proxy_connect_failure)?
     } else {
         TcpStream::connect((host, port))
             .await
@@ -199,6 +203,20 @@ async fn connect_attempt_inner(
             fallback_reason: classify_upgrade_failure(&error),
             message: upgrade_message(&error),
         })
+}
+
+fn is_reserved_handshake_header(name: &http::header::HeaderName) -> bool {
+    matches!(name.as_str(), "host" | "connection" | "upgrade")
+        || name.as_str().starts_with("sec-websocket-")
+}
+
+fn proxy_connect_failure(error: ErrorDetails) -> ConnectFailure {
+    let message = format!("websocket proxy tunnel failed: {}", error.message);
+    if error.code.is_some() {
+        ConnectFailure::closed(message)
+    } else {
+        ConnectFailure::network(message)
+    }
 }
 
 fn upgrade_message(error: &TungsteniteError) -> String {
@@ -234,7 +252,8 @@ mod tests {
 
     use url::Url;
 
-    use super::request;
+    use super::{proxy_connect_failure, request};
+    use crate::transport::core::{ErrorDetails, ErrorKind};
 
     #[test]
     fn upgrade_request_preserves_authored_headers() {
@@ -262,5 +281,35 @@ mod tests {
         invalid_headers.insert("bad header".to_owned(), "value".to_owned());
         let websocket = Url::parse("wss://example.test/v1/realtime").expect("test URL is valid");
         assert!(request(&websocket, &invalid_headers).is_err());
+    }
+
+    #[test]
+    fn upgrade_request_rejects_reserved_handshake_headers() {
+        let url = Url::parse("wss://example.test/v1/responses").expect("test URL is valid");
+        for name in ["Host", "connection", "Upgrade", "Sec-WebSocket-Key"] {
+            let headers = BTreeMap::from([(name.to_owned(), "authored".to_owned())]);
+            let error = request(&url, &headers).expect_err("reserved header must be rejected");
+            assert!(error.to_string().contains("reserved"));
+        }
+    }
+
+    #[test]
+    fn proxy_http_status_fails_closed_while_network_io_can_fallback() {
+        let auth = proxy_connect_failure(ErrorDetails {
+            kind: ErrorKind::Http,
+            code: Some(407),
+            message: "proxy authentication required".to_owned(),
+        });
+        assert_eq!(auth.fallback_reason(), None);
+
+        let network = proxy_connect_failure(ErrorDetails {
+            kind: ErrorKind::Connect,
+            code: None,
+            message: "connection refused".to_owned(),
+        });
+        assert_eq!(
+            network.fallback_reason(),
+            Some(crate::transport::ws::driver::FallbackReason::NetworkConnect)
+        );
     }
 }

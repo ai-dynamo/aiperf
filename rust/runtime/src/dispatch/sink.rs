@@ -75,6 +75,15 @@ pub struct ObservedRoundTripMetrics {
     pub mean_timestamp_lag_ns: Option<f64>,
 }
 
+/// Actual inference route selected after connection establishment policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ObservedTransportRoute {
+    /// Stable route identity such as `websocket` or `http_sse`.
+    pub actual_route: &'static str,
+    /// Stable allowlisted fallback reason, absent when no fallback occurred.
+    pub fallback_reason: Option<&'static str>,
+}
+
 /// Measurement hook fed by any sink. Timestamps are milliseconds relative to
 /// run start. The observer is intentionally local-loop friendly: it has no
 /// `Send`/`Sync` supertraits, so thread-per-core workers can accumulate through
@@ -126,6 +135,8 @@ pub trait RequestObserver {
     fn on_endpoint_metrics(&self, _uuid: Uuid, _metrics: ObservedEndpointMetrics) {}
     /// Record transport-computed application-event lag facts before terminal status.
     fn on_round_trip_metrics(&self, _uuid: Uuid, _metrics: ObservedRoundTripMetrics) {}
+    /// Record the actual route after any pre-application fallback decision.
+    fn on_transport_route(&self, _uuid: Uuid, _route: ObservedTransportRoute) {}
     /// Record terminal status for the request.
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus);
 }

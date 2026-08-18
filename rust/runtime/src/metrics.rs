@@ -16,12 +16,13 @@ use std::sync::Arc;
 use crate::clock::Clock;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{
-    ObservedEndpointMetrics, ObservedRoundTripMetrics, ObservedTokenKind, ObservedUsage,
-    RequestObserver,
+    ObservedEndpointMetrics, ObservedRoundTripMetrics, ObservedTokenKind, ObservedTransportRoute,
+    ObservedUsage, RequestObserver,
 };
 use crate::metrics_core::{
     AccumulatorSummary, InferenceDimensions, MetricTag, MetricValue, MetricsAccumulator,
-    MetricsConfig, Phase, RecordIngest, RequestTrace, TokenCounts, UsageMetrics,
+    MetricsConfig, Phase, RecordIngest, RequestTrace, TokenCounts, TransportRouteMetadata,
+    UsageMetrics,
 };
 use rustc_hash::FxHashMap;
 use uuid::Uuid;
@@ -107,6 +108,7 @@ struct PendingRequest {
     first_output_token_ns: Option<i64>,
     endpoint_metrics: Option<Box<ObservedEndpointMetrics>>,
     round_trip_metrics: Option<ObservedRoundTripMetrics>,
+    transport_route: Option<ObservedTransportRoute>,
     observed_usage: CompactObservedUsage,
     terminal: Option<ReplayTerminalStatus>,
     metadata: RequestMetricMetadata,
@@ -535,6 +537,14 @@ impl PendingRequest {
             worker_assignment_index: self.metadata.worker_assignment_index,
             conversation_id: self.metadata.conversation_id,
             dimensions: self.metadata.dimensions,
+            transport: self
+                .transport_route
+                .map_or_else(TransportRouteMetadata::default, |route| {
+                    TransportRouteMetadata {
+                        actual_route: Some(route.actual_route.to_owned()),
+                        fallback_reason: route.fallback_reason.map(str::to_owned),
+                    }
+                }),
             phase: self.metadata.phase,
             phase_index: None,
             phase_name: None,
@@ -667,6 +677,7 @@ impl RequestObserver for NativeMetricsObserver {
                 first_output_token_ns: None,
                 endpoint_metrics: None,
                 round_trip_metrics: None,
+                transport_route: None,
                 observed_usage: CompactObservedUsage::default(),
                 terminal: None,
                 metadata,
@@ -750,6 +761,12 @@ impl RequestObserver for NativeMetricsObserver {
         }
     }
 
+    fn on_transport_route(&self, uuid: Uuid, route: ObservedTransportRoute) {
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
+            request.transport_route = Some(route);
+        }
+    }
+
     fn on_terminal(&self, uuid: Uuid, status: ReplayTerminalStatus) {
         let terminal_ns = self.relative_now_ns();
         let mut state = self.state.borrow_mut();
@@ -824,6 +841,12 @@ impl RequestObserver for ObserverTee {
     fn on_round_trip_metrics(&self, uuid: Uuid, metrics: ObservedRoundTripMetrics) {
         for delegate in &self.delegates {
             delegate.on_round_trip_metrics(uuid, metrics);
+        }
+    }
+
+    fn on_transport_route(&self, uuid: Uuid, route: ObservedTransportRoute) {
+        for delegate in &self.delegates {
+            delegate.on_transport_route(uuid, route);
         }
     }
 
@@ -1227,6 +1250,32 @@ mod tests {
                 .map(|(_uuid, record)| (record.request_index, record.correlation_id.as_str()))
                 .collect::<Vec<_>>(),
             vec![(Some(0), "slot-zero"), (Some(2), "slot-two")]
+        );
+    }
+
+    #[test]
+    fn observer_retains_actual_transport_route_and_fallback_reason() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock, 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(23);
+        observer.on_arrival(uuid, 0.0, 4, 1);
+        observer.on_transport_route(
+            uuid,
+            ObservedTransportRoute {
+                actual_route: "http_sse",
+                fallback_reason: Some("unsupported_upgrade"),
+            },
+        );
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+
+        let collection = observer.finish_with_records();
+        assert_eq!(
+            collection.records[0].1.transport.actual_route.as_deref(),
+            Some("http_sse")
+        );
+        assert_eq!(
+            collection.records[0].1.transport.fallback_reason.as_deref(),
+            Some("unsupported_upgrade")
         );
     }
 

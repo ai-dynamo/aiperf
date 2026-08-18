@@ -117,6 +117,10 @@ struct RecordMetadata {
     request_end_ns: i64,
     worker_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    actual_transport_route: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transport_fallback_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     global_dispatch_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worker_assignment_index: Option<u64>,
@@ -307,6 +311,10 @@ struct RawRecordMetadata {
     request_end_ns: i64,
     worker_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    actual_transport_route: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transport_fallback_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     global_dispatch_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worker_assignment_index: Option<u64>,
@@ -473,6 +481,8 @@ pub(crate) fn per_record_parquet_row(
         request_ack_ns: record.first_token_ns,
         request_end_ns: record.end_ns,
         worker_id: record_worker_id(record),
+        actual_transport_route: record.transport.actual_route.clone(),
+        transport_fallback_reason: record.transport.fallback_reason.clone(),
         global_dispatch_index: record
             .global_dispatch_index
             .and_then(|index| i64::try_from(index).ok()),
@@ -500,6 +510,8 @@ const CSV_METADATA_COLUMNS: &[&str] = &[
     "request_ack_ns",
     "request_end_ns",
     "worker_id",
+    "actual_transport_route",
+    "transport_fallback_reason",
     "record_processor_id",
     "benchmark_phase",
     "was_cancelled",
@@ -624,6 +636,22 @@ pub(crate) fn record_csv_row(
     cells.push(csv_opt_i64(record.first_token_ns));
     cells.push(record.end_ns.to_string());
     cells.push(record_worker_id(record));
+    cells.push(
+        record
+            .transport
+            .actual_route
+            .as_deref()
+            .map(csv_escape)
+            .unwrap_or_default(),
+    );
+    cells.push(
+        record
+            .transport
+            .fallback_reason
+            .as_deref()
+            .map(csv_escape)
+            .unwrap_or_default(),
+    );
     cells.push("aiperf runner".to_string());
     cells.push(phase_str(record.phase).to_string());
     cells.push(record.canceled.to_string());
@@ -954,6 +982,8 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
             request_ack_ns: record.first_token_ns,
             request_end_ns: record.end_ns,
             worker_id: record_worker_id(record),
+            actual_transport_route: record.transport.actual_route.clone(),
+            transport_fallback_reason: record.transport.fallback_reason.clone(),
             global_dispatch_index: record.global_dispatch_index,
             worker_assignment_index: record.worker_assignment_index,
             record_processor_id: "aiperf runner",
@@ -1000,6 +1030,8 @@ fn raw_record_row<'a>(
             request_ack_ns: ingest.first_token_ns,
             request_end_ns: ingest.end_ns,
             worker_id: record_worker_id(ingest),
+            actual_transport_route: ingest.transport.actual_route.clone(),
+            transport_fallback_reason: ingest.transport.fallback_reason.clone(),
             global_dispatch_index: ingest.global_dispatch_index,
             worker_assignment_index: ingest.worker_assignment_index,
             record_processor_id: "aiperf runner",
@@ -1231,6 +1263,8 @@ mod tests {
             requested_output: Some(3),
             ..TokenCounts::default()
         };
+        ingest.transport.actual_route = Some("http_sse".to_owned());
+        ingest.transport.fallback_reason = Some("unsupported_upgrade".to_owned());
         let captured = CapturedRecord {
             uuid: Uuid::from_u128(7),
             x_correlation_id: "session-7".into(),
@@ -1244,6 +1278,11 @@ mod tests {
         let row: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(row["metadata"]["benchmark_phase"], "profiling");
         assert_eq!(row["metadata"]["x_correlation_id"], "session-7");
+        assert_eq!(row["metadata"]["actual_transport_route"], "http_sse");
+        assert_eq!(
+            row["metadata"]["transport_fallback_reason"],
+            "unsupported_upgrade"
+        );
         assert_eq!(row["metrics"]["request_latency"]["value"], 10.0);
         assert_eq!(row["metrics"]["time_to_first_token"]["value"], 5.0);
         assert_eq!(row["metrics"]["inter_token_latency"]["value"], 2.5);
@@ -1266,6 +1305,7 @@ mod tests {
             requested_output: Some(3),
             ..TokenCounts::default()
         };
+        ok.transport.actual_route = Some("websocket".to_owned());
         let success = CapturedRecord {
             uuid: Uuid::from_u128(7),
             x_correlation_id: "session-7".into(),
@@ -1288,6 +1328,10 @@ mod tests {
         // The mapped rows agree with the JSONL projection for the same records.
         let success_row = per_record_parquet_row(&success, &MetricsConfig::default(), false);
         assert_eq!(success_row.benchmark_phase, "profiling");
+        assert_eq!(
+            success_row.actual_transport_route.as_deref(),
+            Some("websocket")
+        );
         assert_eq!(
             success_row.metrics.get("request_latency").copied(),
             Some(10.0)
@@ -1331,6 +1375,8 @@ mod tests {
             requested_output: Some(3),
             ..TokenCounts::default()
         };
+        ok.transport.actual_route = Some("http_sse".to_owned());
+        ok.transport.fallback_reason = Some("network_connect".to_owned());
         let success = CapturedRecord {
             uuid: Uuid::from_u128(7),
             x_correlation_id: "session-7".into(),
@@ -1367,6 +1413,8 @@ mod tests {
         for column in [
             "session_num",
             "x_request_id",
+            "actual_transport_route",
+            "transport_fallback_reason",
             "benchmark_phase",
             "was_cancelled",
             "Request Latency (ms)",
@@ -1391,6 +1439,8 @@ mod tests {
         let ok_row = &rows[0];
         assert_eq!(ok_row[idx("session_num")], "7");
         assert_eq!(ok_row[idx("benchmark_phase")], "profiling");
+        assert_eq!(ok_row[idx("actual_transport_route")], "http_sse");
+        assert_eq!(ok_row[idx("transport_fallback_reason")], "network_connect");
         assert_eq!(ok_row[idx("was_cancelled")], "false");
         assert_eq!(ok_row[idx("Request Latency (ms)")], "10");
         assert_eq!(ok_row[idx("error_code")], "");

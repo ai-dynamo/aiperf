@@ -24,6 +24,15 @@ pub struct InferenceDimensions {
     pub model: Option<String>,
 }
 
+/// Actual transport route retained for one completed request.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransportRouteMetadata {
+    /// Stable selected route, absent when the transport does not report it.
+    pub actual_route: Option<String>,
+    /// Stable fallback reason, absent when no alternative route was selected.
+    pub fallback_reason: Option<String>,
+}
+
 /// Token counts attached to a completed request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenCounts {
@@ -150,6 +159,9 @@ pub struct RecordIngest {
     pub conversation_id: Option<String>,
     /// Model and selected endpoint used by this request.
     pub dimensions: InferenceDimensions,
+    /// Actual transport route selected after fallback policy.
+    #[serde(default)]
+    pub transport: TransportRouteMetadata,
     /// Record phase.
     pub phase: Phase,
     /// Zero-based position in the authored workflow phase sequence.
@@ -213,6 +225,7 @@ impl RecordIngest {
             worker_assignment_index: None,
             conversation_id: None,
             dimensions: InferenceDimensions::default(),
+            transport: TransportRouteMetadata::default(),
             phase,
             phase_index: None,
             phase_name: None,
