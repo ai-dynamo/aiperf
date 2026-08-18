@@ -5,6 +5,7 @@
 
 use std::collections::VecDeque;
 use std::fmt::{self, Display, Formatter};
+use std::future::Future;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -30,7 +31,7 @@ mod wire;
 
 use wire::{
     ConnectionReader, ConnectionSocket, ConnectionWriter, InboundMessage, OutboundControl,
-    RawUpgrade,
+    RawUpgrade, TextFrame,
 };
 
 const MAX_CAPTURE_EVENTS_PER_CONNECTION: usize = 16_384;
@@ -38,6 +39,7 @@ const ACTION_QUEUE_CAPACITY: usize = 2;
 const CONTROL_QUEUE_CAPACITY: usize = 8;
 const WRITER_EVENT_CAPACITY: usize = 16;
 const CLOSE_HANDSHAKE_TIMEOUT_NS: i64 = 1_000_000_000;
+const WIRE_WRITE_TIMEOUT_NS: i64 = 1_000_000_000;
 
 /// Sanitized metadata for one completed WebSocket connection.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -291,7 +293,7 @@ enum WriterControl {
 enum WriterEvent {
     Actions(ActionResult),
     Control(WebSocketCaptureEvent),
-    CloseReply(Result<WebSocketCaptureEvent, ()>),
+    CloseReply(Result<WebSocketCaptureEvent, CloseClassification>),
 }
 
 struct WriterTaskGuard(tokio::task::JoinHandle<()>);
@@ -359,55 +361,39 @@ async fn serve_connection(state: Arc<AppState>, socket: ConnectionSocket, route:
                         capture.push_event(event);
                         capture.close = CloseClassification::ClientClose;
                     }
-                    Err(()) => capture.close = CloseClassification::SendError,
+                    Err(close) => capture.close = close,
                 }
                 break;
             }
             DriverEvent::Writer(Some(WriterEvent::Actions(result))) => {
-                for event in result.events {
-                    capture.push_event(event);
-                }
-                if let Some(operation) = operation.as_mut() {
-                    operation.add_response_bytes(result.response_bytes);
-                }
-                let operation_finished = result.operation.is_some();
-                match result.operation {
-                    Some(OperationResult::Completed { completion_tokens }) => {
-                        capture.terminal = TerminalClassification::Completed;
-                        if let Some(operation) = operation.take() {
-                            operation.complete(state.clock_anchor.now_ns(), completion_tokens);
-                        }
+                match apply_action_result(
+                    &state,
+                    &mut capture,
+                    &mut operation,
+                    &mut attribution,
+                    result,
+                ) {
+                    ActionDisposition::Continue => continue,
+                    ActionDisposition::Close(close) => {
+                        capture.close = close;
+                        break;
                     }
-                    Some(OperationResult::ContinuationRejected) => {
-                        capture.terminal = TerminalClassification::ContinuationRejected;
-                        if let Some(operation) = operation.take() {
-                            operation.reject();
-                        }
+                    ActionDisposition::AwaitServerClose(close) => {
+                        capture.close = await_server_close(
+                            &state,
+                            &mut reader,
+                            &control_tx,
+                            &mut writer_event_rx,
+                            &mut capture,
+                            &mut operation,
+                            &mut attribution,
+                            started_ns,
+                            close,
+                        )
+                        .await;
+                        break;
                     }
-                    None => {}
                 }
-                if operation_finished {
-                    attribution = None;
-                }
-                if let Some(close) = result.close {
-                    capture.close = close;
-                    break;
-                }
-                if let Some(close) = result.close_after_handshake {
-                    capture.close = await_server_close(
-                        &state,
-                        &mut reader,
-                        &control_tx,
-                        &mut writer_event_rx,
-                        &mut capture,
-                        started_ns,
-                        attribution.as_ref(),
-                        close,
-                    )
-                    .await;
-                    break;
-                }
-                continue;
             }
             DriverEvent::Writer(None) => {
                 capture.close = CloseClassification::SendError;
@@ -625,7 +611,8 @@ async fn serve_connection(state: Arc<AppState>, socket: ConnectionSocket, route:
                     &control_tx,
                     &mut writer_event_rx,
                     &mut capture,
-                    attribution.clone(),
+                    &mut operation,
+                    &mut attribution,
                 )
                 .await;
                 break;
@@ -648,8 +635,20 @@ struct ActionResult {
     operation: Option<OperationResult>,
     response_bytes: usize,
     close: Option<CloseClassification>,
-    close_after_handshake: Option<CloseClassification>,
+    close_after_handshake: Option<PendingServerClose>,
     events: Vec<WebSocketCaptureEvent>,
+}
+
+#[derive(Clone, Copy)]
+struct PendingServerClose {
+    classification: CloseClassification,
+    deadline_ns: i64,
+}
+
+enum ActionDisposition {
+    Continue,
+    Close(CloseClassification),
+    AwaitServerClose(PendingServerClose),
 }
 
 impl Default for ActionResult {
@@ -664,6 +663,47 @@ impl Default for ActionResult {
     }
 }
 
+fn apply_action_result<'a>(
+    state: &AppState,
+    capture: &mut WebSocketCapture,
+    operation: &mut Option<OperationAccounting<'a>>,
+    attribution: &mut Option<CaptureAttribution>,
+    result: ActionResult,
+) -> ActionDisposition {
+    for event in result.events {
+        capture.push_event(event);
+    }
+    if let Some(operation) = operation.as_mut() {
+        operation.add_response_bytes(result.response_bytes);
+    }
+    let operation_finished = result.operation.is_some();
+    match result.operation {
+        Some(OperationResult::Completed { completion_tokens }) => {
+            capture.terminal = TerminalClassification::Completed;
+            if let Some(operation) = operation.take() {
+                operation.complete(state.clock_anchor.now_ns(), completion_tokens);
+            }
+        }
+        Some(OperationResult::ContinuationRejected) => {
+            capture.terminal = TerminalClassification::ContinuationRejected;
+            if let Some(operation) = operation.take() {
+                operation.reject();
+            }
+        }
+        None => {}
+    }
+    if operation_finished {
+        *attribution = None;
+    }
+    if let Some(close) = result.close {
+        ActionDisposition::Close(close)
+    } else if let Some(close) = result.close_after_handshake {
+        ActionDisposition::AwaitServerClose(close)
+    } else {
+        ActionDisposition::Continue
+    }
+}
+
 async fn send_actions(
     state: &AppState,
     writer: &mut ConnectionWriter,
@@ -674,25 +714,60 @@ async fn send_actions(
 ) -> Option<ActionResult> {
     let mut result = ActionResult::default();
     let mut pending_control: Option<OutboundControl> = None;
+    let close_deadline_ns = batch
+        .actions
+        .iter()
+        .any(|action| matches!(action, ServerAction::Close))
+        .then(|| {
+            state
+                .clock_anchor
+                .now_ns()
+                .saturating_add(CLOSE_HANDSHAKE_TIMEOUT_NS)
+        });
     for action in batch.actions {
-        if service_queued_controls(writer, control_rx, event_tx, state.clock_anchor, started_ns)
-            .await
+        if result.operation.is_none()
+            && !matches!(
+                action,
+                ServerAction::CompleteOperation { .. } | ServerAction::RejectContinuation
+            )
         {
-            return None;
+            match service_queued_controls(
+                writer,
+                control_rx,
+                event_tx,
+                state.clock_anchor,
+                started_ns,
+                close_deadline_ns,
+            )
+            .await
+            {
+                Ok(false) => {}
+                Ok(true) => return None,
+                Err(close) => {
+                    result.close = Some(close);
+                    return Some(result);
+                }
+            }
         }
         match action {
             ServerAction::SendText { at_ns, payload } => {
-                if !wait_until_with_controls(
+                match wait_until_with_controls(
                     writer,
                     control_rx,
                     event_tx,
                     state.clock_anchor,
                     started_ns,
                     at_ns,
+                    close_deadline_ns,
                 )
                 .await
                 {
-                    return None;
+                    Ok(true) => {}
+                    Ok(false) => return None,
+                    Err(close) => {
+                        result.close = Some(close);
+                        return Some(result);
+                    }
                 }
                 let mut event = capture_event_with_attribution(
                     "out",
@@ -703,99 +778,207 @@ async fn send_actions(
                     started_ns,
                 );
                 let payload_len = payload.len();
-                let sent = match writer
-                    .send_text(
-                        payload,
-                        state.config.websocket_fragment_bytes,
-                        state.config.websocket_max_message_bytes,
-                        pending_control.as_ref(),
-                        state.clock_anchor,
-                    )
-                    .await
-                {
-                    Ok(sent) => sent,
+                let mut message = match writer.prepare_text(
+                    payload,
+                    state.config.websocket_fragment_bytes,
+                    state.config.websocket_max_message_bytes,
+                ) {
+                    Ok(message) => message,
                     Err(error) => {
                         tracing::debug!(component = "websocket_mock", error = %error, "WebSocket send failed");
                         result.close = Some(CloseClassification::SendError);
                         return Some(result);
                     }
                 };
+                let mut is_first_frame = true;
+                loop {
+                    let frame = match message.next_frame() {
+                        Ok(Some(frame)) => frame,
+                        Ok(None) => break,
+                        Err(error) => {
+                            tracing::debug!(component = "websocket_mock", error = %error, "WebSocket send failed");
+                            result.close = Some(CloseClassification::SendError);
+                            return Some(result);
+                        }
+                    };
+                    let is_final = frame.is_final();
+                    if is_first_frame
+                        && is_final
+                        && let Some(control) = pending_control.take()
+                    {
+                        match send_server_control(
+                            writer,
+                            &control,
+                            batch.attribution.as_ref(),
+                            state.clock_anchor,
+                            started_ns,
+                            close_deadline_ns,
+                        )
+                        .await
+                        {
+                            Ok(control_event) => result.events.push(control_event),
+                            Err(close) => {
+                                result.close = Some(close);
+                                return Some(result);
+                            }
+                        }
+                    }
+                    let intercepted = match send_text_frame_with_control_poll(
+                        writer,
+                        &frame,
+                        control_rx,
+                        state.clock_anchor,
+                        close_deadline_ns,
+                        !is_final,
+                    )
+                    .await
+                    {
+                        Ok(control) => control,
+                        Err(close) => {
+                            result.close = Some(close);
+                            return Some(result);
+                        }
+                    };
+                    if is_first_frame
+                        && !is_final
+                        && let Some(control) = pending_control.take()
+                    {
+                        match send_server_control(
+                            writer,
+                            &control,
+                            batch.attribution.as_ref(),
+                            state.clock_anchor,
+                            started_ns,
+                            close_deadline_ns,
+                        )
+                        .await
+                        {
+                            Ok(control_event) => result.events.push(control_event),
+                            Err(close) => {
+                                result.close = Some(close);
+                                return Some(result);
+                            }
+                        }
+                    }
+                    if let Some(control) = intercepted {
+                        match handle_writer_control(
+                            writer,
+                            control,
+                            event_tx,
+                            state.clock_anchor,
+                            started_ns,
+                            close_deadline_ns,
+                        )
+                        .await
+                        {
+                            Ok(false) => {}
+                            Ok(true) => return None,
+                            Err(close) => {
+                                result.close = Some(close);
+                                return Some(result);
+                            }
+                        }
+                    }
+                    if !is_final {
+                        match service_queued_controls(
+                            writer,
+                            control_rx,
+                            event_tx,
+                            state.clock_anchor,
+                            started_ns,
+                            close_deadline_ns,
+                        )
+                        .await
+                        {
+                            Ok(false) => {}
+                            Ok(true) => return None,
+                            Err(close) => {
+                                result.close = Some(close);
+                                return Some(result);
+                            }
+                        }
+                    }
+                    is_first_frame = false;
+                }
                 event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
                 result.response_bytes = result.response_bytes.saturating_add(payload_len);
-                if let Some(control) = pending_control.take() {
-                    result.events.push(capture_event_with_attribution(
-                        "out",
-                        control.opcode(),
-                        control.payload(),
-                        batch.attribution.as_ref(),
-                        sent.interjected_control_ns
-                            .unwrap_or_else(|| state.clock_anchor.now_ns()),
-                        started_ns,
-                    ));
-                }
                 result.events.push(event);
             }
             ServerAction::SendPing(payload) => {
+                let control = OutboundControl::Ping(payload);
                 if state.config.websocket_fragment_bytes > 0 {
-                    pending_control = Some(OutboundControl::Ping(payload));
+                    pending_control = Some(control);
                     continue;
                 }
-                let mut event = capture_event_with_attribution(
-                    "out",
-                    "ping",
-                    &payload,
+                match send_server_control(
+                    writer,
+                    &control,
                     batch.attribution.as_ref(),
-                    state.clock_anchor.now_ns(),
+                    state.clock_anchor,
                     started_ns,
-                );
-                if writer
-                    .send_control(&OutboundControl::Ping(payload))
-                    .await
-                    .is_err()
+                    close_deadline_ns,
+                )
+                .await
                 {
-                    result.close = Some(CloseClassification::SendError);
-                    return Some(result);
+                    Ok(event) => result.events.push(event),
+                    Err(close) => {
+                        result.close = Some(close);
+                        return Some(result);
+                    }
                 }
-                event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
-                result.events.push(event);
             }
             ServerAction::SendPong(payload) => {
+                let control = OutboundControl::Pong(payload);
                 if state.config.websocket_fragment_bytes > 0 {
-                    pending_control = Some(OutboundControl::Pong(payload));
+                    pending_control = Some(control);
                     continue;
                 }
-                let mut event = capture_event_with_attribution(
-                    "out",
-                    "pong",
-                    &payload,
+                match send_server_control(
+                    writer,
+                    &control,
                     batch.attribution.as_ref(),
-                    state.clock_anchor.now_ns(),
+                    state.clock_anchor,
                     started_ns,
-                );
-                if writer
-                    .send_control(&OutboundControl::Pong(payload))
-                    .await
-                    .is_err()
+                    close_deadline_ns,
+                )
+                .await
                 {
-                    result.close = Some(CloseClassification::SendError);
-                    return Some(result);
+                    Ok(event) => result.events.push(event),
+                    Err(close) => {
+                        result.close = Some(close);
+                        return Some(result);
+                    }
                 }
-                event.relative_ns = state.clock_anchor.now_ns().saturating_sub(started_ns);
-                result.events.push(event);
             }
             ServerAction::Close => {
-                if writer.send_close().await.is_ok() {
-                    result.events.push(capture_event_with_attribution(
-                        "out",
-                        "close",
-                        &[],
-                        batch.attribution.as_ref(),
-                        state.clock_anchor.now_ns(),
-                        started_ns,
-                    ));
-                    result.close_after_handshake = Some(batch.close_classification);
-                } else {
-                    result.close = Some(CloseClassification::SendError);
+                let deadline_ns = close_deadline_ns.unwrap_or_else(|| {
+                    state
+                        .clock_anchor
+                        .now_ns()
+                        .saturating_add(CLOSE_HANDSHAKE_TIMEOUT_NS)
+                });
+                match complete_before_deadline(state.clock_anchor, deadline_ns, writer.send_close())
+                    .await
+                {
+                    Some(Ok(())) => {
+                        result.events.push(capture_event_with_attribution(
+                            "out",
+                            "close",
+                            &[],
+                            batch.attribution.as_ref(),
+                            state.clock_anchor.now_ns(),
+                            started_ns,
+                        ));
+                        result.close_after_handshake = Some(PendingServerClose {
+                            classification: batch.close_classification,
+                            deadline_ns,
+                        });
+                    }
+                    Some(Err(error)) => {
+                        tracing::debug!(component = "websocket_mock", error = %error, "WebSocket close send failed");
+                        result.close = Some(CloseClassification::SendError);
+                    }
+                    None => result.close = Some(CloseClassification::CloseHandshakeTimeout),
                 }
                 return Some(result);
             }
@@ -812,17 +995,18 @@ async fn send_actions(
         }
     }
     if let Some(control) = pending_control {
-        if writer.send_control(&control).await.is_err() {
-            result.close = Some(CloseClassification::SendError);
-        } else {
-            result.events.push(capture_event_with_attribution(
-                "out",
-                control.opcode(),
-                control.payload(),
-                batch.attribution.as_ref(),
-                state.clock_anchor.now_ns(),
-                started_ns,
-            ));
+        match send_server_control(
+            writer,
+            &control,
+            batch.attribution.as_ref(),
+            state.clock_anchor,
+            started_ns,
+            close_deadline_ns,
+        )
+        .await
+        {
+            Ok(event) => result.events.push(event),
+            Err(close) => result.close = Some(close),
         }
     }
     Some(result)
@@ -843,16 +1027,18 @@ async fn run_connection_writer(
                 let Some(control) = control else {
                     return;
                 };
-                if handle_writer_control(
+                match handle_writer_control(
                     &mut writer,
                     control,
                     &event_tx,
                     state.clock_anchor,
                     started_ns,
+                    None,
                 )
                 .await
                 {
-                    return;
+                    Ok(false) => {}
+                    Ok(true) | Err(_) => return,
                 }
             }
             batch = action_rx.recv() => {
@@ -882,23 +1068,157 @@ async fn run_connection_writer(
     }
 }
 
+async fn send_text_frame_with_control_poll(
+    writer: &mut ConnectionWriter,
+    frame: &TextFrame,
+    control_rx: &mut mpsc::Receiver<WriterControl>,
+    clock_anchor: aiperf_runtime::clock::RealClockAnchor,
+    close_deadline_ns: Option<i64>,
+    should_poll_control: bool,
+) -> Result<Option<WriterControl>, CloseClassification> {
+    let deadline_ns = write_deadline_ns(clock_anchor, close_deadline_ns);
+    let mut intercepted = None;
+    loop {
+        let remaining_ns = deadline_ns.saturating_sub(clock_anchor.now_ns());
+        if remaining_ns <= 0 {
+            return Err(write_timeout_classification(close_deadline_ns));
+        }
+        let feed = writer.feed_text_frame(frame);
+        tokio::pin!(feed);
+        let feed_result = tokio::select! {
+            biased;
+            result = &mut feed => Some(result),
+            control = control_rx.recv(), if should_poll_control && intercepted.is_none() => {
+                intercepted = Some(control.ok_or(CloseClassification::SendError)?);
+                None
+            }
+            _ = sleep_ns(remaining_ns) => {
+                return Err(write_timeout_classification(close_deadline_ns));
+            }
+        };
+        if let Some(result) = feed_result {
+            result.map_err(|error| {
+                tracing::debug!(component = "websocket_mock", error = %error, "WebSocket frame enqueue failed");
+                CloseClassification::SendError
+            })?;
+            break;
+        }
+    }
+    loop {
+        let remaining_ns = deadline_ns.saturating_sub(clock_anchor.now_ns());
+        if remaining_ns <= 0 {
+            return Err(write_timeout_classification(close_deadline_ns));
+        }
+        let flush = writer.flush();
+        tokio::pin!(flush);
+        let flush_result = tokio::select! {
+            biased;
+            result = &mut flush => Some(result),
+            control = control_rx.recv(), if should_poll_control && intercepted.is_none() => {
+                intercepted = Some(control.ok_or(CloseClassification::SendError)?);
+                None
+            }
+            _ = sleep_ns(remaining_ns) => {
+                return Err(write_timeout_classification(close_deadline_ns));
+            }
+        };
+        if let Some(result) = flush_result {
+            result.map_err(|error| {
+                tracing::debug!(component = "websocket_mock", error = %error, "WebSocket frame flush failed");
+                CloseClassification::SendError
+            })?;
+            return Ok(intercepted);
+        }
+    }
+}
+
+async fn send_server_control(
+    writer: &mut ConnectionWriter,
+    control: &OutboundControl,
+    attribution: Option<&CaptureAttribution>,
+    clock_anchor: aiperf_runtime::clock::RealClockAnchor,
+    started_ns: i64,
+    close_deadline_ns: Option<i64>,
+) -> Result<WebSocketCaptureEvent, CloseClassification> {
+    let deadline_ns = write_deadline_ns(clock_anchor, close_deadline_ns);
+    match complete_before_deadline(clock_anchor, deadline_ns, writer.send_control(control)).await {
+        Some(Ok(())) => Ok(capture_event_with_attribution(
+            "out",
+            control.opcode(),
+            control.payload(),
+            attribution,
+            clock_anchor.now_ns(),
+            started_ns,
+        )),
+        Some(Err(error)) => {
+            tracing::debug!(component = "websocket_mock", error = %error, "WebSocket control send failed");
+            Err(CloseClassification::SendError)
+        }
+        None => Err(write_timeout_classification(close_deadline_ns)),
+    }
+}
+
+fn write_deadline_ns(
+    clock_anchor: aiperf_runtime::clock::RealClockAnchor,
+    close_deadline_ns: Option<i64>,
+) -> i64 {
+    close_deadline_ns.unwrap_or_else(|| clock_anchor.now_ns().saturating_add(WIRE_WRITE_TIMEOUT_NS))
+}
+
+fn write_timeout_classification(close_deadline_ns: Option<i64>) -> CloseClassification {
+    if close_deadline_ns.is_some() {
+        CloseClassification::CloseHandshakeTimeout
+    } else {
+        CloseClassification::SendError
+    }
+}
+
+async fn complete_before_deadline<F>(
+    clock_anchor: aiperf_runtime::clock::RealClockAnchor,
+    deadline_ns: i64,
+    future: F,
+) -> Option<F::Output>
+where
+    F: Future,
+{
+    let remaining_ns = deadline_ns.saturating_sub(clock_anchor.now_ns());
+    if remaining_ns <= 0 {
+        return None;
+    }
+    tokio::pin!(future);
+    tokio::select! {
+        biased;
+        output = &mut future => Some(output),
+        _ = sleep_ns(remaining_ns) => None,
+    }
+}
+
 async fn service_queued_controls(
     writer: &mut ConnectionWriter,
     control_rx: &mut mpsc::Receiver<WriterControl>,
     event_tx: &mpsc::Sender<WriterEvent>,
     clock_anchor: aiperf_runtime::clock::RealClockAnchor,
     started_ns: i64,
-) -> bool {
+    close_deadline_ns: Option<i64>,
+) -> Result<bool, CloseClassification> {
     loop {
         match control_rx.try_recv() {
             Ok(control) => {
-                if handle_writer_control(writer, control, event_tx, clock_anchor, started_ns).await
+                if handle_writer_control(
+                    writer,
+                    control,
+                    event_tx,
+                    clock_anchor,
+                    started_ns,
+                    close_deadline_ns,
+                )
+                .await?
                 {
-                    return true;
+                    return Ok(true);
                 }
             }
-            Err(mpsc::error::TryRecvError::Empty) => return false,
-            Err(mpsc::error::TryRecvError::Disconnected) => return true,
+            Err(mpsc::error::TryRecvError::Empty) => return Ok(false),
+            Err(mpsc::error::TryRecvError::Disconnected) => return Ok(true),
         }
     }
 }
@@ -910,17 +1230,31 @@ async fn wait_until_with_controls(
     clock_anchor: aiperf_runtime::clock::RealClockAnchor,
     started_ns: i64,
     target_ns: i64,
-) -> bool {
+    close_deadline_ns: Option<i64>,
+) -> Result<bool, CloseClassification> {
     loop {
         let delay_ns = target_ns.saturating_sub(clock_anchor.now_ns());
         if delay_ns <= 0 {
-            return true;
+            return Ok(true);
+        }
+        let deadline_ns = close_deadline_ns.unwrap_or_else(|| {
+            clock_anchor
+                .now_ns()
+                .saturating_add(delay_ns)
+                .saturating_add(1)
+        });
+        let deadline_delay_ns = deadline_ns.saturating_sub(clock_anchor.now_ns());
+        if deadline_delay_ns <= 0 {
+            return Err(CloseClassification::CloseHandshakeTimeout);
         }
         tokio::select! {
-            _ = sleep_ns(delay_ns) => return true,
+            _ = sleep_ns(delay_ns) => return Ok(true),
+            _ = sleep_ns(deadline_delay_ns), if close_deadline_ns.is_some() => {
+                return Err(CloseClassification::CloseHandshakeTimeout);
+            }
             control = control_rx.recv() => {
                 let Some(control) = control else {
-                    return false;
+                    return Ok(false);
                 };
                 if handle_writer_control(
                     writer,
@@ -928,10 +1262,11 @@ async fn wait_until_with_controls(
                     event_tx,
                     clock_anchor,
                     started_ns,
+                    close_deadline_ns,
                 )
-                .await
+                .await?
                 {
-                    return false;
+                    return Ok(false);
                 }
             }
         }
@@ -944,14 +1279,23 @@ async fn handle_writer_control(
     event_tx: &mpsc::Sender<WriterEvent>,
     clock_anchor: aiperf_runtime::clock::RealClockAnchor,
     started_ns: i64,
-) -> bool {
+    close_deadline_ns: Option<i64>,
+) -> Result<bool, CloseClassification> {
     match control {
         WriterControl::Frame {
             control,
             attribution,
         } => {
-            if writer.send_control(&control).await.is_err() {
-                return true;
+            let deadline_ns = write_deadline_ns(clock_anchor, close_deadline_ns);
+            match complete_before_deadline(clock_anchor, deadline_ns, writer.send_control(&control))
+                .await
+            {
+                Some(Ok(())) => {}
+                Some(Err(error)) => {
+                    tracing::debug!(component = "websocket_mock", error = %error, "WebSocket control send failed");
+                    return Err(CloseClassification::SendError);
+                }
+                None => return Err(write_timeout_classification(close_deadline_ns)),
             }
             let event = capture_event_with_attribution(
                 "out",
@@ -961,23 +1305,29 @@ async fn handle_writer_control(
                 clock_anchor.now_ns(),
                 started_ns,
             );
-            event_tx.send(WriterEvent::Control(event)).await.is_err()
+            Ok(event_tx.send(WriterEvent::Control(event)).await.is_err())
         }
         WriterControl::CloseReply { attribution } => {
-            let result = if writer.flush().await.is_ok() {
-                Ok(capture_event_with_attribution(
+            let deadline_ns = write_deadline_ns(clock_anchor, close_deadline_ns);
+            let result = match complete_before_deadline(clock_anchor, deadline_ns, writer.flush())
+                .await
+            {
+                Some(Ok(())) => Ok(capture_event_with_attribution(
                     "out",
                     "close",
                     &[],
                     attribution.as_ref(),
                     clock_anchor.now_ns(),
                     started_ns,
-                ))
-            } else {
-                Err(())
+                )),
+                Some(Err(error)) => {
+                    tracing::debug!(component = "websocket_mock", error = %error, "WebSocket close reply failed");
+                    Err(CloseClassification::SendError)
+                }
+                None => Err(CloseClassification::CloseHandshakeTimeout),
             };
             let _ = event_tx.send(WriterEvent::CloseReply(result)).await;
-            true
+            Ok(true)
         }
     }
 }
@@ -988,11 +1338,18 @@ async fn await_server_close(
     control_tx: &mpsc::Sender<WriterControl>,
     writer_event_rx: &mut mpsc::Receiver<WriterEvent>,
     capture: &mut WebSocketCapture,
+    operation: &mut Option<OperationAccounting<'_>>,
+    attribution: &mut Option<CaptureAttribution>,
     started_ns: i64,
-    attribution: Option<&CaptureAttribution>,
-    completed_close: CloseClassification,
+    pending_close: PendingServerClose,
 ) -> CloseClassification {
-    let timeout = sleep_ns(CLOSE_HANDSHAKE_TIMEOUT_NS);
+    let remaining_ns = pending_close
+        .deadline_ns
+        .saturating_sub(state.clock_anchor.now_ns());
+    if remaining_ns <= 0 {
+        return CloseClassification::CloseHandshakeTimeout;
+    }
+    let timeout = sleep_ns(remaining_ns);
     tokio::pin!(timeout);
     loop {
         tokio::select! {
@@ -1000,16 +1357,18 @@ async fn await_server_close(
             event = writer_event_rx.recv() => match event {
                 Some(WriterEvent::Control(event)) => capture.push_event(event),
                 Some(WriterEvent::Actions(result)) => {
-                    for event in result.events {
-                        capture.push_event(event);
-                    }
-                    if let Some(close) = result.close {
-                        return close;
+                    match apply_action_result(state, capture, operation, attribution, result) {
+                        ActionDisposition::Continue => {}
+                        ActionDisposition::Close(close) => return close,
+                        ActionDisposition::AwaitServerClose(_) => {
+                            return CloseClassification::ProtocolError;
+                        }
                     }
                 }
                 Some(WriterEvent::CloseReply(result)) => {
-                    if let Ok(event) = result {
-                        capture.push_event(event);
+                    match result {
+                        Ok(event) => capture.push_event(event),
+                        Err(close) => return close,
                     }
                 }
                 None => return CloseClassification::SendError,
@@ -1020,24 +1379,24 @@ async fn await_server_close(
                         "in",
                         "close",
                         &[],
-                        attribution,
+                        attribution.as_ref(),
                         state.clock_anchor.now_ns(),
                         started_ns,
                     ));
-                    return completed_close;
+                    return pending_close.classification;
                 }
                 Some(Ok(InboundMessage::Ping(payload))) => {
                     capture.push_event(capture_event_with_attribution(
                         "in",
                         "ping",
                         &payload,
-                        attribution,
+                        attribution.as_ref(),
                         state.clock_anchor.now_ns(),
                         started_ns,
                     ));
                     if control_tx.try_send(WriterControl::Frame {
                         control: OutboundControl::Pong(payload),
-                        attribution: attribution.cloned(),
+                        attribution: attribution.clone(),
                     }).is_err() {
                         return CloseClassification::SendError;
                     }
@@ -1047,7 +1406,7 @@ async fn await_server_close(
                         "in",
                         "pong",
                         &payload,
-                        attribution,
+                        attribution.as_ref(),
                         state.clock_anchor.now_ns(),
                         started_ns,
                     )
@@ -1066,10 +1425,13 @@ async fn await_client_close_reply(
     control_tx: &mpsc::Sender<WriterControl>,
     writer_event_rx: &mut mpsc::Receiver<WriterEvent>,
     capture: &mut WebSocketCapture,
-    attribution: Option<CaptureAttribution>,
+    operation: &mut Option<OperationAccounting<'_>>,
+    attribution: &mut Option<CaptureAttribution>,
 ) -> CloseClassification {
     if control_tx
-        .try_send(WriterControl::CloseReply { attribution })
+        .try_send(WriterControl::CloseReply {
+            attribution: attribution.clone(),
+        })
         .is_err()
     {
         return CloseClassification::SendError;
@@ -1084,16 +1446,16 @@ async fn await_client_close_reply(
                     capture.push_event(event);
                     return CloseClassification::ClientClose;
                 }
-                Some(WriterEvent::CloseReply(Err(()))) | None => {
-                    return CloseClassification::SendError;
-                }
+                Some(WriterEvent::CloseReply(Err(close))) => return close,
+                None => return CloseClassification::SendError,
                 Some(WriterEvent::Control(event)) => capture.push_event(event),
                 Some(WriterEvent::Actions(result)) => {
-                    for event in result.events {
-                        capture.push_event(event);
-                    }
-                    if let Some(close) = result.close {
-                        return close;
+                    match apply_action_result(state, capture, operation, attribution, result) {
+                        ActionDisposition::Continue => {}
+                        ActionDisposition::Close(close) => return close,
+                        ActionDisposition::AwaitServerClose(close) => {
+                            return close.classification;
+                        }
                     }
                 }
             },
@@ -1850,6 +2212,88 @@ mod tests {
             }
         }
         panic!("socket ended before server close");
+    }
+
+    #[tokio::test]
+    async fn client_close_drains_a_racing_terminal_action_before_reply() {
+        let state = AppState::build(MockServerConfig::default());
+        let started_ns = state.clock_anchor.now_ns();
+        let mut capture = WebSocketCapture::new(0, RouteKind::Turns, WebSocketScenario::Normal, 4);
+        let mut operation = Some(OperationAccounting::begin(
+            &state.recorder,
+            RouteKind::Turns,
+            "mock".to_owned(),
+            started_ns,
+            64,
+        ));
+        let (control_tx, _control_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
+        let (event_tx, mut event_rx) = mpsc::channel(WRITER_EVENT_CAPACITY);
+        event_tx
+            .send(WriterEvent::Actions(ActionResult {
+                operation: Some(OperationResult::Completed {
+                    completion_tokens: 1,
+                }),
+                response_bytes: 128,
+                events: vec![capture_event(
+                    "out",
+                    "text",
+                    br#"{"type":"response.completed"}"#,
+                    state.clock_anchor.now_ns(),
+                    started_ns,
+                )],
+                ..ActionResult::default()
+            }))
+            .await
+            .expect("queue racing terminal result");
+        event_tx
+            .send(WriterEvent::CloseReply(Ok(capture_event(
+                "out",
+                "close",
+                &[],
+                state.clock_anchor.now_ns(),
+                started_ns,
+            ))))
+            .await
+            .expect("queue close reply");
+
+        let mut attribution = None;
+        let close = await_client_close_reply(
+            &state,
+            &control_tx,
+            &mut event_rx,
+            &mut capture,
+            &mut operation,
+            &mut attribution,
+        )
+        .await;
+        drop(operation.take());
+
+        assert!(matches!(close, CloseClassification::ClientClose));
+        assert!(matches!(
+            capture.terminal,
+            TerminalClassification::Completed
+        ));
+        let endpoint = RouteKind::Turns.endpoint_label();
+        assert_eq!(
+            state
+                .recorder
+                .metrics
+                .aiperf
+                .REQUESTS_TOTAL
+                .with_label_values(&[endpoint, "POST", "200"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            state
+                .recorder
+                .metrics
+                .aiperf
+                .REQUESTS_TOTAL
+                .with_label_values(&[endpoint, "POST", "500"])
+                .get(),
+            0
+        );
     }
 
     #[test]

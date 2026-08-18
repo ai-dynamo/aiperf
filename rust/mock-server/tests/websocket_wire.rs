@@ -18,6 +18,7 @@ use aiperf_mock_server::{AppState, build_router, listener, tls};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream, UnixStream};
+use tokio::sync::watch;
 
 const TEST_WEBSOCKET_KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 const TEST_WEBSOCKET_ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
@@ -87,15 +88,7 @@ impl TestServer {
     }
 
     async fn connect(&self, is_tls: bool, path: &str) -> RawWebSocketClient {
-        let tcp = TcpStream::connect(self.address)
-            .await
-            .expect("connect WebSocket test listener");
-        let io = if is_tls {
-            BoxIo(Box::new(connect_insecure_tls(tcp).await))
-        } else {
-            BoxIo(Box::new(tcp))
-        };
-        RawWebSocketClient::upgrade(io, path).await
+        RawWebSocketClient::connect(self.address, is_tls, path).await
     }
 
     async fn raw_request(&self, request: &[u8]) -> String {
@@ -111,31 +104,154 @@ impl TestServer {
     }
 
     async fn wait_for_captures(&self, count: usize) -> Vec<Value> {
-        for _ in 0..100 {
-            let request = http::Request::builder()
-                .uri("/mock/websocket/captures")
-                .body(axum::body::Body::empty())
-                .expect("capture request");
-            use tower::ServiceExt;
-            let response = build_router(self.state.clone())
-                .oneshot(request)
-                .await
-                .expect("capture response");
-            use http_body_util::BodyExt;
-            let body = response
-                .into_body()
-                .collect()
-                .await
-                .expect("collect capture response")
-                .to_bytes();
-            let captures: Vec<Value> =
-                serde_json::from_slice(&body).expect("capture response is JSON");
+        self.wait_for_captures_for(count, Duration::from_millis(250))
+            .await
+    }
+
+    async fn wait_for_captures_for(&self, count: usize, timeout: Duration) -> Vec<Value> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let captures = self.captures().await;
             if captures.len() >= count {
                 return captures;
             }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "mock did not publish {count} WebSocket captures within {timeout:?}"
+            );
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        panic!("mock did not publish {count} WebSocket captures");
+    }
+
+    async fn captures(&self) -> Vec<Value> {
+        let request = http::Request::builder()
+            .uri("/mock/websocket/captures")
+            .body(axum::body::Body::empty())
+            .expect("capture request");
+        use tower::ServiceExt;
+        let response = build_router(self.state.clone())
+            .oneshot(request)
+            .await
+            .expect("capture response");
+        use http_body_util::BodyExt;
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("collect capture response")
+            .to_bytes();
+        serde_json::from_slice(&body).expect("capture response is JSON")
+    }
+
+    fn request_total(&self, status: &str) -> u64 {
+        self.state
+            .recorder
+            .metrics
+            .aiperf
+            .REQUESTS_TOTAL
+            .with_label_values(&["mock_websocket_turns", "POST", status])
+            .get()
+    }
+}
+
+struct PausedProxy {
+    address: SocketAddr,
+    is_paused: watch::Sender<bool>,
+    has_server_data: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl PausedProxy {
+    async fn start(target: SocketAddr) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind backpressure proxy");
+        let address = listener.local_addr().expect("backpressure proxy address");
+        let (is_paused, mut pause_rx) = watch::channel(false);
+        let (has_server_data, _) = watch::channel(false);
+        let server_data_tx = has_server_data.clone();
+        let task = tokio::spawn(async move {
+            let (client, _) = listener.accept().await.expect("accept proxy client");
+            let upstream_socket = tokio::net::TcpSocket::new_v4().expect("create proxy socket");
+            upstream_socket
+                .set_recv_buffer_size(64 * 1024)
+                .expect("constrain proxy receive buffer before connect");
+            let upstream = upstream_socket
+                .connect(target)
+                .await
+                .expect("connect proxy upstream");
+            let (mut client_read, mut client_write) = client.into_split();
+            let (mut upstream_read, mut upstream_write) = upstream.into_split();
+            let client_to_server = tokio::spawn(async move {
+                let _ = tokio::io::copy(&mut client_read, &mut upstream_write).await;
+            });
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                if *pause_rx.borrow() {
+                    tokio::select! {
+                        changed = pause_rx.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                        }
+                        ready = upstream_read.readable(), if !*server_data_tx.borrow() => {
+                            if ready.is_err() {
+                                break;
+                            }
+                            server_data_tx.send_replace(true);
+                        }
+                    }
+                    continue;
+                }
+                tokio::select! {
+                    biased;
+                    changed = pause_rx.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                    }
+                    read = upstream_read.read(&mut buffer) => match read {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            if client_write.write_all(&buffer[..read]).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            client_to_server.abort();
+        });
+        Self {
+            address,
+            is_paused,
+            has_server_data,
+            task,
+        }
+    }
+
+    fn pause(&self) {
+        self.is_paused.send_replace(true);
+    }
+
+    fn resume(&self) {
+        self.is_paused.send_replace(false);
+    }
+
+    async fn wait_for_server_data(&self) {
+        let mut data_rx = self.has_server_data.subscribe();
+        while !*data_rx.borrow_and_update() {
+            data_rx
+                .changed()
+                .await
+                .expect("backpressure proxy data signal");
+        }
+    }
+}
+
+impl Drop for PausedProxy {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 
@@ -157,6 +273,18 @@ struct RawWebSocketClient {
 }
 
 impl RawWebSocketClient {
+    async fn connect(address: SocketAddr, is_tls: bool, path: &str) -> Self {
+        let tcp = TcpStream::connect(address)
+            .await
+            .expect("connect WebSocket test listener");
+        let io = if is_tls {
+            BoxIo(Box::new(connect_insecure_tls(tcp).await))
+        } else {
+            BoxIo(Box::new(tcp))
+        };
+        Self::upgrade(io, path).await
+    }
+
     async fn upgrade(mut io: BoxIo, path: &str) -> Self {
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {TEST_WEBSOCKET_KEY}\r\n\r\n"
@@ -227,6 +355,36 @@ impl RawWebSocketClient {
         tokio::time::timeout(Duration::from_secs(5), read_server_frame(&mut self.io))
             .await
             .expect("server frame timeout")
+    }
+}
+
+#[derive(Default)]
+struct TextReassembler {
+    payload: Vec<u8>,
+    is_open: bool,
+}
+
+impl TextReassembler {
+    fn push(&mut self, frame: &WireFrame) -> Option<Value> {
+        match frame.opcode {
+            0x1 => {
+                assert!(!self.is_open, "text frame cannot overlap a message");
+                self.payload.extend_from_slice(&frame.payload);
+                self.is_open = !frame.is_final;
+            }
+            0x0 => {
+                assert!(self.is_open, "continuation requires an open message");
+                self.payload.extend_from_slice(&frame.payload);
+                self.is_open = !frame.is_final;
+            }
+            _ => return None,
+        }
+        if self.is_open {
+            return None;
+        }
+        let event = serde_json::from_slice(&self.payload).expect("reassembled event is JSON");
+        self.payload.clear();
+        Some(event)
     }
 }
 
@@ -381,6 +539,13 @@ fn fragmented_config() -> MockServerConfig {
     }
 }
 
+fn large_turn_request(model_bytes: usize) -> String {
+    format!(
+        r#"{{"type":"response.create","model":"{}","input":[]}}"#,
+        "m".repeat(model_bytes)
+    )
+}
+
 #[tokio::test]
 async fn ws_authors_utf8_safe_fragments_with_interjected_control() {
     let server = TestServer::start(fragmented_config(), false).await;
@@ -512,6 +677,93 @@ async fn realtime_reads_upload_and_ping_while_output_is_scheduled() {
 }
 
 #[tokio::test]
+async fn backpressured_fragmented_output_prioritizes_pong_over_remaining_data_on_ws_and_wss() {
+    for is_tls in [false, true] {
+        let server = TestServer::start(
+            MockServerConfig {
+                websocket_mode: WebSocketMode::TurnSerialized,
+                websocket_scenario: WebSocketScenario::Normal,
+                websocket_fragment_bytes: 64 * 1024,
+                websocket_first_content_delay_ms: 0.0,
+                websocket_content_interval_ms: 0.0,
+                no_tokenizer: true,
+                ..MockServerConfig::default()
+            },
+            is_tls,
+        )
+        .await;
+        let proxy = PausedProxy::start(server.address).await;
+        let mut client =
+            RawWebSocketClient::connect(proxy.address, is_tls, "/mock/websocket/turns").await;
+        proxy.pause();
+        client.send_text(&large_turn_request(5 * 1024 * 1024)).await;
+        tokio::time::timeout(Duration::from_secs(1), proxy.wait_for_server_data())
+            .await
+            .expect("server output must reach the paused proxy");
+        client.send_ping(b"backpressure").await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        proxy.resume();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut is_message_open = false;
+            loop {
+                let frame = client.read_frame().await;
+                match frame.opcode {
+                    0x1 => {
+                        assert!(!is_message_open, "text message cannot overlap");
+                        is_message_open = !frame.is_final;
+                    }
+                    0x0 => {
+                        assert!(is_message_open, "continuation requires an open message");
+                        is_message_open = !frame.is_final;
+                    }
+                    0xa => {
+                        assert_eq!(frame.payload, b"backpressure");
+                        assert!(
+                            is_message_open,
+                            "Pong must overtake the remaining fragments after pressure releases"
+                        );
+                        break;
+                    }
+                    opcode => panic!("unexpected server opcode {opcode:#x}"),
+                }
+            }
+        })
+        .await
+        .expect("backpressured Pong proof must finish within five seconds");
+    }
+}
+
+#[tokio::test]
+async fn server_close_deadline_includes_blocked_output_on_ws_and_wss() {
+    for is_tls in [false, true] {
+        let server = TestServer::start(
+            MockServerConfig {
+                websocket_mode: WebSocketMode::TurnSerialized,
+                websocket_scenario: WebSocketScenario::CloseBeforeTerminal,
+                websocket_fragment_bytes: 64 * 1024,
+                websocket_first_content_delay_ms: 0.0,
+                websocket_content_interval_ms: 0.0,
+                no_tokenizer: true,
+                ..MockServerConfig::default()
+            },
+            is_tls,
+        )
+        .await;
+        let proxy = PausedProxy::start(server.address).await;
+        let mut client =
+            RawWebSocketClient::connect(proxy.address, is_tls, "/mock/websocket/turns").await;
+        proxy.pause();
+        client.send_text(&large_turn_request(5 * 1024 * 1024)).await;
+
+        let captures = server
+            .wait_for_captures_for(1, Duration::from_millis(1500))
+            .await;
+        assert_eq!(captures[0]["close"], "close_handshake_timeout");
+    }
+}
+
+#[tokio::test]
 async fn client_close_is_answered_over_ws_and_wss() {
     for is_tls in [false, true] {
         let server = TestServer::start(fragmented_config(), is_tls).await;
@@ -520,6 +772,39 @@ async fn client_close_is_answered_over_ws_and_wss() {
         assert_eq!(client.read_frame().await.opcode, 0x8);
         let captures = server.wait_for_captures(1).await;
         assert_eq!(captures[0]["close"], "client_close");
+    }
+}
+
+#[tokio::test]
+async fn terminal_then_immediate_client_close_remains_successful_over_ws_and_wss() {
+    for is_tls in [false, true] {
+        let server = TestServer::start(fragmented_config(), is_tls).await;
+        let mut client = server.connect(is_tls, "/mock/websocket/turns").await;
+        client
+            .send_text(r#"{"type":"response.create","model":"mock","input":"hello"}"#)
+            .await;
+        let mut messages = TextReassembler::default();
+        loop {
+            let frame = client.read_frame().await;
+            if messages
+                .push(&frame)
+                .is_some_and(|event| event["type"] == "response.completed")
+            {
+                client.send_close().await;
+                break;
+            }
+        }
+        loop {
+            if client.read_frame().await.opcode == 0x8 {
+                break;
+            }
+        }
+
+        let captures = server.wait_for_captures(1).await;
+        assert_eq!(captures[0]["terminal"], "completed");
+        assert_eq!(captures[0]["close"], "client_close");
+        assert_eq!(server.request_total("200"), 1);
+        assert_eq!(server.request_total("500"), 0);
     }
 }
 
@@ -543,18 +828,16 @@ async fn preterminal_server_close_waits_for_peer_over_ws_and_wss() {
         client
             .send_text(r#"{"type":"response.create","model":"mock","input":"hello"}"#)
             .await;
+        let mut messages = TextReassembler::default();
         let mut has_terminal = false;
         loop {
             let frame = client.read_frame().await;
             if frame.opcode == 0x8 {
                 break;
             }
-            if frame.opcode == 0x1 || frame.opcode == 0x0 {
-                has_terminal |= frame
-                    .payload
-                    .windows(b"response.completed".len())
-                    .any(|window| window == b"response.completed");
-            }
+            has_terminal |= messages
+                .push(&frame)
+                .is_some_and(|event| event["type"] == "response.completed");
         }
         assert!(!has_terminal, "pre-terminal close must not complete");
         client.send_close().await;
@@ -620,6 +903,28 @@ async fn raw_reader_rejects_oversized_or_invalid_server_frames_before_allocation
         .await
         .expect_err("oversized frame must fail before payload allocation");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn text_reassembler_detects_an_event_type_split_across_fragments() {
+    let mut messages = TextReassembler::default();
+    assert!(
+        messages
+            .push(&WireFrame {
+                is_final: false,
+                opcode: 0x1,
+                payload: br#"{"type":"response."#.to_vec(),
+            })
+            .is_none()
+    );
+    let event = messages
+        .push(&WireFrame {
+            is_final: true,
+            opcode: 0x0,
+            payload: br#"completed"}"#.to_vec(),
+        })
+        .expect("final fragment completes the event");
+    assert_eq!(event["type"], "response.completed");
 }
 
 #[cfg(unix)]

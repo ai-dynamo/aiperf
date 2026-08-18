@@ -6,7 +6,6 @@
 use std::fmt::{self, Display, Formatter};
 use std::future::Future;
 
-use aiperf_runtime::clock::RealClockAnchor;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::extract::ws::{Message as AxumMessage, WebSocket};
@@ -139,20 +138,98 @@ pub(super) enum ConnectionWriter {
     Raw(SplitSink<RawWebSocket, TungsteniteMessage>),
 }
 
-/// Actual wire-send timing for one logical text message.
-pub(super) struct TextSend {
-    pub(super) interjected_control_ns: Option<i64>,
+/// One frame in a validated outbound text message.
+#[derive(Clone)]
+pub(super) enum TextFrame {
+    Complete(String),
+    Fragment {
+        payload: Bytes,
+        opcode: OpCode,
+        is_final: bool,
+    },
+}
+
+impl TextFrame {
+    pub(super) fn is_final(&self) -> bool {
+        match self {
+            Self::Complete(_) => true,
+            Self::Fragment { is_final, .. } => *is_final,
+        }
+    }
+}
+
+/// Lazily authored frames for one outbound text message.
+pub(super) enum TextMessage {
+    Complete(Option<String>),
+    Fragmented {
+        payload: Bytes,
+        fragment_bytes: usize,
+        start: usize,
+        has_emitted_empty: bool,
+    },
+}
+
+impl TextMessage {
+    pub(super) fn next_frame(&mut self) -> Result<Option<TextFrame>, WireError> {
+        match self {
+            Self::Complete(text) => Ok(text.take().map(TextFrame::Complete)),
+            Self::Fragmented {
+                payload,
+                fragment_bytes,
+                start,
+                has_emitted_empty,
+            } => {
+                if payload.is_empty() {
+                    if *has_emitted_empty {
+                        return Ok(None);
+                    }
+                    *has_emitted_empty = true;
+                    return Ok(Some(TextFrame::Fragment {
+                        payload: Bytes::new(),
+                        opcode: OpCode::Data(Data::Text),
+                        is_final: true,
+                    }));
+                }
+                if *start == payload.len() {
+                    return Ok(None);
+                }
+                let mut end = start.saturating_add(*fragment_bytes).min(payload.len());
+                while end > *start
+                    && end < payload.len()
+                    && payload[end] & 0b1100_0000 == 0b1000_0000
+                {
+                    end -= 1;
+                }
+                if end == *start {
+                    return Err(WireError::new(
+                        "fragment size cannot hold the next UTF-8 scalar".to_owned(),
+                    ));
+                }
+                let is_final = end == payload.len();
+                let opcode = if *start == 0 {
+                    OpCode::Data(Data::Text)
+                } else {
+                    OpCode::Data(Data::Continue)
+                };
+                let frame = TextFrame::Fragment {
+                    payload: payload.slice(*start..end),
+                    opcode,
+                    is_final,
+                };
+                *start = end;
+                Ok(Some(frame))
+            }
+        }
+    }
 }
 
 impl ConnectionWriter {
-    pub(super) async fn send_text(
-        &mut self,
+    pub(super) fn prepare_text(
+        &self,
         payload: Bytes,
         fragment_bytes: usize,
         max_message_bytes: usize,
-        interjected: Option<&OutboundControl>,
-        clock_anchor: RealClockAnchor,
-    ) -> Result<TextSend, WireError> {
+    ) -> Result<TextMessage, WireError> {
         if payload.len() > max_message_bytes {
             return Err(WireError::new(format!(
                 "outbound application message is {} bytes, exceeding configured maximum {max_message_bytes}",
@@ -164,56 +241,48 @@ impl ConnectionWriter {
                 "fragment size must be zero or at least four bytes".to_owned(),
             ));
         }
-        match self {
-            Self::Axum(socket) => {
-                let text = outbound_text(&payload)?;
-                let mut interjected_control_ns = None;
-                if let Some(control) = interjected {
-                    socket
-                        .send(control.axum_message())
-                        .await
-                        .map_err(|error| WireError::new(error.to_string()))?;
-                    interjected_control_ns = Some(clock_anchor.now_ns());
-                }
-                socket
-                    .send(AxumMessage::Text(text.into()))
-                    .await
-                    .map_err(|error| WireError::new(error.to_string()))?;
-                Ok(TextSend {
-                    interjected_control_ns,
-                })
-            }
-            Self::Raw(socket) if fragment_bytes > 0 => {
-                outbound_text(&payload)?;
-                let text_len = payload.len();
-                send_fragmented_text(
-                    socket,
-                    payload,
-                    text_len,
-                    fragment_bytes,
-                    interjected,
-                    clock_anchor,
-                )
+        if matches!(self, Self::Raw(_)) && fragment_bytes > 0 {
+            std::str::from_utf8(&payload)
+                .map_err(|error| WireError::new(format!("outbound text is not UTF-8: {error}")))?;
+            Ok(TextMessage::Fragmented {
+                payload,
+                fragment_bytes,
+                start: 0,
+                has_emitted_empty: false,
+            })
+        } else {
+            Ok(TextMessage::Complete(Some(outbound_text(&payload)?)))
+        }
+    }
+
+    pub(super) async fn feed_text_frame(&mut self, frame: &TextFrame) -> Result<(), WireError> {
+        match (self, frame) {
+            (Self::Axum(socket), TextFrame::Complete(text)) => socket
+                .feed(AxumMessage::Text(text.clone().into()))
                 .await
-            }
-            Self::Raw(socket) => {
-                let text = outbound_text(&payload)?;
-                let mut interjected_control_ns = None;
-                if let Some(control) = interjected {
-                    socket
-                        .send(control.tungstenite_message())
-                        .await
-                        .map_err(|error| WireError::new(error.to_string()))?;
-                    interjected_control_ns = Some(clock_anchor.now_ns());
-                }
-                socket
-                    .send(TungsteniteMessage::Text(text.into()))
-                    .await
-                    .map_err(|error| WireError::new(error.to_string()))?;
-                Ok(TextSend {
-                    interjected_control_ns,
-                })
-            }
+                .map_err(|error| WireError::new(error.to_string())),
+            (Self::Raw(socket), TextFrame::Complete(text)) => socket
+                .feed(TungsteniteMessage::Text(text.clone().into()))
+                .await
+                .map_err(|error| WireError::new(error.to_string())),
+            (
+                Self::Raw(socket),
+                TextFrame::Fragment {
+                    payload,
+                    opcode,
+                    is_final,
+                },
+            ) => socket
+                .feed(TungsteniteMessage::Frame(Frame::message(
+                    payload.clone(),
+                    *opcode,
+                    *is_final,
+                )))
+                .await
+                .map_err(|error| WireError::new(error.to_string())),
+            (Self::Axum(_), TextFrame::Fragment { .. }) => Err(WireError::new(
+                "raw text fragment selected for an Axum socket".to_owned(),
+            )),
         }
     }
 
@@ -290,79 +359,6 @@ fn tungstenite_inbound(message: TungsteniteMessage) -> Result<InboundMessage, Wi
                 "tungstenite exposed an unreassembled inbound frame".to_owned(),
             ));
         }
-    })
-}
-
-async fn send_fragmented_text(
-    socket: &mut SplitSink<RawWebSocket, TungsteniteMessage>,
-    payload: Bytes,
-    text_len: usize,
-    fragment_bytes: usize,
-    interjected: Option<&OutboundControl>,
-    clock_anchor: RealClockAnchor,
-) -> Result<TextSend, WireError> {
-    let mut interjected_control_ns = None;
-    if text_len <= fragment_bytes {
-        if let Some(control) = interjected {
-            socket
-                .send(control.tungstenite_message())
-                .await
-                .map_err(|error| WireError::new(error.to_string()))?;
-            interjected_control_ns = Some(clock_anchor.now_ns());
-        }
-    }
-    if text_len == 0 {
-        socket
-            .send(TungsteniteMessage::Frame(Frame::message(
-                Bytes::new(),
-                OpCode::Data(Data::Text),
-                true,
-            )))
-            .await
-            .map_err(|error| WireError::new(error.to_string()))?;
-        return Ok(TextSend {
-            interjected_control_ns,
-        });
-    }
-    let mut start = 0;
-    while start < text_len {
-        let mut end = start.saturating_add(fragment_bytes).min(text_len);
-        while end > start && end < text_len && payload[end] & 0b1100_0000 == 0b1000_0000 {
-            end -= 1;
-        }
-        if end == start {
-            return Err(WireError::new(
-                "fragment size cannot hold the next UTF-8 scalar".to_owned(),
-            ));
-        }
-        let is_final = end == text_len;
-        let opcode = if start == 0 {
-            OpCode::Data(Data::Text)
-        } else {
-            OpCode::Data(Data::Continue)
-        };
-        socket
-            .send(TungsteniteMessage::Frame(Frame::message(
-                payload.slice(start..end),
-                opcode,
-                is_final,
-            )))
-            .await
-            .map_err(|error| WireError::new(error.to_string()))?;
-        if start == 0
-            && !is_final
-            && let Some(control) = interjected
-        {
-            socket
-                .send(control.tungstenite_message())
-                .await
-                .map_err(|error| WireError::new(error.to_string()))?;
-            interjected_control_ns = Some(clock_anchor.now_ns());
-        }
-        start = end;
-    }
-    Ok(TextSend {
-        interjected_control_ns,
     })
 }
 
