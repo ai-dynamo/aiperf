@@ -21,20 +21,20 @@ use std::{
 use aiperf_runtime::eval::{
     AdapterEnvelope, AdapterExit, AdapterMessage, AdapterProcess, AdapterSpawnRequest,
     AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError, AgentVariantRef,
-    ArtifactDigest, AttemptId, CancelReason, DockerAdapterSpawnerRequest, DockerBuildRequest,
-    DockerCopyRequest, DockerCreateRequest, DockerExecRequest, DockerNativeGraphEpisodeExecutor,
-    DockerProcessSandbox, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
-    EngineNativeGraphEpisodeCallback, EpisodeAssignment, EpisodeExecutionError, EvalExecutionError,
-    EvalNodeRecordArtifact, EvidenceEvent, EvidenceKind, FrozenArtifactReference,
-    FrozenAttemptBundle, HarborEpisodeEvaluatorFactory, HarborEvaluationCoordinator,
-    HarborImporter, HarborLifecycleAgentContract, HarborLifecycleRequest,
-    HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource, HostEnvelope, HostMessage,
-    LocalNativeGraphSuiteScheduler, ModelCapacityKey, ModelEndpointIsolationProof, ModelIdentity,
-    ModelRuntimeConfig, NativeGraphCompletedAttempt, NativeGraphEnvironmentAdapterStart,
-    NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor,
-    NativeGraphEpisodeLease, NativeGraphEpisodeRunner, NativeGraphPackagePlan,
-    NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity, ProtocolCapability,
-    ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
+    ArtifactDigest, ArtifactDownloadHandle, AttemptId, CancelReason, DockerAdapterSpawnerRequest,
+    DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
+    DockerNativeGraphEpisodeExecutor, DockerProcessSandbox, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, EngineNativeGraphEpisodeCallback, EpisodeAssignment, EpisodeExecutionError,
+    EvalExecutionError, EvalNodeRecordArtifact, EvidenceEvent, EvidenceKind,
+    FrozenArtifactReference, FrozenAttemptBundle, HarborEpisodeEvaluatorFactory,
+    HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
+    HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource,
+    HostEnvelope, HostMessage, LocalNativeGraphSuiteScheduler, ModelCapacityKey,
+    ModelEndpointIsolationProof, ModelIdentity, ModelRuntimeConfig, NativeGraphCompletedAttempt,
+    NativeGraphEnvironmentAdapterStart, NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback,
+    NativeGraphEpisodeExecutor, NativeGraphEpisodeLease, NativeGraphEpisodeRunner,
+    NativeGraphPackagePlan, NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity,
+    ProtocolCapability, ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
     ResourceLeaseRequest, RewardDocument, RuntimeIdentity, ScoreVersion, SecretProvider,
     SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult, regrade,
     run_native_graph_episode_callback, run_resolved_suite,
@@ -1219,6 +1219,8 @@ struct RolloutAdapterChild {
     parent: Option<String>,
     pending_operation: Option<String>,
     pending_bytes: Option<Vec<u8>>,
+    pending_read_parent: Option<String>,
+    pending_download: Option<ArtifactDownloadHandle>,
     outputs: VecDeque<Vec<u8>>,
     references: Vec<FrozenArtifactReference>,
     is_reset_complete: bool,
@@ -1256,11 +1258,45 @@ impl AdapterProcess for RolloutAdapterChild {
                 self.outputs = VecDeque::from([b"rollout-reset-observation".to_vec()]);
                 self.request_output(host.episode)?;
             }
-            HostMessage::StepEnvironment { .. } => {
+            HostMessage::StepEnvironment { action_ref } => {
                 if self.parent.is_some() || !self.is_reset_complete {
                     return Err(AdapterSupervisionError::InvalidResetTransition);
                 }
-                self.parent = Some(host.operation);
+                self.pending_read_parent = Some(host.operation.clone());
+                self.push(
+                    host.episode,
+                    "native-graph-rollout",
+                    format!("{}-read", host.operation),
+                    AdapterMessage::GetArtifactRequest {
+                        parent_operation: host.operation,
+                        request: serde_json::to_value(action_ref).map_err(|error| {
+                            AdapterSupervisionError::Process(format!(
+                                "fixture action reference is invalid: {error}"
+                            ))
+                        })?,
+                    },
+                )?;
+            }
+            HostMessage::GetArtifactHandle { download, .. } => {
+                if self.pending_read_parent.is_none() || self.pending_download.is_some() {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                self.pending_download = Some(download);
+            }
+            HostMessage::ArtifactDownloadChunk { download, .. } => {
+                if self.pending_download.as_ref() != Some(&download) {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+            }
+            HostMessage::ArtifactDownloadComplete { download } => {
+                if self.pending_download.take() != Some(download) {
+                    return Err(AdapterSupervisionError::InvalidResetTransition);
+                }
+                self.parent = Some(
+                    self.pending_read_parent
+                        .take()
+                        .ok_or(AdapterSupervisionError::InvalidResetTransition)?,
+                );
                 self.outputs = VecDeque::from([
                     b"rollout-transition-observation".to_vec(),
                     b"rollout-transition-info".to_vec(),
