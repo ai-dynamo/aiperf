@@ -8,8 +8,9 @@ use std::collections::BTreeSet;
 use aiperf_runtime::eval::{
     AdapterEnvelope, AdapterMessage, AdapterProtocol, AdapterProtocolConfig,
     AdapterProtocolFactory, AdapterRole, ArtifactDigest, ArtifactQuota, EpisodeArtifactStore,
-    HostEnvelope, HostMessage, ModelBindingId, ProtocolCapability, ProtocolError, ProtocolLimits,
-    ProtocolOperationState, ProtocolSessionState, StrictAdapterProtocolFactory,
+    FrozenArtifactReference, HostEnvelope, HostMessage, ModelBindingId, ProtocolCapability,
+    ProtocolError, ProtocolLimits, ProtocolOperationState, ProtocolSessionState,
+    StrictAdapterProtocolFactory,
 };
 use serde_json::json;
 
@@ -108,7 +109,7 @@ fn ready(protocol: &mut dyn AdapterProtocol, role: AdapterRole) {
 fn artifact_handles() -> (
     tempfile::TempDir,
     aiperf_runtime::eval::ArtifactUploadHandle,
-    aiperf_runtime::eval::ArtifactDownloadHandle,
+    FrozenArtifactReference,
 ) {
     let directory = tempfile::tempdir().expect("temporary artifact root");
     let mut store = EpisodeArtifactStore::new(
@@ -130,10 +131,21 @@ fn artifact_handles() -> (
     let frozen = store
         .commit_upload(&upload)
         .expect("fixture freezes the upload");
-    let download = store
-        .issue_download(&frozen)
-        .expect("store issues download capability");
-    (directory, upload, download)
+    let reference = store
+        .issue_reference(&frozen)
+        .expect("store issues immutable reference");
+    (directory, upload, reference)
+}
+
+fn frozen_reference(label: &str) -> FrozenArtifactReference {
+    let download = serde_json::from_value(json!(format!("{label}-download")))
+        .expect("fixture download handle deserializes");
+    let artifact = serde_json::from_value(json!({
+        "digest": ArtifactDigest::from_bytes(label.as_bytes()),
+        "length": label.len(),
+    }))
+    .expect("fixture frozen artifact deserializes");
+    FrozenArtifactReference::new(download, artifact)
 }
 
 #[test]
@@ -166,6 +178,91 @@ fn factory_exposes_only_the_object_safe_protocol_seam() {
         ))
         .expect("adapter accepts the negotiated host frame");
     assert_eq!(protocol.session_state(), ProtocolSessionState::Ready);
+}
+
+#[test]
+fn environment_reset_admits_its_prebound_frozen_input_reference() {
+    let mut protocol = new_protocol(AdapterRole::Environment);
+    ready(protocol.as_mut(), AdapterRole::Environment);
+
+    protocol
+        .accept_host(host(
+            1,
+            "reset-1",
+            HostMessage::ResetEnvironment {
+                input_ref: frozen_reference("reset-input"),
+            },
+        ))
+        .expect("the Rust-bound initial input does not require a prior child artifact request");
+    assert_eq!(
+        protocol.operation_state("reset-1"),
+        Some(ProtocolOperationState::Pending)
+    );
+}
+
+#[test]
+fn environment_response_requires_a_rust_committed_output_reference() {
+    let mut protocol = new_protocol(AdapterRole::Environment);
+    let (_directory, upload, output_reference) = artifact_handles();
+    ready(protocol.as_mut(), AdapterRole::Environment);
+
+    protocol
+        .accept_host(host(
+            1,
+            "reset-1",
+            HostMessage::ResetEnvironment {
+                input_ref: frozen_reference("reset-input"),
+            },
+        ))
+        .expect("Rust opens the reset operation with its prebound input");
+    protocol
+        .accept_adapter(adapter(
+            1,
+            "reset-output",
+            AdapterMessage::PutArtifactRequest {
+                parent_operation: "reset-1".to_owned(),
+                declared_bytes: 3,
+            },
+        ))
+        .expect("adapter may request a bounded output upload");
+    protocol
+        .accept_host(host(
+            2,
+            "reset-output",
+            HostMessage::PutArtifactHandle {
+                upload: upload.clone(),
+                declared_bytes: 3,
+            },
+        ))
+        .expect("Rust grants the exact requested upload capability");
+    protocol
+        .accept_adapter(adapter(
+            2,
+            "reset-output",
+            AdapterMessage::ArtifactUploadComplete {
+                upload: upload.clone(),
+            },
+        ))
+        .expect("adapter confirms the same upload capability");
+    protocol
+        .accept_host(host(
+            3,
+            "reset-output",
+            HostMessage::ArtifactCommitted {
+                upload,
+                reference: output_reference.clone(),
+            },
+        ))
+        .expect("only Rust converts the upload into the output download reference");
+    protocol
+        .accept_adapter(adapter(
+            3,
+            "reset-1",
+            AdapterMessage::EnvironmentReset {
+                observation_ref: output_reference,
+            },
+        ))
+        .expect("the reset response can name only the Rust-committed output reference");
 }
 
 #[test]
@@ -497,7 +594,7 @@ fn model_call_and_artifact_grants_bind_the_original_operation_facts() {
     ));
 
     let mut tool = new_protocol(AdapterRole::Tool);
-    let (_directory, upload, download) = artifact_handles();
+    let (_directory, upload, reference) = artifact_handles();
     ready(tool.as_mut(), AdapterRole::Tool);
     tool.accept_host(host(
         1,
@@ -529,8 +626,7 @@ fn model_call_and_artifact_grants_bind_the_original_operation_facts() {
             "put-1",
             HostMessage::ArtifactCommitted {
                 upload: artifact_handles().1,
-                download,
-                length: 3,
+                reference,
             },
         ))
         .expect_err("commit cannot switch the previously granted capability");
@@ -977,8 +1073,10 @@ fn consumed_download_handles_are_released_from_the_protocol_cap() {
     let mut limits = ProtocolLimits::default();
     limits.max_artifact_handles = 1;
     let mut protocol = new_protocol_with_limits(AdapterRole::Tool, limits);
-    let (_first_directory, upload, first_download) = artifact_handles();
-    let (_second_directory, _second_upload, second_download) = artifact_handles();
+    let (_first_directory, upload, first_reference) = artifact_handles();
+    let (_second_directory, _second_upload, second_reference) = artifact_handles();
+    let first_download = first_reference.download().clone();
+    let second_download = second_reference.download().clone();
     ready(protocol.as_mut(), AdapterRole::Tool);
     protocol
         .accept_host(host(
@@ -1013,8 +1111,7 @@ fn consumed_download_handles_are_released_from_the_protocol_cap() {
             "put-1",
             HostMessage::ArtifactCommitted {
                 upload,
-                download: first_download.clone(),
-                length: 3,
+                reference: first_reference,
             },
         ))
         .expect("commit exchanges upload for the one download lease");

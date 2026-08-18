@@ -59,13 +59,19 @@ impl ArtifactDownloadHandle {
 }
 
 /// Immutable artifact identity retained by the Rust-owned store.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FrozenArtifact {
     digest: ArtifactDigest,
     length: u64,
 }
 
 impl FrozenArtifact {
+    /// Reconstitutes a descriptor only after a bounded wire decoder validates its fields.
+    pub(crate) fn from_descriptor(digest: ArtifactDigest, length: u64) -> Self {
+        Self { digest, length }
+    }
+
     /// Returns the canonical BLAKE3 identity.
     pub fn digest(&self) -> &ArtifactDigest {
         &self.digest
@@ -77,8 +83,34 @@ impl FrozenArtifact {
     }
 }
 
+/// Immutable content identity paired with the only Rust-issued child read capability.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenArtifactReference {
+    download: ArtifactDownloadHandle,
+    artifact: FrozenArtifact,
+}
+
+impl FrozenArtifactReference {
+    /// Binds one opaque download capability to its verified frozen-content descriptor.
+    pub fn new(download: ArtifactDownloadHandle, artifact: FrozenArtifact) -> Self {
+        Self { download, artifact }
+    }
+
+    /// Borrows the store-issued one-shot download capability.
+    pub fn download(&self) -> &ArtifactDownloadHandle {
+        &self.download
+    }
+
+    /// Borrows the verified frozen-content descriptor.
+    pub fn artifact(&self) -> &FrozenArtifact {
+        &self.artifact
+    }
+}
+
 /// Canonical frozen-artifact selection passed between isolated phases.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FrozenArtifactManifest {
     artifacts: Vec<FrozenArtifact>,
 }
@@ -87,6 +119,15 @@ impl FrozenArtifactManifest {
     /// Returns canonical immutable artifacts in digest order.
     pub fn artifacts(&self) -> &[FrozenArtifact] {
         &self.artifacts
+    }
+
+    /// Builds a canonical manifest from a bounded decoder's sorted unique descriptors.
+    pub(crate) fn from_canonical_artifacts(artifacts: Vec<FrozenArtifact>) -> Option<Self> {
+        if artifacts.windows(2).all(|pair| pair[0] < pair[1]) {
+            Some(Self { artifacts })
+        } else {
+            None
+        }
     }
 }
 
@@ -172,6 +213,11 @@ impl EpisodeArtifactStore {
             reserved_bytes: 0,
             is_closed: false,
         })
+    }
+
+    /// Returns the immutable episode quota used to admit frozen evidence.
+    pub const fn quota(&self) -> ArtifactQuota {
+        self.quota
     }
 
     /// Reserves a byte-exact upload and returns its only write capability.
@@ -381,6 +427,15 @@ impl EpisodeArtifactStore {
         Ok(handle)
     }
 
+    /// Issues one immutable reference whose capability and descriptor came from this store.
+    pub fn issue_reference(
+        &mut self,
+        artifact: &FrozenArtifact,
+    ) -> Result<FrozenArtifactReference, ArtifactError> {
+        let download = self.issue_download(artifact)?;
+        Ok(FrozenArtifactReference::new(download, artifact.clone()))
+    }
+
     /// Validates the complete frozen descriptor before delivering any bytes and consumes its grant.
     pub fn copy_download(
         &mut self,
@@ -411,6 +466,40 @@ impl EpisodeArtifactStore {
             .remove(download.as_str())
             .map(|_| ())
             .ok_or(ArtifactError::UnknownDownloadHandle)
+    }
+
+    /// Revokes one exact immutable reference before its child capability can be replayed.
+    pub fn revoke_reference(
+        &mut self,
+        reference: &FrozenArtifactReference,
+    ) -> Result<(), ArtifactError> {
+        self.ensure_open()?;
+        let digest = self
+            .downloads
+            .get(reference.download().as_str())
+            .ok_or(ArtifactError::UnknownDownloadHandle)?;
+        if digest != reference.artifact().digest() {
+            return Err(ArtifactError::ArtifactReferenceMismatch);
+        }
+        self.downloads.remove(reference.download().as_str());
+        Ok(())
+    }
+
+    /// Validates one live capability against its exact frozen descriptor without consuming it.
+    pub fn validate_reference(
+        &self,
+        reference: &FrozenArtifactReference,
+    ) -> Result<(), ArtifactError> {
+        self.ensure_open()?;
+        let digest = self
+            .downloads
+            .get(reference.download().as_str())
+            .ok_or(ArtifactError::UnknownDownloadHandle)?;
+        if digest == reference.artifact().digest() {
+            Ok(())
+        } else {
+            Err(ArtifactError::ArtifactReferenceMismatch)
+        }
     }
 
     /// Reads complete verified frozen bytes without issuing a child capability.
@@ -571,6 +660,8 @@ pub enum ArtifactError {
     UnknownDownloadHandle,
     /// The supplied frozen artifact was not created by this store.
     UnknownFrozenArtifact,
+    /// A capability did not name the descriptor it was issued for.
+    ArtifactReferenceMismatch,
     /// A commit observed an incomplete staged stream.
     LengthMismatch { expected: u64, actual: u64 },
     /// A streamed write exceeded its granted length.
@@ -615,6 +706,9 @@ impl Display for ArtifactError {
             Self::UnknownUploadHandle => formatter.write_str("unknown artifact upload handle"),
             Self::UnknownDownloadHandle => formatter.write_str("unknown artifact download handle"),
             Self::UnknownFrozenArtifact => formatter.write_str("unknown frozen artifact"),
+            Self::ArtifactReferenceMismatch => {
+                formatter.write_str("artifact capability does not match frozen descriptor")
+            }
             Self::LengthMismatch { expected, actual } => {
                 write!(
                     formatter,

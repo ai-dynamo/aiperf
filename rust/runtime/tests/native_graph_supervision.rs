@@ -142,6 +142,13 @@ impl SupervisedAdapter for ResetFailsAdapter {
         Err(AdapterSupervisionError::ResetRejected("fixture".to_owned()))
     }
 
+    fn release_download_handle(
+        &mut self,
+        _: &aiperf_runtime::eval::ArtifactDownloadHandle,
+    ) -> Result<(), AdapterSupervisionError> {
+        Ok(())
+    }
+
     async fn cancel_and_reap(
         &mut self,
         _: CancelReason,
@@ -178,6 +185,13 @@ impl SupervisedAdapter for FreshAdapter {
     }
 
     async fn reset(&mut self, _: HostEnvelope) -> Result<(), AdapterSupervisionError> {
+        Ok(())
+    }
+
+    fn release_download_handle(
+        &mut self,
+        _: &aiperf_runtime::eval::ArtifactDownloadHandle,
+    ) -> Result<(), AdapterSupervisionError> {
         Ok(())
     }
 

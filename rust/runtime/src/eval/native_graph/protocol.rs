@@ -15,7 +15,7 @@ use crate::eval::ArtifactDigest;
 
 use super::{
     AdapterRole, ModelBindingId,
-    artifacts::{ArtifactDownloadHandle, ArtifactUploadHandle},
+    artifacts::{ArtifactDownloadHandle, ArtifactUploadHandle, FrozenArtifactReference},
 };
 
 /// The first supported NativeGraph adapter wire version.
@@ -90,7 +90,7 @@ impl Default for ProtocolLimits {
 }
 
 /// Immutable admission parameters for one supervised adapter session.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdapterProtocolConfig {
     role: AdapterRole,
     episode: String,
@@ -259,13 +259,13 @@ pub enum HostMessage {
     },
     /// Requests the first external environment observation.
     ResetEnvironment {
-        /// Arbitrary but bounded reset context.
-        input: Value,
+        /// Rust-issued immutable reset input reference.
+        input_ref: FrozenArtifactReference,
     },
     /// Requests exactly one external environment transition.
     StepEnvironment {
-        /// Arbitrary but bounded Rust-authorized action.
-        action: Value,
+        /// Rust-issued immutable action reference.
+        action_ref: FrozenArtifactReference,
     },
     /// Opens an externally-driven terminal candidate operation.
     RequestEpisodeTerminal {
@@ -283,10 +283,8 @@ pub enum HostMessage {
     ArtifactCommitted {
         /// Same store-issued upload capability Rust granted.
         upload: ArtifactUploadHandle,
-        /// Store-issued opaque frozen-content capability.
-        download: ArtifactDownloadHandle,
-        /// Exact frozen length.
-        length: u64,
+        /// Rust-issued immutable reference after exact streaming commit.
+        reference: FrozenArtifactReference,
     },
     /// Answers an adapter artifact-read request with a bounded read capability.
     GetArtifactHandle {
@@ -345,21 +343,33 @@ pub enum AdapterMessage {
     },
     /// Returns the first external environment observation.
     EnvironmentReset {
-        /// Arbitrary but bounded initial observation.
-        observation: Value,
+        /// Rust-issued immutable initial-observation reference.
+        observation_ref: FrozenArtifactReference,
     },
     /// Returns exactly one external environment transition.
     Transition {
-        /// Arbitrary but bounded observation.
-        observation: Value,
+        /// Rust-issued immutable observation reference.
+        observation_ref: FrozenArtifactReference,
         /// Finite source-reported reward retained as evidence.
         reward: f64,
         /// Whether the environment terminally ended.
         terminated: bool,
         /// Whether the environment truncated without terminal completion.
         truncated: bool,
-        /// Arbitrary but bounded environment diagnostics.
-        info: Value,
+        /// Rust-issued immutable environment diagnostics reference.
+        info_ref: FrozenArtifactReference,
+    },
+    /// Confirms that a previously granted upload now contains its exact declared bytes.
+    ArtifactUploadComplete {
+        /// Same store-issued upload capability Rust granted for this operation.
+        upload: ArtifactUploadHandle,
+    },
+    /// Streams one bounded base64 fragment into the exact Rust-issued upload capability.
+    ArtifactUploadChunk {
+        /// Same store-issued upload capability Rust granted for this operation.
+        upload: ArtifactUploadHandle,
+        /// One nonempty base64 fragment decoded only by the Rust-owned artifact authority.
+        bytes_base64: String,
     },
     /// Starts a store-owned bounded artifact upload request.
     PutArtifactRequest {
@@ -706,24 +716,24 @@ impl StrictAdapterProtocol {
                 self.require_operation_mut(&envelope.operation)?.state =
                     OperationState::AwaitDecision;
             }
-            HostMessage::ResetEnvironment { input } => {
+            HostMessage::ResetEnvironment { input_ref } => {
                 self.require_ready()?;
                 self.require_role(AdapterRole::Environment)?;
                 self.require_capability(ProtocolCapability::Environment)?;
                 self.require_new_operation(&envelope.operation)?;
-                validate_json(&input, &self.config.limits)?;
+                self.validate_frozen_reference(&input_ref)?;
                 self.insert_operation(
                     envelope.operation.clone(),
                     envelope.span.clone(),
                     OperationState::AwaitEnvironmentReset,
                 )?;
             }
-            HostMessage::StepEnvironment { action } => {
+            HostMessage::StepEnvironment { action_ref } => {
                 self.require_ready()?;
                 self.require_role(AdapterRole::Environment)?;
                 self.require_capability(ProtocolCapability::Environment)?;
                 self.require_new_operation(&envelope.operation)?;
-                validate_json(&action, &self.config.limits)?;
+                self.validate_frozen_reference(&action_ref)?;
                 self.insert_operation(
                     envelope.operation.clone(),
                     envelope.span.clone(),
@@ -772,20 +782,16 @@ impl StrictAdapterProtocol {
                         declared_bytes,
                     };
             }
-            HostMessage::ArtifactCommitted {
-                upload,
-                download,
-                length,
-            } => {
+            HostMessage::ArtifactCommitted { upload, reference } => {
                 self.require_ready()?;
                 self.require_capability(ProtocolCapability::Artifacts)?;
                 validate_identifier(upload.as_str(), &self.config.limits, "upload capability")?;
                 validate_identifier(
-                    download.as_str(),
+                    reference.download().as_str(),
                     &self.config.limits,
                     "download capability",
                 )?;
-                self.validate_artifact_length(length)?;
+                self.validate_artifact_length(reference.artifact().length())?;
                 let (expected_upload, declared_bytes) =
                     match &self.require_operation(&envelope.operation)?.state {
                         OperationState::AwaitArtifactCommit {
@@ -805,13 +811,13 @@ impl StrictAdapterProtocol {
                         actual: upload.as_str().to_owned(),
                     });
                 }
-                if declared_bytes != length {
+                if declared_bytes != reference.artifact().length() {
                     return Err(ProtocolError::ArtifactLengthMismatch {
                         expected: declared_bytes,
-                        actual: length,
+                        actual: reference.artifact().length(),
                     });
                 }
-                self.replace_upload_with_download(upload.as_str(), download.as_str())?;
+                self.replace_upload_with_download(upload.as_str(), reference.download().as_str())?;
                 self.require_operation_mut(&envelope.operation)?.state = OperationState::Closed;
             }
             HostMessage::GetArtifactHandle { download, length } => {
@@ -972,18 +978,18 @@ impl StrictAdapterProtocol {
                 })?;
                 self.clear_model_call_lineage(&envelope.operation)?;
             }
-            AdapterMessage::EnvironmentReset { observation } => {
+            AdapterMessage::EnvironmentReset { observation_ref } => {
                 self.require_role(AdapterRole::Environment)?;
                 self.require_capability(ProtocolCapability::Environment)?;
-                validate_json(&observation, &self.config.limits)?;
+                self.validate_granted_frozen_reference(&observation_ref)?;
                 self.close_response(&envelope.operation, |state| {
                     matches!(state, OperationState::AwaitEnvironmentReset)
                 })?;
             }
             AdapterMessage::Transition {
-                observation,
+                observation_ref,
                 reward,
-                info,
+                info_ref,
                 ..
             } => {
                 self.require_role(AdapterRole::Environment)?;
@@ -991,8 +997,8 @@ impl StrictAdapterProtocol {
                 if !reward.is_finite() {
                     return Err(ProtocolError::NonFiniteReward);
                 }
-                validate_json(&observation, &self.config.limits)?;
-                validate_json(&info, &self.config.limits)?;
+                self.validate_granted_frozen_reference(&observation_ref)?;
+                self.validate_granted_frozen_reference(&info_ref)?;
                 self.close_response(&envelope.operation, |state| {
                     matches!(state, OperationState::AwaitTransition)
                 })?;
@@ -1012,6 +1018,62 @@ impl StrictAdapterProtocol {
                     parent_span,
                     OperationState::AwaitArtifactGrant { declared_bytes },
                 )?;
+            }
+            AdapterMessage::ArtifactUploadComplete { upload } => {
+                self.require_ready()?;
+                self.require_capability(ProtocolCapability::Artifacts)?;
+                validate_identifier(upload.as_str(), &self.config.limits, "upload capability")?;
+                let state = &self.require_operation(&envelope.operation)?.state;
+                let OperationState::AwaitArtifactCommit {
+                    upload: expected_upload,
+                    ..
+                } = state
+                else {
+                    return Err(ProtocolError::OperationState {
+                        operation: envelope.operation.clone(),
+                        state: operation_disposition(state),
+                    });
+                };
+                if expected_upload != &upload {
+                    return Err(ProtocolError::ArtifactUploadMismatch {
+                        expected: expected_upload.as_str().to_owned(),
+                        actual: upload.as_str().to_owned(),
+                    });
+                }
+            }
+            AdapterMessage::ArtifactUploadChunk {
+                upload,
+                bytes_base64,
+            } => {
+                self.require_ready()?;
+                self.require_capability(ProtocolCapability::Artifacts)?;
+                validate_identifier(upload.as_str(), &self.config.limits, "upload capability")?;
+                if bytes_base64.is_empty() {
+                    return Err(ProtocolError::ArtifactUploadChunkEmpty);
+                }
+                if bytes_base64.len() > self.config.limits.max_frame_bytes {
+                    return Err(ProtocolError::FrameTooLarge {
+                        limit: self.config.limits.max_frame_bytes,
+                        actual: bytes_base64.len(),
+                    });
+                }
+                let state = &self.require_operation(&envelope.operation)?.state;
+                let OperationState::AwaitArtifactCommit {
+                    upload: expected_upload,
+                    ..
+                } = state
+                else {
+                    return Err(ProtocolError::OperationState {
+                        operation: envelope.operation.clone(),
+                        state: operation_disposition(state),
+                    });
+                };
+                if expected_upload != &upload {
+                    return Err(ProtocolError::ArtifactUploadMismatch {
+                        expected: expected_upload.as_str().to_owned(),
+                        actual: upload.as_str().to_owned(),
+                    });
+                }
             }
             AdapterMessage::GetArtifactRequest {
                 parent_operation,
@@ -1313,6 +1375,37 @@ impl StrictAdapterProtocol {
             })
         } else {
             Ok(())
+        }
+    }
+
+    fn validate_frozen_reference(
+        &self,
+        reference: &FrozenArtifactReference,
+    ) -> Result<(), ProtocolError> {
+        validate_identifier(
+            reference.download().as_str(),
+            &self.config.limits,
+            "download capability",
+        )?;
+        // Environment bindings preauthorize immutable references before the
+        // initial reset; the session ledger tracks only request/response grants.
+        self.validate_artifact_length(reference.artifact().length())
+    }
+
+    fn validate_granted_frozen_reference(
+        &self,
+        reference: &FrozenArtifactReference,
+    ) -> Result<(), ProtocolError> {
+        self.validate_frozen_reference(reference)?;
+        if self
+            .active_download_handles
+            .contains(reference.download().as_str())
+        {
+            Ok(())
+        } else {
+            Err(ProtocolError::UnknownArtifactDownloadHandle(
+                reference.download().as_str().to_owned(),
+            ))
         }
     }
 
@@ -1650,6 +1743,8 @@ pub enum ProtocolError {
     ArtifactLengthTooLarge { limit: u64, actual: u64 },
     /// An artifact continuation changed its original length.
     ArtifactLengthMismatch { expected: u64, actual: u64 },
+    /// An artifact upload chunk was empty and could not advance the bounded stream.
+    ArtifactUploadChunkEmpty,
     /// An artifact commit changed its originally granted upload capability.
     ArtifactUploadMismatch { expected: String, actual: String },
     /// An adapter artifact request did not name a live Rust-origin parent operation.
@@ -1794,6 +1889,9 @@ impl Display for ProtocolError {
                     formatter,
                     "artifact length {actual} does not match {expected}"
                 )
+            }
+            Self::ArtifactUploadChunkEmpty => {
+                formatter.write_str("artifact upload chunk must not be empty")
             }
             Self::ArtifactUploadMismatch { expected, actual } => {
                 write!(

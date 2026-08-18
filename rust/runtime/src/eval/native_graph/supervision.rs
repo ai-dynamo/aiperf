@@ -15,8 +15,8 @@ use async_trait::async_trait;
 use crate::eval::provider::{ModelEndpointAuthority, ProviderError, ProviderProfile};
 use crate::eval::{
     AdapterProtocol, AdapterProtocolConfig, AdapterProtocolFactory, AdapterRole, ArtifactDigest,
-    EvalExecutionError, HostEnvelope, ModelSecretId, NativeGraphPackagePlan, NativeGraphProfile,
-    PROTOCOL_VERSION, ProviderCapabilities,
+    ArtifactDownloadHandle, EvalExecutionError, HostEnvelope, ModelSecretId,
+    NativeGraphPackagePlan, NativeGraphProfile, PROTOCOL_VERSION, ProviderCapabilities,
 };
 
 use super::{AdapterEnvelope, HostMessage, ProtocolError};
@@ -374,6 +374,14 @@ impl Drop for SpawnTransactionGuard {
 /// Factory seam for a complete protocol-validated adapter runtime.
 #[async_trait(?Send)]
 pub trait AdapterRuntimeFactory {
+    /// Returns the exact immutable protocol configuration used by [`Self::start`], if exposed.
+    ///
+    /// Runtimes that cannot bind an adapter session to one immutable configuration return
+    /// `None`; callers requiring exact role and capability admission must refuse them.
+    fn protocol_config(&self) -> Option<&AdapterProtocolConfig> {
+        None
+    }
+
     /// Starts one supervised adapter session from a prefiltered spawn request.
     async fn start(
         &self,
@@ -400,6 +408,11 @@ pub trait SupervisedAdapter {
     async fn receive_idle(&mut self) -> Result<AdapterEnvelope, AdapterSupervisionError>;
     /// Applies one Rust-owned reset and validates its matching acknowledgement.
     async fn reset(&mut self, message: HostEnvelope) -> Result<(), AdapterSupervisionError>;
+    /// Releases one Rust-revoked download capability from the private protocol ledger.
+    fn release_download_handle(
+        &mut self,
+        download: &ArtifactDownloadHandle,
+    ) -> Result<(), AdapterSupervisionError>;
     /// Cancels and reaps the child without leaving a reusable process behind.
     async fn cancel_and_reap(
         &mut self,
@@ -431,6 +444,10 @@ impl ProtocolAdapterRuntimeFactory {
 
 #[async_trait(?Send)]
 impl AdapterRuntimeFactory for ProtocolAdapterRuntimeFactory {
+    fn protocol_config(&self) -> Option<&AdapterProtocolConfig> {
+        Some(&self.config)
+    }
+
     async fn start(
         &self,
         request: AdapterSpawnRequest,
@@ -713,6 +730,15 @@ impl SupervisedAdapter for StrictSupervisedAdapter {
                 )
                 .await),
         }
+    }
+
+    fn release_download_handle(
+        &mut self,
+        download: &ArtifactDownloadHandle,
+    ) -> Result<(), AdapterSupervisionError> {
+        self.protocol
+            .release_download_handle(download)
+            .map_err(AdapterSupervisionError::Protocol)
     }
 
     async fn cancel_and_reap(

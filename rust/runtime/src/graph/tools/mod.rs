@@ -6,6 +6,7 @@
 pub mod dispatch;
 pub mod docker;
 pub mod environment;
+pub mod environment_stepper;
 pub mod local;
 pub mod policy;
 pub mod workspace;
@@ -30,6 +31,12 @@ pub use docker::{
 pub use environment::{
     EnvironmentRecipe, ResolvedTraceEnvironment, ToolExecutionBackend, ToolSandboxCapabilities,
     TraceEnvironmentError, TraceEnvironmentResolver,
+};
+pub use environment_stepper::{
+    EnvironmentArtifactBindings, EnvironmentEpisodeIdentity, EnvironmentResetRecord,
+    EnvironmentResetRequest, EnvironmentSessionAuthority, EnvironmentStepRequest,
+    EnvironmentStepper, EnvironmentStepperBinding, EnvironmentStepperError,
+    EnvironmentStepperFactory, SupervisedEnvironmentStepperFactory,
 };
 pub use local::{
     LocalProcessRequest, LocalSessionSandbox, ProcessSession, ProcessSpawner, TokioProcessSpawner,
