@@ -4,11 +4,22 @@
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
-use aiperf_runtime::eval::{
-    ArtifactDigest, HarborImporter, HarborSource, LocalExecutionResult, MultiStepExecutionResult,
-    NativeSourceAcquirer, RewardDocument, StepExecutionResult,
+use async_trait::async_trait;
+use aiperf_runtime::{
+    engine::application::Application,
+    eval::{
+        ArtifactDigest, EngineNativeGraphEpisodeCallback, EnvName, EvalExecutionError,
+        EvalNodeRecordArtifact, HarborImporter, HarborSource, LocalExecutionResult,
+        ModelRuntimeConfig, MultiStepExecutionResult, NativeGraphEpisodeCallback,
+        NativeGraphEpisodeLease, NativeSourceAcquirer, RewardDocument, SecretProvider, SecretValue,
+        StepExecutionResult,
+    },
 };
 use serde_json::json;
 
@@ -211,9 +222,9 @@ fn eval_command_without_records_output_retains_reward_json_contract() {
             .as_object()
             .unwrap()
             .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        ["artifacts", "reward", "task"]
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["artifacts", "reward", "task"])
     );
     assert_eq!(reward["reward"]["reward"], 1.0);
 }
@@ -300,9 +311,32 @@ fn eval_command_rejects_invalid_records_output_before_docker_provisioning() {
     );
 }
 
+struct EmptyNativeGraphSecrets;
+
+impl SecretProvider for EmptyNativeGraphSecrets {
+    fn resolve(&self, name: &EnvName) -> Result<SecretValue, EvalExecutionError> {
+        Err(EvalExecutionError::MissingSecret(name.clone()))
+    }
+}
+
+struct AcquiredNativeGraphLease;
+
+impl NativeGraphEpisodeLease for AcquiredNativeGraphLease {
+    fn is_authorized(&self) -> bool {
+        true
+    }
+
+    fn is_environment_acquired(&self) -> bool {
+        true
+    }
+
+    fn instruction(&self) -> &str {
+        "Complete the graph."
+    }
+}
+
 #[test]
-#[ignore = "requires a Docker daemon and pulls alpine:3.20"]
-fn eval_command_native_graph_records_output_preserves_reward_stdout() {
+fn eval_command_native_graph_records_output_is_parseable_without_docker() {
     use std::io::{Read as _, Write as _};
     use std::net::TcpListener;
 
@@ -324,40 +358,34 @@ fn eval_command_native_graph_records_output_preserves_reward_stdout() {
 
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("native-graph");
-    write_native_graph_task(&task_root, &endpoint, "FROM alpine:3.20\n");
-    let runtime_path = temporary.path().join("model-runtime.toml");
-    fs::write(&runtime_path, "version = 1\n").unwrap();
-    let lifecycle_path = temporary.path().join("lifecycle.json");
-    write_native_graph_lifecycle(&lifecycle_path);
+    write_native_graph_task(&task_root, &endpoint, "FROM scratch\n");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let native = imported.package.native_graph().unwrap();
+    let model_runtime: ModelRuntimeConfig = toml::from_str("version = 1\n").unwrap();
+    let application = Application::stock(format!("blake3:{}", "5".repeat(64))).unwrap();
     let records_path = temporary.path().join("records.jsonl");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_aiperf"))
-        .args(["eval", "--task"])
-        .arg(&task_root)
-        .arg("--model-runtime")
-        .arg(&runtime_path)
-        .arg("--lifecycle-request")
-        .arg(&lifecycle_path)
-        .arg("--records-output")
-        .arg(&records_path)
-        .output()
+    let artifact = EvalNodeRecordArtifact::open(&records_path).unwrap();
+    let mut callback = EngineNativeGraphEpisodeCallback::new(
+        &application,
+        native,
+        &model_runtime,
+        &EmptyNativeGraphSecrets,
+        Some(artifact.clone()),
+    )
+    .unwrap();
+    let mut lease = AcquiredNativeGraphLease;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
         .unwrap();
 
-    assert!(
-        output.status.success(),
-        "eval failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let reward: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        reward
-            .as_object()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>(),
-        ["artifacts", "episodes", "reward", "task"]
-    );
+    runtime
+        .block_on(callback.run(&mut lease))
+        .expect("the NativeGraph callback writes its suite-owned record artifact");
+    artifact.finish().unwrap();
+
     let rows = fs::read_to_string(&records_path).unwrap();
     let rows = rows
         .lines()
