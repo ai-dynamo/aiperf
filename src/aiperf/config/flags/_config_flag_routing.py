@@ -134,6 +134,10 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         "unsafe_override",
         # inter-turn delay cap, carried onto trace datasets by build_dataset
         "inter_turn_delay_cap_seconds",
+        # verbatim system prompt, carried onto the dataset by
+        # _VERBATIM_DATASET_FIELDS (added on main by #1268)
+        "system_prompt",
+        "system_prompt_file",
         # baseten_trace dataset knobs carried by _VERBATIM_DATASET_FIELDS;
         # against another format they raise rather than drop
         "force_min_tokens",
