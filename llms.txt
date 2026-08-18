@@ -23,8 +23,13 @@ purpose for each, so an agent knows which file to open for a given question.
   provenance, task and agent Docker networks set to `no-network`, host-owned
   AIPerf model transport, and a plan-bound Docker `NoAdapterEgress` proof; it
   runs as one scored matrix trial with invocation-owned branch workspaces and
-  typed control receipts. Adapters, externally driven graphs, and
-  multi-lifecycle suites fail closed.
+  typed control receipts. The `externally_driven` profile instead validates an
+  `externally_driven` lifecycle record against its immutable manifest driver,
+  rejects `--agent-command`, and a single-task invocation reaches its
+  unavailable compatibility-runner preflight without `--model-runtime`; it
+  remains fail closed before provisioning. The current suite grammar has no
+  externally driven shape because it requires Rust model-binding axes.
+  Adapters and multi-lifecycle suites also fail closed.
   The one `aiperf` binary is BOTH the entry point AND the execution engine — the sole
   executable that dispatches load and owns exactly one benchmark hot path (no separate
   runner binary). The runtime library it links is crate `aiperf-runtime` (`rust/runtime`).
@@ -664,6 +669,9 @@ Measurement and output:
 - [`docs/specs/metrics.md`](docs/specs/metrics.md) — the IO-free metrics engine: the
   column-store accumulator, the metric catalog, sweep curves, and the typed
   report; exact vs sketch modes.
+- [`docs/specs/eval-node-metrics-artifact.md`](docs/specs/eval-node-metrics-artifact.md)
+  — planned host-owned NativeGraph eval JSONL sidecar that retains canonical
+  per-model-node metrics while preserving reward JSON and package trust boundaries.
 - [`docs/specs/definition-registry.md`](docs/specs/definition-registry.md) — built
   single shared definition layer: a lookup-only `Definition` (header, units,
   `larger_is_better`, `value_type`, group, order) for metrics and dataset-analysis
