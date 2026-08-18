@@ -14,6 +14,7 @@ pub struct RoundTripTimingState {
     last_content_receive_ns: Option<i64>,
     content_receive_timestamp_sum_ns: i128,
     content_receive_count: u64,
+    last_observation_ns: Option<i64>,
     is_invalid: bool,
 }
 
@@ -22,8 +23,9 @@ impl RoundTripTimingState {
     pub fn on_measured_input_flushed(&mut self, timestamp_ns: i64) {
         if self.is_invalid
             || timestamp_ns < 0
+            || self.last_content_receive_ns.is_some()
             || self
-                .last_send_ns
+                .last_observation_ns
                 .is_some_and(|previous| timestamp_ns < previous)
         {
             self.is_invalid = true;
@@ -43,6 +45,7 @@ impl RoundTripTimingState {
         self.send_timestamp_sum_ns = sum;
         self.send_count = count;
         self.last_send_ns = Some(timestamp_ns);
+        self.last_observation_ns = Some(timestamp_ns);
     }
 
     /// Record one decoded event carrying non-empty user-visible content.
@@ -50,7 +53,7 @@ impl RoundTripTimingState {
         if self.is_invalid
             || timestamp_ns < 0
             || self
-                .last_content_receive_ns
+                .last_observation_ns
                 .is_some_and(|previous| timestamp_ns < previous)
         {
             self.is_invalid = true;
@@ -70,6 +73,7 @@ impl RoundTripTimingState {
         self.content_receive_timestamp_sum_ns = sum;
         self.content_receive_count = count;
         self.last_content_receive_ns = Some(timestamp_ns);
+        self.last_observation_ns = Some(timestamp_ns);
     }
 
     /// Finish the two application-event lag estimators, preserving invalidity as absence.
@@ -141,5 +145,15 @@ mod tests {
         content_regression.on_content_received(500);
         content_regression.on_content_received(300);
         assert_eq!(content_regression.finish(), Default::default());
+    }
+
+    #[test]
+    fn measured_input_after_content_invalidates_operation() {
+        let mut timing = RoundTripTimingState::default();
+        timing.on_measured_input_flushed(300);
+        timing.on_content_received(500);
+        timing.on_measured_input_flushed(400);
+
+        assert_eq!(timing.finish(), Default::default());
     }
 }

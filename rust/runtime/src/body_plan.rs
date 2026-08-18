@@ -507,6 +507,14 @@ impl BodyPlan {
         }
     }
 
+    /// Whether a named-field plan declares `name`, regardless of its value representation.
+    pub fn has_field(&self, name: &str) -> bool {
+        match self {
+            Self::Fields(program) => program.position(name).is_some(),
+            Self::Raw(_) | Self::Prebuilt(_) => false,
+        }
+    }
+
     /// Field names whose value can differ per dispatch (`effective_from_plan`
     /// reads these out of the plan literals). A plan carrying any of them cannot
     /// be collapsed to a single prebuilt body.

@@ -614,7 +614,7 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         store: &dyn SegmentStore,
         overrides: &Overrides,
     ) -> EndpointResult<PreparedWsOperation> {
-        if body.literal_field("type").is_some() || overrides.fields().contains_key("type") {
+        if body.has_field("type") || overrides.fields().contains_key("type") {
             return Err(EndpointError::InvalidRequest(
                 "Responses `type` is a reserved WebSocket event field".to_owned(),
             ));
@@ -2013,7 +2013,7 @@ mod lowering_tests {
     }
 
     #[test]
-    fn responses_websocket_lowering_rejects_a_colliding_event_type() {
+    fn responses_websocket_lowering_rejects_a_wire_backed_event_type() {
         let turns = [text_turn()];
         let request = PreparedRequest::new(
             "gpt-test",
@@ -2029,7 +2029,7 @@ mod lowering_tests {
         let mut endpoint = RawEndpointConfig::default();
         endpoint.extra = Some(Map::from_iter([(
             "type".to_owned(),
-            Value::String("authored.type".to_owned()),
+            json!([{"value": "authored.type"}]),
         )]));
         let body = ResponsesEndpoint
             .format_prepared_payload(&request, &endpoint)
