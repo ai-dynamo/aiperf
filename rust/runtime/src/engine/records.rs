@@ -648,16 +648,14 @@ pub(crate) fn record_csv_row(
         record
             .transport
             .actual_route
-            .as_deref()
-            .map(csv_escape)
+            .map(|route| csv_escape(route.as_str()))
             .unwrap_or_default(),
     );
     cells.push(
         record
             .transport
             .fallback_reason
-            .as_deref()
-            .map(csv_escape)
+            .map(|reason| csv_escape(reason.as_str()))
             .unwrap_or_default(),
     );
     cells.push("aiperf runner".to_string());

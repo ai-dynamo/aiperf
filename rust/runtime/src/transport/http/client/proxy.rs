@@ -141,8 +141,8 @@ pub async fn connect_via_proxy(
         }
     }
 
-    let status = connect_status_code(&buf).ok_or_else(|| {
-        protocol_err("proxy CONNECT response had no valid status line".to_string())
+    let status = connect_response_status(&buf).ok_or_else(|| {
+        protocol_err("proxy CONNECT response head was malformed".to_string())
     })?;
     if status != 200 {
         return Err(proxy_status_err(
@@ -168,17 +168,30 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
 }
 
-/// Parse the numeric status from an `HTTP/1.x NNN ...` status line.
-fn connect_status_code(buf: &[u8]) -> Option<u16> {
-    let line_end = buf.windows(2).position(|w| w == b"\r\n")?;
-    let line = std::str::from_utf8(&buf[..line_end]).ok()?;
+/// Parse a complete HTTP/1.x response head and return its numeric status.
+fn connect_response_status(buf: &[u8]) -> Option<u16> {
+    let header_end = find_header_end(buf)?;
+    let mut lines = buf[..header_end.checked_sub(2)?].split(|byte| *byte == b'\n');
+    let status_line = lines.next()?.strip_suffix(b"\r")?;
+    let line = std::str::from_utf8(status_line).ok()?;
     let mut fields = line.split_whitespace();
     if !matches!(fields.next()?, "HTTP/1.0" | "HTTP/1.1") {
         return None;
     }
     let status = fields.next()?;
-    (status.len() == 3 && status.bytes().all(|byte| byte.is_ascii_digit()))
-        .then(|| status.parse().ok())?
+    if status.len() != 3 || !status.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    for raw_line in lines {
+        if raw_line.is_empty() {
+            continue;
+        }
+        let header = raw_line.strip_suffix(b"\r")?;
+        let colon = header.iter().position(|byte| *byte == b':')?;
+        http::HeaderName::from_bytes(&header[..colon]).ok()?;
+        http::HeaderValue::from_bytes(&header[colon + 1..]).ok()?;
+    }
+    status.parse().ok()
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -304,9 +317,9 @@ mod tests {
     fn status_and_header_end_parsing() {
         let ok = b"HTTP/1.1 200 Connection established\r\nX: y\r\n\r\n";
         assert_eq!(find_header_end(ok), Some(ok.len()));
-        assert_eq!(connect_status_code(ok), Some(200));
+        assert_eq!(connect_response_status(ok), Some(200));
         assert_eq!(
-            connect_status_code(b"HTTP/1.1 407 Proxy Auth\r\n\r\n"),
+            connect_response_status(b"HTTP/1.1 407 Proxy Auth\r\n\r\n"),
             Some(407)
         );
         let error = proxy_status_err(407, "authentication required".to_owned());
@@ -319,6 +332,7 @@ mod tests {
         for response in [
             b"HTTP/1.1 nope Invalid\r\n\r\n".to_vec(),
             b"Proxy-Agent: test\r\n\r\n".to_vec(),
+            b"HTTP/1.1 200 OK\r\nnot-a-header\r\n\r\n".to_vec(),
             b"HTTP/1.1 200 OK\r\n\r\nunexpected".to_vec(),
         ] {
             let error = connect_response_error(response).await;
