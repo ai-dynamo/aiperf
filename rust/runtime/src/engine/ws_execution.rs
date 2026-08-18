@@ -428,6 +428,7 @@ impl WebSocketTransportSink {
         url: &str,
         headers: &BTreeMap<String, String>,
         now_ns: i64,
+        allow_reuse: bool,
     ) -> (Option<CachedSocket>, Vec<CachedSocket>) {
         let mut idle = self.idle.borrow_mut();
         let keepalive_ns = self.transport.client.keepalive_ns;
@@ -443,24 +444,25 @@ impl WebSocketTransportSink {
                 index += 1;
             }
         }
-        let cached = if self.transport.connection_reuse == ConnectionReuseStrategy::Never {
-            None
-        } else {
-            idle.iter()
-                .position(|cached| {
-                    cached.affinity_key.as_deref() == Some(affinity_key)
-                        && cached.url == url
-                        && cached.headers == *headers
-                })
-                .or_else(|| {
-                    idle.iter().position(|cached| {
-                        cached.affinity_key.is_none()
+        let cached =
+            if !allow_reuse || self.transport.connection_reuse == ConnectionReuseStrategy::Never {
+                None
+            } else {
+                idle.iter()
+                    .position(|cached| {
+                        cached.affinity_key.as_deref() == Some(affinity_key)
                             && cached.url == url
                             && cached.headers == *headers
                     })
-                })
-                .map(|index| idle.swap_remove(index))
-        };
+                    .or_else(|| {
+                        idle.iter().position(|cached| {
+                            cached.affinity_key.is_none()
+                                && cached.url == url
+                                && cached.headers == *headers
+                        })
+                    })
+                    .map(|index| idle.swap_remove(index))
+            };
         if cached.is_none()
             && socket_pool_requires_eviction(idle.len(), self.slots.available_permits())
         {
@@ -481,9 +483,11 @@ impl WebSocketTransportSink {
         url: &Url,
         headers: &BTreeMap<String, String>,
         deadline_ns: Option<i64>,
+        allow_reuse: bool,
     ) -> Result<CheckedOutSocket, ConnectFailure> {
         let now_ns = self.clock.now_ns();
-        let (cached, expired) = self.take_cached(affinity_key, url.as_str(), headers, now_ns);
+        let (cached, expired) =
+            self.take_cached(affinity_key, url.as_str(), headers, now_ns, allow_reuse);
         for cached in expired {
             close_socket(cached.socket, self.clock.clone(), deadline_ns).await;
         }
@@ -601,8 +605,53 @@ impl WebSocketTransportSink {
         let _slot = acquire_before_deadline(&self.slots, self.clock.clone(), deadline_ns).await?;
         let mut record = RequestRecord::started(start_ns);
         record.request_headers = request.headers.clone();
+        ensure!(
+            prepared_operation
+                .messages()
+                .iter()
+                .all(|message| message.opcode() == capabilities.application_opcode),
+            "websocket endpoint {:?} prepared an unregistered application opcode",
+            endpoint.descriptor().id
+        );
+        let operation_id = format!("{}:0", request.uuid);
+        let base_correlated =
+            match correlate_operation(&prepared_operation, capabilities.dialect, &operation_id) {
+                Ok(correlated) => correlated,
+                Err(error) => {
+                    return self.failed_dispatch_result(
+                        &request,
+                        &prepared_operation,
+                        record,
+                        observer,
+                        start_ns,
+                        AttemptFailure::protocol(error),
+                    );
+                }
+            };
+        let allow_reuse = base_correlated.correlation().supports_reused_socket();
+        if capabilities.dialect == WebSocketDialect::Realtime
+            && prepared_operation.requires_affinity_state()
+            && !allow_reuse
+        {
+            return self.failed_dispatch_result(
+                &request,
+                &prepared_operation,
+                record,
+                observer,
+                start_ns,
+                AttemptFailure::protocol(anyhow!(
+                    "Realtime continuation cannot be safely correlated on its affinity-owned socket"
+                )),
+            );
+        }
         let checked_out = match self
-            .checkout(&affinity_key, &url, &request.headers, deadline_ns)
+            .checkout(
+                &affinity_key,
+                &url,
+                &request.headers,
+                deadline_ns,
+                allow_reuse,
+            )
             .await
         {
             Ok(value) => value,
@@ -672,47 +721,40 @@ impl WebSocketTransportSink {
                 )),
             );
         }
-        let operation = match capabilities.dialect {
-            WebSocketDialect::Responses => checked_out
-                .continuation_id
-                .as_deref()
-                .filter(|_| checked_out.has_affinity_state)
-                .map(|response_id| {
-                    with_previous_response_id(&prepared_operation, response_id).ok_or_else(|| {
-                        anyhow!(
-                            "websocket continuation could not be injected into the prepared operation"
-                        )
-                    })
-                })
-                .transpose()?
-                .unwrap_or_else(|| prepared_operation.as_ref().clone()),
-            WebSocketDialect::Realtime => prepared_operation.as_ref().clone(),
-        };
-        ensure!(
-            operation
-                .messages()
-                .iter()
-                .all(|message| message.opcode() == capabilities.application_opcode),
-            "websocket endpoint {:?} prepared an unregistered application opcode",
-            endpoint.descriptor().id
-        );
-        let correlated = match correlate_operation(
-            &operation,
-            capabilities.dialect,
-            &format!("{}:0", request.uuid),
-        ) {
-            Ok(correlated) => correlated,
-            Err(error) => {
-                close_socket(checked_out.socket, self.clock.clone(), deadline_ns).await;
-                return self.failed_dispatch_result(
-                    &request,
-                    &operation,
-                    record,
-                    observer,
-                    start_ns,
-                    AttemptFailure::protocol(error),
-                );
+        let correlated = match capabilities.dialect {
+            WebSocketDialect::Responses => {
+                match checked_out
+                    .continuation_id
+                    .as_deref()
+                    .filter(|_| checked_out.has_affinity_state)
+                {
+                    Some(response_id) => {
+                        let operation = with_previous_response_id(&prepared_operation, response_id)
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "websocket continuation could not be injected into the prepared operation"
+                                )
+                            })?;
+                        match correlate_operation(&operation, capabilities.dialect, &operation_id) {
+                            Ok(correlated) => correlated,
+                            Err(error) => {
+                                close_socket(checked_out.socket, self.clock.clone(), deadline_ns)
+                                    .await;
+                                return self.failed_dispatch_result(
+                                    &request,
+                                    &operation,
+                                    record,
+                                    observer,
+                                    start_ns,
+                                    AttemptFailure::protocol(error),
+                                );
+                            }
+                        }
+                    }
+                    None => base_correlated,
+                }
             }
+            WebSocketDialect::Realtime => base_correlated,
         };
         let attempt = self
             .run_attempt(
@@ -1095,9 +1137,9 @@ impl WebSocketTransportSink {
                             return Err(AttemptFailure::retryable_protocol(
                                 anyhow!(
                                     "{}",
-                                    event
-                                        .error_message()
-                                        .unwrap_or("correlated websocket application error")
+                                    event.error_message().unwrap_or_else(|| {
+                                        "correlated websocket application error".to_owned()
+                                    })
                                 ),
                                 state.can_retry(),
                             ));
@@ -1806,6 +1848,34 @@ mod tests {
         }
     }
 
+    fn responses_turn_with_full_metadata(reference: PreparedEndpointReference) -> PreparedTurn {
+        let metadata = (0..16)
+            .map(|index| {
+                (
+                    format!("key-{index}"),
+                    Value::String(format!("value-{index}")),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "type": "response.create",
+            "model": "model",
+            "input": [{"role": "user", "content": "hi"}],
+            "metadata": metadata,
+        }))
+        .expect("full-capacity Responses request serializes");
+        let operation = PreparedWsOperation::new(
+            [PreparedWsMessage::text(
+                Bytes::from(payload),
+                PreparedWsMessageRole::MeasuredInput,
+            )],
+            None,
+        );
+        let mut turn = responses_turn(reference);
+        turn.request.body = Some(RequestBody::WebSocket(Arc::new(operation)));
+        turn
+    }
+
     #[test]
     fn reused_responses_socket_quarantines_stale_response_before_raw_attribution() {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1836,8 +1906,11 @@ mod tests {
                     }),
                     serde_json::json!({
                         "type":"response.output_text.delta",
-                        "response_id":"stale",
+                        "item_id":"stale-item",
+                        "output_index":0,
+                        "content_index":0,
                         "delta":"wrong",
+                        "sequence_number":2,
                     }),
                     serde_json::json!({
                         "type":"response.completed",
@@ -1849,8 +1922,11 @@ mod tests {
                     }),
                     serde_json::json!({
                         "type":"response.output_text.delta",
-                        "response_id":"current",
+                        "item_id":"current-item",
+                        "output_index":0,
+                        "content_index":0,
                         "delta":"right",
+                        "sequence_number":5,
                     }),
                     serde_json::json!({
                         "type":"response.completed",
@@ -1914,6 +1990,142 @@ mod tests {
                 [ReplayTerminalStatus::Completed]
             );
             server.abort();
+        });
+    }
+
+    #[test]
+    fn full_metadata_capacity_bypasses_a_generic_reused_socket() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, async {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("test listener binds");
+            let address = listener.local_addr().expect("listener has an address");
+            let server = tokio::task::spawn_local(async move {
+                let (stream, _) = listener
+                    .accept()
+                    .await
+                    .expect("server accepts cached client");
+                let mut cached = accept_async(stream)
+                    .await
+                    .expect("server upgrades cached client");
+                let (stream, cached_received_application) = tokio::select! {
+                    message = cached.next() => {
+                        let received_application = match message {
+                            Some(Ok(Message::Close(_))) => {
+                                cached.flush().await.expect("server flushes cached Close");
+                                false
+                            }
+                            Some(Ok(Message::Text(_))) | Some(Ok(Message::Binary(_))) => {
+                                cached
+                                    .close(None)
+                                    .await
+                                    .expect("server closes unsafe cached exchange");
+                                true
+                            }
+                            message => panic!("expected cached socket activity, got {message:?}"),
+                        };
+                        let (stream, _) = listener
+                            .accept()
+                            .await
+                            .expect("server accepts retry client");
+                        (stream, received_application)
+                    }
+                    accepted = listener.accept() => {
+                        let (stream, _) = accepted.expect("server accepts fresh client");
+                        (stream, false)
+                    }
+                };
+                let mut fresh = accept_async(stream)
+                    .await
+                    .expect("server upgrades fresh client");
+                let request = match fresh.next().await {
+                    Some(Ok(Message::Text(payload))) => {
+                        serde_json::from_str::<Value>(&payload).expect("request is JSON")
+                    }
+                    message => panic!("expected fresh text request, got {message:?}"),
+                };
+                let metadata = request["metadata"]
+                    .as_object()
+                    .expect("request metadata remains an object");
+                assert_eq!(metadata.len(), 16);
+                assert!(!metadata.contains_key("_aiperf_ws_operation"));
+                for event in [
+                    serde_json::json!({
+                        "type":"response.created",
+                        "response":{"id":"current"},
+                    }),
+                    serde_json::json!({
+                        "type":"response.output_text.delta",
+                        "item_id":"current-item",
+                        "output_index":0,
+                        "content_index":0,
+                        "delta":"right",
+                        "sequence_number":2,
+                    }),
+                    serde_json::json!({
+                        "type":"response.completed",
+                        "response":{
+                            "id":"current",
+                            "status":"completed",
+                            "output":[{"content":[{"text":"right"}]}],
+                        },
+                    }),
+                ] {
+                    fresh
+                        .send(Message::Text(event.to_string().into()))
+                        .await
+                        .expect("server sends event");
+                }
+                cached_received_application
+            });
+
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let url = format!("ws://{address}/v1/responses");
+            let cached = connect(
+                &Url::parse(&url).expect("test URL is valid"),
+                &BTreeMap::new(),
+                &crate::transport::http::config::ClientConfig::default(),
+                WebSocketConfig::default(),
+                clock.clone(),
+                None,
+            )
+            .await
+            .expect("cached socket upgrades");
+            let (sink, reference) = responses_sink(clock, url.clone());
+            let now_ns = sink.clock.now_ns();
+            sink.idle.borrow_mut().push(CachedSocket {
+                affinity_key: None,
+                continuation_id: None,
+                url,
+                headers: BTreeMap::new(),
+                connected_ns: now_ns,
+                retained_ns: now_ns,
+                socket: cached,
+            });
+            let observer = TerminalObserver::default();
+            let result = sink
+                .dispatch_inner(
+                    responses_turn_with_full_metadata(reference),
+                    &observer,
+                    &|_| {},
+                    None,
+                )
+                .await
+                .expect("valid full-capacity metadata request completes");
+
+            assert_eq!(result.outcome.response_text, "right");
+            assert!(
+                !server.await.expect("server task completes"),
+                "full-capacity metadata must bypass generic pooled sockets before sending"
+            );
+            assert_eq!(
+                observer.0.borrow().as_slice(),
+                [ReplayTerminalStatus::Completed]
+            );
         });
     }
 

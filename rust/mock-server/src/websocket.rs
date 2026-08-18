@@ -1949,6 +1949,7 @@ impl ConnectionScenario {
                 let first_content_ns =
                     input_complete_ns.saturating_add(self.first_content_delay_ns);
                 if self.scenario != WebSocketScenario::DoneOnly {
+                    let item_id = format!("mock-message-{}-{}", self.connection_id, self.next_turn);
                     for index in 0..self.content_events {
                         actions.push(self.text_action_at(
                             first_content_ns.saturating_add(
@@ -1956,8 +1957,11 @@ impl ConnectionScenario {
                             ),
                             serde_json::json!({
                                 "type":"response.output_text.delta",
-                                "response_id":response_id.clone(),
-                                "delta":"mock"
+                                "item_id":item_id,
+                                "output_index":0,
+                                "content_index":0,
+                                "delta":"mock",
+                                "sequence_number":index + 1,
                             }),
                         ));
                     }
@@ -2536,6 +2540,37 @@ mod tests {
             created["response"]["metadata"]["_aiperf_ws_operation"],
             "operation-1"
         );
+    }
+
+    #[test]
+    fn responses_delta_uses_the_streaming_event_shape() {
+        let config = MockServerConfig::default();
+        let mut scenario = ConnectionScenario::new(RouteKind::Turns, 1, &config);
+        let delta = scenario
+            .on_event(
+                ClientEvent::StartTurn {
+                    model: "mock-model".to_owned(),
+                    continuation: None,
+                    operation_id: Some("operation-1".to_owned()),
+                },
+                1_000,
+            )
+            .expect("normal turn is valid")
+            .into_iter()
+            .find_map(|action| match action {
+                ServerAction::SendText { payload, .. } => serde_json::from_slice::<Value>(&payload)
+                    .ok()
+                    .filter(|event| event["type"] == "response.output_text.delta"),
+                _ => None,
+            })
+            .expect("normal turn has an output delta");
+
+        assert!(delta.get("response_id").is_none());
+        assert_eq!(delta["item_id"], "mock-message-1-1");
+        assert_eq!(delta["output_index"], 0);
+        assert_eq!(delta["content_index"], 0);
+        assert_eq!(delta["sequence_number"], 1);
+        assert_eq!(delta["delta"], "mock");
     }
 
     #[test]
