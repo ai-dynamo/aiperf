@@ -17,8 +17,9 @@ use std::{
 
 use aiperf_runtime::clock::SimClock;
 use aiperf_runtime::eval::{
-    AdapterExit, AdapterProcess, AdapterSupervisionError, CancelReason, ComposeProjectId,
-    DockerAdapterLease, DockerAdapterProcess, DockerBuildRequest, DockerComposeArchiveRequest,
+    AdapterExit, AdapterProcess, AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner,
+    AdapterSupervisionError, CancelReason, ComposeProjectId, DockerAdapterLease,
+    DockerAdapterProcess, DockerBuildRequest, DockerComposeArchiveRequest,
     DockerComposeBuildRequest, DockerComposeConfigRequest, DockerComposeCopyRequest,
     DockerComposeDownRequest, DockerComposeExecRequest, DockerComposeRuntime,
     DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest,
@@ -36,6 +37,56 @@ static DOCKER_RUNTIME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct LeaseFenceClient {
     events: Rc<RefCell<Vec<String>>>,
+}
+
+struct RecordingAdapterSpawnTransaction {
+    process: Option<Box<dyn AdapterProcess>>,
+}
+
+#[async_trait(?Send)]
+impl AdapterSpawnTransaction for RecordingAdapterSpawnTransaction {
+    async fn await_process(&mut self) -> Result<Box<dyn AdapterProcess>, AdapterSupervisionError> {
+        self.process
+            .take()
+            .ok_or(AdapterSupervisionError::AlreadyReaped)
+    }
+
+    async fn abort(&mut self, deadline: Duration) -> Result<(), AdapterSupervisionError> {
+        let Some(mut process) = self.process.take() else {
+            return Ok(());
+        };
+        process.cancel(CancelReason::HostShutdown, deadline).await?;
+        process.reap(deadline).await?;
+        Ok(())
+    }
+
+    fn fence(&mut self) {
+        if let Some(process) = self.process.as_deref_mut() {
+            process.fence();
+        }
+    }
+}
+
+struct RecordingAdapterSpawner {
+    events: Rc<RefCell<Vec<String>>>,
+    requests: Rc<RefCell<Vec<(Vec<String>, BTreeMap<String, String>)>>>,
+}
+
+impl AdapterSpawner for RecordingAdapterSpawner {
+    fn begin_spawn(
+        &self,
+        request: AdapterSpawnRequest,
+    ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        self.events.borrow_mut().push("adapter-spawn".to_owned());
+        self.requests
+            .borrow_mut()
+            .push((request.argv().to_vec(), request.environment().clone()));
+        Ok(Box::new(RecordingAdapterSpawnTransaction {
+            process: Some(Box::new(LeaseFenceClient {
+                events: self.events.clone(),
+            })),
+        }))
+    }
 }
 
 #[async_trait(?Send)]
@@ -165,10 +216,13 @@ struct RecordingRuntime {
 
 #[derive(Default)]
 struct LegacyRuntime {
-    events: RefCell<Vec<String>>,
+    events: Rc<RefCell<Vec<String>>>,
     images: RefCell<Vec<String>>,
+    creates: RefCell<Vec<Vec<String>>>,
+    adapter_spawner_labels: RefCell<Vec<BTreeMap<String, String>>>,
     native_graph_profile: Option<ProviderProfile>,
     image_workdir: Option<String>,
+    adapter_spawner: Option<Rc<dyn AdapterSpawner>>,
 }
 
 impl DockerRuntime for LegacyRuntime {
@@ -214,12 +268,30 @@ impl DockerRuntime for LegacyRuntime {
         }
     }
 
+    fn adapter_spawner(
+        &self,
+        request: &aiperf_runtime::eval::DockerAdapterSpawnerRequest,
+        _: &aiperf_runtime::eval::NativeGraphAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        self.adapter_spawner_labels
+            .borrow_mut()
+            .push(request.project().ownership_labels());
+        self.adapter_spawner
+            .clone()
+            .ok_or(EvalExecutionError::UnsupportedEnforcement(
+                "streaming Docker adapter spawn",
+            ))
+    }
+
     fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
         self.events.borrow_mut().push("build".to_owned());
         Ok(())
     }
 
     fn create(&self, request: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        self.creates
+            .borrow_mut()
+            .push(request.public_arguments().to_vec());
         self.images.borrow_mut().push(
             request
                 .public_arguments()
@@ -1845,7 +1917,7 @@ PHASE = "verifier"
         .unwrap();
 
     assert_eq!(
-        runtime.events.into_inner(),
+        runtime.events.borrow().clone(),
         vec![
             "preflight",
             "build:none",
@@ -2021,7 +2093,7 @@ fn shared_image_workdir_is_rejected_after_implicit_step_start() {
     assert_eq!(runtime.creates.borrow().len(), 1);
     assert_eq!(runtime.starts.get(), 1);
     assert_eq!(runtime.removals.get(), 1);
-    let events = runtime.events.into_inner();
+    let events = runtime.events.borrow().clone();
     assert!(
         events
             .iter()
@@ -2069,7 +2141,7 @@ fn shared_image_workdir_is_rejected_after_explicit_multi_step_start() {
     assert_eq!(runtime.creates.borrow().len(), 1);
     assert_eq!(runtime.starts.get(), 1);
     assert_eq!(runtime.removals.get(), 1);
-    let events = runtime.events.into_inner();
+    let events = runtime.events.borrow().clone();
     assert!(
         events
             .iter()
@@ -2160,7 +2232,7 @@ retries = 3
 
     assert!(matches!(error, EvalExecutionError::Unhealthy(_)));
     assert_eq!(
-        runtime.events.into_inner(),
+        runtime.events.borrow().clone(),
         vec![
             "preflight",
             "build",
@@ -2276,7 +2348,7 @@ fn agent_terminal_errors_prevent_verifier_and_remove_the_container() {
             error
         );
         assert_eq!(
-            runtime.events.into_inner(),
+            runtime.events.borrow().clone(),
             vec!["preflight", "build", "create", "start", "agent", "remove"]
         );
     }
@@ -2313,7 +2385,7 @@ fn artifact_collection_failure_prevents_separate_verifier_setup() {
 
     assert!(matches!(error, EvalExecutionError::ArtifactCollection(_)));
     assert_eq!(
-        runtime.events.into_inner(),
+        runtime.events.borrow().clone(),
         vec!["build", "create", "start", "agent", "collect", "remove"]
     );
 }
@@ -2463,7 +2535,7 @@ fn separate_verifier_failure_removes_both_container_leases() {
 
     assert!(matches!(error, EvalExecutionError::ProcessFailure(_)));
     assert_eq!(
-        runtime.events.into_inner(),
+        runtime.events.borrow().clone(),
         vec![
             "preflight",
             "build",
@@ -2512,7 +2584,7 @@ fn separate_verifier_start_failure_removes_registered_verifier_lease() {
                 && reason.contains("verifier removal failed")
     ));
     assert_eq!(
-        runtime.events.into_inner(),
+        runtime.events.borrow().clone(),
         vec![
             "build", "create", "start", "agent", "create", "start", "remove", "remove"
         ]
@@ -2606,7 +2678,7 @@ fn separate_verifier_health_failure_prevents_verifier_files_and_cleans_leases() 
         EvalExecutionError::Unhealthy(_)
     ));
     assert_eq!(
-        runtime.events.into_inner(),
+        runtime.events.borrow().clone(),
         vec![
             "build",
             "create",
@@ -2957,7 +3029,7 @@ fn legacy_json_package_runs_in_the_recipe_image_without_a_docker_build() {
             "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
         ]
     );
-    let events = runtime.events.into_inner();
+    let events = runtime.events.borrow().clone();
     assert!(!events.contains(&"build".to_owned()));
     assert!(events.iter().filter(|event| *event == "agent").count() == 1);
     assert!(events.iter().filter(|event| *event == "verifier").count() >= 2);
@@ -3067,7 +3139,7 @@ fn shared_verifier_resets_tests_before_each_selected_tree_copy() {
         )
         .unwrap();
 
-    let events = runtime.events.into_inner();
+    let events = runtime.events.borrow().clone();
     let reset_indices = events
         .iter()
         .enumerate()
@@ -3420,7 +3492,7 @@ fn single_step_separate_verifier_rejects_reserved_workdir_before_provisioning() 
     ));
     assert_eq!(runtime.creates.borrow().len(), 1);
     assert_eq!(runtime.starts.get(), 1);
-    assert!(runtime.events.into_inner().iter().all(|event| {
+    assert!(runtime.events.borrow().iter().all(|event| {
         !event.starts_with("inspect-workdir:")
             && !event.starts_with("copy-artifacts:")
             && !event.starts_with("reset-tests:")
@@ -3501,7 +3573,7 @@ fn separate_verifier_rejects_reserved_image_workdir_before_artifact_transfer() {
     ));
     assert_eq!(runtime.creates.borrow().len(), 2);
     assert_eq!(runtime.starts.get(), 2);
-    let events = runtime.events.into_inner();
+    let events = runtime.events.borrow().clone();
     assert!(
         events
             .iter()
@@ -3547,7 +3619,7 @@ fn separate_verifier_rejects_reserved_cli_workdir_before_verifier_provisioning()
     ));
     assert_eq!(runtime.creates.borrow().len(), 1);
     assert_eq!(runtime.starts.get(), 1);
-    assert!(runtime.events.into_inner().iter().all(|event| {
+    assert!(runtime.events.borrow().iter().all(|event| {
         !event.starts_with("inspect-workdir:")
             && !event.starts_with("copy-artifacts:")
             && !event.starts_with("reset-tests:")
@@ -4519,6 +4591,73 @@ executable = "tools/adapter.sh"
     task_root
 }
 
+fn native_graph_rollout_task_root(temporary: &tempfile::TempDir) -> std::path::PathBuf {
+    let task_root = native_graph_task_root(temporary);
+    fs::create_dir_all(task_root.join("rollout")).unwrap();
+    fs::write(
+        task_root.join("adapters.toml"),
+        r#"[[adapters]]
+id = "environment-adapter"
+role = "environment"
+argv = ["tools/environment.sh"]
+executable = "tools/environment.sh"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("tools/environment.sh"),
+        "#!/bin/sh\nexit 0\n",
+    )
+    .unwrap();
+    fs::write(task_root.join("rollout/reset.json"), b"{}\n").unwrap();
+    fs::write(task_root.join("rollout/policy.json"), b"{}\n").unwrap();
+    fs::write(
+        task_root.join("rollout.toml"),
+        r#"[environment]
+adapter_id = "environment-adapter"
+protocol_factory_id = "strict_jsonl"
+runtime_provider_id = "strict_supervised"
+stepper_factory_id = "supervised_environment"
+action_encoder_id = "move_v1"
+operation_deadline_ms = 5000
+reset_source = "rollout/reset.json"
+max_frame_bytes = 4096
+max_identifier_bytes = 128
+max_json_bytes = 2048
+max_json_depth = 4
+max_json_array_entries = 8
+max_json_object_entries = 8
+max_operation_ledger_entries = 16
+max_model_call_lineage_entries = 4
+max_session_model_call_lineage_entries = 16
+max_session_model_call_lineage_bytes = 2048
+max_artifact_handles = 4
+max_artifact_bytes = 4096
+
+[artifacts]
+max_artifacts = 8
+max_total_bytes = 16384
+max_artifact_bytes = 3072
+max_download_handles = 4
+
+[policy]
+environment = "counter-v1"
+model_binding_id = "primary"
+prompt_source = "rollout/policy.json"
+max_decision_bytes = 256
+horizon = 4
+gamma = 0.75
+
+[limits]
+max_environment_bytes = 256
+max_horizon = 8
+max_prompt_bytes = 256
+"#,
+    )
+    .unwrap();
+    task_root
+}
+
 #[test]
 fn native_graph_docker_execution_requires_runtime_authorization_before_build() {
     let temporary = tempfile::tempdir().unwrap();
@@ -4595,8 +4734,44 @@ fn native_graph_docker_execution_accepts_the_runtime_resolved_no_egress_proof() 
 }
 
 struct OrderedNativeGraphCallback<'a> {
-    events: &'a RefCell<Vec<String>>,
+    events: &'a Rc<RefCell<Vec<String>>>,
     fail: bool,
+}
+
+struct AdapterStartingFailingNativeGraphCallback<'a> {
+    events: &'a Rc<RefCell<Vec<String>>>,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeCallback for AdapterStartingFailingNativeGraphCallback<'_> {
+    async fn run(
+        &mut self,
+        lease: &mut dyn NativeGraphEpisodeLease,
+    ) -> Result<(), EvalExecutionError> {
+        lease.environment_adapter_start()?.start().await?;
+        self.events
+            .borrow_mut()
+            .push("native-graph-callback-failed".to_owned());
+        Err(EvalExecutionError::ProcessFailure(
+            "native graph callback failed".to_owned(),
+        ))
+    }
+}
+
+struct AdapterStartingNativeGraphCallback<'a> {
+    events: &'a Rc<RefCell<Vec<String>>>,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeCallback for AdapterStartingNativeGraphCallback<'_> {
+    async fn run(
+        &mut self,
+        lease: &mut dyn NativeGraphEpisodeLease,
+    ) -> Result<(), EvalExecutionError> {
+        lease.environment_adapter_start()?.start().await?;
+        self.events.borrow_mut().push("native-graph".to_owned());
+        Ok(())
+    }
 }
 
 #[async_trait(?Send)]
@@ -4685,6 +4860,247 @@ async fn native_graph_callback_precedes_verification_and_failure_keeps_reverse_c
             assert!(verifier_index < removal_index);
         }
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_graph_adapter_start_is_task_minted_secret_free_and_reaped_after_callback_failure() {
+    let _guard = DOCKER_RUNTIME_TEST_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_rollout_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let profile = ProviderProfile::new(
+        "runtime-no-egress",
+        vec![ProviderCapability::ModelEndpointIsolation],
+    )
+    .unwrap()
+    .with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
+    .unwrap();
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let adapter_events = Rc::new(RefCell::new(Vec::new()));
+    let runtime = LegacyRuntime {
+        native_graph_profile: Some(profile),
+        image_workdir: Some("/work".to_owned()),
+        adapter_spawner: Some(Rc::new(RecordingAdapterSpawner {
+            events: adapter_events.clone(),
+            requests: requests.clone(),
+        })),
+        ..LegacyRuntime::default()
+    };
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let mut callback = AdapterStartingFailingNativeGraphCallback {
+        events: &runtime.events,
+    };
+
+    let error = DockerProcessSandbox::new()
+        .execute_native_graph_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &FixedSecret,
+            &mut callback,
+        )
+        .await
+        .expect_err("callback failure must retain its primary error after adapter reaping");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ProcessFailure(reason) if reason == "native graph callback failed"
+    ));
+    assert_eq!(
+        requests.borrow().as_slice(),
+        [(vec!["tools/environment.sh".to_owned()], BTreeMap::new())],
+        "Docker must mint the package-declared adapter request with no model environment"
+    );
+    assert_eq!(
+        adapter_events.borrow().as_slice(),
+        ["adapter-spawn", "client-cancel", "client-reap"],
+        "the lease must reap its adapter before the outer Docker cleanup"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_graph_adapter_reaping_follows_artifact_collection_and_verification() {
+    let _guard = DOCKER_RUNTIME_TEST_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_rollout_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let profile = ProviderProfile::new(
+        "runtime-no-egress",
+        vec![ProviderCapability::ModelEndpointIsolation],
+    )
+    .unwrap()
+    .with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
+    .unwrap();
+    let mut runtime = LegacyRuntime {
+        native_graph_profile: Some(profile),
+        image_workdir: Some("/work".to_owned()),
+        adapter_spawner: None,
+        ..LegacyRuntime::default()
+    };
+    let spawner = Rc::new(RecordingAdapterSpawner {
+        events: runtime.events.clone(),
+        requests: Rc::new(RefCell::new(Vec::new())),
+    });
+    runtime.adapter_spawner = Some(spawner);
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let mut callback = AdapterStartingNativeGraphCallback {
+        events: &runtime.events,
+    };
+
+    DockerProcessSandbox::new()
+        .execute_native_graph_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &FixedSecret,
+            &mut callback,
+        )
+        .await
+        .expect("successful graph callback preserves the task until verification completes");
+
+    let events = runtime.events.borrow();
+    let position = |event: &str| {
+        events
+            .iter()
+            .position(|actual| actual == event)
+            .expect("expected lifecycle event")
+    };
+    assert!(position("native-graph") < position("verifier"));
+    assert!(position("verifier") < position("client-cancel"));
+    assert!(position("client-cancel") < position("client-reap"));
+    assert!(position("client-reap") < position("remove"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_graph_adapter_binds_its_exact_run_labels_before_it_can_start() {
+    let _guard = DOCKER_RUNTIME_TEST_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_rollout_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let profile = ProviderProfile::new(
+        "runtime-no-egress",
+        vec![ProviderCapability::ModelEndpointIsolation],
+    )
+    .unwrap()
+    .with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
+    .unwrap();
+    let runtime = LegacyRuntime {
+        native_graph_profile: Some(profile),
+        image_workdir: Some("/work".to_owned()),
+        adapter_spawner: Some(Rc::new(RecordingAdapterSpawner {
+            events: Rc::new(RefCell::new(Vec::new())),
+            requests: Rc::new(RefCell::new(Vec::new())),
+        })),
+        ..LegacyRuntime::default()
+    };
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let mut callback = AdapterStartingNativeGraphCallback {
+        events: &runtime.events,
+    };
+
+    DockerProcessSandbox::new()
+        .execute_native_graph_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &FixedSecret,
+            &mut callback,
+        )
+        .await
+        .expect("the labelled adapter container permits a successful graph callback");
+
+    let labels = runtime.adapter_spawner_labels.borrow();
+    let labels = labels
+        .first()
+        .expect("adapter spawner receives the run-owned container labels");
+    let creates = runtime.creates.borrow();
+    let create = creates
+        .first()
+        .expect("native graph provisions its task container");
+    for (name, value) in labels {
+        assert!(
+            create
+                .windows(2)
+                .any(|arguments| arguments == ["--label", &format!("{name}={value}")]),
+            "native graph container must carry the adapter's exact {name} label"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_graph_adapter_start_refuses_an_absent_rollout_selector_before_spawning() {
+    let _guard = DOCKER_RUNTIME_TEST_LOCK.lock().unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let profile = ProviderProfile::new(
+        "runtime-no-egress",
+        vec![ProviderCapability::ModelEndpointIsolation],
+    )
+    .unwrap()
+    .with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
+    .unwrap();
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let adapter_events = Rc::new(RefCell::new(Vec::new()));
+    let runtime = LegacyRuntime {
+        native_graph_profile: Some(profile),
+        image_workdir: Some("/work".to_owned()),
+        adapter_spawner: Some(Rc::new(RecordingAdapterSpawner {
+            events: adapter_events.clone(),
+            requests: requests.clone(),
+        })),
+        ..LegacyRuntime::default()
+    };
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+    let mut callback = AdapterStartingFailingNativeGraphCallback {
+        events: &runtime.events,
+    };
+
+    let error = DockerProcessSandbox::new()
+        .execute_native_graph_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &FixedSecret,
+            &mut callback,
+        )
+        .await
+        .expect_err("a graph without a rollout selector has no adapter operation");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidRecipe("NativeGraph rollout environment adapter")
+    ));
+    assert!(requests.borrow().is_empty());
+    assert!(adapter_events.borrow().is_empty());
 }
 
 fn standard_task_with_artifacts(

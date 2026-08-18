@@ -27,10 +27,12 @@ use tokio::process::Command as TokioCommand;
 use crate::{
     clock::{Clock, RealClock},
     eval::{
-        AdapterProcess, AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner,
-        AdapterSupervisionError, ArtifactDigest, HarborTaskPackage, ModelEndpointIsolationProof,
-        ModelSecretId, NativeGraphAdapterAuthorization, NativeGraphEpisodeCallback,
-        NativeGraphEpisodeLease, ProviderCapability, ProviderProfile, RewardDocument, VerifierMode,
+        AdapterLifecycleDeadlines, AdapterProcess, AdapterRole, AdapterSpawnRequest,
+        AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError, ArtifactDigest,
+        CancelReason, HarborTaskPackage, ModelEndpointIsolationProof, ModelSecretId,
+        NativeGraphAdapterAuthorization, NativeGraphEnvironmentAdapterStart,
+        NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
+        ProviderCapability, ProviderProfile, RewardDocument, VerifierMode,
         run_native_graph_episode_callback,
     },
 };
@@ -55,6 +57,7 @@ const MAX_DOCKER_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
 /// Lease exposed to a Rust-owned graph only after Docker provider authorization.
 struct DockerNativeGraphEpisodeLease<'a> {
     instruction: &'a str,
+    environment_adapter_start: Option<DockerNativeGraphEnvironmentAdapterStart>,
     // Holding the exact proof for the callback lifetime prevents a later path
     // from treating an unverified environment as an equivalent graph lease.
     _authorization: &'a NativeGraphAdapterAuthorization,
@@ -72,6 +75,221 @@ impl NativeGraphEpisodeLease for DockerNativeGraphEpisodeLease<'_> {
     fn instruction(&self) -> &str {
         self.instruction
     }
+
+    fn environment_adapter_start(
+        &mut self,
+    ) -> Result<&mut dyn NativeGraphEnvironmentAdapterStart, EvalExecutionError> {
+        self.environment_adapter_start
+            .as_mut()
+            .map(|operation| operation as &mut dyn NativeGraphEnvironmentAdapterStart)
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph rollout environment adapter",
+            ))
+    }
+}
+
+impl NativeGraphEpisodeBackendLease for DockerNativeGraphEpisodeLease<'_> {
+    fn reap_environment_adapter<'lease>(
+        &'lease mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), EvalExecutionError>> + 'lease>>
+    {
+        Box::pin(async move {
+            if let Some(adapter_start) = self.environment_adapter_start.as_mut() {
+                adapter_start.cancel_and_reap().await
+            } else {
+                Ok(())
+            }
+        })
+    }
+}
+
+/// One launch transaction fenced when its async startup future is cancelled.
+struct DockerNativeGraphAdapterStartGuard {
+    transaction: Option<Box<dyn AdapterSpawnTransaction>>,
+}
+
+impl DockerNativeGraphAdapterStartGuard {
+    fn new(transaction: Box<dyn AdapterSpawnTransaction>) -> Self {
+        Self {
+            transaction: Some(transaction),
+        }
+    }
+
+    async fn await_process(&mut self) -> Result<Box<dyn AdapterProcess>, AdapterSupervisionError> {
+        self.transaction
+            .as_deref_mut()
+            .ok_or(AdapterSupervisionError::PoolAccounting)?
+            .await_process()
+            .await
+    }
+
+    async fn abort(&mut self, deadline: Duration) -> Result<(), AdapterSupervisionError> {
+        self.transaction
+            .as_deref_mut()
+            .ok_or(AdapterSupervisionError::PoolAccounting)?
+            .abort(deadline)
+            .await
+    }
+
+    fn disarm(&mut self) {
+        self.transaction.take();
+    }
+}
+
+impl Drop for DockerNativeGraphAdapterStartGuard {
+    fn drop(&mut self) {
+        if let Some(transaction) = self.transaction.as_deref_mut() {
+            transaction.fence();
+        }
+    }
+}
+
+/// Docker-owned adapter launch whose process is retained only by the episode lease.
+struct DockerNativeGraphEnvironmentAdapterStart {
+    request: Option<AdapterSpawnRequest>,
+    spawner: Rc<dyn AdapterSpawner>,
+    process: Option<Box<dyn AdapterProcess>>,
+    deadlines: AdapterLifecycleDeadlines,
+}
+
+impl DockerNativeGraphEnvironmentAdapterStart {
+    fn supervision_error(
+        operation: &'static str,
+        error: AdapterSupervisionError,
+    ) -> EvalExecutionError {
+        EvalExecutionError::ProcessSpawn(format!(
+            "NativeGraph environment adapter {operation}: {error}"
+        ))
+    }
+
+    async fn cancel_and_reap(&mut self) -> Result<(), EvalExecutionError> {
+        let Some(mut process) = self.process.take() else {
+            return Ok(());
+        };
+        let cancel = process
+            .cancel(CancelReason::HostShutdown, self.deadlines.cancel())
+            .await;
+        let reap = process.reap(self.deadlines.reap()).await;
+        match (cancel, reap) {
+            (Ok(()), Ok(_)) => Ok(()),
+            (Err(primary), Ok(_)) => Err(Self::supervision_error("cancellation", primary)),
+            (Ok(()), Err(recovery)) => {
+                self.process = Some(process);
+                Err(Self::supervision_error("reaping", recovery))
+            }
+            (Err(primary), Err(recovery)) => {
+                self.process = Some(process);
+                Err(EvalExecutionError::ProcessFailure(format!(
+                    "NativeGraph environment adapter cancellation failed: {primary}; reaping failed: {recovery}"
+                )))
+            }
+        }
+    }
+}
+
+impl Drop for DockerNativeGraphEnvironmentAdapterStart {
+    fn drop(&mut self) {
+        if let Some(process) = self.process.as_deref_mut() {
+            process.fence();
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEnvironmentAdapterStart for DockerNativeGraphEnvironmentAdapterStart {
+    async fn start(&mut self) -> Result<(), EvalExecutionError> {
+        if self.process.is_some() {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "NativeGraph environment adapter already started",
+            ));
+        }
+        let request = self
+            .request
+            .take()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "NativeGraph environment adapter start operation",
+            ))?;
+        let transaction = self
+            .spawner
+            .begin_spawn(request)
+            .map_err(|error| Self::supervision_error("spawn", error))?;
+        let mut guard = DockerNativeGraphAdapterStartGuard::new(transaction);
+        let process = match guard.await_process().await {
+            Ok(process) => process,
+            Err(primary) => match guard.abort(self.deadlines.reap()).await {
+                Ok(()) => return Err(Self::supervision_error("startup", primary)),
+                Err(recovery) => {
+                    return Err(EvalExecutionError::ProcessFailure(format!(
+                        "NativeGraph environment adapter startup failed: {primary}; abort failed: {recovery}"
+                    )));
+                }
+            },
+        };
+        guard.disarm();
+        self.process = Some(process);
+        Ok(())
+    }
+}
+
+fn native_graph_environment_adapter_start(
+    runtime: &dyn DockerRuntime,
+    package: &HarborTaskPackage,
+    authorization: &NativeGraphAdapterAuthorization,
+    container: &str,
+    project: Option<&ComposeProjectId>,
+    environment: &super::EnvironmentPlan,
+    environment_workdir: Option<&str>,
+) -> Result<Option<DockerNativeGraphEnvironmentAdapterStart>, EvalExecutionError> {
+    let native_graph = package
+        .native_graph()
+        .ok_or(EvalExecutionError::InvalidRecipe(
+            "NativeGraph package plan",
+        ))?;
+    let Some(rollout) = native_graph.rollout() else {
+        return Ok(None);
+    };
+    let adapter = native_graph
+        .adapters()
+        .iter()
+        .find(|adapter| adapter.id == *rollout.environment().adapter_id())
+        .ok_or(EvalExecutionError::InvalidRecipe(
+            "NativeGraph rollout environment adapter",
+        ))?;
+    if adapter.role != AdapterRole::Environment {
+        return Err(EvalExecutionError::InvalidRecipe(
+            "NativeGraph rollout environment adapter role",
+        ));
+    }
+    let operation_deadline =
+        Duration::from_millis(rollout.environment().operation_deadline_ms().get());
+    let deadlines = AdapterLifecycleDeadlines::new(
+        operation_deadline,
+        operation_deadline,
+        operation_deadline,
+        operation_deadline,
+        operation_deadline,
+        operation_deadline,
+        operation_deadline,
+    )
+    .map_err(|_| EvalExecutionError::InvalidRecipe("NativeGraph adapter lifecycle deadlines"))?;
+    let request = authorization
+        .spawn_request(adapter.argv.clone(), BTreeMap::new(), deadlines)
+        .map_err(|_| EvalExecutionError::InvalidRecipe("NativeGraph environment adapter argv"))?;
+    let spawner_request = DockerAdapterSpawnerRequest::new(
+        container,
+        project.cloned().ok_or(EvalExecutionError::InvalidRecipe(
+            "NativeGraph environment adapter ownership",
+        ))?,
+    )?
+    .with_user(environment.user())
+    .with_workdir(environment_workdir);
+    let spawner = runtime.adapter_spawner(&spawner_request, authorization)?;
+    Ok(Some(DockerNativeGraphEnvironmentAdapterStart {
+        request: Some(request),
+        spawner,
+        process: None,
+        deadlines,
+    }))
 }
 
 use super::docker_runtime::preflight_compose_configuration;
@@ -690,6 +908,22 @@ impl DockerProcessSandbox {
         let run_id = NEXT_DOCKER_RUN_ID.fetch_add(1, Ordering::Relaxed);
         let image = docker_image_name(&safe_suffix, std::process::id(), run_id);
         let container = docker_container_name(&safe_suffix, std::process::id(), run_id);
+        let adapter_project = package
+            .native_graph()
+            .and_then(|native_graph| native_graph.rollout())
+            .map(|_| ComposeProjectId::new("aiperf-native-graph-environment"));
+        let adapter_labels = adapter_project
+            .as_ref()
+            .map(ComposeProjectId::ownership_labels);
+        let environment_adapter_start = native_graph_environment_adapter_start(
+            runtime,
+            package,
+            &authorization,
+            &container,
+            adapter_project.as_ref(),
+            environment,
+            environment_workdir,
+        )?;
         let mut containers = vec![container.clone()];
 
         let outcome = async {
@@ -710,7 +944,8 @@ impl DockerProcessSandbox {
                 runtime,
                 &container,
                 &image,
-                ContainerWorkspace::at_workdir(workspace.path(), environment_workdir),
+                ContainerWorkspace::at_workdir(workspace.path(), environment_workdir)
+                    .with_ownership_labels(adapter_labels.as_ref()),
                 environment,
                 baseline_network,
                 Some(package.instruction()),
@@ -748,6 +983,7 @@ impl DockerProcessSandbox {
             )?;
             let mut lease = DockerNativeGraphEpisodeLease {
                 instruction: package.instruction(),
+                environment_adapter_start,
                 _authorization: &authorization,
             };
             run_native_graph_episode_callback(callback, &mut lease, || {
@@ -2278,13 +2514,74 @@ struct DockerCliRuntime {
     native_graph_model_secrets: Option<BTreeMap<ModelSecretId, super::EnvName>>,
 }
 
+fn adapter_ownership_arguments(request: &DockerAdapterSpawnerRequest) -> Vec<String> {
+    let mut arguments = vec![
+        "container".to_owned(),
+        "ls".to_owned(),
+        "--all".to_owned(),
+        "--quiet".to_owned(),
+        "--no-trunc".to_owned(),
+        "--filter".to_owned(),
+        format!("name=^/{}$", request.container()),
+    ];
+    for (name, value) in request.project().ownership_labels() {
+        arguments.extend(["--filter".to_owned(), format!("label={name}={value}")]);
+    }
+    arguments
+}
+
+fn parse_owned_adapter_container_id(output: &[u8]) -> Result<String, AdapterSupervisionError> {
+    let output = std::str::from_utf8(output).map_err(|_| {
+        AdapterSupervisionError::Process(
+            "Docker ownership lookup returned non-UTF-8 container identity".to_owned(),
+        )
+    })?;
+    let mut identifiers = output.lines().filter(|line| !line.is_empty());
+    let identifier = identifiers.next().ok_or_else(|| {
+        AdapterSupervisionError::Process(
+            "Docker ownership lookup found no run-owned adapter container".to_owned(),
+        )
+    })?;
+    if identifiers.next().is_some()
+        || identifier.len() != 64
+        || !identifier.bytes().all(|byte| {
+            byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
+        })
+    {
+        return Err(AdapterSupervisionError::Process(
+            "Docker ownership lookup found an ambiguous or invalid adapter container".to_owned(),
+        ));
+    }
+    Ok(identifier.to_owned())
+}
+
+fn resolve_owned_adapter_container(
+    clock: Rc<dyn Clock>,
+    request: &DockerAdapterSpawnerRequest,
+    deadline: Duration,
+) -> Result<String, AdapterSupervisionError> {
+    let output = docker_output_bounded(
+        clock,
+        adapter_ownership_arguments(request),
+        request.container(),
+        Some(deadline),
+    )
+    .map_err(|_| {
+        AdapterSupervisionError::Process(
+            "Docker could not validate the run-owned adapter container".to_owned(),
+        )
+    })?;
+    parse_owned_adapter_container_id(&output)
+}
+
 struct DockerCliAdapterSpawner {
     request: DockerAdapterSpawnerRequest,
     authorization: NativeGraphAdapterAuthorization,
+    clock: Rc<dyn Clock>,
 }
 
 struct DockerCliAdapterLease {
-    request: DockerAdapterSpawnerRequest,
+    container_id: String,
 }
 
 struct DockerFenceReapRequest {
@@ -2340,7 +2637,7 @@ fn reap_unhanded_docker_client(mut child: Child) {
 impl DockerAdapterLease for DockerCliAdapterLease {
     async fn terminate(&self, deadline: Duration) -> Result<(), AdapterSupervisionError> {
         let mut command = TokioCommand::new("docker");
-        command.args(["kill", self.request.container()]);
+        command.args(["kill", &self.container_id]);
         let status = tokio::time::timeout(deadline, command.status())
             .await
             .map_err(|_| {
@@ -2364,7 +2661,7 @@ impl DockerAdapterLease for DockerCliAdapterLease {
 
     fn fence(&self) {
         let child = Command::new("docker")
-            .args(["kill", self.request.container()])
+            .args(["kill", &self.container_id])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -2383,6 +2680,11 @@ impl AdapterSpawner for DockerCliAdapterSpawner {
         request: AdapterSpawnRequest,
     ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
         let request = self.authorization.authorize_spawn_request(request)?;
+        let container_id = resolve_owned_adapter_container(
+            self.clock.clone(),
+            &self.request,
+            request.deadlines().startup(),
+        )?;
         let mut command = TokioCommand::new("docker");
         command.args(["exec", "-i"]);
         for (name, value) in request.environment() {
@@ -2395,7 +2697,7 @@ impl AdapterSpawner for DockerCliAdapterSpawner {
             command.args(["--workdir", workdir]);
         }
         command
-            .arg(self.request.container())
+            .arg(&container_id)
             .args(request.argv())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -2405,9 +2707,7 @@ impl AdapterSpawner for DockerCliAdapterSpawner {
         let client = spawn_adapter_child(command, request.max_stderr_bytes())?;
         let process = Box::new(DockerAdapterProcess::new(
             client,
-            Rc::new(DockerCliAdapterLease {
-                request: self.request.clone(),
-            }),
+            Rc::new(DockerCliAdapterLease { container_id }),
         ));
         Ok(Box::new(DockerAdapterSpawnTransaction {
             process: Some(process),
@@ -2513,6 +2813,7 @@ impl DockerRuntime for DockerCliRuntime {
         Ok(Rc::new(DockerCliAdapterSpawner {
             request: request.clone(),
             authorization: authorization.clone(),
+            clock: self.clock.clone(),
         }))
     }
 
@@ -3865,6 +4166,7 @@ fn redact_secret_values(
 struct ContainerWorkspace<'a> {
     path: &'a std::path::Path,
     target: Option<&'a str>,
+    ownership_labels: Option<&'a BTreeMap<String, String>>,
 }
 
 impl<'a> ContainerWorkspace<'a> {
@@ -3872,7 +4174,13 @@ impl<'a> ContainerWorkspace<'a> {
         Self {
             path,
             target: workdir,
+            ownership_labels: None,
         }
+    }
+
+    fn with_ownership_labels(mut self, labels: Option<&'a BTreeMap<String, String>>) -> Self {
+        self.ownership_labels = labels;
+        self
     }
 }
 
@@ -3893,6 +4201,11 @@ fn create_planned_container(
         "--network".to_owned(),
         network_lease.to_owned(),
     ];
+    if let Some(labels) = workspace.ownership_labels {
+        for (name, value) in labels {
+            arguments.extend(["--label".to_owned(), format!("{name}={value}")]);
+        }
+    }
     if let Some(target) = workspace.target {
         arguments.extend([
             "--volume".to_owned(),
@@ -4739,33 +5052,73 @@ fn reports_absent_container(stderr: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::{Cell, RefCell},
+        cell::Cell,
         collections::VecDeque,
         fs,
         io::{self, Read},
         process::Command,
         rc::Rc,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        task::{Wake, Waker},
         time::Duration,
     };
 
     use super::{
         DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecProcess,
         DockerExecState, DockerRemoveRequest, DockerRemoveStatus, DockerRuntime,
-        DockerStartRequest, EvalExecutionError, EvalExecutionPhase, classify_bounded_remove_result,
-        compensate_late_create_with, compose_ownership_filters, compose_stop_arguments,
-        copy_archive_stream_bounded, docker_cli_native_graph_no_egress_profile,
-        docker_container_name, docker_image_name, drain_output_bounded, drive_docker_exec,
-        ensure_network_exists, read_optional_reward_archive, read_reward_with_runtime,
+        DockerStartRequest, EvalExecutionError, EvalExecutionPhase, adapter_ownership_arguments,
+        classify_bounded_remove_result, compensate_late_create_with, compose_ownership_filters,
+        compose_stop_arguments, copy_archive_stream_bounded,
+        docker_cli_native_graph_no_egress_profile, docker_container_name, docker_image_name,
+        drain_output_bounded, drive_docker_exec, ensure_network_exists,
+        parse_owned_adapter_container_id, read_optional_reward_archive, read_reward_with_runtime,
         reap_fenced_docker_client, redact_secret_values, reports_absent_container,
         run_docker_exec_without_deadline,
     };
     use crate::{
         clock::SimClock,
         eval::{
-            ComposeProjectId, HarborImporter, HarborSource, ModelEndpointIsolationProof,
-            NativeSourceAcquirer, ProviderCapabilities,
+            ComposeProjectId, DockerAdapterSpawnerRequest, HarborImporter, HarborSource,
+            ModelEndpointIsolationProof, NativeSourceAcquirer, ProviderCapabilities,
         },
     };
+
+    #[test]
+    fn adapter_remote_termination_resolves_exact_labelled_container_id() {
+        let project = ComposeProjectId::new("native-graph-environment");
+        let request = DockerAdapterSpawnerRequest::new("adapter-container", project.clone())
+            .expect("fixture request is valid");
+        let arguments = adapter_ownership_arguments(&request);
+
+        assert!(
+            arguments
+                .windows(2)
+                .any(|arguments| arguments == ["--filter", "name=^/adapter-container$"])
+        );
+        for (name, value) in project.ownership_labels() {
+            assert!(
+                arguments
+                    .windows(2)
+                    .any(|arguments| arguments == ["--filter", &format!("label={name}={value}")])
+            );
+        }
+
+        let identifier = "a".repeat(64);
+        assert_eq!(
+            parse_owned_adapter_container_id(identifier.as_bytes())
+                .expect("one exact labelled container is killable"),
+            identifier
+        );
+        assert!(parse_owned_adapter_container_id(b"").is_err());
+        assert!(parse_owned_adapter_container_id(b"not-a-container-id\n").is_err());
+        assert!(
+            parse_owned_adapter_container_id(format!("{identifier}\n{identifier}\n").as_bytes())
+                .is_err()
+        );
+    }
 
     #[test]
     fn fenced_docker_client_is_reaped_by_handoff() {
@@ -5368,58 +5721,67 @@ mod tests {
     }
 
     #[test]
-    fn late_create_cleanup_retries_absent_until_removed_with_sim_clock() {
+    fn late_create_cleanup_settles_immediate_absence_or_removal_without_full_deadline() {
+        for initially_removed in [false, true] {
+            let clock = Rc::new(SimClock::new());
+            let attempts = Cell::new(0);
+            let result = compensate_late_create_with(
+                clock.clone(),
+                "verifier-container",
+                EvalExecutionPhase::Verifier,
+                Duration::from_secs(10),
+                |_: Duration| {
+                    attempts.set(attempts.get() + 1);
+                    Ok(if initially_removed && attempts.get() == 1 {
+                        DockerRemoveStatus::Removed
+                    } else {
+                        DockerRemoveStatus::Absent
+                    })
+                },
+            );
+
+            assert_eq!(result, Ok(()));
+            assert_eq!(attempts.get(), 12);
+            assert_eq!(clock.now_ns(), Duration::from_millis(110).as_nanos() as i64);
+        }
+    }
+
+    #[test]
+    fn late_create_cleanup_removes_a_create_that_materializes_during_settlement() {
+        struct MaterializeTarget(Arc<AtomicBool>);
+
+        impl Wake for MaterializeTarget {
+            fn wake(self: Arc<Self>) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
         let clock = Rc::new(SimClock::new());
-        let attempts = Cell::new(0);
+        let target_exists = Arc::new(AtomicBool::new(false));
+        let was_removed = Cell::new(false);
+        clock.schedule(
+            Duration::from_millis(90).as_nanos() as i64,
+            Waker::from(Arc::new(MaterializeTarget(target_exists.clone()))),
+        );
+
         let result = compensate_late_create_with(
             clock.clone(),
             "verifier-container",
             EvalExecutionPhase::Verifier,
             Duration::from_secs(10),
             |_: Duration| {
-                attempts.set(attempts.get() + 1);
-                match attempts.get() {
-                    1 => {
-                        clock.advance_to(1);
-                        Ok(DockerRemoveStatus::Absent)
-                    }
-                    2 => Ok(DockerRemoveStatus::Removed),
-                    _ => Ok(DockerRemoveStatus::Absent),
+                if target_exists.swap(false, Ordering::SeqCst) {
+                    was_removed.set(true);
+                    Ok(DockerRemoveStatus::Removed)
+                } else {
+                    Ok(DockerRemoveStatus::Absent)
                 }
             },
         );
 
         assert_eq!(result, Ok(()));
-        assert_eq!(attempts.get(), 13);
-        assert_eq!(clock.now_ns(), 120_000_001);
-    }
-
-    #[test]
-    fn late_create_cleanup_settles_after_a_create_following_removal() {
-        let clock = Rc::new(SimClock::new());
-        let statuses = RefCell::new(VecDeque::from([
-            DockerRemoveStatus::Removed,
-            DockerRemoveStatus::Removed,
-            DockerRemoveStatus::Absent,
-        ]));
-        let attempts = Cell::new(0);
-        let result = compensate_late_create_with(
-            clock.clone(),
-            "verifier-container",
-            EvalExecutionPhase::Verifier,
-            Duration::from_secs(10),
-            |_: Duration| {
-                attempts.set(attempts.get() + 1);
-                Ok(statuses
-                    .borrow_mut()
-                    .pop_front()
-                    .unwrap_or(DockerRemoveStatus::Absent))
-            },
-        );
-
-        assert_eq!(result, Ok(()));
-        assert_eq!(attempts.get(), 13);
-        assert_eq!(clock.now_ns(), 120_000_000);
+        assert!(was_removed.get());
+        assert!(clock.now_ns() < Duration::from_millis(250).as_nanos() as i64);
     }
 
     struct FakeDockerExec {

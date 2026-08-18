@@ -46,7 +46,8 @@ pub use local_process::{
 };
 pub use multi_step::{MultiStepExecutionResult, StepExecutionResult};
 pub use native_graph_episode::{
-    NativeGraphEpisodeCallback, NativeGraphEpisodeLease, run_native_graph_episode_callback,
+    NativeGraphEnvironmentAdapterStart, NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback,
+    NativeGraphEpisodeLease, run_native_graph_episode_callback,
 };
 pub use plan::{
     ArtifactSpec, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectPlan,

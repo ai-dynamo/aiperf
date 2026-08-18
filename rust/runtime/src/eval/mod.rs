@@ -52,11 +52,12 @@ pub use execution::{
     HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborLocalEvaluationRequest,
     HarborSandboxRecipe, HealthcheckPlan, ImageSource, ImageSourceKind, ImmutablePatch,
     LocalAdapterSpawner, LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox,
-    MultiStepExecutionResult, MultiStepRewardStrategy, NativeGraphEpisodeCallback,
-    NativeGraphEpisodeLease, NetworkPolicy, OwnedComposeResources, PhasePlan, ProcessOutput,
-    ProviderCapabilities, SandboxRole, SecretProvider, SecretValue, StepExecutionResult,
-    VerifierCollectHook, VerifierPlan, WorkspaceOverlay, collect_artifacts, preflight_docker,
-    resolve_phase_environment, run_native_graph_episode_callback, transfer_artifacts,
+    MultiStepExecutionResult, MultiStepRewardStrategy, NativeGraphEnvironmentAdapterStart,
+    NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
+    NetworkPolicy, OwnedComposeResources, PhasePlan, ProcessOutput, ProviderCapabilities,
+    SandboxRole, SecretProvider, SecretValue, StepExecutionResult, VerifierCollectHook,
+    VerifierPlan, WorkspaceOverlay, collect_artifacts, preflight_docker, resolve_phase_environment,
+    run_native_graph_episode_callback, transfer_artifacts,
 };
 pub use health::{TaskHealthError, TaskHealthRecord, TaskVerdict};
 pub use identity::{

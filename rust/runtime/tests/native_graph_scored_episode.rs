@@ -25,13 +25,13 @@ use aiperf_runtime::eval::{
     HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
     HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource,
     LocalNativeGraphSuiteScheduler, ModelCapacityKey, ModelEndpointIsolationProof, ModelIdentity,
-    ModelRuntimeConfig, NativeGraphCompletedAttempt, NativeGraphEpisodeCallback,
-    NativeGraphEpisodeExecutor, NativeGraphEpisodeLease, NativeGraphEpisodeRunner,
-    NativeGraphPackagePlan, NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity,
-    ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
-    ResourceLeaseRequest, RewardDocument, RuntimeIdentity, ScoreVersion, SecretProvider,
-    SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult, regrade,
-    run_native_graph_episode_callback, run_resolved_suite,
+    ModelRuntimeConfig, NativeGraphCompletedAttempt, NativeGraphEpisodeBackendLease,
+    NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor, NativeGraphEpisodeLease,
+    NativeGraphEpisodeRunner, NativeGraphPackagePlan, NativeGraphSuiteManifest,
+    NativeSourceAcquirer, PolicyIdentity, ProviderCapabilities, ProviderCapability,
+    ProviderProfile, RegradeRequest, ResourceLeaseRequest, RewardDocument, RuntimeIdentity,
+    ScoreVersion, SecretProvider, SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec,
+    VerifierResult, regrade, run_native_graph_episode_callback, run_resolved_suite,
 };
 use aiperf_runtime::{engine::application::Application, eval::EnvName};
 use async_trait::async_trait;
@@ -677,6 +677,8 @@ impl NativeGraphEpisodeLease for RecordingLease<'_> {
         "write a result"
     }
 }
+
+impl NativeGraphEpisodeBackendLease for RecordingLease<'_> {}
 
 struct RecordingCallback<'a> {
     callback_ran: &'a Cell<bool>,
