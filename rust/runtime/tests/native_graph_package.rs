@@ -287,6 +287,7 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
     assert_eq!(rollout.policy().gamma(), 0.75);
     assert_eq!(rollout.limits().max_environment_bytes(), 256);
     assert_eq!(rollout.limits().max_horizon(), 8);
+    assert_eq!(rollout.limits().max_prompt_bytes(), 256);
     assert_eq!(
         rollout.environment().reset_source().bytes(),
         b"{\"seed\":7}\n"
@@ -348,6 +349,12 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
             "rollout.toml",
             "max_horizon = 8",
             "max_horizon = 4",
+        ),
+        (
+            "policy prompt cap",
+            "rollout.toml",
+            "max_prompt_bytes = 256",
+            "max_prompt_bytes = 128",
         ),
         (
             "environment adapter selection",
@@ -509,6 +516,26 @@ fn native_graph_rollout_import_retains_environment_selection_and_seals_every_aut
             "{selection} must be sealed into the NativeGraph package identity"
         );
     }
+}
+
+#[test]
+fn rollout_policy_prompt_exceeding_the_selected_cap_is_refused_at_import() {
+    let task = rollout_task_fixture(b"{\"seed\":7}\n");
+    replace(
+        &task.path().join("rollout.toml"),
+        "max_prompt_bytes = 256",
+        "max_prompt_bytes = 8",
+    );
+
+    let error = import_native_task(task.path())
+        .expect_err("a retained policy prompt above the selected cap must fail import");
+
+    assert!(
+        error
+            .to_string()
+            .contains("rollout.policy.prompt_source exceeds rollout.limits.max_prompt_bytes"),
+        "unexpected selected prompt-cap rejection: {error}"
+    );
 }
 
 #[test]
@@ -1245,6 +1272,7 @@ gamma = 0.75
 [limits]
 max_environment_bytes = 256
 max_horizon = 8
+max_prompt_bytes = 256
 "#
 }
 

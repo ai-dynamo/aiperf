@@ -16,15 +16,23 @@ use std::{
     time::Duration,
 };
 
-use aiperf_runtime::graph::tools::EnvironmentStepperFactory;
+use aiperf_runtime::graph::{
+    agent::{LiveAgentPolicyDecisionReader, LiveAgentPolicyDecisionRequest},
+    tools::{
+        EnvironmentResetRequest, EnvironmentSessionAuthority, EnvironmentStepRequest,
+        EnvironmentStepper, EnvironmentStepperBinding, EnvironmentStepperError,
+        EnvironmentStepperFactory,
+    },
+};
 use aiperf_runtime::{
     eval::{
         AdapterExit, AdapterLifecycleDeadlines, AdapterProtocolConfig, AdapterProtocolFactory,
         AdapterRole, AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawner,
         AdapterSupervisionError, AgentVariantRef, ArtifactDigest, ArtifactQuota, CancelReason,
-        HarborImporter, HarborSource, ModelIdentity, MoveV1ActionEncoderFactory,
+        HarborImporter, HarborSource, ModelBindingId, ModelIdentity, MoveV1ActionEncoderFactory,
         NativeGraphAdapterRuntimeProvider, NativeGraphAdapterRuntimeResolution,
-        NativeGraphEnvironmentStepperFactory, NativeGraphFactoryError, NativeGraphSuiteManifest,
+        NativeGraphEnvironmentStepperFactory, NativeGraphFactoryError,
+        NativeGraphModelDecisionError, NativeGraphPolicyModelRuntime, NativeGraphSuiteManifest,
         NativeSourceAcquirer, PolicyIdentity, ProtocolCapability, ProtocolLimits,
         ResourceLeaseRequest, RuntimeIdentity, StrictAdapterProtocolFactory, SuiteRunId,
         SuiteTrialSpec, SupervisedAdapter, SupervisedEnvironmentStepperBinder, TrialBudget,
@@ -142,6 +150,7 @@ fn missing_selected_action_encoder_refuses_before_runtime_or_stepper_binding() {
             "strict_supervised",
             Arc::new(RecordingRuntimeProvider {
                 starts: Arc::clone(&runtime_starts),
+                sends: Arc::new(AtomicUsize::new(0)),
             }),
         )
         .expect("test runtime registration succeeds");
@@ -177,6 +186,7 @@ async fn selected_worker_local_components_preserve_rollout_admission_through_ste
             "strict_supervised",
             Arc::new(RecordingRuntimeProvider {
                 starts: Arc::clone(&runtime_starts),
+                sends: Arc::new(AtomicUsize::new(0)),
             }),
         )
         .expect("test runtime registration succeeds");
@@ -231,6 +241,421 @@ async fn selected_worker_local_components_preserve_rollout_admission_through_ste
         b"{\"seed\":7}\n"
     );
     drop(started.into_stepper());
+}
+
+#[tokio::test]
+async fn foreign_same_selector_session_decision_is_refused_before_stepper_dispatch() {
+    let imported = import_rollout_fixture();
+    let trial = resolve_rollout_trial(imported);
+    let runtime_starts = Arc::new(AtomicUsize::new(0));
+    let adapter_sends = Arc::new(AtomicUsize::new(0));
+    let mut registry = aiperf_runtime::extensions::AIPerfRegistry::empty_or_base();
+    registry
+        .register_native_graph_protocol("strict_jsonl", Arc::new(StrictAdapterProtocolFactory))
+        .expect("test protocol registration succeeds");
+    registry
+        .register_native_graph_adapter_runtime(
+            "strict_supervised",
+            Arc::new(RecordingRuntimeProvider {
+                starts: Arc::clone(&runtime_starts),
+                sends: Arc::clone(&adapter_sends),
+            }),
+        )
+        .expect("test runtime registration succeeds");
+    registry
+        .register_native_graph_environment_stepper(
+            "supervised_environment",
+            Arc::new(SupervisedEnvironmentStepperBinder),
+        )
+        .expect("test stepper registration succeeds");
+    registry
+        .register_native_graph_action_encoder("move_v1", Arc::new(MoveV1ActionEncoderFactory))
+        .expect("test action encoder registration succeeds");
+    let target = bind_native_graph_environment_stepper(&registry, &trial)
+        .expect("the target worker-local session binds");
+    let foreign = bind_native_graph_environment_stepper(&registry, &trial)
+        .expect("the foreign worker-local session binds");
+    let store_root = tempfile::tempdir().expect("artifact-store root");
+    let store = Rc::new(RefCell::new(
+        aiperf_runtime::eval::EpisodeArtifactStore::new(
+            store_root.path(),
+            ArtifactQuota {
+                max_artifacts: 8,
+                max_total_bytes: 16_384,
+                max_artifact_bytes: 3_072,
+                max_download_handles: 4,
+            },
+        )
+        .expect("the package-selected store quota is valid"),
+    ));
+    let started = target
+        .start(
+            "root",
+            Rc::clone(&store),
+            Rc::new(CountingSpawner::default()) as Rc<dyn AdapterSpawner>,
+        )
+        .await
+        .expect("the target stepper starts");
+    let foreign_prepared = foreign
+        .prepare_live_rollout_coordinator(Box::new(ForeignSessionRuntime::new()))
+        .expect("the foreign immutable rollout prepares its selected model runtime");
+    let error = match started.bind_live_rollout_coordinator(foreign_prepared) {
+        Ok(_) => {
+            panic!("a foreign immutable binding must not attach a coordinator to this stepper")
+        }
+        Err(error) => error,
+    };
+
+    assert!(
+        error.to_string().contains("another environment binding"),
+        "unexpected foreign-session rejection: {error}"
+    );
+    assert_eq!(adapter_sends.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn one_bound_stepper_mints_distinct_authority_for_each_started_session() {
+    let imported = import_rollout_fixture();
+    let trial = resolve_rollout_trial(imported);
+    let stepper_dispatches = Arc::new(AtomicUsize::new(0));
+    let mut registry = aiperf_runtime::extensions::AIPerfRegistry::empty_or_base();
+    registry
+        .register_native_graph_protocol("strict_jsonl", Arc::new(StrictAdapterProtocolFactory))
+        .expect("test protocol registration succeeds");
+    registry
+        .register_native_graph_adapter_runtime(
+            "strict_supervised",
+            Arc::new(RecordingRuntimeProvider {
+                starts: Arc::new(AtomicUsize::new(0)),
+                sends: Arc::new(AtomicUsize::new(0)),
+            }),
+        )
+        .expect("test runtime registration succeeds");
+    registry
+        .register_native_graph_environment_stepper(
+            "supervised_environment",
+            Arc::new(DispatchRecordingStepperBinder {
+                dispatches: Arc::clone(&stepper_dispatches),
+            }),
+        )
+        .expect("test stepper registration succeeds");
+    registry
+        .register_native_graph_action_encoder("move_v1", Arc::new(MoveV1ActionEncoderFactory))
+        .expect("test action encoder registration succeeds");
+    let bound = bind_native_graph_environment_stepper(&registry, &trial)
+        .expect("the immutable package admission binds once");
+    let first_prepared = bound
+        .prepare_live_rollout_coordinator(Box::new(ForeignSessionRuntime::new()))
+        .expect("the first selected model runtime prepares against the immutable binding");
+    let store_root = tempfile::tempdir().expect("artifact-store root");
+    let first_store = Rc::new(RefCell::new(
+        aiperf_runtime::eval::EpisodeArtifactStore::new(
+            store_root.path(),
+            ArtifactQuota {
+                max_artifacts: 8,
+                max_total_bytes: 16_384,
+                max_artifact_bytes: 3_072,
+                max_download_handles: 4,
+            },
+        )
+        .expect("first package-selected store opens"),
+    ));
+    let second_store = Rc::new(RefCell::new(
+        aiperf_runtime::eval::EpisodeArtifactStore::new(
+            store_root.path(),
+            ArtifactQuota {
+                max_artifacts: 8,
+                max_total_bytes: 16_384,
+                max_artifact_bytes: 3_072,
+                max_download_handles: 4,
+            },
+        )
+        .expect("second package-selected store opens"),
+    ));
+    let first = bound
+        .start(
+            "first",
+            Rc::clone(&first_store),
+            Rc::new(CountingSpawner::default()) as Rc<dyn AdapterSpawner>,
+        )
+        .await
+        .expect("the first worker session starts");
+    let mut second = bound
+        .start(
+            "second",
+            Rc::clone(&second_store),
+            Rc::new(CountingSpawner::default()) as Rc<dyn AdapterSpawner>,
+        )
+        .await
+        .expect("the second worker session starts");
+    let mut first_coordinator = first
+        .bind_live_rollout_coordinator(first_prepared)
+        .expect("the prepared model runtime binds only to the first started session");
+    let observation = freeze_observation(&mut first_store.borrow_mut());
+    let decision = first_coordinator
+        .decide_policy_decision(&observation, &mut first_store.borrow_mut())
+        .await
+        .expect("the first session receives one sealed decision");
+
+    let error = second
+        .step_policy_decision("cross-session", decision)
+        .await
+        .expect_err("a decision from the first start must not reach the second start");
+
+    assert!(
+        error
+            .to_string()
+            .contains("another worker-local rollout session"),
+        "cross-start decision must fail with session authority: {error}"
+    );
+    assert_eq!(
+        stepper_dispatches.load(Ordering::Relaxed),
+        0,
+        "a cross-session decision must be rejected before the selected stepper dispatches"
+    );
+}
+
+#[tokio::test]
+async fn started_session_binds_only_one_live_rollout_coordinator() {
+    let imported = import_rollout_fixture();
+    let trial = resolve_rollout_trial(imported);
+    let stepper_dispatches = Arc::new(AtomicUsize::new(0));
+    let mut registry = aiperf_runtime::extensions::AIPerfRegistry::empty_or_base();
+    registry
+        .register_native_graph_protocol("strict_jsonl", Arc::new(StrictAdapterProtocolFactory))
+        .expect("test protocol registration succeeds");
+    registry
+        .register_native_graph_adapter_runtime(
+            "strict_supervised",
+            Arc::new(RecordingRuntimeProvider {
+                starts: Arc::new(AtomicUsize::new(0)),
+                sends: Arc::new(AtomicUsize::new(0)),
+            }),
+        )
+        .expect("test runtime registration succeeds");
+    registry
+        .register_native_graph_environment_stepper(
+            "supervised_environment",
+            Arc::new(DispatchRecordingStepperBinder {
+                dispatches: Arc::clone(&stepper_dispatches),
+            }),
+        )
+        .expect("test stepper registration succeeds");
+    registry
+        .register_native_graph_action_encoder("move_v1", Arc::new(MoveV1ActionEncoderFactory))
+        .expect("test action encoder registration succeeds");
+    let bound = bind_native_graph_environment_stepper(&registry, &trial)
+        .expect("the immutable package admission binds once");
+    let first_prepared = bound
+        .prepare_live_rollout_coordinator(Box::new(ForeignSessionRuntime::new()))
+        .expect("the first selected model runtime prepares against the immutable binding");
+    let second_prepared = bound
+        .prepare_live_rollout_coordinator(Box::new(ForeignSessionRuntime::new()))
+        .expect("the second selected model runtime prepares against the immutable binding");
+    let store_root = tempfile::tempdir().expect("artifact-store root");
+    let store = Rc::new(RefCell::new(
+        aiperf_runtime::eval::EpisodeArtifactStore::new(
+            store_root.path(),
+            ArtifactQuota {
+                max_artifacts: 8,
+                max_total_bytes: 16_384,
+                max_artifact_bytes: 3_072,
+                max_download_handles: 4,
+            },
+        )
+        .expect("package-selected store opens"),
+    ));
+    let started = bound
+        .start(
+            "root",
+            store,
+            Rc::new(CountingSpawner::default()) as Rc<dyn AdapterSpawner>,
+        )
+        .await
+        .expect("the selected worker session starts");
+    let _first = started
+        .bind_live_rollout_coordinator(first_prepared)
+        .expect("the first prepared coordinator binds once");
+    let error = match started.bind_live_rollout_coordinator(second_prepared) {
+        Ok(_) => panic!("a started worker session must reject a second live rollout coordinator"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("already has a live rollout coordinator"),
+        "unexpected repeated-bind rejection: {error}"
+    );
+    assert_eq!(
+        stepper_dispatches.load(Ordering::Relaxed),
+        0,
+        "a repeated coordinator bind must fail before environment-stepper dispatch"
+    );
+}
+
+#[tokio::test]
+async fn raw_encoder_action_cannot_bypass_the_started_session_boundary() {
+    let imported = import_rollout_fixture();
+    let trial = resolve_rollout_trial(imported);
+    let adapter_sends = Arc::new(AtomicUsize::new(0));
+    let mut registry = aiperf_runtime::extensions::AIPerfRegistry::empty_or_base();
+    registry
+        .register_native_graph_protocol("strict_jsonl", Arc::new(StrictAdapterProtocolFactory))
+        .expect("test protocol registration succeeds");
+    registry
+        .register_native_graph_adapter_runtime(
+            "strict_supervised",
+            Arc::new(RecordingRuntimeProvider {
+                starts: Arc::new(AtomicUsize::new(0)),
+                sends: Arc::clone(&adapter_sends),
+            }),
+        )
+        .expect("test runtime registration succeeds");
+    registry
+        .register_native_graph_environment_stepper(
+            "supervised_environment",
+            Arc::new(SupervisedEnvironmentStepperBinder),
+        )
+        .expect("test stepper registration succeeds");
+    registry
+        .register_native_graph_action_encoder("move_v1", Arc::new(MoveV1ActionEncoderFactory))
+        .expect("test action encoder registration succeeds");
+    let bound = bind_native_graph_environment_stepper(&registry, &trial)
+        .expect("the immutable package admission binds once");
+    let store_root = tempfile::tempdir().expect("artifact-store root");
+    let store = Rc::new(RefCell::new(
+        aiperf_runtime::eval::EpisodeArtifactStore::new(
+            store_root.path(),
+            ArtifactQuota {
+                max_artifacts: 8,
+                max_total_bytes: 16_384,
+                max_artifact_bytes: 3_072,
+                max_download_handles: 4,
+            },
+        )
+        .expect("package-selected store opens"),
+    ));
+    let started = bound
+        .start(
+            "root",
+            Rc::clone(&store),
+            Rc::new(CountingSpawner::default()) as Rc<dyn AdapterSpawner>,
+        )
+        .await
+        .expect("the selected environment stepper starts");
+    let raw_action = bound
+        .action_encoder()
+        .admit(
+            aiperf_runtime::eval::DeclaredPolicyDecision::from_json_bytes(
+                bound.action_encoder_id().clone(),
+                br#"{"kind":"move","direction":"north"}"#,
+                bound.action_encoding_limits(),
+            )
+            .expect("raw same-selector decision parses"),
+            &mut store.borrow_mut(),
+            bound.action_encoding_limits(),
+        )
+        .expect("the public raw encoder path can mint a pre-start action");
+
+    let mut raw_stepper = started.into_stepper();
+    let error = raw_stepper
+        .step(EnvironmentStepRequest::admitted("raw-bypass", raw_action))
+        .await
+        .expect_err("a raw admitted action must not bypass the started session authority");
+
+    assert!(
+        matches!(error, EnvironmentStepperError::ActionSessionMismatch),
+        "unexpected raw-action bypass result: {error}"
+    );
+    assert_eq!(
+        adapter_sends.load(Ordering::Relaxed),
+        0,
+        "a raw encoder capability must be refused before adapter dispatch"
+    );
+}
+
+#[tokio::test]
+async fn same_session_coordinator_decision_reaches_the_selected_stepper_once() {
+    let imported = import_rollout_fixture();
+    let trial = resolve_rollout_trial(imported);
+    let runtime_starts = Arc::new(AtomicUsize::new(0));
+    let stepper_dispatches = Arc::new(AtomicUsize::new(0));
+    let mut registry = aiperf_runtime::extensions::AIPerfRegistry::empty_or_base();
+    registry
+        .register_native_graph_protocol("strict_jsonl", Arc::new(StrictAdapterProtocolFactory))
+        .expect("test protocol registration succeeds");
+    registry
+        .register_native_graph_adapter_runtime(
+            "strict_supervised",
+            Arc::new(RecordingRuntimeProvider {
+                starts: Arc::clone(&runtime_starts),
+                sends: Arc::new(AtomicUsize::new(0)),
+            }),
+        )
+        .expect("test runtime registration succeeds");
+    registry
+        .register_native_graph_environment_stepper(
+            "supervised_environment",
+            Arc::new(DispatchRecordingStepperBinder {
+                dispatches: Arc::clone(&stepper_dispatches),
+            }),
+        )
+        .expect("test stepper registration succeeds");
+    registry
+        .register_native_graph_action_encoder("move_v1", Arc::new(MoveV1ActionEncoderFactory))
+        .expect("test action encoder registration succeeds");
+    let bound = bind_native_graph_environment_stepper(&registry, &trial)
+        .expect("the worker-local session binds");
+    let store_root = tempfile::tempdir().expect("artifact-store root");
+    let store = Rc::new(RefCell::new(
+        aiperf_runtime::eval::EpisodeArtifactStore::new(
+            store_root.path(),
+            ArtifactQuota {
+                max_artifacts: 8,
+                max_total_bytes: 16_384,
+                max_artifact_bytes: 3_072,
+                max_download_handles: 4,
+            },
+        )
+        .expect("the package-selected store quota is valid"),
+    ));
+    let prepared = bound
+        .prepare_live_rollout_coordinator(Box::new(ForeignSessionRuntime::new()))
+        .expect("the selected model runtime prepares against this immutable binding");
+    let mut started = bound
+        .start(
+            "root",
+            Rc::clone(&store),
+            Rc::new(CountingSpawner::default()) as Rc<dyn AdapterSpawner>,
+        )
+        .await
+        .expect("the selected stepper starts");
+    let mut coordinator = started
+        .bind_live_rollout_coordinator(prepared)
+        .expect("the prepared model runtime binds to this started session");
+    let observation = {
+        let mut artifacts = store.borrow_mut();
+        let upload = artifacts.begin_upload(14).expect("observation reserves");
+        artifacts
+            .write_upload(&upload, &mut std::io::Cursor::new(br#"{"position":0}"#))
+            .expect("observation writes");
+        artifacts
+            .commit_upload(&upload)
+            .expect("observation freezes")
+    };
+    let decision = coordinator
+        .decide_policy_decision(&observation, &mut store.borrow_mut())
+        .await
+        .expect("the coordinator issues a decision for this session");
+
+    started
+        .step_policy_decision("step-0", decision)
+        .await
+        .expect_err("the recording adapter ends after observing one dispatched request");
+
+    assert_eq!(runtime_starts.load(Ordering::Relaxed), 0);
+    assert_eq!(stepper_dispatches.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]
@@ -328,6 +753,7 @@ impl AdapterSpawner for CapturingSpawner {
 
 struct RecordingRuntimeProvider {
     starts: Arc<AtomicUsize>,
+    sends: Arc<AtomicUsize>,
 }
 
 struct CapturingRuntimeProvider;
@@ -393,6 +819,7 @@ impl NativeGraphAdapterRuntimeProvider for RecordingRuntimeProvider {
         Ok(Rc::new(RecordingRuntimeResolution {
             config,
             starts: Arc::clone(&self.starts),
+            sends: Arc::clone(&self.sends),
         }))
     }
 }
@@ -400,6 +827,7 @@ impl NativeGraphAdapterRuntimeProvider for RecordingRuntimeProvider {
 struct RecordingRuntimeResolution {
     config: AdapterProtocolConfig,
     starts: Arc<AtomicUsize>,
+    sends: Arc<AtomicUsize>,
 }
 
 impl NativeGraphAdapterRuntimeResolution for RecordingRuntimeResolution {
@@ -414,6 +842,7 @@ impl NativeGraphAdapterRuntimeResolution for RecordingRuntimeResolution {
         Ok(Rc::new(RecordingRuntime {
             config: self.config.clone(),
             starts: Arc::clone(&self.starts),
+            sends: Arc::clone(&self.sends),
         }))
     }
 }
@@ -465,6 +894,7 @@ impl NativeGraphAdapterRuntimeResolution for WrongRoleRuntimeResolution {
         Ok(Rc::new(RecordingRuntime {
             config: self.config.clone(),
             starts: Arc::clone(&self.starts),
+            sends: Arc::new(AtomicUsize::new(0)),
         }))
     }
 }
@@ -472,6 +902,7 @@ impl NativeGraphAdapterRuntimeResolution for WrongRoleRuntimeResolution {
 struct RecordingRuntime {
     config: AdapterProtocolConfig,
     starts: Arc<AtomicUsize>,
+    sends: Arc<AtomicUsize>,
 }
 
 #[async_trait(?Send)]
@@ -485,11 +916,15 @@ impl AdapterRuntimeFactory for RecordingRuntime {
         _: AdapterSpawnRequest,
     ) -> Result<Box<dyn SupervisedAdapter>, AdapterSupervisionError> {
         self.starts.fetch_add(1, Ordering::Relaxed);
-        Ok(Box::new(RecordingAdapter))
+        Ok(Box::new(RecordingAdapter {
+            sends: Arc::clone(&self.sends),
+        }))
     }
 }
 
-struct RecordingAdapter;
+struct RecordingAdapter {
+    sends: Arc<AtomicUsize>,
+}
 
 #[async_trait(?Send)]
 impl SupervisedAdapter for RecordingAdapter {
@@ -497,6 +932,7 @@ impl SupervisedAdapter for RecordingAdapter {
         &mut self,
         _: aiperf_runtime::eval::HostEnvelope,
     ) -> Result<(), AdapterSupervisionError> {
+        self.sends.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -540,6 +976,54 @@ impl SupervisedAdapter for RecordingAdapter {
     }
 }
 
+struct ForeignSessionRuntime {
+    binding: ModelBindingId,
+}
+
+impl ForeignSessionRuntime {
+    fn new() -> Self {
+        Self {
+            binding: serde_json::from_str("\"primary\"").expect("fixture binding is valid"),
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl NativeGraphPolicyModelRuntime for ForeignSessionRuntime {
+    fn binding(&self) -> &ModelBindingId {
+        &self.binding
+    }
+
+    async fn open_decision(
+        &mut self,
+        _: &LiveAgentPolicyDecisionRequest,
+    ) -> Result<Box<dyn LiveAgentPolicyDecisionReader>, NativeGraphModelDecisionError> {
+        Ok(Box::new(StaticDecisionReader {
+            bytes: br#"{"kind":"move","direction":"north"}"#,
+            offset: 0,
+        }))
+    }
+}
+
+struct StaticDecisionReader {
+    bytes: &'static [u8],
+    offset: usize,
+}
+
+#[async_trait(?Send)]
+impl LiveAgentPolicyDecisionReader for StaticDecisionReader {
+    async fn read(
+        &mut self,
+        destination: &mut [u8],
+    ) -> Result<usize, aiperf_runtime::graph::agent::AgentLoopError> {
+        let remaining = &self.bytes[self.offset..];
+        let count = remaining.len().min(destination.len());
+        destination[..count].copy_from_slice(&remaining[..count]);
+        self.offset += count;
+        Ok(count)
+    }
+}
+
 struct CountingStepperBinder {
     binds: Arc<AtomicUsize>,
 }
@@ -553,6 +1037,61 @@ impl NativeGraphEnvironmentStepperFactory for CountingStepperBinder {
         Err(NativeGraphFactoryError::new(
             "test stepper binder must not run",
         ))
+    }
+}
+
+struct DispatchRecordingStepperBinder {
+    dispatches: Arc<AtomicUsize>,
+}
+
+impl NativeGraphEnvironmentStepperFactory for DispatchRecordingStepperBinder {
+    fn bind(
+        &self,
+        _: Rc<dyn AdapterRuntimeFactory>,
+    ) -> Result<Rc<dyn EnvironmentStepperFactory>, NativeGraphFactoryError> {
+        Ok(Rc::new(DispatchRecordingStepperFactory {
+            dispatches: Arc::clone(&self.dispatches),
+        }))
+    }
+}
+
+struct DispatchRecordingStepperFactory {
+    dispatches: Arc<AtomicUsize>,
+}
+
+#[async_trait(?Send)]
+impl EnvironmentStepperFactory for DispatchRecordingStepperFactory {
+    async fn start(
+        &self,
+        _: EnvironmentStepperBinding,
+        _: EnvironmentSessionAuthority,
+        _: AdapterSpawnRequest,
+    ) -> Result<Box<dyn EnvironmentStepper>, EnvironmentStepperError> {
+        Ok(Box::new(DispatchRecordingStepper {
+            dispatches: Arc::clone(&self.dispatches),
+        }))
+    }
+}
+
+struct DispatchRecordingStepper {
+    dispatches: Arc<AtomicUsize>,
+}
+
+#[async_trait(?Send)]
+impl EnvironmentStepper for DispatchRecordingStepper {
+    async fn reset(
+        &mut self,
+        _: EnvironmentResetRequest,
+    ) -> Result<aiperf_runtime::graph::tools::EnvironmentResetRecord, EnvironmentStepperError> {
+        Err(EnvironmentStepperError::AlreadyReset)
+    }
+
+    async fn step(
+        &mut self,
+        _: EnvironmentStepRequest,
+    ) -> Result<aiperf_runtime::eval::EnvironmentTransitionRecord, EnvironmentStepperError> {
+        self.dispatches.fetch_add(1, Ordering::Relaxed);
+        Err(EnvironmentStepperError::EpisodeTerminal)
     }
 }
 
@@ -573,6 +1112,19 @@ fn adapter_spawn_request(operation: Duration) -> AdapterSpawnRequest {
         deadlines,
     )
     .expect("test spawn request is valid")
+}
+
+fn freeze_observation(
+    store: &mut aiperf_runtime::eval::EpisodeArtifactStore,
+) -> aiperf_runtime::eval::FrozenArtifact {
+    let bytes = br#"{\"position\":0}"#;
+    let upload = store
+        .begin_upload(u64::try_from(bytes.len()).expect("fixture bytes fit u64"))
+        .expect("observation reserves");
+    store
+        .write_upload(&upload, &mut std::io::Cursor::new(bytes))
+        .expect("observation writes");
+    store.commit_upload(&upload).expect("observation freezes")
 }
 
 fn resolve_rollout_trial(
@@ -733,6 +1285,7 @@ gamma = 0.75
 [limits]
 max_environment_bytes = 256
 max_horizon = 8
+max_prompt_bytes = 256
 "#,
     )
     .expect("rollout manifest");

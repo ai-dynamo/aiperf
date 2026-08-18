@@ -110,10 +110,11 @@ pub trait NativeGraphActionEncoder: Send {
 }
 
 /// One package-selected encoder bound from a frozen registry before adapter provisioning.
+#[derive(Clone)]
 pub struct BoundNativeGraphActionEncoder {
     id: ActionEncoderFactoryId,
     authority: ActionAdmissionAuthority,
-    encoder: Box<dyn NativeGraphActionEncoder>,
+    encoder: Rc<dyn NativeGraphActionEncoder>,
 }
 
 impl BoundNativeGraphActionEncoder {
@@ -128,7 +129,7 @@ impl BoundNativeGraphActionEncoder {
         Ok(Self {
             id,
             authority: ActionAdmissionAuthority(Rc::new(())),
-            encoder,
+            encoder: Rc::from(encoder),
         })
     }
 
@@ -144,10 +145,32 @@ impl BoundNativeGraphActionEncoder {
         store: &mut EpisodeArtifactStore,
         limits: ActionEncodingLimits,
     ) -> Result<AdmittedEnvironmentAction, EpisodeActionEncodingError> {
+        self.admit_with_session(decision, store, limits, None)
+    }
+
+    /// Admits an issued live-rollout decision for exactly one started environment session.
+    pub(crate) fn admit_for_session(
+        &self,
+        decision: DeclaredPolicyDecision,
+        store: &mut EpisodeArtifactStore,
+        limits: ActionEncodingLimits,
+        session: &ActionSessionAuthority,
+    ) -> Result<AdmittedEnvironmentAction, EpisodeActionEncodingError> {
+        self.admit_with_session(decision, store, limits, Some(session.clone()))
+    }
+
+    fn admit_with_session(
+        &self,
+        decision: DeclaredPolicyDecision,
+        store: &mut EpisodeArtifactStore,
+        limits: ActionEncodingLimits,
+        session: Option<ActionSessionAuthority>,
+    ) -> Result<AdmittedEnvironmentAction, EpisodeActionEncodingError> {
         let reference = freeze_declared_policy_action(&decision, self, store, limits)?;
         Ok(AdmittedEnvironmentAction {
             encoder: self.id.clone(),
             authority: self.authority.clone(),
+            session,
             reference,
         })
     }
@@ -167,6 +190,20 @@ impl BoundNativeGraphActionEncoder {
 #[derive(Clone, Debug)]
 pub(crate) struct ActionAdmissionAuthority(Rc<()>);
 
+/// Opaque authority minted once for each started package-selected environment session.
+#[derive(Clone, Debug)]
+pub(crate) struct ActionSessionAuthority(Rc<()>);
+
+impl ActionSessionAuthority {
+    pub(crate) fn new() -> Self {
+        Self(Rc::new(()))
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// Opaque single-use environment action admitted by one selected bound encoder.
 ///
 /// Only [`BoundNativeGraphActionEncoder::admit`] can construct this capability. Its artifact
@@ -174,6 +211,7 @@ pub(crate) struct ActionAdmissionAuthority(Rc<()>);
 pub struct AdmittedEnvironmentAction {
     encoder: ActionEncoderFactoryId,
     authority: ActionAdmissionAuthority,
+    session: Option<ActionSessionAuthority>,
     reference: FrozenArtifactReference,
 }
 
@@ -193,6 +231,12 @@ impl AdmittedEnvironmentAction {
 
     pub(crate) fn matches_authority(&self, authority: &ActionAdmissionAuthority) -> bool {
         Rc::ptr_eq(&self.authority.0, &authority.0)
+    }
+
+    pub(crate) fn matches_session(&self, session: &ActionSessionAuthority) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|issued| issued.matches(session))
     }
 
     pub(crate) fn reference(&self) -> &FrozenArtifactReference {

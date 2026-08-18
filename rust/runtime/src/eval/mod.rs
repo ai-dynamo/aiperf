@@ -25,11 +25,11 @@ pub(crate) use execution::{
     shared_workdir_conflicts_reserved_verifier_path, validate_env_name, validate_user,
     verifier_artifact_target_collision,
 };
-pub(crate) use native_graph::ActionAdmissionAuthority;
 #[cfg(feature = "engine")]
 pub(crate) use native_graph::GENERATION_METADATA_KEY;
 #[cfg(feature = "engine")]
 pub(crate) use native_graph::NATIVE_GRAPH_LIVE_DRIVER_KIND;
+pub(crate) use native_graph::{ActionAdmissionAuthority, ActionSessionAuthority};
 
 pub use artifact_manifest::{
     ArtifactManifestError, DeclaredArtifactManifest, MaterializedArtifactManifest,
@@ -122,11 +122,14 @@ pub use native_graph::{
 pub use native_graph::{
     BoundNativeGraphEnvironmentStepper, CurrentNativeGraphModelBindingResolver,
     DockerNativeGraphEpisodeExecutor, EngineNativeGraphEpisodeCallback, EpisodeExecutionError,
-    EvalNodeRecordArtifact, ModelRuntimeConfig, ModelRuntimeError, NativeGraphEpisodeExecutor,
-    NativeGraphEpisodeRunner, NativeGraphModelBindingResolver, NativeGraphModelStageError,
-    ObservedNativeGraphTransportEvidence, ResolvedModelBinding, ResolvedModelBindingSet,
-    ResolvedTokenizerBinding, StartedNativeGraphEnvironmentStepper,
-    bind_native_graph_environment_stepper, select_native_graph_external_driver,
+    EvalNodeRecordArtifact, IssuedNativeGraphPolicyDecision, ModelRuntimeConfig, ModelRuntimeError,
+    NativeGraphEpisodeExecutor, NativeGraphEpisodeRunner, NativeGraphLiveRolloutCoordinator,
+    NativeGraphLiveRolloutError, NativeGraphModelBindingResolver, NativeGraphModelDecisionError,
+    NativeGraphModelStageError, NativeGraphPolicyModelRuntime,
+    ObservedNativeGraphTransportEvidence, PreparedNativeGraphLiveRolloutCoordinator,
+    ResolvedModelBinding, ResolvedModelBindingSet, ResolvedTokenizerBinding,
+    StartedNativeGraphEnvironmentStepper, bind_native_graph_environment_stepper,
+    select_native_graph_external_driver,
 };
 pub use native_graph::{
     CellularFoldError, NativeGraphCellAssignment, NativeGraphCellLease,

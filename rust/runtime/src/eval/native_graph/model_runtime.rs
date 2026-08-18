@@ -6,10 +6,12 @@
 use std::{
     collections::BTreeMap,
     fmt::{self, Display, Formatter},
+    rc::Rc,
     sync::Arc,
 };
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use url::Url;
@@ -30,13 +32,22 @@ use crate::{
         SecretProvider, SecretValue,
     },
     extensions::AIPerfRegistry,
+    graph::agent::{
+        AgentInvocationLease, AgentLoopError, AgentResponseStore, AgentTrajectory,
+        AgentTrajectorySink, AgentTurnCoordinator, InvocationLeaseFactory,
+        LiveAgentPolicyDecisionCollector, LiveAgentPolicyDecisionReader,
+        LiveAgentPolicyDecisionRequest,
+    },
     multiturn::{EndpointInputTokenCounter, InputTokenCounter},
     transport::{core::ConnectionReuseStrategy, http::config::ClientConfig},
 };
 
+use super::package::NativeGraphRolloutPlan;
 use super::{
-    GenerationDefaults, ModelBindingId, ModelBindingSpec, ModelCapturePolicy, ModelSecretId,
-    NativeGraphPackagePlan, TokenizerBindingSpec, lower_native_graph,
+    ActionEncoderFactoryId, ActionEncodingLimits, ArtifactError, DeclaredPolicyDecision,
+    EpisodeActionEncodingError, EpisodeArtifactStore, FrozenArtifact, GenerationDefaults,
+    ModelBindingId, ModelBindingSpec, ModelCapturePolicy, ModelSecretId, NativeGraphPackagePlan,
+    TokenizerBindingSpec, lower_native_graph,
     lowering::{NATIVE_GRAPH_EXECUTION_PROFILE, NATIVE_GRAPH_SOURCE_SCHEMA},
 };
 
@@ -467,6 +478,352 @@ impl ResolvedTokenizerBinding {
             tokenizer,
             apply_chat_template,
         )))
+    }
+}
+
+/// One model-runtime failure while collecting a raw live-rollout policy decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeGraphModelDecisionError(String);
+
+impl NativeGraphModelDecisionError {
+    /// Creates a redacted model-decision runtime failure.
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self(reason.into())
+    }
+}
+
+impl Display for NativeGraphModelDecisionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NativeGraphModelDecisionError {}
+
+/// Existing model-runtime boundary for one bounded policy decision.
+///
+/// The runtime receives no collector and cannot return an owned decision frame. It instead opens
+/// a reader that the host drives through buffers capped by the imported policy limit. The rollout
+/// coordinator owns lexical JSON admission and action encoding after this seam.
+#[async_trait(?Send)]
+pub trait NativeGraphPolicyModelRuntime {
+    /// Returns the exact imported model binding resolved by this runtime.
+    fn binding(&self) -> &ModelBindingId;
+
+    /// Opens one package-bound prompt and frozen-observation decision reader.
+    async fn open_decision(
+        &mut self,
+        request: &LiveAgentPolicyDecisionRequest,
+    ) -> Result<Box<dyn LiveAgentPolicyDecisionReader>, NativeGraphModelDecisionError>;
+}
+
+/// Opaque authority binding prepared live-rollout facts to one immutable environment binding.
+#[derive(Clone)]
+pub(crate) struct NativeGraphLiveRolloutBindingAuthority(Rc<()>);
+
+impl NativeGraphLiveRolloutBindingAuthority {
+    pub(crate) fn new() -> Self {
+        Self(Rc::new(()))
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// Opaque authority minted only after one worker-local environment stepper starts.
+#[derive(Clone)]
+pub(crate) struct NativeGraphLiveRolloutSessionAuthority(Rc<()>);
+
+impl NativeGraphLiveRolloutSessionAuthority {
+    pub(crate) fn new() -> Self {
+        Self(Rc::new(()))
+    }
+
+    fn matches(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// A policy decision issued by the exact worker-local rollout coordinator.
+///
+/// The public type intentionally has no public constructor: a started environment stepper accepts
+/// only decisions stamped by the coordinator bound from the same imported rollout session.
+pub struct IssuedNativeGraphPolicyDecision {
+    decision: DeclaredPolicyDecision,
+    authority: NativeGraphLiveRolloutSessionAuthority,
+}
+
+impl fmt::Debug for IssuedNativeGraphPolicyDecision {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IssuedNativeGraphPolicyDecision")
+            .field("encoder", self.decision.encoder())
+            .finish_non_exhaustive()
+    }
+}
+
+impl IssuedNativeGraphPolicyDecision {
+    pub(crate) fn new(
+        decision: DeclaredPolicyDecision,
+        authority: NativeGraphLiveRolloutSessionAuthority,
+    ) -> Self {
+        Self {
+            decision,
+            authority,
+        }
+    }
+
+    pub(crate) fn belongs_to(&self, authority: &NativeGraphLiveRolloutSessionAuthority) -> bool {
+        self.authority.matches(authority)
+    }
+
+    pub(crate) fn into_decision(self) -> DeclaredPolicyDecision {
+        self.decision
+    }
+}
+
+/// Prepared immutable live-rollout facts waiting for exactly one started worker session.
+///
+/// This object owns the selected runtime and has no session authority. It can therefore never
+/// issue a decision until a matching started stepper consumes it.
+pub struct PreparedNativeGraphLiveRolloutCoordinator {
+    binding: NativeGraphLiveRolloutBindingAuthority,
+    model_binding: ModelBindingId,
+    prompt: super::NativeGraphRolloutPolicyPromptSource,
+    action_encoder_id: ActionEncoderFactoryId,
+    limits: ActionEncodingLimits,
+    max_prompt_bytes: usize,
+    runtime: Box<dyn NativeGraphPolicyModelRuntime>,
+}
+
+impl PreparedNativeGraphLiveRolloutCoordinator {
+    pub(crate) fn into_coordinator(
+        self,
+        expected_binding: &NativeGraphLiveRolloutBindingAuthority,
+        authority: NativeGraphLiveRolloutSessionAuthority,
+    ) -> Result<NativeGraphLiveRolloutCoordinator, NativeGraphLiveRolloutError> {
+        if !self.binding.matches(expected_binding) {
+            return Err(NativeGraphLiveRolloutError::SessionBindingMismatch);
+        }
+        Ok(NativeGraphLiveRolloutCoordinator {
+            model_binding: self.model_binding,
+            prompt: self.prompt,
+            action_encoder_id: self.action_encoder_id,
+            limits: self.limits,
+            max_prompt_bytes: self.max_prompt_bytes,
+            authority,
+            runtime: self.runtime,
+        })
+    }
+}
+
+/// Package-bound coordinator for one live rollout policy decision.
+///
+/// The coordinator is deliberately not a second executor: it extends the
+/// existing [`AgentTurnCoordinator`] policy-decision path, while the existing
+/// environment stepper retains all action-dispatch and child-lifecycle control.
+pub struct NativeGraphLiveRolloutCoordinator {
+    model_binding: ModelBindingId,
+    prompt: super::NativeGraphRolloutPolicyPromptSource,
+    action_encoder_id: ActionEncoderFactoryId,
+    limits: ActionEncodingLimits,
+    max_prompt_bytes: usize,
+    authority: NativeGraphLiveRolloutSessionAuthority,
+    runtime: Box<dyn NativeGraphPolicyModelRuntime>,
+}
+
+impl NativeGraphLiveRolloutCoordinator {
+    /// Prepares immutable rollout selectors before any environment adapter is provisioned.
+    pub(crate) fn prepare(
+        rollout: &NativeGraphRolloutPlan,
+        binding: NativeGraphLiveRolloutBindingAuthority,
+        runtime: Box<dyn NativeGraphPolicyModelRuntime>,
+    ) -> Result<PreparedNativeGraphLiveRolloutCoordinator, NativeGraphLiveRolloutError> {
+        let policy = rollout.policy();
+        if runtime.binding() != policy.model_binding_id() {
+            return Err(NativeGraphLiveRolloutError::MissingModelBinding {
+                binding: policy.model_binding_id().clone(),
+            });
+        }
+        let max_decision_bytes = usize::try_from(policy.max_decision_bytes()).map_err(|_| {
+            NativeGraphLiveRolloutError::DecisionLimitOutOfRange {
+                field: "rollout.policy.max_decision_bytes",
+            }
+        })?;
+        let max_action_bytes = usize::try_from(
+            rollout.environment().artifact_limits().max_artifact_bytes(),
+        )
+        .map_err(|_| NativeGraphLiveRolloutError::DecisionLimitOutOfRange {
+            field: "rollout.artifacts.max_artifact_bytes",
+        })?;
+        let limits = ActionEncodingLimits::new(max_decision_bytes, max_action_bytes)
+            .map_err(NativeGraphLiveRolloutError::ActionEncoding)?;
+        let max_prompt_bytes =
+            usize::try_from(rollout.limits().max_prompt_bytes()).map_err(|_| {
+                NativeGraphLiveRolloutError::DecisionLimitOutOfRange {
+                    field: "rollout.limits.max_prompt_bytes",
+                }
+            })?;
+        if policy.prompt_source().bytes().len() > max_prompt_bytes {
+            return Err(NativeGraphLiveRolloutError::PromptLimitExceeded);
+        }
+        Ok(PreparedNativeGraphLiveRolloutCoordinator {
+            model_binding: policy.model_binding_id().clone(),
+            prompt: policy.prompt_source().clone(),
+            action_encoder_id: rollout.environment().action_encoder_id().clone(),
+            limits,
+            max_prompt_bytes,
+            binding,
+            runtime,
+        })
+    }
+
+    /// Dispatches one bounded model decision and returns only its sealed policy decision.
+    ///
+    /// The worker-local package-selected environment stepper owns the encoder authority that may
+    /// turn this decision into a single-use action capability.
+    pub async fn decide_policy_decision(
+        &mut self,
+        observation: &FrozenArtifact,
+        store: &mut EpisodeArtifactStore,
+    ) -> Result<IssuedNativeGraphPolicyDecision, NativeGraphLiveRolloutError> {
+        let observation = store
+            .read_frozen(observation)
+            .map_err(NativeGraphLiveRolloutError::Artifact)?;
+        if self.prompt.bytes().len() > self.max_prompt_bytes {
+            return Err(NativeGraphLiveRolloutError::PromptLimitExceeded);
+        }
+        let request = LiveAgentPolicyDecisionRequest::new(
+            Bytes::copy_from_slice(self.prompt.bytes()),
+            Bytes::from(observation),
+            self.limits.max_decision_bytes(),
+        )
+        .map_err(NativeGraphLiveRolloutError::Coordinator)?;
+        let mut collector = LiveAgentPolicyDecisionCollector::new(self.limits.max_decision_bytes())
+            .map_err(NativeGraphLiveRolloutError::Coordinator)?;
+        let mut reader = AgentTurnCoordinator::next_live_policy_decision(self, &request)
+            .await
+            .map_err(NativeGraphLiveRolloutError::Coordinator)?;
+        collector
+            .collect_from(reader.as_mut())
+            .await
+            .map_err(NativeGraphLiveRolloutError::Coordinator)?;
+        let decision = DeclaredPolicyDecision::from_json_bytes(
+            self.action_encoder_id.clone(),
+            &collector.into_bytes(),
+            self.limits,
+        )
+        .map_err(NativeGraphLiveRolloutError::ActionEncoding)?;
+        Ok(IssuedNativeGraphPolicyDecision::new(
+            decision,
+            self.authority.clone(),
+        ))
+    }
+}
+
+#[async_trait(?Send)]
+impl AgentTurnCoordinator for NativeGraphLiveRolloutCoordinator {
+    async fn next_live_policy_decision(
+        &mut self,
+        request: &LiveAgentPolicyDecisionRequest,
+    ) -> Result<Box<dyn LiveAgentPolicyDecisionReader>, AgentLoopError> {
+        if self.runtime.binding() != &self.model_binding {
+            return Err(AgentLoopError::new(
+                "live rollout model runtime changed its selected binding",
+            ));
+        }
+        if request.prompt() != self.prompt.bytes() {
+            return Err(AgentLoopError::new(
+                "live rollout policy request did not retain the imported prompt snapshot",
+            ));
+        }
+        if request.max_decision_bytes() != self.limits.max_decision_bytes() {
+            return Err(AgentLoopError::new(
+                "live rollout policy request did not retain the selected decision bound",
+            ));
+        }
+        self.runtime
+            .open_decision(request)
+            .await
+            .map_err(|error| AgentLoopError::new(error.to_string()))
+    }
+
+    async fn run(
+        &mut self,
+        _: &mut dyn AgentResponseStore,
+        _: &mut dyn AgentTrajectorySink,
+        _: &dyn InvocationLeaseFactory,
+        _: &dyn AgentInvocationLease,
+        _: &dyn crate::graph::tools::AgentToolCallDecoder,
+        _: &dyn crate::graph::tools::AgentObservationFormatter,
+    ) -> Result<AgentTrajectory, AgentLoopError> {
+        Err(AgentLoopError::new(
+            "NativeGraph live rollout coordinator does not execute recorded trajectories",
+        ))
+    }
+}
+
+/// Typed live-rollout decision failure without raw prompt, observation, or model bytes.
+#[derive(Debug)]
+pub enum NativeGraphLiveRolloutError {
+    /// The selected model binding was not resolved before environment provisioning.
+    MissingModelBinding {
+        /// The package-selected binding identifier.
+        binding: ModelBindingId,
+    },
+    /// A package-selected byte limit could not be represented on this platform.
+    DecisionLimitOutOfRange {
+        /// The selected package field.
+        field: &'static str,
+    },
+    /// The existing agent coordinator rejected a sealed model-decision exchange.
+    Coordinator(AgentLoopError),
+    /// The imported prompt source exceeded its selected immutable cap.
+    PromptLimitExceeded,
+    /// Prepared live-rollout facts belonged to a different immutable environment binding.
+    SessionBindingMismatch,
+    /// The Rust-owned artifact store could not read or freeze a fact.
+    Artifact(ArtifactError),
+    /// The selected action encoder refused the raw model decision.
+    ActionEncoding(EpisodeActionEncodingError),
+}
+
+impl Display for NativeGraphLiveRolloutError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingModelBinding { binding } => write!(
+                formatter,
+                "NativeGraph live rollout selected unavailable model binding {binding:?}"
+            ),
+            Self::DecisionLimitOutOfRange { field } => write!(
+                formatter,
+                "NativeGraph live rollout limit {field} does not fit this platform"
+            ),
+            Self::Coordinator(error) => Display::fmt(error, formatter),
+            Self::PromptLimitExceeded => formatter.write_str(
+                "NativeGraph live rollout prompt exceeds the selected imported byte limit",
+            ),
+            Self::SessionBindingMismatch => formatter.write_str(
+                "NativeGraph live rollout coordinator belongs to another environment binding",
+            ),
+            Self::Artifact(error) => Display::fmt(error, formatter),
+            Self::ActionEncoding(error) => Display::fmt(error, formatter),
+        }
+    }
+}
+
+impl std::error::Error for NativeGraphLiveRolloutError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Coordinator(error) => Some(error),
+            Self::Artifact(error) => Some(error),
+            Self::ActionEncoding(error) => Some(error),
+            Self::MissingModelBinding { .. }
+            | Self::DecisionLimitOutOfRange { .. }
+            | Self::PromptLimitExceeded
+            | Self::SessionBindingMismatch => None,
+        }
     }
 }
 

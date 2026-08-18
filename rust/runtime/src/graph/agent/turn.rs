@@ -80,6 +80,174 @@ pub enum LiveAgentTurnDirective {
     },
 }
 
+/// One sealed policy-model request for a live agent turn.
+///
+/// Only the NativeGraph rollout coordinator constructs this request from its
+/// imported prompt snapshot and a Rust-owned frozen environment observation.
+pub struct LiveAgentPolicyDecisionRequest {
+    prompt: Bytes,
+    observation: Bytes,
+    max_decision_bytes: usize,
+}
+
+impl fmt::Debug for LiveAgentPolicyDecisionRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveAgentPolicyDecisionRequest")
+            .field("prompt_bytes", &self.prompt.len())
+            .field("observation_bytes", &self.observation.len())
+            .field("max_decision_bytes", &self.max_decision_bytes)
+            .finish()
+    }
+}
+
+impl LiveAgentPolicyDecisionRequest {
+    /// Constructs a bounded model-decision request from Rust-owned rollout facts.
+    pub(crate) fn new(
+        prompt: Bytes,
+        observation: Bytes,
+        max_decision_bytes: usize,
+    ) -> Result<Self, AgentLoopError> {
+        if max_decision_bytes == 0 {
+            return Err(AgentLoopError::new(
+                "live policy decision requires a positive byte limit",
+            ));
+        }
+        Ok(Self {
+            prompt,
+            observation,
+            max_decision_bytes,
+        })
+    }
+
+    /// Returns the imported immutable policy-prompt bytes.
+    pub fn prompt(&self) -> &[u8] {
+        &self.prompt
+    }
+
+    /// Returns the Rust-read frozen environment observation bytes.
+    pub fn observation(&self) -> &[u8] {
+        &self.observation
+    }
+
+    /// Returns the exact maximum raw decision bytes the model runtime may collect.
+    pub const fn max_decision_bytes(&self) -> usize {
+        self.max_decision_bytes
+    }
+}
+
+/// Host-owned bounded source for raw bytes of one live policy decision.
+///
+/// The coordinator supplies the destination buffer, so a model runtime cannot return an owned
+/// response frame through this boundary. Implementations must write at most the supplied capacity.
+#[async_trait(?Send)]
+pub trait LiveAgentPolicyDecisionReader {
+    /// Reads at most `destination.len()` raw decision bytes, returning zero only at end of input.
+    async fn read(&mut self, destination: &mut [u8]) -> Result<usize, AgentLoopError>;
+}
+
+/// Bounded Rust-owned collector for one streaming live policy decision.
+///
+/// The collector allocates only after a reader has written into a host-owned bounded buffer.
+pub struct LiveAgentPolicyDecisionCollector {
+    max_decision_bytes: usize,
+    bytes: Vec<u8>,
+}
+
+impl fmt::Debug for LiveAgentPolicyDecisionCollector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveAgentPolicyDecisionCollector")
+            .field("collected_bytes", &self.bytes.len())
+            .field("max_decision_bytes", &self.max_decision_bytes)
+            .finish()
+    }
+}
+
+impl LiveAgentPolicyDecisionCollector {
+    /// Creates the collector for one positive package-selected decision cap.
+    pub(crate) fn new(max_decision_bytes: usize) -> Result<Self, AgentLoopError> {
+        if max_decision_bytes == 0 {
+            return Err(AgentLoopError::new(
+                "live policy decision requires a positive byte limit",
+            ));
+        }
+        Ok(Self {
+            max_decision_bytes,
+            bytes: Vec::new(),
+        })
+    }
+
+    fn append(&mut self, chunk: &[u8]) -> Result<(), AgentLoopError> {
+        let required = self
+            .bytes
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| AgentLoopError::new("live policy decision byte length overflow"))?;
+        if required > self.max_decision_bytes {
+            return Err(AgentLoopError::new(
+                "live policy decision exceeds the selected byte limit",
+            ));
+        }
+        self.bytes
+            .try_reserve(chunk.len())
+            .map_err(|_| AgentLoopError::new("live policy decision allocation failed"))?;
+        self.bytes.extend_from_slice(chunk);
+        Ok(())
+    }
+
+    /// Reads a complete decision through host-owned bounded buffers before retaining any bytes.
+    pub async fn collect_from(
+        &mut self,
+        reader: &mut dyn LiveAgentPolicyDecisionReader,
+    ) -> Result<(), AgentLoopError> {
+        const READ_CHUNK_BYTES: usize = 4_096;
+        let mut scratch = [0_u8; READ_CHUNK_BYTES];
+        loop {
+            let remaining = self
+                .max_decision_bytes
+                .checked_sub(self.bytes.len())
+                .ok_or_else(|| AgentLoopError::new("live policy decision byte length overflow"))?;
+            if remaining == 0 {
+                let mut probe = [0_u8; 1];
+                let observed = reader.read(&mut probe).await?;
+                if observed > probe.len() {
+                    return Err(AgentLoopError::new(
+                        "live policy decision reader exceeded the host-owned buffer",
+                    ));
+                }
+                return if observed == 0 {
+                    Ok(())
+                } else {
+                    Err(AgentLoopError::new(
+                        "live policy decision exceeds the selected byte limit",
+                    ))
+                };
+            }
+            let capacity = remaining.min(scratch.len());
+            let observed = reader.read(&mut scratch[..capacity]).await?;
+            if observed > capacity {
+                return Err(AgentLoopError::new(
+                    "live policy decision reader exceeded the host-owned buffer",
+                ));
+            }
+            if observed == 0 {
+                return Ok(());
+            }
+            self.append(&scratch[..observed])?;
+        }
+    }
+
+    /// Returns the currently retained model-output length without exposing its bytes.
+    pub const fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
 impl AgentTurn {
     /// Construct one selected response and its sequential tool calls.
     pub fn new(selection: ResponseSelection, is_copied_context: bool) -> Self {
@@ -137,6 +305,19 @@ pub trait AgentTurnCoordinator {
     async fn next_live_turn(&mut self) -> Result<LiveAgentTurnDirective, AgentLoopError> {
         Err(AgentLoopError::new(
             "agent turn coordinator does not support live progression",
+        ))
+    }
+
+    /// Requests one bounded raw policy decision through an existing live coordinator.
+    ///
+    /// Recorded coordinators retain the default refusal. NativeGraph rollout
+    /// composition installs its package-bound model-runtime coordinator instead.
+    async fn next_live_policy_decision(
+        &mut self,
+        _: &LiveAgentPolicyDecisionRequest,
+    ) -> Result<Box<dyn LiveAgentPolicyDecisionReader>, AgentLoopError> {
+        Err(AgentLoopError::new(
+            "agent turn coordinator does not support live policy decisions",
         ))
     }
 
@@ -320,4 +501,43 @@ fn build_subsequent_dispatch_prompt(
         prompt.extend_from_slice(observation);
     }
     Ok(Bytes::from(prompt))
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::{LiveAgentPolicyDecisionCollector, LiveAgentPolicyDecisionRequest};
+
+    #[test]
+    fn policy_decision_collector_refuses_an_oversized_chunk_before_retaining_it() {
+        let mut collector = LiveAgentPolicyDecisionCollector::new(3)
+            .expect("a positive selected decision cap is valid");
+
+        let error = collector
+            .append(&[b'x'; 4])
+            .expect_err("an oversized provider chunk must not be retained");
+
+        assert!(
+            error
+                .to_string()
+                .contains("exceeds the selected byte limit")
+        );
+        assert_eq!(collector.len(), 0);
+    }
+
+    #[test]
+    fn policy_decision_request_debug_redacts_raw_prompt_and_observation_bytes() {
+        let request = LiveAgentPolicyDecisionRequest::new(
+            Bytes::from_static(b"prompt-secret"),
+            Bytes::from_static(b"observation-secret"),
+            32,
+        )
+        .expect("fixture request is valid");
+
+        let debug = format!("{request:?}");
+        assert!(!debug.contains("prompt-secret"));
+        assert!(!debug.contains("observation-secret"));
+        assert!(debug.contains("prompt_bytes"));
+    }
 }

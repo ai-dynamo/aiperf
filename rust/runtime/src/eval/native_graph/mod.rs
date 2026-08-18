@@ -27,7 +27,7 @@ mod supervision;
 
 #[cfg(feature = "engine")]
 pub use crate::engine::record_lane::EvalNodeRecordArtifact;
-pub(crate) use action_encoder::ActionAdmissionAuthority;
+pub(crate) use action_encoder::{ActionAdmissionAuthority, ActionSessionAuthority};
 pub use action_encoder::{
     ActionEncodingLimits, AdmittedEnvironmentAction, BoundNativeGraphActionEncoder,
     DeclaredPolicyDecision, EpisodeActionEncodingError, NativeGraphActionEncoder,
@@ -97,9 +97,12 @@ pub use matrix::{
 };
 #[cfg(feature = "engine")]
 pub use model_runtime::{
-    CurrentNativeGraphModelBindingResolver, EngineNativeGraphEpisodeCallback, ModelRuntimeConfig,
-    ModelRuntimeError, NativeGraphModelBindingResolver, NativeGraphModelStageError,
-    ObservedNativeGraphTransportEvidence, ResolvedModelBinding, ResolvedModelBindingSet,
+    CurrentNativeGraphModelBindingResolver, EngineNativeGraphEpisodeCallback,
+    IssuedNativeGraphPolicyDecision, ModelRuntimeConfig, ModelRuntimeError,
+    NativeGraphLiveRolloutCoordinator, NativeGraphLiveRolloutError,
+    NativeGraphModelBindingResolver, NativeGraphModelDecisionError, NativeGraphModelStageError,
+    NativeGraphPolicyModelRuntime, ObservedNativeGraphTransportEvidence,
+    PreparedNativeGraphLiveRolloutCoordinator, ResolvedModelBinding, ResolvedModelBindingSet,
     ResolvedTokenizerBinding,
 };
 pub use result::{

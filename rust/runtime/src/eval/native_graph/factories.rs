@@ -22,7 +22,7 @@ use std::{
 use crate::extensions::AIPerfRegistry;
 use crate::graph::tools::{
     EnvironmentArtifactBindings, EnvironmentEpisodeIdentity, EnvironmentSessionAuthority,
-    EnvironmentStepper, EnvironmentStepperBinding,
+    EnvironmentStepRequest, EnvironmentStepper, EnvironmentStepperBinding,
     EnvironmentStepperFactory as WorkerEnvironmentStepperFactory,
     SupervisedEnvironmentStepperFactory,
 };
@@ -32,12 +32,21 @@ use crate::{
 };
 
 use super::action_encoder::{
-    ActionEncodingLimits, BoundNativeGraphActionEncoder, EpisodeActionEncodingError,
-    MoveV1ActionEncoder,
+    ActionEncodingLimits, ActionSessionAuthority, BoundNativeGraphActionEncoder,
+    EpisodeActionEncodingError, MoveV1ActionEncoder,
+};
+#[cfg(feature = "engine")]
+use super::model_runtime::{
+    IssuedNativeGraphPolicyDecision, NativeGraphLiveRolloutBindingAuthority,
+    NativeGraphLiveRolloutCoordinator, NativeGraphLiveRolloutError,
+    NativeGraphLiveRolloutSessionAuthority, NativeGraphPolicyModelRuntime,
+    PreparedNativeGraphLiveRolloutCoordinator,
 };
 use super::package::ActionEncoderFactoryId;
 #[cfg(feature = "engine")]
-use super::package::{NativeGraphRolloutEnvironment, NativeGraphRolloutResetSource};
+use super::package::{
+    NativeGraphRolloutEnvironment, NativeGraphRolloutPlan, NativeGraphRolloutResetSource,
+};
 use super::{
     AdapterLifecycleDeadlines, AdapterProtocolConfig, AdapterProtocolFactory,
     AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawner, ArtifactError, ArtifactQuota,
@@ -247,6 +256,8 @@ pub struct BoundNativeGraphEnvironmentStepper {
     artifact_quota: ArtifactQuota,
     operation_deadline: Duration,
     reset_source: NativeGraphRolloutResetSource,
+    rollout: NativeGraphRolloutPlan,
+    rollout_binding: NativeGraphLiveRolloutBindingAuthority,
     runtime: Rc<dyn NativeGraphAdapterRuntimeResolution>,
     stepper_factory: Arc<dyn NativeGraphEnvironmentStepperFactory>,
 }
@@ -288,6 +299,19 @@ impl BoundNativeGraphEnvironmentStepper {
         self.operation_deadline
     }
 
+    /// Prepares a selected model runtime for this exact imported rollout before a worker starts.
+    pub fn prepare_live_rollout_coordinator(
+        &self,
+        runtime: Box<dyn NativeGraphPolicyModelRuntime>,
+    ) -> Result<PreparedNativeGraphLiveRolloutCoordinator, NativeGraphFactoryError> {
+        NativeGraphLiveRolloutCoordinator::prepare(
+            &self.rollout,
+            self.rollout_binding.clone(),
+            runtime,
+        )
+        .map_err(live_rollout_factory_error)
+    }
+
     /// Starts the selected worker-local stepper and returns its only reset-input capability.
     pub async fn start(
         &self,
@@ -296,6 +320,8 @@ impl BoundNativeGraphEnvironmentStepper {
         spawner: Rc<dyn AdapterSpawner>,
     ) -> Result<StartedNativeGraphEnvironmentStepper, NativeGraphFactoryError> {
         let request = self.sealed_spawn_request()?;
+        let rollout_session = NativeGraphLiveRolloutSessionAuthority::new();
+        let action_session = ActionSessionAuthority::new();
         let reset_input = {
             let mut store = store.try_borrow_mut().map_err(|_| {
                 NativeGraphFactoryError::new(
@@ -324,7 +350,12 @@ impl BoundNativeGraphEnvironmentStepper {
                 EnvironmentArtifactBindings::new([reset_input.clone()])
                     .map_err(|error| NativeGraphFactoryError::new(error.to_string()))?,
             )
-            .map(|binding| binding.with_selected_action_encoder(&self.action_encoder))
+            .map(|binding| {
+                binding.with_selected_action_encoder_session(
+                    &self.action_encoder,
+                    action_session.clone(),
+                )
+            })
             .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
         }) {
             Ok(binding) => binding,
@@ -369,6 +400,13 @@ impl BoundNativeGraphEnvironmentStepper {
             Ok(stepper) => Ok(StartedNativeGraphEnvironmentStepper {
                 stepper,
                 reset_input,
+                action_encoder: self.action_encoder.clone(),
+                action_encoding_limits: self.action_encoding_limits,
+                rollout_binding: self.rollout_binding.clone(),
+                rollout_session,
+                coordinator_bind_token: RefCell::new(Some(())),
+                action_session,
+                artifacts: store,
             }),
             Err(error) => Err(revoke_reset_reference(
                 &store,
@@ -440,6 +478,13 @@ impl BoundNativeGraphEnvironmentStepper {
 pub struct StartedNativeGraphEnvironmentStepper {
     stepper: Box<dyn EnvironmentStepper>,
     reset_input: FrozenArtifactReference,
+    action_encoder: BoundNativeGraphActionEncoder,
+    action_encoding_limits: ActionEncodingLimits,
+    rollout_binding: NativeGraphLiveRolloutBindingAuthority,
+    rollout_session: NativeGraphLiveRolloutSessionAuthority,
+    coordinator_bind_token: RefCell<Option<()>>,
+    action_session: ActionSessionAuthority,
+    artifacts: Rc<RefCell<super::EpisodeArtifactStore>>,
 }
 
 #[cfg(feature = "engine")]
@@ -447,6 +492,66 @@ impl StartedNativeGraphEnvironmentStepper {
     /// Borrows the one-shot reset-input capability frozen from the imported package snapshot.
     pub fn reset_input(&self) -> &FrozenArtifactReference {
         &self.reset_input
+    }
+
+    /// Consumes exact prepared package facts to bind one coordinator to this started session.
+    ///
+    /// A successful bind consumes the worker-local bind token. A rejected prepared coordinator
+    /// leaves that token available so the started session may still bind its matching coordinator.
+    pub fn bind_live_rollout_coordinator(
+        &self,
+        prepared: PreparedNativeGraphLiveRolloutCoordinator,
+    ) -> Result<NativeGraphLiveRolloutCoordinator, NativeGraphFactoryError> {
+        let mut token = self.coordinator_bind_token.try_borrow_mut().map_err(|_| {
+            NativeGraphFactoryError::new(
+                "NativeGraph started worker session coordinator binding is already in progress",
+            )
+        })?;
+        let Some(bind_token) = token.take() else {
+            return Err(NativeGraphFactoryError::new(
+                "NativeGraph started worker session already has a live rollout coordinator",
+            ));
+        };
+        match prepared.into_coordinator(&self.rollout_binding, self.rollout_session.clone()) {
+            Ok(coordinator) => Ok(coordinator),
+            Err(error) => {
+                *token = Some(bind_token);
+                Err(live_rollout_factory_error(error))
+            }
+        }
+    }
+
+    /// Admits a sealed policy decision through this stepper's own selected encoder before
+    /// dispatching its single-use action capability.
+    pub async fn step_policy_decision(
+        &mut self,
+        operation: impl Into<String>,
+        decision: IssuedNativeGraphPolicyDecision,
+    ) -> Result<super::EnvironmentTransitionRecord, NativeGraphFactoryError> {
+        if !decision.belongs_to(&self.rollout_session) {
+            return Err(NativeGraphFactoryError::new(
+                "NativeGraph policy decision belongs to another worker-local rollout session",
+            ));
+        }
+        let action = {
+            let mut artifacts = self.artifacts.try_borrow_mut().map_err(|_| {
+                NativeGraphFactoryError::new(
+                    "NativeGraph environment artifact store is already borrowed",
+                )
+            })?;
+            self.action_encoder
+                .admit_for_session(
+                    decision.into_decision(),
+                    &mut artifacts,
+                    self.action_encoding_limits,
+                    &self.action_session,
+                )
+                .map_err(action_encoder_factory_error)?
+        };
+        self.stepper
+            .step(EnvironmentStepRequest::admitted(operation, action))
+            .await
+            .map_err(|error| NativeGraphFactoryError::new(error.to_string()))
     }
 
     /// Transfers ownership of the selected worker-local environment stepper.
@@ -584,9 +689,18 @@ pub fn bind_native_graph_environment_stepper(
         artifact_quota,
         operation_deadline,
         reset_source: environment.reset_source().clone(),
+        rollout: rollout.clone(),
+        rollout_binding: NativeGraphLiveRolloutBindingAuthority::new(),
         runtime: resolved,
         stepper_factory: Arc::clone(stepper_factory),
     })
+}
+
+#[cfg(feature = "engine")]
+fn live_rollout_factory_error(error: NativeGraphLiveRolloutError) -> NativeGraphFactoryError {
+    NativeGraphFactoryError::new(format!(
+        "NativeGraph live rollout coordinator binding failed: {error}"
+    ))
 }
 
 #[cfg(feature = "engine")]

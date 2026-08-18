@@ -508,6 +508,7 @@ impl NativeGraphRolloutPolicy {
 pub struct NativeGraphRolloutLimits {
     max_environment_bytes: u64,
     max_horizon: u32,
+    max_prompt_bytes: u64,
 }
 
 impl NativeGraphRolloutLimits {
@@ -519,6 +520,11 @@ impl NativeGraphRolloutLimits {
     /// Returns the maximum rollout horizon allowed by the package.
     pub const fn max_horizon(&self) -> u32 {
         self.max_horizon
+    }
+
+    /// Returns the maximum imported prompt bytes retained for one policy decision.
+    pub const fn max_prompt_bytes(&self) -> u64 {
+        self.max_prompt_bytes
     }
 }
 
@@ -956,6 +962,7 @@ struct RolloutPolicyDto {
 struct RolloutLimitsDto {
     max_environment_bytes: u64,
     max_horizon: u32,
+    max_prompt_bytes: u64,
 }
 
 fn resolve_rollout(
@@ -980,8 +987,10 @@ fn resolve_rollout(
     let limits = NativeGraphRolloutLimits {
         max_environment_bytes: manifest.limits.max_environment_bytes,
         max_horizon: manifest.limits.max_horizon,
+        max_prompt_bytes: manifest.limits.max_prompt_bytes,
     };
-    if limits.max_environment_bytes == 0 || limits.max_horizon == 0 {
+    if limits.max_environment_bytes == 0 || limits.max_horizon == 0 || limits.max_prompt_bytes == 0
+    {
         return invalid("rollout.limits must be positive");
     }
     let policy_environment =
@@ -1014,6 +1023,12 @@ fn resolve_rollout(
         manifest.policy.prompt_source,
     )?;
     let prompt_bytes = source.read_owned(&prompt_path)?;
+    if u64::try_from(prompt_bytes.len()).map_err(|_| {
+        HarborImportError::InvalidPackage("rollout.policy.prompt_source is too long".to_owned())
+    })? > limits.max_prompt_bytes
+    {
+        return invalid("rollout.policy.prompt_source exceeds rollout.limits.max_prompt_bytes");
+    }
     let prompt_source = NativeGraphRolloutPolicyPromptSource {
         path: prompt_path,
         digest: ArtifactDigest::from_bytes(&prompt_bytes),
@@ -1750,6 +1765,11 @@ fn append_rollout_identity(material: &mut Vec<u8>, rollout: &NativeGraphRolloutP
         material,
         "native-graph-rollout.limits.max-horizon",
         &rollout.limits.max_horizon.to_le_bytes(),
+    );
+    append_identity_field(
+        material,
+        "native-graph-rollout.limits.max-prompt-bytes",
+        &rollout.limits.max_prompt_bytes.to_le_bytes(),
     );
 }
 

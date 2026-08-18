@@ -28,6 +28,7 @@ pub use trajectory::{
 };
 pub use turn::{
     AgentLoopError, AgentTurn, AgentTurnCoordinator, AgentTurnCoordinatorFactory,
-    AgentTurnCoordinatorSpec, LiveAgentTurnDirective, ResponseSelection,
+    AgentTurnCoordinatorSpec, LiveAgentPolicyDecisionCollector, LiveAgentPolicyDecisionReader,
+    LiveAgentPolicyDecisionRequest, LiveAgentTurnDirective, ResponseSelection,
     StaticAgentTurnCoordinator, StaticAgentTurnCoordinatorFactory,
 };
