@@ -15,7 +15,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use url::Url;
 
 use crate::clock::Clock;
-use crate::transport::core::ErrorDetails;
+use crate::transport::core::{ErrorDetails, ErrorKind};
 use crate::transport::http::config::{ClientConfig, apply_socket_opts};
 use crate::transport::ws::driver::{FallbackReason, classify_upgrade_failure};
 
@@ -212,10 +212,10 @@ fn is_reserved_handshake_header(name: &http::header::HeaderName) -> bool {
 
 fn proxy_connect_failure(error: ErrorDetails) -> ConnectFailure {
     let message = format!("websocket proxy tunnel failed: {}", error.message);
-    if error.code.is_some() {
-        ConnectFailure::closed(message)
-    } else {
+    if error.kind == ErrorKind::Connect {
         ConnectFailure::network(message)
+    } else {
+        ConnectFailure::closed(message)
     }
 }
 
@@ -294,13 +294,20 @@ mod tests {
     }
 
     #[test]
-    fn proxy_http_status_fails_closed_while_network_io_can_fallback() {
+    fn proxy_protocol_and_status_fail_closed_while_network_io_can_fallback() {
         let auth = proxy_connect_failure(ErrorDetails {
             kind: ErrorKind::Http,
             code: Some(407),
             message: "proxy authentication required".to_owned(),
         });
         assert_eq!(auth.fallback_reason(), None);
+
+        let malformed = proxy_connect_failure(ErrorDetails {
+            kind: ErrorKind::Protocol,
+            code: None,
+            message: "malformed CONNECT response".to_owned(),
+        });
+        assert_eq!(malformed.fallback_reason(), None);
 
         let network = proxy_connect_failure(ErrorDetails {
             kind: ErrorKind::Connect,

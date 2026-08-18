@@ -921,9 +921,10 @@ impl ControlPlaneHttp for NativeControlPlaneHttp {
                 kind: match error.kind {
                     ErrorKind::Timeout => ControlPlaneHttpErrorKind::Timeout,
                     ErrorKind::Cancelled => ControlPlaneHttpErrorKind::Cancelled,
-                    ErrorKind::Connect | ErrorKind::Sse | ErrorKind::Other => {
-                        ControlPlaneHttpErrorKind::Transport
-                    }
+                    ErrorKind::Connect
+                    | ErrorKind::Protocol
+                    | ErrorKind::Sse
+                    | ErrorKind::Other => ControlPlaneHttpErrorKind::Transport,
                     ErrorKind::Http => unreachable!(),
                 },
                 message: bounded_error(&error.message),

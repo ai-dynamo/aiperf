@@ -10,6 +10,7 @@
 //! Each request type implements [`Dispatchable`], keeping engine and wire types
 //! behind the trait.
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::collector::ReplayTerminalStatus;
@@ -75,13 +76,53 @@ pub struct ObservedRoundTripMetrics {
     pub mean_timestamp_lag_ns: Option<f64>,
 }
 
+/// Stable inference route selected after connection establishment policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportRoute {
+    /// Native WebSocket execution.
+    Websocket,
+    /// Preprepared HTTP server-sent-event fallback.
+    HttpSse,
+}
+
+impl TransportRoute {
+    /// Stable artifact spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Websocket => "websocket",
+            Self::HttpSse => "http_sse",
+        }
+    }
+}
+
+/// Stable reason an HTTP/SSE route replaced WebSocket before request send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportFallbackReason {
+    /// DNS, TCP, or pre-application handshake I/O failed.
+    NetworkConnect,
+    /// The peer explicitly does not expose the requested WebSocket upgrade.
+    UnsupportedUpgrade,
+}
+
+impl TransportFallbackReason {
+    /// Stable artifact spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NetworkConnect => "network_connect",
+            Self::UnsupportedUpgrade => "unsupported_upgrade",
+        }
+    }
+}
+
 /// Actual inference route selected after connection establishment policy.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ObservedTransportRoute {
-    /// Stable route identity such as `websocket` or `http_sse`.
-    pub actual_route: &'static str,
+    /// Selected route.
+    pub actual_route: TransportRoute,
     /// Stable allowlisted fallback reason, absent when no fallback occurred.
-    pub fallback_reason: Option<&'static str>,
+    pub fallback_reason: Option<TransportFallbackReason>,
 }
 
 /// Measurement hook fed by any sink. Timestamps are milliseconds relative to

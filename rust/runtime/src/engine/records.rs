@@ -12,6 +12,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+use crate::dispatch::sink::{TransportFallbackReason, TransportRoute};
 use crate::export::otel::{OtelRecordAccumulator, classify_spec_error_type};
 use crate::metrics_core::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
@@ -117,9 +118,9 @@ struct RecordMetadata {
     request_end_ns: i64,
     worker_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    actual_transport_route: Option<String>,
+    actual_transport_route: Option<TransportRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    transport_fallback_reason: Option<String>,
+    transport_fallback_reason: Option<TransportFallbackReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     global_dispatch_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -243,6 +244,7 @@ fn error_kind_type_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Sse => "SSEResponseError",
         ErrorKind::Cancelled => "RequestCancellationError",
         ErrorKind::Connect => "ConnectError",
+        ErrorKind::Protocol => "ProtocolError",
         ErrorKind::Timeout => "TimeoutError",
         ErrorKind::Other => "TransportError",
     }
@@ -311,9 +313,9 @@ struct RawRecordMetadata {
     request_end_ns: i64,
     worker_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    actual_transport_route: Option<String>,
+    actual_transport_route: Option<TransportRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    transport_fallback_reason: Option<String>,
+    transport_fallback_reason: Option<TransportFallbackReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     global_dispatch_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -481,8 +483,14 @@ pub(crate) fn per_record_parquet_row(
         request_ack_ns: record.first_token_ns,
         request_end_ns: record.end_ns,
         worker_id: record_worker_id(record),
-        actual_transport_route: record.transport.actual_route.clone(),
-        transport_fallback_reason: record.transport.fallback_reason.clone(),
+        actual_transport_route: record
+            .transport
+            .actual_route
+            .map(|route| route.as_str().to_owned()),
+        transport_fallback_reason: record
+            .transport
+            .fallback_reason
+            .map(|reason| reason.as_str().to_owned()),
         global_dispatch_index: record
             .global_dispatch_index
             .and_then(|index| i64::try_from(index).ok()),
@@ -982,8 +990,8 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
             request_ack_ns: record.first_token_ns,
             request_end_ns: record.end_ns,
             worker_id: record_worker_id(record),
-            actual_transport_route: record.transport.actual_route.clone(),
-            transport_fallback_reason: record.transport.fallback_reason.clone(),
+            actual_transport_route: record.transport.actual_route,
+            transport_fallback_reason: record.transport.fallback_reason,
             global_dispatch_index: record.global_dispatch_index,
             worker_assignment_index: record.worker_assignment_index,
             record_processor_id: "aiperf runner",
@@ -1030,8 +1038,8 @@ fn raw_record_row<'a>(
             request_ack_ns: ingest.first_token_ns,
             request_end_ns: ingest.end_ns,
             worker_id: record_worker_id(ingest),
-            actual_transport_route: ingest.transport.actual_route.clone(),
-            transport_fallback_reason: ingest.transport.fallback_reason.clone(),
+            actual_transport_route: ingest.transport.actual_route,
+            transport_fallback_reason: ingest.transport.fallback_reason,
             global_dispatch_index: ingest.global_dispatch_index,
             worker_assignment_index: ingest.worker_assignment_index,
             record_processor_id: "aiperf runner",
@@ -1263,8 +1271,8 @@ mod tests {
             requested_output: Some(3),
             ..TokenCounts::default()
         };
-        ingest.transport.actual_route = Some("http_sse".to_owned());
-        ingest.transport.fallback_reason = Some("unsupported_upgrade".to_owned());
+        ingest.transport.actual_route = Some(TransportRoute::HttpSse);
+        ingest.transport.fallback_reason = Some(TransportFallbackReason::UnsupportedUpgrade);
         let captured = CapturedRecord {
             uuid: Uuid::from_u128(7),
             x_correlation_id: "session-7".into(),
@@ -1305,7 +1313,7 @@ mod tests {
             requested_output: Some(3),
             ..TokenCounts::default()
         };
-        ok.transport.actual_route = Some("websocket".to_owned());
+        ok.transport.actual_route = Some(TransportRoute::Websocket);
         let success = CapturedRecord {
             uuid: Uuid::from_u128(7),
             x_correlation_id: "session-7".into(),
@@ -1375,8 +1383,8 @@ mod tests {
             requested_output: Some(3),
             ..TokenCounts::default()
         };
-        ok.transport.actual_route = Some("http_sse".to_owned());
-        ok.transport.fallback_reason = Some("network_connect".to_owned());
+        ok.transport.actual_route = Some(TransportRoute::HttpSse);
+        ok.transport.fallback_reason = Some(TransportFallbackReason::NetworkConnect);
         let success = CapturedRecord {
             uuid: Uuid::from_u128(7),
             x_correlation_id: "session-7".into(),

@@ -517,6 +517,7 @@ fn error_kind_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Sse => "sse_error",
         ErrorKind::Cancelled => "cancelled",
         ErrorKind::Connect => "connect_error",
+        ErrorKind::Protocol => "protocol_error",
         ErrorKind::Timeout => "timeout",
         ErrorKind::Other => "transport_error",
     }

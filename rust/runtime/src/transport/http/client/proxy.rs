@@ -116,31 +116,34 @@ pub async fn connect_via_proxy(
             .await
             .map_err(|e| connect_err(format!("proxy CONNECT read: {e}")))?;
         if n == 0 {
-            return Err(connect_err(
-                "proxy closed the connection during CONNECT".to_string(),
-            ));
+            return Err(if buf.is_empty() {
+                connect_err("proxy closed the connection during CONNECT".to_string())
+            } else {
+                protocol_err("proxy CONNECT response ended before complete headers".to_string())
+            });
         }
         buf.extend_from_slice(&chunk[..n]);
+        if buf.len() > 8192 {
+            return Err(protocol_err(
+                "proxy CONNECT response headers too large".to_string(),
+            ));
+        }
         if let Some(pos) = find_header_end(&buf) {
             // A well-behaved proxy sends nothing after the 200 headers until we
             // start the TLS ClientHello, so there should be no trailing bytes;
             // guard anyway rather than silently drop tunnelled data.
             if pos != buf.len() {
-                return Err(connect_err(
+                return Err(protocol_err(
                     "proxy sent unexpected data after CONNECT response".to_string(),
                 ));
             }
             break;
         }
-        if buf.len() > 8192 {
-            return Err(connect_err(
-                "proxy CONNECT response headers too large".to_string(),
-            ));
-        }
     }
 
-    let status = connect_status_code(&buf)
-        .ok_or_else(|| connect_err("proxy CONNECT response had no status line".to_string()))?;
+    let status = connect_status_code(&buf).ok_or_else(|| {
+        protocol_err("proxy CONNECT response had no valid status line".to_string())
+    })?;
     if status != 200 {
         return Err(proxy_status_err(
             status,
@@ -169,7 +172,13 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 fn connect_status_code(buf: &[u8]) -> Option<u16> {
     let line_end = buf.windows(2).position(|w| w == b"\r\n")?;
     let line = std::str::from_utf8(&buf[..line_end]).ok()?;
-    line.split_whitespace().nth(1)?.parse().ok()
+    let mut fields = line.split_whitespace();
+    if !matches!(fields.next()?, "HTTP/1.0" | "HTTP/1.1") {
+        return None;
+    }
+    let status = fields.next()?;
+    (status.len() == 3 && status.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| status.parse().ok())?
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -224,6 +233,14 @@ fn connect_err(message: String) -> ErrorDetails {
     }
 }
 
+fn protocol_err(message: String) -> ErrorDetails {
+    ErrorDetails {
+        kind: ErrorKind::Protocol,
+        code: None,
+        message,
+    }
+}
+
 fn proxy_status_err(status: u16, message: String) -> ErrorDetails {
     ErrorDetails {
         kind: ErrorKind::Http,
@@ -234,7 +251,39 @@ fn proxy_status_err(status: u16, message: String) -> ErrorDetails {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
     use super::*;
+
+    async fn connect_response_error(response: Vec<u8>) -> ErrorDetails {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test proxy binds");
+        let address = listener.local_addr().expect("test proxy has an address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("test proxy accepts");
+            let mut request = [0_u8; 512];
+            let _ = stream
+                .read(&mut request)
+                .await
+                .expect("CONNECT request reads");
+            stream
+                .write_all(&response)
+                .await
+                .expect("CONNECT response writes");
+        });
+        let proxy = ProxyConfig {
+            host: address.ip().to_string(),
+            port: address.port(),
+            auth_header: None,
+        };
+        let error = connect_via_proxy(&proxy, "origin.test", 443)
+            .await
+            .expect_err("invalid CONNECT response must fail");
+        server.await.expect("test proxy exits");
+        error
+    }
 
     #[test]
     fn connect_request_includes_host_and_auth() {
@@ -263,6 +312,26 @@ mod tests {
         let error = proxy_status_err(407, "authentication required".to_owned());
         assert_eq!(error.kind, ErrorKind::Http);
         assert_eq!(error.code, Some(407));
+    }
+
+    #[tokio::test]
+    async fn malformed_connect_responses_are_protocol_errors() {
+        for response in [
+            b"HTTP/1.1 nope Invalid\r\n\r\n".to_vec(),
+            b"Proxy-Agent: test\r\n\r\n".to_vec(),
+            b"HTTP/1.1 200 OK\r\n\r\nunexpected".to_vec(),
+        ] {
+            let error = connect_response_error(response).await;
+            assert_eq!(error.kind, ErrorKind::Protocol);
+            assert_eq!(error.code, None);
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_connect_response_is_a_protocol_error() {
+        let error = connect_response_error(vec![b'x'; 8193]).await;
+        assert_eq!(error.kind, ErrorKind::Protocol);
+        assert_eq!(error.code, None);
     }
 
     #[test]

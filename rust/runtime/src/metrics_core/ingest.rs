@@ -7,6 +7,7 @@
 //! metric overrides. Accumulators decide which catalog rows are computable for a
 //! given export context; producers only fill this shape.
 
+use crate::dispatch::sink::{TransportFallbackReason, TransportRoute};
 use crate::metrics_core::catalog::MetricTag;
 use crate::metrics_core::value::MetricValue;
 use crate::metrics_core::window::Phase;
@@ -25,12 +26,12 @@ pub struct InferenceDimensions {
 }
 
 /// Actual transport route retained for one completed request.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransportRouteMetadata {
     /// Stable selected route, absent when the transport does not report it.
-    pub actual_route: Option<String>,
+    pub actual_route: Option<TransportRoute>,
     /// Stable fallback reason, absent when no alternative route was selected.
-    pub fallback_reason: Option<String>,
+    pub fallback_reason: Option<TransportFallbackReason>,
 }
 
 /// Token counts attached to a completed request.

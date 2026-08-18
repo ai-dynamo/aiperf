@@ -14,6 +14,8 @@ pub enum ErrorKind {
     Cancelled,
     /// Connection establishment (DNS/TCP/TLS/handshake) failed.
     Connect,
+    /// A peer response violated the expected wire protocol.
+    Protocol,
     /// A read/response timeout elapsed.
     Timeout,
     /// Another transport failure.

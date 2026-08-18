@@ -17,7 +17,7 @@ use crate::clock::Clock;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{
     ObservedEndpointMetrics, ObservedRoundTripMetrics, ObservedTokenKind, ObservedTransportRoute,
-    ObservedUsage, RequestObserver,
+    ObservedUsage, RequestObserver, TransportFallbackReason, TransportRoute,
 };
 use crate::metrics_core::{
     AccumulatorSummary, InferenceDimensions, MetricTag, MetricValue, MetricsAccumulator,
@@ -541,8 +541,8 @@ impl PendingRequest {
                 .transport_route
                 .map_or_else(TransportRouteMetadata::default, |route| {
                     TransportRouteMetadata {
-                        actual_route: Some(route.actual_route.to_owned()),
-                        fallback_reason: route.fallback_reason.map(str::to_owned),
+                        actual_route: Some(route.actual_route),
+                        fallback_reason: route.fallback_reason,
                     }
                 }),
             phase: self.metadata.phase,
@@ -1262,20 +1262,20 @@ mod tests {
         observer.on_transport_route(
             uuid,
             ObservedTransportRoute {
-                actual_route: "http_sse",
-                fallback_reason: Some("unsupported_upgrade"),
+                actual_route: TransportRoute::HttpSse,
+                fallback_reason: Some(TransportFallbackReason::UnsupportedUpgrade),
             },
         );
         observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
 
         let collection = observer.finish_with_records();
         assert_eq!(
-            collection.records[0].1.transport.actual_route.as_deref(),
-            Some("http_sse")
+            collection.records[0].1.transport.actual_route,
+            Some(TransportRoute::HttpSse)
         );
         assert_eq!(
-            collection.records[0].1.transport.fallback_reason.as_deref(),
-            Some("unsupported_upgrade")
+            collection.records[0].1.transport.fallback_reason,
+            Some(TransportFallbackReason::UnsupportedUpgrade)
         );
     }
 
