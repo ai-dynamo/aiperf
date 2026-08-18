@@ -53,11 +53,22 @@ class BaseCompletionRequest(BaseModel):
     max_tokens: int | None = None
     ignore_eos: bool = False
     min_tokens: int | None = None
+    # Test knob: bundle the first N output tokens into the first streamed chunk to
+    # emulate a server (e.g. TRT-LLM stream-interval) whose first content chunk
+    # carries more than one token. Defaults to 1 (one token per chunk).
+    mock_first_chunk_tokens: int = 1
 
     @property
     def include_usage(self) -> bool:
         """Check if usage statistics should be included in streaming response."""
         return bool(self.stream_options and self.stream_options.get("include_usage"))
+
+    @property
+    def continuous_usage_stats(self) -> bool:
+        """Check if per-chunk (cumulative) usage should be reported on every chunk."""
+        return bool(
+            self.stream_options and self.stream_options.get("continuous_usage_stats")
+        )
 
 
 class ChatCompletionRequest(BaseCompletionRequest):
