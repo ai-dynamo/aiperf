@@ -38,7 +38,7 @@ async fn native_graph_rollout_uses_mock_selected_policy_decisions_end_to_end() {
 
     let _docker = docker_e2e_lock();
     let result = harness.run_no_server(&format!(
-        "eval --task {} --model-runtime {} --lifecycle-request {} --image sha256:{}",
+        "eval --task {} --model-runtime {} --lifecycle-request {} --workdir /work --image sha256:{}",
         task.display(),
         model_runtime.display(),
         lifecycle.display(),
@@ -312,7 +312,7 @@ fn write_policy_dataset(path: &Path, first: &str, second: &str) {
 
 fn eval_command(task: &Path, model_runtime: &Path, lifecycle: &Path) -> String {
     format!(
-        "eval --task {} --model-runtime {} --lifecycle-request {} --image sha256:{}",
+        "eval --task {} --model-runtime {} --lifecycle-request {} --workdir /work --image sha256:{}",
         task.display(),
         model_runtime.display(),
         lifecycle.display(),
@@ -474,8 +474,10 @@ stage=""
 step_count=0
 artifact_phase=""
 current_bytes=""
+current_file=""
 output_operation=""
 first_reference=""
+info_reference=""
 pending_download=""
 action_bytes=""
 
@@ -491,7 +493,11 @@ emit() {
 
 request_upload() {
     output_operation="${parent}-output-${sequence}"
-    byte_count=$(printf '%s' "$current_bytes" | wc -c | tr -d ' ')
+    if [ -n "$current_file" ]; then
+        byte_count=$(wc -c < "$current_file" | tr -d ' ')
+    else
+        byte_count=$(printf '%s' "$current_bytes" | wc -c | tr -d ' ')
+    fi
     emit "$parent_span" "$output_operation" \
         "{\"type\":\"put_artifact_request\",\"parent_operation\":\"$parent\",\"declared_bytes\":$byte_count}"
 }
@@ -511,6 +517,7 @@ while IFS= read -r line; do
             parent_span=$host_span
             stage=reset
             current_bytes=state-zero
+            current_file=""
             artifact_phase=observation
             request_upload
             ;;
@@ -550,11 +557,16 @@ while IFS= read -r line; do
             else
                 current_bytes=state-two
             fi
+            current_file=""
             request_upload
             ;;
         *'"type":"put_artifact_handle"'*)
             upload=$(field "$line" upload)
-            encoded=$(printf '%s' "$current_bytes" | base64 | tr -d '\n')
+            if [ -n "$current_file" ]; then
+                encoded=$(base64 < "$current_file" | tr -d '\n')
+            else
+                encoded=$(printf '%s' "$current_bytes" | base64 | tr -d '\n')
+            fi
             emit "$host_span" "$host_operation" \
                 "{\"type\":\"artifact_upload_chunk\",\"upload\":\"$upload\",\"bytes_base64\":\"$encoded\"}"
             emit "$host_span" "$host_operation" \
@@ -573,6 +585,13 @@ while IFS= read -r line; do
                 first_reference=$reference
                 artifact_phase=info
                 current_bytes=transition-info
+                current_file=""
+                request_upload
+            elif [ "$artifact_phase" = info ]; then
+                info_reference=$reference
+                artifact_phase=workspace-patch
+                current_file=/tmp/native-graph-workspace-patch.tar
+                tar -cf "$current_file" -C /work result.txt
                 request_upload
             else
                 if [ "$step_count" -eq 1 ]; then
@@ -581,7 +600,10 @@ while IFS= read -r line; do
                     terminal=true
                 fi
                 emit "$parent_span" "$parent" \
-                    "{\"type\":\"transition\",\"observation_ref\":$first_reference,\"reward\":1.0,\"terminated\":$terminal,\"truncated\":false,\"info_ref\":$reference}"
+                    "{\"type\":\"transition\",\"observation_ref\":$first_reference,\"reward\":1.0,\"terminated\":$terminal,\"truncated\":false,\"info_ref\":$info_reference,\"workspace_patch_ref\":$reference}"
+                if [ "$terminal" = true ]; then
+                    printf north > /work/result.txt
+                fi
                 stage=ready
             fi
             ;;
@@ -616,7 +638,7 @@ max_artifact_handles = 4
 max_artifact_bytes = 4096
 
 [artifacts]
-max_artifacts = 8
+max_artifacts = 10
 max_total_bytes = 16384
 max_artifact_bytes = 3072
 max_download_handles = 4
