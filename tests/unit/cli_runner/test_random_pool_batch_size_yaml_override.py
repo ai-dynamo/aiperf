@@ -215,12 +215,39 @@ def test_batch_size_flag_on_synthetic_yaml_does_not_raise(
     Regression test: synthetic datasets have no ``format`` field at all, so
     ``dataset.get("format")`` returned ``None`` and the ``!= RANDOM_POOL`` check
     incorrectly raised for perfectly legitimate synthetic/embeddings batch-size
-    usage. These flags are already routed onto SyntheticDataset's
-    prompts/images/audio/video.batch_size sub-configs by the generic CLI-override
-    deep-merge that runs before this helper, so the helper must no-op here
-    rather than validate or touch anything.
+    usage.
     """
     yaml_path = _write_synthetic_yaml(tmp_path, batch_size=1)
     cli = _cli(**batch_kwarg)
     cfg = resolve_config(cli, yaml_path)
     assert cfg.benchmark.datasets[0].type == "synthetic"
+
+
+def test_prompt_batch_size_flag_on_synthetic_yaml_is_silently_dropped(
+    tmp_path: Path,
+) -> None:
+    """Pins the known (pre-existing, out-of-scope-to-fix-here) gap: nothing in
+    the YAML+CLI path routes --prompt-batch-size onto a synthetic dataset's
+    prompts.batch_size, unlike the CLI-only path (no --config) where the same
+    flag applies correctly. The YAML value survives untouched; the explicit
+    CLI flag is silently ignored, inverting normal CLI-overrides-YAML
+    precedence. If this starts failing, the gap has been closed -- update
+    this test to assert the override actually took effect.
+    """
+    yaml_path = _write_synthetic_yaml(tmp_path, batch_size=1)
+    cli = _cli(prompt_batch_size=4)
+    cfg = resolve_config(cli, yaml_path)
+    assert cfg.benchmark.datasets[0].prompts.batch_size == 1
+
+
+def test_image_batch_size_flag_on_synthetic_yaml_is_silently_dropped(
+    tmp_path: Path,
+) -> None:
+    """Companion to the text case: --image-batch-size against a synthetic YAML
+    dataset with no `images:` block doesn't even create one -- the flag has
+    zero effect end to end, not just a value mismatch.
+    """
+    yaml_path = _write_synthetic_yaml(tmp_path, batch_size=1)
+    cli = _cli(image_batch_size=2)
+    cfg = resolve_config(cli, yaml_path)
+    assert cfg.benchmark.datasets[0].images is None
