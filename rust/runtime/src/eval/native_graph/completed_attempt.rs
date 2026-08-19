@@ -440,7 +440,7 @@ impl std::error::Error for NativeGraphCompletedAttemptError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::CompatibilityTerminalReceipt;
+    use crate::eval::{CaptureError, CompatibilityTerminalReceipt};
     use crate::eval::{
         EpisodeEvaluator, EpisodeScoreState, HarborEpisodeEvaluator, RewardDocument, ScoreVersion,
         VerifierResult,
@@ -585,6 +585,34 @@ mod tests {
         assert_eq!(
             error,
             NativeGraphCompletedAttemptError::CompatibilitySessionIdentityMismatch
+        );
+    }
+
+    #[test]
+    fn compatibility_supplement_refuses_a_report_from_another_capture_session() {
+        let report_authority = authority("external-attempt-a");
+        let receipt_authority = authority("external-attempt-b");
+        let report_session = report_authority
+            .compatibility_capture_session()
+            .expect("external authority has a capture session");
+        let receipt_session = receipt_authority
+            .compatibility_capture_session()
+            .expect("external authority has a capture session")
+            .clone();
+        let report = CapturePolicy::from_session(report_session)
+            .begin_observation()
+            .freeze();
+        let receipt = CompatibilityTerminalReceipt::from_canonical_terminal_bytes(
+            receipt_session,
+            br#"{"terminal":"accepted"}"#,
+        )
+        .expect("bounded fixture terminal receipt seals");
+
+        assert_eq!(
+            report
+                .into_terminal_supplement(receipt)
+                .expect_err("a report and receipt from different sessions cannot pair"),
+            CaptureError::CaptureSessionIdentityMismatch
         );
     }
 

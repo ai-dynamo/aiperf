@@ -156,6 +156,7 @@ impl CompatibilityTerminalReceipt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapturePolicy {
     package_identity: ArtifactDigest,
+    capture_session: Option<CompatibilityCaptureSession>,
 }
 
 impl CapturePolicy {
@@ -176,6 +177,7 @@ impl CapturePolicy {
         package.append_identity_material(&mut material);
         Ok(Self {
             package_identity: ArtifactDigest::from_bytes(&material),
+            capture_session: None,
         })
     }
 
@@ -209,6 +211,7 @@ impl CapturePolicy {
     pub(crate) fn from_session(session: &CompatibilityCaptureSession) -> Self {
         Self {
             package_identity: session.package_identity().clone(),
+            capture_session: Some(session.clone()),
         }
     }
 }
@@ -281,6 +284,7 @@ impl CompatibilityObservation {
         };
         CompatibilityObservationReport {
             package_identity: self.policy.package_identity,
+            capture_session: self.policy.capture_session,
             fidelity,
             observed_https_calls: self.observed_https_calls,
             partial_calls: self.partial_calls,
@@ -308,6 +312,7 @@ impl CompatibilityObservation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompatibilityObservationReport {
     package_identity: ArtifactDigest,
+    capture_session: Option<CompatibilityCaptureSession>,
     fidelity: CaptureFidelity,
     observed_https_calls: u16,
     partial_calls: u16,
@@ -346,7 +351,7 @@ impl CompatibilityObservationReport {
         &self.digest
     }
 
-    /// Seals this package-bound report for an externally driven terminal result.
+    /// Seals this capture-session-bound report for an externally driven terminal result.
     ///
     /// The conversion is deliberately one way: callers can retain or emit only the bounded
     /// report, never a raw capture or a NativeGraph/exact compatibility classification.
@@ -355,7 +360,7 @@ impl CompatibilityObservationReport {
         self,
         receipt: CompatibilityTerminalReceipt,
     ) -> Result<CompatibilityTerminalSupplement, CaptureError> {
-        if self.package_identity != *receipt.session().package_identity() {
+        if self.capture_session.as_ref() != Some(receipt.session()) {
             return Err(CaptureError::CaptureSessionIdentityMismatch);
         }
         let fidelity = match self.fidelity {
