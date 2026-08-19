@@ -5,48 +5,53 @@
 
 mod common;
 
-use std::{fs, path::Path, sync::Mutex};
+use std::{fs, path::Path, process::Command, sync::Mutex};
 
 use aiperf_runtime::eval::ArtifactDigest;
-use common::AIPerfHarness;
+use common::exec_binary;
 use serde_json::Value;
 
 static DOCKER_E2E_LOCK: Mutex<()> = Mutex::new(());
 
-#[tokio::test]
-async fn external_task_preserves_compatibility_fidelity_and_verifier_score_end_to_end() {
+#[test]
+fn external_task_preserves_compatibility_fidelity_and_verifier_score_end_to_end() {
     let temporary = tempfile::tempdir().expect("create external compatibility fixture root");
     let task = temporary.path().join("external-compatibility-task");
     let lifecycle = temporary.path().join("lifecycle.json");
     write_external_task(&task);
     write_lifecycle(&lifecycle);
-    let harness = AIPerfHarness::new().await;
-
     let _docker = DOCKER_E2E_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let result = harness.run_no_server(&format!(
-        "eval --task {} --lifecycle-request {} --image sha256:{}",
-        task.display(),
-        lifecycle.display(),
-        "a".repeat(64),
-    ));
+    let output = Command::new(exec_binary())
+        .arg("eval")
+        .arg("--task")
+        .arg(&task)
+        .arg("--lifecycle-request")
+        .arg(&lifecycle)
+        .arg("--image")
+        .arg(format!("sha256:{}", "a".repeat(64)))
+        .env("HF_HUB_OFFLINE", "1")
+        .env("TRANSFORMERS_OFFLINE", "1")
+        .output()
+        .expect("start external compatibility eval");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        result.success(),
-        "external compatibility eval failed with {}\nstdout:\n{}\nstderr:\n{}",
-        result.exit_code,
-        result.stdout,
-        result.stderr
+        output.status.success(),
+        "external compatibility eval failed with {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        stdout,
+        stderr
     );
-    let report_text = format!("{}\n{}", result.stdout, result.stderr);
+    let report_text = format!("{stdout}\n{stderr}");
     assert!(
         !report_text.contains("driver-private-output"),
         "raw Driver terminal data must not enter product output: {report_text}"
     );
     let report: Value = serde_json::from_str(
-        result
-            .stdout
+        stdout
             .lines()
             .last()
             .expect("scored eval prints a final summary"),
@@ -65,7 +70,7 @@ async fn external_task_preserves_compatibility_fidelity_and_verifier_score_end_t
     assert_eq!(
         lifecycle_evidence,
         &[Value::String(
-            "blake3:378edf317f397d30c8ae6abaf7264ff82f1c24a83602f01d9465eaaca16fe7df".to_owned()
+            "blake3:adcf29cf1daf7cbdf569c7a5456b68e896f0900823bbcb6eec15244322a4dd8d".to_owned()
         )],
         "the product must export the exact sealed compatibility lifecycle event identity"
     );
@@ -88,6 +93,9 @@ profile = "externally_driven"
 adapter_manifest = "adapters.toml"
 driver = "driver-adapter"
 external_driver_factory_id = "terminal_v1"
+
+[verifier]
+environment_mode = "separate"
 "#,
     )
     .expect("write external task manifest");

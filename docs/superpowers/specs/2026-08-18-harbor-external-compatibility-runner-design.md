@@ -64,19 +64,27 @@ claim.
 
 Docker exposes a distinct compatibility spawner and an isolated
 `execute_externally_driven_with_runtime` transaction. It refuses Compose,
-multi-step recipes, missing driver selection, missing prepared driver, and
-incompatible protocol/runtime configuration before build or environment spend.
+multi-step recipes, a shared verifier, missing driver selection, missing
+prepared driver, and incompatible protocol/runtime configuration before build
+or environment spend. The required authored separate verifier is load-bearing:
+confirmed Driver teardown stops the task container, declared artifacts are
+collected from that stopped container, and only then is a fresh verifier
+container provisioned.
 The successful transaction is:
 
 ```text
 preflight -> acquire environment -> healthcheck -> start Driver session
-          -> correlated terminal receipt -> declared artifacts -> verifier
-          -> score -> reverse cleanup
+          -> correlated terminal receipt -> cancel/reap Driver -> declared artifacts
+          -> verifier -> score -> reverse container cleanup
 ```
 
 Any driver error, timeout, cancellation, missing terminal receipt, invalid
 receipt, or artifact/verifier failure cancels and reaps the driver exactly once.
-No terminal receipt means the verifier is not invoked.
+No terminal receipt or confirmed Driver reap means artifacts are not collected
+and the verifier is not invoked. One Clock-based absolute Agent deadline covers
+Driver startup, Ready negotiation, prepared-driver work, terminal exchange, and
+the cleanup decision; inner supervision never receives the original budget
+again.
 
 ## Terminal protocol and evidence
 

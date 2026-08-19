@@ -354,9 +354,9 @@ impl BoundNativeGraphEnvironmentStepper {
         store: Rc<RefCell<super::EpisodeArtifactStore>>,
         spawner: Rc<dyn AdapterSpawner>,
         request: AdapterSpawnRequest,
-        defer_terminal_cleanup: bool,
+        needs_deferred_terminal_cleanup: bool,
     ) -> Result<StartedNativeGraphEnvironmentStepper, NativeGraphFactoryError> {
-        let expected_argv = if defer_terminal_cleanup {
+        let expected_argv = if needs_deferred_terminal_cleanup {
             self.adapter.container_argv()
         } else {
             self.adapter.argv.clone()
@@ -403,7 +403,7 @@ impl BoundNativeGraphEnvironmentStepper {
                 )
             })
             .map(|binding| {
-                if defer_terminal_cleanup {
+                if needs_deferred_terminal_cleanup {
                     binding.with_deferred_terminal_cleanup()
                 } else {
                     binding

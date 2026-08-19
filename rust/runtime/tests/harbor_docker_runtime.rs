@@ -4790,7 +4790,12 @@ adapter_manifest = "adapters.toml"
 driver = "driver-adapter"
 external_driver_factory_id = "fixture"
 
-{manifest_suffix}"#,
+{verifier_config}{manifest_suffix}"#,
+            verifier_config = if manifest_suffix.contains("[verifier]") {
+                ""
+            } else {
+                "[verifier]\nenvironment_mode = \"separate\"\n\n"
+            },
         ),
     )
     .unwrap();
@@ -4907,6 +4912,7 @@ enum ExternalTerminalCase {
     Timeout,
     MissingCandidate,
     InvalidCandidate,
+    MaliciousReady,
     StartupPending,
     ArtifactAndCleanupFailure,
 }
@@ -4955,6 +4961,8 @@ impl NativeGraphExternalDriverFactory for TransactionExternalDriverFactory {
 struct TransactionExternalDriverSpawnExecutor {
     events: Arc<Mutex<Vec<&'static str>>>,
     case: ExternalTerminalCase,
+    driver_is_live: Rc<Cell<bool>>,
+    startup_clock: Option<Rc<SimClock>>,
 }
 
 impl ExternalDriverSpawnExecutor for TransactionExternalDriverSpawnExecutor {
@@ -4962,6 +4970,14 @@ impl ExternalDriverSpawnExecutor for TransactionExternalDriverSpawnExecutor {
         &self,
         _: aiperf_runtime::eval::AuthorizedExternalDriverSpawn,
     ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        self.driver_is_live.set(true);
+        if let Some(clock) = self.startup_clock.as_ref() {
+            return Ok(Box::new(SlowExternalDriverSpawnTransaction {
+                events: Arc::clone(&self.events),
+                driver_is_live: Rc::clone(&self.driver_is_live),
+                clock: Rc::clone(clock),
+            }));
+        }
         if matches!(self.case, ExternalTerminalCase::StartupPending) {
             return Ok(Box::new(PendingExternalDriverSpawnTransaction {
                 events: Arc::clone(&self.events),
@@ -4973,8 +4989,39 @@ impl ExternalDriverSpawnExecutor for TransactionExternalDriverSpawnExecutor {
                 events: Arc::clone(&self.events),
                 case: self.case,
                 stdout: VecDeque::new(),
+                driver_is_live: Rc::clone(&self.driver_is_live),
             })),
         }))
+    }
+}
+
+struct SlowExternalDriverSpawnTransaction {
+    events: Arc<Mutex<Vec<&'static str>>>,
+    driver_is_live: Rc<Cell<bool>>,
+    clock: Rc<SimClock>,
+}
+
+#[async_trait(?Send)]
+impl AdapterSpawnTransaction for SlowExternalDriverSpawnTransaction {
+    async fn await_process(&mut self) -> Result<Box<dyn AdapterProcess>, AdapterSupervisionError> {
+        aiperf_runtime::clock::Clock::sleep(self.clock.clone(), 200_000_000).await;
+        Err(AdapterSupervisionError::Process(
+            "slow startup unexpectedly outlived the Driver budget".to_owned(),
+        ))
+    }
+
+    async fn abort(&mut self, _: Duration) -> Result<(), AdapterSupervisionError> {
+        if self.driver_is_live.replace(false) {
+            self.events.lock().unwrap().push("cancel");
+            self.events.lock().unwrap().push("reap");
+        }
+        Ok(())
+    }
+
+    fn fence(&mut self) {
+        if self.driver_is_live.replace(false) {
+            self.events.lock().unwrap().push("fence");
+        }
     }
 }
 
@@ -5010,6 +5057,7 @@ struct TransactionExternalDriverProcess {
     events: Arc<Mutex<Vec<&'static str>>>,
     case: ExternalTerminalCase,
     stdout: VecDeque<Vec<u8>>,
+    driver_is_live: Rc<Cell<bool>>,
 }
 
 impl TransactionExternalDriverProcess {
@@ -5039,7 +5087,11 @@ impl AdapterProcess for TransactionExternalDriverProcess {
         })?;
         match host.message {
             HostMessage::Hello { .. } => self.push(AdapterEnvelope::new(
-                host.episode,
+                if matches!(self.case, ExternalTerminalCase::MaliciousReady) {
+                    "driver-private-ready-identifier".to_owned()
+                } else {
+                    host.episode
+                },
                 "startup",
                 0,
                 host.operation,
@@ -5084,6 +5136,7 @@ impl AdapterProcess for TransactionExternalDriverProcess {
                 )),
                 ExternalTerminalCase::DriverError
                 | ExternalTerminalCase::Timeout
+                | ExternalTerminalCase::MaliciousReady
                 | ExternalTerminalCase::StartupPending => Ok(()),
             },
             _ => Err(AdapterSupervisionError::InvalidResetTransition),
@@ -5131,10 +5184,12 @@ impl AdapterProcess for TransactionExternalDriverProcess {
                 "fixture reap failure".to_owned(),
             ));
         }
+        self.driver_is_live.set(false);
         Ok(AdapterExit::Reaped)
     }
 
     fn fence(&mut self) {
+        self.driver_is_live.set(false);
         self.events.lock().unwrap().push("fence");
     }
 }
@@ -5143,6 +5198,8 @@ struct TransactionDockerRuntime {
     events: Arc<Mutex<Vec<&'static str>>>,
     case: ExternalTerminalCase,
     is_environment_acquired: Cell<bool>,
+    driver_is_live: Rc<Cell<bool>>,
+    startup_clock: Option<Rc<SimClock>>,
 }
 
 impl DockerRuntime for TransactionDockerRuntime {
@@ -5167,6 +5224,8 @@ impl DockerRuntime for TransactionDockerRuntime {
             Rc::new(TransactionExternalDriverSpawnExecutor {
                 events: Arc::clone(&self.events),
                 case: self.case,
+                driver_is_live: Rc::clone(&self.driver_is_live),
+                startup_clock: self.startup_clock.clone(),
             }),
         ))
     }
@@ -5196,6 +5255,12 @@ impl DockerRuntime for TransactionDockerRuntime {
                 .iter()
                 .any(|argument| argument == "/tests/test.sh")
         {
+            if self.driver_is_live.get() {
+                self.events
+                    .lock()
+                    .unwrap()
+                    .push("driver-observed-verifier-material");
+            }
             self.events.lock().unwrap().push("verify");
         }
         Ok(())
@@ -5207,6 +5272,12 @@ impl DockerRuntime for TransactionDockerRuntime {
 
     fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
         if source.ends_with("result.txt") {
+            if self.driver_is_live.get() {
+                self.events
+                    .lock()
+                    .unwrap()
+                    .push("driver-wrote-after-terminal");
+            }
             self.events.lock().unwrap().push("collect");
             if matches!(self.case, ExternalTerminalCase::ArtifactAndCleanupFailure) {
                 return Err(EvalExecutionError::ArtifactCollection(
@@ -5260,6 +5331,8 @@ async fn external_driver_transaction_orders_terminal_verifier_and_exact_cleanup(
         events: Arc::clone(&events),
         case: ExternalTerminalCase::Valid,
         is_environment_acquired: Cell::new(false),
+        driver_is_live: Rc::new(Cell::new(false)),
+        startup_clock: None,
     };
 
     let (execution, supplement) = DockerProcessSandbox::new()
@@ -5288,10 +5361,11 @@ async fn external_driver_transaction_orders_terminal_verifier_and_exact_cleanup(
             "acquire",
             "healthcheck",
             "terminal",
-            "collect",
-            "verify",
             "cancel",
             "reap",
+            "collect",
+            "healthcheck",
+            "verify",
         ]
     );
 }
@@ -5323,6 +5397,8 @@ async fn external_driver_terminal_failures_skip_verifier_and_cleanup_exactly_onc
             events: Arc::clone(&events),
             case,
             is_environment_acquired: Cell::new(false),
+            driver_is_live: Rc::new(Cell::new(false)),
+            startup_clock: None,
         };
 
         let error = DockerProcessSandbox::new()
@@ -5366,7 +5442,7 @@ async fn external_driver_pending_terminal_uses_stricter_authored_deadline_and_cl
     let temporary = tempfile::tempdir().unwrap();
     let task_root = external_driver_task_root(
         &temporary,
-        "[environment.healthcheck]\ncommand = [\"ready\"]\n\n[agent]\ntimeout_sec = 0.1\n\n[verifier]\ntimeout_sec = 0.1\n",
+        "[environment.healthcheck]\ncommand = [\"ready\"]\n\n[agent]\ntimeout_sec = 0.1\n\n[verifier]\nenvironment_mode = \"separate\"\ntimeout_sec = 0.1\n",
     );
     let imported = HarborImporter::new(&NativeSourceAcquirer)
         .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
@@ -5387,6 +5463,8 @@ async fn external_driver_pending_terminal_uses_stricter_authored_deadline_and_cl
         events: Arc::clone(&events),
         case: ExternalTerminalCase::Timeout,
         is_environment_acquired: Cell::new(false),
+        driver_is_live: Rc::new(Cell::new(false)),
+        startup_clock: None,
     };
     let clock = Rc::new(SimClock::new());
     let sandbox = DockerProcessSandbox::with_clock(clock.clone());
@@ -5451,7 +5529,7 @@ async fn external_driver_pending_terminal_uses_stricter_authored_deadline_and_cl
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn external_driver_preserves_artifact_primary_and_cleanup_failures() {
+async fn external_driver_cleanup_failure_prevents_artifact_collection() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = external_driver_task_root(
         &temporary,
@@ -5472,6 +5550,8 @@ async fn external_driver_preserves_artifact_primary_and_cleanup_failures() {
         events: Arc::clone(&events),
         case: ExternalTerminalCase::ArtifactAndCleanupFailure,
         is_environment_acquired: Cell::new(false),
+        driver_is_live: Rc::new(Cell::new(false)),
+        startup_clock: None,
     };
 
     let error = DockerProcessSandbox::new()
@@ -5488,12 +5568,12 @@ async fn external_driver_preserves_artifact_primary_and_cleanup_failures() {
             &FixedSecret,
         )
         .await
-        .expect_err("artifact and Driver cleanup failures must both remain observable");
+        .expect_err("Driver cleanup failure must prevent artifact and verifier access");
 
     let error = error.to_string();
-    assert!(error.contains("fixture artifact failure"), "{error}");
     assert!(error.contains("fixture cancel failure"), "{error}");
     assert!(error.contains("fixture reap failure"), "{error}");
+    assert!(!error.contains("fixture artifact failure"), "{error}");
     assert_eq!(
         events.lock().unwrap().as_slice(),
         [
@@ -5501,7 +5581,6 @@ async fn external_driver_preserves_artifact_primary_and_cleanup_failures() {
             "acquire",
             "healthcheck",
             "terminal",
-            "collect",
             "cancel",
             "reap",
             "fence",
@@ -5535,6 +5614,8 @@ async fn external_driver_startup_abort_cleans_once_without_a_second_fence() {
         events: Arc::clone(&events),
         case: ExternalTerminalCase::StartupPending,
         is_environment_acquired: Cell::new(false),
+        driver_is_live: Rc::new(Cell::new(false)),
+        startup_clock: None,
     };
 
     let error = DockerProcessSandbox::new()
@@ -5567,6 +5648,211 @@ async fn external_driver_startup_abort_cleans_once_without_a_second_fence() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn external_driver_slow_startup_uses_one_clock_deadline_and_cleans_once() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(
+        &temporary,
+        "[environment.healthcheck]\ncommand = [\"ready\"]\n\n[agent]\ntimeout_sec = 0.1\n\n[verifier]\nenvironment_mode = \"separate\"\ntimeout_sec = 0.1\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial_for_run_with_budget(
+        imported.clone(),
+        b"external-driver-clocked-startup",
+        0.25,
+    );
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let prepared = TransactionExternalDriverFactory {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::Valid,
+    }
+    .prepare(&imported.package, &trial)
+    .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime = TransactionDockerRuntime {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::Valid,
+        is_environment_acquired: Cell::new(false),
+        driver_is_live: Rc::new(Cell::new(false)),
+        startup_clock: Some(clock.clone()),
+    };
+    let sandbox = DockerProcessSandbox::with_clock(clock.clone());
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/work".to_owned()),
+    )
+    .unwrap();
+    let deadline_clock = clock.clone();
+    let result = tokio::task::LocalSet::new()
+        .run_until(async move {
+            let execution = tokio::task::spawn_local(async move {
+                sandbox
+                    .execute_externally_driven_with_runtime(
+                        &runtime,
+                        &recipe,
+                        &imported.package,
+                        &trial,
+                        prepared,
+                        &FixedSecret,
+                    )
+                    .await
+            });
+            for _ in 0..1_024 {
+                if deadline_clock.next_event_time().is_some() || execution.is_finished() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(
+                deadline_clock.next_event_time(),
+                Some(100_000_000),
+                "the outer Agent deadline must cover startup instead of waiting for its 200ms sleeper"
+            );
+            deadline_clock.advance_to(100_000_000);
+            execution.await.unwrap()
+        })
+        .await;
+
+    assert_eq!(
+        result,
+        Err(EvalExecutionError::Timeout {
+            phase: EvalExecutionPhase::Agent,
+            timeout: Duration::from_millis(100),
+        })
+    );
+    let events = events.lock().unwrap();
+    assert_eq!(events.iter().filter(|event| **event == "cancel").count(), 1);
+    assert_eq!(events.iter().filter(|event| **event == "reap").count(), 1);
+    assert!(!events.contains(&"fence"), "{events:?}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn aborting_external_driver_terminal_future_confirms_cleanup_once() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let prepared = TransactionExternalDriverFactory {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::Timeout,
+    }
+    .prepare(&imported.package, &trial)
+    .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime = TransactionDockerRuntime {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::Timeout,
+        is_environment_acquired: Cell::new(false),
+        driver_is_live: Rc::new(Cell::new(false)),
+        startup_clock: None,
+    };
+    let sandbox = DockerProcessSandbox::with_clock(clock);
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/work".to_owned()),
+    )
+    .unwrap();
+    let observed_events = Arc::clone(&events);
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            let execution = tokio::task::spawn_local(async move {
+                sandbox
+                    .execute_externally_driven_with_runtime(
+                        &runtime,
+                        &recipe,
+                        &imported.package,
+                        &trial,
+                        prepared,
+                        &FixedSecret,
+                    )
+                    .await
+            });
+            for _ in 0..1_024 {
+                if observed_events.lock().unwrap().contains(&"terminal") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert!(observed_events.lock().unwrap().contains(&"terminal"));
+            execution.abort();
+            assert!(execution.await.unwrap_err().is_cancelled());
+            for _ in 0..1_024 {
+                if observed_events.lock().unwrap().contains(&"reap") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+
+    let events = events.lock().unwrap();
+    assert_eq!(events.iter().filter(|event| **event == "cancel").count(), 1);
+    assert_eq!(events.iter().filter(|event| **event == "reap").count(), 1);
+    assert!(!events.contains(&"fence"), "{events:?}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn external_driver_malformed_ready_identifier_is_redacted_before_public_return() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let prepared = TransactionExternalDriverFactory {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::MaliciousReady,
+    }
+    .prepare(&imported.package, &trial)
+    .unwrap();
+    let runtime = TransactionDockerRuntime {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::MaliciousReady,
+        is_environment_acquired: Cell::new(false),
+        driver_is_live: Rc::new(Cell::new(false)),
+        startup_clock: None,
+    };
+
+    let error = DockerProcessSandbox::new()
+        .execute_externally_driven_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Some("/work".to_owned()),
+            )
+            .unwrap(),
+            &imported.package,
+            &trial,
+            prepared,
+            &FixedSecret,
+        )
+        .await
+        .expect_err("malformed Ready correlation must fail closed");
+
+    assert_eq!(
+        error,
+        EvalExecutionError::ProcessFailure(
+            "external compatibility Driver session was rejected".to_owned()
+        )
+    );
+    assert!(!format!("{error:?}").contains("driver-private-ready-identifier"));
+    assert!(
+        !error
+            .to_string()
+            .contains("driver-private-ready-identifier")
+    );
+    let events = events.lock().unwrap();
+    assert_eq!(events.iter().filter(|event| **event == "cancel").count(), 1);
+    assert_eq!(events.iter().filter(|event| **event == "reap").count(), 1);
+    assert!(!events.contains(&"fence"), "{events:?}");
+}
+
 fn prepare_external_driver(
     imported: &aiperf_runtime::eval::ImportedTask,
     trial: &aiperf_runtime::eval::ResolvedEpisodeTrial,
@@ -5578,8 +5864,8 @@ fn prepare_external_driver(
     .unwrap()
 }
 
-#[test]
-fn external_driver_authorization_is_prepared_before_build_and_spawns_only_declared_secret_free_argv()
+#[tokio::test(flavor = "current_thread")]
+async fn external_driver_authorization_is_prepared_before_build_and_spawns_only_declared_secret_free_argv()
  {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = external_driver_task_root(&temporary, "");
@@ -5623,7 +5909,9 @@ fn external_driver_authorization_is_prepared_before_build_and_spawns_only_declar
     runtime
         .build(&DockerBuildRequest::new(["build"]))
         .expect("fixture build succeeds");
-    let _started = launch.start().expect("authorized spawn begins once");
+    let started = launch
+        .start(external_driver_deadlines())
+        .expect("authorized spawn begins once");
     assert_eq!(
         requests.borrow().as_slice(),
         &[(
@@ -5637,10 +5925,16 @@ fn external_driver_authorization_is_prepared_before_build_and_spawns_only_declar
         events.borrow().as_slice(),
         ["external-driver-spawner", "build", "adapter-spawn",]
     );
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            drop(started);
+            tokio::task::yield_now().await;
+        })
+        .await;
 }
 
-#[test]
-fn dropping_started_external_driver_fences_its_live_transaction_once() {
+#[tokio::test(flavor = "current_thread")]
+async fn dropping_started_external_driver_confirms_cancel_and_reap_once() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = external_driver_task_root(&temporary, "");
     let imported = HarborImporter::new(&NativeSourceAcquirer)
@@ -5669,12 +5963,32 @@ fn dropping_started_external_driver_fences_its_live_transaction_once() {
         )
         .unwrap();
 
-    let started = launch.start().unwrap();
-    drop(started);
+    let cleanup_events = Rc::clone(&events);
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            let started = launch.start(external_driver_deadlines()).unwrap();
+            drop(started);
+            for _ in 0..1_024 {
+                if cleanup_events
+                    .borrow()
+                    .iter()
+                    .any(|event| event == "client-reap")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
 
     assert_eq!(
         events.borrow().as_slice(),
-        ["external-driver-spawner", "adapter-spawn", "client-fence"]
+        [
+            "external-driver-spawner",
+            "adapter-spawn",
+            "client-cancel",
+            "client-reap"
+        ]
     );
 }
 
@@ -5708,6 +6022,44 @@ fn external_driver_missing_spawner_refuses_before_docker_create() {
     ));
     assert!(runtime.creates.borrow().is_empty());
     assert_eq!(runtime.native_graph_secret_provider_calls.get(), 0);
+}
+
+#[test]
+fn external_driver_shared_verifier_refuses_before_spawner_or_docker_create() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root =
+        external_driver_task_root(&temporary, "[verifier]\nenvironment_mode = \"shared\"\n");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let runtime = LegacyRuntime {
+        external_driver_spawn_executor: Some(Rc::new(RecordingExternalDriverSpawnExecutor {
+            events: Rc::new(RefCell::new(Vec::new())),
+            requests: Rc::new(RefCell::new(Vec::new())),
+        })),
+        ..LegacyRuntime::default()
+    };
+
+    let error = DockerProcessSandbox::new()
+        .prepare_external_driver_spawn_with_runtime(
+            &runtime,
+            &imported.package,
+            &trial,
+            imported.package.execution_plan(),
+            Some(prepare_external_driver(&imported, &trial)),
+            "external-driver-task-container",
+            ComposeProjectId::new("aiperf-external-driver"),
+            external_driver_deadlines(),
+        )
+        .expect_err("a shared verifier cannot be isolated from the external Driver container");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::UnsupportedEnforcement("external Driver shared verifier isolation")
+    ));
+    assert_eq!(runtime.external_driver_spawner_calls.get(), 0);
+    assert!(runtime.creates.borrow().is_empty());
 }
 
 #[test]
@@ -5785,7 +6137,7 @@ fn external_driver_preflight_refuses_substituted_one_step_compose_and_verifier_p
     let verifier_temporary = tempfile::tempdir().unwrap();
     let verifier_root = external_driver_task_root(
         &verifier_temporary,
-        "[verifier]\nenvironment_mode = \"separate\"\n",
+        "[verifier]\nenvironment_mode = \"shared\"\n",
     );
     let verifier = HarborImporter::new(&NativeSourceAcquirer)
         .import(&HarborSource::local(verifier_root.to_string_lossy()).unwrap())
@@ -5820,6 +6172,9 @@ fn external_driver_preflight_refuses_substituted_one_step_compose_and_verifier_p
                 error,
                 EvalExecutionError::InvalidRecipe("external Driver execution plan")
                     | EvalExecutionError::UnsupportedEnforcement("external Driver Docker Compose")
+                    | EvalExecutionError::UnsupportedEnforcement(
+                        "external Driver shared verifier isolation"
+                    )
             ),
             "case {name}: {error:?}"
         );

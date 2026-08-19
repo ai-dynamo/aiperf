@@ -522,6 +522,7 @@ impl AdapterRuntimeFactory for ProtocolAdapterRuntimeFactory {
             max_stdout_frame_bytes,
             max_stderr_bytes,
             terminal_exit: None,
+            has_cleanup_started: false,
         };
         let hello = HostEnvelope::new(
             self.config.episode(),
@@ -600,9 +601,67 @@ pub struct StrictSupervisedAdapter {
     max_stdout_frame_bytes: usize,
     max_stderr_bytes: usize,
     terminal_exit: Option<AdapterExit>,
+    has_cleanup_started: bool,
 }
 
 impl StrictSupervisedAdapter {
+    /// Binds one already-created process to the strict protocol before startup negotiation.
+    ///
+    /// External Driver startup stores this owner before its first protocol-I/O await so
+    /// cancellation can run the same confirmed cancel/reap path as an established session.
+    pub(crate) fn from_prestarted_process(
+        config: AdapterProtocolConfig,
+        process: Box<dyn AdapterProcess>,
+        deadlines: AdapterLifecycleDeadlines,
+        max_stdout_frame_bytes: usize,
+        max_stderr_bytes: usize,
+    ) -> Self {
+        let max_stdout_frame_bytes = max_stdout_frame_bytes.min(config.max_frame_bytes());
+        Self {
+            protocol: super::protocol::strict_adapter_protocol(config),
+            process: Some(process),
+            deadlines,
+            max_stdout_frame_bytes,
+            max_stderr_bytes,
+            terminal_exit: None,
+            has_cleanup_started: false,
+        }
+    }
+
+    /// Whether terminal cleanup has already been attempted for this process owner.
+    pub(crate) const fn has_cleanup_started(&self) -> bool {
+        self.has_cleanup_started
+    }
+
+    /// Completes the strict Hello/Ready exchange for an already-owned process.
+    pub(crate) async fn negotiate_startup(
+        &mut self,
+        config: &AdapterProtocolConfig,
+    ) -> Result<(), AdapterSupervisionError> {
+        let startup_deadline = AdapterDeadline::new(self.deadlines.startup())?;
+        let hello = HostEnvelope::new(
+            config.episode(),
+            "startup",
+            0,
+            "hello",
+            HostMessage::Hello {
+                supported_versions: vec![PROTOCOL_VERSION],
+                adapter_role: config.role(),
+                capabilities: config.capabilities().iter().copied().collect(),
+            },
+        );
+        self.send_with_deadline(
+            hello,
+            startup_deadline.remaining(AdapterSupervisionError::StartupDeadlineElapsed)?,
+        )
+        .await?;
+        self.receive_with_deadline(
+            startup_deadline.remaining(AdapterSupervisionError::StartupDeadlineElapsed)?,
+        )
+        .await
+        .map(|_| ())
+    }
+
     fn process_mut(&mut self) -> Result<&mut Box<dyn AdapterProcess>, AdapterSupervisionError> {
         self.process
             .as_mut()
@@ -767,6 +826,10 @@ impl SupervisedAdapter for StrictSupervisedAdapter {
         if let Some(exit) = self.terminal_exit {
             return Ok(exit);
         }
+        if self.has_cleanup_started {
+            return Err(AdapterSupervisionError::CleanupAlreadyAttempted);
+        }
+        self.has_cleanup_started = true;
         let cancel_deadline = self.deadlines.cancel();
         let reap_deadline = self.deadlines.reap();
         let process = self.process_mut()?;
@@ -809,7 +872,7 @@ impl Drop for StrictSupervisedAdapter {
 pub(crate) struct ProtocolExternalDriverSession<'a> {
     adapter: &'a mut dyn SupervisedAdapter,
     terminal: DriverTerminalProtocol,
-    capture_session: CompatibilityCaptureSession,
+    capture_session: Option<CompatibilityCaptureSession>,
 }
 
 #[allow(dead_code)]
@@ -822,7 +885,7 @@ impl<'a> ProtocolExternalDriverSession<'a> {
         Ok(Self {
             adapter,
             terminal: DriverTerminalProtocol::new(config)?,
-            capture_session,
+            capture_session: Some(capture_session),
         })
     }
 }
@@ -849,11 +912,12 @@ impl ExternalDriverSession for ProtocolExternalDriverSession<'_> {
             .terminal
             .accept_candidate(candidate)
             .map_err(|_| ExternalDriverError::TerminalReceiptRejected)?;
-        CompatibilityTerminalReceipt::from_canonical_terminal_bytes(
-            self.capture_session.clone(),
-            &bytes,
-        )
-        .map_err(|_| ExternalDriverError::TerminalReceiptRejected)
+        let capture_session = self
+            .capture_session
+            .take()
+            .ok_or(ExternalDriverError::TerminalReceiptRejected)?;
+        CompatibilityTerminalReceipt::from_canonical_terminal_bytes(capture_session, &bytes)
+            .map_err(|_| ExternalDriverError::TerminalReceiptRejected)
     }
 }
 
@@ -1158,6 +1222,7 @@ pub struct ExternallyDrivenAdapterAuthorization {
     external_spawn_token: ExactSpawnToken,
     has_minted_request: Rc<Cell<bool>>,
     has_authorized_request: Rc<Cell<bool>>,
+    minted_deadlines: Rc<Cell<Option<AdapterLifecycleDeadlines>>>,
 }
 
 impl ExternallyDrivenAdapterAuthorization {
@@ -1206,18 +1271,33 @@ impl ExternallyDrivenAdapterAuthorization {
             external_spawn_token: ExactSpawnToken::new(),
             has_minted_request: Rc::new(Cell::new(false)),
             has_authorized_request: Rc::new(Cell::new(false)),
+            minted_deadlines: Rc::new(Cell::new(None)),
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn spawn_request(&self) -> Result<AdapterSpawnRequest, AdapterSupervisionError> {
+        self.spawn_request_with_deadlines(self.deadlines)
+    }
+
+    pub(crate) fn spawn_request_with_deadlines(
+        &self,
+        deadlines: AdapterLifecycleDeadlines,
+    ) -> Result<AdapterSpawnRequest, AdapterSupervisionError> {
         if self.has_minted_request.replace(true) {
             return Err(AdapterSupervisionError::InvalidSpawnRequest(
                 "external Driver request already minted",
             ));
         }
+        if !deadlines_are_within(deadlines, self.deadlines) {
+            return Err(AdapterSupervisionError::InvalidSpawnRequest(
+                "external Driver deadline",
+            ));
+        }
+        self.minted_deadlines.set(Some(deadlines));
         AdapterSpawnRequest::for_external_driver(
             self.driver_argv.clone(),
-            self.deadlines,
+            deadlines,
             self.external_spawn_token.clone(),
         )
     }
@@ -1236,7 +1316,7 @@ impl ExternallyDrivenAdapterAuthorization {
             || !self.external_spawn_token.matches(token)
             || request.argv != self.driver_argv
             || !request.environment.is_empty()
-            || request.deadlines != self.deadlines
+            || Some(request.deadlines) != self.minted_deadlines.get()
             || self.has_authorized_request.replace(true)
         {
             return Err(AdapterSupervisionError::InvalidSpawnRequest(
@@ -1245,6 +1325,19 @@ impl ExternallyDrivenAdapterAuthorization {
         }
         Ok(request)
     }
+}
+
+fn deadlines_are_within(
+    requested: AdapterLifecycleDeadlines,
+    limit: AdapterLifecycleDeadlines,
+) -> bool {
+    requested.startup() <= limit.startup()
+        && requested.reset() <= limit.reset()
+        && requested.heartbeat() <= limit.heartbeat()
+        && requested.idle() <= limit.idle()
+        && requested.operation() <= limit.operation()
+        && requested.cancel() <= limit.cancel()
+        && requested.reap() <= limit.reap()
 }
 
 /// Supervision failure with no secret values in its diagnostic representation.
@@ -1271,6 +1364,8 @@ pub enum AdapterSupervisionError {
     DiagnosticOutputLimit { actual: usize, limit: usize },
     /// The process was already successfully reaped.
     AlreadyReaped,
+    /// Terminal cleanup was already attempted and cannot be repeated.
+    CleanupAlreadyAttempted,
     /// A fixture or implementation rejected a protocol reset.
     ResetRejected(String),
     /// Task 4 rejected an unauthorized or malformed protocol transition.
@@ -1337,6 +1432,9 @@ impl Display for AdapterSupervisionError {
                 )
             }
             Self::AlreadyReaped => formatter.write_str("adapter process was already reaped"),
+            Self::CleanupAlreadyAttempted => {
+                formatter.write_str("adapter terminal cleanup was already attempted")
+            }
             Self::ResetRejected(reason) => write!(formatter, "adapter reset rejected: {reason}"),
             Self::Protocol(error) => write!(formatter, "adapter protocol violation: {error}"),
             Self::Recovery { primary, recovery } => {

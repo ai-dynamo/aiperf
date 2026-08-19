@@ -1221,6 +1221,29 @@ fn bounded_jsonl_rejects_the_frame_before_deserializing_it() {
 }
 
 #[test]
+fn bounded_json_reports_only_the_proven_limit_when_serialization_overflows() {
+    let limits = ProtocolLimits {
+        max_json_bytes: 8,
+        ..ProtocolLimits::default()
+    };
+    let mut protocol = new_protocol_with_limits(AdapterRole::Tool, limits);
+    ready(protocol.as_mut(), AdapterRole::Tool);
+
+    let error = protocol
+        .accept_host(host(
+            1,
+            "tool-1",
+            HostMessage::InvokeTool {
+                input: json!({"private": "driver-controlled-size"}),
+            },
+        ))
+        .expect_err("an oversized JSON value is rejected without an invented exact size");
+
+    assert_eq!(error, ProtocolError::JsonTooLarge { limit: 8 });
+    assert_eq!(error.to_string(), "JSON exceeds 8-byte limit");
+}
+
+#[test]
 fn external_driver_terminal_config_is_exactly_driver_only() {
     let driver_only = AdapterProtocolConfig::new(
         AdapterRole::Driver,

@@ -33,7 +33,11 @@ purpose for each, so an agent knows which file to open for a given question.
   `externally_driven` lifecycle record against its immutable manifest driver,
   rejects `--agent-command` and `--model-runtime`, and runs one single-task
   Docker compatibility transaction through the exact built-in `terminal_v1`
-  factory. That sealed factory can only request the terminal response; it gets
+  factory. The transaction requires an authored separate verifier, uses one
+  absolute Clock deadline, confirms Driver cancel/reap and task-container stop,
+  collects declared artifacts from the stopped container, and only then creates
+  the fresh verifier container. That sealed factory can only request the
+  terminal response; it gets
   no model runtime, external model secrets, HTTP client, generic Docker
   authority, or raw terminal payload. The result retains the verifier-authored
   score, reports `externally_driven`/`Missing`, and exports only the typed

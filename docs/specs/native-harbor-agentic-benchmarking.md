@@ -45,8 +45,15 @@ and Docker proves `NoAdapterEgress` for the sealed plan.
 One `externally_driven` standard task can instead select the built-in
 `terminal_v1` compatibility factory. The CLI prepares that factory against the
 exact resolved package and trial before Docker, supervises its manifest driver
-to one terminal response, then retains only a compatibility digest beside the
-ordinary Harbor verifier result. This lower-fidelity path neither resolves a
+to one terminal response, then confirms Driver cancellation and reap before
+artifact collection or verifier setup. This profile requires an authored
+separate verifier: confirmed cleanup stops the task container, Rust collects
+the declared artifacts from the stopped container, and a fresh verifier
+container receives only that frozen transfer. One Clock-based
+absolute Agent deadline covers startup, Ready negotiation, the prepared driver,
+terminal exchange, and the cleanup decision. The runner retains only a
+compatibility digest beside the ordinary Harbor verifier result. This
+lower-fidelity path neither resolves a
 model runtime nor exposes model credentials, an HTTP client, generic Docker
 authority, or the raw terminal payload.
 
@@ -91,10 +98,13 @@ silently add an unbounded loop or direct network model call.
 `externally_driven` is the terminal-only compatibility profile for one standard
 task. Single-task preflight validates the immutable `terminal_v1` factory,
 driver selection, exact resolved trial, and lifecycle command provenance before
-Docker; it rejects `--agent-command` and `--model-runtime`. The sealed factory
-can only request one terminal response from its authorized driver session. Rust
-continues to own task identity, process lifecycle, environment, budgets,
-declared artifacts, verifier, score, and outer episode timing.
+Docker; it rejects a shared verifier, `--agent-command`, and `--model-runtime`.
+The sealed factory can only request one terminal response from its authorized
+driver session. Rust continues to own task identity, process lifecycle,
+environment, budgets, declared artifacts, verifier, score, and outer episode
+timing. A terminal receipt does not authorize artifact or verifier access until
+the untrusted Driver has been confirmed reaped; cleanup failure therefore ends
+the attempt before either.
 
 The result is classified as `externally_driven`, never exact NativeGraph. With
 no capture proxy, its fidelity is `Missing`. Its verifier-authored reward and

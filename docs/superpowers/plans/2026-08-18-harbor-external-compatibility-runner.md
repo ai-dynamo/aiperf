@@ -41,7 +41,7 @@
 | `rust/runtime/tests/harbor_docker_runtime.rs` | Supervision, secret stripping, rejection, and cleanup tests. |
 | `rust/runtime/tests/native_graph_scored_episode.rs` | Concrete executor-to-verifier-to-result integration tests. |
 | `rust/cli/tests/eval_command.rs` | CLI preflight/no-model-runtime/refusal tests. |
-| `rust/e2e-tests/tests/test_harbor_external_compatibility.rs` | Product-level mock-server/Docker end-to-end coverage. |
+| `rust/e2e-tests/tests/test_harbor_external_compatibility.rs` | Product-level terminal-only Docker end-to-end coverage with no inference traffic. |
 
 ### Task 1: Seal pure compatibility contracts
 
@@ -219,10 +219,10 @@ git commit -m "feat(eval): authorize Harbor external drivers"
 
 - [ ] **Step 1: Write the failing tests**
 
-Add a concrete fake Docker/driver test proving `prepare → acquire → healthcheck → terminal → artifacts → verifier → cancel → reap`, and negative cases where driver error, timeout, missing candidate, or invalid candidate skip verifier but cancel/reap exactly once.
+Add a concrete fake Docker/driver test proving `prepare → acquire → healthcheck → terminal → cancel → reap → artifacts → verifier`, and negative cases where driver error, timeout, missing candidate, invalid candidate, or failed cleanup skip verifier while attempting cancel/reap exactly once.
 
 ```rust
-assert_eq!(events, ["prepare", "healthcheck", "terminal", "collect", "verify", "cancel", "reap"]);
+assert_eq!(events, ["prepare", "healthcheck", "terminal", "cancel", "reap", "collect", "verify"]);
 assert_eq!(verifier.calls(), 0); // missing terminal candidate
 assert_eq!(adapter.reap_calls(), 1);
 ```
@@ -235,7 +235,7 @@ Expected: FAIL because no external executor/session transaction is wired to Harb
 
 - [ ] **Step 3: Write minimal implementation**
 
-Add `execute_externally_driven_with_runtime` beside the native path. It performs only the approved one-step transaction, obtains a terminal receipt from the prepared driver session, invokes existing artifact collector/verifier, and freezes the Task 1 supplement. Ensure every exit uses one owner to cancel/reap once; do not alter protected uncertain-create/recovery regions.
+Add `execute_externally_driven_with_runtime` beside the native path. It performs only the approved one-step transaction, obtains a terminal receipt from the prepared driver session, confirms Driver cancel/reap before invoking the existing artifact collector/verifier, and freezes the Task 1 supplement. Use one Clock-based absolute Agent deadline across startup, Ready negotiation, prepared-driver work, terminal exchange, and the cleanup decision. Ensure every exit and execution-future cancellation uses one owner to cancel/reap once; do not alter protected uncertain-create/recovery regions.
 
 - [ ] **Step 4: Run focused transaction tests to verify they pass**
 
@@ -266,7 +266,13 @@ git commit -m "feat(eval): execute Harbor external compatibility episodes"
 
 - [ ] **Step 1: Write the failing CLI and product tests**
 
-Create an e2e task whose external driver emits one valid terminal receipt through the in-repo mock-server/Docker environment. Assert externally-driven fidelity, verifier-authored reward/score, default `Missing` capture, and no raw driver payload in exported lifecycle evidence. Add CLI tests for no-model-runtime success, unknown factory and `--agent-command` pre-Docker refusal, and suite refusal.
+Create a Docker e2e task whose terminal-only external driver emits one valid
+terminal receipt without inference traffic and whose authored separate verifier
+runs in a fresh container after Driver teardown. Assert externally-driven
+fidelity, verifier-authored reward/score, default `Missing` capture, and no raw
+driver payload in exported lifecycle evidence. Add CLI tests for no-model-runtime
+success, shared-verifier refusal, unknown factory and `--agent-command`
+pre-Docker refusal, and suite refusal.
 
 ```rust
 assert_eq!(report.fidelity(), EpisodeFidelity::ExternallyDriven(CompatibilityFidelity::Missing));
@@ -291,7 +297,8 @@ Run:
 ```bash
 source ../.venv/bin/activate
 RUSTC_WRAPPER= cargo test -p aiperf-cli --test eval_command -- --nocapture
-RUSTC_WRAPPER= cargo test -p aiperf-e2e-tests --test test_harbor_external_compatibility -- --nocapture
+RUSTC_WRAPPER= cargo build -p aiperf-cli
+AIPERF_E2E_BIN=$PWD/target/debug/aiperf RUSTC_WRAPPER= cargo test -p aiperf-e2e-tests --test test_harbor_external_compatibility -- --nocapture
 cargo fmt --all --check
 git diff --check
 cd .. && /usr/bin/python3 tools/check_agent_files_sync.py && /usr/bin/python3 tools/check_docs_current.py
@@ -325,7 +332,7 @@ RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_grap
 RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test native_graph_scored_episode -- --nocapture
 RUSTC_WRAPPER= cargo test -p aiperf-runtime --features engine --test harbor_docker_runtime -- --nocapture
 RUSTC_WRAPPER= cargo test -p aiperf-cli --test eval_command -- --nocapture
-RUSTC_WRAPPER= cargo test -p aiperf-e2e-tests --test test_harbor_external_compatibility -- --nocapture
+AIPERF_E2E_BIN=$PWD/target/debug/aiperf RUSTC_WRAPPER= cargo test -p aiperf-e2e-tests --test test_harbor_external_compatibility -- --nocapture
 ```
 
 - [ ] **Step 2: Inspect requirement evidence**
@@ -346,4 +353,3 @@ If the audit changes canonical documentation, commit only the complete files:
 git add docs/specs/native-harbor-agentic-benchmarking.md docs/specs/README.md llms.txt
 git commit -m "docs(eval): finalize Harbor compatibility evidence"
 ```
-

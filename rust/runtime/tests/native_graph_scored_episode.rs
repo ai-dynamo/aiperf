@@ -560,9 +560,12 @@ async fn docker_external_episode_preserves_harbor_score_and_compatibility_fideli
             "start",
             "driver-spawn",
             "terminal",
-            "verifier",
             "cancel",
             "reap",
+            "create",
+            "start",
+            "verifier",
+            "remove",
             "remove",
         ]
     );
@@ -2055,6 +2058,9 @@ profile = "externally_driven"
 adapter_manifest = "adapters.toml"
 driver = "driver-adapter"
 external_driver_factory_id = "scored-fixture"
+
+[verifier]
+environment_mode = "separate"
 "#,
     )
     .expect("external Driver task manifest");

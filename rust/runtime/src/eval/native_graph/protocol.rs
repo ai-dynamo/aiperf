@@ -527,6 +527,10 @@ impl AdapterProtocolFactory for StrictAdapterProtocolFactory {
     }
 }
 
+pub(crate) fn strict_adapter_protocol(config: AdapterProtocolConfig) -> Box<dyn AdapterProtocol> {
+    Box::new(StrictAdapterProtocol::new(config))
+}
+
 /// Session-level protocol disposition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProtocolSessionState {
@@ -632,8 +636,8 @@ const DRIVER_TERMINAL_SEQUENCE: u64 = 1;
 #[allow(dead_code)]
 pub(crate) struct DriverTerminalProtocol {
     config: AdapterProtocolConfig,
-    requested: bool,
-    settled: bool,
+    has_requested_terminal: bool,
+    is_settled: bool,
 }
 
 #[allow(dead_code)]
@@ -642,16 +646,16 @@ impl DriverTerminalProtocol {
         config.validate_external_driver_terminal()?;
         Ok(Self {
             config,
-            requested: false,
-            settled: false,
+            has_requested_terminal: false,
+            is_settled: false,
         })
     }
 
     pub(crate) fn request_terminal(&mut self) -> Result<HostEnvelope, ProtocolError> {
-        if self.requested {
+        if self.has_requested_terminal {
             return Err(ProtocolError::DriverTerminalAlreadyRequested);
         }
-        self.requested = true;
+        self.has_requested_terminal = true;
         Ok(HostEnvelope::new(
             self.config.episode(),
             DRIVER_TERMINAL_SPAN,
@@ -667,10 +671,10 @@ impl DriverTerminalProtocol {
         &mut self,
         envelope: AdapterEnvelope,
     ) -> Result<Vec<u8>, ProtocolError> {
-        if !self.requested || self.settled {
+        if !self.has_requested_terminal || self.is_settled {
             return Err(ProtocolError::DriverTerminalCandidateState);
         }
-        self.settled = true;
+        self.is_settled = true;
         self.validate_candidate_envelope(&envelope)?;
         let AdapterMessage::EpisodeTerminalCandidate { output } = envelope.message else {
             return Err(ProtocolError::DriverTerminalCandidateRequired);
@@ -1979,7 +1983,10 @@ pub enum ProtocolError {
     /// Active artifact references exceeded their bound.
     ArtifactHandleLimit { limit: usize },
     /// An arbitrary JSON payload exceeded a byte cap.
-    JsonTooLarge { limit: usize, actual: usize },
+    ///
+    /// Streaming canonicalization stops at the cap, so it cannot truthfully report an exact
+    /// serialized size without retaining or serializing the rejected remainder.
+    JsonTooLarge { limit: usize },
     /// An arbitrary JSON payload exceeded a nesting cap.
     JsonTooDeep { limit: usize, actual: usize },
     /// An arbitrary JSON array exceeded its entry cap.
@@ -2153,8 +2160,8 @@ impl Display for ProtocolError {
             Self::ArtifactHandleLimit { limit } => {
                 write!(formatter, "artifact handle limit {limit} exceeded")
             }
-            Self::JsonTooLarge { limit, actual } => {
-                write!(formatter, "JSON bytes {actual} exceed limit {limit}")
+            Self::JsonTooLarge { limit } => {
+                write!(formatter, "JSON exceeds {limit}-byte limit")
             }
             Self::JsonTooDeep { limit, actual } => {
                 write!(formatter, "JSON depth {actual} exceeds limit {limit}")
@@ -2230,7 +2237,6 @@ fn validate_json(value: &Value, limits: &ProtocolLimits) -> Result<(), ProtocolE
     if bytes.len() > limits.max_json_bytes {
         return Err(ProtocolError::JsonTooLarge {
             limit: limits.max_json_bytes,
-            actual: bytes.len(),
         });
     }
     validate_json_shape(value, limits, 1)
@@ -2247,10 +2253,7 @@ fn canonical_terminal_json(
     let mut writer = BoundedJsonWriter::new(limit);
     match serde_json::to_writer(&mut writer, value) {
         Ok(()) => Ok(writer.into_bytes()),
-        Err(_) if writer.overflowed() => Err(ProtocolError::JsonTooLarge {
-            limit,
-            actual: limit.saturating_add(1),
-        }),
+        Err(_) if writer.has_overflowed() => Err(ProtocolError::JsonTooLarge { limit }),
         Err(_) => Err(ProtocolError::InvalidJson(
             "terminal candidate cannot be canonicalized".to_owned(),
         )),
@@ -2260,7 +2263,7 @@ fn canonical_terminal_json(
 struct BoundedJsonWriter {
     bytes: Vec<u8>,
     limit: usize,
-    overflowed: bool,
+    has_overflowed: bool,
 }
 
 impl BoundedJsonWriter {
@@ -2268,12 +2271,12 @@ impl BoundedJsonWriter {
         Self {
             bytes: Vec::with_capacity(limit.min(4096)),
             limit,
-            overflowed: false,
+            has_overflowed: false,
         }
     }
 
-    fn overflowed(&self) -> bool {
-        self.overflowed
+    fn has_overflowed(&self) -> bool {
+        self.has_overflowed
     }
 
     fn into_bytes(self) -> Vec<u8> {
@@ -2289,7 +2292,7 @@ impl Write for BoundedJsonWriter {
             return Ok(buffer.len());
         }
         self.bytes.extend_from_slice(&buffer[..remaining]);
-        self.overflowed = true;
+        self.has_overflowed = true;
         Err(io::Error::new(
             io::ErrorKind::WriteZero,
             "terminal JSON exceeded its bound",

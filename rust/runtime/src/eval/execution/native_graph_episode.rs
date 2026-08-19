@@ -46,29 +46,38 @@ pub(crate) async fn run_externally_driven_episode_session<T>(
     session: &mut dyn ExternallyDrivenEpisodeSession,
     after_terminal: impl FnOnce(CompatibilityTerminalReceipt) -> Result<T, EvalExecutionError>,
 ) -> Result<T, EvalExecutionError> {
-    let outcome = match remaining {
+    let (mut outcome, terminal_deadline_ns) = match remaining {
         Ok(remaining) => {
+            let started_ns = clock.now_ns();
+            let remaining_ns = remaining.as_nanos().min(i64::MAX as u128) as i64;
+            let terminal_deadline_ns = started_ns.saturating_add(remaining_ns);
             let terminal = session.request_terminal();
-            let timer = clock.sleep(remaining.as_nanos().min(i64::MAX as u128) as i64);
+            let timer = clock.clone().sleep(remaining_ns);
             tokio::pin!(terminal);
             tokio::pin!(timer);
-            tokio::select! {
+            let outcome = tokio::select! {
                 biased;
-                result = &mut terminal => match result {
-                    Ok(receipt) => after_terminal(receipt),
-                    Err(error) => Err(error),
-                },
+                result = &mut terminal => result,
                 () = &mut timer => Err(EvalExecutionError::Timeout {
                     phase: EvalExecutionPhase::Agent,
                     timeout,
                 }),
-            }
+            };
+            (outcome, Some(terminal_deadline_ns))
         }
-        Err(error) => Err(error),
+        Err(error) => (Err(error), None),
     };
     let cleanup = session.cancel_and_reap().await;
+    if outcome.is_ok()
+        && terminal_deadline_ns.is_some_and(|deadline_ns| clock.now_ns() >= deadline_ns)
+    {
+        outcome = Err(EvalExecutionError::Timeout {
+            phase: EvalExecutionPhase::Agent,
+            timeout,
+        });
+    }
     match (outcome, cleanup) {
-        (Ok(value), Ok(())) => Ok(value),
+        (Ok(receipt), Ok(())) => after_terminal(receipt),
         (Ok(_), Err(error)) | (Err(error), Ok(())) => Err(error),
         (Err(primary), Err(cleanup)) => Err(EvalExecutionError::ProcessFailure(format!(
             "external Driver episode failed: {primary}; cleanup failed: {cleanup}"

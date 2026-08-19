@@ -152,7 +152,7 @@ struct DockerNativeGraphEnvironmentRolloutSession {
     workspace_patch: NativeGraphWorkspacePatchContract,
     accepted_patch_count: u64,
     accepted_patch_bytes: u64,
-    workspace_tainted: bool,
+    is_workspace_tainted: bool,
     _artifact_root: TempDir,
 }
 
@@ -203,7 +203,7 @@ impl DockerNativeGraphEnvironmentRolloutSession {
             workspace_patch,
             accepted_patch_count: 0,
             accepted_patch_bytes: 0,
-            workspace_tainted: false,
+            is_workspace_tainted: false,
             _artifact_root: artifact_root,
         })
     }
@@ -260,7 +260,7 @@ impl DockerNativeGraphEnvironmentRolloutSession {
         ) {
             Ok(()) => {}
             Err(error) => {
-                self.workspace_tainted = true;
+                self.is_workspace_tainted = true;
                 return Err(EvalExecutionError::NativeGraphModel(format!(
                     "NativeGraph workspace patch application failed; the rollout session is tainted: {error}"
                 )));
@@ -283,7 +283,7 @@ impl DockerNativeGraphEnvironmentRolloutSession {
     }
 
     fn ensure_workspace_is_safe(&self) -> Result<(), EvalExecutionError> {
-        if self.workspace_tainted {
+        if self.is_workspace_tainted {
             return Err(EvalExecutionError::NativeGraphModel(
                 "NativeGraph rollout session is tainted by incomplete workspace-patch recovery"
                     .to_owned(),
@@ -334,7 +334,7 @@ impl NativeGraphEnvironmentRolloutSession for DockerNativeGraphEnvironmentRollou
             .await
             .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
         if let Err(primary) = self.apply_transition_patch(&transition) {
-            if self.workspace_tainted {
+            if self.is_workspace_tainted {
                 return match self.cancel_and_reap().await {
                     Ok(()) => Err(primary),
                     Err(cleanup) => Err(EvalExecutionError::ProcessFailure(format!(
@@ -1976,12 +1976,52 @@ impl DockerProcessSandbox {
                 EvalExecutionPhase::Agent,
                 driver_timeout,
             );
-            let started = driver_spawn.start().map_err(|error| {
-                EvalExecutionError::ProcessFailure(format!("external Driver spawn failed: {error}"))
-            })?;
-            let mut driver = started
-                .into_session(protocol, capture_session.clone())
-                .await?;
+            let startup_deadlines = external_driver_lifecycle_deadlines(
+                driver_deadline.remaining()?,
+            )?;
+            let mut started = match driver_spawn.start(startup_deadlines) {
+                Ok(started) => started,
+                Err(_) => {
+                    return Err(match driver_deadline.remaining() {
+                        Ok(_) => external_driver_session_rejected(),
+                        Err(timeout) => timeout,
+                    });
+                }
+            };
+            let startup = match driver_deadline.remaining() {
+                Ok(remaining) => {
+                    let startup = started.establish_session(&protocol);
+                    let timer = self.clock.clone().sleep(
+                        remaining.as_nanos().min(i64::MAX as u128) as i64,
+                    );
+                    tokio::pin!(startup);
+                    tokio::pin!(timer);
+                    tokio::select! {
+                        biased;
+                        result = &mut startup => result.map_err(|_| external_driver_session_rejected()),
+                        () = &mut timer => Err(EvalExecutionError::Timeout {
+                            phase: EvalExecutionPhase::Agent,
+                            timeout: driver_timeout,
+                        }),
+                    }
+                }
+                Err(error) => Err(error),
+            };
+            if let Err(primary) = startup {
+                let cleanup = if started.has_started_cleanup() {
+                    started.retire_after_started_cleanup();
+                    Ok(())
+                } else {
+                    started.cancel_and_reap().await
+                };
+                return match cleanup {
+                    Ok(()) => Err(primary),
+                    Err(cleanup) => Err(EvalExecutionError::ProcessFailure(format!(
+                        "external Driver startup failed: {primary}; cleanup failed: {cleanup}"
+                    ))),
+                };
+            }
+            let mut driver = started.into_session(protocol, capture_session.clone())?;
             run_externally_driven_episode_session(
                 self.clock.clone(),
                 driver_timeout,
@@ -3093,12 +3133,19 @@ fn external_driver_timeout(
 fn external_driver_lifecycle_deadlines(
     timeout: Duration,
 ) -> Result<AdapterLifecycleDeadlines, EvalExecutionError> {
-    // The resolved execution budget is the outer Driver deadline. Every inner
-    // supervision action receives no more time than that same authored bound.
+    // This already-minimized Agent budget is the outer Driver deadline. Each
+    // inner supervision action receives no more than its remaining duration.
     AdapterLifecycleDeadlines::new(
         timeout, timeout, timeout, timeout, timeout, timeout, timeout,
     )
     .map_err(|_| EvalExecutionError::InvalidRecipe("external Driver execution deadline"))
+}
+
+#[cfg(feature = "engine")]
+fn external_driver_session_rejected() -> EvalExecutionError {
+    EvalExecutionError::ProcessFailure(
+        "external compatibility Driver session was rejected".to_owned(),
+    )
 }
 
 fn docker_run_names(package: &HarborTaskPackage) -> (String, String) {

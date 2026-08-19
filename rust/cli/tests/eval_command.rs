@@ -30,7 +30,7 @@ fn write_externally_driven_task(task_root: &Path) {
     fs::create_dir_all(task_root.join("tools")).unwrap();
     fs::write(
         task_root.join("task.toml"),
-        "schema_version = \"1.1\"\n[task]\nname = \"example/external-driver\"\n[native_graph]\nprofile = \"externally_driven\"\nadapter_manifest = \"adapters.toml\"\ndriver = \"driver-adapter\"\nexternal_driver_factory_id = \"terminal_v1\"\n",
+        "schema_version = \"1.1\"\n[task]\nname = \"example/external-driver\"\n[native_graph]\nprofile = \"externally_driven\"\nadapter_manifest = \"adapters.toml\"\ndriver = \"driver-adapter\"\nexternal_driver_factory_id = \"terminal_v1\"\n[verifier]\nenvironment_mode = \"separate\"\n",
     )
     .unwrap();
     fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
@@ -498,6 +498,42 @@ fn externally_driven_eval_enters_the_runner_without_model_runtime_before_provisi
     assert!(
         !error.to_string().contains("--model-runtime is required"),
         "external compatibility preflight must not require a Rust model runtime: {error:#}"
+    );
+}
+
+#[test]
+fn externally_driven_eval_rejects_shared_verifier_before_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("external-driver");
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    write_externally_driven_task(&task_root);
+    let manifest = fs::read_to_string(task_root.join("task.toml")).unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        manifest.replace(
+            "environment_mode = \"separate\"",
+            "environment_mode = \"shared\"",
+        ),
+    )
+    .unwrap();
+    write_externally_driven_lifecycle(&lifecycle_path, &["tools/driver.sh"]);
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+    ])
+    .expect_err("a shared verifier cannot be isolated from the external Driver container");
+
+    assert!(
+        error
+            .to_string()
+            .contains("external Driver shared verifier isolation"),
+        "unexpected external-profile refusal: {error:#}"
     );
 }
 
