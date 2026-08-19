@@ -42,7 +42,13 @@ committing descriptor rollout evidence. The sidecar is reaped before artifact
 collection, so post-terminal sidecar writes cannot affect independent
 verification or scoring. The task and agent Docker networks remain `no-network`,
 and Docker proves `NoAdapterEgress` for the sealed plan.
-Externally driven graphs remain fail-closed for this slice.
+One `externally_driven` standard task can instead select the built-in
+`terminal_v1` compatibility factory. The CLI prepares that factory against the
+exact resolved package and trial before Docker, supervises its manifest driver
+to one terminal response, then retains only a compatibility digest beside the
+ordinary Harbor verifier result. This lower-fidelity path neither resolves a
+model runtime nor exposes model credentials, an HTTP client, generic Docker
+authority, or the raw terminal payload.
 
 The runtime also supplies native Graph-IR scheduling, state channels, reducers,
 worker-local metrics, trace-local placement, cellular folding, and injected
@@ -82,19 +88,21 @@ silently add an unbounded loop or direct network model call.
 
 ### Supervised external episode, the compatibility profile
 
-`externally_driven` is currently an import and preflight-only compatibility
-profile, not an executable agent runtime. Single-task preflight validates the
-immutable driver selection and lifecycle command provenance, rejects
-`--agent-command`, and reaches the unavailable compatibility-runner boundary
-without requiring `--model-runtime`. It fails closed before environment
-provisioning and cannot report an episode result.
+`externally_driven` is the terminal-only compatibility profile for one standard
+task. Single-task preflight validates the immutable `terminal_v1` factory,
+driver selection, exact resolved trial, and lifecycle command provenance before
+Docker; it rejects `--agent-command` and `--model-runtime`. The sealed factory
+can only request one terminal response from its authorized driver session. Rust
+continues to own task identity, process lifecycle, environment, budgets,
+declared artifacts, verifier, score, and outer episode timing.
 
-The planned compatibility runner will supervise an opaque user-language loop.
-It will let Rust own task identity, process lifecycle, environment, budgets,
-artifacts, verifier, score, and outer episode timing while reporting lower
-observability than NativeGraph: it will not claim native scheduling or full
-internal model/tool visibility. Any result will be classified as
-`externally_driven`, never an exact NativeGraph result.
+The result is classified as `externally_driven`, never exact NativeGraph. With
+no capture proxy, its fidelity is `Missing`. Its verifier-authored reward and
+score remain ordinary Harbor authority, while the compatibility lifecycle is
+exported as one content-addressed digest. Raw driver terminal bytes are bounded,
+digested, discarded at the private protocol boundary, and absent from product
+output. The legacy `refuse` factory remains registered as an explicit
+unavailable selector.
 
 A planned optional AIPerf-native capture proxy and capture executor will
 improve observability of declared HTTP(S) model or tool calls in this profile.
@@ -220,16 +228,14 @@ provisioned. Adapters receive only binding ids and correlated model results.
 The `externally_driven` profile has no Rust-owned model binding or secret
 mapping. Its lifecycle record uses the distinct `externally_driven` contract,
 must exactly match the immutable manifest driver argv, and cannot use
-`--agent-command`. A single-task invocation currently supports only this
-import and preflight boundary: it reaches the unavailable compatibility-runner
-boundary without requiring `--model-runtime` and fails closed before
-environment provisioning. It launches neither a driver nor a capture executor.
-The existing suite grammar still requires Rust model-binding axes, so it has no
-valid externally driven suite shape yet.
+`--agent-command` or `--model-runtime`. A single-task invocation resolves one
+matrix trial, prepares the exact `terminal_v1` capability, and runs the sealed
+Docker compatibility executor. Unknown, mismatched, and `refuse` selectors fail
+before Docker. Authored `--suite` execution remains an explicit refusal because
+the suite input has no external lifecycle-provenance contract.
 
 The current import contract uses the same schema revision and names its sole
-declared driver and exact registered compatibility-factory selector explicitly;
-the planned compatibility runner will supervise it:
+declared driver and exact registered compatibility-factory selector explicitly:
 
 ```toml
 schema_version = "1.1"
@@ -237,7 +243,7 @@ schema_version = "1.1"
 [native_graph]
 profile = "externally_driven"
 driver = "episode-driver"
-external_driver_factory_id = "refuse"
+external_driver_factory_id = "terminal_v1"
 adapter_manifest = "adapters.toml"
 ```
 
@@ -271,8 +277,9 @@ that Rust atomically commits to the verifier workspace; no adapter mount reaches
 that workspace directly. A task becomes one resolved, independently verified, scored matrix
 trial. `--suite` uses that same path only when exactly one resolved trial
 matches the supplied lifecycle request. Externally driven graphs and
-multi-lifecycle suite provenance remain typed refusals pending their dedicated
-contracts.
+multi-lifecycle suite provenance remain typed refusals in `--suite`. The
+`externally_driven` single-task path independently resolves one trial without a
+model runtime and runs only the exact `terminal_v1` driver capability.
 
 The importer records both the complete source snapshot and a resolved native
 graph plan. In addition to the complete source digest, the package identity
@@ -316,8 +323,8 @@ correlated `DeliverModelResult`. `InvokeTool` gives a tool adapter a frozen inpu
 snapshot and returns a typed `ToolResult`. Every response carries the operation,
 episode, span, and sequence ids it satisfies.
 
-When the planned compatibility runner executes an `externally_driven` episode,
-only its driver will be permitted to emit an `EpisodeTerminalCandidate`.
+When the compatibility runner executes an `externally_driven` episode, only its
+driver is permitted to emit an `EpisodeTerminalCandidate`.
 NativeGraph tool, environment, heuristic, and policy adapters terminate only
 their correlated operation; Rust alone evaluates graph terminality and emits
 the canonical episode terminal record. RL reset produces the initial observation
@@ -380,8 +387,10 @@ that bind a completed-attempt digest to the issued plan, grant, cell, task,
 trial, and attempt before one ordered fold can release capacity. It remains a
 local controller boundary: Velo transport, remote artifact transfer, and cell
 launch integration are not yet implemented. External compatibility likewise
-has only a bounded digest/counter observation profile that can emit lifecycle
-evidence; it does not execute or capture an external driver.
+uses the bounded digest/counter observation profile, executes one sealed terminal
+driver transaction, and emits digest-only lifecycle evidence. It does not
+capture model calls or retain raw driver data, so its current fidelity is always
+`Missing`.
 
 ## Results, verifier, and RL authority
 
@@ -453,4 +462,12 @@ measurement.
 - `rust/runtime/src/engine/graph_input.rs` and
   `rust/runtime/src/graph/recorded/agent_recording/` — recorded-agent replay
   adapter, distinct from the proposed live NativeGraph executor.
-- `rust/cli/src/eval.rs` — current native eval CLI and NativeGraph refusal.
+- `rust/runtime/src/eval/native_graph/factories.rs` — exact `terminal_v1`
+  preparation and the legacy unavailable selector.
+- `rust/runtime/src/eval/native_graph/episode_runner.rs` — sealed Docker
+  compatibility transaction and ordinary Harbor completion.
+- `rust/cli/src/eval/native_graph.rs` — single-task NativeGraph and external
+  compatibility CLI composition plus digest-only result rendering.
+- `rust/e2e-tests/tests/test_harbor_external_compatibility.rs` — real Docker
+  product acceptance for Missing fidelity, verifier score authority, and raw
+  terminal-payload exclusion.

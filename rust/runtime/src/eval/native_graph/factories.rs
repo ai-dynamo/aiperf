@@ -1164,7 +1164,37 @@ impl PreparedExternalDriverCapability {
     }
 }
 
-/// Explicit refusal until the externally driven compatibility slice is enabled.
+/// Built-in terminal-only compatibility factory for one exact external package and trial.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TerminalV1ExternalDriverFactory;
+
+impl NativeGraphExternalDriverFactory for TerminalV1ExternalDriverFactory {
+    fn id(&self) -> &str {
+        "terminal_v1"
+    }
+
+    fn prepare_driver(
+        &self,
+        _: &NativeGraphPackagePlan,
+        _: &ResolvedEpisodeTrial,
+    ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError> {
+        Ok(Box::new(TerminalV1PreparedExternalDriver))
+    }
+}
+
+struct TerminalV1PreparedExternalDriver;
+
+#[async_trait(?Send)]
+impl PreparedExternalDriver for TerminalV1PreparedExternalDriver {
+    async fn run(
+        &mut self,
+        session: &mut dyn ExternalDriverSession,
+    ) -> Result<CompatibilityTerminalReceipt, ExternalDriverError> {
+        session.request_terminal().await
+    }
+}
+
+/// Explicit refusal for packages selecting the legacy unavailable factory.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RefusingExternalDriverFactory;
 

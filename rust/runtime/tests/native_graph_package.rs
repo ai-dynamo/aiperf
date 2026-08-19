@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, num::NonZeroUsize, path::Path, sync::Arc};
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, HarborImporter, HarborSource, ModelCapturePolicy, NativeSourceAcquirer,
-    TokenizerBindingSpec, select_native_graph_external_driver,
+    AgentVariantRef, ArtifactDigest, ExternalDriverError, HarborImporter, HarborSource,
+    ImportedTask, ModelCapturePolicy, ModelIdentity, NativeGraphExternalDriverFactory,
+    NativeGraphPackagePlan, NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity,
+    PreparedExternalDriver, ResolvedEpisodeTrial, ResourceLeaseRequest, RuntimeIdentity,
+    SuiteRunId, SuiteTrialSpec, TokenizerBindingSpec, TrialBudget, TrialSpec,
+    select_native_graph_external_driver,
 };
 use aiperf_runtime::extensions::{AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory};
 
@@ -817,7 +821,7 @@ fn externally_driven_factory_selection_is_required_and_identity_bound() {
     let missing = externally_driven_task_fixture();
     replace(
         &missing.path().join("task.toml"),
-        "external_driver_factory_id = \"refuse\"\n",
+        "external_driver_factory_id = \"terminal_v1\"\n",
         "",
     );
     let error = import_native_task(missing.path()).unwrap_err();
@@ -834,7 +838,7 @@ fn externally_driven_factory_selection_is_required_and_identity_bound() {
     let altered = externally_driven_task_fixture();
     replace(
         &altered.path().join("task.toml"),
-        "external_driver_factory_id = \"refuse\"",
+        "external_driver_factory_id = \"terminal_v1\"",
         "external_driver_factory_id = \"other-driver\"",
     );
     let altered_imported = import_native_task(altered.path()).unwrap();
@@ -860,12 +864,12 @@ fn externally_driven_factory_preflight_resolves_only_the_exact_immutable_selecto
 
     let factory = select_native_graph_external_driver(&registry, &selected_package)
         .expect("the sealed built-in selector resolves exactly");
-    assert_eq!(factory.id(), "refuse");
+    assert_eq!(factory.id(), "terminal_v1");
 
     let unknown = externally_driven_task_fixture();
     replace(
         &unknown.path().join("task.toml"),
-        "external_driver_factory_id = \"refuse\"",
+        "external_driver_factory_id = \"terminal_v1\"",
         "external_driver_factory_id = \"unregistered\"",
     );
     let unknown_package = import_native_task(unknown.path())
@@ -883,6 +887,74 @@ fn externally_driven_factory_preflight_resolves_only_the_exact_immutable_selecto
             .to_string()
             .contains("unknown external driver factory")
     );
+}
+
+#[test]
+fn built_in_terminal_driver_prepares_only_the_exact_external_trial_while_refuse_stays_unavailable()
+{
+    let mut registry = BuiltinAIPerfRegistryFactory
+        .build()
+        .expect("the built-in registry is available");
+    let mismatch = registry
+        .register_native_graph_external_driver(
+            "registered-name",
+            Arc::new(MismatchedExternalDriverFactory),
+        )
+        .unwrap_err();
+    assert!(
+        mismatch
+            .to_string()
+            .contains("registry name does not match its declared identifier")
+    );
+    let terminal_task = externally_driven_task_fixture();
+    let terminal_imported = import_native_task(terminal_task.path()).unwrap();
+    let terminal_trial = resolved_external_trial(terminal_imported.clone());
+    let terminal_factory = select_native_graph_external_driver(
+        &registry,
+        terminal_imported.package.native_graph().unwrap(),
+    )
+    .expect("the exact terminal selector resolves");
+
+    terminal_factory
+        .prepare(&terminal_imported.package, &terminal_trial)
+        .expect("terminal_v1 prepares one opaque terminal request for the exact trial");
+
+    let refusing_task = externally_driven_task_fixture();
+    replace(
+        &refusing_task.path().join("task.toml"),
+        "external_driver_factory_id = \"terminal_v1\"",
+        "external_driver_factory_id = \"refuse\"",
+    );
+    let refusing_imported = import_native_task(refusing_task.path()).unwrap();
+    let refusing_trial = resolved_external_trial(refusing_imported.clone());
+    let refusing_factory = select_native_graph_external_driver(
+        &registry,
+        refusing_imported.package.native_graph().unwrap(),
+    )
+    .expect("the explicit refusal selector remains registered");
+
+    assert_eq!(
+        refusing_factory
+            .prepare(&refusing_imported.package, &refusing_trial)
+            .unwrap_err(),
+        ExternalDriverError::Unavailable
+    );
+}
+
+struct MismatchedExternalDriverFactory;
+
+impl NativeGraphExternalDriverFactory for MismatchedExternalDriverFactory {
+    fn id(&self) -> &str {
+        "declared-name"
+    }
+
+    fn prepare_driver(
+        &self,
+        _: &NativeGraphPackagePlan,
+        _: &ResolvedEpisodeTrial,
+    ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError> {
+        Err(ExternalDriverError::Unavailable)
+    }
 }
 
 #[test]
@@ -1361,7 +1433,7 @@ name = "example/external-driver"
 profile = "externally_driven"
 adapter_manifest = "adapters.toml"
 driver = "driver-adapter"
-external_driver_factory_id = "refuse"
+external_driver_factory_id = "terminal_v1"
 "#,
     )
     .unwrap();
@@ -1378,6 +1450,36 @@ executable = "tools/driver.sh"
     .unwrap();
     fs::write(task.path().join("tools/driver.sh"), b"#!/bin/sh\nexit 0\n").unwrap();
     task
+}
+
+fn resolved_external_trial(imported: ImportedTask) -> ResolvedEpisodeTrial {
+    let trial = TrialSpec::new(
+        imported.task.clone(),
+        AgentVariantRef::new("external-driver").unwrap(),
+        ModelIdentity::new("compatibility", "opaque-driver").unwrap(),
+        7,
+        PolicyIdentity::new(ArtifactDigest::from_bytes(b"external-policy")),
+        TrialBudget::new(2.0, 3.0).unwrap(),
+        ArtifactDigest::from_bytes(b"external-environment"),
+        ArtifactDigest::from_bytes(b"external-verifier"),
+        RuntimeIdentity::new("external:v1").unwrap(),
+    )
+    .unwrap();
+    let suite = NativeGraphSuiteManifest::new(vec![
+        SuiteTrialSpec::from_imported(
+            imported,
+            trial,
+            NonZeroUsize::new(1).unwrap(),
+            ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+        )
+        .unwrap(),
+    ])
+    .unwrap()
+    .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
+        b"external-package-factory-test",
+    )))
+    .unwrap();
+    suite.trials().first().unwrap().clone()
 }
 
 fn server_tokenizer_task_fixture() -> tempfile::TempDir {

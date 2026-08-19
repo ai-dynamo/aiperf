@@ -19,14 +19,15 @@ use std::{
 use aiperf_runtime::{
     engine::{application::Application, distribution_identity::current_distribution_id},
     eval::{
+        CompatibilityFidelity, DockerExternallyDrivenEpisodeExecutor,
         DockerNativeGraphEpisodeExecutor, DockerProcessSandbox, EngineNativeGraphEpisodeCallback,
-        EnvName, EvalNodeRecordArtifact, HarborEvaluationCoordinator, HarborImporter,
-        HarborLifecycleAgentContract, HarborLifecycleRequest, HarborSandboxRecipe, ImportedTask,
-        ModelCapacityKey, ModelRuntimeConfig, NativeGraphEpisodeRunner, NativeGraphProfile,
-        NativeGraphSuiteManifest, NativeSourceAcquirer, ResourceLeaseRequest, ResourceLimits,
-        SecretProvider, SecretValue, SuiteRunId, SuiteTrialSpec, VerifierMode,
-        parse_native_graph_suite_toml, run_resolved_suite, select_native_graph_external_driver,
-        select_native_graph_scheduler,
+        EnvName, EpisodeFidelity, EvalNodeRecordArtifact, HarborEvaluationCoordinator,
+        HarborImporter, HarborLifecycleAgentContract, HarborLifecycleRequest, HarborSandboxRecipe,
+        ImportedTask, ModelCapacityKey, ModelRuntimeConfig, NativeGraphEpisodeRunner,
+        NativeGraphProfile, NativeGraphSuiteManifest, NativeSourceAcquirer,
+        PreparedExternalDriverCapability, ResourceLeaseRequest, ResourceLimits, SecretProvider,
+        SecretValue, SuiteRunId, SuiteTrialSpec, VerifierMode, parse_native_graph_suite_toml,
+        run_resolved_suite, select_native_graph_external_driver, select_native_graph_scheduler,
     },
 };
 use anyhow::Context as _;
@@ -67,6 +68,13 @@ pub(super) fn run_task(
         }
         NativeGraphProfile::ExternallyDriven => {
             validate_native_graph_invocation(&imported, lifecycle, &options)?;
+            if model_runtime_path.is_some() {
+                anyhow::bail!(
+                    "externally driven NativeGraph evaluation does not accept --model-runtime"
+                );
+            }
+            let trial = HarborEvaluationCoordinator::resolve_trial(&imported, lifecycle)?;
+            let (resolved, limits) = one_trial_suite(imported.clone(), trial)?;
             let native = imported.package.native_graph().ok_or_else(|| {
                 anyhow::anyhow!(
                     "NativeGraph task snapshot disappeared before external-driver preflight"
@@ -74,9 +82,23 @@ pub(super) fn run_task(
             })?;
             let dist_id = current_distribution_id()
                 .context("deriving native graph distribution identity from the current binary")?;
-            let application = Application::stock(dist_id)?;
-            select_native_graph_external_driver(application.product_registry(), native)?;
-            anyhow::bail!("externally driven NativeGraph compatibility runner is not enabled")
+            let application = Rc::new(Application::stock(dist_id)?);
+            let factory =
+                select_native_graph_external_driver(application.product_registry(), native)?;
+            let resolved_trial = resolved
+                .trials()
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("external suite resolved no trial"))?;
+            let prepared_driver = factory.prepare(&imported.package, resolved_trial)?;
+            run_resolved_external_suite(
+                imported,
+                lifecycle,
+                options,
+                resolved,
+                limits,
+                application,
+                prepared_driver,
+            )
         }
     }
 }
@@ -292,6 +314,49 @@ fn run_resolved_native_graph_suite(
     Ok(0)
 }
 
+fn run_resolved_external_suite(
+    imported: ImportedTask,
+    lifecycle: &HarborLifecycleRequest,
+    options: NativeGraphCliOptions,
+    suite: aiperf_runtime::eval::ResolvedNativeGraphSuite,
+    limits: ResourceLimits,
+    application: Rc<Application>,
+    prepared_driver: PreparedExternalDriverCapability,
+) -> anyhow::Result<i32> {
+    let image = options.image.unwrap_or_else(|| {
+        "sha256:0000000000000000000000000000000000000000000000000000000000".to_owned()
+    });
+    let recipe = HarborSandboxRecipe::for_standard_task(image, options.workdir)?;
+    let scheduler = select_native_graph_scheduler(
+        application.product_registry(),
+        NATIVE_GRAPH_SCHEDULER,
+        limits,
+    )?;
+    let executor = Rc::new(DockerExternallyDrivenEpisodeExecutor::new(
+        DockerProcessSandbox::new(),
+        recipe,
+        imported.clone(),
+        lifecycle.clone(),
+        prepared_driver,
+        Rc::new(HostEnvironmentSecrets),
+    )?);
+    let runner = Rc::new(NativeGraphEpisodeRunner::with_registered_evaluator(
+        executor,
+        application.product_registry(),
+        NATIVE_GRAPH_EVALUATOR,
+    )?);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let local = LocalSet::new();
+    let results = local.block_on(
+        &runtime,
+        run_resolved_suite(scheduler.as_ref(), suite, runner),
+    )?;
+    emit_results(imported.task.id.as_str(), lifecycle, &results)?;
+    Ok(0)
+}
+
 fn preflight_registered_native_graph_seams(
     application: &Application,
     native: &aiperf_runtime::eval::NativeGraphPackagePlan,
@@ -408,6 +473,24 @@ struct NativeGraphEvalOutput<'a> {
     artifacts: [(); 0],
     reward: BTreeMap<&'a str, f64>,
     episodes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    score: Option<ExternalEvalScore>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fidelity: Option<ExternalEvalFidelity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lifecycle_evidence: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct ExternalEvalScore {
+    state: &'static str,
+    reward: f64,
+}
+
+#[derive(Serialize)]
+struct ExternalEvalFidelity {
+    profile: &'static str,
+    capture: &'static str,
 }
 
 fn emit_results(
@@ -419,11 +502,37 @@ fn emit_results(
         .first()
         .and_then(aiperf_runtime::eval::EpisodeResult::verified_reward)
         .ok_or_else(|| anyhow::anyhow!("NativeGraph episode completed without a verified score"))?;
+    let external = results.first().and_then(|result| match result.fidelity() {
+        EpisodeFidelity::ExternallyDriven(fidelity) => Some((result, fidelity)),
+        EpisodeFidelity::Legacy | EpisodeFidelity::NativeGraph => None,
+    });
+    let score = external.map(|_| ExternalEvalScore {
+        state: "verified",
+        reward,
+    });
+    let fidelity = external.map(|(_, fidelity)| ExternalEvalFidelity {
+        profile: "externally_driven",
+        capture: match fidelity {
+            CompatibilityFidelity::ObservedProxy => "observed_proxy",
+            CompatibilityFidelity::Partial => "partial",
+            CompatibilityFidelity::Missing => "missing",
+        },
+    });
+    let lifecycle_evidence = external.map(|(result, _)| {
+        result
+            .evidence()
+            .iter()
+            .map(|digest| digest.as_str().to_owned())
+            .collect()
+    });
     let output = NativeGraphEvalOutput {
         task,
         artifacts: [],
         reward: BTreeMap::from([(lifecycle.regrade.metric.as_str(), reward)]),
         episodes: results.len(),
+        score,
+        fidelity,
+        lifecycle_evidence,
     };
     println!("{}", serde_json::to_string(&output)?);
     Ok(())

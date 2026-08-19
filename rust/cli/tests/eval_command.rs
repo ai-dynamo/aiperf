@@ -20,7 +20,6 @@ use aiperf_runtime::{
         StepExecutionResult,
     },
 };
-use async_trait::async_trait;
 use serde_json::json;
 
 static DOCKER_TIMEOUT_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -31,7 +30,7 @@ fn write_externally_driven_task(task_root: &Path) {
     fs::create_dir_all(task_root.join("tools")).unwrap();
     fs::write(
         task_root.join("task.toml"),
-        "schema_version = \"1.1\"\n[task]\nname = \"example/external-driver\"\n[native_graph]\nprofile = \"externally_driven\"\nadapter_manifest = \"adapters.toml\"\ndriver = \"driver-adapter\"\nexternal_driver_factory_id = \"refuse\"\n",
+        "schema_version = \"1.1\"\n[task]\nname = \"example/external-driver\"\n[native_graph]\nprofile = \"externally_driven\"\nadapter_manifest = \"adapters.toml\"\ndriver = \"driver-adapter\"\nexternal_driver_factory_id = \"terminal_v1\"\n",
     )
     .unwrap();
     fs::write(task_root.join("instruction.md"), "Do work.\n").unwrap();
@@ -472,7 +471,7 @@ fn externally_driven_eval_rejects_agent_command_before_model_runtime_or_provisio
 }
 
 #[test]
-fn externally_driven_eval_reaches_compatibility_runner_preflight_without_model_runtime() {
+fn externally_driven_eval_enters_the_runner_without_model_runtime_before_provisioning() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = temporary.path().join("external-driver");
     let lifecycle_path = temporary.path().join("lifecycle.json");
@@ -485,20 +484,49 @@ fn externally_driven_eval_reaches_compatibility_runner_preflight_without_model_r
         task_root.to_string_lossy().into_owned(),
         "--lifecycle-request".to_owned(),
         lifecycle_path.to_string_lossy().into_owned(),
+        "--image".to_owned(),
+        "sha256:bad".to_owned(),
     ])
-    .expect_err(
-        "the unavailable compatibility runner must reject without asking for model runtime",
-    );
+    .expect_err("the invalid immutable image must fail only after external runner composition");
 
     assert!(
         error
             .to_string()
-            .contains("externally driven NativeGraph compatibility runner is not enabled"),
+            .contains("invalid sandbox recipe image digest"),
         "unexpected external-profile refusal: {error:#}"
     );
     assert!(
         !error.to_string().contains("--model-runtime is required"),
         "external compatibility preflight must not require a Rust model runtime: {error:#}"
+    );
+}
+
+#[test]
+fn externally_driven_eval_rejects_model_runtime_before_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("external-driver");
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    let runtime_path = temporary.path().join("model-runtime.toml");
+    write_externally_driven_task(&task_root);
+    write_externally_driven_lifecycle(&lifecycle_path, &["tools/driver.sh"]);
+    fs::write(&runtime_path, "version = 1\n").unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--task".to_owned(),
+        task_root.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+        "--model-runtime".to_owned(),
+        runtime_path.to_string_lossy().into_owned(),
+    ])
+    .expect_err("an external task must not accept a Rust model runtime");
+
+    assert!(
+        error
+            .to_string()
+            .contains("externally driven NativeGraph evaluation does not accept --model-runtime"),
+        "unexpected external-profile refusal: {error:#}"
     );
 }
 
@@ -512,7 +540,7 @@ fn externally_driven_eval_rejects_an_unregistered_factory_before_runner_or_provi
     fs::write(
         task_root.join("task.toml"),
         task_toml.replace(
-            "external_driver_factory_id = \"refuse\"",
+            "external_driver_factory_id = \"terminal_v1\"",
             "external_driver_factory_id = \"unregistered\"",
         ),
     )
@@ -539,6 +567,80 @@ fn externally_driven_eval_rejects_an_unregistered_factory_before_runner_or_provi
             .to_string()
             .contains("compatibility runner is not enabled"),
         "the generic compatibility runner must not be reached: {error:#}"
+    );
+}
+
+#[test]
+fn externally_driven_eval_refuses_authored_suite_execution_before_provisioning() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = temporary.path().join("external-driver");
+    let lifecycle_path = temporary.path().join("lifecycle.json");
+    let runtime_path = temporary.path().join("model-runtime.toml");
+    let suite_path = temporary.path().join("external-suite.toml");
+    write_externally_driven_task(&task_root);
+    write_externally_driven_lifecycle(&lifecycle_path, &["tools/driver.sh"]);
+    fs::write(&runtime_path, "version = 1\n").unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    fs::write(
+        &suite_path,
+        format!(
+            r#"[defaults]
+runtime = "external:v1"
+execution_seconds = 2.0
+verifier_seconds = 3.0
+environment = "{}"
+verifier = "{}"
+
+[limits]
+parallelism = 1
+cpu_units = 1
+memory_bytes = 1
+max_expanded_trials = 1
+model_binding_units = {{}}
+
+[[tasks]]
+source = {{ kind = "local", path = {:?} }}
+task_id = "{}"
+task_digest = "{}"
+graph_axes = ["external-driver"]
+model_axes = ["opaque"]
+policy_axes = ["{}"]
+seeds = [7]
+repetitions = 1
+
+[tasks.resources]
+cpu_units = 1
+memory_bytes = 1
+model_binding_units = {{}}
+"#,
+            ArtifactDigest::from_bytes(b"environment").as_str(),
+            ArtifactDigest::from_bytes(b"verifier").as_str(),
+            task_root.to_string_lossy(),
+            imported.task.id.as_str(),
+            imported.task.digest.as_str(),
+            ArtifactDigest::from_bytes(b"policy").as_str(),
+        ),
+    )
+    .unwrap();
+
+    let error = aiperf_cli::dispatch::run(&[
+        "eval".to_owned(),
+        "--suite".to_owned(),
+        suite_path.to_string_lossy().into_owned(),
+        "--model-runtime".to_owned(),
+        runtime_path.to_string_lossy().into_owned(),
+        "--lifecycle-request".to_owned(),
+        lifecycle_path.to_string_lossy().into_owned(),
+    ])
+    .expect_err("authored external suites remain outside the compatibility slice");
+
+    assert!(
+        error
+            .to_string()
+            .contains("externally driven NativeGraph --suite execution is not supported"),
+        "unexpected external-suite refusal: {error:#}"
     );
 }
 

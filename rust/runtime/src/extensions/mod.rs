@@ -41,7 +41,7 @@ use crate::eval::{
     NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
     NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
     RefusingExternalDriverFactory, StrictAdapterProtocolFactory, StrictAdapterRuntimeProvider,
-    SuiteSchedulerFactory, SupervisedEnvironmentStepperBinder,
+    SuiteSchedulerFactory, SupervisedEnvironmentStepperBinder, TerminalV1ExternalDriverFactory,
 };
 use crate::export::ExporterRegistry;
 
@@ -314,6 +314,10 @@ impl AIPerfExtension for BuiltinNativeGraphExtension {
         registry.register_native_graph_external_driver(
             "refuse",
             Arc::new(RefusingExternalDriverFactory) as Arc<dyn NativeGraphExternalDriverFactory>,
+        )?;
+        registry.register_native_graph_external_driver(
+            "terminal_v1",
+            Arc::new(TerminalV1ExternalDriverFactory) as Arc<dyn NativeGraphExternalDriverFactory>,
         )?;
         registry
             .native_graph_fidelity_observers

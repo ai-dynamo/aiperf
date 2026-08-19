@@ -124,9 +124,10 @@ pub use native_graph::{
     RolloutTransitionEvidence, RolloutVerifierDecodeError, RolloutVerifierInput,
     SelectedModelBinding, StrictAdapterProtocolFactory, StrictAdapterRuntimeProvider,
     StrictSupervisedAdapter, SuiteError, SuiteRunId, SuiteSchedulerFactory, SuiteTrialSpec,
-    SupervisedAdapter, SupervisedEnvironmentStepperBinder, TokenizerBindingSpec,
-    ValidatedAdapterMessage, ValidatedHostMessage, aggregate_episode_results, lower_native_graph,
-    parse_native_graph_suite_toml, run_resolved_suite, validate_native_graph_trace_plan,
+    SupervisedAdapter, SupervisedEnvironmentStepperBinder, TerminalV1ExternalDriverFactory,
+    TokenizerBindingSpec, ValidatedAdapterMessage, ValidatedHostMessage, aggregate_episode_results,
+    lower_native_graph, parse_native_graph_suite_toml, run_resolved_suite,
+    validate_native_graph_trace_plan,
 };
 #[cfg(feature = "engine")]
 pub use native_graph::{

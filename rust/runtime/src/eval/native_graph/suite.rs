@@ -617,6 +617,9 @@ impl AuthoredNativeGraphSuite {
                 .package
                 .native_graph()
                 .ok_or(SuiteError::NotNativeGraphTask)?;
+            if native_graph.profile() == super::NativeGraphProfile::ExternallyDriven {
+                return Err(SuiteError::ExternalAuthoredSuiteUnsupported);
+            }
             for binding in native_graph.model_bindings() {
                 let capacity_key = ModelCapacityKey::from_task_binding(&imported.task, binding);
                 match global_binding_keys.get(binding.id.as_str()) {
@@ -1246,6 +1249,8 @@ pub enum SuiteError {
         /// Logical model binding identifier.
         binding: String,
     },
+    /// Authored suites do not yet carry external lifecycle provenance.
+    ExternalAuthoredSuiteUnsupported,
     /// One binding name would select conflicting package-scoped model runtimes.
     CrossTaskModelBindingAlias {
         /// Ambiguous textual model-binding identifier.
@@ -1424,6 +1429,8 @@ impl fmt::Display for SuiteError {
                 formatter,
                 "native graph suite task {task_index} does not declare model binding {binding:?}"
             ),
+            Self::ExternalAuthoredSuiteUnsupported => formatter
+                .write_str("externally driven NativeGraph --suite execution is not supported"),
             Self::CrossTaskModelBindingAlias { binding } => write!(
                 formatter,
                 "native graph suite model binding {binding:?} names conflicting task-scoped runtimes"

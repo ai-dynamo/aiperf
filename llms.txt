@@ -31,10 +31,14 @@ purpose for each, so an agent knows which file to open for a given question.
   matrix trial; cross-host episode transport is not runnable yet. The
   `externally_driven` profile instead validates an
   `externally_driven` lifecycle record against its immutable manifest driver,
-  rejects `--agent-command`, and a single-task invocation reaches its
-  unavailable compatibility-runner preflight without `--model-runtime`; it
-  remains fail closed before provisioning. The current suite grammar has no
-  externally driven shape because it requires Rust model-binding axes.
+  rejects `--agent-command` and `--model-runtime`, and runs one single-task
+  Docker compatibility transaction through the exact built-in `terminal_v1`
+  factory. That sealed factory can only request the terminal response; it gets
+  no model runtime, external model secrets, HTTP client, generic Docker
+  authority, or raw terminal payload. The result retains the verifier-authored
+  score, reports `externally_driven`/`Missing`, and exports one digest rather
+  than raw driver data. Unknown, mismatched, and legacy `refuse` factories fail
+  before Docker. Authored externally driven suites remain an explicit refusal.
   Adapters and multi-lifecycle suites also fail closed.
   The one `aiperf` binary is BOTH the entry point AND the execution engine — the sole
   executable that dispatches load and owns exactly one benchmark hot path (no separate

@@ -78,7 +78,7 @@ pub use factories::{
     NativeGraphLowererProvider, NativeGraphProviderRecoveryFactory,
     PackageNativeGraphLowererProvider, PreparedExternalDriver, PreparedExternalDriverCapability,
     RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, StrictAdapterRuntimeProvider,
-    SupervisedEnvironmentStepperBinder,
+    SupervisedEnvironmentStepperBinder, TerminalV1ExternalDriverFactory,
 };
 pub(crate) use live_driver::NATIVE_GRAPH_LIVE_DRIVER_KIND;
 pub use live_driver::{
