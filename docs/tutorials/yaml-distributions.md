@@ -256,12 +256,11 @@ benchmark:
 
   phases:
     - name: warmup
-      kind: warmup
       type: concurrency
       concurrency: 4
       requests: 50
+      exclude_from_results: true
     - name: profiling
-      kind: profiling
       type: poisson
       rate: 30.0
       duration: 120

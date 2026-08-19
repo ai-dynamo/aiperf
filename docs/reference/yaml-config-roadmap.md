@@ -57,12 +57,14 @@ benchmark:
       type: concurrency
       concurrency: 4
       requests: 50
+      exclude_from_results: true
 
     - name: warm_cache_warmup
       kind: warmup
       type: concurrency
       concurrency: 16
       requests: 100
+      exclude_from_results: true
 
     - name: steady_state_profile
       kind: profiling
@@ -80,7 +82,7 @@ benchmark:
 Key changes:
 
 - `name` becomes free-form (validated against a permissive identifier regex), rather than a `Literal`.
-- A new `kind` field carries the warmup-vs-profiling distinction. Warmup data remains phase-scoped, while only profiling-kind phases contribute to profiling aggregates.
+- A new `kind` field carries the warmup-vs-profiling distinction the credit pipeline currently derives from the name. `exclude_from_results` is then driven by `kind`, not by string equality on `name`.
 - Reports, artifact subdirectories, and sweep parameter paths address phases by user-given name (`phases.steady_state_profile.rate`).
 - Existing two-phase configs continue to load: `name: warmup` defaults `kind: warmup`, `name: profiling` defaults `kind: profiling`.
 

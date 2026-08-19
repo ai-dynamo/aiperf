@@ -99,16 +99,12 @@ Then:
 2. If the flag maps to an existing `AIPerfConfig` key, add an entry to that section's
    field map (e.g. `_ENDPOINT_FIELD_MAP` in `_converter_endpoint.py`).
    Otherwise, read it directly in the relevant `_converter_*.py` builder.
-3. Add the same explicit-field route to
-   `config.flags.resolver.build_cli_overrides` when the flag is valid with
-   `--config`. Test CLI-only and YAML-plus-CLI resolution against the same
-   affected `AIPerfConfig` subtree; unrelated YAML must remain intact.
-4. Run `make generate-cli-docs` to regen `docs/cli-options.md`. Run
+3. Run `make generate-cli-docs` to regen `docs/cli-options.md`. Run
    `make generate-env-vars-docs` if you also added a corresponding env var.
-5. Add a unit test under `tests/unit/config/` constructing
+4. Add a unit test under `tests/unit/config/` constructing
    `CLIConfig(my_new_flag=...)` and asserting the converter emits the
    right `AIPerfConfig` shape.
-6. The disjointedness invariant in
+5. The disjointedness invariant in
    `tests/unit/config/v1/test_section_fields.py` will catch any
    cross-section name collision automatically.
 
@@ -116,26 +112,8 @@ Then:
 - No validators on CLIConfig fields. `BeforeValidator(parse_str_or_list)` for
   CLI input coercion is fine; domain validation (range checks across fields,
   cross-field constraints) lives on `AIPerfConfig`, not CLIConfig.
-- The CLI-to-envelope converter and config-file resolver are the only modules
-  outside `cli_commands/` that may read `CLIConfig` attributes.
-
-### Config-file override envelope invariant
-
-`resolve_config` keeps two Config-v2 dictionaries aligned when combining
-`--config` with explicit CLI flags:
-
-- The rendered dictionary is post-environment and post-Jinja; it feeds
-  `AIPerfConfig.model_validate`.
-- The raw envelope is post-environment but pre-Jinja; it is retained on
-  `AIPerfConfig._raw_envelope` so `build_benchmark_plan` can render each
-  `sweep.parameters` variation independently.
-
-Every config-file override transformation must run through
-`_merge_overrides_into_envelope`, which applies the same deep merge, dataset
-filtering, phase targeting, and magic-list promotion to both dictionaries. Do
-not mutate only the rendered dictionary: a CLI override of a templated field
-would appear correct on the base config and then be replaced by the old Jinja
-template during sweep expansion.
+- The CLI-to-envelope converter is the only module outside `cli_commands/` that may
+  read `CLIConfig` attributes.
 
 ### Bool|object nested endpoint fields + flat CLI lowering
 

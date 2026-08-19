@@ -148,8 +148,6 @@ Use the root `profile_export_aiperf.json` and CSV when you need the traditional 
 
 Use `phase_manifest.json` and `phases/<phase_name>/profile_export_aiperf.json` when you need exact per-phase request metrics. This is the right view for comparing `baseline_traffic`, `cancellation_stress`, and `recovery_traffic` independently.
 
-On Kubernetes, the operator also uses the manifest's per-phase success and error counts to finalize `status.phases` by phase name. This closes the controller-shutdown sampling window for workflows with multiple profiling phases; older single-profiling runs without a readable manifest continue to use the aggregate root export as a compatibility fallback.
-
 For server metrics, the root `server_metrics_export.json` preserves the legacy aggregate view. In workflows with repeated phase kinds, its phase ranges may span gaps between phases of the same kind. Use `phases/<phase_name>/server_metrics.json` for exact phase-scoped server telemetry.
 
 Adaptive profiling phases also write their own controller artifacts. See [Adaptive Scale](adaptive-scale.md#multiple-adaptive-phases) for multiple adaptive phases and `adaptive_scale_manifest.json`.

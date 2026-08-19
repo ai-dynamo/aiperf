@@ -147,7 +147,7 @@ sequenceDiagram
   server before profiling load starts. Warmup is opt-in: omit
   `--warmup-request-count` / `--warmup-num-sessions` /
   `--warmup-duration` on the CLI, or omit the `warmup:` block (and any
-  phase with `kind: warmup`) in YAML. Note that
+  `exclude_from_results` warmup phase) in YAML. Note that
   `--warmup-request-count 0` is **not** the way to do this — the flag is
   constrained to `> 0` and a `0` fails validation with `Input should be
   greater than 0`.

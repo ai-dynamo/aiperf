@@ -30,16 +30,19 @@ flowchart LR
     cfg --> exp --> run --> agg
 
     subgraph BACKENDS["RunExecutor backend (swap point)"]
-        local["LocalSubprocessExecutor<br/>(local process)"]
-        k8s["K8sChildJobExecutor<br/>(sweep-controller pod)"]
+        local["LocalSubprocessExecutor<br/>(today)"]
+        k8s["K8sChildJobExecutor<br/><i>coming soon</i>"]
     end
     run -. selects .-> local
     run -. selects .-> k8s
 
     classDef stage fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#0d47a1
     classDef shipping fill:#e8f5e9,stroke:#2e7d32,stroke-width:1.5px,color:#1b5e20
+    classDef coming fill:#fafafa,stroke:#9e9e9e,stroke-width:1.5px,stroke-dasharray:5 3,color:#616161
+
     class cfg,exp,run,agg stage
-    class local,k8s shipping
+    class local shipping
+    class k8s coming
 
     style BACKENDS fill:transparent,stroke:#78909c,stroke-width:2px,stroke-dasharray:2 2
 ```
@@ -66,7 +69,7 @@ flowchart LR
 > orchestrator and executors don't change. Want to run the whole
 > thing on Kubernetes? Implement `RunExecutor.execute` to create an
 > `AIPerfJob` CR and HTTP-pull its results instead of forking a
-> subprocess (`K8sChildJobExecutor`) — the
+> subprocess (this is the *coming-soon* `K8sChildJobExecutor`) — the
 > plan, orchestrator, planner, analyzer, and exporters are reused
 > byte-for-byte. The progression from a single-shot `aiperf profile`
 > to a cluster-distributed BO search isn't a rewrite; it's the same
@@ -75,11 +78,10 @@ flowchart LR
 
 ### Execution
 
-`LocalSubprocessExecutor` powers `aiperf profile -f config.yaml` and forks
-`aiperf.orchestrator.subprocess_runner` per cell. `K8sChildJobExecutor` runs the
-same plan in a sweep-controller pod created from an `AIPerfSweep` CR. Each cell
-becomes an `AIPerfJob` CR, watched to completion; the operator results server
-supplies the child export in the same `RunResult` shape as local execution.
+Today only `LocalSubprocessExecutor` ships: `aiperf profile -f config.yaml` runs the orchestrator in the same Python process and forks `aiperf.orchestrator.subprocess_runner` per cell.
+
+> [!NOTE]
+> **Cluster execution (coming soon).** `K8sChildJobExecutor` lives on the K8s integration branch (not `main` yet). It runs in-cluster in a `sweep-controller` pod (from an `AIPerfSweep` CR). Each cell becomes an `AIPerfJob` CR, watched to completion; the operator results server supplies the child export (same shape as local). Orchestrator logic is unchanged—only `RunExecutor` differs. CLI: `aiperf kube sweep` (alongside `aiperf kube profile`).
 
 ### Key types
 
@@ -97,7 +99,7 @@ The whole flow uses about a dozen types. If you know these, you can read any swe
 | **`BenchmarkRun`** | One cell: `(cfg, variation, trial, artifact_dir)`. The smallest unit of work. |
 | **`RunResult`** | `{success, summary_metrics, artifacts_path, variation_label, variation_values, trial_index, error}`. One per `BenchmarkRun`. |
 | **`MultiRunOrchestrator`** | Drives the N×M loop. Picks REPEATED (trials outer) or INDEPENDENT (variations outer) based on `sweep.iteration_order`; dispatches to `execute_adaptive_search` if the sweep is adaptive. |
-| **`RunExecutor`** | ABC with `execute(run) -> RunResult` plus `derive_id(plan, var_idx, trial) -> str` for stable per-cell identifiers. `LocalSubprocessExecutor` launches local subprocesses; `K8sChildJobExecutor` creates one child `AIPerfJob` CR per call. |
+| **`RunExecutor`** | ABC with `execute(run) -> RunResult` plus a second abstract `derive_id(plan, var_idx, trial) -> str` for stable per-cell identifiers. `LocalSubprocessExecutor` is the only shipping implementation today; `K8sChildJobExecutor` (one child `AIPerfJob` CR per call) is finalized but unmerged — see Execution above. |
 | **`SweepAnalyzer`** | Post-hoc aggregator. CLI helpers group `list[RunResult]` by `variation_values` into `per_combination_stats`; `SweepAnalyzer.compute()` then produces `best_configurations`, `pareto_optimal`, `per_combination_metrics`. Written to `sweep_aggregate/profile_export_aiperf_sweep.{json,csv}`. |
 
 ### End-to-end pipeline (canonical)
@@ -132,7 +134,7 @@ flowchart TD
     subgraph S6["6. execute one cell"]
         re["**RunExecutor** (ABC)"]
         loc["**LocalSubprocessExecutor**<br/>forks subprocess_runner"]
-        k8s["**K8sChildJobExecutor**<br/>creates child AIPerfJob CRs"]
+        k8s["**K8sChildJobExecutor**<br/><i>coming soon</i>"]
         run["aiperf workload run<br/><i>full service mesh — see<br/>docs/architecture.md</i>"]
         rr["**RunResult**<br/>metrics · variation_values · artifacts_path"]
     end
@@ -147,13 +149,14 @@ flowchart TD
     uc -->|convert_cli_to_aiperf| ac
     ac --> es --> bp --> mo --> strategy --> br --> re
     re --> loc
-    re --> k8s
+    re -.coming soon.-> k8s
     loc --> run --> rr
     rr --> sa --> out
 
     classDef data fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#0d47a1
     classDef proc fill:#fff3e0,stroke:#e65100,stroke-width:1.5px,color:#bf360c
     classDef art fill:#e8f5e9,stroke:#2e7d32,stroke-width:1.5px,color:#1b5e20
+    classDef coming fill:#fafafa,stroke:#9e9e9e,stroke-width:1.5px,stroke-dasharray:5 3,color:#616161
     classDef decision fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1.5px,color:#4a148c
 
     class yaml,cli,uc data
@@ -161,7 +164,7 @@ flowchart TD
     class es,sa,run proc
     class mo,strategy,br,re,loc decision
     class rr,out art
-    class k8s decision
+    class k8s coming
 
     style S1 fill:transparent,stroke:#78909c,stroke-width:2px,stroke-dasharray:5 3
     style S2 fill:transparent,stroke:#78909c,stroke-width:2px,stroke-dasharray:5 3
@@ -172,12 +175,7 @@ flowchart TD
     style S7 fill:transparent,stroke:#78909c,stroke-width:2px,stroke-dasharray:5 3
 ```
 
-At stage 6 the selected executor either forks a local subprocess or creates a
-child `AIPerfJob`; aggregation is pure post-hoc compute over the collected
-`RunResult`s. YAML configs reach `AIPerfConfig` through the Config-v2 loader;
-only CLI flags travel through `CLIConfig` first so cyclopts can parse
-magic-list affordances (`--concurrency 1,2,4`) before they are lifted into a
-typed `SweepConfig`.
+The orchestrator forks a subprocess per cell at stage 6; aggregation is pure post-hoc compute over the collected `RunResult`s. YAML configs reach `AIPerfConfig` directly through `load_config` → `AIPerfConfig.model_validate`; only CLI flags travel through `CLIConfig` first so cyclopts can parse magic-list affordances (`--concurrency 1,2,4`) before they're lifted into a typed `SweepConfig`.
 
 ### What happens between runs (per-cell loop)
 
@@ -391,7 +389,7 @@ For adaptive search, `N` is the iteration count: bounded above by `max_iteration
 | Plan loader (CLI/YAML -> plan) | `src/aiperf/config/loader/plan.py` |
 | `BenchmarkPlan` / `BenchmarkRun` models | `src/aiperf/config/resolution/plan.py` |
 | Orchestrator | `src/aiperf/orchestrator/orchestrator.py` |
-| Executors | `src/aiperf/orchestrator/{executor,local_executor}.py`, `src/aiperf/sweep_controller/k8s_executor.py` |
+| Executors | `src/aiperf/orchestrator/{executor,local_executor}.py` |
 | Aggregation | `src/aiperf/orchestrator/aggregation/sweep.py` |
 | Search planners + recipes | `src/aiperf/orchestrator/search_planner/`, `src/aiperf/search_recipes/` |
 
@@ -621,13 +619,6 @@ variation (for adaptive runs and for no-sweep runs) or calls `expand_sweep`
 also Sobol / Latin-hypercube for QMC sweeps), then renders any per-variation
 Jinja and emits one `BenchmarkConfig` per variation.
 
-Local files and `AIPerfSweep` CRs converge before this stage. Kubernetes
-projects the Config-v2 fields out of `spec`, loads that mapping with the same
-Config-v2 loader, and calls `build_benchmark_plan`. The Kubernetes adapter only
-attaches the CR's `failurePolicy` afterward. This keeps Jinja overlays, seed
-derivation, `multi_run`, `plot`, and future `AIPerfConfig` envelope fields on
-origin/main's canonical plan path.
-
 ```mermaid
 %%{init: {'flowchart': {'nodeSpacing': 50, 'rankSpacing': 60, 'htmlLabels': true}, 'themeVariables': {'fontSize': '14px'}}}%%
 flowchart TB
@@ -856,7 +847,7 @@ Three collaborators inside the cell — two ABCs and one Pydantic model:
 | Type | Implementations | Job |
 | :--- | :--- | :--- |
 | **`ExecutionStrategy`** (ABC) | `FixedTrialsStrategy`, `AdaptiveStrategy` | Decide whether to run another trial in this cell. |
-| **`RunExecutor`** (ABC) | `LocalSubprocessExecutor`, `K8sChildJobExecutor` | Turn one `BenchmarkRun` into one `RunResult`; the backend either spawns a local subprocess or creates and watches a child `AIPerfJob`. |
+| **`RunExecutor`** (ABC) | `LocalSubprocessExecutor` (only one shipping) | Turn one `BenchmarkRun` into one `RunResult` by spawning a fresh subprocess of `aiperf.orchestrator.subprocess_runner`. |
 | **`BenchmarkRun`** (Pydantic model) | — | The smallest unit of work — essentially `(cfg, variation, trial, artifact_dir)`, plus identity fields (`benchmark_id`, `sweep_id`, `label`, `cli_command`, `random_seed`) that the orchestrator uses for the artifact tree and sweep grouping. |
 
 `FixedTrialsStrategy` runs exactly `M` trials. `AdaptiveStrategy` runs until a
@@ -1073,7 +1064,7 @@ other class in the sweep code is glue or helper.
 | **`MultiRunOrchestrator`** | Drives the cell loop; dispatches grid vs adaptive.                 | Stage 4                   |
 | **`ExecutionStrategy`**  | Per-cell "should I keep going?" — `FixedTrialsStrategy` / `AdaptiveStrategy`. | Stages 5–6        |
 | **`BenchmarkRun`**       | One `(cfg, variation, trial)` plus identity (`benchmark_id`, `sweep_id`, `label`, `cli_command`, `random_seed`). Smallest unit of work. | Stage 6 in                |
-| **`RunExecutor`**        | ABC implemented by `LocalSubprocessExecutor` and `K8sChildJobExecutor`. | Stage 6                 |
+| **`RunExecutor`**        | ABC. Only impl: `LocalSubprocessExecutor`.                           | Stage 6                   |
 | **`RunResult`**          | One `BenchmarkRun`'s output (metrics + variation metadata).          | Stage 6 out -> 7 in       |
 | **`SweepAnalyzer`**      | Pure compute: `list[RunResult]` -> grouped / best / Pareto JSON.     | Stage 7                   |
 
@@ -1113,7 +1104,7 @@ flowchart LR
     class E art
 ```
 
-### 10,000 ft — local and cluster execution
+### 10,000 ft — local end-to-end (with cluster path *coming soon*)
 
 ```mermaid
 %%{init: {'flowchart': {'nodeSpacing': 50, 'rankSpacing': 60, 'htmlLabels': true}, 'themeVariables': {'fontSize': '14px'}}}%%
@@ -1122,7 +1113,7 @@ flowchart TD
 
     subgraph INPUTS["inputs"]
         cli["**aiperf profile** -c config.yaml"]
-        kube["**aiperf kube sweep** --config sweep.yaml"]
+        kube["**aiperf kube sweep** --config sweep.yaml<br/><i>coming soon</i>"]
     end
 
     subgraph CORE["plan / orchestration"]
@@ -1132,12 +1123,12 @@ flowchart TD
 
     subgraph EXEC["executors"]
         local["**LocalSubprocessExecutor**"]
-        k8s["**K8sChildJobExecutor**<br/><i>(in sweep-controller pod)</i>"]
+        k8s["**K8sChildJobExecutor**<br/><i>(in sweep-controller pod)</i><br/><i>coming soon</i>"]
     end
 
     subgraph RUNTIME["runtime"]
         sysctrl["**SystemController** + services"]
-        child["child **AIPerfJob** CRs<br/><i>(one per cell, deterministic names)</i>"]
+        child["child **AIPerfJob** CRs<br/><i>(one per cell, deterministic names)</i><br/><i>coming soon</i>"]
     end
 
     subgraph RESULTS["results"]
@@ -1145,27 +1136,28 @@ flowchart TD
     end
 
     user --> cli --> plan
-    user --> kube --> plan
+    user -.->|"coming soon"| kube -.-> plan
 
     plan --> orch
     orch --> local
-    orch --> k8s
+    orch -.->|"coming soon"| k8s
     local --> sysctrl
-    k8s --> child
-    child -->|"HTTP pull<br/>profile_export_aiperf.json"| out
+    k8s -.-> child
+    child -.->|"HTTP pull<br/>profile_export_aiperf.json"| out
     sysctrl --> out
 
     classDef data fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#0d47a1
     classDef proc fill:#fff3e0,stroke:#e65100,stroke-width:1.5px,color:#bf360c
     classDef decision fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1.5px,color:#4a148c
     classDef art fill:#e8f5e9,stroke:#2e7d32,stroke-width:1.5px,color:#1b5e20
+    classDef coming fill:#fafafa,stroke:#9e9e9e,stroke-width:1.5px,stroke-dasharray:5 3,color:#616161
 
-    class user,cli,kube data
+    class user,cli data
     class plan data
-    class orch,local,k8s decision
+    class orch,local decision
     class sysctrl proc
     class out art
-    class child proc
+    class kube,k8s,child coming
 
     style INPUTS fill:transparent,stroke:#78909c,stroke-width:2px,stroke-dasharray:5 3
     style CORE fill:transparent,stroke:#78909c,stroke-width:2px,stroke-dasharray:5 3
@@ -1280,7 +1272,7 @@ flowchart TD
 
 ### Sub-flow — RunExecutor backends
 
-`RunExecutor` is a 2-method ABC: `execute(run) -> RunResult` and `derive_id(plan, var_idx, trial) -> str`. The local executor derives a stable id from the plan/variation/trial tuple for artifact naming; the cluster executor derives a deterministic K8s-name-safe id from `(plan, var_idx, trial)` so child `AIPerfJob` creation is idempotent.
+`RunExecutor` is a 2-method ABC: `execute(run) -> RunResult` and `derive_id(plan, var_idx, trial) -> str`. The local executor derives a stable id from the plan/variation/trial tuple for artifact naming; the cluster executor (**coming soon — finalized on the K8s integration branch, not yet on `main`**) derives a deterministic K8s-name-safe id from `(plan, var_idx, trial)` so child `AIPerfJob` creation is idempotent.
 
 ```mermaid
 %%{init: {'flowchart': {'nodeSpacing': 50, 'rankSpacing': 60, 'htmlLabels': true}, 'themeVariables': {'fontSize': '14px'}}}%%
@@ -1294,7 +1286,7 @@ flowchart TD
         rrl["**RunResult**<br/>label · success ·<br/>summary_metrics · error ·<br/>artifacts_path · variation_label ·<br/>variation_values · trial_index"]
     end
 
-    subgraph K8S_BACKEND["cluster backend"]
+    subgraph K8S_BACKEND["cluster backend &mdash; <i>coming soon</i>"]
         k8s["**K8sChildJobExecutor**<br/><i>(runs inside sweep-controller pod)</i>"]
         cr["create **AIPerfJob** CR<br/><i>(deterministic name:<br/>&lt;sweep&gt;-v{idx:04d}-t{trial:02d})</i>"]
         watch["kubernetes_asyncio:<br/>watch child to terminal phase"]
@@ -1303,7 +1295,7 @@ flowchart TD
     end
 
     abc --> loc
-    abc --> k8s
+    abc -.->|"coming soon"| k8s
 
     loc -->|spawn subprocess| sub
     sub --> jr
@@ -1318,14 +1310,13 @@ flowchart TD
     classDef decision fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1.5px,color:#4a148c
     classDef proc fill:#fff3e0,stroke:#e65100,stroke-width:1.5px,color:#bf360c
     classDef art fill:#e8f5e9,stroke:#2e7d32,stroke-width:1.5px,color:#1b5e20
+    classDef coming fill:#fafafa,stroke:#9e9e9e,stroke-width:1.5px,stroke-dasharray:5 3,color:#616161
 
     class run data
     class abc,loc decision
     class sub,jr proc
     class rrl art
-    class k8s decision
-    class cr,watch,pull proc
-    class rrk art
+    class k8s,cr,watch,pull,rrk coming
 
     style LOCAL_BACKEND fill:transparent,stroke:#78909c,stroke-width:2px,stroke-dasharray:5 3
     style K8S_BACKEND fill:transparent,stroke:#9e9e9e,stroke-width:2px,stroke-dasharray:5 3
@@ -1470,6 +1461,7 @@ classDiagram
     }
     class LocalSubprocessExecutor
     class K8sChildJobExecutor {
+        <<coming soon>>
         runs in sweep-controller pod
         creates child AIPerfJob CR per call
     }
@@ -1500,7 +1492,7 @@ classDiagram
     MultiRunOrchestrator ..> BenchmarkRun : builds
     MultiRunOrchestrator ..> RunExecutor : delegates
     RunExecutor <|-- LocalSubprocessExecutor
-    RunExecutor <|-- K8sChildJobExecutor
+    RunExecutor <|.. K8sChildJobExecutor : coming soon
     RunExecutor ..> RunResult : returns
 
     SweepAnalyzer ..> RunResult : aggregates
@@ -1947,7 +1939,7 @@ sequenceDiagram
     participant PP as PostProcessHandler
     participant Out as search_history.json /<br/>sweep_aggregate
 
-    Orch->>Pl: planner instantiated upstream<br/>(via build_search_planner)<br/>and passed into execute
+    Orch->>Pl: planner instantiated upstream<br/>(via _build_search_planner)<br/>and passed into execute
 
     loop until converged or max_iterations
         Orch->>Pl: ask
@@ -2301,8 +2293,8 @@ flowchart TB
 
 #### Notes on extension points
 
-- **Adding a new planner backend** (random-search baseline, etc.): subclass `SearchPlanner`, implement the four abstract methods (`ask`/`tell`/`is_converged`/`history`); optionally override `convergence_reason` (default returns `None`) and `boundary_summary` (1D feasibility planners only). No orchestrator changes required — `MonotonicSLASearchPlanner`, `SmoothIsotonicSLAPlanner`, and `OptunaSearchPlanner` are existing examples reusing the same ABC. Wiring is already generic: `AdaptiveSearchSweep.planner` is a `SearchPlannerType` (`ExtensibleStrEnum` in `src/aiperf/plugin/enums.pyi`), and the shared `build_search_planner` factory dispatches through `plugins.get_class(PluginType.SEARCH_PLANNER, sweep.planner)`. To register a new backend, add an entry under `search_planner:` in `src/aiperf/plugin/plugins.yaml` and a matching enum value — no dispatch code changes.
-- **Adding a new executor backend**: subclass `RunExecutor`. `LocalSubprocessExecutor` and `K8sChildJobExecutor` both execute one `(variation, trial)` at a time via `execute(BenchmarkRun)` — the seam is adaptive-shaped by construction.
+- **Adding a new planner backend** (random-search baseline, etc.): subclass `SearchPlanner`, implement the four abstract methods (`ask`/`tell`/`is_converged`/`history`); optionally override `convergence_reason` (default returns `None`) and `boundary_summary` (1D feasibility planners only). No orchestrator changes required — `MonotonicSLASearchPlanner`, `SmoothIsotonicSLAPlanner`, and `OptunaSearchPlanner` are existing examples reusing the same ABC. Wiring is already generic: `AdaptiveSearchSweep.planner` is a `SearchPlannerType` (`ExtensibleStrEnum` in `src/aiperf/plugin/enums.pyi`), and `cli_runner._run_multi_benchmark` instantiates the planner via `plugins.get_class(PluginType.SEARCH_PLANNER, sweep.planner)`. To register a new backend, add an entry under `search_planner:` in `src/aiperf/plugin/plugins.yaml` and a matching enum value — no dispatch code changes.
+- **Adding a new executor backend**: subclass `RunExecutor`. `LocalSubprocessExecutor` iterates one (variation, trial) at a time via `execute(BenchmarkRun)` — the seam is adaptive-shaped by construction.
 - **Replacing the BO backend.** The `OptunaSearchPlanner` boundary (and its `BayesianSearchPlanner` curated-preset subclass) is the only Optuna-aware code in the project. BoTorch-specific acquisitions live behind the optional `botorch` extra in `pyproject.toml`. The `qlognei` / `qlognehvi` acquisitions, posterior-regret stopping (`--optuna-terminator regret`/`emmr`), pooled-percentile aggregation (`--search-percentile-pooling pooled`), and the Hvarfner-DSP Matern-5/2 kernel ([arXiv:2402.02229](https://arxiv.org/abs/2402.02229)) are all plumbed through `_optuna_helpers.py`. The remaining principled upgrade path is wiring per-iteration heteroscedastic noise estimates from the pooled-percentile JSONL helper into a `HeteroskedasticSingleTaskGP`-based custom `candidates_func`. Evidence-gated: ship only if observed within-trial variance varies meaningfully across the search space on real workloads.
 
 #### `smooth_isotonic` as novel-in-composition

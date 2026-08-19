@@ -341,15 +341,11 @@ Gap = 15 / 0.5 = **30 seconds** between each user's requests.
 
 | Metric | What It Tells You |
 |--------|-------------------|
-| **TTFT (Time to First Token)** | Aggregate prefill latency across benchmark requests |
+| **TTFT (Time to First Token)** | Lower TTFT on subsequent turns indicates cache hits |
+| **TTFT by Turn Index** | Compare Turn 0 vs Turn 1+ to measure cache benefit |
 | **Throughput** | Higher throughput with caching enabled indicates cache effectiveness |
 
-AIPerf does not emit a built-in per-turn TTFT trend metric. Raw exports retain
-turn metadata for offline analysis when a turn-by-turn cache study is required.
-
-### Expected Raw-Record Patterns
-
-When grouping a raw export by turn index offline, expect these patterns:
+### Expected Patterns
 
 **With effective caching:**
 - Turn 0 (first turn): Higher TTFT (cache miss, full prefill)
