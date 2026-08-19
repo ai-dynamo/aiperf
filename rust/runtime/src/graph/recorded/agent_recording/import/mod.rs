@@ -6,6 +6,7 @@
 //! The discovery result is an exact authority which later parsing consumes
 //! directly, rather than walking an authored history directory a second time.
 
+mod claude_code;
 mod codex;
 mod discovery;
 
@@ -15,6 +16,7 @@ use std::path::PathBuf;
 
 use bytes::Bytes;
 
+pub use claude_code::parse_claude_session;
 pub use codex::parse_codex_session;
 pub use discovery::{detect_imported_agent_source, discover_imported_agent_read_set};
 

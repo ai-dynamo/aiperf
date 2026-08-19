@@ -1,0 +1,304 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//! Claude Code JSONL normalization contracts for imported recorded-agent sessions.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use aiperf_runtime::graph::recorded::agent_recording::{
+    ImportedAgentSourceFile, ImportedSessionFamily, parse_claude_session,
+};
+use serde_json::Value;
+use tempfile::tempdir;
+
+fn fixture(path: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/recorded_agent_session_import/claude_code")
+        .join(path)
+}
+
+fn claude_file(path: PathBuf, family: ImportedSessionFamily) -> ImportedAgentSourceFile {
+    ImportedAgentSourceFile {
+        relative_path: path.file_name().expect("fixture file name").into(),
+        path,
+        family,
+    }
+}
+
+fn session_file(path: PathBuf) -> ImportedAgentSourceFile {
+    claude_file(path, ImportedSessionFamily::Session)
+}
+
+fn messages(
+    call: &aiperf_runtime::graph::recorded::agent_recording::ImportedModelCall,
+) -> Vec<Value> {
+    call.request_messages
+        .iter()
+        .map(|message| serde_json::from_slice(&message.wire).expect("canonical JSON wire"))
+        .collect()
+}
+
+fn write(root: &Path, name: &str, body: &str) -> ImportedAgentSourceFile {
+    let path = root.join(name);
+    fs::write(&path, body).expect("write source fixture");
+    session_file(path)
+}
+
+#[test]
+fn main_linear_history_is_systemless_and_uses_first_metadata() {
+    let session = parse_claude_session(&session_file(fixture("linear.jsonl"))).expect("session");
+    assert_eq!(session.model.as_deref(), Some("claude-opus-4-6"));
+    assert_eq!(session.calls.len(), 2);
+    assert!(session.system_prompt.is_none());
+    assert_eq!(
+        session.calls[0]
+            .request_messages
+            .iter()
+            .map(|message| message.role.as_str())
+            .collect::<Vec<_>>(),
+        ["user"],
+    );
+    assert_eq!(
+        session.calls[1]
+            .request_messages
+            .iter()
+            .map(|message| message.role.as_str())
+            .collect::<Vec<_>>(),
+        ["user", "assistant", "user"],
+    );
+    assert!(session.cwd_present && session.git_branch_present);
+    assert!(session.calls.iter().all(|call| !call.tool_schema_available));
+    assert!(
+        session
+            .calls
+            .iter()
+            .all(|call| call.output_tokens.is_none())
+    );
+}
+
+#[test]
+fn main_parallel_tools_retain_provider_blocks_and_delay() {
+    let session =
+        parse_claude_session(&session_file(fixture("parallel_tools.jsonl"))).expect("session");
+    assert_eq!(session.calls.len(), 2);
+    let second = messages(&session.calls[1]);
+    assert_eq!(second[1]["content"][0]["type"], "tool_use");
+    assert_eq!(second[1]["content"][1]["id"], "toolu_02");
+    assert_eq!(second[2]["content"][0]["type"], "tool_result");
+    assert_eq!(session.calls[1].delay_after_previous_us, Some(500_000.0));
+    assert_eq!(session.observed_tool_count, 2);
+}
+
+#[test]
+fn main_merges_repeated_assistant_snapshots_without_extra_calls() {
+    let root = tempdir().expect("temporary fixtures");
+    let file = write(
+        root.path(),
+        "snapshots.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"u-1\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"a-1\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"model\":\"claude\",\"content\":[{\"type\":\"text\",\"text\":\"hel\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"a-2\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"model\":\"other\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Read\",\"input\":{\"path\":\"x\"}}]}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"u-2\",\"timestamp\":\"2026-04-02T00:00:01Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool-1\",\"content\":\"done\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"a-3\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-2\",\"content\":[{\"type\":\"text\",\"text\":\"next\"}]}}\n"
+        ),
+    );
+    let session = parse_claude_session(&file).expect("merged session");
+    assert_eq!(session.model.as_deref(), Some("claude"));
+    assert_eq!(session.calls.len(), 2);
+    assert_eq!(session.calls[0].source_id, "msg-1");
+    let history = messages(&session.calls[1]);
+    assert_eq!(history[1]["content"][0]["text"], "hello");
+    assert_eq!(history[1]["content"][1]["id"], "tool-1");
+    assert_eq!(history[2]["content"][0]["tool_use_id"], "tool-1");
+}
+
+#[test]
+fn main_rejects_conflicts_invalid_correlations_and_never_leaks_private_values() {
+    let root = tempdir().expect("temporary fixtures");
+    for (name, body, detail) in [
+        (
+            "conflicting-text.jsonl",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"PRIVATE_PROMPT\"}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"text\",\"text\":\"one\"}]}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a2\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"text\",\"text\":\"PRIVATE_REASONING\"}]}}\n",
+            "conflicting repeated assistant text block",
+        ),
+        (
+            "bad-result.jsonl",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"missing\",\"content\":\"PRIVATE_RESULT\"}]}}\n",
+            "result does not identify an open tool use",
+        ),
+        (
+            "invalid-time.jsonl",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"timestamp\":\"PRIVATE_TIMESTAMP\",\"message\":{\"role\":\"user\",\"content\":\"PRIVATE_CWD\"}}\n",
+            "invalid timestamp",
+        ),
+        (
+            "no-calls.jsonl",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"cwd\":\"PRIVATE_BRANCH\",\"message\":{\"role\":\"user\",\"content\":\"PRIVATE_PROMPT\"}}\n",
+            "no inferred model calls",
+        ),
+    ] {
+        let error = parse_claude_session(&write(root.path(), name, body))
+            .expect_err(name)
+            .to_string();
+        assert!(error.contains(detail), "{name}: {error}");
+        for private in [
+            "PRIVATE_PROMPT",
+            "PRIVATE_REASONING",
+            "PRIVATE_RESULT",
+            "PRIVATE_TIMESTAMP",
+            "PRIVATE_CWD",
+            "PRIVATE_BRANCH",
+        ] {
+            assert!(!error.contains(private), "{name} leaked {private}: {error}");
+        }
+    }
+}
+
+#[test]
+fn main_filters_sidechains_and_validates_subagent_parent() {
+    let root = tempdir().expect("temporary fixtures");
+    let file = write(
+        root.path(),
+        "mixed.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":true,\"sessionId\":\"safe\",\"uuid\":\"side-u\",\"message\":{\"role\":\"user\",\"content\":\"ignore\"}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"keep\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"text\",\"text\":\"answer\"}]}}\n"
+        ),
+    );
+    let session = parse_claude_session(&file).expect("main session");
+    assert_eq!(session.calls.len(), 1);
+    assert!(session.parent.is_none());
+
+    let subagent = parse_claude_session(&claude_file(
+        fixture("with_subagent/main/subagents/agent-aaa.jsonl"),
+        ImportedSessionFamily::Subagent,
+    ))
+    .expect("subagent session");
+    let parent = subagent.parent.expect("subagent parent");
+    assert_eq!(parent.session_id, "sess-main");
+    assert_eq!(parent.tool_use_id, "toolu_task_01");
+}
+
+#[test]
+fn main_validates_ids_merges_exact_tool_snapshots_and_counts_omissions() {
+    let root = tempdir().expect("temporary fixtures");
+    let fallback = write(
+        root.path(),
+        "uuid-fallback.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"uuid-fallback\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{}},{\"type\":\"thinking\",\"thinking\":\"PRIVATE_REASONING\"},{\"type\":\"unknown\",\"value\":\"PRIVATE_VALUE\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"new-uuid\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{}}]}}\n"
+        ),
+    );
+    let session = parse_claude_session(&fallback).expect("uuid fallback session");
+    assert_eq!(session.calls[0].source_id, "msg");
+    assert_eq!(session.observed_tool_count, 1);
+    assert_eq!(session.omitted_reasoning_count, 1);
+    assert_eq!(session.ignored_record_count, 1);
+
+    let uuid_fallback = write(
+        root.path(),
+        "uuid-source-id.jsonl",
+        "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"uuid-fallback\",\"message\":{\"role\":\"assistant\",\"content\":[]}}\n",
+    );
+    assert_eq!(
+        parse_claude_session(&uuid_fallback)
+            .expect("uuid source-id fallback")
+            .calls[0]
+            .source_id,
+        "uuid-fallback"
+    );
+
+    for (name, body, detail) in [
+        (
+            "no-assistant-id.jsonl",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"message\":{\"role\":\"assistant\",\"content\":[]}}\n",
+            "invalid message identifier",
+        ),
+        (
+            "tool-conflict.jsonl",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{}}]}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"b\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Bash\",\"input\":{}}]}}\n",
+            "conflicting tool-use identifier reuse",
+        ),
+        (
+            "inconsistent-session.jsonl",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe-one\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe-two\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[]}}\n",
+            "inconsistent session identifier",
+        ),
+    ] {
+        let error = parse_claude_session(&write(root.path(), name, body))
+            .expect_err(name)
+            .to_string();
+        assert!(error.contains(detail), "{name}: {error}");
+        assert!(!error.contains("PRIVATE_VALUE"));
+    }
+}
+
+#[test]
+fn main_accepts_reverse_tool_results_and_rejects_duplicate_results() {
+    let root = tempdir().expect("temporary fixtures");
+    let reverse = write(
+        root.path(),
+        "reverse-results.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"timestamp\":\"2026-04-02T00:00:00Z\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"one\",\"name\":\"Read\",\"input\":{}},{\"type\":\"tool_use\",\"id\":\"two\",\"name\":\"Bash\",\"input\":{}}]}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"r\",\"timestamp\":\"2026-04-02T00:00:01Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"two\",\"content\":\"two\"},{\"type\":\"tool_result\",\"tool_use_id\":\"one\",\"content\":\"one\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"b\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-2\",\"content\":[]}}\n"
+        ),
+    );
+    let session = parse_claude_session(&reverse).expect("reverse results");
+    assert!(session.tool_results_complete);
+    assert_eq!(session.calls[1].delay_after_previous_us, Some(1_000_000.0));
+    let history = messages(&session.calls[1]);
+    assert_eq!(history[2]["content"][0]["tool_use_id"], "two");
+    assert_eq!(history[2]["content"][1]["tool_use_id"], "one");
+
+    let duplicate = write(
+        root.path(),
+        "duplicate-result.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{}}]}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"r\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool\",\"content\":\"one\"},{\"type\":\"tool_result\",\"tool_use_id\":\"tool\",\"content\":\"two\"}]}}\n"
+        ),
+    );
+    let error = parse_claude_session(&duplicate)
+        .expect_err("duplicate result")
+        .to_string();
+    assert!(error.contains("duplicate result identifier"));
+}
+
+#[test]
+fn main_adversarial_fixtures_keep_private_values_out_of_diagnostics() {
+    for (name, detail) in [
+        (
+            "repeated_text_conflict.jsonl",
+            "conflicting repeated assistant text block",
+        ),
+        (
+            "dangling_result.jsonl",
+            "result does not identify an open tool use",
+        ),
+        ("invalid_timestamp.jsonl", "invalid timestamp"),
+    ] {
+        let error = parse_claude_session(&session_file(fixture(&format!(
+            "../adversarial/claude_code/{name}"
+        ))))
+        .expect_err(name)
+        .to_string();
+        assert!(error.contains(detail), "{name}: {error}");
+        for private in [
+            "PRIVATE_PROMPT",
+            "PRIVATE_REASONING",
+            "PRIVATE_RESULT",
+            "PRIVATE_TIMESTAMP",
+        ] {
+            assert!(!error.contains(private), "{name} leaked {private}: {error}");
+        }
+    }
+}

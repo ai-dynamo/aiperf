@@ -1,0 +1,3 @@
+{"type":"user","isSidechain":false,"sessionId":"safe","uuid":"u","message":{"role":"user","content":"PRIVATE_PROMPT"}}
+{"type":"assistant","isSidechain":false,"sessionId":"safe","uuid":"a","message":{"role":"assistant","id":"msg","content":[{"type":"text","text":"first"}]}}
+{"type":"assistant","isSidechain":false,"sessionId":"safe","uuid":"a2","message":{"role":"assistant","id":"msg","content":[{"type":"text","text":"PRIVATE_REASONING"}]}}
