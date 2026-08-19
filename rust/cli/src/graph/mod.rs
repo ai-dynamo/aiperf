@@ -287,15 +287,13 @@ fn load(args: CommonArgs) -> Result<LoadedGraphInput, GraphCommandError> {
 
 fn is_input_decode_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
-        cause.downcast_ref::<serde_json::Error>().is_some()
-            || matches!(
-                cause.to_string().to_ascii_lowercase().as_str(),
-                text if text.contains("decoding direct")
-                    || text.contains("decode")
-                    || text.contains("serde")
-                    || text.contains("deserializ")
-                    || text.contains("invalid json:")
-            )
+        if cause.downcast_ref::<serde_json::Error>().is_some() {
+            return true;
+        }
+        let text = cause.to_string().to_ascii_lowercase();
+        text.contains("decoding direct")
+            || text.contains("decoding otlp json")
+            || text.contains("invalid json:")
     })
 }
 
@@ -372,5 +370,18 @@ fn write_error(operation: GraphOperation, error: &GraphCommandError, is_json: bo
         }
     } else {
         eprintln!("aiperf graph {}: {}", operation.as_str(), error.message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_input_decode_error;
+
+    #[test]
+    fn decode_named_lowering_error_is_not_an_input_decode_error() {
+        let error = anyhow::anyhow!("tokenizer decode_lossy failed")
+            .context("lowering recorded graph materialization");
+
+        assert!(!is_input_decode_error(&error));
     }
 }
