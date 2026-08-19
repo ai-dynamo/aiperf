@@ -928,6 +928,34 @@ fn prepare_dataset_destination(dest_dir: &Path, relative: &Path) -> Result<PathB
     Ok(destination)
 }
 
+// Validate every manifest path before making any dataset request.
+fn validate_dataset_manifest(manifest: &DatasetManifest) -> Result<()> {
+    let mut seen = HashSet::with_capacity(manifest.files.len());
+    for name in &manifest.files {
+        validate_dataset_relname(name)
+            .with_context(|| format!("validating shipped dataset file {name:?}"))?;
+        ensure!(
+            seen.insert(name),
+            "duplicate dataset manifest path {name:?}"
+        );
+    }
+    match manifest.kind.as_str() {
+        "dir" => Ok(()),
+        "file" | "prefix" | "replay_root" | "agent_session_set" => {
+            if matches!(manifest.kind.as_str(), "replay_root" | "agent_session_set")
+                && manifest.base_name.is_empty()
+            {
+                Ok(())
+            } else {
+                validate_dataset_relname(&manifest.base_name).with_context(|| {
+                    format!("validating dataset base name {:?}", manifest.base_name)
+                })
+            }
+        }
+        other => bail!("unknown dataset manifest kind {other:?}"),
+    }
+}
+
 /// Reconstruct a shipped directory / segmented-prefix / single-file graph trace
 /// under `dest_dir` and return the local path `datasets/0.path` should
 /// point at.
@@ -945,14 +973,8 @@ pub async fn reconstruct_shipped_dataset(
     manifest: &DatasetManifest,
     dest_dir: &Path,
 ) -> Result<PathBuf> {
-    let mut seen = HashSet::new();
+    validate_dataset_manifest(manifest)?;
     for name in &manifest.files {
-        validate_dataset_relname(name)
-            .with_context(|| format!("validating shipped dataset file {name:?}"))?;
-        ensure!(
-            seen.insert(name),
-            "duplicate dataset manifest path {name:?}"
-        );
         let dest = prepare_dataset_destination(dest_dir, Path::new(name))?;
         fetch_dataset_to_file(authority, name, &dest)
             .await
@@ -966,9 +988,6 @@ pub async fn reconstruct_shipped_dataset(
             {
                 Ok(dest_dir.to_path_buf())
             } else {
-                validate_dataset_relname(&manifest.base_name).with_context(|| {
-                    format!("validating dataset base name {:?}", manifest.base_name)
-                })?;
                 Ok(dest_dir.join(&manifest.base_name))
             }
         }
@@ -1467,8 +1486,9 @@ mod tests {
     async fn agent_session_exact_set_reconstructs_only_nested_discovered_sources() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("source");
-        let main = source.join("main.jsonl");
-        let subagent = source.join("main/subagents/agent-aaa.jsonl");
+        let selected = source.join("selected");
+        let main = selected.join("main.jsonl");
+        let subagent = selected.join("main/subagents/agent-aaa.jsonl");
         for (path, bytes) in [
             (
                 &main,
@@ -1484,10 +1504,10 @@ mod tests {
         }
         let manifest = DatasetManifest {
             kind: "agent_session_set".to_owned(),
-            base_name: "main.jsonl".to_owned(),
+            base_name: "selected".to_owned(),
             files: vec![
-                "main.jsonl".to_owned(),
-                "main/subagents/agent-aaa.jsonl".to_owned(),
+                "selected/main.jsonl".to_owned(),
+                "selected/main/subagents/agent-aaa.jsonl".to_owned(),
             ],
         };
         let server = ArtifactUploadServer::start_with_dataset_plan(
@@ -1495,9 +1515,9 @@ mod tests {
             dir.path().join("controller-temp"),
             HashSet::new(),
             HashMap::from([
-                ("main.jsonl".to_owned(), main.clone()),
+                ("selected/main.jsonl".to_owned(), main.clone()),
                 (
-                    "main/subagents/agent-aaa.jsonl".to_owned(),
+                    "selected/main/subagents/agent-aaa.jsonl".to_owned(),
                     subagent.clone(),
                 ),
             ]),
@@ -1511,53 +1531,70 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(rewritten, landed.join("main.jsonl"));
-        assert_eq!(
-            std::fs::read(landed.join("main.jsonl")).unwrap(),
-            std::fs::read(&main).unwrap()
-        );
-        assert_eq!(
-            std::fs::read(landed.join("main/subagents/agent-aaa.jsonl")).unwrap(),
-            std::fs::read(&subagent).unwrap()
-        );
+        assert_eq!(rewritten, landed.join("selected"));
         assert!(!landed.join("secret.jsonl").exists());
+        let source_read_set =
+            crate::graph::recorded::agent_recording::discover_imported_agent_read_set(
+                &selected,
+                Some(&source),
+                crate::config::model::dataset::RecordedAgentSourceFormat::ClaudeCode,
+                Some(true),
+            )
+            .unwrap();
         let rediscovered =
             crate::graph::recorded::agent_recording::discover_imported_agent_read_set(
-                &landed.join("main.jsonl"),
+                &rewritten,
                 Some(&landed),
                 crate::config::model::dataset::RecordedAgentSourceFormat::ClaudeCode,
                 Some(true),
             )
             .unwrap();
-        for file in rediscovered.files {
-            assert_eq!(
-                std::fs::read(&file.path).unwrap(),
-                std::fs::read(source.join(file.relative_path)).unwrap(),
-                "{} must land byte-identical",
-                file.path.display()
-            );
-        }
+        let read_set_bytes =
+            |read_set: crate::graph::recorded::agent_recording::ImportedAgentReadSet| {
+                read_set
+                    .files
+                    .into_iter()
+                    .map(|file| (file.relative_path, std::fs::read(file.path).unwrap()))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            };
+        assert_eq!(
+            read_set_bytes(rediscovered),
+            read_set_bytes(source_read_set),
+            "the landed selected directory must rediscover the exact complete session set"
+        );
         server.shutdown().await;
     }
 
     #[tokio::test]
-    async fn agent_session_exact_set_rejects_duplicate_and_traversal_paths() {
+    async fn agent_session_exact_set_rejects_duplicate_paths_before_fetching() {
         let dest = tempfile::tempdir().unwrap();
-        for files in [
-            vec!["main.jsonl".to_owned(), "main.jsonl".to_owned()],
-            vec!["../secret.jsonl".to_owned()],
-        ] {
-            let manifest = DatasetManifest {
-                kind: "agent_session_set".to_owned(),
-                base_name: "main.jsonl".to_owned(),
-                files,
-            };
-            assert!(
-                reconstruct_shipped_dataset("127.0.0.1:1", &manifest, dest.path())
-                    .await
-                    .is_err()
-            );
-        }
+        let manifest = DatasetManifest {
+            kind: "agent_session_set".to_owned(),
+            base_name: "main.jsonl".to_owned(),
+            files: vec!["main.jsonl".to_owned(), "main.jsonl".to_owned()],
+        };
+        let error = reconstruct_shipped_dataset("127.0.0.1:1", &manifest, dest.path())
+            .await
+            .expect_err("a duplicate must reject before attempting the unreachable server");
+        assert!(
+            format!("{error:#}").contains("duplicate dataset manifest path \"main.jsonl\""),
+            "duplicate rejection must win over an unreachable fetch: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_session_exact_set_rejects_traversal_paths() {
+        let dest = tempfile::tempdir().unwrap();
+        let manifest = DatasetManifest {
+            kind: "agent_session_set".to_owned(),
+            base_name: "main.jsonl".to_owned(),
+            files: vec!["../secret.jsonl".to_owned()],
+        };
+        assert!(
+            reconstruct_shipped_dataset("127.0.0.1:1", &manifest, dest.path())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
