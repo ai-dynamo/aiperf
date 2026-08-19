@@ -964,6 +964,23 @@ mod tests {
             inspect_bundle(&bundle(Vec::new()), GraphInspectionOptions::default()).issues[0].code,
             "bundle-empty"
         );
+
+        let repeated = bundle(vec![
+            program("same", graph(r#"{"nodes":{}}"#)),
+            program("same", graph(r#"{"nodes":{}}"#)),
+            program("same", graph(r#"{"nodes":{}}"#)),
+        ]);
+        let duplicates = inspect_bundle(&repeated, GraphInspectionOptions::default())
+            .issues
+            .into_iter()
+            .filter(|issue| issue.code == "trace-id-duplicate")
+            .collect::<Vec<_>>();
+        assert_eq!(duplicates.len(), 2);
+        assert!(
+            duplicates
+                .iter()
+                .all(|issue| issue.trace_id.as_deref() == Some("same"))
+        );
     }
 
     #[test]
@@ -992,6 +1009,16 @@ mod tests {
         assert_eq!(llm.streaming, Some(false));
         assert_eq!(llm.model_override.as_deref(), Some("m"));
         assert_eq!(llm.max_tokens, Some(4));
+        assert_eq!(
+            plan.summary,
+            GraphPlanSummary {
+                node_count: 3,
+                llm_node_count: 2,
+                tool_node_count: 1,
+                edge_count: 4,
+                channel_count: 2,
+            }
+        );
         assert!(
             plan.topology.edges.iter().any(
                 |edge| edge.anchor == GraphEdgeAnchor::FirstToken && edge.delay_us == Some(3.0)
@@ -1098,6 +1125,48 @@ mod tests {
             panic!("valid graph must have waves")
         };
         assert_eq!(waves[1].trigger, "completed: source");
+    }
+
+    #[test]
+    fn completion_chain_uses_completion_waves_and_exposes_llm_inputs_and_splices() {
+        let graph = graph(
+            r#"{
+                "state":{"out":{},"done":{}},
+                "nodes":{
+                    "n0":{"output":"out"},
+                    "n1":{"output":"done","inputs":[{"channel":"out","count":1}],"items":[{"splice":"out"}]}},
+                "edges":[
+                    {"source":"START","target":"n0"},
+                    {"source":"n0","target":"n1"}
+                ]
+            }"#,
+        );
+        let plan = &inspect_bundle(
+            &bundle(vec![program("t", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling;
+        let n1 = plan
+            .topology
+            .nodes
+            .iter()
+            .find(|node| node.id == "n1")
+            .unwrap();
+        assert_eq!(
+            n1.inputs,
+            vec![GraphNodeInputInspection {
+                channel: "out".into(),
+                count: "1".into(),
+            }]
+        );
+        assert_eq!(n1.prompt_splice_channels, vec!["out"]);
+        let ReadinessInspection::Available { waves } = &plan.readiness else {
+            panic!("valid chain must have waves")
+        };
+        assert_eq!(waves[0].node_ids, vec!["n0"]);
+        assert_eq!(waves[1].node_ids, vec!["n1"]);
+        assert_eq!(waves[1].trigger, "completed: n0");
     }
 
     #[test]
