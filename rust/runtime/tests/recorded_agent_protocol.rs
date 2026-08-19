@@ -30,8 +30,8 @@ fn run_with_artifacts(artifacts: Value) -> BenchmarkRunWireV2 {
                 "type": "file", "format": "agent_recording", "path": "/tmp/recording.json",
                 "sampling": "sequential", "options": {},
                 "graph": {
-                    "replay_root": "/tmp/replay", "execute_tools": true,
-                    "tool_image": "tools:latest", "pinch_image": "pinch:latest",
+                    "replay_root": "/tmp/replay", "source_format": "claude_code",
+                    "include_subagents": false, "execute_tools": false,
                     "command_timeout_seconds": 9.5, "container_stop_timeout_seconds": 4.0,
                     "session_close_grace_seconds": 1.5, "use_family_sampling": false,
                     "emit_warmup": true, "resume": false, "stop_on_failure": true
@@ -46,7 +46,7 @@ fn run_with_artifacts(artifacts: Value) -> BenchmarkRunWireV2 {
 }
 
 #[test]
-fn graph_config_and_all_replay_artifact_paths_round_trip_strictly() {
+fn recorded_agent_import_contract_round_trips_graph_source_configuration() {
     let artifacts = json!({
         "trace": false, "inputs_path": "inputs.json",
         "graph_tool_time_path": "tool-time.json",
@@ -64,7 +64,9 @@ fn graph_config_and_all_replay_artifact_paths_round_trip_strictly() {
     assert_eq!(authored.workload.id.as_str(), "graph");
     let graph: Value =
         serde_json::from_str(authored.workload.config.get()).expect("graph config JSON");
-    assert_eq!(graph["dataset"]["graph"]["execute_tools"], true);
+    assert_eq!(graph["dataset"]["graph"]["source_format"], "claude_code");
+    assert_eq!(graph["dataset"]["graph"]["include_subagents"], false);
+    assert_eq!(graph["dataset"]["graph"]["execute_tools"], false);
     assert_eq!(graph["dataset"]["graph"]["command_timeout_seconds"], 9.5);
     assert_eq!(
         authored.artifacts.graph_replay_metrics_csv_path.as_deref(),

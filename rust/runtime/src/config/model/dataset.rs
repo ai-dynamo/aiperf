@@ -6,6 +6,61 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The origin format of a recorded-agent graph input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordedAgentSourceFormat {
+    /// Preserve existing recording detection and sniff a single JSONL input.
+    #[default]
+    Auto,
+    /// Require the Mini-SWE-Agent recording or replay-manifest contract.
+    MiniSweAgent,
+    /// Require a Codex CLI session export.
+    Codex,
+    /// Require a Claude Code session export.
+    ClaudeCode,
+}
+
+/// An invalid recorded-agent source-format spelling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordedAgentSourceFormatParseError;
+
+impl std::fmt::Display for RecordedAgentSourceFormatParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "recorded-agent source format must be one of: auto, mini_swe_agent, \
+             mini-swe-agent, codex, claude_code, claude-code",
+        )
+    }
+}
+
+impl std::error::Error for RecordedAgentSourceFormatParseError {}
+
+impl std::fmt::Display for RecordedAgentSourceFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Auto => "auto",
+            Self::MiniSweAgent => "mini_swe_agent",
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude_code",
+        })
+    }
+}
+
+impl std::str::FromStr for RecordedAgentSourceFormat {
+    type Err = RecordedAgentSourceFormatParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "auto" => Ok(Self::Auto),
+            "mini_swe_agent" | "mini-swe-agent" => Ok(Self::MiniSweAgent),
+            "codex" => Ok(Self::Codex),
+            "claude_code" | "claude-code" => Ok(Self::ClaudeCode),
+            _ => Err(RecordedAgentSourceFormatParseError),
+        }
+    }
+}
+
 /// Dataset sampling order, which is extensible by dataset kind.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -344,6 +399,12 @@ pub struct Synthetic {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecordedAgentGraphConfig {
+    /// Source format used to decode the recorded session.
+    #[serde(default)]
+    pub source_format: RecordedAgentSourceFormat,
+    /// Whether Claude Code subagent sessions participate in the replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_subagents: Option<bool>,
     /// Root directory resolving manifest-relative recordings and task assets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_root: Option<std::path::PathBuf>,

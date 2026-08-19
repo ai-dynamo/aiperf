@@ -12,7 +12,7 @@
 use anyhow::{Result, bail};
 
 use super::model::config::BenchmarkConfig;
-use super::model::dataset::{CacheBustTarget, Dataset};
+use super::model::dataset::{CacheBustTarget, Dataset, RecordedAgentSourceFormat};
 use super::model::phase::{Phase, PhaseKind, PhaseRole};
 use super::model::transport::Transport;
 
@@ -310,6 +310,58 @@ fn validate_recorded_agent_replay(cfg: &BenchmarkConfig) -> Result<()> {
         if file.format.as_deref() != Some("agent_recording") {
             bail!("dataset.graph is only supported with dataset.format=agent_recording");
         }
+        if matches!(
+            graph.source_format,
+            RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode
+        ) {
+            if graph.execute_tools {
+                bail!(
+                    "dataset.graph.execute_tools is incompatible with imported \
+                     session source_format={}",
+                    graph.source_format
+                );
+            }
+            if graph.tool_image.is_some() {
+                bail!(
+                    "dataset.graph.tool_image is incompatible with imported \
+                     session source_format={}",
+                    graph.source_format
+                );
+            }
+            if graph.pinch_image.is_some() {
+                bail!(
+                    "dataset.graph.pinch_image is incompatible with imported \
+                     session source_format={}",
+                    graph.source_format
+                );
+            }
+            if cfg.scenario.as_deref() == Some("recorded-agent-default") {
+                bail!(
+                    "scenario=recorded-agent-default is incompatible with imported \
+                     session source_format={}",
+                    graph.source_format
+                );
+            }
+        }
+        if matches!(
+            graph.source_format,
+            RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::MiniSweAgent
+        ) && graph.include_subagents.is_some()
+        {
+            bail!(
+                "dataset.graph.include_subagents is only applicable to \
+                 source_format=claude_code"
+            );
+        }
+        if graph.source_format == RecordedAgentSourceFormat::ClaudeCode
+            && cfg
+                .endpoint
+                .as_ref()
+                .map(|endpoint| endpoint.endpoint_type.0.as_str())
+                != Some("messages")
+        {
+            bail!("dataset.graph.source_format=claude_code requires endpoint.type=messages");
+        }
         for (field, value) in [
             ("command_timeout_seconds", graph.command_timeout_seconds),
             (
@@ -438,6 +490,7 @@ fn validate_agentic_cache_warmup(cfg: &BenchmarkConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::model::dataset::{RecordedAgentGraphConfig, RecordedAgentSourceFormat};
     use serde_json::json;
 
     /// Build a `BenchmarkConfig` from a JSON value, panicking on decode error.
@@ -783,6 +836,149 @@ mod tests {
             "path": "/tmp/recording.json",
             "graph": graph
         }])
+    }
+
+    #[test]
+    fn recorded_agent_import_contract_defaults_to_auto_without_authored_subagent_control() {
+        let graph: RecordedAgentGraphConfig = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(graph.source_format, RecordedAgentSourceFormat::Auto);
+        assert_eq!(graph.include_subagents, None);
+        assert_eq!(
+            serde_json::to_value(&graph).unwrap()["source_format"],
+            "auto"
+        );
+    }
+
+    #[test]
+    fn recorded_agent_import_contract_rejects_tools_and_sampling_for_session_sources() {
+        for source in ["codex", "claude_code"] {
+            let mut value = valid_value();
+            value["datasets"] = recorded_agent_dataset(
+                json!({"source_format": source, "execute_tools": true}),
+                json!({}),
+            );
+            assert!(
+                validate(&cfg(value))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("execute_tools")
+            );
+        }
+    }
+
+    #[test]
+    fn recorded_agent_import_contract_rejects_session_tool_settings_and_scenario() {
+        for source in ["codex", "claude_code"] {
+            for (field, graph) in [
+                (
+                    "tool_image",
+                    json!({"source_format": source, "tool_image": "tools:latest"}),
+                ),
+                (
+                    "pinch_image",
+                    json!({"source_format": source, "pinch_image": "pinch:latest"}),
+                ),
+            ] {
+                let mut value = valid_value();
+                value["datasets"] = recorded_agent_dataset(graph, json!({}));
+                let error = validate(&cfg(value)).unwrap_err().to_string();
+                assert!(error.contains(field), "{source}: {error}");
+            }
+
+            let mut value = valid_value();
+            value["scenario"] = json!("recorded-agent-default");
+            value["datasets"] = recorded_agent_dataset(json!({"source_format": source}), json!({}));
+            let error = validate(&cfg(value)).unwrap_err().to_string();
+            assert!(
+                error.contains("recorded-agent-default"),
+                "{source}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn recorded_agent_import_contract_limits_subagents_to_explicit_claude_sources() {
+        for source in ["codex", "mini_swe_agent"] {
+            for include_subagents in [true, false] {
+                let mut value = valid_value();
+                value["datasets"] = recorded_agent_dataset(
+                    json!({"source_format": source, "include_subagents": include_subagents}),
+                    json!({}),
+                );
+                let error = validate(&cfg(value)).unwrap_err().to_string();
+                assert!(error.contains("include_subagents"), "{source}: {error}");
+            }
+        }
+
+        for include_subagents in [None, Some(true), Some(false)] {
+            let mut value = valid_value();
+            let mut graph = json!({"source_format": "claude_code"});
+            if let Some(include_subagents) = include_subagents {
+                graph["include_subagents"] = json!(include_subagents);
+            }
+            value["endpoint"]["type"] = json!("messages");
+            value["datasets"] = recorded_agent_dataset(graph, json!({}));
+            assert!(validate(&cfg(value)).is_ok());
+        }
+    }
+
+    #[test]
+    fn recorded_agent_import_contract_requires_messages_for_explicit_claude() {
+        let mut value = valid_value();
+        value["datasets"] =
+            recorded_agent_dataset(json!({"source_format": "claude_code"}), json!({}));
+        let error = validate(&cfg(value)).unwrap_err().to_string();
+        assert!(error.contains("messages"), "{error}");
+
+        let mut auto = valid_value();
+        auto["datasets"] = recorded_agent_dataset(json!({"source_format": "auto"}), json!({}));
+        assert!(validate(&cfg(auto)).is_ok());
+    }
+
+    #[test]
+    fn recorded_agent_import_contract_preserves_strict_graph_format_and_fields() {
+        let mut invalid_format = valid_value();
+        invalid_format["datasets"] = json!([{
+            "type": "file",
+            "format": "single_turn",
+            "sampling": "sequential",
+            "options": {},
+            "path": "/tmp/recording.json",
+            "graph": {"source_format": "codex"}
+        }]);
+        let error = validate(&cfg(invalid_format)).unwrap_err().to_string();
+        assert!(error.contains("agent_recording"), "{error}");
+
+        let error = serde_json::from_value::<RecordedAgentGraphConfig>(json!({
+            "source_format": "codex",
+            "unsupported": true
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("unsupported"), "{error}");
+    }
+
+    #[test]
+    fn recorded_agent_import_contract_parses_config_and_cli_source_spellings() {
+        for (input, expected) in [
+            ("auto", RecordedAgentSourceFormat::Auto),
+            ("mini_swe_agent", RecordedAgentSourceFormat::MiniSweAgent),
+            ("mini-swe-agent", RecordedAgentSourceFormat::MiniSweAgent),
+            ("codex", RecordedAgentSourceFormat::Codex),
+            ("claude_code", RecordedAgentSourceFormat::ClaudeCode),
+            ("claude-code", RecordedAgentSourceFormat::ClaudeCode),
+        ] {
+            assert_eq!(
+                input.parse::<RecordedAgentSourceFormat>().unwrap(),
+                expected
+            );
+        }
+        let error = "unsupported"
+            .parse::<RecordedAgentSourceFormat>()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("mini_swe_agent"), "{error}");
+        assert!(!error.contains("unsupported"), "{error}");
     }
 
     #[test]
