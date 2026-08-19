@@ -3,7 +3,7 @@
 import pytest
 
 from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models import Image, Text, Turn
+from aiperf.common.models import Conversation, Image, Text, Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -277,8 +277,10 @@ class TestChatEndpoint:
             assert payload["stream_options"] == expected
 
     def test_format_payload_does_not_mutate_endpoint_extra(
-        self, model_endpoint, sample_conversations
-    ):
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
         """Auto-adding include_usage must not write back into endpoint.extra.
 
         The payload merge aliases the shared config dict, and endpoint.extra

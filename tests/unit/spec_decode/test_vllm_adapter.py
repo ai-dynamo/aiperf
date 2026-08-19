@@ -106,7 +106,8 @@ class TestVLLMSpecDecodeAdapter:
         assert record.engine == "vllm"
         assert record.mean_acceptance_length == pytest.approx(1.2325581395348837)
         assert record.draft_acceptance_rate == pytest.approx(0.07751937984496124)
-        # The dense list is inflated into the sparse map (zero buckets dropped).
+        # Index 2 is absent because the neutral record stays sparse: engines
+        # may report any bucket layout, so zero counts carry no information.
         assert record.acceptance_histogram == {0: 39, 1: 1, 3: 3}
         assert record.num_spec_steps == 43
         assert record.num_accepted_draft_tokens == 10
