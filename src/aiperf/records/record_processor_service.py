@@ -346,18 +346,15 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self,
         message: ProfileCompleteCommand,  # noqa: ARG002
     ) -> None:
-        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
+        """Finalize child record artifacts before result aggregation.
 
         RecordsManager sends PROFILE_COMPLETE after all records are processed
         but before exporting/aggregating results. Flushing children here ensures
         buffered writers drain to disk before the RawRecordAggregator reads them.
 
-        We flush rather than stop: stop() runs the @on_stop hook chain inside
-        the message-handler task, and when SystemController later broadcasts
-        SHUTDOWN it cancels the in-flight handler task, leaving the writer
-        wedged at STOPPING with the buffer un-flushed. flush_buffer() drains
-        the buffer without tearing down the file handle, and the writer's
-        normal _close_file hook handles teardown during service shutdown.
+        Writers without a dedicated artifact finalizer are flushed in place.
+        RawRecordWriterProcessor additionally closes its staging file so the
+        local RawRecordAggregator can read and remove it on Windows.
         """
         await self._finalize_local_artifacts()
 
@@ -370,22 +367,27 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         await self._finalize_local_artifacts()
 
     async def _finalize_local_artifacts(self) -> None:
-        """Flush every child writer, propagating any incomplete artifact."""
-        children = [
-            (child, flush)
-            for child in self._children
-            if (flush := getattr(child, "flush_buffer", None)) is not None
-        ]
+        """Finalize every child writer, propagating any incomplete artifact."""
+        children = []
+        for child in self._children:
+            finalizer = getattr(type(child), "finalize_artifact", None)
+            finalize = (
+                child.finalize_artifact
+                if callable(finalizer)
+                else getattr(child, "flush_buffer", None)
+            )
+            if finalize is not None:
+                children.append((child, finalize))
         results = await asyncio.gather(
-            *(flush() for _child, flush in children), return_exceptions=True
+            *(finalize() for _child, finalize in children), return_exceptions=True
         )
         failures: list[Exception] = []
-        for (child, _flush), result in zip(children, results, strict=True):
+        for (child, _finalize), result in zip(children, results, strict=True):
             if isinstance(result, asyncio.CancelledError):
                 raise result
             if isinstance(result, Exception):
                 failures.append(
-                    RuntimeError(f"Failed to flush child {child}: {result!r}")
+                    RuntimeError(f"Failed to finalize child {child}: {result!r}")
                 )
         if failures:
             raise ExceptionGroup(

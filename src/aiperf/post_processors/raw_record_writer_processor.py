@@ -175,6 +175,15 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         # Write using the buffered writer mixin (handles batching and flushing)
         await self.buffered_write(record_export)
 
+    async def finalize_artifact(self) -> None:
+        """Flush and close the staging file before raw-record aggregation.
+
+        Windows keeps an open JSONL handle exclusively locked, so aggregation
+        must run only after this writer has released it.
+        """
+        await self.flush_buffer()
+        await self._close_file()
+
 
 class RawRecordAggregator(AIPerfLoggerMixin):
     """Aggregator for raw records."""
