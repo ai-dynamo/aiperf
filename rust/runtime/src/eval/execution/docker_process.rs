@@ -403,7 +403,7 @@ struct DockerNativeGraphEnvironmentAdapterStart {
     rollout_session: Option<DockerNativeGraphEnvironmentRolloutSession>,
     deadlines: AdapterLifecycleDeadlines,
     /// Keeps the private no-network sidecar workspace mounted until its adapter is reaped.
-    adapter_workspace: TempDir,
+    _adapter_workspace: TempDir,
 }
 
 impl DockerNativeGraphEnvironmentAdapterStart {
@@ -662,7 +662,7 @@ fn native_graph_environment_adapter_start(
         #[cfg(feature = "engine")]
         rollout_session: None,
         deadlines,
-        adapter_workspace,
+        _adapter_workspace: adapter_workspace,
     }))
 }
 
@@ -674,15 +674,12 @@ fn native_graph_environment_adapter_start(
 fn native_graph_adapter_runtime_argv(
     adapter: &crate::eval::AdapterSpec,
 ) -> Result<Vec<String>, EvalExecutionError> {
-    let executable = adapter.executable.strip_prefix("environment/").ok_or(
-        EvalExecutionError::InvalidRecipe("NativeGraph environment adapter executable source"),
-    )?;
-    let mut argv = adapter.argv.clone();
-    let first = argv.first_mut().ok_or(EvalExecutionError::InvalidRecipe(
-        "NativeGraph environment adapter argv",
-    ))?;
-    *first = format!("/environment/{executable}");
-    Ok(argv)
+    if adapter.argv.is_empty() {
+        return Err(EvalExecutionError::InvalidRecipe(
+            "NativeGraph environment adapter argv",
+        ));
+    }
+    Ok(adapter.container_argv())
 }
 
 use super::docker_runtime::preflight_compose_configuration;
@@ -5456,6 +5453,7 @@ mod tests {
         collections::{BTreeMap, VecDeque},
         fs,
         io::{self, Read},
+        path::PathBuf,
         process::Command,
         rc::Rc,
         sync::{
@@ -5481,18 +5479,17 @@ mod tests {
     use crate::{
         clock::SimClock,
         eval::{
-            AdapterId, AdapterLifecycleDeadlines, AdapterRole, AdapterSpawnRequest,
-            AdapterSpawnTransaction, AdapterSpawner, AdapterSpec, AdapterSupervisionError,
-            ComposeProjectId, DockerAdapterSpawnerRequest, HarborImporter, HarborSource,
-            ModelEndpointIsolationProof, NativeGraphEnvironmentAdapterStart, NativeSourceAcquirer,
-            ProviderCapabilities,
+            AdapterLifecycleDeadlines, AdapterRole, AdapterSpawnRequest, AdapterSpawnTransaction,
+            AdapterSpawner, AdapterSpec, AdapterSupervisionError, ComposeProjectId,
+            DockerAdapterSpawnerRequest, HarborImporter, HarborSource, ModelEndpointIsolationProof,
+            NativeGraphEnvironmentAdapterStart, NativeSourceAcquirer, ProviderCapabilities,
         },
     };
 
     #[test]
     fn native_graph_adapter_runtime_argv_uses_the_image_resident_executable() {
         let adapter = AdapterSpec {
-            id: AdapterId::new("environment").expect("fixture adapter id"),
+            id: serde_json::from_str("\"environment\"").expect("fixture adapter id"),
             role: AdapterRole::Environment,
             argv: vec![
                 "environment/environment.sh".to_owned(),
@@ -5506,6 +5503,17 @@ mod tests {
         assert_eq!(
             super::native_graph_adapter_runtime_argv(&adapter).expect("image executable argv"),
             ["/environment/environment.sh", "--strict"]
+        );
+
+        let root_adapter = AdapterSpec {
+            executable: "tools/environment.sh".to_owned(),
+            argv: vec!["tools/environment.sh".to_owned()],
+            ..adapter
+        };
+        assert_eq!(
+            super::native_graph_adapter_runtime_argv(&root_adapter)
+                .expect("root image executable argv"),
+            ["/tools/environment.sh"]
         );
     }
 
@@ -5550,12 +5558,13 @@ mod tests {
             spawner: Rc::new(RecordingLegacyStartSpawner {
                 spawned: Rc::clone(&spawned),
             }),
+            workspace_root: PathBuf::from("/work"),
             process: None,
             rollout_start: None,
             rollout_session: None,
             is_rollout_session_required: true,
             deadlines,
-            adapter_workspace: tempfile::tempdir().expect("fixture adapter workspace"),
+            _adapter_workspace: tempfile::tempdir().expect("fixture adapter workspace"),
         };
 
         let error = operation

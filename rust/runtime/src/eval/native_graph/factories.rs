@@ -354,7 +354,12 @@ impl BoundNativeGraphEnvironmentStepper {
         request: AdapterSpawnRequest,
         defer_terminal_cleanup: bool,
     ) -> Result<StartedNativeGraphEnvironmentStepper, NativeGraphFactoryError> {
-        if request.argv() != self.adapter.argv.as_slice() || !request.environment().is_empty() {
+        let expected_argv = if defer_terminal_cleanup {
+            self.adapter.container_argv()
+        } else {
+            self.adapter.argv.clone()
+        };
+        if request.argv() != expected_argv.as_slice() || !request.environment().is_empty() {
             return Err(NativeGraphFactoryError::new(
                 "NativeGraph authorized environment spawn request does not match the imported adapter selection",
             ));

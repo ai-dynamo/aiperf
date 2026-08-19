@@ -531,15 +531,40 @@ async fn docker_rollout_only_episode_appends_bounded_policy_lifecycle_evidence()
         .first()
         .expect("the trusted rollout adapter is bound to one ownership-labelled container");
     let creates = execution.runtime.creates.borrow();
-    let create = creates
+    let task_create = creates
         .first()
         .expect("the trusted rollout provisions its task container");
-    for (name, value) in labels {
-        assert!(
+    let adapter_create = creates
+        .iter()
+        .find(|create| {
             create
                 .windows(2)
+                .any(|arguments| arguments == ["--network", "none"])
+        })
+        .expect("the rollout adapter runs in one no-network sidecar");
+    let mounted_workspace = |create: &[String]| {
+        create
+            .windows(2)
+            .find_map(|arguments| (arguments[0] == "--volume").then(|| arguments[1].clone()))
+            .expect("container has one mounted workspace")
+    };
+    assert_ne!(
+        mounted_workspace(task_create),
+        mounted_workspace(adapter_create),
+        "the adapter cannot write into the verifier workspace"
+    );
+    assert!(
+        !adapter_create
+            .iter()
+            .any(|argument| argument.starts_with("AIPERF_EVAL_INSTRUCTION=")),
+        "the adapter sidecar receives no task instruction environment"
+    );
+    for (name, value) in labels {
+        assert!(
+            adapter_create
+                .windows(2)
                 .any(|arguments| arguments == ["--label", &format!("{name}={value}")]),
-            "the task container carries the adapter's exact ownership label"
+            "the adapter sidecar carries the adapter's exact ownership label"
         );
     }
 
@@ -550,9 +575,9 @@ async fn docker_rollout_only_episode_appends_bounded_policy_lifecycle_evidence()
             .position(|actual| *actual == event)
             .expect("trusted rollout lifecycle event")
     };
-    assert!(position("verifier") < position("client-cancel"));
     assert!(position("client-cancel") < position("client-reap"));
-    assert!(position("client-reap") < position("remove"));
+    assert!(position("client-reap") < position("verifier"));
+    assert!(position("verifier") < position("remove"));
     assert_eq!(
         timeline
             .iter()
@@ -1752,7 +1777,7 @@ async fn execute_rollout_only_episode() -> RolloutOnlyExecution {
         runtime_for_executor,
         HarborSandboxRecipe::for_standard_task(
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            None,
+            Some("/work".to_owned()),
         )
         .expect("immutable rollout-only Docker recipe"),
         imported,

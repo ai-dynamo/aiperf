@@ -292,6 +292,24 @@ pub struct AdapterSpec {
     pub policy: Vec<String>,
 }
 
+impl AdapterSpec {
+    /// Derives the immutable image-resident launch argv from sealed source provenance.
+    ///
+    /// Package manifests retain source-relative paths for acquisition and identity. Docker
+    /// adapters execute from the task image, where `environment/` is the image build root and
+    /// all other selected package paths are rooted at `/`.
+    pub(crate) fn container_argv(&self) -> Vec<String> {
+        let mut argv = self.argv.clone();
+        if let Some(first) = argv.first_mut() {
+            *first = self.executable.strip_prefix("environment/").map_or_else(
+                || format!("/{}", self.executable),
+                |path| format!("/environment/{path}"),
+            );
+        }
+        argv
+    }
+}
+
 /// Immutable graph program bytes selected from the acquired package snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeGraphProgramSource {
