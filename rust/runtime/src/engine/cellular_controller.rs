@@ -3465,6 +3465,36 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn agent_session_exact_set_rejects_symlink_before_artifact_server_binding() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("sessions");
+        std::fs::create_dir_all(&source).unwrap();
+        let outside = temporary.path().join("outside.jsonl");
+        std::fs::write(&outside, b"{\"type\":\"session_meta\",\"payload\":{}}\n").unwrap();
+        symlink(&outside, source.join("linked.jsonl")).unwrap();
+        let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+            "type": "file",
+            "format": "agent_recording",
+            "path": source,
+            "graph": {"source_format": "codex"},
+        }]}}});
+
+        let error = build_dataset_serve_plan_from_envelope(
+            &envelope,
+            Some("agent_recording"),
+            &source,
+            None,
+        )
+        .expect_err("symlinked imported sessions must reject while planning the serve set");
+        let error = format!("{error:#}");
+
+        assert!(error.contains("symlink"), "unexpected error: {error}");
+    }
+
     #[test]
     fn agent_session_exact_set_auto_jsonl_treats_null_graph_as_omitted() {
         let temporary = tempfile::tempdir().unwrap();
