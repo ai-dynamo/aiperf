@@ -63,7 +63,8 @@ fn output_error(
 
 fn render_text(report: &GraphExplainReport) -> String {
     let mut text = format!(
-        "Input\n  format: {}\n  roots: {}\n  nodes: {}\n  segments: {}\n",
+        "Input\n  source: {}\n  format: {}\n  roots: {}\n  nodes: {}\n  segments: {}\n",
+        report.input.source,
         report.input.format,
         report.input.root_count,
         report.input.node_count,
@@ -256,4 +257,51 @@ fn nonzero_delay(value: Option<f64>) -> String {
     value
         .filter(|delay| *delay != 0.0)
         .map_or_else(|| "-".to_owned(), |delay| delay.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+
+    use super::{TextJsonFormat, emit_report};
+    use crate::graph::report::{GraphExplainInputReport, GraphExplainReport};
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "persistent test failure",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn report() -> GraphExplainReport {
+        GraphExplainReport {
+            schema_version: "aiperf.graph.explain.v1".to_owned(),
+            input: GraphExplainInputReport {
+                source: "/tmp/canonical.graph".to_owned(),
+                format: "dag_jsonl".to_owned(),
+                root_count: 0,
+                node_count: 0,
+                segment_count: 0,
+                adapter_warnings: Vec::new(),
+            },
+            programs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn persistent_output_failure_is_a_typed_graph_error() {
+        let mut writer = FailingWriter;
+        let error = emit_report(&report(), TextJsonFormat::Json, &mut writer)
+            .expect_err("writer must reject final explanation output");
+        assert_eq!(error.code.as_str(), "output-write-failed");
+        assert_eq!(error.source.as_deref(), Some("/tmp/canonical.graph"));
+    }
 }

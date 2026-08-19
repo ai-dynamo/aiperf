@@ -691,16 +691,26 @@ pub fn bound_message(message: String) -> String {
 mod tests {
     use std::collections::BTreeMap;
     use std::error::Error as _;
+    use std::sync::Arc;
 
+    use aiperf_runtime::dataset::{Payload, SegmentPool};
+    use aiperf_runtime::graph::driver::{
+        ReplayTaskIdentity, ReplayTraceMetadata, TraceDriverSpec, TraceEnvironmentSpec,
+    };
+    use aiperf_runtime::graph::input::{GraphInputBundle, GraphInputMetadata};
     use aiperf_runtime::graph::inspect::{
-        GraphBundleInspection, GraphInspectionIssue, GraphInspectionSeverity, GraphPlanInspection,
-        GraphPlanPhase, GraphPlanSummary, GraphProgramInspection, GraphTopologyInspection,
-        ReadinessInspection,
+        GraphBundleInspection, GraphInspectionIssue, GraphInspectionOptions,
+        GraphInspectionSeverity, GraphPlanInspection, GraphPlanPhase, GraphPlanSummary,
+        GraphProgramInspection, GraphTopologyInspection, ReadinessInspection, inspect_bundle,
+    };
+    use aiperf_runtime::graph::model::{
+        ExecutableGraphNode, GraphRecord, GraphTracePlan, GraphTraceProgram, LlmNode,
+        LlmRequestSpec, PromptItem, StaticEdge, ToolNode, TraceRecord,
     };
 
     use super::{
-        GraphCommandError, GraphCommandErrorCode, GraphIssueSeverityReport, GraphOperation,
-        GraphPlanPhaseReport, GraphValidateReport,
+        GraphCommandError, GraphCommandErrorCode, GraphExplainReport, GraphIssueSeverityReport,
+        GraphOperation, GraphPlanPhaseReport, GraphValidateReport,
     };
 
     fn issue(
@@ -893,5 +903,204 @@ mod tests {
         assert!(json["issues"][0]["trace_id"].is_null());
         assert!(json["issues"][0]["phase"].is_null());
         assert!(json["issues"][0]["location"].is_null());
+    }
+
+    #[test]
+    fn recorded_replay_inspection_never_serializes_retained_secret_payloads() {
+        let secret_payload = "secret-prompt-payload";
+        let secret_tool = "secret-tool-command";
+        let secret_environment = "secret-environment-value";
+        let secret_driver = "secret-driver-value";
+        let mut pool = SegmentPool::new();
+        let prompt = pool
+            .intern(
+                None,
+                Payload::Raw {
+                    wire: secret_payload.into(),
+                },
+            )
+            .expect("prompt segment");
+        let tools = pool
+            .intern(
+                None,
+                Payload::Raw {
+                    wire: secret_tool.into(),
+                },
+            )
+            .expect("tool segment");
+        let mut graph = GraphRecord::default();
+        graph.nodes.insert(
+            "llm".into(),
+            ExecutableGraphNode::Llm(LlmNode {
+                output: "reply".into(),
+                streaming: true,
+                inputs: Vec::new(),
+                min_start_delay_us: None,
+                max_tokens: Some(7),
+                items: vec![PromptItem::Seg { seg: prompt }],
+                request: Some(LlmRequestSpec {
+                    tools: Some(tools),
+                    model: Some("recorded-model".into()),
+                    additional_body: None,
+                }),
+                metadata: BTreeMap::new(),
+            }),
+        );
+        graph.nodes.insert(
+            "tool".into(),
+            ExecutableGraphNode::Tool(ToolNode {
+                output: "tool_out".into(),
+                commands: vec![secret_tool.into()],
+                timeout_ns: None,
+            }),
+        );
+        graph.edges = vec![
+            StaticEdge {
+                source: "START".into(),
+                target: "llm".into(),
+                delay_after_predecessor_us: None,
+                min_start_delay_us: None,
+                delay_after_predecessor_start_us: None,
+                delay_after_predecessor_first_token_us: None,
+            },
+            StaticEdge {
+                source: "llm".into(),
+                target: "tool".into(),
+                delay_after_predecessor_us: None,
+                min_start_delay_us: Some(42.0),
+                delay_after_predecessor_start_us: None,
+                delay_after_predecessor_first_token_us: Some(9.0),
+            },
+            StaticEdge {
+                source: "tool".into(),
+                target: "END".into(),
+                delay_after_predecessor_us: None,
+                min_start_delay_us: None,
+                delay_after_predecessor_start_us: None,
+                delay_after_predecessor_first_token_us: None,
+            },
+        ];
+        let program = GraphTraceProgram {
+            profiling: GraphTracePlan {
+                graph,
+                trace: TraceRecord {
+                    id: "recorded-trace".into(),
+                    graph_ref: None,
+                    initial_state: BTreeMap::new(),
+                },
+                arrival_offset_ns: Some(11),
+            },
+            warmup: None,
+            environment: Some(TraceEnvironmentSpec {
+                kind: "recorded".into(),
+                data: BTreeMap::from([("secret".into(), secret_environment.into())]),
+            }),
+            replay: Some(ReplayTraceMetadata {
+                manifest_ordinal: 0,
+                identity: ReplayTaskIdentity {
+                    adapter: "recorded".into(),
+                    family: "fixture".into(),
+                    task_id: "secret-task".into(),
+                    primary_role: None,
+                },
+                source_digest: "secret-source-digest".into(),
+                normalization_target_digest: None,
+                target_output_tokens: vec![7],
+                expected_llm_node_count: 1,
+                expected_tool_node_count: 1,
+                request_profile_identity: "secret-profile".into(),
+                comparability_annotations: BTreeMap::new(),
+            }),
+            driver: TraceDriverSpec::with_data(
+                "recorded_replay".into(),
+                BTreeMap::from([("secret".into(), secret_driver.into())]),
+            ),
+        };
+        let warmup = GraphTracePlan {
+            graph: program.profiling.graph.clone(),
+            trace: TraceRecord {
+                id: "warmup-trace".into(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        };
+        let second = GraphTraceProgram {
+            profiling: GraphTracePlan {
+                graph: program.profiling.graph.clone(),
+                trace: TraceRecord {
+                    id: "second-trace".into(),
+                    graph_ref: None,
+                    initial_state: BTreeMap::new(),
+                },
+                arrival_offset_ns: Some(12),
+            },
+            warmup: Some(warmup),
+            environment: None,
+            replay: None,
+            driver: TraceDriverSpec::static_graph(),
+        };
+        let bundle = GraphInputBundle {
+            programs: vec![program, second],
+            segments: Arc::new(pool.freeze()),
+            metadata: GraphInputMetadata {
+                format: "agent_recording".into(),
+                root_count: 2,
+                node_count: 2,
+                warning_facts: Vec::new(),
+            },
+        };
+        let report = GraphExplainReport::from_inspection(
+            "/tmp/recording.json".into(),
+            inspect_bundle(&bundle, GraphInspectionOptions::default()),
+        );
+        assert_eq!(report.programs[0].driver, "recorded_replay");
+        assert_eq!(report.programs[0].profiling.readiness_waves, None);
+        assert_eq!(
+            report.programs[0]
+                .profiling
+                .readiness_unavailable
+                .as_ref()
+                .map(|value| value.code.as_str()),
+            Some("non-static-driver")
+        );
+        assert_eq!(report.programs[0].profiling.summary.tool_node_count, 1);
+        assert_eq!(
+            report
+                .programs
+                .iter()
+                .map(|program| program.trace_id.as_str())
+                .collect::<Vec<_>>(),
+            ["recorded-trace", "second-trace"]
+        );
+        assert!(report.programs[1].warmup.is_some());
+        let timed_edge = report.programs[0]
+            .profiling
+            .topology
+            .edges
+            .iter()
+            .find(|edge| edge.source == "llm" && edge.target == "tool")
+            .expect("timed edge");
+        assert!(matches!(
+            timed_edge.anchor,
+            super::GraphEdgeAnchorReport::FirstToken
+        ));
+        assert_eq!(timed_edge.delay_us, Some(9.0));
+        assert_eq!(timed_edge.min_start_delay_us, Some(42.0));
+        let json = serde_json::to_string(&report).expect("serialize report");
+        for forbidden in [
+            secret_payload,
+            secret_tool,
+            secret_environment,
+            secret_driver,
+            "source_digest",
+            "request_profile_identity",
+            "commands",
+            "items",
+            "data",
+            "table",
+        ] {
+            assert!(!json.contains(forbidden), "public JSON leaked {forbidden}");
+        }
     }
 }

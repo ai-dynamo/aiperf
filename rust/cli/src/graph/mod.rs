@@ -198,27 +198,31 @@ fn run_validate(args: ValidateArgs) -> anyhow::Result<i32> {
 }
 
 fn run_explain(args: ExplainArgs) -> anyhow::Result<i32> {
+    let is_json = matches!(args.output_format, TextJsonFormat::Json);
     match load(args.common) {
         Ok(input) => match explain::run(input, args.output_format) {
             Ok(()) => Ok(0),
-            Err(error) => {
-                write_error(
-                    GraphOperation::Explain,
-                    &error,
-                    matches!(args.output_format, TextJsonFormat::Json),
-                )?;
-                Ok(2)
-            }
+            Err(error) => Ok(write_explain_error(&error, is_json)),
         },
-        Err(error) => {
-            write_error(
-                GraphOperation::Explain,
-                &error,
-                matches!(args.output_format, TextJsonFormat::Json),
-            )?;
-            Ok(2)
-        }
+        Err(error) => Ok(write_explain_error(&error, is_json)),
     }
+}
+
+fn write_explain_error(error: &GraphCommandError, is_json: bool) -> i32 {
+    if is_json {
+        let stdout = io::stdout();
+        let mut output = stdout.lock();
+        explain_error_status(error, true, &mut output)
+    } else {
+        let stderr = io::stderr();
+        let mut output = stderr.lock();
+        explain_error_status(error, false, &mut output)
+    }
+}
+
+fn explain_error_status<W: Write>(error: &GraphCommandError, is_json: bool, output: &mut W) -> i32 {
+    let _ = write_error_to(GraphOperation::Explain, error, is_json, output);
+    2
 }
 
 fn run_visualize(args: VisualizeArgs) -> anyhow::Result<i32> {
@@ -416,10 +420,13 @@ mod tests {
     use std::collections::BTreeMap;
     use std::io::{self, Write};
 
-    use super::{GraphOperation, TextJsonFormat, is_input_decode_error, validate, write_error_to};
+    use super::{
+        GraphOperation, TextJsonFormat, explain_error_status, is_input_decode_error, validate,
+        write_error_to,
+    };
     use crate::graph::report::{
-        GraphErrorReport, GraphIssueReport, GraphIssueSeverityReport, GraphIssueSummary,
-        GraphValidateReport,
+        GraphCommandError, GraphCommandErrorCode, GraphErrorReport, GraphIssueReport,
+        GraphIssueSeverityReport, GraphIssueSummary, GraphValidateReport,
     };
 
     struct FailFirstWriter {
@@ -438,6 +445,21 @@ mod tests {
             }
             self.bytes.extend_from_slice(buffer);
             Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct PersistentFailWriter;
+
+    impl Write for PersistentFailWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "persistent test failure",
+            ))
         }
 
         fn flush(&mut self) -> io::Result<()> {
@@ -494,5 +516,17 @@ mod tests {
         assert_eq!(fatal.schema_version, "aiperf.graph.error.v1");
         assert_eq!(fatal.code.as_str(), "output-write-failed");
         assert_eq!(fatal.source.as_deref(), Some("/tmp/input.graph"));
+    }
+
+    #[test]
+    fn persistent_explain_output_failure_returns_exit_two_without_fallback_error() {
+        let error = GraphCommandError::new(
+            GraphCommandErrorCode::OutputWriteFailed,
+            "could not write graph explanation report",
+            Some("/tmp/canonical.graph".to_owned()),
+        );
+        let mut writer = PersistentFailWriter;
+
+        assert_eq!(explain_error_status(&error, true, &mut writer), 2);
     }
 }

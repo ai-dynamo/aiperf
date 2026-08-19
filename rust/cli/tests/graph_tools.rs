@@ -113,7 +113,7 @@ fn explain_small_input_matches_the_human_golden() {
     assert!(stderr(&output).is_empty());
     assert_eq!(
         String::from_utf8(output.stdout).expect("explain text UTF-8"),
-        include_str!("goldens/graph_tools/explain-small.txt")
+        include_str!("goldens/graph_tools/explain-small.txt").replace("$SOURCE", &source)
     );
 }
 
@@ -126,7 +126,7 @@ fn explain_invalid_lowered_input_is_best_effort_and_matches_the_human_golden() {
     assert!(stderr(&output).is_empty());
     assert_eq!(
         String::from_utf8(output.stdout).expect("explain text UTF-8"),
-        include_str!("goldens/graph_tools/explain-invalid.txt")
+        include_str!("goldens/graph_tools/explain-invalid.txt").replace("$SOURCE", &source)
     );
 
     let output = explain_output(&source, "conditional_graph", &["--output-format=json"]);
