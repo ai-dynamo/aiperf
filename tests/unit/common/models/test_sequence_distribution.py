@@ -982,6 +982,45 @@ class TestRangeRatioDistributionSglangMode:
             == _sglang(128, 128, 0.3, num_special_tokens=5).input_bounds
         )
 
+    def test_preseed_accepts_uint64_run_seed(self):
+        """A 64-bit run seed must not blow up the MT19937 global seeder.
+
+        `resolve_run_seed` returns `sha256(...)[:8]` as a uint64 for adaptive
+        sweeps and `multi_run.vary_seed_per_trial`, and `--random-seed` is only
+        bounded `ge=0`. Passing that straight to `numpy.random.seed` raises
+        "Seed must be between 0 and 2**32 - 1" and kills the DatasetManager.
+        """
+        from aiperf.common.random_generator import derive_variation_seed
+
+        seed = derive_variation_seed(42, "concurrency_10:trial:1")
+        assert seed >= 2**32
+
+        dist = _sglang(1024, 128, 0.5)
+        dist.preseed(4, seed)
+
+        assert len(dist._isl_cache) == 4
+        assert all(512 <= isl <= 1024 for isl in dist._isl_cache)
+
+    def test_preseed_uint64_seed_is_reproducible(self):
+        """Same uint64 seed => same draws, so folding stays deterministic."""
+        from aiperf.common.random_generator import derive_variation_seed
+
+        seed = derive_variation_seed(42, "concurrency_10")
+        a, b = _sglang(1024, 128, 0.5), _sglang(1024, 128, 0.5)
+        a.preseed(8, seed)
+        b.preseed(8, seed)
+        assert a._isl_cache == b._isl_cache
+        assert a._osl_cache == b._osl_cache
+
+    def test_preseed_small_seed_draws_are_unchanged_by_folding(self):
+        """Seeds under 2**32 fold to themselves, pinning pre-fix draw values."""
+        dist = _sglang(1024, 128, 0.5)
+        dist.preseed(4, 42)
+
+        np.random.seed(42)
+        expected_isl = np.random.randint(512, 1025, size=4).tolist()
+        assert dist._isl_cache == expected_isl
+
 
 class TestParseRandomRangeRatio:
     """Tests for --random-range-ratio CLI string parsing via VLLMRatioConfig."""

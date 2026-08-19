@@ -937,9 +937,12 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
         output_lens = np.random.randint(lower, upper + 1, size=n)
         offsets     = np.random.randint(0, vocab_size, size=n)
 
-    When ``seed`` is provided, ``numpy.random.seed(seed)`` is called before
-    the draws so that aiperf runs are reproducible even though SGLang itself
-    never seeds the global RNG before sampling.
+    When ``seed`` is provided, the global RNG is seeded before the draws so
+    that aiperf runs are reproducible even though SGLang itself never seeds
+    it before sampling. The seed is folded through
+    :func:`~aiperf.common.random_generator.fold_seed_to_uint32` first, since
+    ``numpy.random.seed`` rejects the 64-bit seeds that adaptive sweeps and
+    ``multi_run.vary_seed_per_trial`` produce.
     """
 
     _style: ClassVar[RandomCorpusStyle] = RandomCorpusStyle.SGLANG
@@ -953,7 +956,11 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
 
     def preseed(self, n: int, seed: int | None) -> None:
         if seed is not None:
-            np.random.seed(seed)
+            # numpy's legacy global seeder caps at 2**32-1, but run seeds are
+            # 64-bit on the adaptive-sweep and vary_seed_per_trial paths (and
+            # --random-seed is only bounded ge=0), so fold before seeding.
+            # The PCG64 parent path takes 64-bit seeds directly and needs no fold.
+            np.random.seed(rng.fold_seed_to_uint32(seed))
         g = _LegacyRNG()
         self._isl_cache = g.integers(
             self._input_low, self._input_high + 1, size=n
