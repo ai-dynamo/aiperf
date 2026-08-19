@@ -485,7 +485,11 @@ def _apply_random_pool_batch_size_overrides(
     if dataset is None or dataset.get("type") != DatasetType.FILE:
         return
 
-    fmt = dataset.get("format")
+    # dataset.get("format") reads the raw pre-validation YAML dict, so an omitted
+    # `format:` key reads back as None here even though FileDataset.format defaults
+    # to DatasetFormat.SINGLE_TURN -- fall back to that default so the error message
+    # below reports the actual effective format instead of a misleading "None".
+    fmt = dataset.get("format") or DatasetFormat.SINGLE_TURN
     if fmt != DatasetFormat.RANDOM_POOL:
         flag_names = ", ".join(
             flag
@@ -494,7 +498,7 @@ def _apply_random_pool_batch_size_overrides(
         )
         raise ValueError(
             f"{flag_names} requires format: random_pool on the YAML dataset "
-            f"(got format: {fmt!r}). Either set format: random_pool in the dataset "
+            f"(got format: {fmt}). Either set format: random_pool in the dataset "
             "config, or remove these flags."
         )
 

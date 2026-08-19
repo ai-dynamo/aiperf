@@ -12,6 +12,7 @@ All tests drive ``resolve_config`` with a real YAML file, not ``convert_cli_to_a
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -164,6 +165,41 @@ benchmark:
     yaml_path.write_text(yaml_content)
     cli = _cli(prompt_batch_size=4)
     with pytest.raises(ValueError, match="random_pool"):
+        resolve_config(cli, yaml_path)
+
+
+def test_batch_size_on_yaml_with_omitted_format_reports_effective_default(
+    tmp_path: Path,
+) -> None:
+    """The rejection message must report the effective default format
+    ('single_turn'), not a bare 'None', when the YAML omits `format:` entirely.
+
+    Regression test: dataset.get("format") reads the raw pre-validation YAML
+    dict, so an omitted format key read back as None even though
+    FileDataset.format defaults to DatasetFormat.SINGLE_TURN -- "got format:
+    None" reads like a parse failure rather than "you didn't set format, so
+    it's using the default".
+    """
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_content = f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    path: {pool}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    yaml_path = tmp_path / "no_format.yaml"
+    yaml_path.write_text(yaml_content)
+    cli = _cli(prompt_batch_size=4)
+    with pytest.raises(ValueError, match=re.escape("got format: single_turn")):
         resolve_config(cli, yaml_path)
 
 
