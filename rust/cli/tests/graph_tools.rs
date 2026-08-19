@@ -7,8 +7,9 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use aiperf_cli::graph::report::{
-    GraphCommandErrorCode, GraphErrorReport, GraphIssueReport, GraphIssueSeverityReport,
-    GraphIssueSummary, GraphOperation, GraphPlanPhaseReport, GraphValidateReport,
+    GraphCommandErrorCode, GraphErrorReport, GraphExplainReport, GraphIssueReport,
+    GraphIssueSeverityReport, GraphIssueSummary, GraphOperation, GraphPlanPhaseReport,
+    GraphValidateReport,
 };
 use aiperf_runtime::config::model::workload_kind::GRAPH_FORMATS;
 use serde_json::json;
@@ -63,6 +64,84 @@ fn validate_output(path: &str, format: &str, extra: &[&str]) -> Output {
     let mut args = vec!["graph", "validate", path, "--graph-format", format];
     args.extend_from_slice(extra);
     output(&args)
+}
+
+fn explain_output(path: &str, format: &str, extra: &[&str]) -> Output {
+    let mut args = vec!["graph", "explain", path, "--graph-format", format];
+    args.extend_from_slice(extra);
+    output(&args)
+}
+
+#[test]
+fn graph_explain_report_preserves_the_versioned_safe_wire_shape() {
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = explain_output(&source, "dag_jsonl", &["--output-format", "json"]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    let report: GraphExplainReport =
+        serde_json::from_slice(&output.stdout).expect("explain JSON is versioned");
+    assert_eq!(report.schema_version, "aiperf.graph.explain.v1");
+    assert_eq!(report.input.format, "dag_jsonl");
+    assert_eq!(report.input.root_count, 1);
+    assert_eq!(report.programs.len(), 1);
+    assert_eq!(report.programs[0].driver, "static_graph");
+    assert!(report.programs[0].profiling.readiness_waves.is_some());
+    assert!(report.programs[0].profiling.readiness_unavailable.is_none());
+
+    let json = String::from_utf8(output.stdout).expect("explain JSON UTF-8");
+    for forbidden in [
+        "segment_handle",
+        "prompt_payload",
+        "tool_command",
+        "environment_data",
+        "driver_data",
+    ] {
+        assert!(
+            !json.contains(forbidden),
+            "explain report must not expose {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn explain_small_input_matches_the_human_golden() {
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = explain_output(&source, "dag_jsonl", &[]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("explain text UTF-8"),
+        include_str!("goldens/graph_tools/explain-small.txt")
+    );
+}
+
+#[test]
+fn explain_invalid_lowered_input_is_best_effort_and_matches_the_human_golden() {
+    let source = fixture("tests/fixtures/graph_tools/mixed-anchor.conditional.yaml");
+    let output = explain_output(&source, "conditional_graph", &[]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("explain text UTF-8"),
+        include_str!("goldens/graph_tools/explain-invalid.txt")
+    );
+
+    let output = explain_output(&source, "conditional_graph", &["--output-format=json"]);
+    assert_eq!(output.status.code(), Some(0));
+    let report: GraphExplainReport =
+        serde_json::from_slice(&output.stdout).expect("best-effort explain JSON");
+    assert_eq!(report.programs[0].profiling.readiness_waves, None);
+    assert_eq!(
+        report.programs[0]
+            .profiling
+            .readiness_unavailable
+            .as_ref()
+            .map(|unavailable| unavailable.code.as_str()),
+        Some("validation-errors")
+    );
 }
 
 #[test]

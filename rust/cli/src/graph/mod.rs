@@ -199,10 +199,17 @@ fn run_validate(args: ValidateArgs) -> anyhow::Result<i32> {
 
 fn run_explain(args: ExplainArgs) -> anyhow::Result<i32> {
     match load(args.common) {
-        Ok(input) => {
-            explain::run(input);
-            Ok(0)
-        }
+        Ok(input) => match explain::run(input, args.output_format) {
+            Ok(()) => Ok(0),
+            Err(error) => {
+                write_error(
+                    GraphOperation::Explain,
+                    &error,
+                    matches!(args.output_format, TextJsonFormat::Json),
+                )?;
+                Ok(2)
+            }
+        },
         Err(error) => {
             write_error(
                 GraphOperation::Explain,
