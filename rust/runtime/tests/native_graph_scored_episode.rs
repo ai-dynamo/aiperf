@@ -479,106 +479,114 @@ async fn docker_episode_executor_appends_two_suite_episodes_to_one_record_artifa
 
 #[tokio::test(flavor = "current_thread")]
 async fn docker_external_episode_preserves_harbor_score_and_compatibility_fidelity() {
-    let imported = import_external_driver_fixture();
-    let lifecycle = external_driver_lifecycle_request();
-    let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)
-        .expect("resolve external lifecycle trial before environment provisioning");
-    let suite = NativeGraphSuiteManifest::new(vec![
-        SuiteTrialSpec::from_imported(
-            imported.clone(),
-            trial,
-            NonZeroUsize::new(1).expect("one external episode"),
-            ResourceLeaseRequest::new(1, 64, BTreeMap::new())
-                .expect("external episode needs no model capacity"),
-        )
-        .expect("external suite trial"),
-    ])
-    .expect("one external suite trial")
-    .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
-        b"external-driver-scored-run",
-    )))
-    .expect("resolve one external matrix assignment");
-    let prepared = ScoredExternalDriverFactory
-        .prepare(
-            &imported.package,
-            suite
-                .trials()
-                .first()
-                .expect("resolved suite retains its one external trial"),
-        )
-        .expect("prepare the exact external trial before provisioning");
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let runtime = Rc::new(GraphDockerRuntime {
-        events: Rc::clone(&events),
-        external_driver_spawn_executor: Some(Rc::new(ScoredExternalDriverSpawnExecutor {
-            events: Rc::clone(&events),
-        })),
-        ..GraphDockerRuntime::default()
-    });
-    let executor = Rc::new(
-        DockerExternallyDrivenEpisodeExecutor::new_with_runtime(
-            DockerProcessSandbox::new(),
-            runtime,
-            HarborSandboxRecipe::for_standard_task(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                Some("/work".to_owned()),
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let imported = import_external_driver_fixture();
+            let lifecycle = external_driver_lifecycle_request();
+            let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)
+                .expect("resolve external lifecycle trial before environment provisioning");
+            let suite = NativeGraphSuiteManifest::new(vec![
+                SuiteTrialSpec::from_imported(
+                    imported.clone(),
+                    trial,
+                    NonZeroUsize::new(1).expect("one external episode"),
+                    ResourceLeaseRequest::new(1, 64, BTreeMap::new())
+                        .expect("external episode needs no model capacity"),
+                )
+                .expect("external suite trial"),
+            ])
+            .expect("one external suite trial")
+            .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
+                b"external-driver-scored-run",
+            )))
+            .expect("resolve one external matrix assignment");
+            let prepared = ScoredExternalDriverFactory
+                .prepare(
+                    &imported.package,
+                    suite
+                        .trials()
+                        .first()
+                        .expect("resolved suite retains its one external trial"),
+                )
+                .expect("prepare the exact external trial before provisioning");
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let runtime = Rc::new(GraphDockerRuntime {
+                events: Rc::clone(&events),
+                external_driver_spawn_executor: Some(Rc::new(ScoredExternalDriverSpawnExecutor {
+                    events: Rc::clone(&events),
+                })),
+                ..GraphDockerRuntime::default()
+            });
+            let executor = Rc::new(
+                DockerExternallyDrivenEpisodeExecutor::new_with_runtime(
+                    DockerProcessSandbox::new(),
+                    runtime,
+                    HarborSandboxRecipe::for_standard_task(
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        Some("/work".to_owned()),
+                    )
+                    .expect("immutable external Docker recipe"),
+                    imported,
+                    lifecycle,
+                    prepared,
+                    Rc::new(EmptySecrets),
+                )
+                .expect("construct the consuming external episode executor"),
+            );
+            let runner = Rc::new(NativeGraphEpisodeRunner::new(
+                executor,
+                Rc::new(HarborEpisodeEvaluatorFactory),
+            ));
+            let scheduler = LocalNativeGraphSuiteScheduler::new(
+                aiperf_runtime::eval::ResourceLimits::new(1, 1, 64, BTreeMap::new())
+                    .expect("finite no-model scheduler resources"),
             )
-            .expect("immutable external Docker recipe"),
-            imported,
-            lifecycle,
-            prepared,
-            Rc::new(EmptySecrets),
-        )
-        .expect("construct the consuming external episode executor"),
-    );
-    let runner = Rc::new(NativeGraphEpisodeRunner::new(
-        executor,
-        Rc::new(HarborEpisodeEvaluatorFactory),
-    ));
-    let scheduler = LocalNativeGraphSuiteScheduler::new(
-        aiperf_runtime::eval::ResourceLimits::new(1, 1, 64, BTreeMap::new())
-            .expect("finite no-model scheduler resources"),
-    )
-    .expect("external scheduler");
+            .expect("external scheduler");
 
-    let consumed_suite = suite.clone();
-    let results = run_resolved_suite(&scheduler, suite, runner.clone())
-        .await
-        .expect("external terminal, Harbor verifier, freeze, and evaluator all complete");
+            let consumed_suite = suite.clone();
+            let results = run_resolved_suite(&scheduler, suite, runner.clone())
+                .await
+                .expect("external terminal, Harbor verifier, freeze, and evaluator all complete");
 
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].verified_reward(), Some(1.0));
-    assert_eq!(
-        results[0].fidelity(),
-        aiperf_runtime::eval::EpisodeFidelity::ExternallyDriven(CompatibilityFidelity::Missing)
-    );
-    assert_eq!(
-        events.borrow().as_slice(),
-        [
-            "build",
-            "create",
-            "start",
-            "driver-spawn",
-            "terminal",
-            "cancel",
-            "reap",
-            "create",
-            "start",
-            "verifier",
-            "remove",
-            "remove",
-        ]
-    );
-    let completed_events = events.borrow().clone();
-    let error = run_resolved_suite(&scheduler, consumed_suite, runner)
-        .await
-        .expect_err("the sealed external capability cannot be reconstructed after consumption");
-    assert!(
-        error
-            .to_string()
-            .contains("external Driver preparation was already consumed")
-    );
-    assert_eq!(events.borrow().as_slice(), completed_events.as_slice());
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].verified_reward(), Some(1.0));
+            assert_eq!(
+                results[0].fidelity(),
+                aiperf_runtime::eval::EpisodeFidelity::ExternallyDriven(
+                    CompatibilityFidelity::Missing
+                )
+            );
+            assert_eq!(
+                events.borrow().as_slice(),
+                [
+                    "build",
+                    "create",
+                    "start",
+                    "driver-spawn",
+                    "terminal",
+                    "cancel",
+                    "reap",
+                    "create",
+                    "start",
+                    "verifier",
+                    "remove",
+                    "remove",
+                ]
+            );
+            let completed_events = events.borrow().clone();
+            let error = run_resolved_suite(&scheduler, consumed_suite, runner)
+                .await
+                .expect_err(
+                    "the sealed external capability cannot be reconstructed after consumption",
+                );
+            assert!(
+                error
+                    .to_string()
+                    .contains("external Driver preparation was already consumed")
+            );
+            assert_eq!(events.borrow().as_slice(), completed_events.as_slice());
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
