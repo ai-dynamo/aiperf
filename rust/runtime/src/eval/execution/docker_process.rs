@@ -76,6 +76,14 @@ struct DockerNativeGraphEpisodeLease<'a> {
     _authorization: &'a NativeGraphAdapterAuthorization,
 }
 
+impl DockerNativeGraphEpisodeLease<'_> {
+    fn reaps_adapter_before_artifact_collection(&self) -> bool {
+        self.environment_adapter_start
+            .as_ref()
+            .is_some_and(DockerNativeGraphEnvironmentAdapterStart::is_isolated_rollout)
+    }
+}
+
 impl NativeGraphEpisodeLease for DockerNativeGraphEpisodeLease<'_> {
     fn is_authorized(&self) -> bool {
         true
@@ -102,6 +110,10 @@ impl NativeGraphEpisodeLease for DockerNativeGraphEpisodeLease<'_> {
 }
 
 impl NativeGraphEpisodeBackendLease for DockerNativeGraphEpisodeLease<'_> {
+    fn reaps_environment_adapter_before_artifact_collection(&self) -> bool {
+        self.reaps_adapter_before_artifact_collection()
+    }
+
     fn reap_environment_adapter<'lease>(
         &'lease mut self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), EvalExecutionError>> + 'lease>>
@@ -390,9 +402,21 @@ struct DockerNativeGraphEnvironmentAdapterStart {
     #[cfg(feature = "engine")]
     rollout_session: Option<DockerNativeGraphEnvironmentRolloutSession>,
     deadlines: AdapterLifecycleDeadlines,
+    /// Keeps the private no-network sidecar workspace mounted until its adapter is reaped.
+    adapter_workspace: TempDir,
 }
 
 impl DockerNativeGraphEnvironmentAdapterStart {
+    #[cfg(feature = "engine")]
+    fn is_isolated_rollout(&self) -> bool {
+        self.is_rollout_session_required
+    }
+
+    #[cfg(not(feature = "engine"))]
+    fn is_isolated_rollout(&self) -> bool {
+        false
+    }
+
     fn supervision_error(
         operation: &'static str,
         error: AdapterSupervisionError,
@@ -542,10 +566,12 @@ fn native_graph_environment_adapter_start(
     package: &HarborTaskPackage,
     authorization: &NativeGraphAdapterAuthorization,
     container: &str,
+    image: &str,
     project: Option<&ComposeProjectId>,
     environment: &super::EnvironmentPlan,
     environment_workdir: Option<&str>,
     workspace_root: &std::path::Path,
+    containers: &mut Vec<String>,
     #[cfg(feature = "engine")] rollout_start: Option<NativeGraphLeaseRolloutStart>,
 ) -> Result<Option<DockerNativeGraphEnvironmentAdapterStart>, EvalExecutionError> {
     let native_graph = package
@@ -592,17 +618,37 @@ fn native_graph_environment_adapter_start(
         operation_deadline,
     )
     .map_err(|_| EvalExecutionError::InvalidRecipe("NativeGraph adapter lifecycle deadlines"))?;
+    let adapter_workspace = tempfile::tempdir()
+        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    let adapter_container = format!("{container}-native-graph-adapter");
+    let project = project.cloned().ok_or(EvalExecutionError::InvalidRecipe(
+        "NativeGraph environment adapter ownership",
+    ))?;
+    let ownership_labels = project.ownership_labels();
+    let no_network = network_lease(&NetworkPolicy::no_network())?;
+    create_planned_container(
+        runtime,
+        &adapter_container,
+        image,
+        ContainerWorkspace::at_workdir(adapter_workspace.path(), environment_workdir)
+            .with_ownership_labels(Some(&ownership_labels)),
+        environment,
+        no_network,
+        None,
+        None,
+    )?;
+    containers.push(adapter_container.clone());
+    runtime.start(&DockerStartRequest::new(&adapter_container))?;
     let request = authorization
-        .spawn_request(adapter.argv.clone(), BTreeMap::new(), deadlines)
+        .spawn_request(
+            native_graph_adapter_runtime_argv(adapter)?,
+            BTreeMap::new(),
+            deadlines,
+        )
         .map_err(|_| EvalExecutionError::InvalidRecipe("NativeGraph environment adapter argv"))?;
-    let spawner_request = DockerAdapterSpawnerRequest::new(
-        container,
-        project.cloned().ok_or(EvalExecutionError::InvalidRecipe(
-            "NativeGraph environment adapter ownership",
-        ))?,
-    )?
-    .with_user(environment.user())
-    .with_workdir(environment_workdir);
+    let spawner_request = DockerAdapterSpawnerRequest::new(&adapter_container, project)?
+        .with_user(environment.user())
+        .with_workdir(environment_workdir);
     let spawner = runtime.adapter_spawner(&spawner_request, authorization)?;
     Ok(Some(DockerNativeGraphEnvironmentAdapterStart {
         request: Some(request),
@@ -616,7 +662,27 @@ fn native_graph_environment_adapter_start(
         #[cfg(feature = "engine")]
         rollout_session: None,
         deadlines,
+        adapter_workspace,
     }))
+}
+
+/// Maps the sealed package-source executable to its immutable image location.
+///
+/// NativeGraph manifests retain source-relative adapter provenance while the Docker image is
+/// built from the package's `environment/` directory. The runtime never executes the mutable
+/// workspace copy of that path.
+fn native_graph_adapter_runtime_argv(
+    adapter: &crate::eval::AdapterSpec,
+) -> Result<Vec<String>, EvalExecutionError> {
+    let executable = adapter.executable.strip_prefix("environment/").ok_or(
+        EvalExecutionError::InvalidRecipe("NativeGraph environment adapter executable source"),
+    )?;
+    let mut argv = adapter.argv.clone();
+    let first = argv.first_mut().ok_or(EvalExecutionError::InvalidRecipe(
+        "NativeGraph environment adapter argv",
+    ))?;
+    *first = format!("/environment/{executable}");
+    Ok(argv)
 }
 
 use super::docker_runtime::preflight_compose_configuration;
@@ -1243,19 +1309,7 @@ impl DockerProcessSandbox {
             .as_ref()
             .map(ComposeProjectId::ownership_labels);
         #[cfg(feature = "engine")]
-        let rollout_start = callback.take_lease_rollout_start();
-        let environment_adapter_start = native_graph_environment_adapter_start(
-            runtime,
-            package,
-            &authorization,
-            &container,
-            adapter_project.as_ref(),
-            environment,
-            environment_workdir,
-            workspace.path(),
-            #[cfg(feature = "engine")]
-            rollout_start,
-        )?;
+        let mut rollout_start = callback.take_lease_rollout_start();
         let mut containers = vec![container.clone()];
 
         let outcome = async {
@@ -1312,6 +1366,20 @@ impl DockerProcessSandbox {
                 environment_workdir,
                 baseline_network,
                 remaining(&agent_deadline)?,
+            )?;
+            let environment_adapter_start = native_graph_environment_adapter_start(
+                runtime,
+                package,
+                &authorization,
+                &container,
+                &image,
+                adapter_project.as_ref(),
+                environment,
+                environment_workdir,
+                workspace.path(),
+                &mut containers,
+                #[cfg(feature = "engine")]
+                rollout_start.take(),
             )?;
             let mut lease = DockerNativeGraphEpisodeLease {
                 instruction: package.instruction(),
@@ -5413,12 +5481,33 @@ mod tests {
     use crate::{
         clock::SimClock,
         eval::{
-            AdapterLifecycleDeadlines, AdapterSpawnRequest, AdapterSpawnTransaction,
-            AdapterSpawner, AdapterSupervisionError, ComposeProjectId, DockerAdapterSpawnerRequest,
-            HarborImporter, HarborSource, ModelEndpointIsolationProof,
-            NativeGraphEnvironmentAdapterStart, NativeSourceAcquirer, ProviderCapabilities,
+            AdapterId, AdapterLifecycleDeadlines, AdapterRole, AdapterSpawnRequest,
+            AdapterSpawnTransaction, AdapterSpawner, AdapterSpec, AdapterSupervisionError,
+            ComposeProjectId, DockerAdapterSpawnerRequest, HarborImporter, HarborSource,
+            ModelEndpointIsolationProof, NativeGraphEnvironmentAdapterStart, NativeSourceAcquirer,
+            ProviderCapabilities,
         },
     };
+
+    #[test]
+    fn native_graph_adapter_runtime_argv_uses_the_image_resident_executable() {
+        let adapter = AdapterSpec {
+            id: AdapterId::new("environment").expect("fixture adapter id"),
+            role: AdapterRole::Environment,
+            argv: vec![
+                "environment/environment.sh".to_owned(),
+                "--strict".to_owned(),
+            ],
+            executable: "environment/environment.sh".to_owned(),
+            config: Vec::new(),
+            policy: Vec::new(),
+        };
+
+        assert_eq!(
+            super::native_graph_adapter_runtime_argv(&adapter).expect("image executable argv"),
+            ["/environment/environment.sh", "--strict"]
+        );
+    }
 
     struct RecordingLegacyStartSpawner {
         spawned: Rc<Cell<bool>>,
@@ -5466,6 +5555,7 @@ mod tests {
             rollout_session: None,
             is_rollout_session_required: true,
             deadlines,
+            adapter_workspace: tempfile::tempdir().expect("fixture adapter workspace"),
         };
 
         let error = operation

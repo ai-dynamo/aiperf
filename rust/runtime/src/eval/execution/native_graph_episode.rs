@@ -153,6 +153,15 @@ pub trait NativeGraphEpisodeLease {
 /// never this trait, so adapter cleanup remains Rust-owned after declared
 /// artifact collection and verification, or immediately after callback failure.
 pub trait NativeGraphEpisodeBackendLease: NativeGraphEpisodeLease {
+    /// Whether a started adapter must be reaped before the verifier observes task artifacts.
+    ///
+    /// Isolated rollout adapters run outside the task container and must be stopped before
+    /// collection. Legacy adapter starts execute in the task container and retain the historic
+    /// post-verifier cleanup order.
+    fn reaps_environment_adapter_before_artifact_collection(&self) -> bool {
+        false
+    }
+
     /// Reaps an environment adapter started through this lease.
     fn reap_environment_adapter<'lease>(
         &'lease mut self,
@@ -241,8 +250,15 @@ where
     };
     match callback_outcome {
         Ok(()) => {
+            if lease.reaps_environment_adapter_before_artifact_collection() {
+                lease.reap_environment_adapter().await?;
+            }
             let lifecycle_outcome = after_callback();
-            let cleanup_outcome = lease.reap_environment_adapter().await;
+            let cleanup_outcome = if lease.reaps_environment_adapter_before_artifact_collection() {
+                Ok(())
+            } else {
+                lease.reap_environment_adapter().await
+            };
             match (lifecycle_outcome, cleanup_outcome) {
                 (Ok(value), Ok(())) => Ok(value),
                 (Ok(_), Err(error)) => Err(error),
