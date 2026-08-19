@@ -136,15 +136,20 @@ fn graph_recording_source_and_subagent_flags_accept_the_documented_spellings() {
 }
 
 fn graph_recording_source_and_subagent_flags_accept_the_documented_spellings_body() {
-    for args in [
-        vec!["--graph-include-subagents"],
-        vec!["--graph-include-subagents=true"],
-        vec!["--graph-include-subagents=false"],
-        vec!["--graph-recording-source", "mini-swe-agent"],
+    for (args, expected) in [
+        (&[][..], None),
+        (&["--graph-include-subagents"][..], Some(true)),
+        (&["--graph-include-subagents=true"][..], Some(true)),
+        (&["--graph-include-subagents=false"][..], Some(false)),
     ] {
-        ProfileFlags::try_parse_from(std::iter::once("aiperf").chain(args))
-            .expect("documented graph import flag parses");
+        let flags =
+            ProfileFlags::try_parse_from(std::iter::once("aiperf").chain(args.iter().copied()))
+                .expect("documented graph import flag parses");
+        assert_eq!(flags.graph_include_subagents, expected, "{args:?}");
     }
+
+    ProfileFlags::try_parse_from(["aiperf", "--graph-recording-source", "mini-swe-agent"])
+        .expect("mini-swe-agent parses");
 
     for args in [
         vec!["--graph-recording-source", "claude"],
