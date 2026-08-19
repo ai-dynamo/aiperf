@@ -178,6 +178,44 @@ def test_synthetic_only_flag_rejected_on_public_dataset(
         build_dataset(user)
 
 
+@pytest.mark.parametrize(
+    "extra, expected_flag_fragment",
+    [
+        param({"prompt_batch_size": 3}, "--prompt-batch-size", id="text"),
+        param({"image_batch_size": 2}, "--image-batch-size", id="image"),
+    ],
+)  # fmt: skip
+def test_batch_size_flag_rejected_on_public_dataset_names_public_dataset(
+    extra: dict, expected_flag_fragment: str
+) -> None:
+    """Batch-size flags on a PUBLIC dataset must raise a message that names
+    --public-dataset, not --input-file.
+
+    Regression test: batch_violations previously always used the --input-file
+    wording ("requires --custom-dataset-type random_pool when used with
+    --input-file"), even when the user passed --public-dataset and never
+    touched --input-file at all -- every suggestion in that message was a
+    dead end since --custom-dataset-type random_pool is mutually exclusive
+    with --public-dataset.
+    """
+    from aiperf.plugin.enums import PublicDatasetType
+
+    user = CLIConfig(
+        model_names=["test-model"],
+        endpoint_type="chat",
+        **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+        public_dataset=PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS,
+        **extra,
+    )
+    with pytest.raises(ValueError, match=expected_flag_fragment) as exc_info:
+        build_dataset(user)
+    message = str(exc_info.value)
+    assert "remove --input-file" not in message, (
+        "the user never set --input-file; telling them to remove it is a dead end"
+    )
+    assert "--public-dataset" in message
+
+
 class TestRandomPoolBatchSizeCarveOut:
     """random_pool must be exempt from the batch-size flag rejection."""
 

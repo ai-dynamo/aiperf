@@ -662,11 +662,17 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
             "apply synthetic-only prompt shaping (ISL, prefix prompts, multimodal "
             "generation, multi-turn conversation, etc)."
         )
-    if batch_violations:
+    if batch_violations and cli.input_file is not None:
         raise ValueError(
             f"{', '.join(batch_violations)} requires --custom-dataset-type random_pool "
             "when used with --input-file. Either add --custom-dataset-type random_pool "
             "to keep --input-file, or remove --input-file to use a synthetic dataset."
+        )
+    if batch_violations:
+        raise ValueError(
+            f"{', '.join(batch_violations)} is only supported with synthetic datasets "
+            "or --input-file --custom-dataset-type random_pool; remove --public-dataset "
+            "to use a synthetic dataset."
         )
 
 
