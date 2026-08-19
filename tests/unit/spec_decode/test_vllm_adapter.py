@@ -278,6 +278,26 @@ class TestVLLMSpecDecodeAdapter:
                 {**SUMMARY_PAYLOAD, "acceptance_histogram": None},
                 id="histogram_none_not_list",
             ),
+            param(
+                # Falsey malformed elements must not slip through the
+                # zero-bucket filter and yield a valid-looking record.
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": [39, 1, None, 3]},
+                id="histogram_falsey_none_element",
+            ),
+            param(
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": [39, 1, False, 3]},
+                id="histogram_falsey_bool_element",
+            ),
+            param(
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": [39, 1, 0.0, 3]},
+                id="histogram_falsey_float_element",
+            ),
+            param(
+                # Truthy but coerces to zero -- would land a 0 bucket in a map
+                # that promises zero buckets are omitted.
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": [39, 1, "0", 3]},
+                id="histogram_str_zero_element",
+            ),
         ],
     )  # fmt: skip
     def test_adapt_malformed_payload_degrades_to_none(

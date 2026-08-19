@@ -79,15 +79,24 @@ class VLLMSpecDecodeAdapter:
         try:
             # vLLM sends a dense ``list[int]`` (index j -> step count); inflate
             # into the neutral record's sparse map, dropping zero-count buckets.
-            # Reject non-list shapes up front: a str/dict is iterable, so
-            # enumerate would silently build a bucket-per-character/key map that
-            # only the record's cross-field validators would catch.
+            # Validate the shape AND every element before filtering: a str/dict
+            # is iterable (enumerate would build a bucket per character/key),
+            # and filtering on truthiness first would silently drop a falsey
+            # malformed entry (None/False/0.0) while keeping a truthy one that
+            # coerces to zero ("0"), which would violate the record's
+            # zero-buckets-omitted invariant. ``type(...) is int`` rather than
+            # isinstance so bools -- an int subclass -- are rejected too.
             raw_histogram = payload["acceptance_histogram"]
-            if not isinstance(raw_histogram, list):
+            if not isinstance(raw_histogram, list) or not all(
+                type(count) is int for count in raw_histogram
+            ):
                 raise TypeError(
-                    f"acceptance_histogram must be a list, got {type(raw_histogram).__name__}"
+                    "acceptance_histogram must be a list of ints, got "
+                    f"{raw_histogram!r}"
                 )
-            histogram = {j: count for j, count in enumerate(raw_histogram) if count}
+            histogram = {
+                j: count for j, count in enumerate(raw_histogram) if count != 0
+            }
             usage = find_last_non_empty_usage(responses)
             return SpecDecodeAcceptanceRecord(
                 engine=ENGINE,
