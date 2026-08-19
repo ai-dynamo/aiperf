@@ -23,6 +23,7 @@ pub mod execute;
 pub mod execute_mode;
 pub mod expand;
 pub mod flags;
+pub mod graph;
 #[cfg(feature = "search-pyo3")]
 pub mod isotonic;
 pub mod jsonnum;
