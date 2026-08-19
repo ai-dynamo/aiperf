@@ -24,7 +24,7 @@ mod rl;
 mod rollout_evidence;
 mod suite;
 mod supervision;
-mod workspace_patch;
+pub(crate) mod workspace_patch;
 
 #[cfg(feature = "engine")]
 pub use crate::engine::record_lane::EvalNodeRecordArtifact;
@@ -131,7 +131,7 @@ pub use package::{
     ActionEncoderFactoryId, AdapterId, AdapterRole, AdapterSpec, ExternalDriverFactoryId,
     GenerationDefaults, HeaderSecretRef, ModelBindingId, ModelBindingSpec, ModelCapturePolicy,
     ModelSecretId, NativeGraphPackagePlan, NativeGraphProfile, NativeGraphProgramSource,
-    NativeGraphRolloutPolicyPromptSource, TokenizerBindingSpec,
+    NativeGraphRolloutPolicyPromptSource, NativeGraphWorkspacePatchContract, TokenizerBindingSpec,
 };
 pub(crate) use package::{
     NativeGraphPackageDraft, NativeGraphSectionDto, resolve_native_graph_package,

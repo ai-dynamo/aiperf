@@ -189,6 +189,7 @@ pub struct EnvironmentTransitionRecord {
     terminated: bool,
     truncated: bool,
     info: FrozenArtifact,
+    workspace_patch: FrozenArtifact,
 }
 impl EnvironmentTransitionRecord {
     /// Creates one environment-authoritative transition with immutable frozen evidence.
@@ -199,6 +200,7 @@ impl EnvironmentTransitionRecord {
         terminated: bool,
         truncated: bool,
         info: FrozenArtifact,
+        workspace_patch: FrozenArtifact,
     ) -> Result<Self, RlRolloutError> {
         if !reward.is_finite() {
             return Err(RlRolloutError::NonFiniteReward);
@@ -213,6 +215,7 @@ impl EnvironmentTransitionRecord {
             terminated,
             truncated,
             info,
+            workspace_patch,
         })
     }
 
@@ -244,6 +247,11 @@ impl EnvironmentTransitionRecord {
     /// Borrows the frozen diagnostic descriptor for this transition.
     pub fn info(&self) -> &FrozenArtifact {
         &self.info
+    }
+
+    /// Borrows the sealed workspace-patch archive descriptor for this transition.
+    pub fn workspace_patch(&self) -> &FrozenArtifact {
+        &self.workspace_patch
     }
 }
 /// Frozen derived return facts.

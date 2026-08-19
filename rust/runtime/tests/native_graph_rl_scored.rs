@@ -115,7 +115,7 @@ impl NativeGraphEpisodeExecutor for SealedRolloutExecutor {
 
 fn quota() -> ArtifactQuota {
     ArtifactQuota {
-        max_artifacts: 4,
+        max_artifacts: 5,
         max_total_bytes: 1024,
         max_artifact_bytes: 256,
         max_download_handles: 4,
@@ -168,6 +168,7 @@ fn frozen_rollout_with_policy(
             2.0,
             terminated,
             truncated,
+            info.artifact().clone(),
             info.artifact().clone(),
         )
         .expect("fixture transition is valid")])
@@ -750,6 +751,7 @@ async fn descriptor_only_receipt_freezes_terminal_rollout_without_retaining_chil
                 true,
                 false,
                 info.artifact().clone(),
+                info.artifact().clone(),
             )
             .expect("terminal transition is valid"),
         )
@@ -819,6 +821,7 @@ fn receipt_refuses_forged_replayed_and_post_terminal_observations_before_a_step(
                 true,
                 false,
                 info.artifact().clone(),
+                info.artifact().clone(),
             )
             .expect("terminal transition is valid"),
         )
@@ -851,6 +854,7 @@ fn receipt_refuses_the_next_model_observation_once_the_sealed_horizon_is_reached
                 1.0,
                 false,
                 false,
+                info.artifact().clone(),
                 info.artifact().clone(),
             )
             .expect("nonterminal transition is valid"),

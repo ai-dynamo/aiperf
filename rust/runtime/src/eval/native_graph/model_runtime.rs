@@ -53,7 +53,8 @@ use super::{
     BoundNativeGraphEnvironmentStepper, DeclaredPolicyDecision, EpisodeActionEncodingError,
     EpisodeArtifactStore, FrozenArtifact, FrozenRolloutEvidence, GenerationDefaults,
     ModelBindingId, ModelBindingSpec, ModelCapturePolicy, ModelSecretId,
-    NativeGraphAttemptAuthority, NativeGraphPackagePlan, TokenizerBindingSpec, lower_native_graph,
+    NativeGraphAttemptAuthority, NativeGraphPackagePlan, NativeGraphWorkspacePatchContract,
+    TokenizerBindingSpec, lower_native_graph,
     lowering::{NATIVE_GRAPH_EXECUTION_PROFILE, NATIVE_GRAPH_SOURCE_SCHEMA},
 };
 
@@ -1173,6 +1174,7 @@ impl EngineNativeGraphEpisodeCallback {
         &mut self,
         stepper: BoundNativeGraphEnvironmentStepper,
         authority: NativeGraphAttemptAuthority,
+        workspace_patch: NativeGraphWorkspacePatchContract,
     ) -> Result<(), NativeGraphModelStageError> {
         if self.lease_rollout_start.is_some() || self.needs_live_rollout {
             return Err(NativeGraphModelStageError::Factory {
@@ -1207,6 +1209,7 @@ impl EngineNativeGraphEpisodeCallback {
             coordinator,
             authority,
             summary,
+            workspace_patch,
         ));
         self.needs_live_rollout = true;
         Ok(())

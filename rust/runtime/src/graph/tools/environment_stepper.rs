@@ -1032,6 +1032,7 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
             terminated,
             truncated,
             info_ref,
+            workspace_patch_ref,
             ..
         } = response.message
         else {
@@ -1058,6 +1059,14 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
                     .await;
             }
         };
+        let workspace_patch = match self.release_output(&operation, &workspace_patch_ref) {
+            Ok(workspace_patch) => workspace_patch,
+            Err(error) => {
+                return self
+                    .invalidate(CancelReason::IntegrityViolation, error)
+                    .await;
+            }
+        };
         let reaches_horizon = self.step_count.saturating_add(1) == self.binding.horizon;
         let transition = match EnvironmentTransitionRecord::new(
             self.step_count,
@@ -1066,6 +1075,7 @@ impl EnvironmentStepper for SupervisedEnvironmentStepper {
             terminated,
             truncated || (reaches_horizon && !terminated),
             info,
+            workspace_patch,
         ) {
             Ok(transition) => transition,
             Err(error) => {

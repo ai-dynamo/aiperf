@@ -214,6 +214,16 @@ impl NativeGraphEpisodeExecutor for DockerNativeGraphEpisodeExecutor {
                 .bind_live_rollout(
                     bound,
                     NativeGraphAttemptAuthority::from_resolved_trial(assignment.trial()),
+                    native
+                        .rollout()
+                        .ok_or_else(|| {
+                            EpisodeExecutionError::Configuration(
+                                "NativeGraph rollout disappeared after immutable executor construction"
+                                    .to_owned(),
+                            )
+                        })?
+                        .workspace_patch()
+                        .clone(),
                 )
                 .map_err(|error| {
                     EpisodeExecutionError::Callback(

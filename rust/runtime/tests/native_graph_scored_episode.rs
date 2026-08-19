@@ -1300,6 +1300,7 @@ impl AdapterProcess for RolloutAdapterChild {
                 self.outputs = VecDeque::from([
                     b"rollout-transition-observation".to_vec(),
                     b"rollout-transition-info".to_vec(),
+                    Self::workspace_patch_archive(),
                 ]);
                 self.request_output(host.episode)?;
             }
@@ -1391,6 +1392,18 @@ impl AdapterProcess for RolloutAdapterChild {
 }
 
 impl RolloutAdapterChild {
+    fn workspace_patch_archive() -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(6);
+        header.set_mode(0o600);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "result.txt", io::Cursor::new(b"south\n"))
+            .expect("test workspace patch writes");
+        builder.into_inner().expect("test workspace patch finishes")
+    }
+
     fn request_output(&mut self, episode: String) -> Result<(), AdapterSupervisionError> {
         let parent = self
             .parent
@@ -1443,7 +1456,7 @@ impl RolloutAdapterChild {
                 },
             )
         } else {
-            let [observation, info]: [FrozenArtifactReference; 2] = references
+            let [observation, info, workspace_patch]: [FrozenArtifactReference; 3] = references
                 .try_into()
                 .map_err(|_| AdapterSupervisionError::InvalidResetTransition)?;
             self.push(
@@ -1456,6 +1469,7 @@ impl RolloutAdapterChild {
                     terminated: true,
                     truncated: false,
                     info_ref: info,
+                    workspace_patch_ref: workspace_patch,
                 },
             )
         }

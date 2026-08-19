@@ -282,6 +282,7 @@ impl AdapterProcess for StrictUploadChild {
                     [
                         b"strict-transition-observation".to_vec(),
                         b"strict-transition-info".to_vec(),
+                        b"strict-workspace-patch".to_vec(),
                     ],
                 )?;
             }
@@ -330,6 +331,7 @@ impl AdapterProcess for StrictUploadChild {
                     [
                         b"strict-transition-observation".to_vec(),
                         b"strict-transition-info".to_vec(),
+                        b"strict-workspace-patch".to_vec(),
                     ],
                 )?;
             }
@@ -520,7 +522,7 @@ fn strict_upload_finish_parent(
             StrictUploadMode::ResetThenTerminalStep | StrictUploadMode::ReadActionThenTerminalStep
         )
     {
-        let [observation, info]: [FrozenArtifactReference; 2] = references
+        let [observation, info, workspace_patch]: [FrozenArtifactReference; 3] = references
             .try_into()
             .map_err(|_| AdapterSupervisionError::InvalidResetTransition)?;
         AdapterMessage::Transition {
@@ -529,6 +531,7 @@ fn strict_upload_finish_parent(
             terminated: true,
             truncated: false,
             info_ref: info,
+            workspace_patch_ref: workspace_patch,
         }
     } else {
         return Err(AdapterSupervisionError::InvalidResetTransition);
@@ -826,6 +829,9 @@ impl SupervisedAdapter for StoreBackedEnvironmentAdapter {
                         info_ref: references
                             .next()
                             .ok_or(AdapterSupervisionError::EndOfStream)?,
+                        workspace_patch_ref: references
+                            .next()
+                            .ok_or(AdapterSupervisionError::EndOfStream)?,
                     },
                 };
                 if references.next().is_some() {
@@ -1113,6 +1119,7 @@ fn transition_response_with_reward(
             terminated,
             truncated,
             info_ref: transition_info_reference(),
+            workspace_patch_ref: transition_workspace_patch_reference(),
         },
     )
 }
@@ -1146,6 +1153,10 @@ fn transition_observation_reference() -> FrozenArtifactReference {
 
 fn transition_info_reference() -> FrozenArtifactReference {
     immutable_reference("transition-info")
+}
+
+fn transition_workspace_patch_reference() -> FrozenArtifactReference {
+    immutable_reference("transition-workspace-patch")
 }
 
 fn environment_binding(protocol: AdapterProtocolConfig, horizon: u32) -> EnvironmentStepperBinding {
@@ -1190,6 +1201,7 @@ fn transition_record(
         terminated,
         truncated,
         transition_info_reference().artifact().clone(),
+        transition_workspace_patch_reference().artifact().clone(),
     )
 }
 
@@ -1305,6 +1317,7 @@ fn store_backed_plan_from_response(
             VecDeque::from([
                 b"dynamic-transition-observation".to_vec(),
                 b"dynamic-transition-info".to_vec(),
+                b"dynamic-workspace-patch".to_vec(),
             ]),
         ),
         _ => panic!("fixture only scripts environment responses"),
@@ -1340,6 +1353,7 @@ fn environment_protocol_carries_only_frozen_artifact_references() {
     let input = immutable_reference("input");
     let observation = immutable_reference("observation");
     let info = immutable_reference("info");
+    let workspace_patch = immutable_reference("workspace-patch");
 
     let reset = serde_json::to_value(HostMessage::ResetEnvironment {
         input_ref: input.clone(),
@@ -1361,15 +1375,21 @@ fn environment_protocol_carries_only_frozen_artifact_references() {
         terminated: false,
         truncated: false,
         info_ref: info.clone(),
+        workspace_patch_ref: workspace_patch.clone(),
     })
     .expect("transition serializes");
     assert!(transition.get("observation").is_none());
     assert!(transition.get("info").is_none());
+    assert!(transition.get("workspace_patch").is_none());
     assert_eq!(
         transition["observation_ref"],
         serde_json::to_value(observation).unwrap()
     );
     assert_eq!(transition["info_ref"], serde_json::to_value(info).unwrap());
+    assert_eq!(
+        transition["workspace_patch_ref"],
+        serde_json::to_value(workspace_patch).unwrap()
+    );
 }
 
 #[test]
@@ -2626,6 +2646,7 @@ async fn invalidated_reset_retries_pending_cleanup_before_refusing_a_step() {
                 terminated: false,
                 truncated: false,
                 info_ref: transition_info_reference(),
+                workspace_patch_ref: transition_workspace_patch_reference(),
             },
         )],
         VecDeque::from([FakeReapBehavior::Fail, FakeReapBehavior::Complete]),
@@ -3050,6 +3071,7 @@ fn frozen_rollout_evidence(source: &[u8], action: &[u8]) -> FrozenRolloutEvidenc
             true,
             false,
             info.artifact().clone(),
+            info.artifact().clone(),
         )
         .expect("terminal transition is valid")])
         .expect("trajectory is valid");
@@ -3223,6 +3245,7 @@ fn rollout_freeze_pre_admits_policy_before_retaining_actions() {
             true,
             false,
             info.artifact().clone(),
+            info.artifact().clone(),
         )
         .expect("terminal transition is valid")])
         .expect("trajectory is valid");
@@ -3268,6 +3291,7 @@ fn trajectory_keeps_its_strict_policy_limits_when_freeze_offers_looser_limits() 
             1.0,
             true,
             false,
+            info.artifact().clone(),
             info.artifact().clone(),
         )
         .expect("terminal transition is valid")])
@@ -3315,6 +3339,7 @@ fn rollout_freeze_rejects_aggregate_descriptor_bytes_before_retaining_actions() 
             1.0,
             true,
             false,
+            info.artifact().clone(),
             info.artifact().clone(),
         )
         .expect("terminal transition is valid")])
@@ -3374,6 +3399,7 @@ fn rollout_verifier_decode_rejects_repeated_descriptor_bytes_above_total_quota()
             true,
             false,
             info.artifact().clone(),
+            info.artifact().clone(),
         )
         .expect("terminal transition is valid")])
         .expect("trajectory is valid");
@@ -3430,6 +3456,7 @@ fn rollout_freeze_refuses_a_verifier_document_above_the_selected_document_limit(
             1.0,
             true,
             false,
+            info.artifact().clone(),
             info.artifact().clone(),
         )
         .expect("terminal transition is valid")])
@@ -3491,6 +3518,7 @@ fn rollout_verifier_decode_counts_escaped_strings_by_decoded_bytes() {
             1.0,
             true,
             false,
+            info.artifact().clone(),
             info.artifact().clone(),
         )
         .expect("terminal transition is valid")])

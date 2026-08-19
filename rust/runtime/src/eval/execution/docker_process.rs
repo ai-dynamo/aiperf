@@ -9,6 +9,7 @@ use std::{
     fs,
     io::{self, Read, Seek, SeekFrom, Write},
     os::unix::fs::PermissionsExt,
+    path::PathBuf,
     process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
     sync::{
@@ -27,11 +28,14 @@ use tokio::process::Command as TokioCommand;
 #[cfg(feature = "engine")]
 use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
 #[cfg(feature = "engine")]
+use crate::eval::native_graph::workspace_patch::apply_workspace_patch;
+#[cfg(feature = "engine")]
 use crate::eval::{
     EpisodeArtifactStore, FrozenArtifact, FrozenRolloutEvidence, NativeGraphAttemptAuthority,
     NativeGraphEnvironmentRolloutSession, NativeGraphLeaseRolloutStart,
     NativeGraphLiveRolloutCoordinator, NativeGraphRolloutReceipt,
-    NativeGraphRolloutTransitionReceipt, StartedNativeGraphEnvironmentStepper,
+    NativeGraphRolloutTransitionReceipt, NativeGraphWorkspacePatchContract,
+    StartedNativeGraphEnvironmentStepper,
 };
 use crate::{
     clock::{Clock, RealClock},
@@ -125,6 +129,11 @@ struct DockerNativeGraphEnvironmentRolloutSession {
     receipt: Option<NativeGraphRolloutReceipt>,
     authority: NativeGraphAttemptAuthority,
     policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+    artifacts: Rc<RefCell<EpisodeArtifactStore>>,
+    workspace_root: PathBuf,
+    workspace_patch: NativeGraphWorkspacePatchContract,
+    accepted_patch_count: u64,
+    accepted_patch_bytes: u64,
     _artifact_root: TempDir,
 }
 
@@ -134,8 +143,9 @@ impl DockerNativeGraphEnvironmentRolloutSession {
         start: NativeGraphLeaseRolloutStart,
         spawner: Rc<dyn AdapterSpawner>,
         request: AdapterSpawnRequest,
+        workspace_root: PathBuf,
     ) -> Result<Self, EvalExecutionError> {
-        let (binding, prepared, authority, policy_summary) = start.into_parts();
+        let (binding, prepared, authority, policy_summary, workspace_patch) = start.into_parts();
         let artifact_root = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
         let artifacts = Rc::new(RefCell::new(
@@ -143,7 +153,12 @@ impl DockerNativeGraphEnvironmentRolloutSession {
                 .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?,
         ));
         let mut started = binding
-            .start_with_authorized_request("native-graph-rollout", artifacts, spawner, request)
+            .start_with_authorized_request(
+                "native-graph-rollout",
+                Rc::clone(&artifacts),
+                spawner,
+                request,
+            )
             .await
             .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
         let receipt = started.new_rollout_receipt();
@@ -164,8 +179,73 @@ impl DockerNativeGraphEnvironmentRolloutSession {
             receipt: Some(receipt),
             authority,
             policy_summary,
+            artifacts,
+            workspace_root,
+            workspace_patch,
+            accepted_patch_count: 0,
+            accepted_patch_bytes: 0,
             _artifact_root: artifact_root,
         })
+    }
+
+    fn apply_transition_patch(
+        &mut self,
+        transition: &NativeGraphRolloutTransitionReceipt,
+    ) -> Result<(), EvalExecutionError> {
+        if self.accepted_patch_count >= self.workspace_patch.max_patches() {
+            return Err(EvalExecutionError::NativeGraphModel(
+                "NativeGraph rollout exceeded its sealed workspace-patch count".to_owned(),
+            ));
+        }
+        let patch = transition.transition().workspace_patch();
+        let bytes = self
+            .artifacts
+            .try_borrow()
+            .map_err(|_| {
+                EvalExecutionError::NativeGraphModel(
+                    "NativeGraph environment artifact store is already borrowed".to_owned(),
+                )
+            })?
+            .read_frozen(patch)
+            .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        let patch_bytes = u64::try_from(bytes.len()).map_err(|_| {
+            EvalExecutionError::NativeGraphModel(
+                "NativeGraph workspace patch length exceeds sealed range".to_owned(),
+            )
+        })?;
+        let total = self
+            .accepted_patch_bytes
+            .checked_add(patch_bytes)
+            .ok_or_else(|| {
+                EvalExecutionError::NativeGraphModel(
+                    "NativeGraph workspace patch byte accounting overflowed".to_owned(),
+                )
+            })?;
+        if total > self.workspace_patch.max_total_patch_bytes() {
+            return Err(EvalExecutionError::NativeGraphModel(
+                "NativeGraph rollout exceeded its sealed workspace-patch byte limit".to_owned(),
+            ));
+        }
+        let mutable_paths = self
+            .workspace_patch
+            .mutable_paths()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        apply_workspace_patch(
+            &self.workspace_root,
+            &bytes,
+            &mutable_paths,
+            self.workspace_patch.max_patch_bytes(),
+        )
+        .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        self.accepted_patch_count = self.accepted_patch_count.checked_add(1).ok_or_else(|| {
+            EvalExecutionError::NativeGraphModel(
+                "NativeGraph workspace patch count overflowed".to_owned(),
+            )
+        })?;
+        self.accepted_patch_bytes = total;
+        Ok(())
     }
 
     async fn cancel_and_reap(&mut self) -> Result<(), EvalExecutionError> {
@@ -214,6 +294,7 @@ impl NativeGraphEnvironmentRolloutSession for DockerNativeGraphEnvironmentRollou
             .step_live_rollout(&mut self.coordinator, operation, observation)
             .await
             .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        self.apply_transition_patch(&transition)?;
         self.receipt
             .as_mut()
             .ok_or(EvalExecutionError::InvalidRecipe(
@@ -300,6 +381,7 @@ impl Drop for DockerNativeGraphAdapterStartGuard {
 struct DockerNativeGraphEnvironmentAdapterStart {
     request: Option<AdapterSpawnRequest>,
     spawner: Rc<dyn AdapterSpawner>,
+    workspace_root: PathBuf,
     process: Option<Box<dyn AdapterProcess>>,
     #[cfg(feature = "engine")]
     is_rollout_session_required: bool,
@@ -435,6 +517,7 @@ impl NativeGraphEnvironmentAdapterStart for DockerNativeGraphEnvironmentAdapterS
             rollout_start,
             Rc::clone(&self.spawner),
             request,
+            self.workspace_root.clone(),
         )
         .await?;
         self.rollout_session = Some(session);
@@ -462,6 +545,7 @@ fn native_graph_environment_adapter_start(
     project: Option<&ComposeProjectId>,
     environment: &super::EnvironmentPlan,
     environment_workdir: Option<&str>,
+    workspace_root: &std::path::Path,
     #[cfg(feature = "engine")] rollout_start: Option<NativeGraphLeaseRolloutStart>,
 ) -> Result<Option<DockerNativeGraphEnvironmentAdapterStart>, EvalExecutionError> {
     let native_graph = package
@@ -523,6 +607,7 @@ fn native_graph_environment_adapter_start(
     Ok(Some(DockerNativeGraphEnvironmentAdapterStart {
         request: Some(request),
         spawner,
+        workspace_root: workspace_root.to_path_buf(),
         process: None,
         #[cfg(feature = "engine")]
         is_rollout_session_required: rollout_start.is_some(),
@@ -1167,6 +1252,7 @@ impl DockerProcessSandbox {
             adapter_project.as_ref(),
             environment,
             environment_workdir,
+            workspace.path(),
             #[cfg(feature = "engine")]
             rollout_start,
         )?;

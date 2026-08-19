@@ -201,7 +201,7 @@ impl RolloutEvidenceLimits {
         }
         let artifact_limit = self.quota.max_artifacts.min(store_quota.max_artifacts);
         let required_artifacts = transition_count
-            .checked_mul(3)
+            .checked_mul(4)
             .and_then(|count| count.checked_add(1))
             .ok_or(RolloutAdmissionError::ArtifactCountOverflow)?;
         if required_artifacts > artifact_limit {
@@ -218,9 +218,11 @@ impl RolloutEvidenceLimits {
             self.admit_artifact(action, store_quota)?;
             self.admit_artifact(transition.observation(), store_quota)?;
             self.admit_artifact(transition.info(), store_quota)?;
+            self.admit_artifact(transition.workspace_patch(), store_quota)?;
             admit_descriptor_total(&mut total_bytes, action, total_limit)?;
             admit_descriptor_total(&mut total_bytes, transition.observation(), total_limit)?;
             admit_descriptor_total(&mut total_bytes, transition.info(), total_limit)?;
+            admit_descriptor_total(&mut total_bytes, transition.workspace_patch(), total_limit)?;
         }
         Ok(())
     }
@@ -529,6 +531,7 @@ pub struct RolloutTransitionEvidence {
     terminated: bool,
     truncated: bool,
     info: FrozenArtifact,
+    workspace_patch: FrozenArtifact,
 }
 
 impl RolloutTransitionEvidence {
@@ -565,6 +568,11 @@ impl RolloutTransitionEvidence {
     /// Borrows the immutable diagnostic descriptor after its capability was stripped.
     pub fn info(&self) -> &FrozenArtifact {
         &self.info
+    }
+
+    /// Borrows the immutable workspace-patch archive descriptor for this transition.
+    pub fn workspace_patch(&self) -> &FrozenArtifact {
+        &self.workspace_patch
     }
 }
 
@@ -758,6 +766,11 @@ impl RolloutVerifierInput {
                 &transition.info,
                 limits.quota.max_total_bytes,
             )?;
+            admit_descriptor_total(
+                &mut total_bytes,
+                &transition.workspace_patch,
+                limits.quota.max_total_bytes,
+            )?;
         }
         Ok(())
     }
@@ -769,6 +782,7 @@ impl RolloutVerifierInput {
             artifacts.insert(transition.action.clone());
             artifacts.insert(transition.observation.clone());
             artifacts.insert(transition.info.clone());
+            artifacts.insert(transition.workspace_patch.clone());
         }
         artifacts
     }
@@ -834,6 +848,11 @@ impl RolloutVerifierInput {
                 &[u8::from(transition.truncated)],
             );
             append_artifact(&mut material, "transition-info", &transition.info);
+            append_artifact(
+                &mut material,
+                "transition-workspace-patch",
+                &transition.workspace_patch,
+            );
         }
         append_identity_field(
             &mut material,
@@ -1172,6 +1191,7 @@ impl FrozenRolloutEvidence {
             artifacts.insert(transition.action.clone());
             artifacts.insert(transition.observation.clone());
             artifacts.insert(transition.info.clone());
+            artifacts.insert(transition.workspace_patch.clone());
         }
         let mut verifier_input = RolloutVerifierInput {
             identity,
@@ -1245,6 +1265,7 @@ impl RolloutTransitionEvidence {
             terminated: transition.is_terminated(),
             truncated: transition.is_truncated(),
             info: transition.info().clone(),
+            workspace_patch: transition.workspace_patch().clone(),
         }
     }
 }
@@ -1604,6 +1625,7 @@ impl<'de> Visitor<'de> for RolloutTransitionEvidenceVisitor<'_> {
         let mut terminated = None;
         let mut truncated = None;
         let mut info = None;
+        let mut workspace_patch = None;
         while let Some(field) = map.next_key()? {
             match field {
                 RolloutTransitionField::Step => set_once(&mut step, map.next_value()?, "step")?,
@@ -1637,6 +1659,13 @@ impl<'de> Visitor<'de> for RolloutTransitionEvidenceVisitor<'_> {
                     })?,
                     "info",
                 )?,
+                RolloutTransitionField::WorkspacePatch => set_once(
+                    &mut workspace_patch,
+                    map.next_value_seed(FrozenArtifactSeed {
+                        limits: self.limits,
+                    })?,
+                    "workspace_patch",
+                )?,
             }
         }
         Ok(RolloutTransitionEvidence {
@@ -1647,6 +1676,8 @@ impl<'de> Visitor<'de> for RolloutTransitionEvidenceVisitor<'_> {
             terminated: terminated.ok_or_else(|| de::Error::missing_field("terminated"))?,
             truncated: truncated.ok_or_else(|| de::Error::missing_field("truncated"))?,
             info: info.ok_or_else(|| de::Error::missing_field("info"))?,
+            workspace_patch: workspace_patch
+                .ok_or_else(|| de::Error::missing_field("workspace_patch"))?,
         })
     }
 }
@@ -2061,6 +2092,7 @@ enum RolloutTransitionField {
     Terminated,
     Truncated,
     Info,
+    WorkspacePatch,
 }
 
 #[derive(Deserialize)]

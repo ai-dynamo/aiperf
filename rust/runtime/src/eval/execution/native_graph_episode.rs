@@ -14,7 +14,7 @@ use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
 use crate::eval::{
     BoundNativeGraphEnvironmentStepper, FrozenArtifact, FrozenRolloutEvidence,
     NativeGraphAttemptAuthority, NativeGraphRolloutTransitionReceipt,
-    PreparedNativeGraphLiveRolloutCoordinator,
+    NativeGraphWorkspacePatchContract, PreparedNativeGraphLiveRolloutCoordinator,
 };
 
 /// Opaque, immutable rollout start facts retained by the Docker lease before provisioning.
@@ -28,6 +28,7 @@ pub struct NativeGraphLeaseRolloutStart {
     coordinator: PreparedNativeGraphLiveRolloutCoordinator,
     authority: NativeGraphAttemptAuthority,
     live_policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+    workspace_patch: NativeGraphWorkspacePatchContract,
 }
 
 #[cfg(feature = "engine")]
@@ -37,12 +38,14 @@ impl NativeGraphLeaseRolloutStart {
         coordinator: PreparedNativeGraphLiveRolloutCoordinator,
         authority: NativeGraphAttemptAuthority,
         live_policy_summary: Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+        workspace_patch: NativeGraphWorkspacePatchContract,
     ) -> Self {
         Self {
             stepper,
             coordinator,
             authority,
             live_policy_summary,
+            workspace_patch,
         }
     }
 
@@ -53,12 +56,14 @@ impl NativeGraphLeaseRolloutStart {
         PreparedNativeGraphLiveRolloutCoordinator,
         NativeGraphAttemptAuthority,
         Rc<RefCell<NativeGraphLivePolicyCallSummary>>,
+        NativeGraphWorkspacePatchContract,
     ) {
         (
             self.stepper,
             self.coordinator,
             self.authority,
             self.live_policy_summary,
+            self.workspace_patch,
         )
     }
 }

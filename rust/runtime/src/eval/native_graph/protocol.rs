@@ -371,6 +371,8 @@ pub enum AdapterMessage {
         truncated: bool,
         /// Rust-issued immutable environment diagnostics reference.
         info_ref: FrozenArtifactReference,
+        /// Rust-issued immutable workspace-patch archive reference.
+        workspace_patch_ref: FrozenArtifactReference,
     },
     /// Confirms that a previously granted upload now contains its exact declared bytes.
     ArtifactUploadComplete {
@@ -1094,6 +1096,7 @@ impl StrictAdapterProtocol {
                 observation_ref,
                 reward,
                 info_ref,
+                workspace_patch_ref,
                 ..
             } => {
                 self.require_role(AdapterRole::Environment)?;
@@ -1103,6 +1106,7 @@ impl StrictAdapterProtocol {
                 }
                 self.validate_granted_frozen_reference(&observation_ref)?;
                 self.validate_granted_frozen_reference(&info_ref)?;
+                self.validate_granted_frozen_reference(&workspace_patch_ref)?;
                 self.close_response(&envelope.operation, |state| {
                     matches!(state, OperationState::AwaitTransition)
                 })?;
