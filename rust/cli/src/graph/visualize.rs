@@ -66,7 +66,30 @@ pub(super) fn run(
 
 /// Flush and atomically publish rendered visualization bytes beside their destination.
 pub(super) fn write_output_atomically(path: &Path, bytes: &[u8]) -> Result<(), GraphCommandError> {
-    check_output_target(path, |target| fs::symlink_metadata(target))?;
+    write_output_atomically_with_persist(
+        path,
+        bytes,
+        |target| fs::symlink_metadata(target),
+        |temporary, target| {
+            temporary
+                .persist(target)
+                .map(|_| ())
+                .map_err(|error| error.error)
+        },
+    )
+}
+
+fn write_output_atomically_with_persist<M, P>(
+    path: &Path,
+    bytes: &[u8],
+    symlink_metadata: M,
+    persist: P,
+) -> Result<(), GraphCommandError>
+where
+    M: FnOnce(&Path) -> io::Result<fs::Metadata>,
+    P: FnOnce(tempfile::NamedTempFile, &Path) -> io::Result<()>,
+{
+    check_output_target(path, symlink_metadata)?;
 
     let parent = path
         .parent()
@@ -95,9 +118,7 @@ pub(super) fn write_output_atomically(path: &Path, bytes: &[u8]) -> Result<(), G
         .as_file()
         .sync_all()
         .map_err(|cause| output_write_error(path, cause))?;
-    temporary
-        .persist(path)
-        .map_err(|cause| output_write_error(path, cause.error))?;
+    persist(temporary, path).map_err(|cause| output_write_error(path, cause))?;
     Ok(())
 }
 
@@ -146,10 +167,11 @@ fn output_write_error(path: &Path, cause: impl Into<anyhow::Error>) -> GraphComm
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::io;
     use std::path::Path;
 
-    use super::{GraphCommandErrorCode, check_output_target};
+    use super::{GraphCommandErrorCode, check_output_target, write_output_atomically_with_persist};
 
     #[test]
     fn metadata_failure_is_an_output_write_failure() {
@@ -163,6 +185,37 @@ mod tests {
             GraphCommandErrorCode::OutputWriteFailed
         ));
         assert!(error.message.contains("output-write-failed"));
+    }
+
+    #[test]
+    fn persist_failure_cleans_up_the_temporary_file() {
+        let directory = tempfile::tempdir().expect("create output directory");
+        let destination = directory.path().join("graph.mmd");
+        let error = write_output_atomically_with_persist(
+            &destination,
+            b"rendered graph",
+            |target| fs::symlink_metadata(target),
+            |temporary, target| {
+                fs::create_dir(target)?;
+                temporary
+                    .persist(target)
+                    .map(|_| ())
+                    .map_err(|error| error.error)
+            },
+        )
+        .expect_err("persist failure must reject the output");
+
+        assert!(matches!(
+            error.code,
+            GraphCommandErrorCode::OutputWriteFailed
+        ));
+        assert!(error.message.contains("output-write-failed"));
+        let entries = fs::read_dir(directory.path())
+            .expect("read output directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read output directory entries");
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].path().is_dir());
     }
 }
 

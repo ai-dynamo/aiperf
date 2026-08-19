@@ -212,25 +212,6 @@ fn output_missing_parent_reports_write_failure_without_creating_a_destination() 
     assert!(!destination.exists());
 }
 
-#[cfg(unix)]
-#[test]
-fn output_persist_failure_cleans_up_the_temporary_file() {
-    let directory = tempfile::tempdir().expect("create output directory");
-    let destination = directory.path().join("x".repeat(300));
-    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
-    let output = visualize_mermaid_output(&source, Some(&destination));
-
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
-    assert!(stderr(&output).contains("output-write-failed"));
-    assert!(
-        fs::read_dir(directory.path())
-            .expect("read output directory after persist failure")
-            .next()
-            .is_none()
-    );
-}
-
 #[test]
 fn output_non_directory_parent_preserves_the_existing_parent_file() {
     let directory = tempfile::tempdir().expect("create output directory");
