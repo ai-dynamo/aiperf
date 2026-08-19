@@ -447,8 +447,9 @@ fn rewrite_cell_dataset_paths(
     );
     if let Some(replay_root) = local_replay_root {
         let graph = dataset
-            .get_mut("graph")
-            .and_then(serde_json::Value::as_object_mut)
+            .entry("graph".to_owned())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+            .as_object_mut()
             .context("recorded-agent cell envelope graph is not an object")?;
         graph.insert(
             "replay_root".to_owned(),
@@ -1299,5 +1300,26 @@ mod tests {
             files: vec!["main.jsonl".to_owned()],
         };
         assert!(manifest_has_local_replay_root(&manifest));
+    }
+
+    #[test]
+    fn agent_session_exact_set_creates_missing_graph_for_replay_root_rewrite() {
+        let mut envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+            "type": "file",
+            "format": "agent_recording",
+            "path": "/controller/main.jsonl"
+        }]}}});
+
+        rewrite_cell_dataset_paths(
+            &mut envelope,
+            std::path::Path::new("/cell/main.jsonl"),
+            Some(std::path::Path::new("/cell")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            envelope.pointer("/run/cfg/datasets/0/graph/replay_root"),
+            Some(&serde_json::json!("/cell"))
+        );
     }
 }

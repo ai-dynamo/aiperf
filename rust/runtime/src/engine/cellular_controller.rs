@@ -2229,6 +2229,15 @@ fn discover_imported_agent_read_set_from_envelope(
     } else {
         replay_root.map_or_else(|| source.to_path_buf(), |root| root.join(source))
     };
+    if source_format == RecordedAgentSourceFormat::Auto
+        && source_candidate.is_dir()
+        && replay_root.is_some_and(|root| source_candidate != root)
+    {
+        bail!(
+            "recorded-agent directory imports require an explicit source_format; \
+             select codex or claude_code before cross-host cellular shipping"
+        );
+    }
     let is_imported = matches!(
         source_format,
         RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode
@@ -3347,8 +3356,9 @@ mod tests {
         use crate::graph::recorded::agent_recording::discover_imported_agent_read_set;
 
         let replay_root = tempfile::tempdir().unwrap();
-        let main = replay_root.path().join("main.jsonl");
-        let subagent = replay_root.path().join("main/subagents/agent-aaa.jsonl");
+        let selected = replay_root.path().join("selected");
+        let main = selected.join("main.jsonl");
+        let subagent = selected.join("main/subagents/agent-aaa.jsonl");
         for path in [&main, &subagent] {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, b"{\"sessionId\":\"session\",\"parentUuid\":null}\n").unwrap();
@@ -3360,8 +3370,8 @@ mod tests {
         std::fs::write(impostor, b"not selected\n").unwrap();
 
         let read_set = discover_imported_agent_read_set(
-            &main,
-            Some(replay_root.path()),
+            &selected,
+            None,
             RecordedAgentSourceFormat::ClaudeCode,
             Some(true),
         )
@@ -3379,6 +3389,31 @@ mod tests {
         assert!(!served.contains_key("secret.jsonl"));
         assert!(!served.contains_key("credentials.txt"));
         assert!(!served.contains_key("nested/impostor.jsonl"));
+    }
+
+    #[test]
+    fn agent_session_exact_set_rejects_auto_directory_below_replay_root() {
+        let replay_root = tempfile::tempdir().unwrap();
+        let selected = replay_root.path().join("imported");
+        std::fs::create_dir_all(&selected).unwrap();
+        std::fs::write(selected.join("secret.jsonl"), b"secret\n").unwrap();
+
+        let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+            "type": "file",
+            "format": "agent_recording",
+            "path": selected,
+            "graph": {"replay_root": replay_root.path()}
+        }]}}});
+        let error = build_dataset_serve_plan_from_envelope(
+            &envelope,
+            Some("agent_recording"),
+            &selected,
+            Some(replay_root.path()),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("directory imports require an explicit source_format"));
     }
 
     #[test]
