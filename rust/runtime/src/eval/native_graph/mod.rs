@@ -24,6 +24,7 @@ mod rl;
 mod rollout_evidence;
 mod suite;
 mod supervision;
+mod workspace_patch;
 
 #[cfg(feature = "engine")]
 pub use crate::engine::record_lane::EvalNodeRecordArtifact;
