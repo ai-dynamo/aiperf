@@ -7,7 +7,7 @@ use std::{
     collections::BTreeSet,
     fmt::{self, Display, Formatter},
     fs,
-    io::Cursor,
+    io::{Cursor, Read},
     path::{Component, Path, PathBuf},
 };
 
@@ -80,13 +80,24 @@ pub(crate) fn apply_workspace_patch(
         .map_err(|_| NativeGraphWorkspacePatchError::Io)?;
     let mut archive = Archive::new(Cursor::new(archive_bytes));
     let mut seen = BTreeSet::new();
+    let mut extracted_bytes = 0_u64;
     for entry in archive
         .entries()
         .map_err(|_| NativeGraphWorkspacePatchError::Archive)?
     {
-        let mut entry = entry.map_err(|_| NativeGraphWorkspacePatchError::Archive)?;
-        if !entry.header().entry_type().is_file() {
+        let entry = entry.map_err(|_| NativeGraphWorkspacePatchError::Archive)?;
+        if !entry.header().entry_type().is_file() || entry.header().entry_type().is_gnu_sparse() {
             return Err(NativeGraphWorkspacePatchError::NonRegularEntry);
+        }
+        let entry_bytes = entry
+            .header()
+            .size()
+            .map_err(|_| NativeGraphWorkspacePatchError::Archive)?;
+        extracted_bytes = extracted_bytes
+            .checked_add(entry_bytes)
+            .ok_or(NativeGraphWorkspacePatchError::PatchTooLarge)?;
+        if entry_bytes > max_patch_bytes as u64 || extracted_bytes > max_patch_bytes as u64 {
+            return Err(NativeGraphWorkspacePatchError::PatchTooLarge);
         }
         let path = entry
             .path()
@@ -105,10 +116,10 @@ pub(crate) fn apply_workspace_patch(
         fs::create_dir_all(parent).map_err(|_| NativeGraphWorkspacePatchError::Io)?;
         let mut file =
             fs::File::create(&destination).map_err(|_| NativeGraphWorkspacePatchError::Io)?;
-        let copied = std::io::copy(&mut entry, &mut file)
+        let copied = std::io::copy(&mut entry.take(entry_bytes), &mut file)
             .map_err(|_| NativeGraphWorkspacePatchError::Archive)?;
-        if copied > u64::try_from(max_patch_bytes).unwrap_or(u64::MAX) {
-            return Err(NativeGraphWorkspacePatchError::PatchTooLarge);
+        if copied != entry_bytes {
+            return Err(NativeGraphWorkspacePatchError::Archive);
         }
         file.sync_all()
             .map_err(|_| NativeGraphWorkspacePatchError::Io)?;
@@ -116,12 +127,57 @@ pub(crate) fn apply_workspace_patch(
     if seen.is_empty() {
         return Err(NativeGraphWorkspacePatchError::Archive);
     }
-    for path in seen {
+    for path in &seen {
         validate_destination(root, &path)?;
-        fs::rename(staging.path().join(&path), root.join(path))
-            .map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+    }
+    commit_staged_patch(root, staging.path(), seen)?;
+    Ok(())
+}
+
+fn commit_staged_patch(
+    root: &Path,
+    staging: &Path,
+    paths: BTreeSet<PathBuf>,
+) -> Result<(), NativeGraphWorkspacePatchError> {
+    let rollback = tempfile::Builder::new()
+        .prefix("native-graph-workspace-rollback-")
+        .tempdir_in(root)
+        .map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+    let mut committed = Vec::with_capacity(paths.len());
+    for path in paths {
+        let destination = root.join(&path);
+        let backup = rollback.path().join(&path);
+        let existed = destination.exists();
+        if existed {
+            let parent = backup
+                .parent()
+                .ok_or(NativeGraphWorkspacePatchError::InvalidPath)?;
+            fs::create_dir_all(parent).map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+            if fs::rename(&destination, &backup).is_err() {
+                rollback_staged_patch(root, rollback.path(), &committed);
+                return Err(NativeGraphWorkspacePatchError::Io);
+            }
+        }
+        if fs::rename(staging.join(&path), &destination).is_err() {
+            if existed {
+                let _ = fs::rename(&backup, &destination);
+            }
+            rollback_staged_patch(root, rollback.path(), &committed);
+            return Err(NativeGraphWorkspacePatchError::Io);
+        }
+        committed.push((path, existed));
     }
     Ok(())
+}
+
+fn rollback_staged_patch(root: &Path, rollback: &Path, committed: &[(PathBuf, bool)]) {
+    for (path, existed) in committed.iter().rev() {
+        let destination = root.join(path);
+        let _ = fs::remove_file(&destination);
+        if *existed {
+            let _ = fs::rename(rollback.join(path), destination);
+        }
+    }
 }
 
 fn normalized_path(path: &Path) -> Result<PathBuf, NativeGraphWorkspacePatchError> {
@@ -245,6 +301,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_a_declared_oversized_entry_before_staging_its_contents() {
+        let root = tempfile::tempdir().expect("workspace root is created");
+        fs::write(root.path().join("result.txt"), b"original\n").expect("seed result");
+
+        let patch = declared_size_archive("result.txt", 4_097);
+        assert!(matches!(
+            apply_workspace_patch(root.path(), &patch, &["result.txt"], 4_096),
+            Err(super::NativeGraphWorkspacePatchError::PatchTooLarge)
+        ));
+        assert_eq!(
+            fs::read(root.path().join("result.txt")).expect("seed remains"),
+            b"original\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_multi_file_patch_without_partially_replacing_prior_files() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("workspace root is created");
+        fs::write(root.path().join("first.txt"), b"first-original\n").expect("seed first result");
+        fs::write(root.path().join("outside.txt"), b"outside\n").expect("seed outside");
+        symlink("outside.txt", root.path().join("second.txt"))
+            .expect("create unsafe second destination");
+
+        let patch = archive([
+            ("first.txt", b"first-patched\n".as_slice()),
+            ("second.txt", b"second-patched\n".as_slice()),
+        ]);
+        assert!(
+            apply_workspace_patch(root.path(), &patch, &["first.txt", "second.txt"], 4_096,)
+                .is_err()
+        );
+        assert_eq!(
+            fs::read(root.path().join("first.txt")).expect("first remains"),
+            b"first-original\n"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn rejects_archive_and_destination_symlinks_without_writing() {
@@ -331,6 +428,18 @@ mod tests {
                 .expect("test archive entry writes");
             builder.finish().expect("test archive finishes");
         }
+        bytes
+    }
+
+    fn declared_size_archive(path: &str, size: u64) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut header = Header::new_gnu();
+        header.set_size(size);
+        header.set_mode(0o600);
+        header.set_path(path).expect("test path is valid");
+        header.set_cksum();
+        bytes.extend_from_slice(header.as_bytes());
+        bytes.extend_from_slice(&[0; 1_024]);
         bytes
     }
 }
