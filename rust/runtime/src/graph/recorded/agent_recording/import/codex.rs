@@ -91,8 +91,7 @@ struct CodexState<'a> {
     ignored_record_count: u64,
     omitted_reasoning_count: u64,
     tool_results_complete: bool,
-    suppress_one_following_plain_assistant_after_completed_bundle: bool,
-    next_assistant_delay_after_previous_us: Option<f64>,
+    next_model_delay_after_previous_us: Option<f64>,
 }
 
 impl<'a> CodexState<'a> {
@@ -113,8 +112,7 @@ impl<'a> CodexState<'a> {
             ignored_record_count: 0,
             omitted_reasoning_count: 0,
             tool_results_complete: true,
-            suppress_one_following_plain_assistant_after_completed_bundle: false,
-            next_assistant_delay_after_previous_us: None,
+            next_model_delay_after_previous_us: None,
         }
     }
 
@@ -165,7 +163,14 @@ impl<'a> CodexState<'a> {
                 "payload must be an object",
             )
         })?;
-        let id = required_identifier(payload, "id", &self.file.path, line, "session_meta")?;
+        let id = required_identifier(
+            payload,
+            "id",
+            &self.file.path,
+            line,
+            "session_meta",
+            "invalid session identifier",
+        )?;
         if let Some(previous) = &self.session_id {
             if previous != &id {
                 return Err(error(
@@ -207,10 +212,6 @@ impl<'a> CodexState<'a> {
         payload: Option<&Map<String, Value>>,
         line: usize,
     ) -> Result<(), ImportedAgentError> {
-        let completed_bundle_precedes_message = self
-            .pending
-            .as_ref()
-            .is_some_and(|bundle| bundle.had_result && bundle.calls.len() == bundle.results.len());
         self.flush_bundle()?;
         let payload = payload.ok_or_else(|| {
             error(
@@ -239,23 +240,9 @@ impl<'a> CodexState<'a> {
         }
         let message = raw_message(role, text.unwrap_or_default(), &self.file.path, line)?;
         if role == "assistant" {
-            if self.suppress_one_following_plain_assistant_after_completed_bundle {
-                self.suppress_one_following_plain_assistant_after_completed_bundle = false;
-            } else {
-                let delay = self.next_assistant_delay_after_previous_us.take();
-                self.calls
-                    .push(self.model_call(format!("codex-line-{line}"), delay));
-            }
-            if completed_bundle_precedes_message {
-                // The observed response after tool results is the replayable
-                // completion. Codex may append one unframed plain response
-                // afterwards; retain that history but do not invent a third
-                // request boundary for it.
-                self.suppress_one_following_plain_assistant_after_completed_bundle = true;
-            }
-        }
-        if role != "assistant" {
-            self.next_assistant_delay_after_previous_us = None;
+            let delay = self.next_model_delay_after_previous_us.take();
+            self.calls
+                .push(self.model_call(format!("codex-line-{line}"), delay));
         }
         self.history.push(message);
         Ok(())
@@ -267,7 +254,6 @@ impl<'a> CodexState<'a> {
         record: &Map<String, Value>,
         line: usize,
     ) -> Result<(), ImportedAgentError> {
-        self.suppress_one_following_plain_assistant_after_completed_bundle = false;
         if self
             .pending
             .as_ref()
@@ -283,8 +269,14 @@ impl<'a> CodexState<'a> {
                 "payload must be an object",
             )
         })?;
-        let call_id =
-            required_identifier(payload, "call_id", &self.file.path, line, "function_call")?;
+        let call_id = required_identifier(
+            payload,
+            "call_id",
+            &self.file.path,
+            line,
+            "function_call",
+            "invalid call identifier",
+        )?;
         if !self.seen_call_ids.insert(call_id.clone()) {
             return Err(error(
                 &self.file.path,
@@ -293,10 +285,16 @@ impl<'a> CodexState<'a> {
                 "duplicate call identifier",
             ));
         }
-        let name = required_string(payload, "name", &self.file.path, line, "function_call")?;
+        let name =
+            required_non_empty_string(payload, "name", &self.file.path, line, "function_call")?;
         let arguments =
-            required_string(payload, "arguments", &self.file.path, line, "function_call")?;
+            required_string_field(payload, "arguments", &self.file.path, line, "function_call")?;
         let timestamp = parse_timestamp(record, &self.file.path, line, "function_call")?;
+        if self.pending.is_none() {
+            let delay = self.next_model_delay_after_previous_us.take();
+            self.calls
+                .push(self.model_call(format!("codex-line-{line}"), delay));
+        }
         let bundle = self.pending.get_or_insert_with(|| PendingBundle {
             first_line: line,
             first_timestamp: timestamp,
@@ -333,8 +331,9 @@ impl<'a> CodexState<'a> {
             &self.file.path,
             line,
             "function_call_output",
+            "invalid call identifier",
         )?;
-        let output = required_string(
+        let output = required_string_field(
             payload,
             "output",
             &self.file.path,
@@ -393,8 +392,6 @@ impl<'a> CodexState<'a> {
             .and_then(|(first, last)| last.signed_duration_since(*first).num_microseconds())
             .filter(|micros| *micros > 0)
             .map(|micros| micros as f64);
-        self.calls
-            .push(self.model_call(format!("codex-line-{}", bundle.first_line), None));
         let tool_calls = bundle
             .calls
             .iter()
@@ -420,7 +417,7 @@ impl<'a> CodexState<'a> {
                 bundle.first_line,
             )?);
         }
-        self.next_assistant_delay_after_previous_us = delay_after_previous_us;
+        self.next_model_delay_after_previous_us = delay_after_previous_us;
         Ok(())
     }
 
@@ -449,6 +446,14 @@ impl<'a> CodexState<'a> {
                 "missing session identifier",
             )
         })?;
+        if self.calls.is_empty() {
+            return Err(error(
+                &self.file.path,
+                0,
+                "response_item",
+                "no inferred model calls",
+            ));
+        }
         Ok(ImportedAgentSession {
             session_id,
             source: ImportedAgentSource::Codex,
@@ -533,6 +538,7 @@ fn required_identifier(
     path: &std::path::Path,
     line: usize,
     label: &'static str,
+    invalid_detail: &'static str,
 ) -> Result<String, ImportedAgentError> {
     let value = payload
         .get(field)
@@ -545,12 +551,12 @@ fn required_identifier(
             byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'#' | b'-')
         })
     {
-        return Err(error(path, line, label, "invalid call identifier"));
+        return Err(error(path, line, label, invalid_detail));
     }
     Ok(value)
 }
 
-fn required_string(
+fn required_non_empty_string(
     payload: &Map<String, Value>,
     field: &str,
     path: &std::path::Path,
@@ -561,6 +567,20 @@ fn required_string(
         .get(field)
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| error(path, line, label, "missing required string"))
+}
+
+fn required_string_field(
+    payload: &Map<String, Value>,
+    field: &str,
+    path: &std::path::Path,
+    line: usize,
+    label: &'static str,
+) -> Result<String, ImportedAgentError> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .ok_or_else(|| error(path, line, label, "missing required string"))
 }

@@ -83,7 +83,7 @@ fn codex_linear_history_is_canonical_and_omits_reasoning() {
 fn codex_tool_bundle_is_causal_and_preserves_result_order() {
     let session =
         parse_codex_session(&codex_file(fixture("with_tools.jsonl"))).expect("tool session");
-    assert_eq!(session.calls.len(), 2);
+    assert_eq!(session.calls.len(), 3);
     assert_eq!(session.observed_tool_count, 1);
     assert_eq!(session.calls[1].delay_after_previous_us, Some(250_000.0));
     assert_eq!(
@@ -91,10 +91,15 @@ fn codex_tool_bundle_is_causal_and_preserves_result_order() {
         ["system", "user", "assistant", "tool"]
     );
     assert!(session.tool_results_complete);
-    let history = messages(&session.calls[1]);
+    let history = messages(&session.calls[2]);
     assert_eq!(history[2]["tool_calls"][0]["function"]["name"], "shell");
     assert_eq!(history[2]["tool_calls"][0]["id"], "call_001");
     assert_eq!(history[3]["tool_call_id"], "call_001");
+    assert_eq!(session.calls[2].source_id, "codex-line-7");
+    assert_eq!(
+        roles(&session.calls[2]),
+        ["system", "user", "assistant", "tool", "assistant", "user"]
+    );
 }
 
 #[test]
@@ -139,6 +144,11 @@ fn codex_rejects_invalid_tool_correlation_and_metadata_without_leaking_values() 
     let root = tempdir().expect("temporary fixtures");
     for (name, body, detail) in [
         (
+            "invalid-session.jsonl",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"PRIVATE SESSION\"}}\n",
+            "invalid session identifier",
+        ),
+        (
             "empty-call.jsonl",
             "{\"type\":\"session_meta\",\"payload\":{\"id\":\"safe\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"f\",\"arguments\":\"PRIVATE_ARGUMENT\",\"call_id\":\"\"}}\n",
             "invalid call identifier",
@@ -152,6 +162,11 @@ fn codex_rejects_invalid_tool_correlation_and_metadata_without_leaking_values() 
             "duplicate.jsonl",
             "{\"type\":\"session_meta\",\"payload\":{\"id\":\"safe\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"f\",\"arguments\":\"{}\",\"call_id\":\"call\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"f\",\"arguments\":\"{}\",\"call_id\":\"call\"}}\n",
             "duplicate call identifier",
+        ),
+        (
+            "duplicate-result.jsonl",
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"safe\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"f\",\"arguments\":\"{}\",\"call_id\":\"call\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call\",\"output\":\"PRIVATE_RESULT\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call\",\"output\":\"PRIVATE_RESULT\"}}\n",
+            "duplicate result identifier",
         ),
         (
             "inconsistent.jsonl",
@@ -174,6 +189,8 @@ fn codex_hashes_exact_bytes_and_reports_safe_parse_errors() {
     let body = concat!(
         "{\"type\":\"session_meta\",\"payload\":{\"id\":\"safe-hash\",\"cwd\":\"PRIVATE_CWD\",\"git\":{\"branch\":\"PRIVATE_BRANCH\"},\"base_instructions\":{\"text\":\"PRIVATE_PROMPT\"}}}\n\n",
         "{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\",\"summary\":[{\"text\":\"PRIVATE_REASONING\"}]}}\n",
+        "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"f\",\"arguments\":\"PRIVATE_ARGUMENT\",\"call_id\":\"call-private\"}}\n",
+        "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-private\",\"output\":\"PRIVATE_RESULT\"}}\n",
         "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}}\n"
     );
     let file = write(root.path(), "hash.jsonl", body);
@@ -299,17 +316,78 @@ fn codex_rejects_invalid_timestamps_and_safe_malformed_records() {
 }
 
 #[test]
-fn codex_ignores_additive_records_and_does_not_infer_calls_without_output() {
+fn codex_ignores_additive_records_without_retaining_private_content() {
     let root = tempdir().expect("temporary fixtures");
     let file = write(
         root.path(),
         "additive.jsonl",
         concat!(
             "{\"type\":\"session_meta\",\"payload\":{\"id\":\"safe-additive\"}}\n",
-            "{\"type\":\"future_record\",\"payload\":{\"private\":\"PRIVATE_PROMPT\"}}\n"
+            "{\"type\":\"future_record\",\"payload\":{\"private\":\"PRIVATE_PROMPT\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}}\n"
         ),
     );
     let session = parse_codex_session(&file).expect("additive source");
-    assert!(session.calls.is_empty());
+    assert_eq!(session.calls.len(), 1);
     assert_eq!(session.ignored_record_count, 1);
+}
+
+#[test]
+fn codex_rejects_a_session_without_an_inferred_model_call() {
+    let root = tempdir().expect("temporary fixtures");
+    let file = write(
+        root.path(),
+        "no-call.jsonl",
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"safe-no-call\"}}\n",
+    );
+    assert!(
+        parse_codex_session(&file)
+            .expect_err("no model output")
+            .to_string()
+            .contains("no inferred model calls")
+    );
+}
+
+#[test]
+fn codex_keeps_tool_delay_across_history_only_messages_and_consumes_it_on_tool_output() {
+    let root = tempdir().expect("temporary fixtures");
+    let file = write(
+        root.path(),
+        "delay-through-history.jsonl",
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"safe-delay\"}}\n",
+            "{\"timestamp\":\"2026-03-26T05:38:18.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"one\",\"arguments\":\"{}\",\"call_id\":\"call-one\"}}\n",
+            "{\"timestamp\":\"2026-03-26T05:38:18.250Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-one\",\"output\":\"done\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"system\",\"content\":[{\"type\":\"input_text\",\"text\":\"also keep\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":\"keep\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"going\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"two\",\"arguments\":\"{}\",\"call_id\":\"call-two\"}}\n"
+        ),
+    );
+    let session = parse_codex_session(&file).expect("delayed second tool output");
+    assert_eq!(session.calls.len(), 2);
+    assert_eq!(session.calls[1].source_id, "codex-line-7");
+    assert_eq!(session.calls[1].delay_after_previous_us, Some(250_000.0));
+}
+
+#[test]
+fn codex_accepts_empty_tool_results_and_preserves_multi_block_text_order() {
+    let root = tempdir().expect("temporary fixtures");
+    let file = write(
+        root.path(),
+        "blocks.jsonl",
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"safe-blocks\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"one\"},{\"type\":\"text\",\"text\":\"two\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"three\"},{\"type\":\"text\",\"text\":\"four\"}]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"f\",\"arguments\":\"{}\",\"call_id\":\"call-empty\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-empty\",\"output\":\"\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"five\"}]}}\n"
+        ),
+    );
+    let session = parse_codex_session(&file).expect("empty output is valid");
+    let history = messages(&session.calls[2]);
+    assert_eq!(history[0]["content"], "one\ntwo");
+    assert_eq!(history[1]["content"], "three\nfour");
+    assert_eq!(history[3]["content"], "");
 }
