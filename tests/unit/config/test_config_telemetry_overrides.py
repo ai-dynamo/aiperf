@@ -199,3 +199,53 @@ def test_otel_secondary_flag_without_any_url_still_errors(base_yaml: Path) -> No
     """The guard stands when neither source supplies a metrics URL."""
     with pytest.raises(ValueError, match="requires --otel-url"):
         resolve_config(cli(gen_ai_provider="nvidia"), base_yaml)
+
+
+# ---------------------------------------------------------------------------
+# Endpoint probes: reset-kv-cache and server-profiler
+# ---------------------------------------------------------------------------
+
+
+def test_reset_kv_cache_routes(base_yaml: Path) -> None:
+    resolved = resolve_config(cli(reset_kv_cache=True), base_yaml)
+    assert resolved.benchmark.endpoint.reset_kv_cache is not None
+
+
+def test_reset_kv_cache_path_routes(base_yaml: Path) -> None:
+    resolved = resolve_config(
+        cli(reset_kv_cache=True, reset_kv_cache_path="/reset"), base_yaml
+    )
+    assert resolved.benchmark.endpoint.reset_kv_cache.path == "/reset"
+
+
+def test_server_profiler_routes(base_yaml: Path) -> None:
+    resolved = resolve_config(
+        cli(server_profiler=True, server_profiler_start_path="/start"), base_yaml
+    )
+    assert resolved.benchmark.endpoint.server_profiler.start_path == "/start"
+
+
+def test_probe_flag_overrides_yaml_block(base_yaml: Path, tmp_path: Path) -> None:
+    """A YAML-supplied probe block must lose to the explicit flag, field-wise."""
+    cfg = tmp_path / "with_probe.yaml"
+    cfg.write_text(
+        base_yaml.read_text()
+        .replace(
+            "  dataset:",
+            "  endpoint2_placeholder: 0\n  dataset:",
+        )
+        .replace("  endpoint2_placeholder: 0\n", "")
+    )
+    cfg.write_text(
+        base_yaml.read_text().replace(
+            "    url: http://localhost:8000",
+            "    url: http://localhost:8000\n"
+            "    reset_kv_cache:\n"
+            "      path: /from-yaml\n"
+            "      timeout_seconds: 30",
+        )
+    )
+    resolved = resolve_config(cli(reset_kv_cache_path="/from-cli"), cfg)
+    assert resolved.benchmark.endpoint.reset_kv_cache.path == "/from-cli"
+    # The field the user did not pass survives.
+    assert resolved.benchmark.endpoint.reset_kv_cache.timeout_seconds == 30

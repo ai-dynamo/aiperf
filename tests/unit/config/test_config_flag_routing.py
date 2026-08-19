@@ -93,19 +93,24 @@ def test_unrouted_sweeping_flag_raises(base_yaml: Path) -> None:
         resolve_config(cli(concurrency_min=2), base_yaml)
 
 
-def test_unrouted_endpoint_flag_raises(base_yaml: Path) -> None:
-    """reset-kv-cache flags are unrouted under --config and must error."""
-    with pytest.raises(ConfigurationError, match=r"--reset-kv-cache"):
-        resolve_config(cli(reset_kv_cache=True), base_yaml)
+def test_dataset_identity_flag_raises(base_yaml: Path) -> None:
+    """--custom-dataset-type would replace the dataset the YAML declares.
+
+    (ENDPOINT_FIELDS, which this case used to cover, is fully routed now.)
+    """
+    with pytest.raises(ConfigurationError, match=r"--custom-dataset-type"):
+        resolve_config(cli(custom_dataset_type="mooncake_trace"), base_yaml)
 
 
 def test_error_names_every_offending_flag(base_yaml: Path) -> None:
     """All unrouted flags are reported at once, not one per run."""
     with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(cli(concurrency_min=2, reset_kv_cache=True), base_yaml)
+        resolve_config(
+            cli(concurrency_min=2, custom_dataset_type="mooncake_trace"), base_yaml
+        )
     message = str(excinfo.value)
     assert "--concurrency-min" in message
-    assert "--reset-kv-cache" in message
+    assert "--custom-dataset-type" in message
 
 
 def test_error_mentions_config_flag_as_the_cause(base_yaml: Path) -> None:

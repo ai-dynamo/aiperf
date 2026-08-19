@@ -393,7 +393,11 @@ def _apply_endpoint_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
     ``--model-names`` lives on the CLIConfig endpoint section but maps to the
     ``models.items`` block on AIPerfConfig; everything else stays on ``endpoint``.
     """
-    from aiperf.config.flags._converter_endpoint import _ENDPOINT_FIELD_MAP
+    from aiperf.config.flags._converter_endpoint import (
+        _ENDPOINT_FIELD_MAP,
+        _maybe_build_reset_kv_cache,
+        _maybe_build_server_profiler,
+    )
 
     ep_set = cli.model_fields_set & ENDPOINT_FIELDS
     if not ep_set:
@@ -404,6 +408,15 @@ def _apply_endpoint_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
     for cli_field, aiperf_key in _ENDPOINT_FIELD_MAP.items():
         if cli_field in ep_set:
             endpoint[aiperf_key] = getattr(cli, cli_field)
+    # The probe sub-blocks have builders the CLI-only path already uses; this
+    # path simply never called them. They emit only fields the user set, so a
+    # YAML block keeps whatever the flags do not mention.
+    for key, built in (
+        ("reset_kv_cache", _maybe_build_reset_kv_cache(cli)),
+        ("server_profiler", _maybe_build_server_profiler(cli)),
+    ):
+        if built is not None:
+            endpoint[key] = built
     if endpoint:
         out["endpoint"] = endpoint
     if "model_names" in ep_set and cli.model_names:
