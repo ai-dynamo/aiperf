@@ -1399,6 +1399,14 @@ console_exporter:
       actual output length differs significantly from requested --osl value.
       Typically indicates ignore_eos is not set or not supported by the server.
 
+  unmeasured_endpoints:
+    class: aiperf.exporters.console_unmeasured_endpoints_exporter:ConsoleUnmeasuredEndpointsExporter
+    description: |
+      Console exporter reporting requests that per-row dataset endpoint routing
+      sent to an endpoint other than the run-level --endpoint-type. Those requests
+      are issued but excluded from the metric tables, so their counts are reported
+      separately. Silent unless a dataset used per-row endpoint routing.
+
   accuracy:
     class: aiperf.accuracy.accuracy_console_exporter:AccuracyConsoleExporter
     description: |

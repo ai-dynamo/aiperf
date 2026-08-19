@@ -31,6 +31,7 @@ from aiperf.common.enums import (
     CreditPhase,
     MetricConsoleGroup,
     MetricValueTypeT,
+    RequestContentType,
 )
 from aiperf.common.exceptions import InvalidInferenceResultError
 from aiperf.common.finite import FiniteFloat
@@ -215,6 +216,13 @@ class MetricRecordMetadata(AIPerfBaseModel):
             "Loader-specific source classification for this request, when "
             "provided by the dataset loader."
         ),
+    )
+    endpoint_type: str | None = Field(
+        default=None,
+        description="Registered endpoint plugin this request was sent to when "
+        "the dataset row overrode the run-level endpoint type (per-row endpoint "
+        "routing). None means the run-level type. Read by the records manager to "
+        "keep records from other endpoints out of the primary metric set.",
     )
     credit_issued_ns: int | None = Field(
         default=None,
@@ -433,6 +441,14 @@ class ProfileResults(AIPerfBaseModel):
         "bundles the slice's window bounds (start_ns, end_ns, is_complete) "
         "with its metric results. Position in the list is the slice's "
         "chronological index. Produced by the MetricsAccumulator engine.",
+    )
+    unmeasured_request_counts: dict[str, Annotated[int, Field(ge=0)]] = Field(
+        default_factory=dict,
+        description="Completed request counts by endpoint name for requests that "
+        "per-row endpoint routing sent to an endpoint other than the run-level "
+        "one. These requests were issued and their errors tracked, but their "
+        "metrics are not comparable with the primary endpoint's and are excluded "
+        "from `records`. Empty unless a dataset used per-row endpoint routing.",
     )
     total_expected: int | None = Field(
         default=None,
@@ -880,6 +896,15 @@ class RecordContext(AIPerfBaseModel):
             "provided by the dataset loader."
         ),
     )
+    endpoint_type: str | None = Field(
+        default=None,
+        description="Registered endpoint plugin this request was dispatched to, "
+        "when the originating turn overrode the run-level endpoint type (see "
+        "``Turn.endpoint_type``). None means the run-level type was used. Read "
+        "by the record processor to select the response parser, and by the "
+        "records manager to keep non-primary endpoints out of the primary "
+        "metric set.",
+    )
     x_request_id: str = Field(
         ...,
         description="The X-Request-ID header of the request. This is a unique ID for the request.",
@@ -1032,6 +1057,68 @@ class RequestInfo(RecordContext):
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
     )
+
+    @property
+    def resolved_endpoint_type(self) -> str:
+        """Return the endpoint plugin name this request dispatches to.
+
+        The dispatched turn's ``endpoint_type`` wins when set (per-row endpoint
+        routing), otherwise the run-level configured type. Single source of
+        truth for the worker (payload formatting), the transport (URL path and
+        streaming headers), and record enrichment, so the three can never
+        disagree about which endpoint served a request.
+        """
+        turn = self.turns[-1] if self.turns else None
+        if turn is not None and turn.endpoint_type is not None:
+            return turn.endpoint_type
+        return str(self.model_endpoint.endpoint.type)
+
+    @property
+    def is_endpoint_overridden(self) -> bool:
+        """True when this request goes to a per-row endpoint, not the run-level one."""
+        return self.resolved_endpoint_type != str(self.model_endpoint.endpoint.type)
+
+    @property
+    def resolved_streaming(self) -> bool:
+        """Whether this request is sent as a streaming request.
+
+        The run-level ``--streaming`` flag gated by the resolved endpoint's own
+        ``supports_streaming`` metadata. A per-row override can land on an
+        endpoint that has no streaming variant (embeddings, rankings) inside an
+        otherwise streaming run; without this gate that request would advertise
+        ``Accept: text/event-stream`` for a plain JSON response.
+        """
+        if not self.model_endpoint.endpoint.streaming:
+            return False
+        if not self.is_endpoint_overridden:
+            return True
+
+        from aiperf.plugin import plugins
+
+        metadata = plugins.get_endpoint_metadata(self.resolved_endpoint_type)
+        return bool(getattr(metadata, "supports_streaming", False))
+
+    @property
+    def resolved_request_content_type(self) -> RequestContentType | None:
+        """Return the body serialization content type for this request.
+
+        For the run-level endpoint this is the configured value, which
+        ``EndpointConfig._validate_request_content_type`` already reconciled
+        against that endpoint's ``requires_form_data``. A per-row endpoint
+        override never went through that validator, so its content type is
+        derived from its own plugin metadata — otherwise a multipart endpoint
+        reached by an overridden row would be sent as JSON and rejected by the
+        server's form parser.
+        """
+        if not self.is_endpoint_overridden:
+            return self.model_endpoint.endpoint.request_content_type
+
+        from aiperf.plugin import plugins
+
+        metadata = plugins.get_endpoint_metadata(self.resolved_endpoint_type)
+        if getattr(metadata, "requires_form_data", False):
+            return RequestContentType.MULTIPART_FORM_DATA
+        return RequestContentType.APPLICATION_JSON
 
 
 class RequestRecord(AIPerfBaseModel):

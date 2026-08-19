@@ -216,6 +216,7 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             CreditPhase.WARMUP: 0,
             CreditPhase.PROFILING: 0,
         }
+        manager._unmeasured_endpoint_counts = {}
         return manager
 
     def _records_message(self) -> RecordsMessage:
@@ -362,6 +363,7 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             CreditPhase.WARMUP: warmup_overflow,
             CreditPhase.PROFILING: 7,
         }
+        manager._unmeasured_endpoint_counts = {}
         return manager
 
     @pytest.mark.asyncio
@@ -428,6 +430,7 @@ class TestRecordsManagerMetricRecordDispatchErrors:
             CreditPhase.WARMUP: 3,
             CreditPhase.PROFILING: 0,
         }
+        manager._unmeasured_endpoint_counts = {}
 
         results = await RecordsManager._summarize_warmup_metric_records(manager)
 
@@ -942,6 +945,7 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
         CreditPhase.WARMUP: 0,
         CreditPhase.PROFILING: 0,
     }
+    manager._unmeasured_endpoint_counts = {}
     return manager
 
 
@@ -1317,6 +1321,7 @@ class TestRecordsManagerAnalyzerMetrics:
             CreditPhase.WARMUP: 0,
             CreditPhase.PROFILING: 0,
         }
+        manager._unmeasured_endpoint_counts = {}
 
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True

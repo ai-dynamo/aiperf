@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import CustomDatasetType, EndpointType, EndpointTypeStr
 
 if TYPE_CHECKING:
     from aiperf.dataset.loader.baseten_trace import BasetenTrace
@@ -265,6 +265,7 @@ class MooncakeTrace(AIPerfBaseModel):
     - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
     - With payload: {"payload": {"prompt": "Hello", "max_tokens": 50}, "timestamp": 1000}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
+    - Routed to another endpoint: {"input_length": 10, "endpoint_type": "embeddings"}
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
@@ -311,6 +312,74 @@ class MooncakeTrace(AIPerfBaseModel):
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
     )
+    endpoint_type: EndpointTypeStr | None = Field(
+        default=None,
+        description="Registered endpoint plugin this row is sent to (for example "
+        "'embeddings'), overriding the run-level --endpoint-type. Selects the URL "
+        "path, the payload formatter, and the response parser for this request. "
+        "Not allowed with 'payload' (which bypasses formatting) or 'session_id' "
+        "(routing is single-turn only). Rows sent to an endpoint other than the "
+        "run-level one are excluded from the primary metric set and reported as "
+        "a separate count.",
+    )
+
+    @model_validator(mode="after")
+    def validate_endpoint_type(self) -> "MooncakeTrace":
+        """Validate the endpoint_type names a registered endpoint plugin.
+
+        Resolved here rather than at dispatch time so a typo fails while loading
+        the trace instead of after the benchmark has started issuing requests.
+        The value is normalized to its registered spelling (the endpoint enum
+        lookup is case- and separator-insensitive) so downstream lookups can
+        compare it directly against the run-level endpoint type.
+        """
+        if self.endpoint_type is None:
+            return self
+
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        try:
+            self.endpoint_type = str(EndpointType(self.endpoint_type))
+        except ValueError:
+            valid = sorted(
+                entry.name for entry in plugins.list_entries(PluginType.ENDPOINT)
+            )
+            raise ValueError(
+                f"'endpoint_type' {self.endpoint_type!r} is not a registered "
+                f"endpoint. Valid endpoints: {', '.join(valid)}"
+            ) from None
+
+        if self.payload is not None:
+            raise ValueError(
+                "'endpoint_type' cannot be combined with 'payload'. A payload "
+                "row is sent to the server verbatim and bypasses endpoint "
+                "formatting entirely, so naming an endpoint would apply only "
+                "its URL path while silently ignoring its request format -- the "
+                "row is not really being sent to that endpoint. Build the row "
+                "with 'input_length', 'text_input', or 'messages' to route it, "
+                "or keep 'payload' and drop 'endpoint_type'."
+            )
+
+        if not plugins.get_endpoint_metadata(self.endpoint_type).endpoint_path:
+            raise ValueError(
+                f"'endpoint_type' {self.endpoint_type!r} declares no endpoint "
+                "path, so it cannot be a routing target -- the row would be "
+                "sent to the base URL with no path appended. It is a "
+                "passthrough for non-standard APIs, configured run-wide via "
+                "--endpoint-type with --custom-endpoint, not per row."
+            )
+
+        if self.session_id is not None:
+            raise ValueError(
+                "'endpoint_type' cannot be combined with 'session_id'. Per-row "
+                "endpoint routing is single-turn only: multi-turn dispatch "
+                "replays the whole conversation history on every turn, which "
+                "endpoints such as 'embeddings' reject. Split the row into its "
+                "own session or drop 'endpoint_type'."
+            )
+
+        return self
 
     @model_validator(mode="after")
     def validate_input(self) -> "MooncakeTrace":

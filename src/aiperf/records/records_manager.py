@@ -530,6 +530,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             CreditPhase.WARMUP: 0,
             CreditPhase.PROFILING: 0,
         }
+        # Requests that per-row endpoint routing sent to an endpoint other than
+        # the run-level one, counted per phase by endpoint name. Their metrics
+        # are not comparable with the primary endpoint's (an embeddings response
+        # has no output tokens, so TTFT/ITL/OSL are undefined), so they are kept
+        # out of the accumulators entirely and reported as counts instead.
+        # Keyed by phase like _skipped_context_overflow_counts_by_phase so a
+        # warmup request is not reported in the profiling results.
+        self._unmeasured_endpoint_counts: dict[CreditPhase, dict[str, int]] = {}
 
         self._gpu_telemetry_accumulator: GPUTelemetryAccumulatorProtocol | None = None
         self._server_metrics_accumulator: ServerMetricsAccumulatorProtocol | None = None
@@ -772,6 +780,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._handle_context_overflow_skip(message, phase)
             return
 
+        # Per-row endpoint routing: records from an endpoint other than the
+        # run-level one are counted, not measured (see _handle_unmeasured_endpoint).
+        endpoint_type = getattr(message.metadata, "endpoint_type", None)
+        if endpoint_type is not None and endpoint_type != str(
+            self.run.cfg.endpoint.type
+        ):
+            await self._handle_unmeasured_endpoint(message, phase, endpoint_type)
+            return
+
         dispatch_errors: list[BaseException] = []
         for record in message.records:
             if isinstance(record, MetricRecordsData):
@@ -793,6 +810,42 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_index=message.metadata.phase_index,
             )
 
+        await self._maybe_trigger_failed_request_abort(phase)
+
+        if (
+            phase in self._complete_credit_phases
+            and (
+                phase != CreditPhase.PROFILING
+                or not self._has_multiple_profiling_phases()
+                or self._credits_complete_received
+            )
+            and self._check_all_records_received(phase)
+        ):
+            await self._handle_all_records_received_once(phase)
+
+    async def _handle_unmeasured_endpoint(
+        self, message: RecordsMessage, phase: CreditPhase, endpoint_type: str
+    ) -> None:
+        """Count a record from a non-primary endpoint without measuring it.
+
+        Metric applicability is a property of the endpoint: embeddings declares
+        ``produces_tokens: false``, so feeding its records to accumulators
+        configured for the run-level endpoint would compute TTFT/ITL/OSL over
+        requests that never produced a token. Until metrics are partitioned per
+        endpoint, these records are counted and their errors tracked, but they
+        do not reach the accumulators.
+
+        Unlike ``_handle_context_overflow_skip``, ``message.error`` is passed
+        through: a failed request to a secondary endpoint is a genuine failure
+        and must still count against ``--failed-request-threshold``.
+        """
+        phase_counts = self._unmeasured_endpoint_counts.setdefault(phase, {})
+        phase_counts[endpoint_type] = phase_counts.get(endpoint_type, 0) + 1
+        self._records_tracker.update_from_request(message.metadata, message.error)
+        if message.error:
+            self._error_tracker.increment_error_count_for_phase(
+                phase, message.error, phase_index=message.metadata.phase_index
+            )
         await self._maybe_trigger_failed_request_abort(phase)
 
         if (
@@ -1984,6 +2037,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 else None,
                 context_overflow_count=self._skipped_context_overflow_counts_by_phase.get(
                     phase, 0
+                ),
+                unmeasured_request_counts=dict(
+                    self._unmeasured_endpoint_counts.get(phase, {})
                 ),
                 phase_records=phase_records,
                 pooled_spec_decode_acceptance_histogram=_pooled_spec_decode_histogram(

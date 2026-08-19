@@ -84,11 +84,36 @@ class InferenceClient(AIPerfLifecycleMixin):
             PluginType.ENDPOINT, self.model_endpoint.endpoint.type
         )
         self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
+        # Endpoint instances for per-row endpoint routing (Turn.endpoint_type),
+        # which can dispatch a request to a different endpoint than the
+        # configured default. Holds ONLY the non-run-level endpoints; the
+        # run-level one always resolves through ``self.endpoint`` so callers
+        # that replace it are still honored. Instances are stateless formatters,
+        # so one per type is created lazily and reused.
+        self._routed_endpoints: dict[str, Any] = {}
         TransportClass = plugins.get_class(
             PluginType.TRANSPORT, str(self.model_endpoint.transport)
         )
         self.transport = TransportClass(model_endpoint=self.model_endpoint)
         self.attach_child_lifecycle(self.transport)
+
+    def _endpoint_for(self, request_info: RequestInfo) -> Any:
+        """Return the endpoint instance that formats this request.
+
+        The run-level endpoint is returned as-is; a per-row override
+        (``Turn.endpoint_type``) resolves to a lazily created, memoized instance
+        of the named endpoint plugin.
+        """
+        if not request_info.is_endpoint_overridden:
+            return self.endpoint
+
+        endpoint_type = request_info.resolved_endpoint_type
+        endpoint = self._routed_endpoints.get(endpoint_type)
+        if endpoint is None:
+            EndpointClass = plugins.get_class(PluginType.ENDPOINT, endpoint_type)
+            endpoint = EndpointClass(model_endpoint=self.model_endpoint)
+            self._routed_endpoints[endpoint_type] = endpoint
+        return endpoint
 
     async def _send_request_to_transport(
         self,
@@ -112,8 +137,9 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
-        request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
-        request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
+        endpoint = self._endpoint_for(request_info)
+        request_info.endpoint_headers = endpoint.get_endpoint_headers(request_info)
+        request_info.endpoint_params = endpoint.get_endpoint_params(request_info)
         if request_info.payload_bytes is not None:
             formatted_payload: dict[str, Any] | bytes = request_info.payload_bytes
         else:
@@ -121,7 +147,7 @@ class InferenceClient(AIPerfLifecycleMixin):
             if current_turn and current_turn.raw_payload is not None:
                 formatted_payload = current_turn.raw_payload
             else:
-                formatted_payload = self.endpoint.format_payload(request_info)
+                formatted_payload = endpoint.format_payload(request_info)
         # Canonicalise to bytes and stash on request_info. Two wins: (1) the
         # transport skips its own orjson.dumps on the dict path, (2) the
         # record processor can read the exact wire payload for raw-export.
@@ -134,7 +160,7 @@ class InferenceClient(AIPerfLifecycleMixin):
             encoded = orjson.dumps(formatted_payload)
             request_info.payload_bytes = encoded
             is_multipart = (
-                self.model_endpoint.endpoint.request_content_type
+                request_info.resolved_request_content_type
                 == RequestContentType.MULTIPART_FORM_DATA
             )
             wire_payload = formatted_payload if is_multipart else encoded

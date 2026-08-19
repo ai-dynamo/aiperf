@@ -254,6 +254,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             source_outer_idx=record.request_info.source_outer_idx,
             source_inner_idx=record.request_info.source_inner_idx,
             source_kind=record.request_info.source_kind,
+            endpoint_type=record.request_info.endpoint_type,
             record_processor_id=self.service_id,
             benchmark_phase=record.request_info.credit_phase,
             phase_index=record.request_info.phase_index,
@@ -450,6 +451,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 profiling_index = record.request_info.profiling_index
                 phase_name = record.request_info.phase_name
                 phase_kind = record.request_info.phase_kind
+                endpoint_type = record.request_info.endpoint_type
             else:
                 session_num = -1
                 benchmark_phase = CreditPhase.PROFILING
@@ -457,6 +459,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 profiling_index = None
                 phase_name = None
                 phase_kind = None
+                endpoint_type = None
             metadata = MetricRecordMetadata(
                 session_num=session_num,
                 request_start_ns=record.timestamp_ns,
@@ -468,6 +471,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 profiling_index=profiling_index,
                 phase_name=phase_name,
                 phase_kind=phase_kind,
+                endpoint_type=endpoint_type,
             )
         error = record.error or ErrorDetails.from_exception(exc)
         # The producers didn't run, so ship a RecordsMessage carrying a single

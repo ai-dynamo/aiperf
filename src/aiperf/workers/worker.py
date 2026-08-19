@@ -1522,6 +1522,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             source_outer_idx=source_turn.source_outer_idx if source_turn else None,
             source_inner_idx=source_turn.source_inner_idx if source_turn else None,
             source_kind=source_turn.source_kind if source_turn else None,
+            endpoint_type=source_turn.endpoint_type if source_turn else None,
             turns=turns,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,

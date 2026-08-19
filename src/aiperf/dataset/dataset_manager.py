@@ -629,6 +629,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if not Environment.DATASET.PREFORMAT_PAYLOADS:
             return
 
+        # Per-row endpoint routing dispatches turns to different endpoints, but
+        # pre-formatting bakes every payload with one ModelEndpointInfo. Baking
+        # here would send a chat-shaped body to (say) the embeddings endpoint.
+        # Fall back to the structured-turns path, where the worker formats each
+        # turn with its own endpoint.
+        if any(t.endpoint_type is not None for c in conversations for t in c.turns):
+            return
+
         needs_formatting = False
         for conv in conversations:
             if all(t.raw_payload is not None for t in conv.turns):
@@ -743,6 +751,26 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if not all_have_raw:
             # None have raw_payload, or some conversations do and others don't:
             # CONVERSATION can serialize both shapes. PAYLOAD_BYTES cannot.
+            return MemoryMapFormat.CONVERSATION
+
+        # PayloadTurnData carries only payload bytes plus max_tokens/timestamp,
+        # so the worker's fast path rebuilds a scalars-only Turn and would drop
+        # Turn.endpoint_type — silently sending per-row-routed requests to the
+        # run-level endpoint's path. CONVERSATION round-trips the whole Turn.
+        # The mooncake loader already rejects endpoint_type alongside a verbatim
+        # payload, so no built-in loader can reach this today; it is a backstop
+        # against silent mis-routing for any future producer of endpoint_type,
+        # since Turn allows the combination even though no loader emits it.
+        if any(
+            turn.endpoint_type is not None
+            for conv in conversations
+            for turn in conv.turns
+        ):
+            self.info(
+                "Per-row endpoint routing detected; using the CONVERSATION mmap "
+                "format instead of the PAYLOAD_BYTES fast path (pre-encoded "
+                "payload bytes cannot carry the per-turn endpoint)"
+            )
             return MemoryMapFormat.CONVERSATION
 
         feature = self._body_mutating_feature()
