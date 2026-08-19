@@ -101,5 +101,6 @@ dynamo-aiperf-native
 # superpowers plans/specs scratch (kept locally, not tracked)
 docs/superpowers/
 plans/
+.superpowers
 
 **/.vite/

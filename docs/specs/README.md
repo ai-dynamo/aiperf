@@ -96,7 +96,7 @@ read the record for the subsystem you are touching.
 | Spec | Purpose |
 |---|---|
 | [metrics.md](metrics.md) | The IO-free metrics engine: the column-store accumulator, the metric catalog, sweep curves, and the typed report; exact vs sketch modes. |
-| [eval-node-metrics-artifact.md](eval-node-metrics-artifact.md) | Built host-owned `aiperf eval --records-output` JSONL sidecar: streams one canonical record per completed NativeGraph model node while keeping reward JSON and package trust boundaries unchanged. |
+| [eval-node-metrics-artifact.md](eval-node-metrics-artifact.md) | Built host-owned `aiperf eval --records-output` JSONL sidecar: streams one canonical record per completed NativeGraph model node (with status retained in raw-record capture) while keeping reward JSON and package trust boundaries unchanged. |
 | [definition-registry.md](definition-registry.md) | Built single shared definition layer: a lookup-only `Definition` (header, units, `larger_is_better`, `value_type`, group, order) for metrics and dataset-analysis outputs (server/GPU telemetry still seam-only) — split out of `MetricSpec`, keyed by namespaced id, made compile-time complete via the const-array `[MetricSpec; COUNT]` length, and used for SLA comparison, table rendering, and the `aiperf metrics` command. |
 | [telemetry.md](telemetry.md) | Side-channel measurement: GPU telemetry, server metrics, and network latency, feeding values into the metrics seam. |
 | [exporters.md](exporters.md) | The native output plane: the typed report core and the static set of `Exporter` sinks behind one trait. |

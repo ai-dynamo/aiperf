@@ -16,12 +16,13 @@ use super::dataset::Dataset;
 ///
 /// Any dataset whose native format token is one of these routes the run through
 /// the `graph` workload; every other dataset uses the `scheduled` workload.
-pub const GRAPH_FORMATS: [&str; 5] = [
+pub const GRAPH_FORMATS: [&str; 6] = [
     "dag_jsonl",
     "conditional_graph",
     "weka_trace",
     "dynamo_trace",
     "agent_recording",
+    "otlp_genai",
 ];
 
 /// The workload implementation a run projects onto.
@@ -174,6 +175,14 @@ mod tests {
     fn weka_trace_dataset_is_graph() {
         assert_eq!(
             workload_kind(&cfg_with(file_dataset("weka_trace"))),
+            WorkloadKind::Graph
+        );
+    }
+
+    #[test]
+    fn otlp_genai_dataset_is_graph() {
+        assert_eq!(
+            workload_kind(&cfg_with(file_dataset("otlp_genai"))),
             WorkloadKind::Graph
         );
     }

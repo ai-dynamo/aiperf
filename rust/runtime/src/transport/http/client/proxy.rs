@@ -141,9 +141,8 @@ pub async fn connect_via_proxy(
         }
     }
 
-    let status = connect_response_status(&buf).ok_or_else(|| {
-        protocol_err("proxy CONNECT response head was malformed".to_string())
-    })?;
+    let status = connect_response_status(&buf)
+        .ok_or_else(|| protocol_err("proxy CONNECT response head was malformed".to_string()))?;
     if status != 200 {
         return Err(proxy_status_err(
             status,

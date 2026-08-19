@@ -30,9 +30,9 @@ pub mod state;
 pub mod throughput;
 pub mod tls;
 pub mod tokens;
-pub mod websocket;
 #[cfg(feature = "uring")]
 pub mod uring;
+pub mod websocket;
 
 pub use app::{AppState, build_router};
 pub use config::MockServerConfig;

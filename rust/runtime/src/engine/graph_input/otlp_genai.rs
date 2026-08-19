@@ -210,17 +210,7 @@ fn lower_otlp(roots: Vec<Value>, limit: Option<usize>) -> Result<GraphInputBundl
         .flatten()
         .collect::<Vec<_>>();
     ensure!(!spans.is_empty(), "OTLP input contains no spans");
-    let mut traces = Vec::<(String, Vec<Span>)>::new();
-    for span in spans {
-        if let Some((_, grouped)) = traces
-            .iter_mut()
-            .find(|(trace_id, _)| *trace_id == span.trace_id)
-        {
-            grouped.push(span);
-        } else {
-            traces.push((span.trace_id.clone(), vec![span]));
-        }
-    }
+    let traces = group_traces(spans);
     let mut pool = SegmentPool::new();
     let mut programs = Vec::new();
     let mut warnings = BTreeSet::new();
@@ -247,6 +237,26 @@ fn lower_otlp(roots: Vec<Value>, limit: Option<usize>) -> Result<GraphInputBundl
             warning_facts: warnings.into_iter().collect(),
         },
     })
+}
+
+/// Group spans by trace while retaining the trace order from the OTLP input.
+///
+/// A linear search through prior groups becomes quadratic for recordings with
+/// many short traces, so retain a trace-id-to-slot index alongside the ordered
+/// groups.
+fn group_traces(spans: Vec<Span>) -> Vec<(String, Vec<Span>)> {
+    let mut indexes = HashMap::<String, usize>::new();
+    let mut traces = Vec::<(String, Vec<Span>)>::new();
+    for span in spans {
+        if let Some(index) = indexes.get(&span.trace_id).copied() {
+            traces[index].1.push(span);
+        } else {
+            let index = traces.len();
+            indexes.insert(span.trace_id.clone(), index);
+            traces.push((span.trace_id.clone(), vec![span]));
+        }
+    }
+    traces
 }
 
 fn flatten_resource_spans(root: Value) -> Result<Vec<Span>> {
@@ -793,6 +803,48 @@ fn sanitize(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn groups_interleaved_traces_in_first_seen_order() {
+        let spans = vec![
+            Span {
+                trace_id: "b".into(),
+                ..test_span()
+            },
+            Span {
+                trace_id: "a".into(),
+                ..test_span()
+            },
+            Span {
+                trace_id: "b".into(),
+                ..test_span()
+            },
+        ];
+
+        let traces = group_traces(spans);
+
+        assert_eq!(
+            traces
+                .iter()
+                .map(|(trace_id, spans)| (trace_id.as_str(), spans.len()))
+                .collect::<Vec<_>>(),
+            vec![("b", 2), ("a", 1)]
+        );
+    }
+
+    fn test_span() -> Span {
+        Span {
+            trace_id: String::new(),
+            span_id: "span".into(),
+            parent_span_id: None,
+            name: "span".into(),
+            kind: 3,
+            start_time_unix_nano: None,
+            end_time_unix_nano: None,
+            attributes: BTreeMap::new(),
+            is_streaming: false,
+        }
+    }
 
     #[test]
     fn replay_output_parses_a_string_encoded_genai_message_array() {

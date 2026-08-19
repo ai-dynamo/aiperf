@@ -14,9 +14,11 @@ without changing the scored reward JSON or letting an untrusted task package
 choose an output destination.
 
 The artifact is intentionally a record sidecar, not a new metrics engine or a
-synthetic profile report. It uses the canonical record projection so TTFT, ITL,
-token counts, latency, status, and correlation fields keep the same meanings as
-other native record artifacts.
+synthetic profile report. It uses the canonical record projection, whose
+top-level fields are `metadata`, `metrics`, optional `trace_data`, and `error`,
+so TTFT, ITL, token counts, latency, error classification, and correlation
+fields keep the same meanings as other native record artifacts. HTTP status is
+retained only by raw-record capture and is not a canonical record JSONL field.
 
 ## Built
 
@@ -49,8 +51,9 @@ pre-provision destination validation, and flush/write error propagation. The
 product-level `aiperf-e2e-tests` coverage drives the compiled CLI against the
 in-process deterministic `aiperf-mock-server` over real HTTP/SSE with two model
 nodes. It verifies exactly two canonical rows, node-attributable correlation,
-fixed token accounting, bounded TTFT/ITL, successful streamed model requests,
-no terminal usage or `[DONE]` rows, no record errors, and unchanged reward JSON.
+fixed token accounting, bounded TTFT/ITL, no terminal usage or `[DONE]` rows,
+no record errors, and unchanged reward JSON. Separately, the mock-server
+recorder asserts that both streamed model requests complete with HTTP 200.
 
 ## Future requirements
 

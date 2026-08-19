@@ -6,7 +6,7 @@
 use serde_json::Value;
 
 /// Whether the run targets a graph program (`dag_jsonl` / `weka_trace` /
-/// `dynamo_trace`), as opposed to a scheduled synthetic/linear dataset. Graph
+/// `dynamo_trace` / `otlp_genai`), as opposed to a scheduled synthetic/linear dataset. Graph
 /// programs partition cleanly by whole trace, so they take the concatenation merge
 /// and bypass the scheduled request-budget guards.
 pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
@@ -20,7 +20,14 @@ pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
 pub(crate) fn is_graph_dataset_value(dataset: &Value) -> bool {
     matches!(
         dataset.get("format").and_then(Value::as_str),
-        Some("dag_jsonl" | "conditional_graph" | "weka_trace" | "dynamo_trace" | "agent_recording")
+        Some(
+            "dag_jsonl"
+                | "conditional_graph"
+                | "weka_trace"
+                | "dynamo_trace"
+                | "agent_recording"
+                | "otlp_genai"
+        )
     )
 }
 

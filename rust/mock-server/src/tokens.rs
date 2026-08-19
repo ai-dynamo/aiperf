@@ -795,7 +795,10 @@ mod tests {
         req.max_tokens = Some(64);
         let req_gen = GenRequest::Chat(&req);
         let out = tokenize_request(&req_gen);
-        assert!(!out.tokens.is_empty(), "empty prompt must still generate output tokens");
+        assert!(
+            !out.tokens.is_empty(),
+            "empty prompt must still generate output tokens"
+        );
         assert!(out.tokens.len() <= 64, "must respect max_tokens");
         assert_eq!(out.prompt_token_count, 0);
     }
