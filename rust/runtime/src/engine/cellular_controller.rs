@@ -22,6 +22,10 @@ use crate::cellular::{
     merge_records_by_concatenation, merge_records_in_global_order, merge_store_partitions,
 };
 use crate::clock::{Clock, RealClock, RealClockAnchor};
+use crate::config::model::dataset::{RecordedAgentGraphConfig, RecordedAgentSourceFormat};
+use crate::graph::recorded::agent_recording::{
+    ImportedAgentReadSet, detect_imported_agent_source, discover_imported_agent_read_set,
+};
 use crate::metrics_core::report::NativeReport;
 use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -548,7 +552,12 @@ pub fn run_cellular(
             .pointer("/run/cfg/datasets/0/graph/replay_root")
             .and_then(serde_json::Value::as_str)
             .map(Path::new);
-        Some(build_dataset_serve_plan(format, source, replay_root)?)
+        Some(build_dataset_serve_plan_from_envelope(
+            envelope,
+            format,
+            source,
+            replay_root,
+        )?)
     } else {
         None
     };
@@ -2172,6 +2181,126 @@ fn build_dataset_serve_plan(
     }
 }
 
+/// Build the cross-host serve plan after selecting the recorded-agent source contract
+/// from the already-projected execution envelope. Imported-session discovery is the
+/// only authority for imported source files; strict Mini-SWE replay roots retain their
+/// existing task-pack traversal because their loader consumes the complete root.
+fn build_dataset_serve_plan_from_envelope(
+    envelope: &serde_json::Value,
+    format: Option<&str>,
+    source: &Path,
+    replay_root: Option<&Path>,
+) -> Result<(
+    std::collections::HashMap<String, PathBuf>,
+    crate::engine::artifact_shipping::DatasetManifest,
+)> {
+    if format == Some("agent_recording")
+        && let Some(read_set) = discover_imported_agent_read_set_from_envelope(envelope, source)?
+    {
+        return build_imported_agent_serve_plan(read_set);
+    }
+    build_dataset_serve_plan(format, source, replay_root)
+}
+
+/// Decode the recorded-agent graph configuration once and return the exact imported
+/// source read set when the envelope selected an explicit imported format, or when a
+/// single JSONL auto source positively sniffs as an imported session.
+fn discover_imported_agent_read_set_from_envelope(
+    envelope: &serde_json::Value,
+    source: &Path,
+) -> Result<Option<ImportedAgentReadSet>> {
+    let graph = envelope
+        .pointer("/run/cfg/datasets/0/graph")
+        .map(|value| {
+            serde_json::from_value::<RecordedAgentGraphConfig>(value.clone())
+                .context("decoding recorded-agent graph configuration for cellular shipping")
+        })
+        .transpose()?;
+    let source_format = graph
+        .as_ref()
+        .map_or(RecordedAgentSourceFormat::Auto, |config| {
+            config.source_format
+        });
+    let replay_root = graph
+        .as_ref()
+        .and_then(|config| config.replay_root.as_deref());
+    let source_candidate = if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        replay_root.map_or_else(|| source.to_path_buf(), |root| root.join(source))
+    };
+    let is_imported = matches!(
+        source_format,
+        RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode
+    ) || (source_format == RecordedAgentSourceFormat::Auto
+        && source_candidate.is_file()
+        && source_candidate
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        && detect_imported_agent_source(&source_candidate).is_ok());
+    if !is_imported {
+        return Ok(None);
+    }
+    let include_subagents = graph.as_ref().and_then(|config| config.include_subagents);
+    discover_imported_agent_read_set(source, replay_root, source_format, include_subagents)
+        .map(Some)
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("discovering imported recorded-agent session files for cellular shipping")
+}
+
+/// Build a controller dataset allowlist directly from imported-session discovery.
+///
+/// Discovery has already canonicalized and root-contained every member. This helper
+/// preserves its order in the manifest and never re-enumerates the selected directory,
+/// so unrelated session exports and task files cannot become cross-host authority.
+fn build_imported_agent_serve_plan(
+    read_set: ImportedAgentReadSet,
+) -> Result<(
+    std::collections::HashMap<String, PathBuf>,
+    crate::engine::artifact_shipping::DatasetManifest,
+)> {
+    use crate::engine::artifact_shipping::DatasetManifest;
+
+    let base_name = read_set
+        .selected_path
+        .strip_prefix(&read_set.root)
+        .map_err(|error| anyhow!(error.to_string()))?
+        .to_str()
+        .ok_or_else(|| anyhow!("imported recorded-agent source path is not UTF-8"))?
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let mut files = Vec::with_capacity(read_set.files.len());
+    let mut served = std::collections::HashMap::with_capacity(read_set.files.len());
+    for source in read_set.files {
+        let relative_path = source
+            .relative_path
+            .to_str()
+            .ok_or_else(|| anyhow!("imported recorded-agent source path is not UTF-8"))?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        let relative = Path::new(&relative_path);
+        ensure!(
+            !relative_path.is_empty()
+                && !relative.is_absolute()
+                && relative
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_))),
+            "imported recorded-agent source path {relative_path:?} is not a safe relative path"
+        );
+        ensure!(
+            served.insert(relative_path.clone(), source.path).is_none(),
+            "imported recorded-agent source set has duplicate path {relative_path:?}"
+        );
+        files.push(relative_path);
+    }
+    Ok((
+        served,
+        DatasetManifest {
+            kind: "agent_session_set".into(),
+            base_name,
+            files,
+        },
+    ))
+}
+
 fn build_recorded_replay_root_serve_plan(
     source: &Path,
     replay_root: &Path,
@@ -3210,6 +3339,116 @@ mod tests {
         assert!(files.contains_key("benchmark/pinchbench/manifest.yaml"));
         assert!(files.contains_key("benchmark/pinchbench/tasks/task.yaml"));
         assert!(files.contains_key("benchmark/pinchbench/assets/input.txt"));
+    }
+
+    #[test]
+    fn agent_session_exact_set_serves_only_discovered_claude_sources() {
+        use crate::config::model::dataset::RecordedAgentSourceFormat;
+        use crate::graph::recorded::agent_recording::discover_imported_agent_read_set;
+
+        let replay_root = tempfile::tempdir().unwrap();
+        let main = replay_root.path().join("main.jsonl");
+        let subagent = replay_root.path().join("main/subagents/agent-aaa.jsonl");
+        for path in [&main, &subagent] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"{\"sessionId\":\"session\",\"parentUuid\":null}\n").unwrap();
+        }
+        std::fs::write(replay_root.path().join("secret.jsonl"), b"not selected\n").unwrap();
+        std::fs::write(replay_root.path().join("credentials.txt"), b"secret\n").unwrap();
+        let impostor = replay_root.path().join("nested/impostor.jsonl");
+        std::fs::create_dir_all(impostor.parent().unwrap()).unwrap();
+        std::fs::write(impostor, b"not selected\n").unwrap();
+
+        let read_set = discover_imported_agent_read_set(
+            &main,
+            Some(replay_root.path()),
+            RecordedAgentSourceFormat::ClaudeCode,
+            Some(true),
+        )
+        .unwrap();
+        let (served, manifest) = build_imported_agent_serve_plan(read_set).unwrap();
+
+        assert_eq!(manifest.kind, "agent_session_set");
+        assert_eq!(
+            manifest.files,
+            vec![
+                "main.jsonl".to_owned(),
+                "main/subagents/agent-aaa.jsonl".to_owned(),
+            ]
+        );
+        assert!(!served.contains_key("secret.jsonl"));
+        assert!(!served.contains_key("credentials.txt"));
+        assert!(!served.contains_key("nested/impostor.jsonl"));
+    }
+
+    #[test]
+    fn agent_session_exact_set_recurses_only_selected_codex_files() {
+        use crate::config::model::dataset::RecordedAgentSourceFormat;
+        use crate::graph::recorded::agent_recording::discover_imported_agent_read_set;
+
+        let root = tempfile::tempdir().unwrap();
+        let selected = root.path().join("sessions");
+        for name in ["a.jsonl", "nested/b.jsonl"] {
+            let path = selected.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"{\"type\":\"session_meta\",\"payload\":{}}\n").unwrap();
+        }
+        std::fs::write(selected.join("notes.txt"), b"not a session").unwrap();
+        let read_set = discover_imported_agent_read_set(
+            &selected,
+            Some(root.path()),
+            RecordedAgentSourceFormat::Codex,
+            None,
+        )
+        .unwrap();
+        let (served, manifest) = build_imported_agent_serve_plan(read_set).unwrap();
+
+        assert_eq!(manifest.base_name, "sessions");
+        assert_eq!(
+            manifest.files,
+            vec![
+                "sessions/a.jsonl".to_owned(),
+                "sessions/nested/b.jsonl".to_owned(),
+            ]
+        );
+        assert_eq!(served.len(), 2);
+        assert!(!served.contains_key("sessions/notes.txt"));
+    }
+
+    #[test]
+    fn agent_session_exact_set_resolves_relative_source_below_explicit_root() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("exports/main.jsonl");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(
+            &source,
+            b"{\"sessionId\":\"session\",\"parentUuid\":null}\n",
+        )
+        .unwrap();
+        let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+            "type": "file",
+            "format": "agent_recording",
+            "path": "exports/main.jsonl",
+            "graph": {
+                "source_format": "claude_code",
+                "replay_root": root.path(),
+            }
+        }]}}});
+
+        let (served, manifest) = build_dataset_serve_plan_from_envelope(
+            &envelope,
+            Some("agent_recording"),
+            Path::new("exports/main.jsonl"),
+            Some(root.path()),
+        )
+        .unwrap();
+
+        assert_eq!(manifest.base_name, "exports/main.jsonl");
+        assert_eq!(manifest.files, vec!["exports/main.jsonl".to_owned()]);
+        assert_eq!(
+            served.get("exports/main.jsonl"),
+            Some(&source.canonicalize().unwrap())
+        );
     }
 
     #[cfg(unix)]

@@ -937,8 +937,9 @@ fn prepare_dataset_destination(dest_dir: &Path, relative: &Path) -> Result<PathB
 /// relative name (each name is path-validated). Each file streams independently, so
 /// peak memory is O(chunk) regardless of the number or size of shards. Returns:
 /// - `"dir"` → `dest_dir` (the loader scans the reconstructed directory);
-/// - `"file"` / `"prefix"` / `"replay_root"` → `dest_dir/base_name` (a single
-///   file, segmented-prefix stem, or recording beneath its replay root).
+/// - `"file"` / `"prefix"` / `"replay_root"` / `"agent_session_set"` →
+///   `dest_dir/base_name` (a single file, segmented-prefix stem, recording beneath
+///   its replay root, or an imported session selected from its discovery root).
 pub async fn reconstruct_shipped_dataset(
     authority: &str,
     manifest: &DatasetManifest,
@@ -959,8 +960,10 @@ pub async fn reconstruct_shipped_dataset(
     }
     match manifest.kind.as_str() {
         "dir" => Ok(dest_dir.to_path_buf()),
-        "file" | "prefix" | "replay_root" => {
-            if manifest.kind == "replay_root" && manifest.base_name.is_empty() {
+        "file" | "prefix" | "replay_root" | "agent_session_set" => {
+            if matches!(manifest.kind.as_str(), "replay_root" | "agent_session_set")
+                && manifest.base_name.is_empty()
+            {
                 Ok(dest_dir.to_path_buf())
             } else {
                 validate_dataset_relname(&manifest.base_name).with_context(|| {
@@ -1458,6 +1461,103 @@ mod tests {
             b"workspace asset"
         );
         server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn agent_session_exact_set_reconstructs_only_nested_discovered_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let main = source.join("main.jsonl");
+        let subagent = source.join("main/subagents/agent-aaa.jsonl");
+        for (path, bytes) in [
+            (
+                &main,
+                b"{\"sessionId\":\"main\",\"parentUuid\":null}\n".as_slice(),
+            ),
+            (
+                &subagent,
+                b"{\"sessionId\":\"subagent\",\"parentUuid\":null}\n".as_slice(),
+            ),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        let manifest = DatasetManifest {
+            kind: "agent_session_set".to_owned(),
+            base_name: "main.jsonl".to_owned(),
+            files: vec![
+                "main.jsonl".to_owned(),
+                "main/subagents/agent-aaa.jsonl".to_owned(),
+            ],
+        };
+        let server = ArtifactUploadServer::start_with_dataset_plan(
+            "127.0.0.1:0".parse().unwrap(),
+            dir.path().join("controller-temp"),
+            HashSet::new(),
+            HashMap::from([
+                ("main.jsonl".to_owned(), main.clone()),
+                (
+                    "main/subagents/agent-aaa.jsonl".to_owned(),
+                    subagent.clone(),
+                ),
+            ]),
+            Some(manifest.clone()),
+        )
+        .await
+        .unwrap();
+        let landed = dir.path().join("landed");
+        let rewritten =
+            reconstruct_shipped_dataset(&server.local_addr().to_string(), &manifest, &landed)
+                .await
+                .unwrap();
+
+        assert_eq!(rewritten, landed.join("main.jsonl"));
+        assert_eq!(
+            std::fs::read(landed.join("main.jsonl")).unwrap(),
+            std::fs::read(&main).unwrap()
+        );
+        assert_eq!(
+            std::fs::read(landed.join("main/subagents/agent-aaa.jsonl")).unwrap(),
+            std::fs::read(&subagent).unwrap()
+        );
+        assert!(!landed.join("secret.jsonl").exists());
+        let rediscovered =
+            crate::graph::recorded::agent_recording::discover_imported_agent_read_set(
+                &landed.join("main.jsonl"),
+                Some(&landed),
+                crate::config::model::dataset::RecordedAgentSourceFormat::ClaudeCode,
+                Some(true),
+            )
+            .unwrap();
+        for file in rediscovered.files {
+            assert_eq!(
+                std::fs::read(&file.path).unwrap(),
+                std::fs::read(source.join(file.relative_path)).unwrap(),
+                "{} must land byte-identical",
+                file.path.display()
+            );
+        }
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn agent_session_exact_set_rejects_duplicate_and_traversal_paths() {
+        let dest = tempfile::tempdir().unwrap();
+        for files in [
+            vec!["main.jsonl".to_owned(), "main.jsonl".to_owned()],
+            vec!["../secret.jsonl".to_owned()],
+        ] {
+            let manifest = DatasetManifest {
+                kind: "agent_session_set".to_owned(),
+                base_name: "main.jsonl".to_owned(),
+                files,
+            };
+            assert!(
+                reconstruct_shipped_dataset("127.0.0.1:1", &manifest, dest.path())
+                    .await
+                    .is_err()
+            );
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

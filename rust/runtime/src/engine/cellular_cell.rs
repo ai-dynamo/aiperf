@@ -424,6 +424,12 @@ fn cell_dataset_dir() -> std::path::PathBuf {
     ))
 }
 
+fn manifest_has_local_replay_root(
+    manifest: &crate::engine::artifact_shipping::DatasetManifest,
+) -> bool {
+    matches!(manifest.kind.as_str(), "replay_root" | "agent_session_set")
+}
+
 fn rewrite_cell_dataset_paths(
     envelope: &mut serde_json::Value,
     local_path: &std::path::Path,
@@ -511,11 +517,11 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
             let manifest = fetch_dataset_manifest(&fetch_authority)
                 .await
                 .context("cell fetching dataset manifest from controller")?;
-            let is_replay_root = manifest.kind == "replay_root";
+            let has_local_replay_root = manifest_has_local_replay_root(&manifest);
             let path = reconstruct_shipped_dataset(&fetch_authority, &manifest, &dest_dir)
                 .await
                 .context("cell reconstructing shipped dataset from controller")?;
-            Ok((path, is_replay_root.then_some(dest_dir)))
+            Ok((path, has_local_replay_root.then_some(dest_dir)))
         })
     })
     .join()
@@ -1283,5 +1289,15 @@ mod tests {
             envelope.pointer("/run/cfg/datasets/0/graph/replay_root"),
             Some(&serde_json::json!("/cell/replay"))
         );
+    }
+
+    #[test]
+    fn agent_session_exact_set_uses_landed_root_as_replay_root() {
+        let manifest = crate::engine::artifact_shipping::DatasetManifest {
+            kind: "agent_session_set".to_owned(),
+            base_name: "main.jsonl".to_owned(),
+            files: vec!["main.jsonl".to_owned()],
+        };
+        assert!(manifest_has_local_replay_root(&manifest));
     }
 }
