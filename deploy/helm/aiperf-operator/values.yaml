@@ -1,0 +1,413 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# image is the operator container image configuration
+image:
+  # image.repository is the container registry and image name
+  repository: nvcr.io/nvidia/aiperf
+  # image.tag is the image tag (defaults to Chart.AppVersion)
+  tag: ""
+  # image.pullPolicy is the Kubernetes image pull policy
+  pullPolicy: IfNotPresent
+
+# imagePullSecrets is a list of pull secrets for private registries
+imagePullSecrets: []
+# - name: my-registry-secret
+
+# nameOverride overrides the chart name used in resource names
+nameOverride: ""
+# fullnameOverride overrides the full release name used in resource names
+fullnameOverride: ""
+
+# operator contains deployment settings for the operator container
+operator:
+  # operator.replicas must remain 1. The operator has one authoritative
+  # reconciliation/index writer and does not implement leader election.
+  replicas: 1
+
+  # operator.resources is the CPU and memory requests and limits
+  # No limits set (burstable) so the operator can use as much memory/CPU
+  # as the node provides — needed for high-concurrency runs with many jobs.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+  # operator.podAnnotations is a map of additional pod annotations
+  podAnnotations: {}
+
+  # operator.nodeSelector is a map of node selector labels
+  nodeSelector: {}
+
+  # operator.tolerations is a list of pod tolerations.
+  #
+  # The operator is a control-plane component and intentionally does NOT
+  # tolerate ``nvidia.com/gpu:NoSchedule`` — landing a control-plane pod
+  # on a tainted GPU node wastes expensive GPU capacity that should be
+  # reserved for benchmark workers (whose pod-template tolerates it
+  # themselves).
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: user-workload
+      effect: NoSchedule
+    - key: dedicated
+      operator: Equal
+      value: user-workload
+      effect: NoExecute
+    - key: kubernetes.io/arch
+      operator: Exists
+      effect: NoSchedule
+
+  # operator.affinity is the pod affinity configuration
+  affinity: {}
+
+  # operator.topologySpreadConstraints controls placement across failure domains.
+  # With the required single replica, it can constrain the eligible topology. Example:
+  #   - maxSkew: 1
+  #     topologyKey: topology.kubernetes.io/zone
+  #     whenUnsatisfiable: ScheduleAnyway
+  #     labelSelector:
+  #       matchLabels:
+  #         app.kubernetes.io/name: aiperf-operator
+  #         app.kubernetes.io/component: operator
+  topologySpreadConstraints: []
+
+  # operator.priorityClassName pins the operator to a specific PriorityClass
+  # (e.g. "system-cluster-critical"). Empty = cluster default.
+  priorityClassName: ""
+
+  # operator.env contains environment variables for the operator process
+  env:
+    # monitorInterval is the interval between status checks (seconds)
+    monitorInterval: "10.0"
+    # monitorInitialDelay is the initial delay before first status check (seconds)
+    monitorInitialDelay: "5.0"
+    # jobTimeoutSeconds is the job timeout in seconds (0 = no timeout)
+    jobTimeoutSeconds: "0"
+    # podRestartThreshold is the pod restart count before emitting warning events
+    podRestartThreshold: "3"
+    # resultsTtlDays is the results TTL in days
+    resultsTtlDays: "30"
+    # resultsMaxRetries is the max retries for fetching results from controller
+    resultsMaxRetries: "5"
+    # resultsRetryDelay is the delay between result fetch retries (seconds)
+    resultsRetryDelay: "2.0"
+    # endpointCheckTimeout is the endpoint health check timeout (seconds)
+    endpointCheckTimeout: "10.0"
+    # resultsCompressOnDisk stores downloaded result files as zstd on the PVC
+    resultsCompressOnDisk: "true"
+
+  # operator.metrics configures the Prometheus /metrics endpoint exposed by
+  # the kopf operator process (separate from the FastAPI results-server
+  # sidecar). Set port to 0 to disable.
+  metrics:
+    port: 9090
+
+  # operator.watchNamespaces limits which namespaces the operator watches
+  # for AIPerfJob CRs. Empty list (default) watches all namespaces (kopf's
+  # `--all-namespaces` flag). Non-empty list passes `--namespace=<ns>` for
+  # each entry. Note: the ClusterRole still grants cluster-wide read
+  # permissions; for a true scope-limited install, also set `rbac.create=false`
+  # and provide namespace-scoped RBAC out of band.
+  watchNamespaces: []
+
+  # operator.tmpSizeLimit bounds the /tmp emptyDir. Empty (default) = unbounded.
+  # Set to e.g. "256Mi" to cap node-ephemeral storage use; exceeding the limit
+  # triggers pod eviction (Kubernetes 1.25+).
+  tmpSizeLimit: ""
+
+# podTemplate configures PodSpec fields on JobSet pods spawned by the operator.
+podTemplate:
+  # podTemplate.shareProcessNamespace enables a shared PID namespace across
+  # every container in each JobSet pod. When true, pods render with
+  # `spec.shareProcessNamespace: true`, which lets any container issue
+  # `kill -9 <pid>` against sibling containers via `kubectl exec`. Used by
+  # the chaos-testing suite to inject controller/worker/sidecar faults.
+  # Keep false in production — it weakens process isolation.
+  shareProcessNamespace: false
+
+# chaos is a catch-all for test-only operator overrides. Not for production use —
+# each knob intentionally breaks production invariants to enable fault injection.
+chaos:
+  # chaos.controllerHttpUrlOverride rewrites the operator's controller HTTP
+  # base URL to a single fixed value (e.g. a toxiproxy Service URL). When
+  # set, the progress-client ignores per-CR JobSet pod DNS and sends every
+  # controller request here. Used by chaos scenario C16 to blackhole
+  # operator -> controller traffic through a fault-injecting proxy.
+  # NOT FOR PRODUCTION USE: collapses multi-job isolation (every CR's
+  # traffic funnels through the same URL). Leave empty ("") in production.
+  controllerHttpUrlOverride: ""
+
+  # chaos.apiserverServiceHostOverride / apiserverServicePortOverride rewrite
+  # the in-cluster Kubernetes service env vars consumed by kubernetes_asyncio's
+  # incluster loader. Used by chaos scenario C15 to route operator ->
+  # apiserver traffic through toxiproxy.
+  # NOT FOR PRODUCTION USE: if these are wrong, the operator loses access to
+  # the Kubernetes API entirely.
+  apiserverServiceHostOverride: ""
+  apiserverServicePortOverride: ""
+
+  # chaos.apiserverTlsServerNameOverride preserves TLS verification when the
+  # operator dials a proxy host for the apiserver. C15 sets this to
+  # kubernetes.default.svc so the raw TCP proxy can pass through the real
+  # apiserver certificate without disabling TLS verification.
+  # NOT FOR PRODUCTION USE: leave empty unless apiserverServiceHostOverride is
+  # intentionally steering traffic through an L4 proxy.
+  apiserverTlsServerNameOverride: ""
+
+# resultsServer is the FastAPI sidecar container that hosts the operator's
+# entire HTTP API. It serves every /api/v1/* router (jobs, sweeps, results,
+# config, admin, analytics, dashboard_proxy) and is the only container in
+# the operator Pod with a FastAPI app — the operator container itself runs
+# kopf only and exposes /healthz + /metrics on port 8080. The
+# `AIPERF_OPERATOR_BASE_URL` env var on the operator container is
+# auto-templated to `http://<fullname>.<namespace>:<resultsServer.port>` so
+# in-pod consumers (e.g. the sweep-controller's empty-summary fallback) and
+# stamped CR status fields (`AIPerfSweep.status.apiUrl`,
+# `runsTruncated.fetchURL`) all resolve to this container.
+resultsServer:
+  # resultsServer.port is the HTTP port for the FastAPI app hosting all
+  # /api/v1/* routers; propagates into AIPERF_OPERATOR_BASE_URL.
+  port: 8081
+
+  # resultsServer.resources is the CPU and memory requests and limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# dashboard is the optional Plotly Dash sidecar for the operator Pod.
+# When enabled, a third container is added that serves /dashboard/ —
+# the heavy plot-building runs there, isolated from results-server so
+# a memory blow-up cannot OOM-kill the API surface. results-server
+# reverse-proxies /dashboard/* to localhost:<dashboard.port>.
+dashboard:
+  # dashboard.enabled toggles the sidecar. Off by default.
+  enabled: false
+
+  # dashboard.port is the Pod-local HTTP port the dashboard listens on.
+  # Not exposed via the Service — the request path is:
+  #   client -> Ingress/PF -> results-server :8081 -> localhost:<port>
+  port: 8082
+
+  # dashboard.resources caps the dashboard container's CPU / memory.
+  # Default: 1Gi requested, no limit. Set resources.limits.memory to
+  # enforce a ceiling on shared clusters; the dashboard will be
+  # OOMKilled on its own without affecting the operator or results-server.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 1Gi
+    limits: {}
+
+# rbac controls RBAC resource creation.
+# A ClusterRole is required because the operator:
+# - Watches AIPerfJob CRDs across all namespaces (or a configured subset)
+# - Creates/manages leader election Leases in kube-system
+# - Creates JobSets, ConfigMaps, Roles, and RoleBindings in benchmark namespaces
+# To restrict scope, deploy with --namespace flag to limit the watch to a single namespace.
+rbac:
+  # rbac.create specifies whether to create ClusterRole and ClusterRoleBinding
+  create: true
+
+# storage is the results storage configuration
+storage:
+  # storage.enabled backs the results volume with a PersistentVolumeClaim.
+  # Default is true so benchmark results survive operator pod restarts
+  # (rollout, OOM, eviction). Set false to opt out — useful only for
+  # ephemeral test clusters where an emptyDir is fine and no default
+  # StorageClass is available. When false, the chart falls back to
+  # ``emptyDir`` (size-bounded by ``storage.emptyDirSizeLimit`` if set).
+  enabled: true
+
+  # storage.size is the PVC storage size
+  size: 1Ti
+
+  # storage.storageClassName is the storage class (empty = cluster default)
+  storageClassName: ""
+
+  # storage.mountPath is the mount path in the operator pod
+  mountPath: "/data"
+
+  # storage.accessMode is the PVC access mode. ReadWriteOnce is sufficient for
+  # the required single operator replica; ReadWriteMany remains available for
+  # storage providers or operational workflows that require it.
+  accessMode: "ReadWriteOnce"
+
+  # storage.emptyDirSizeLimit bounds the fallback emptyDir when storage.enabled=false.
+  # Empty (default) = unbounded (matches original chart behavior). Set to e.g.
+  # "10Gi" on shared dev clusters; exceeding the limit evicts the pod (k8s 1.25+).
+  emptyDirSizeLimit: ""
+
+# serviceAccount controls service account creation
+serviceAccount:
+  # serviceAccount.create specifies whether to create a service account
+  create: true
+
+  # serviceAccount.name is the service account name (auto-generated if empty)
+  name: ""
+
+  # serviceAccount.annotations is a map of service account annotations
+  annotations: {}
+
+# benchmarkNamespace controls the namespace for running AIPerfJob workloads
+benchmarkNamespace:
+  # benchmarkNamespace.create specifies whether to create the benchmark namespace
+  create: true
+  # benchmarkNamespace.name is the benchmark namespace name
+  name: "aiperf-benchmarks"
+
+# benchmarkRbacNamespaces lists additional namespaces to provision benchmark
+# RBAC (Role + RoleBinding bound to the `default` ServiceAccount) in, beyond
+# benchmarkNamespace.name. Use when benchmark jobs run in multiple namespaces
+# (e.g. per-team). The chart also creates each namespace (with the same keep
+# policy as the primary benchmark namespace); entries are de-duplicated
+# against benchmarkNamespace.name.
+benchmarkRbacNamespaces: []
+
+# serverMetricsDiscoveryNamespaces lists EXISTING inference namespaces (e.g. a
+# Dynamo deployment namespace) where benchmark pods get a read-only pods
+# Role/RoleBinding so cross-namespace server-metrics endpoint discovery
+# (server_metrics.discovery.namespace) is authorized. Unlike
+# benchmarkRbacNamespaces, entries are NOT created by the chart and receive
+# only `pods: get/list/watch`. Each entry is either a plain namespace string,
+# which binds the `default` ServiceAccount of the benchmark namespace(s), or
+# an object binding custom ServiceAccounts (podTemplate.serviceAccountName)
+# instead:
+#   serverMetricsDiscoveryNamespaces:
+#     - dynamo-server
+#     - namespace: dynamo-staging
+#       serviceAccounts: [aiperf-bench]
+# Same-namespace discovery (the default) needs no entry here — the benchmark
+# Role already grants it.
+serverMetricsDiscoveryNamespaces: []
+
+# kueue configures Kueue gang-scheduling integration
+kueue:
+  # kueue.defaultQueueName is the default Kueue LocalQueue name.
+  # When set, the benchmark namespace is annotated with
+  # kueue.x-k8s.io/default-queue-name so all AIPerf jobs are automatically
+  # admitted through Kueue even without an explicit --queue-name flag.
+  # Leave empty to auto-fill from kueue.localQueueName when createQueues=true.
+  defaultQueueName: ""
+
+  # kueue.createQueues toggles chart-managed provisioning of the Kueue
+  # ResourceFlavor, ClusterQueue, and LocalQueue. Users who install Kueue
+  # separately can flip this on to let the chart seed the queue pair instead
+  # of applying it out-of-band (matches the dev/kube.py `install-kueue`
+  # manifest). Off by default so charts render cleanly on clusters without
+  # Kueue CRDs; also gated on the kueue.x-k8s.io/v1beta1 API being present.
+  createQueues: false
+  # kueue.flavorName is the ResourceFlavor name when createQueues=true.
+  flavorName: "default-flavor"
+  # kueue.clusterQueueName is the ClusterQueue name when createQueues=true.
+  clusterQueueName: "aiperf-cluster-queue"
+  # kueue.localQueueName is the LocalQueue name created in the benchmark
+  # namespace when createQueues=true; also used as defaultQueueName when that
+  # value is left empty.
+  localQueueName: "aiperf-local-queue"
+  # kueue.resources sets the ClusterQueue nominalQuota per covered resource.
+  # Defaults are generous so benchmark jobs admit without tuning on dev
+  # clusters; production users should size these to their fleet.
+  resources:
+    cpu: "1000"
+    memory: "4Ti"
+    # gpu (nvidia.com/gpu) is optional — set to e.g. "64" to include it in
+    # the covered resources list. Empty / unset skips GPU quota entirely.
+    gpu: ""
+
+# ingress exposes the results-server HTTP API outside the cluster via an Ingress.
+# Disabled by default: results are reachable via ClusterIP + port-forward.
+ingress:
+  # ingress.enabled toggles Ingress resource creation
+  enabled: false
+  # ingress.className is the IngressClass name (e.g. "nginx"); empty uses the cluster default
+  className: ""
+  # ingress.annotations is a map of annotations applied to the Ingress
+  annotations: {}
+  # ingress.hosts is the list of host rules; each entry has a host and a paths list.
+  # Paths default to backend port = resultsServer.port (8081). Override per path with portNumber.
+  hosts:
+    - host: aiperf.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # ingress.tls is the optional TLS configuration (list of {hosts, secretName})
+  tls: []
+
+# networkPolicy restricts pod traffic to/from the operator.
+# Disabled by default: no restrictions applied.
+networkPolicy:
+  # networkPolicy.enabled toggles NetworkPolicy resource creation
+  enabled: false
+  # networkPolicy.allowedNamespaces is a list of namespace names allowed to reach the operator
+  # (in addition to the benchmark namespace) and reachable by the operator's egress
+  allowedNamespaces: []
+  # networkPolicy.allowedIngressCIDRs is a CIDR allow-list for external scrapers
+  # (e.g. Prometheus, ingress controllers) reaching health (8080) and results ports
+  allowedIngressCIDRs: []
+
+# serviceMonitor creates a Prometheus Operator ServiceMonitor that scrapes the
+# operator's /metrics endpoint on the dedicated metrics port (operator.metrics.port,
+# default 9090). The Prometheus client binds its own HTTP server there — distinct
+# from kopf's liveness server on 8080 (which only serves /healthz). Requires the
+# monitoring.coreos.com/v1 CRDs from the Prometheus Operator / kube-prometheus-stack.
+# Disabled by default because many clusters do not ship the Prometheus Operator CRDs.
+serviceMonitor:
+  # serviceMonitor.enabled toggles ServiceMonitor resource creation
+  enabled: false
+  # serviceMonitor.interval is the Prometheus scrape interval
+  interval: 30s
+  # serviceMonitor.scrapeTimeout is the Prometheus scrape timeout
+  scrapeTimeout: 10s
+  # serviceMonitor.honorLabels preserves labels from the scraped target on collision
+  honorLabels: true
+  # serviceMonitor.scheme is the URI scheme Prometheus uses to scrape ("http" or "https")
+  scheme: "http"
+  # serviceMonitor.labels is a map of extra labels for Prometheus discovery
+  # (e.g. release: prometheus-stack to match a kube-prometheus-stack selector)
+  labels: {}
+  # serviceMonitor.tlsConfig is an optional Prometheus TLS config block (insecureSkipVerify, caFile, etc.)
+  tlsConfig: {}
+  # serviceMonitor.bearerTokenSecret is an optional SecretKeySelector {name, key} for bearer-token auth
+  bearerTokenSecret: {}
+
+# defaults contains default settings for AIPerfJob resources
+defaults:
+  # defaults.image is the default container image for benchmark jobs.
+  # When empty, the chart computes "<image.repository>:<image.tag|Chart.AppVersion>"
+  # so overriding image.tag automatically propagates to benchmark pods. Set
+  # explicitly to decouple benchmark image from operator image.
+  image: ""
+
+  # defaults.imagePullPolicy is the default image pull policy for benchmark jobs
+  imagePullPolicy: "IfNotPresent"
+
+# tests configures the `helm test` hook pods (CRD check, operator health check).
+tests:
+  image:
+    # tests.image.repository is the registry/image for test-hook pods.
+    # Must provide `kubectl` and `curl` on PATH.
+    repository: alpine/k8s
+    # tests.image.tag is the image tag. Pinned (not :latest) so helm test is
+    # reproducible and works with `imagePullPolicy: IfNotPresent` on clusters
+    # where :latest would otherwise be re-pulled on every run.
+    tag: "1.33.11"
+    # tests.image.pullPolicy is the image pull policy for test-hook pods.
+    pullPolicy: IfNotPresent
+
+  # tests.resources caps the test-hook pods' resource usage. Defaults are
+  # intentionally small — each pod runs one `kubectl get` or `curl` loop and
+  # exits. Limits prevent BestEffort QoS on clusters that penalize unbounded
+  # pods; feel free to set to {} for unbounded.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
