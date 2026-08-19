@@ -48,8 +48,6 @@ pub enum GraphCommandErrorCode {
     SourceNotFound,
     /// The source is not a local path.
     SourceNotLocal,
-    /// The requested adapter format is unavailable.
-    FormatUnsupported,
     /// The tokenizer is neither built in nor local.
     TokenizerUnsupported,
     /// The local tokenizer could not be loaded.
@@ -73,7 +71,6 @@ impl GraphCommandErrorCode {
             Self::InvalidArguments => "invalid-arguments",
             Self::SourceNotFound => "source-not-found",
             Self::SourceNotLocal => "source-not-local",
-            Self::FormatUnsupported => "format-unsupported",
             Self::TokenizerUnsupported => "tokenizer-unsupported",
             Self::TokenizerLoadFailed => "tokenizer-load-failed",
             Self::InputDecodeFailed => "input-decode-failed",

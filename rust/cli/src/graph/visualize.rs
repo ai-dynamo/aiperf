@@ -28,7 +28,7 @@ pub(super) fn run(
     let LoadedGraphInput { source, prepared } = input;
     let inspection = inspect_bundle(&prepared.bundle, GraphInspectionOptions::default());
     let program = select_program(&inspection, requested_trace, &source)?;
-    let issues = validation_errors(&inspection, program);
+    let issues = validation_errors(&inspection);
     if !no_validate && !issues.is_empty() {
         write_validation_errors(&issues)?;
         return Ok(1);
@@ -167,11 +167,118 @@ fn output_write_error(path: &Path, cause: impl Into<anyhow::Error>) -> GraphComm
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::io;
     use std::path::Path;
+    use std::sync::Arc;
 
-    use super::{GraphCommandErrorCode, check_output_target, write_output_atomically_with_persist};
+    use aiperf_runtime::graph::driver::TraceDriverSpec;
+    use aiperf_runtime::graph::input::{GraphInputBundle, GraphInputMetadata};
+    use aiperf_runtime::graph::inspect::{GraphInspectionOptions, inspect_bundle};
+    use aiperf_runtime::graph::model::{
+        GraphRecord, GraphTracePlan, GraphTraceProgram, TraceRecord,
+    };
+    use aiperf_runtime::graph::segment::SegmentPool;
+
+    use super::{
+        GraphCommandErrorCode, check_output_target, validation_errors,
+        write_output_atomically_with_persist,
+    };
+
+    fn graph(json: &str) -> GraphRecord {
+        serde_json::from_str(json).expect("parse test graph")
+    }
+
+    fn program(id: &str, graph: GraphRecord) -> GraphTraceProgram {
+        GraphTraceProgram {
+            profiling: GraphTracePlan {
+                graph,
+                trace: TraceRecord {
+                    id: id.to_owned(),
+                    graph_ref: None,
+                    initial_state: BTreeMap::new(),
+                },
+                arrival_offset_ns: None,
+            },
+            warmup: None,
+            environment: None,
+            replay: None,
+            driver: TraceDriverSpec::static_graph(),
+        }
+    }
+
+    fn bundle(programs: Vec<GraphTraceProgram>) -> GraphInputBundle {
+        GraphInputBundle {
+            metadata: GraphInputMetadata {
+                format: "test".to_owned(),
+                root_count: programs.len(),
+                node_count: programs
+                    .iter()
+                    .map(|program| program.profiling.graph.llm_node_count())
+                    .sum(),
+                warning_facts: Vec::new(),
+            },
+            programs,
+            segments: Arc::new(SegmentPool::new().freeze()),
+        }
+    }
+
+    fn mixed_anchor_graph() -> GraphRecord {
+        graph(
+            r#"{
+                "state": {"a_out": {}, "b_out": {}, "c_out": {}},
+                "nodes": {
+                    "a": {"output": "a_out"},
+                    "b": {"output": "b_out"},
+                    "c": {"output": "c_out"}
+                },
+                "edges": [
+                    {"source": "START", "target": "a"},
+                    {"source": "START", "target": "b"},
+                    {"source": "a", "target": "c"},
+                    {"source": "b", "target": "c", "delay_after_predecessor_start_us": 0}
+                ]
+            }"#,
+        )
+    }
+
+    #[test]
+    fn validation_gate_collects_selected_unselected_and_warmup_errors() {
+        let mut warmup = program(
+            "warmup",
+            graph(
+                r#"{"state":{"out":{}},"nodes":{"n":{"output":"out"}},"edges":[{"source":"START","target":"n"}]}"#,
+            ),
+        );
+        warmup.warmup = Some(GraphTracePlan {
+            graph: mixed_anchor_graph(),
+            trace: TraceRecord {
+                id: "warmup-plan".to_owned(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        });
+        let inspection = inspect_bundle(
+            &bundle(vec![
+                program("selected", mixed_anchor_graph()),
+                program("unselected", mixed_anchor_graph()),
+                warmup,
+            ]),
+            GraphInspectionOptions::default(),
+        );
+        let errors = validation_errors(&inspection);
+
+        assert_eq!(errors.len(), 3);
+        assert_eq!(errors[0].trace_id.as_deref(), Some("selected"));
+        assert_eq!(errors[1].trace_id.as_deref(), Some("unselected"));
+        assert_eq!(errors[2].trace_id.as_deref(), Some("warmup"));
+        assert!(matches!(
+            errors[2].phase,
+            Some(aiperf_runtime::graph::inspect::GraphPlanPhase::Warmup)
+        ));
+    }
 
     #[test]
     fn metadata_failure_is_an_output_write_failure() {
@@ -255,14 +362,20 @@ fn select_program<'a>(
     })
 }
 
-fn validation_errors<'a>(
-    inspection: &'a GraphBundleInspection,
-    program: &'a GraphProgramInspection,
-) -> Vec<&'a aiperf_runtime::graph::inspect::GraphInspectionIssue> {
+fn validation_errors(
+    inspection: &GraphBundleInspection,
+) -> Vec<&aiperf_runtime::graph::inspect::GraphInspectionIssue> {
     inspection
         .issues
         .iter()
-        .chain(program.profiling.issues.iter())
+        .chain(inspection.programs.iter().flat_map(|program| {
+            program.profiling.issues.iter().chain(
+                program
+                    .warmup
+                    .iter()
+                    .flat_map(|warmup| warmup.issues.iter()),
+            )
+        }))
         .filter(|issue| issue.severity == GraphInspectionSeverity::Error)
         .collect()
 }

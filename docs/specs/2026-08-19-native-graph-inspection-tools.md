@@ -98,15 +98,18 @@ The public commands are:
 
 ```text
 aiperf graph validate <PATH> --graph-format <FORMAT>
-    [--tokenizer <NAME_OR_LOCAL_PATH>] [--seed <U64>]
+    [--tokenizer <NAME_OR_LOCAL_PATH>] [--endpoint-type <TYPE>]
+    [--source-format <FORMAT>] [--seed <U64>]
     [--pace arrival] [--output-format text|json]
 
 aiperf graph explain <PATH> --graph-format <FORMAT>
-    [--tokenizer <NAME_OR_LOCAL_PATH>] [--seed <U64>]
+    [--tokenizer <NAME_OR_LOCAL_PATH>] [--endpoint-type <TYPE>]
+    [--source-format <FORMAT>] [--seed <U64>]
     [--output-format text|json]
 
 aiperf graph visualize <PATH> --graph-format <FORMAT>
-    [--tokenizer <NAME_OR_LOCAL_PATH>] [--seed <U64>]
+    [--tokenizer <NAME_OR_LOCAL_PATH>] [--endpoint-type <TYPE>]
+    [--source-format <FORMAT>] [--seed <U64>]
     [--trace <TRACE_ID>] [--output <PATH>]
     [--output-format markdown|mermaid] [--no-validate]
 ```
@@ -120,6 +123,10 @@ exit 2, following the existing native config command's `try_parse_from` pattern
 Common defaults are:
 
 - `--tokenizer builtin`;
+- `--endpoint-type chat`, passed only to the selected adapter to validate its
+  request-profile compatibility; it never resolves or contacts an endpoint;
+- no `--source-format`; when supplied, it selects the imported-session source
+  discriminator for `agent_recording` input and has no role in other formats;
 - `--seed 0`;
 - `--output-format text` for `validate` and `explain`;
 - `--output-format markdown` for `visualize`;
@@ -187,11 +194,12 @@ and graph-command help/completion.
 |---:|---|
 | 0 | Input loaded and the requested operation completed. Warnings do not fail a command. |
 | 1 | The adapter lowered the input successfully, but validation found one or more error-severity issues. |
-| 2 | CLI usage, missing/unreadable source, unsupported format, tokenizer preparation, adapter decode/lowering, trace selection, or output I/O failure. |
+| 2 | CLI usage, missing/unreadable source, tokenizer preparation, adapter decode/lowering, trace selection, or output I/O failure. |
 
 `explain` is best-effort after successful lowering: it reports validation issues
 and omits analyses that require a valid graph, but returns 0. `visualize`
-validates first and returns 1 without rendering if errors exist, unless
+validates the entire retained bundle and returns 1 without rendering if any
+bundle, profiling, or warmup error exists, unless
 `--no-validate` is present. This preserves Python visualize's useful validation
 gate (`ajc/dag-v3:src/aiperf/cli_commands/graph_visualize.py:138-149` and
 `:176-191`) while keeping `validate` the command whose exit status represents
@@ -466,7 +474,12 @@ optional warmup summary/topology/issues, and optional readiness waves. It does
 not embed ANSI strings or preformatted tables.
 
 The JSON topology is an inspection summary, not a serialization of
-`GraphTraceProgram`; segment handles and prompt payload content are not exposed.
+`GraphTraceProgram`. It excludes payload/content values such as prompt bodies,
+initial-state values, replay outputs, segment bytes, tool-request bodies, and
+environment values. It intentionally exposes topology and request-shape metadata:
+trace/node/channel identifiers, node kinds, channel gates and reducers, static
+edges and timing, streaming, model override, maximum tokens, and environment or
+replay presence flags.
 
 ## Visualization contract
 
@@ -534,14 +547,16 @@ newline.
 
 ### Validation and output I/O
 
-By default, any validation error suppresses rendering and returns 1.
+By default, any bundle, profiling-plan, or warmup-plan validation error suppresses rendering and returns 1.
 `--no-validate` permits best-effort topology rendering after successful
 lowering, but cannot bypass adapter/lowering failures.
 
 Without `--output`, rendered bytes go to stdout. With `--output`, the CLI writes
-to a temporary file in the destination directory, flushes it, and atomically
-persists it over a nonexistent or existing regular file. It leaves stdout empty.
-It refuses a directory target and reports output errors on stderr with exit 2.
+to a temporary file in the destination directory, flushes it, and leaves stdout
+empty. Unix atomically replaces a nonexistent or existing regular file. Other
+platforms write a nonexistent destination but reject a preexisting destination
+rather than promise a non-atomic overwrite. It refuses a directory target and
+reports output errors on stderr with exit 2.
 
 ### Why HTML is excluded
 
@@ -560,7 +575,6 @@ Fatal error codes used by `aiperf.graph.error.v1` are stable kebab-case strings:
 - `invalid-arguments`;
 - `source-not-found`;
 - `source-not-local`;
-- `format-unsupported`;
 - `tokenizer-unsupported`;
 - `tokenizer-load-failed`;
 - `input-decode-failed`;
@@ -570,9 +584,9 @@ Fatal error codes used by `aiperf.graph.error.v1` are stable kebab-case strings:
 - `output-write-failed`.
 
 Errors retain their `anyhow` source chain internally, but the JSON `message` is
-one bounded human-readable string. It must not include prompt bodies, segment
-contents, secrets, environment values, or arbitrary debug output. Human mode may
-include the source chain, subject to the same redaction rule.
+one bounded human-readable string. It must not include payload/content values or
+arbitrary debug output. Human mode may include the source chain, subject to the
+same redaction rule.
 
 ## Determinism and security
 
