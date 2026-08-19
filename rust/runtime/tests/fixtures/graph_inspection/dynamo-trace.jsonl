@@ -1,0 +1,1 @@
+{"schema":"dynamo.request.trace.v1","event_type":"request_end","event_time_unix_ms":1,"agent_context":{"session_id":"graph-inspection"},"request":{"request_id":"request-1","model":"model","input_tokens":16,"output_tokens":1,"replay":{"trace_block_size":16,"input_length":16,"input_sequence_hashes":[7]}}}

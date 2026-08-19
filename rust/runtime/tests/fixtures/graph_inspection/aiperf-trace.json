@@ -1,0 +1,1 @@
+{"schema":"aiperf.trace.v1","session_id":7,"block_size":16,"segments":[{"role":"user","kind":["text"],"hash_ids":[1],"tokens":16}],"inference_calls":[{"ts":0.0,"segment_refs":[0],"usage":{"output_tokens":3}}]}

@@ -71,6 +71,60 @@ fn fixture(path: &str) -> String {
         .to_string()
 }
 
+struct BuiltInGraphSource {
+    format: &'static str,
+    path: String,
+    static_compatible: bool,
+}
+
+fn built_in_graph_sources() -> Vec<BuiltInGraphSource> {
+    vec![
+        BuiltInGraphSource {
+            format: "dag_jsonl",
+            path: fixture("../../tests/fixtures/dag/small.dag.jsonl"),
+            static_compatible: true,
+        },
+        BuiltInGraphSource {
+            format: "conditional_graph",
+            path: fixture("../e2e-tests/tests/fixtures/conditional/conditional_shopping.yaml"),
+            static_compatible: true,
+        },
+        BuiltInGraphSource {
+            format: "weka_trace",
+            path: fixture("../../tests/fixtures/weka_traces/simple.json"),
+            static_compatible: true,
+        },
+        BuiltInGraphSource {
+            format: "dynamo_trace",
+            path: fixture("../runtime/tests/fixtures/graph_inspection/dynamo-trace.jsonl"),
+            static_compatible: true,
+        },
+        BuiltInGraphSource {
+            format: "aiperf_trace",
+            path: fixture("../runtime/tests/fixtures/graph_inspection/aiperf-trace.json"),
+            static_compatible: true,
+        },
+        BuiltInGraphSource {
+            format: "agent_recording",
+            path: fixture("../runtime/tests/fixtures/recorded_agent_replay/recordings"),
+            static_compatible: false,
+        },
+        BuiltInGraphSource {
+            format: "otlp_genai",
+            path: fixture("tests/fixtures/graph_tools/collapsed-replay.otlp.json"),
+            static_compatible: false,
+        },
+    ]
+}
+
+fn graph_help_formats(help: &str) -> Vec<&str> {
+    let values = help
+        .lines()
+        .find_map(|line| line.strip_prefix("Supported built-in graph formats: "))
+        .expect("graph help possible-value list");
+    values.split(", ").collect()
+}
+
 fn validate_output(path: &str, format: &str, extra: &[&str]) -> Output {
     let mut args = vec!["graph", "validate", path, "--graph-format", format];
     args.extend_from_slice(extra);
@@ -774,8 +828,61 @@ fn graph_help_lists_the_stock_built_in_formats_without_python() {
     let output = output(&["graph", "--help"]);
     assert_eq!(output.status.code(), Some(0));
     let help = String::from_utf8(output.stdout).expect("help is UTF-8");
-    for format in GRAPH_FORMATS {
-        assert!(help.contains(format), "missing built-in format {format}");
+    assert_eq!(graph_help_formats(&help), GRAPH_FORMATS);
+}
+
+#[test]
+fn built_in_format_commands_agree_with_the_real_adapter_inventory() {
+    for source in built_in_graph_sources() {
+        let validate = validate_output(&source.path, source.format, &["--output-format", "json"]);
+        assert_eq!(
+            validate.status.code(),
+            Some(0),
+            "{}: {}",
+            source.format,
+            stderr(&validate)
+        );
+        let validate: GraphValidateReport =
+            serde_json::from_slice(&validate.stdout).expect("validate JSON");
+        assert_eq!(validate.format, source.format);
+
+        let explain = explain_output(&source.path, source.format, &["--output-format", "json"]);
+        assert_eq!(
+            explain.status.code(),
+            Some(0),
+            "{}: {}",
+            source.format,
+            stderr(&explain)
+        );
+        let explain: GraphExplainReport =
+            serde_json::from_slice(&explain.stdout).expect("explain JSON");
+        assert_eq!(explain.input.format, source.format);
+        assert!(!explain.programs.is_empty(), "{}", source.format);
+
+        if source.static_compatible {
+            let visualize = output(&[
+                "graph",
+                "visualize",
+                &source.path,
+                "--graph-format",
+                source.format,
+                "--no-validate",
+                "--output-format",
+                "mermaid",
+            ]);
+            assert_eq!(
+                visualize.status.code(),
+                Some(0),
+                "{}: {}",
+                source.format,
+                stderr(&visualize)
+            );
+            assert!(
+                String::from_utf8(visualize.stdout)
+                    .expect("Mermaid UTF-8")
+                    .starts_with("flowchart LR\n")
+            );
+        }
     }
 }
 

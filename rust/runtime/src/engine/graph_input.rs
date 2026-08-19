@@ -645,12 +645,20 @@ impl RecordedAgentDatasetInput {
             .graph
             .as_ref()
             .and_then(|graph| graph.include_subagents);
-        let resolved = resolve_recorded_agent_graph_source(
-            &self.path,
-            replay_root,
-            source_format,
-            include_subagents,
-        )?;
+        // The graph-inspection helper authors only the four file-dataset
+        // fields. A bare local directory is therefore a strict recording
+        // corpus, while any authored graph policy retains the explicit import
+        // source-format requirement below.
+        let resolved = if self.graph.is_none() && self.replay_root.is_none() && self.path.is_dir() {
+            strict_recorded_agent_graph_source(&self.path, None)?
+        } else {
+            resolve_recorded_agent_graph_source(
+                &self.path,
+                replay_root,
+                source_format,
+                include_subagents,
+            )?
+        };
         if matches!(&resolved, ResolvedRecordedAgentGraphSource::Imported { .. }) {
             let graph = self.graph.as_ref();
             ensure!(

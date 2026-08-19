@@ -1,0 +1,1 @@
+{"format":"mini-swe-agent-recording-1.0","metadata":{"instance_id":"graph-inspection"},"events":[{"id":1,"type":"model_call","timestamp":1.0,"duration_ns":10,"provider_request":{"messages":[{"role":"user","content":"one"}]},"response_message":{"extra":{"response":{"usage":{"prompt_tokens":3,"completion_tokens":2}}}}}]}
