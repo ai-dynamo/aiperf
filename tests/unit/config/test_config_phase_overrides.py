@@ -232,3 +232,81 @@ def test_secondary_warmup_flag_without_a_phase_or_trigger_errors(
     """Nowhere to land and nothing to create it: must be loud, not dropped."""
     with pytest.raises(ConfigurationError, match=r"warmup"):
         resolve_config(cli(warmup_concurrency=7), concurrency_yaml)
+
+
+# ---------------------------------------------------------------------------
+# Goodput -> the slos block
+# ---------------------------------------------------------------------------
+
+
+def test_goodput_routes_to_slos(concurrency_yaml: Path) -> None:
+    resolved = resolve_config(cli(goodput="ttft:200"), concurrency_yaml)
+    assert resolved.benchmark.slos == {"ttft": 200.0}
+
+
+def test_goodput_merges_with_yaml_slos(tmp_path: Path) -> None:
+    """A YAML slos block keeps the keys the flag does not mention."""
+    cfg = tmp_path / "slos.yaml"
+    cfg.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: synthetic
+  slos:
+    tpot: 50
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    resolved = resolve_config(cli(goodput="ttft:200"), cfg)
+    assert resolved.benchmark.slos == {"tpot": 50.0, "ttft": 200.0}
+
+
+# ---------------------------------------------------------------------------
+# Fixed schedule
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def trace_phase_yaml(tmp_path: Path) -> Path:
+    trace = tmp_path / "t.jsonl"
+    trace.write_text('{"timestamp": 0, "text": "hi"}\n')
+    cfg = tmp_path / "trace_phase.yaml"
+    cfg.write_text(
+        f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: mooncake_trace
+    path: {trace}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    return cfg
+
+
+def test_fixed_schedule_switches_the_phase_type(trace_phase_yaml: Path) -> None:
+    resolved = resolve_config(cli(fixed_schedule=True), trace_phase_yaml)
+    assert profiling(resolved).type == "fixed_schedule"
+
+
+def test_fixed_schedule_offsets_route(trace_phase_yaml: Path) -> None:
+    resolved = profiling(
+        resolve_config(
+            cli(fixed_schedule=True, fixed_schedule_start_offset=5), trace_phase_yaml
+        )
+    )
+    assert resolved.start_offset == 5

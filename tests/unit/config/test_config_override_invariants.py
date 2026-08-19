@@ -106,6 +106,8 @@ FIELD_PROBE_VALUES: dict[str, list[Any]] = {
         ["http://localhost:9401/metrics"],
     ],
     "isl_osl_pairs": [["128,16"], ["256,32"]],
+    # --goodput takes space-separated "metric:value" pairs, not a list.
+    "goodput": ["ttft:200", "ttft:300"],
     "server_metrics_formats": [["json"], ["csv"]],
     "sweep_variants": [["concurrency=2"], ["concurrency=4"]],
 }
