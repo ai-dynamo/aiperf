@@ -32,10 +32,11 @@ use crate::engine::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunSpec,
     NativeSidecarPlan, NativeStaticAccuracyEvaluatorFactory, NativeStaticAccuracyPlan,
     StaticAccuracyEvaluatorFactory, StaticAccuracyEvaluatorProcessSpec,
-    execute_prepared_native_plan_uncommitted_selected, load_tokenizer,
+    execute_prepared_native_plan_uncommitted_selected,
 };
 use crate::engine::execution_factories::ExecutionFactories;
 use crate::engine::graph_input::GraphInputContext;
+use crate::engine::preparation::load_local_tokenizer;
 use crate::engine::protocol::{ArtifactSpec, PhaseSpec, TokenizerSpec};
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::readiness::{
@@ -637,7 +638,7 @@ fn remote_code_tokenizer_error(name: &str) -> String {
 /// it holds either a `tokenizer.json` (HuggingFace fast path) or a native
 /// tiktoken vocab file (`tiktoken.model` / `tokenizer.model` / `*.tiktoken`).
 /// Shared by every resolver so a custom-code-only repository fails identically
-/// instead of surfacing a bare "No such file" at [`load_tokenizer`] time.
+/// instead of surfacing a bare "No such file" at [`load_local_tokenizer`] time.
 fn ensure_native_tokenizer_loadable(name: &str, directory: &Path) -> Result<()> {
     ensure!(
         directory.join("tokenizer.json").is_file() || find_tiktoken_model_file(directory).is_some(),
@@ -1140,7 +1141,7 @@ pub(crate) fn lower_scheduled(
     let endpoint_descriptor = prepared_endpoint.descriptor();
     let tokenizer =
         lower_tokenizer_for_endpoint(&workload.tokenizer, tokenizers, endpoint_descriptor)?;
-    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+    let tokenizer_impl = load_local_tokenizer(Some(&tokenizer.name))?;
     // The rankings composer synthesizes text query/passage rows and is correct
     // only for text-input rerankers. `image_retrieval` also advertises a
     // `Rankings` output but consumes image input, so keying solely on the output
@@ -1219,7 +1220,7 @@ fn lower_graph(
     transport: Arc<dyn crate::engine::registry::NativeTransportExecution>,
 ) -> Result<NativeRunSpec> {
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
-    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+    let tokenizer_impl = load_local_tokenizer(Some(&tokenizer.name))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1378,7 +1379,7 @@ fn lower_legacy_agentic(
     );
 
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
-    let tokenizer_impl = load_tokenizer(Some(&tokenizer.name))?;
+    let tokenizer_impl = load_local_tokenizer(Some(&tokenizer.name))?;
 
     // Decode the HuggingFace weka source from the authored dataset descriptor.
     let dataset_json: serde_json::Value = serde_json::from_str(workload.dataset.get())
@@ -2186,7 +2187,7 @@ mod tests {
     fn resolved_directory_without_tokenizer_json_is_rejected() {
         // The shared guard both online resolvers call: a resolved directory that
         // has no `tokenizer.json` (a custom-code repo whose config-only files
-        // downloaded successfully) is rejected before it reaches `load_tokenizer`,
+        // downloaded successfully) is rejected before it reaches `load_local_tokenizer`,
         // where it would otherwise surface a bare "No such file" error.
         let directory = tempfile::tempdir().unwrap();
         let error = ensure_native_tokenizer_loadable("moonshotai/Kimi-K2", directory.path())

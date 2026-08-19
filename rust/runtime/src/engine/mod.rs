@@ -53,6 +53,7 @@ pub mod offline_execution;
 pub mod online_execution;
 pub mod phase_identity;
 pub mod phase_manifest;
+pub mod preparation;
 pub mod protocol;
 pub mod protocol_v2;
 pub mod readiness;

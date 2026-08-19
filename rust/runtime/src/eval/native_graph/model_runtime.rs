@@ -20,10 +20,10 @@ use url::Url;
 
 use crate::{
     endpoints::{RawEndpointConfig, Turn},
+    engine::preparation::load_local_tokenizer,
     engine::registry::ValidatedEndpointProfileV2,
     engine::{
         application::Application,
-        execute::load_tokenizer,
         graph_execution::{
             NativeGraphLivePolicyCallSummary, NativeGraphPolicyEndpointRuntime,
             NativeGraphTransportEvidence, execute_native_graph_trace,
@@ -548,7 +548,7 @@ impl ResolvedTokenizerBinding {
             } => {
                 let name = (name == "tiktoken").then_some("builtin").unwrap_or(name);
                 (
-                    load_tokenizer(Some(name)).map_err(|error| error.to_string())?,
+                    load_local_tokenizer(Some(name)).map_err(|error| error.to_string())?,
                     *apply_chat_template,
                 )
             }

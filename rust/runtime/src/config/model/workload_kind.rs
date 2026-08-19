@@ -16,11 +16,12 @@ use super::dataset::Dataset;
 ///
 /// Any dataset whose native format token is one of these routes the run through
 /// the `graph` workload; every other dataset uses the `scheduled` workload.
-pub const GRAPH_FORMATS: [&str; 6] = [
+pub const GRAPH_FORMATS: [&str; 7] = [
     "dag_jsonl",
     "conditional_graph",
     "weka_trace",
     "dynamo_trace",
+    "aiperf_trace",
     "agent_recording",
     "otlp_genai",
 ];
@@ -96,6 +97,12 @@ pub fn workload_kind(cfg: &BenchmarkConfig) -> WorkloadKind {
 mod tests {
     use super::*;
     use crate::config::model::dataset::{Distribution, FileDataset, Prompts, Sampling, Synthetic};
+
+    #[test]
+    fn aiperf_trace_selects_the_graph_workload() {
+        assert!(is_graph_format(Some("aiperf_trace")));
+        assert_eq!(GRAPH_FORMATS.len(), 7);
+    }
 
     fn synthetic_dataset() -> Dataset {
         Dataset::Synthetic(Synthetic {

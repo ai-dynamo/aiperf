@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::config::model::dataset::RecordedAgentGraphConfig;
@@ -38,6 +38,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 
+use crate::config::model::workload_kind::GRAPH_FORMATS;
 use crate::engine::dataset_input::DatasetCacheBustSpec;
 use crate::engine::execute::distribution;
 use crate::engine::protocol::{
@@ -207,6 +208,9 @@ pub trait GraphInputAdapter: fmt::Debug + Send + Sync {
 /// Injected open resolver for direct graph-input adapters.
 #[async_trait(?Send)]
 pub trait GraphInputAdapterResolver: fmt::Debug + Send + Sync {
+    /// Registered graph-input format identifiers in their shared authored order.
+    fn supported_formats(&self) -> Vec<&str>;
+
     /// Validate only that the open format identity selects a linked adapter.
     ///
     /// Adapter-owned fields remain untouched. Full strict decoding is deferred
@@ -253,6 +257,14 @@ impl BuiltinRunnerGraphInputAdapterResolver {
             Arc::new(RecordedAgentRunnerGraphInputAdapter),
             Arc::new(OtlpGenaiRunnerGraphInputAdapter),
         ];
+        debug_assert_eq!(
+            adapters
+                .iter()
+                .map(|adapter| adapter.format())
+                .collect::<BTreeSet<_>>(),
+            GRAPH_FORMATS.iter().copied().collect::<BTreeSet<_>>(),
+            "built-in graph adapters must match the shared graph-format inventory"
+        );
         Self {
             adapters: adapters
                 .into_iter()
@@ -289,6 +301,19 @@ where
 
 #[async_trait(?Send)]
 impl GraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver {
+    fn supported_formats(&self) -> Vec<&str> {
+        GRAPH_FORMATS
+            .iter()
+            .filter_map(|format| {
+                debug_assert!(
+                    self.adapters.contains_key(format),
+                    "shared graph format {format:?} has no built-in adapter"
+                );
+                self.adapters.contains_key(format).then_some(*format)
+            })
+            .collect()
+    }
+
     fn validate_identity(&self, raw: &RawValue) -> Result<()> {
         self.selected(raw).map(drop)
     }
@@ -300,6 +325,34 @@ impl GraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver {
     ) -> Result<PreparedRunnerGraphInput> {
         self.selected(raw)?.load(raw, context).await
     }
+}
+
+/// Load one local graph-inspection input through the selected resolver once.
+///
+/// This helper only constructs the canonical file dataset wire shape. It leaves
+/// strict decoding and all source reads to the resolver's single `load` call.
+pub async fn prepare_local_graph_inspection_input(
+    resolver: &dyn GraphInputAdapterResolver,
+    source: &Path,
+    format: &str,
+    tokenizer: &dyn TextTokenizer,
+    seed: u64,
+) -> Result<PreparedRunnerGraphInput> {
+    let raw = serde_json::value::to_raw_value(&serde_json::json!({
+        "type": "file",
+        "format": format,
+        "path": source,
+        "sampling": "sequential",
+    }))?;
+    resolver
+        .load(
+            &raw,
+            &GraphInputContext {
+                tokenizer,
+                run_random_seed: Some(seed),
+            },
+        )
+        .await
 }
 
 #[derive(Deserialize)]
@@ -1604,9 +1657,12 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use std::io::Write;
 
     use crate::dataset::{Payload, TiktokenTokenizer};
+    use async_trait::async_trait;
     use flate2::{Compression, write::GzEncoder};
     use serde_json::json;
 
@@ -1614,6 +1670,84 @@ mod tests {
 
     fn raw(value: Value) -> Box<RawValue> {
         serde_json::value::to_raw_value(&value).unwrap()
+    }
+
+    #[test]
+    fn built_in_resolver_inventory_matches_workload_inventory() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        assert_eq!(
+            resolver.supported_formats(),
+            crate::config::model::workload_kind::GRAPH_FORMATS.to_vec()
+        );
+    }
+
+    #[derive(Debug)]
+    struct CountingResolver {
+        load_calls: AtomicUsize,
+    }
+
+    #[async_trait(?Send)]
+    impl GraphInputAdapterResolver for CountingResolver {
+        fn supported_formats(&self) -> Vec<&str> {
+            vec!["dag_jsonl"]
+        }
+
+        fn validate_identity(&self, _raw: &RawValue) -> Result<()> {
+            panic!("inspection preparation must load without a separate validation pass")
+        }
+
+        async fn load(
+            &self,
+            raw: &RawValue,
+            context: &GraphInputContext<'_>,
+        ) -> Result<PreparedRunnerGraphInput> {
+            self.load_calls.fetch_add(1, Ordering::Relaxed);
+            assert_eq!(context.run_random_seed, Some(73));
+            assert_eq!(
+                raw.get(),
+                r#"{"type":"file","format":"dag_jsonl","path":"/tmp/input.dag.jsonl","sampling":"sequential"}"#
+            );
+            let bundle = compile_dag_jsonl_input(
+                GraphInputConfig {
+                    load: LoadConfig::new(DatasetSource::Inline(json!([
+                        {"session_id":"root","turns":[{"messages":[{"role":"user","content":"hello"}]}]}
+                    ]))),
+                    root_limit: None,
+                },
+                context.tokenizer,
+            )
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?;
+            Ok(PreparedRunnerGraphInput {
+                bundle,
+                random_seed: None,
+                default_output_tokens: 16,
+                allow_dataset_wrap: true,
+                t_star_window: TStarWindow::default(),
+                cache_bust_target: CacheBustTarget::None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_local_graph_inspection_input_loads_once_with_sequential_file_wire_shape() {
+        let resolver = CountingResolver {
+            load_calls: AtomicUsize::new(0),
+        };
+        let tokenizer = TiktokenTokenizer::builtin();
+
+        let prepared = prepare_local_graph_inspection_input(
+            &resolver,
+            std::path::Path::new("/tmp/input.dag.jsonl"),
+            "dag_jsonl",
+            &tokenizer,
+            73,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolver.load_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(prepared.bundle.programs.len(), 1);
     }
 
     #[test]

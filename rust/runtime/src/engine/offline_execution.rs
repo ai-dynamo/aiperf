@@ -63,8 +63,8 @@ use serde_json::{Value, value::RawValue};
 use crate::engine::dataset_input::{DatasetInputContext, PreparedDatasetInput};
 use crate::engine::execute::{
     NativeConversationSourceFactory, build_native_scheduled_phase_plan_with_source_factory,
-    load_tokenizer, metrics_config, native_scheduled_resources, phase_seamless_to_next,
-    resolve_slice_duration_ns, resolve_slos,
+    metrics_config, native_scheduled_resources, phase_seamless_to_next, resolve_slice_duration_ns,
+    resolve_slos,
 };
 use crate::engine::graph_execution::{GraphExecutionEvent, GraphExecutionEventSink};
 use crate::engine::graph_input::GraphInputContext;
@@ -75,6 +75,7 @@ use crate::engine::graph_phase_runtime::{
 use crate::engine::online_execution::{
     OnlineTokenizerSourceResolver, lower_authored_tokenizer, validate_authored_tokenizer,
 };
+use crate::engine::preparation::load_local_tokenizer;
 use crate::engine::protocol::{MetricsSpec, ModelSelectionStrategy, PhaseSpec};
 use crate::engine::protocol_v2::AuthoredRunSpecV2;
 use crate::engine::records::{CapturedModelOutput, CapturedRecord};
@@ -921,7 +922,7 @@ pub(crate) fn prepare_dynosim_scheduled(
     validate_offline_scheduled_phases(&workload.phases)?;
 
     let tokenizer_spec = lower_authored_tokenizer(&workload.tokenizer, tokenizers.as_ref())?;
-    let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
+    let tokenizer = load_local_tokenizer(Some(&tokenizer_spec.name))?;
     let input_token_counter: Arc<dyn InputTokenCounter> = Arc::new(EndpointInputTokenCounter::new(
         tokenizer.clone(),
         tokenizer_spec.apply_chat_template,
@@ -1495,7 +1496,7 @@ pub(crate) fn prepare_dynosim_graph(
     // logging. Backend artifacts still reject pre-existing output files.
     let model = run.models.items[0].name.clone();
     let tokenizer_spec = lower_authored_tokenizer(&workload.tokenizer, tokenizers.as_ref())?;
-    let tokenizer = load_tokenizer(Some(&tokenizer_spec.name))?;
+    let tokenizer = load_local_tokenizer(Some(&tokenizer_spec.name))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
