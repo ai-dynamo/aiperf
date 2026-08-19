@@ -15,7 +15,8 @@ use aiperf_runtime::eval::{
     AdapterPoolKey, AdapterProcess, AdapterProtocolConfig, AdapterRole, AdapterRuntimeFactory,
     AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError,
     ArtifactDigest, CancelReason, HostEnvelope, HostMessage, LocalAdapterSpawner,
-    ProtocolCapability, ProtocolLimits, StrictAdapterProtocolFactory, SupervisedAdapter,
+    ProtocolCapability, ProtocolError, ProtocolLimits, StrictAdapterProtocolFactory,
+    SupervisedAdapter,
 };
 use async_trait::async_trait;
 
@@ -308,6 +309,31 @@ fn delayed_runtime_factory(
     )
 }
 
+fn driver_runtime_factory(
+    observations: Rc<RefCell<ChildObservations>>,
+) -> impl AdapterRuntimeFactory {
+    observations
+        .borrow_mut()
+        .stdout
+        .push_back(driver_ready_frame());
+    let config = AdapterProtocolConfig::new(
+        AdapterRole::Driver,
+        "episode",
+        [ProtocolCapability::Driver].into_iter().collect(),
+        Default::default(),
+        ProtocolLimits::default(),
+    )
+    .expect("fixture Driver protocol config is valid");
+    aiperf_runtime::eval::ProtocolAdapterRuntimeFactory::new(
+        config,
+        Rc::new(StrictAdapterProtocolFactory),
+        Rc::new(RecordingSpawner {
+            observations,
+            launch_delay: None,
+        }),
+    )
+}
+
 fn ready_frame() -> Vec<u8> {
     let mut frame = serde_json::to_vec(&AdapterEnvelope::new(
         "episode",
@@ -321,6 +347,38 @@ fn ready_frame() -> Vec<u8> {
         },
     ))
     .expect("fixture ready frame serializes");
+    frame.push(b'\n');
+    frame
+}
+
+fn driver_ready_frame() -> Vec<u8> {
+    let mut frame = serde_json::to_vec(&AdapterEnvelope::new(
+        "episode",
+        "startup",
+        0,
+        "hello",
+        AdapterMessage::Ready {
+            protocol_version: 1,
+            capabilities: vec![ProtocolCapability::Driver],
+            implementation_digest: ArtifactDigest::from_bytes(b"fixture-driver"),
+        },
+    ))
+    .expect("fixture Driver ready frame serializes");
+    frame.push(b'\n');
+    frame
+}
+
+fn terminal_candidate_frame(sequence: u64) -> Vec<u8> {
+    let mut frame = serde_json::to_vec(&AdapterEnvelope::new(
+        "episode",
+        "external-driver-terminal",
+        sequence,
+        "external-driver-terminal",
+        AdapterMessage::EpisodeTerminalCandidate {
+            output: serde_json::json!({"terminal": "accepted"}),
+        },
+    ))
+    .expect("fixture terminal candidate frame serializes");
     frame.push(b'\n');
     frame
 }
@@ -406,6 +464,49 @@ async fn protocol_factory_intersects_peer_stdout_cap_with_its_protocol_limit() {
         .expect("the Ready frame is below the protocol frame limit");
 
     assert_eq!(observations.borrow().read_max_bytes, [1024]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn supervised_driver_refuses_a_candidate_after_terminal_settlement() {
+    let observations = Rc::new(RefCell::new(ChildObservations::default()));
+    let mut driver = driver_runtime_factory(observations.clone())
+        .start(spawn_request())
+        .await
+        .expect("the Driver session starts and acknowledges its exact capability");
+    observations
+        .borrow_mut()
+        .stdout
+        .push_back(terminal_candidate_frame(1));
+    driver
+        .send(HostEnvelope::new(
+            "episode",
+            "external-driver-terminal",
+            1,
+            "external-driver-terminal",
+            HostMessage::RequestEpisodeTerminal {
+                input: serde_json::json!({}),
+            },
+        ))
+        .await
+        .expect("the Driver terminal request is sent with its fixed correlation");
+    assert!(matches!(
+        driver.receive().await,
+        Ok(AdapterEnvelope {
+            message: AdapterMessage::EpisodeTerminalCandidate { .. },
+            ..
+        })
+    ));
+
+    observations
+        .borrow_mut()
+        .stdout
+        .push_back(terminal_candidate_frame(2));
+    assert!(matches!(
+        driver.receive().await,
+        Err(AdapterSupervisionError::Protocol(
+            ProtocolError::OperationState { .. }
+        ))
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]

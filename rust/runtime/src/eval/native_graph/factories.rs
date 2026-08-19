@@ -1007,9 +1007,16 @@ fn revoke_reset_reference(
 
 /// Capability-limited session supplied only after external compatibility preparation succeeds.
 ///
-/// This marker keeps preparation independent of processes, environments, secrets, and native
-/// execution authority.
-pub trait ExternalDriverSession {}
+/// This boundary admits one Driver terminal candidate and returns only its digest-backed receipt.
+/// It keeps preparation independent of processes, environments, secrets, and native execution
+/// authority.
+#[async_trait(?Send)]
+pub trait ExternalDriverSession {
+    /// Requests the sole correlated terminal candidate for this compatibility episode.
+    async fn request_terminal(
+        &mut self,
+    ) -> Result<CompatibilityTerminalReceipt, ExternalDriverError>;
+}
 
 /// Redacted failure category for compatibility-driver preparation and terminal exchange.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

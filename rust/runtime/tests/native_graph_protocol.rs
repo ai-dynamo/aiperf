@@ -1219,3 +1219,52 @@ fn bounded_jsonl_rejects_the_frame_before_deserializing_it() {
     assert!(matches!(error, ProtocolError::FrameTooLarge { .. }));
     assert_eq!(protocol.session_state(), ProtocolSessionState::Failed);
 }
+
+#[test]
+fn external_driver_terminal_config_is_exactly_driver_only() {
+    let driver_only = AdapterProtocolConfig::new(
+        AdapterRole::Driver,
+        "episode-1",
+        [ProtocolCapability::Driver].into_iter().collect(),
+        BTreeSet::new(),
+        ProtocolLimits::default(),
+    )
+    .expect("a driver-only fixture config is valid");
+    driver_only
+        .validate_external_driver_terminal()
+        .expect("the terminal boundary accepts only the driver capability");
+
+    let tool = config(AdapterRole::Tool);
+    assert_eq!(
+        tool.validate_external_driver_terminal(),
+        Err(ProtocolError::MessageForbiddenForRole(AdapterRole::Tool))
+    );
+
+    assert_eq!(
+        AdapterProtocolConfig::new(
+            AdapterRole::Driver,
+            "episode-1",
+            BTreeSet::new(),
+            BTreeSet::new(),
+            ProtocolLimits::default(),
+        ),
+        Err(ProtocolError::CapabilityNotDeclared(
+            ProtocolCapability::Driver
+        ))
+    );
+
+    let driver_with_artifacts = AdapterProtocolConfig::new(
+        AdapterRole::Driver,
+        "episode-1",
+        [ProtocolCapability::Driver, ProtocolCapability::Artifacts]
+            .into_iter()
+            .collect(),
+        BTreeSet::new(),
+        ProtocolLimits::default(),
+    )
+    .expect("the general protocol still permits optional capabilities");
+    assert_eq!(
+        driver_with_artifacts.validate_external_driver_terminal(),
+        Err(ProtocolError::DriverTerminalConfiguration)
+    );
+}

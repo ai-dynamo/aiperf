@@ -19,7 +19,12 @@ use crate::eval::{
     NativeGraphPackagePlan, NativeGraphProfile, PROTOCOL_VERSION, ProviderCapabilities,
 };
 
-use super::{AdapterEnvelope, HostMessage, ProtocolError};
+use super::protocol::DriverTerminalProtocol;
+use super::{
+    AdapterEnvelope, CompatibilityCaptureSession, CompatibilityTerminalReceipt, HostMessage,
+    ProtocolError,
+    factories::{ExternalDriverError, ExternalDriverSession},
+};
 
 const DEFAULT_MAX_STDOUT_FRAME_BYTES: usize = 64 * 1024;
 const DEFAULT_MAX_STDERR_BYTES: usize = 16 * 1024;
@@ -781,6 +786,63 @@ impl Drop for StrictSupervisedAdapter {
     }
 }
 
+/// Borrowed terminal-only session over one already-started externally driven adapter.
+///
+/// The owning runner retains cancellation and reaping authority. This session can issue only the
+/// one fixed Driver terminal request and converts its response before the raw JSON leaves this
+/// private boundary.
+#[allow(dead_code)]
+pub(crate) struct ProtocolExternalDriverSession<'a> {
+    adapter: &'a mut dyn SupervisedAdapter,
+    terminal: DriverTerminalProtocol,
+    capture_session: CompatibilityCaptureSession,
+}
+
+#[allow(dead_code)]
+impl<'a> ProtocolExternalDriverSession<'a> {
+    pub(crate) fn new(
+        adapter: &'a mut dyn SupervisedAdapter,
+        config: AdapterProtocolConfig,
+        capture_session: CompatibilityCaptureSession,
+    ) -> Result<Self, ProtocolError> {
+        Ok(Self {
+            adapter,
+            terminal: DriverTerminalProtocol::new(config)?,
+            capture_session,
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl ExternalDriverSession for ProtocolExternalDriverSession<'_> {
+    async fn request_terminal(
+        &mut self,
+    ) -> Result<CompatibilityTerminalReceipt, ExternalDriverError> {
+        let request = self
+            .terminal
+            .request_terminal()
+            .map_err(|_| ExternalDriverError::TerminalReceiptRejected)?;
+        self.adapter
+            .send(request)
+            .await
+            .map_err(|_| ExternalDriverError::TerminalReceiptRejected)?;
+        let candidate = self
+            .adapter
+            .receive()
+            .await
+            .map_err(|_| ExternalDriverError::TerminalReceiptRejected)?;
+        let bytes = self
+            .terminal
+            .accept_candidate(candidate)
+            .map_err(|_| ExternalDriverError::TerminalReceiptRejected)?;
+        CompatibilityTerminalReceipt::from_canonical_terminal_bytes(
+            self.capture_session.clone(),
+            &bytes,
+        )
+        .map_err(|_| ExternalDriverError::TerminalReceiptRejected)
+    }
+}
+
 /// Immutable segregation key for opt-in adapter reuse.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AdapterPoolKey {
@@ -1186,9 +1248,12 @@ impl std::error::Error for AdapterSupervisionError {}
 mod tests {
     use std::{collections::BTreeMap, fs};
 
+    use crate::eval::native_graph::CompatibilityCaptureSession;
     use crate::eval::{
-        HarborImporter, HarborSource, ModelEndpointIsolationProof, NativeSourceAcquirer,
-        ProviderCapability,
+        AdapterEnvelope, AdapterExit, AdapterMessage, AdapterRole, AttemptId,
+        CompatibilityTerminalReceipt, ExternalDriverError, ExternalDriverSession, HarborImporter,
+        HarborSource, ModelEndpointIsolationProof, NativeSourceAcquirer, ProtocolCapability,
+        ProtocolLimits, ProviderCapability,
     };
 
     use super::*;
@@ -1319,5 +1384,201 @@ executable = "tools/adapter.sh"
             error,
             AdapterSupervisionError::InvalidSpawnRequest("native graph authorization")
         ));
+    }
+
+    struct TerminalCandidateAdapter {
+        candidate: Option<AdapterEnvelope>,
+        sent: Vec<HostEnvelope>,
+    }
+
+    #[async_trait(?Send)]
+    impl SupervisedAdapter for TerminalCandidateAdapter {
+        async fn send(&mut self, message: HostEnvelope) -> Result<(), AdapterSupervisionError> {
+            self.sent.push(message);
+            Ok(())
+        }
+
+        async fn receive(&mut self) -> Result<AdapterEnvelope, AdapterSupervisionError> {
+            self.candidate
+                .take()
+                .ok_or(AdapterSupervisionError::EndOfStream)
+        }
+
+        async fn receive_heartbeat(&mut self) -> Result<AdapterEnvelope, AdapterSupervisionError> {
+            Err(AdapterSupervisionError::EndOfStream)
+        }
+
+        async fn receive_idle(&mut self) -> Result<AdapterEnvelope, AdapterSupervisionError> {
+            Err(AdapterSupervisionError::EndOfStream)
+        }
+
+        async fn reset(&mut self, _: HostEnvelope) -> Result<(), AdapterSupervisionError> {
+            Err(AdapterSupervisionError::InvalidResetTransition)
+        }
+
+        fn release_download_handle(
+            &mut self,
+            _: &ArtifactDownloadHandle,
+        ) -> Result<(), AdapterSupervisionError> {
+            Ok(())
+        }
+
+        async fn cancel_and_reap(
+            &mut self,
+            _: CancelReason,
+        ) -> Result<AdapterExit, AdapterSupervisionError> {
+            Ok(AdapterExit::Reaped)
+        }
+    }
+
+    fn driver_config() -> AdapterProtocolConfig {
+        AdapterProtocolConfig::new(
+            AdapterRole::Driver,
+            "external-episode",
+            [ProtocolCapability::Driver].into_iter().collect(),
+            BTreeSet::new(),
+            ProtocolLimits::default(),
+        )
+        .expect("driver-only fixture config is valid")
+    }
+
+    fn capture_session() -> CompatibilityCaptureSession {
+        CompatibilityCaptureSession::new(
+            ArtifactDigest::from_bytes(b"package"),
+            ArtifactDigest::from_bytes(b"source"),
+            ArtifactDigest::from_bytes(b"task"),
+            ArtifactDigest::from_bytes(b"environment"),
+            ArtifactDigest::from_bytes(b"trial"),
+            AttemptId::new("attempt").expect("fixture attempt is valid"),
+        )
+    }
+
+    fn candidate(operation: &str, output: serde_json::Value) -> AdapterEnvelope {
+        AdapterEnvelope::new(
+            "external-episode",
+            "external-driver-terminal",
+            1,
+            operation,
+            AdapterMessage::EpisodeTerminalCandidate { output },
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn external_driver_session_accepts_one_correlated_candidate_as_a_digest_receipt() {
+        let mut adapter = TerminalCandidateAdapter {
+            candidate: Some(candidate(
+                "external-driver-terminal",
+                serde_json::json!({"answer": "done"}),
+            )),
+            sent: Vec::new(),
+        };
+        let mut session =
+            ProtocolExternalDriverSession::new(&mut adapter, driver_config(), capture_session())
+                .expect("driver-only config creates the terminal boundary");
+
+        let receipt = session
+            .request_terminal()
+            .await
+            .expect("the one matching candidate becomes an opaque receipt");
+        let expected = CompatibilityTerminalReceipt::from_canonical_terminal_bytes(
+            capture_session(),
+            br#"{"answer":"done"}"#,
+        )
+        .expect("fixture canonical terminal receipt is bounded");
+        assert_eq!(receipt, expected);
+        drop(session);
+        assert!(matches!(
+            adapter.sent.as_slice(),
+            [HostEnvelope {
+                sequence: 1,
+                operation,
+                message: HostMessage::RequestEpisodeTerminal { .. },
+                ..
+            }] if operation == "external-driver-terminal"
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn external_driver_session_refuses_a_non_candidate_terminal_response() {
+        let mut adapter = TerminalCandidateAdapter {
+            candidate: Some(AdapterEnvelope::new(
+                "external-episode",
+                "external-driver-terminal",
+                1,
+                "external-driver-terminal",
+                AdapterMessage::OperationFailed {
+                    code: "driver-failed".to_owned(),
+                    details: serde_json::json!({"untrusted": "details"}),
+                },
+            )),
+            sent: Vec::new(),
+        };
+        let mut session =
+            ProtocolExternalDriverSession::new(&mut adapter, driver_config(), capture_session())
+                .expect("driver-only config creates the terminal boundary");
+        assert_eq!(
+            session.request_terminal().await,
+            Err(ExternalDriverError::TerminalReceiptRejected)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn external_driver_session_refuses_a_foreign_terminal_correlation() {
+        let mut foreign = TerminalCandidateAdapter {
+            candidate: Some(candidate(
+                "foreign-terminal",
+                serde_json::json!({"answer": "done"}),
+            )),
+            sent: Vec::new(),
+        };
+        let mut session =
+            ProtocolExternalDriverSession::new(&mut foreign, driver_config(), capture_session())
+                .expect("driver-only config creates the terminal boundary");
+        assert_eq!(
+            session.request_terminal().await,
+            Err(ExternalDriverError::TerminalReceiptRejected)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn external_driver_session_refuses_an_oversized_candidate_without_exposing_it() {
+        let mut oversized = TerminalCandidateAdapter {
+            candidate: Some(candidate(
+                "external-driver-terminal",
+                serde_json::json!({"terminal": "x".repeat(CompatibilityTerminalReceipt::MAX_CANONICAL_BYTES)}),
+            )),
+            sent: Vec::new(),
+        };
+        let mut session =
+            ProtocolExternalDriverSession::new(&mut oversized, driver_config(), capture_session())
+                .expect("driver-only config creates the terminal boundary");
+        let error = session
+            .request_terminal()
+            .await
+            .expect_err("oversized terminal bytes are refused before a receipt exists");
+        assert_eq!(error, ExternalDriverError::TerminalReceiptRejected);
+        assert!(!format!("{error:?}").contains('x'));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn external_driver_session_refuses_a_second_terminal_request_after_settlement() {
+        let mut settled = TerminalCandidateAdapter {
+            candidate: Some(candidate(
+                "external-driver-terminal",
+                serde_json::json!({"answer": "done"}),
+            )),
+            sent: Vec::new(),
+        };
+        let mut session =
+            ProtocolExternalDriverSession::new(&mut settled, driver_config(), capture_session())
+                .expect("driver-only config creates the terminal boundary");
+        session
+            .request_terminal()
+            .await
+            .expect("the first candidate settles the boundary");
+        assert_eq!(
+            session.request_terminal().await,
+            Err(ExternalDriverError::TerminalReceiptRejected)
+        );
     }
 }

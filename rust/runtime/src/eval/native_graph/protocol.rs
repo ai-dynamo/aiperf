@@ -6,6 +6,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{self, Display, Formatter},
+    io::{self, Write},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -142,6 +143,20 @@ impl AdapterProtocolConfig {
     /// Returns the immutable maximum wire frame selected for this session.
     pub const fn max_frame_bytes(&self) -> usize {
         self.limits.max_frame_bytes
+    }
+
+    /// Validates the restricted admission used by one external-driver terminal exchange.
+    pub fn validate_external_driver_terminal(&self) -> Result<(), ProtocolError> {
+        if self.role != AdapterRole::Driver {
+            return Err(ProtocolError::MessageForbiddenForRole(self.role));
+        }
+        if self.capabilities.len() != 1
+            || !self.capabilities.contains(&ProtocolCapability::Driver)
+            || !self.allowed_model_bindings.is_empty()
+        {
+            return Err(ProtocolError::DriverTerminalConfiguration);
+        }
+        Ok(())
     }
 }
 
@@ -603,6 +618,96 @@ enum OperationState {
     Cancelling,
     Closed,
     Failed,
+}
+
+const DRIVER_TERMINAL_SPAN: &str = "external-driver-terminal";
+const DRIVER_TERMINAL_OPERATION: &str = "external-driver-terminal";
+const DRIVER_TERMINAL_SEQUENCE: u64 = 1;
+
+/// Private terminal-only protocol state for one externally driven adapter session.
+///
+/// The ordinary supervised protocol owns startup negotiation. This boundary starts immediately
+/// after that exchange and independently verifies the sole Driver terminal transition before its
+/// candidate can reach compatibility evidence.
+#[allow(dead_code)]
+pub(crate) struct DriverTerminalProtocol {
+    config: AdapterProtocolConfig,
+    requested: bool,
+    settled: bool,
+}
+
+#[allow(dead_code)]
+impl DriverTerminalProtocol {
+    pub(crate) fn new(config: AdapterProtocolConfig) -> Result<Self, ProtocolError> {
+        config.validate_external_driver_terminal()?;
+        Ok(Self {
+            config,
+            requested: false,
+            settled: false,
+        })
+    }
+
+    pub(crate) fn request_terminal(&mut self) -> Result<HostEnvelope, ProtocolError> {
+        if self.requested {
+            return Err(ProtocolError::DriverTerminalAlreadyRequested);
+        }
+        self.requested = true;
+        Ok(HostEnvelope::new(
+            self.config.episode(),
+            DRIVER_TERMINAL_SPAN,
+            DRIVER_TERMINAL_SEQUENCE,
+            DRIVER_TERMINAL_OPERATION,
+            HostMessage::RequestEpisodeTerminal {
+                input: Value::Object(Default::default()),
+            },
+        ))
+    }
+
+    pub(crate) fn accept_candidate(
+        &mut self,
+        envelope: AdapterEnvelope,
+    ) -> Result<Vec<u8>, ProtocolError> {
+        if !self.requested || self.settled {
+            return Err(ProtocolError::DriverTerminalCandidateState);
+        }
+        self.settled = true;
+        self.validate_candidate_envelope(&envelope)?;
+        let AdapterMessage::EpisodeTerminalCandidate { output } = envelope.message else {
+            return Err(ProtocolError::DriverTerminalCandidateRequired);
+        };
+        canonical_terminal_json(&output, &self.config.limits)
+    }
+
+    fn validate_candidate_envelope(&self, envelope: &AdapterEnvelope) -> Result<(), ProtocolError> {
+        if envelope.version != PROTOCOL_VERSION {
+            return Err(ProtocolError::UnsupportedVersion(envelope.version));
+        }
+        if envelope.episode != self.config.episode {
+            return Err(ProtocolError::EpisodeMismatch {
+                expected: self.config.episode.clone(),
+                actual: envelope.episode.clone(),
+            });
+        }
+        validate_identifier(&envelope.span, &self.config.limits, "span")?;
+        validate_identifier(&envelope.operation, &self.config.limits, "operation")?;
+        if envelope.sequence != DRIVER_TERMINAL_SEQUENCE {
+            return Err(ProtocolError::SequenceOutOfOrder {
+                expected: DRIVER_TERMINAL_SEQUENCE,
+                actual: envelope.sequence,
+            });
+        }
+        if envelope.span != DRIVER_TERMINAL_SPAN {
+            return Err(ProtocolError::SpanMismatch {
+                operation: DRIVER_TERMINAL_OPERATION.to_owned(),
+                expected: DRIVER_TERMINAL_SPAN.to_owned(),
+                actual: envelope.span.clone(),
+            });
+        }
+        if envelope.operation != DRIVER_TERMINAL_OPERATION {
+            return Err(ProtocolError::UnknownOperation(envelope.operation.clone()));
+        }
+        Ok(())
+    }
 }
 
 impl StrictAdapterProtocol {
@@ -1812,6 +1917,14 @@ pub enum ProtocolError {
     MessageForbiddenForRole(AdapterRole),
     /// The selected capabilities omitted a message's required capability.
     CapabilityNotDeclared(ProtocolCapability),
+    /// The compatibility terminal boundary requires a Driver-only configuration.
+    DriverTerminalConfiguration,
+    /// The compatibility terminal request was already issued for this session.
+    DriverTerminalAlreadyRequested,
+    /// A terminal candidate arrived before a request or after settlement.
+    DriverTerminalCandidateState,
+    /// The sole terminal response was not a terminal candidate.
+    DriverTerminalCandidateRequired,
     /// Ready failed to acknowledge the exact host-selected capability set.
     ReadyCapabilitiesMismatch,
     /// A correlation was already recorded and cannot be recycled.
@@ -1930,6 +2043,18 @@ impl Display for ProtocolError {
                     formatter,
                     "protocol capability {capability:?} was not declared"
                 )
+            }
+            Self::DriverTerminalConfiguration => {
+                formatter.write_str("external driver terminal requires a Driver-only configuration")
+            }
+            Self::DriverTerminalAlreadyRequested => {
+                formatter.write_str("external driver terminal was already requested")
+            }
+            Self::DriverTerminalCandidateState => {
+                formatter.write_str("external driver terminal candidate is not admissible")
+            }
+            Self::DriverTerminalCandidateRequired => {
+                formatter.write_str("external driver terminal response must be a candidate")
             }
             Self::ReadyCapabilitiesMismatch => {
                 formatter.write_str("ready capabilities do not match host selection")
@@ -2109,6 +2234,71 @@ fn validate_json(value: &Value, limits: &ProtocolLimits) -> Result<(), ProtocolE
         });
     }
     validate_json_shape(value, limits, 1)
+}
+
+fn canonical_terminal_json(
+    value: &Value,
+    limits: &ProtocolLimits,
+) -> Result<Vec<u8>, ProtocolError> {
+    validate_json_shape(value, limits, 1)?;
+    let limit = limits
+        .max_json_bytes
+        .min(super::CompatibilityTerminalReceipt::MAX_CANONICAL_BYTES);
+    let mut writer = BoundedJsonWriter::new(limit);
+    match serde_json::to_writer(&mut writer, value) {
+        Ok(()) => Ok(writer.into_bytes()),
+        Err(_) if writer.overflowed() => Err(ProtocolError::JsonTooLarge {
+            limit,
+            actual: limit.saturating_add(1),
+        }),
+        Err(_) => Err(ProtocolError::InvalidJson(
+            "terminal candidate cannot be canonicalized".to_owned(),
+        )),
+    }
+}
+
+struct BoundedJsonWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+    overflowed: bool,
+}
+
+impl BoundedJsonWriter {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::with_capacity(limit.min(4096)),
+            limit,
+            overflowed: false,
+        }
+    }
+
+    fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+impl Write for BoundedJsonWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let remaining = self.limit.saturating_sub(self.bytes.len());
+        if buffer.len() <= remaining {
+            self.bytes.extend_from_slice(buffer);
+            return Ok(buffer.len());
+        }
+        self.bytes.extend_from_slice(&buffer[..remaining]);
+        self.overflowed = true;
+        Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "terminal JSON exceeded its bound",
+        ))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn validate_json_shape(
