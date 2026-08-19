@@ -3,6 +3,11 @@
 
 //! Process contracts for the native graph-inspection command namespace.
 
+use std::fs;
+#[cfg(unix)]
+use std::fs::File;
+#[cfg(unix)]
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -76,6 +81,207 @@ fn explain_output(path: &str, format: &str, extra: &[&str]) -> Output {
     let mut args = vec!["graph", "explain", path, "--graph-format", format];
     args.extend_from_slice(extra);
     output(&args)
+}
+
+fn visualize_mermaid_output(source: &str, destination: Option<&Path>) -> Output {
+    let fixture_bin = tempfile::tempdir().expect("create empty PATH directory");
+    let mut command = command_without_python(fixture_bin.path());
+    command.args([
+        "graph",
+        "visualize",
+        source,
+        "--graph-format",
+        "dag_jsonl",
+        "--output-format",
+        "mermaid",
+    ]);
+    if let Some(destination) = destination {
+        command.arg("--output").arg(destination);
+    }
+    command.output().expect("run native aiperf binary")
+}
+
+#[test]
+fn output_new_file_receives_rendered_bytes_and_keeps_stdout_empty() {
+    let directory = tempfile::tempdir().expect("create output directory");
+    let destination = directory.path().join("graph.mmd");
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, Some(&destination));
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).is_empty());
+    assert_eq!(
+        fs::read(&destination).expect("read graph output"),
+        include_bytes!("goldens/graph_tools/visualize-small.mmd")
+    );
+}
+
+#[test]
+fn output_without_destination_writes_mermaid_only_to_stdout() {
+    let directory = tempfile::tempdir().expect("create output directory");
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, None);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    assert_eq!(
+        output.stdout,
+        include_bytes!("goldens/graph_tools/visualize-small.mmd")
+    );
+    assert!(
+        fs::read_dir(directory.path())
+            .expect("read untouched output directory")
+            .next()
+            .is_none()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn output_existing_regular_file_is_replaced_atomically() {
+    let directory = tempfile::tempdir().expect("create output directory");
+    let destination = directory.path().join("graph.mmd");
+    fs::write(&destination, b"old graph bytes").expect("write previous graph");
+    let mut previous = File::open(&destination).expect("hold previous graph open");
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, Some(&destination));
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).is_empty());
+    let mut previous_bytes = Vec::new();
+    previous
+        .read_to_end(&mut previous_bytes)
+        .expect("read held previous graph");
+    assert_eq!(previous_bytes, b"old graph bytes");
+    assert_eq!(
+        fs::read(&destination).expect("read replacement graph"),
+        include_bytes!("goldens/graph_tools/visualize-small.mmd")
+    );
+}
+
+#[cfg(not(unix))]
+#[test]
+fn output_existing_regular_file_is_rejected_when_atomic_replacement_is_unavailable() {
+    let directory = tempfile::tempdir().expect("create output directory");
+    let destination = directory.path().join("graph.mmd");
+    fs::write(&destination, b"old graph bytes").expect("write previous graph");
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, Some(&destination));
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("output-invalid"));
+    assert_eq!(
+        fs::read(&destination).expect("read preserved graph"),
+        b"old graph bytes"
+    );
+}
+
+#[test]
+fn output_directory_target_is_rejected_without_a_temporary_file() {
+    let directory = tempfile::tempdir().expect("create output directory");
+    let destination = directory.path().join("output-directory");
+    fs::create_dir(&destination).expect("create directory target");
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, Some(&destination));
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("output-invalid"));
+    assert!(destination.is_dir());
+    assert_eq!(
+        fs::read_dir(directory.path())
+            .expect("read output directory")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn output_missing_parent_reports_write_failure_without_creating_a_destination() {
+    let directory = tempfile::tempdir().expect("create output directory");
+    let destination = directory.path().join("missing").join("graph.mmd");
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, Some(&destination));
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("output-write-failed"));
+    assert!(!destination.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn output_persist_failure_cleans_up_the_temporary_file() {
+    let directory = tempfile::tempdir().expect("create output directory");
+    let destination = directory.path().join("x".repeat(300));
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, Some(&destination));
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("output-write-failed"));
+    assert!(
+        fs::read_dir(directory.path())
+            .expect("read output directory after persist failure")
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
+fn output_non_directory_parent_preserves_the_existing_parent_file() {
+    let directory = tempfile::tempdir().expect("create output directory");
+    let parent = directory.path().join("not-a-directory");
+    fs::write(&parent, b"keep this file").expect("write parent file");
+    let destination = parent.join("graph.mmd");
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, Some(&destination));
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("output-write-failed"));
+    assert_eq!(
+        fs::read(&parent).expect("read preserved parent file"),
+        b"keep this file"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn output_read_only_parent_preserves_existing_destination() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().expect("create output directory");
+    let output_directory = directory.path().join("read-only");
+    fs::create_dir(&output_directory).expect("create read-only output directory");
+    let destination = output_directory.join("graph.mmd");
+    fs::write(&destination, b"old graph bytes").expect("write previous graph");
+    let mut permissions = fs::metadata(&output_directory)
+        .expect("read output directory permissions")
+        .permissions();
+    let original_mode = permissions.mode();
+    permissions.set_mode(0o555);
+    fs::set_permissions(&output_directory, permissions).expect("make output directory read-only");
+
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = visualize_mermaid_output(&source, Some(&destination));
+
+    let mut restore = fs::metadata(&output_directory)
+        .expect("read output directory permissions")
+        .permissions();
+    restore.set_mode(original_mode);
+    fs::set_permissions(&output_directory, restore).expect("restore output directory permissions");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(stderr(&output).contains("output-write-failed"));
+    assert_eq!(
+        fs::read(&destination).expect("read preserved graph"),
+        b"old graph bytes"
+    );
 }
 
 #[test]

@@ -237,6 +237,7 @@ fn run_visualize(args: VisualizeArgs) -> anyhow::Result<i32> {
         Ok(input) => match visualize::run(
             input,
             args.trace.as_deref(),
+            args.output.as_deref(),
             args.output_format,
             args.no_validate,
         ) {

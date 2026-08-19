@@ -4,7 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 
 use aiperf_runtime::graph::inspect::{
     GraphBundleInspection, GraphEdgeAnchor, GraphInspectionOptions, GraphInspectionSeverity,
@@ -19,6 +21,7 @@ use super::{LoadedGraphInput, VisualizeFormat};
 pub(super) fn run(
     input: LoadedGraphInput,
     requested_trace: Option<&str>,
+    output_path: Option<&Path>,
     output_format: VisualizeFormat,
     no_validate: bool,
 ) -> Result<i32, GraphCommandError> {
@@ -41,19 +44,92 @@ pub(super) fn run(
             &mermaid,
         ),
     };
-    let stdout = io::stdout();
-    stdout
-        .lock()
-        .write_all(rendered.as_bytes())
-        .map_err(|cause| {
-            GraphCommandError::with_cause(
-                GraphCommandErrorCode::OutputWriteFailed,
-                "could not write graph visualization",
-                Some(source.display().to_string()),
-                anyhow::Error::new(cause),
-            )
-        })?;
+    match output_path {
+        Some(path) => write_output_atomically(path, rendered.as_bytes())?,
+        None => {
+            let stdout = io::stdout();
+            stdout
+                .lock()
+                .write_all(rendered.as_bytes())
+                .map_err(|cause| {
+                    GraphCommandError::with_cause(
+                        GraphCommandErrorCode::OutputWriteFailed,
+                        "could not write graph visualization",
+                        Some(source.display().to_string()),
+                        anyhow::Error::new(cause),
+                    )
+                })?;
+        }
+    }
     Ok(0)
+}
+
+/// Flush and atomically publish rendered visualization bytes beside their destination.
+pub(super) fn write_output_atomically(path: &Path, bytes: &[u8]) -> Result<(), GraphCommandError> {
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if !metadata.file_type().is_file() {
+            return Err(output_invalid_error(
+                path,
+                "graph visualization output must be a regular file path",
+            ));
+        }
+        #[cfg(not(unix))]
+        {
+            return Err(output_invalid_error(
+                path,
+                "existing graph visualization output cannot be replaced atomically on this platform",
+            ));
+        }
+    }
+
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent_metadata = fs::metadata(parent).map_err(|cause| output_write_error(path, cause))?;
+    if !parent_metadata.is_dir() {
+        return Err(output_write_error(
+            path,
+            io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "output parent is not a directory",
+            ),
+        ));
+    }
+
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|cause| output_write_error(path, cause))?;
+    temporary
+        .write_all(bytes)
+        .map_err(|cause| output_write_error(path, cause))?;
+    temporary
+        .flush()
+        .map_err(|cause| output_write_error(path, cause))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|cause| output_write_error(path, cause))?;
+    temporary
+        .persist(path)
+        .map_err(|cause| output_write_error(path, cause.error))?;
+    Ok(())
+}
+
+fn output_invalid_error(path: &Path, message: &'static str) -> GraphCommandError {
+    GraphCommandError::new(
+        GraphCommandErrorCode::OutputInvalid,
+        format!("[output-invalid] {message}"),
+        Some(path.display().to_string()),
+    )
+}
+
+fn output_write_error(path: &Path, cause: impl Into<anyhow::Error>) -> GraphCommandError {
+    GraphCommandError::with_cause(
+        GraphCommandErrorCode::OutputWriteFailed,
+        "[output-write-failed] could not write graph visualization output",
+        Some(path.display().to_string()),
+        cause.into(),
+    )
 }
 
 fn select_program<'a>(
