@@ -1047,6 +1047,63 @@ class TestRandomPoolBatchSize:
         assert loader.batch_size_video == 3
 
 
+class TestRandomPoolNamedPoolBatchingGuard:
+    """Batching (any batch size != 1) must be rejected outright for directory
+    input, since it flattens every named pool into one anonymous pool per
+    modality -- discarding the field names (e.g. 'query'/'passage') that
+    directory mode exists to preserve. See _reject_batching_with_named_pools.
+    """
+
+    def _named_pool_data(self):
+        return {
+            "queries.jsonl": [
+                RandomPool(texts=[Text(name="query", contents=["Who are you?"])])
+            ],
+            "passages.jsonl": [
+                RandomPool(texts=[Text(name="passage", contents=["I am a cat."])])
+            ],
+        }
+
+    def test_batching_with_multi_file_data_raises(self, default_cfg):
+        """Any batch size != 1 must raise when data spans more than one named pool."""
+        config = TestRandomPoolBatchSize()._make_config(batch_size_image=0)
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_dir", run=make_run_from_cli(config), num_conversations=2
+        )
+        with pytest.raises(ValueError, match="named pools"):
+            loader.convert_to_conversations(self._named_pool_data())
+
+    def test_batching_with_single_file_data_does_not_raise(self, default_cfg):
+        """A single-file (single named pool) input must still batch normally."""
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(text="query1"),
+                RandomPool(text="query2"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        for conv in conversations:
+            assert len(conv.turns[0].texts[0].contents) == 2
+
+    def test_default_batch_sizes_with_multi_file_data_does_not_raise(self, default_cfg):
+        """All batch sizes at their default of 1 must not trigger the named-pool guard."""
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_dir",
+            run=make_run_from_cli(default_cfg),
+            num_conversations=2,
+        )
+        conversations = loader.convert_to_conversations(self._named_pool_data())
+        assert len(conversations) == 2
+        for conv in conversations:
+            names = {text.name for text in conv.turns[0].texts}
+            assert names == {"query", "passage"}
+
+
 class TestRandomPoolBatchSizeWithFileDataset:
     """Batch sizes must work when the dataset is a FileDataset (--input-file path)."""
 

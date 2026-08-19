@@ -43,6 +43,11 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
       - supports named fields for each modality (e.g. text_field_a, text_field_b, etc.)
       - DOES NOT support multi-turn or its features (e.g. delay, sessions, etc.)
 
+    Batching and named pools are mutually exclusive: batch sizes other than 1 are
+    rejected outright for directory input (multiple named pools), since batching
+    flattens every pool into one anonymous pool per modality -- see
+    ``_reject_batching_with_named_pools``.
+
     Note on batching and associations:
     When entries have paired data across modalities (e.g. {"image": "cat.png", "text": "describe
     this cat"}), enabling batch sizes > 1 flattens each modality into an independent pool and
@@ -310,6 +315,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             or self.batch_size_audio != 1
             or self.batch_size_video != 1
         ):
+            self._reject_batching_with_named_pools(data)
             return self._convert_to_conversations_batched(data)
 
         conversations = [
@@ -342,6 +348,36 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             conversations[i].turns.append(turn)
 
         return conversations
+
+    @staticmethod
+    def _reject_batching_with_named_pools(
+        data: dict[Filename, list[RandomPool]],
+    ) -> None:
+        """Reject batch sizes other than 1 when the input is a directory of named pools.
+
+        Directory mode (multiple files in ``data``) exists specifically to give each
+        pool a name (e.g. ``queries.jsonl`` -> ``query``, ``passages.jsonl`` -> ``passage``)
+        so name-sensitive endpoints (e.g. rankings, which routes on the ``query``/``queries``
+        and ``passages`` field names) can find their fields. ``_convert_to_conversations_batched``
+        flattens every file's pool into one anonymous per-modality pool and emits
+        ``Text(name="")``, discarding that identity regardless of which modality's batch
+        size triggered the flattened path.
+
+        Raises:
+            ValueError: If ``data`` has more than one file (a named-pool directory).
+        """
+        if len(data) <= 1:
+            return
+        names = ", ".join(sorted(data))
+        raise ValueError(
+            f"random_pool batch sizes other than 1 are not supported for named pools: "
+            f"the input is a directory of {len(data)} files, so each file forms a "
+            f"separately named pool ({names}). Batching flattens every pool into one "
+            "anonymous pool per modality, which discards those names and breaks "
+            "name-sensitive endpoints (e.g. rankings, which routes on 'query'/'queries' "
+            "and 'passages'). Either drop the batch-size flags to keep one sample per "
+            "named pool, or use a single unnamed pool file to batch."
+        )
 
     def _build_flat_pool(
         self,
