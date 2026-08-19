@@ -82,7 +82,7 @@ For each target namespace, `debug` gathers five independent slices of cluster st
 
 ### 1. Pod problem map
 
-Every AIPerf pod in the namespace (selected by the `app=aiperf` label — `AIPerfLabels.SELECTOR` in `src/aiperf/kubernetes/constants.py` — or a narrower per-job selector when `-j` is set) is walked for container-status problems. See [`_extract_pod_info`](../../src/aiperf/cli_commands/kube/_debug_extract.py) — each container status is classified into one of:
+Every AIPerf pod in the namespace (selected by the `app=aiperf` label — `AIPerfLabels.SELECTOR` in `src/aiperf/kubernetes/constants.py` — or a narrower per-job selector when `-j` is set) is walked for container-status problems. See [`_extract_pod_info`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/cli_commands/kube/_debug_extract.py) — each container status is classified into one of:
 
 | State | Severity | Suggested action |
 |---|---|---|
@@ -102,7 +102,7 @@ The report also shows each pod's `phase`, total restart count across init and ap
 When `-j` / `--job-id` targets a specific AIPerfJob, directly or by resolving
 an AIPerfSweep child, the operator-published
 `status.liveMetrics` is run through the detectors in
-[`benchmark_diagnosis.py`](../../src/aiperf/kubernetes/benchmark_diagnosis.py).
+[`benchmark_diagnosis.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/kubernetes/benchmark_diagnosis.py).
 These complement the pod problem map above: that section reports *container*
 faults, this one reports what the *benchmark* is doing.
 
@@ -274,4 +274,4 @@ If you are wrapping `debug` from a script and need to distinguish "ran clean, fo
 - [`aiperf kube attach`](./attach.md) — live progress stream for a running job.
 - [`aiperf kube preflight`](./getting-started.md) — pre-deploy checks that often prevent the failures `debug` diagnoses.
 - [AI Debugging Guide](./ai-debugging-guide.md) — structured troubleshooting recipes that use `debug` output as input.
-- Source: [`src/aiperf/cli_commands/kube/debug.py`](../../src/aiperf/cli_commands/kube/debug.py), [`_debug_extract.py`](../../src/aiperf/cli_commands/kube/_debug_extract.py), [`_debug_report.py`](../../src/aiperf/cli_commands/kube/_debug_report.py).
+- Source: [`src/aiperf/cli_commands/kube/debug.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/cli_commands/kube/debug.py), [`_debug_extract.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/cli_commands/kube/_debug_extract.py), [`_debug_report.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/cli_commands/kube/_debug_report.py).

@@ -18,10 +18,10 @@ focuses only on what is Kubernetes-specific.
 ## Opt-out by default
 
 GPU telemetry is **on by default** for every `aiperf kube profile` run. The
-`GpuTelemetryConfig` in [`src/aiperf/config/gpu_telemetry.py`](../../src/aiperf/config/gpu_telemetry.py)
+`GpuTelemetryConfig` in [`src/aiperf/config/gpu_telemetry.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/gpu_telemetry.py)
 defaults `enabled=True`, and the JobSet spec propagates that through
 `AIPerfJobSetSpec.gpu_telemetry_enabled` in
-[`src/aiperf/kubernetes/jobset.py`](../../src/aiperf/kubernetes/jobset.py).
+[`src/aiperf/kubernetes/jobset.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/kubernetes/jobset.py).
 
 To skip the sidecar entirely — useful for non-GPU inference targets, CPU-only
 clusters, or clusters without a DCGM Exporter reachable at the pod level —
@@ -33,7 +33,7 @@ aiperf kube profile --model Qwen/Qwen3-0.6B ... --no-gpu-telemetry
 
 When disabled, the controller pod omits the `gpu-telemetry-manager` container
 and the memory estimator drops its allocation (see `_estimate_gpu_telemetry`
-in [`src/aiperf/kubernetes/_memory_estimator/components.py`](../../src/aiperf/kubernetes/_memory_estimator/components.py)).
+in [`src/aiperf/kubernetes/_memory_estimator/components.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/kubernetes/_memory_estimator/components.py)).
 
 ## No auto-discovery — user supplies the DCGM URLs
 
@@ -51,7 +51,7 @@ sources:
 
 2. **`--gpu-telemetry <urls...>`** — user-supplied URLs, appended to the
    defaults in order (deduplicated) by `GPUTelemetryManager` in
-   [`src/aiperf/gpu_telemetry/manager.py`](../../src/aiperf/gpu_telemetry/manager.py).
+   [`src/aiperf/gpu_telemetry/manager.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/manager.py).
 
 For a Kubernetes run you almost always need to pass at least one explicit URL
 pointing at a cluster-reachable DCGM Exporter Service:
@@ -75,9 +75,9 @@ configuration is a per-run CLI flag, not a cluster-wide operator setting.
 When `gpu_telemetry_enabled=True`, the JobSet builder injects a dedicated
 `gpu-telemetry-manager` container into the controller pod via
 `_create_optional_manager_containers` in
-[`src/aiperf/kubernetes/jobset_builder.py`](../../src/aiperf/kubernetes/jobset_builder.py).
+[`src/aiperf/kubernetes/jobset_builder.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/kubernetes/jobset_builder.py).
 It runs the `GPUTelemetryManager` service from
-[`src/aiperf/gpu_telemetry/manager.py`](../../src/aiperf/gpu_telemetry/manager.py).
+[`src/aiperf/gpu_telemetry/manager.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/manager.py).
 
 | Property | Value | Source |
 |---|---|---|
@@ -121,7 +121,7 @@ Publishing happens once, coordinated by the lifecycle commands from
    accumulated `ProcessTelemetryResult`.
 5. **`SystemController._on_process_telemetry_result_message`** — receives the
    published message (see
-   [`src/aiperf/controller/system_controller.py`](../../src/aiperf/controller/system_controller.py)),
+   [`src/aiperf/controller/system_controller.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/controller/system_controller.py)),
    stamps `endpoints_configured` / `endpoints_successful` onto the summary,
    and stores the results for the unified export. `_check_and_trigger_shutdown`
    waits for profile records, telemetry, and server metrics before triggering
@@ -264,7 +264,7 @@ The memory estimator reports zero GPU-telemetry memory usage when
 `gpu_telemetry.enabled=False` OR `gpu_telemetry.urls` is empty (defaults
 never count as URLs for estimation purposes — see
 `_derive_gpu_telemetry` in
-[`src/aiperf/kubernetes/_memory_estimator/params.py`](../../src/aiperf/kubernetes/_memory_estimator/params.py)).
+[`src/aiperf/kubernetes/_memory_estimator/params.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/kubernetes/_memory_estimator/params.py)).
 That is a display heuristic, not a runtime gate: the sidecar still runs
 and still tries the hard-coded defaults. To prevent it from running at
 all, use `--no-gpu-telemetry`.
