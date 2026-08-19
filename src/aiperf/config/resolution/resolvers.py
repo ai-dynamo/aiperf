@@ -178,7 +178,7 @@ class ArtifactDirResolver:
 def _get_stimulus(cfg: object) -> str:
     """Extract stimulus description from the first non-warmup phase."""
     for phase in cfg.phases:  # type: ignore[union-attr]
-        if phase.exclude_from_results:
+        if phase.kind == "warmup":
             continue
         return _describe_phase(phase)
     return ""

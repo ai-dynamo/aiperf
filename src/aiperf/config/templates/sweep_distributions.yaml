@@ -65,12 +65,13 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       requests: 50
       concurrency: 8
-      excludeFromResults: true
 
     - name: profiling
+      kind: profiling
       type: poisson
       rate: 20.0 # Overridden by sweep
       duration: 120

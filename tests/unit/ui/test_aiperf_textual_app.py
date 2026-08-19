@@ -213,48 +213,52 @@ class TestAIPerfTextualAppProgressHandlers:
         return AIPerfTextualApp(run=MagicMock(), controller=mock_controller)
 
     @pytest.mark.asyncio
-    async def test_on_warmup_progress(self, app):
-        """Test on_warmup_progress updates dashboard and header."""
+    async def test_on_phase_progress_warmup(self, app):
+        """Test generic phase progress updates dashboard and header."""
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._has_result_data = True
         mock_section = Mock()
 
-        warmup_stats = Mock()
-        warmup_stats.requests_progress_percent = 50.0
-        warmup_stats.timeout_triggered = False
+        phase_stats = Mock()
+        phase_stats.phase = "warmup"
+        phase_stats.phase_name = "warmup"
+        phase_stats.requests_progress_percent = 50.0
+        phase_stats.timeout_triggered = False
 
         with patch.object(app, "query_one", return_value=mock_section):
-            await app.on_warmup_progress(warmup_stats)
+            await app.on_phase_progress(phase_stats)
 
-            app.progress_dashboard.on_warmup_progress.assert_called_once_with(
-                warmup_stats
+            app.progress_dashboard.on_phase_progress.assert_called_once_with(
+                phase_stats
             )
             app.progress_header.update_progress.assert_called_once_with(
                 header="Warmup", progress=50.0, total=100
             )
 
     @pytest.mark.asyncio
-    async def test_on_warmup_progress_grace_period(self, app):
-        """Test on_warmup_progress shows grace period when timeout triggered."""
+    async def test_on_phase_progress_warmup_grace_period(self, app):
+        """Test generic phase progress shows a named grace period."""
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._has_result_data = True
         mock_section = Mock()
 
-        warmup_stats = Mock()
-        warmup_stats.timeout_triggered = True
-        warmup_stats.requests_sent = 100
-        warmup_stats.requests_completed = 70
-        warmup_stats.requests_cancelled = 5
+        phase_stats = Mock()
+        phase_stats.phase = "warmup"
+        phase_stats.phase_name = "warmup"
+        phase_stats.timeout_triggered = True
+        phase_stats.requests_sent = 100
+        phase_stats.requests_completed = 70
+        phase_stats.requests_cancelled = 5
 
         with patch.object(app, "query_one", return_value=mock_section):
-            await app.on_warmup_progress(warmup_stats)
+            await app.on_phase_progress(phase_stats)
 
-            app.progress_dashboard.on_warmup_progress.assert_called_once_with(
-                warmup_stats
+            app.progress_dashboard.on_phase_progress.assert_called_once_with(
+                phase_stats
             )
             # Progress should be (70 + 5) / 100 * 100 = 75%
             app.progress_header.update_progress.assert_called_once_with(
@@ -262,52 +266,56 @@ class TestAIPerfTextualAppProgressHandlers:
             )
 
     @pytest.mark.asyncio
-    async def test_on_profiling_progress(self, app):
-        """Test on_profiling_progress updates dashboard and header."""
+    async def test_on_phase_progress_custom_profiling_name(self, app):
+        """Test generic phase progress displays the phase identity, not its kind."""
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._has_result_data = True
         mock_section = Mock()
 
-        profiling_stats = Mock()
-        profiling_stats.requests_progress_percent = 50.0
-        profiling_stats.timeout_triggered = False
+        phase_stats = Mock()
+        phase_stats.phase = "profiling"
+        phase_stats.phase_name = "load"
+        phase_stats.requests_progress_percent = 50.0
+        phase_stats.timeout_triggered = False
 
         with patch.object(app, "query_one", return_value=mock_section):
-            await app.on_profiling_progress(profiling_stats)
+            await app.on_phase_progress(phase_stats)
 
-            app.progress_dashboard.on_profiling_progress.assert_called_once_with(
-                profiling_stats
+            app.progress_dashboard.on_phase_progress.assert_called_once_with(
+                phase_stats
             )
             app.progress_header.update_progress.assert_called_once_with(
-                header="Profiling", progress=50.0, total=100
+                header="Load", progress=50.0, total=100
             )
 
     @pytest.mark.asyncio
-    async def test_on_profiling_progress_grace_period(self, app):
-        """Test on_profiling_progress shows grace period when timeout triggered."""
+    async def test_on_phase_progress_custom_profiling_grace_period(self, app):
+        """Test named profiling grace uses the public phase name."""
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
         app._has_result_data = True
         mock_section = Mock()
 
-        profiling_stats = Mock()
-        profiling_stats.timeout_triggered = True
-        profiling_stats.requests_sent = 100
-        profiling_stats.requests_completed = 80
-        profiling_stats.requests_cancelled = 10
+        phase_stats = Mock()
+        phase_stats.phase = "profiling"
+        phase_stats.phase_name = "storm"
+        phase_stats.timeout_triggered = True
+        phase_stats.requests_sent = 100
+        phase_stats.requests_completed = 80
+        phase_stats.requests_cancelled = 10
 
         with patch.object(app, "query_one", return_value=mock_section):
-            await app.on_profiling_progress(profiling_stats)
+            await app.on_phase_progress(phase_stats)
 
-            app.progress_dashboard.on_profiling_progress.assert_called_once_with(
-                profiling_stats
+            app.progress_dashboard.on_phase_progress.assert_called_once_with(
+                phase_stats
             )
             # Progress should be (80 + 10) / 100 * 100 = 90%
             app.progress_header.update_progress.assert_called_once_with(
-                header="Grace Period", progress=90.0, total=100
+                header="Storm Grace", progress=90.0, total=100
             )
 
     @pytest.mark.asyncio
@@ -316,8 +324,10 @@ class TestAIPerfTextualAppProgressHandlers:
         app.progress_dashboard = Mock()
         app.progress_dashboard.batch = MagicMock()
         app.progress_header = Mock()
-        app._profiling_stats = Mock()
-        app._profiling_stats.is_requests_complete = True
+        profiling_stats = Mock()
+        profiling_stats.is_profiling = True
+        profiling_stats.is_requests_complete = True
+        app._phase_stats = {"profiling": profiling_stats}
 
         records_stats = Mock()
         records_stats.records_progress_percent = 75.0

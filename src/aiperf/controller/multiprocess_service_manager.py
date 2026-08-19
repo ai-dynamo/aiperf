@@ -4,29 +4,16 @@ import asyncio
 import multiprocessing
 import os
 import uuid
-from multiprocessing import Process
-from multiprocessing.context import SpawnProcess
+from multiprocessing.process import BaseProcess
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
+from aiperf.common.mp_context import get_mp_context
 from aiperf.common.types import ServiceTypeT
-
-if IS_WINDOWS:
-    # Windows multiprocessing has no fork context — ``ForkProcess`` is
-    # undefined on ``multiprocessing.context`` there. Define a stub so the
-    # type union below evaluates at class-definition time without the
-    # import raising. The stub is never instantiated on Windows because
-    # spawn is the only start method available there; it exists purely
-    # so Pydantic's annotation resolution doesn't NameError.
-    class ForkProcess:  # type: ignore[no-redef]
-        pass
-else:
-    from multiprocessing.context import ForkProcess
 from aiperf.controller.base_service_manager import BaseServiceManager
 
 
@@ -35,12 +22,15 @@ class MultiProcessRunInfo(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    process: Process | SpawnProcess | ForkProcess | None = Field(
+    process: BaseProcess | None = Field(
         default=None,
         description=(
             "The multiprocessing Process handle for the spawned service. "
-            "Subclass varies by start method: ``ForkProcess`` on Linux "
-            "fork-context, ``SpawnProcess`` on Windows/macOS spawn-context."
+            "Typed as the ``BaseProcess`` ancestor rather than a union of "
+            "concrete subclasses: the class comes from ``get_mp_context()``, "
+            "so it is ``ForkServerProcess`` on Linux and ``SpawnProcess`` "
+            "elsewhere, and enumerating subclasses means every start-method "
+            "change silently fails Pydantic validation at service startup."
         ),
     )
     service_type: ServiceTypeT = Field(
@@ -81,7 +71,12 @@ class MultiProcessServiceManager(BaseServiceManager):
                 if service_metadata.replicable
                 else str(service_type)
             )
-            process = Process(
+            # get_mp_context(), never a bare Process: the default start method
+            # on Linux through 3.13 is fork, and forking the controller
+            # duplicates a process holding live ZMQ contexts, a running event
+            # loop, to_thread executor threads and the mp.Queue feeder thread
+            # into a child that then only ever execs Python.
+            process = get_mp_context().Process(
                 target=bootstrap_and_run_service,
                 name=f"{service_type}_process",
                 kwargs={

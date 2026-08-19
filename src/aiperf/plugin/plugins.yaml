@@ -133,6 +133,16 @@ service:
       required: true
       auto_start: true
 
+  worker_group_manager:
+    class: aiperf.workers.worker_group_manager:WorkerGroupManager
+    description: |
+      Kubernetes WorkerGroupManager service. Runs as the main process in worker pods,
+      downloads the dataset once, runs the pod-local raw-inference proxy, and
+      coordinates sibling worker and record-processor containers that share the pod.
+    metadata:
+      required: false
+      auto_start: false
+
 # =============================================================================
 # API Routers
 # =============================================================================
@@ -167,6 +177,13 @@ api_router:
 # One-to-one mapping: exactly one service manager is selected based on run_mode.
 # =============================================================================
 service_manager:
+  kubernetes:
+    class: aiperf.controller.kubernetes_service_manager:KubernetesServiceManager
+    description: |
+      Kubernetes service manager for distributed deployments. Runs control-plane
+      services in separate controller-pod containers while workers and record
+      processors are external Kubernetes pods managed by JobSet.
+
   multiprocessing:
     class: aiperf.controller.multiprocess_service_manager:MultiProcessServiceManager
     description: |

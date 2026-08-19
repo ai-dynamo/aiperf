@@ -65,12 +65,13 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       requests: "{{ base_concurrency * 5 }}"
       concurrency: "{{ base_concurrency // 2 }}"
-      excludeFromResults: true
 
     - name: profiling
+      kind: profiling
       type: gamma
       rate: "{{ target_rate }}"
       smoothness: 1.5

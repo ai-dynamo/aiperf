@@ -125,6 +125,7 @@ CreditsCompleteMessage.request_ns: numeric field has no ge/gt/le/lt bound and is
 DagSpawn.join_at: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 DatasetConfigurationFailedNotification.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 DatasetConfiguredNotification.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
+DatasetDownloadedNotification.request_ns: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 DatasetManifest.seed: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 EmpiricalDistribution.points: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.
 EndpointConfig.template: numeric field has no ge/gt/le/lt bound and is not FiniteFloat. Add a Pydantic numeric constraint, annotate as FiniteFloat, or add to NUMERIC_BOUNDS_WHITELIST.

@@ -194,6 +194,11 @@ class TestCallbackFunctions:
         manager._user_explicitly_configured_telemetry = False
         manager._telemetry_disabled = False
         manager._collection_interval = 0.333
+        manager._records_push_lock = asyncio.Lock()
+        manager._telemetry_records_closed = False
+        manager._completion_marker_sent = False
+        manager._telemetry_sequence = 0
+        manager.debug = MagicMock()
         return manager
 
     @pytest.mark.asyncio
@@ -218,6 +223,7 @@ class TestCallbackFunctions:
         assert call_args.telemetry_source_url == "http://localhost:9400/metrics"
         assert call_args.records == sample_telemetry_records
         assert call_args.error is None
+        assert call_args.sequence == 1
 
     @pytest.mark.asyncio
     async def test_on_telemetry_records_empty(self):
@@ -277,6 +283,64 @@ class TestCallbackFunctions:
         assert call_args.telemetry_source_url == "http://localhost:9400/metrics"
         assert call_args.records == []
         assert call_args.error == error_details
+        assert call_args.sequence == 1
+
+    @pytest.mark.asyncio
+    async def test_completion_marker_follows_accepted_records_and_closes_admission(
+        self, sample_telemetry_records
+    ) -> None:
+        manager = self._create_test_manager()
+        manager.records_push_client = AsyncMock()
+
+        await manager._on_telemetry_records(sample_telemetry_records, "collector")
+        await manager._on_telemetry_error(
+            ErrorDetails(message="collector warning"), "collector"
+        )
+        await manager._send_collection_complete_marker()
+        await manager._on_telemetry_records(sample_telemetry_records, "collector")
+        await manager._send_collection_complete_marker()
+
+        messages = [
+            call.args[0] for call in manager.records_push_client.push.await_args_list
+        ]
+        assert [message.sequence for message in messages] == [1, 2, 2]
+        assert [message.collection_complete for message in messages] == [
+            False,
+            False,
+            True,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_completion_marker_waits_for_inflight_record_push(
+        self, sample_telemetry_records
+    ) -> None:
+        manager = self._create_test_manager()
+        record_push_started = asyncio.Event()
+        release_record_push = asyncio.Event()
+        pushed_messages: list[TelemetryRecordsMessage] = []
+
+        async def push(message: TelemetryRecordsMessage) -> None:
+            pushed_messages.append(message)
+            if not message.collection_complete:
+                record_push_started.set()
+                await release_record_push.wait()
+
+        manager.records_push_client = MagicMock(push=AsyncMock(side_effect=push))
+
+        record_task = asyncio.create_task(
+            manager._on_telemetry_records(sample_telemetry_records, "collector")
+        )
+        await record_push_started.wait()
+        marker_task = asyncio.create_task(manager._send_collection_complete_marker())
+        await asyncio.sleep(0)
+
+        assert len(pushed_messages) == 1
+        release_record_push.set()
+        await asyncio.gather(record_task, marker_task)
+        assert [message.collection_complete for message in pushed_messages] == [
+            False,
+            True,
+        ]
 
     @pytest.mark.asyncio
     async def test_on_telemetry_error_exception_handling(self):
@@ -502,6 +566,7 @@ class TestCollectorManagement:
         with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             manager = self._create_test_manager()
             manager.stop = AsyncMock()
+            manager._send_collection_complete_marker = AsyncMock()
 
             await manager._delayed_shutdown()
 
@@ -510,6 +575,7 @@ class TestCollectorManagement:
 
             # Verify stop was called
             manager.stop.assert_called_once()
+            manager._send_collection_complete_marker.assert_awaited_once()
 
 
 class TestEdgeCases:
@@ -746,6 +812,7 @@ class TestProfileStartCommand:
         ) as mock_create_task:
             manager = self._create_test_manager()
             manager.publish = AsyncMock()
+            manager._send_collection_complete_marker = AsyncMock()
             manager._collectors = {}  # No collectors
 
             start_msg = ProfileStartCommand(
@@ -756,6 +823,7 @@ class TestProfileStartCommand:
             # Verify shutdown was scheduled
             mock_create_task.assert_called_once()
             assert hasattr(manager, "_shutdown_task")
+            manager._send_collection_complete_marker.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_start_no_redundant_reachability_check_or_initialize(self):

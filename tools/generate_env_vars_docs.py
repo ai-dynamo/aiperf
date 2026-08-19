@@ -123,7 +123,21 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
     return Field(name, default, description, constraints)
 
 
-def _parse_settings_class(node: ast.ClassDef) -> Settings | None:
+def _parse_field_definitions(node: ast.ClassDef) -> list[Field]:
+    """Parse public field definitions declared directly on one class."""
+    return [
+        field
+        for item in node.body
+        if isinstance(item, ast.AnnAssign)
+        and (field := _parse_field(item))
+        and not field.name.startswith("_")
+        and "default_factory" not in field.default
+    ]
+
+
+def _parse_settings_class(
+    node: ast.ClassDef, classes: dict[str, ast.ClassDef]
+) -> Settings | None:
     """Parse a Pydantic BaseSettings class."""
     # Must inherit from BaseSettings
     if not any(isinstance(b, ast.Name) and b.id == "BaseSettings" for b in node.bases):
@@ -147,16 +161,14 @@ def _parse_settings_class(node: ast.ClassDef) -> Settings | None:
                         ):
                             env_prefix = kw.value.value
 
-    # Extract fields
+    # Include fields from focused non-settings mixins in MRO order. These are
+    # valid Pydantic settings fields but do not appear directly in the concrete
+    # BaseSettings AST node.
     fields = []
-    for item in node.body:
-        if (
-            isinstance(item, ast.AnnAssign)
-            and (field := _parse_field(item))
-            and not field.name.startswith("_")
-            and "default_factory" not in field.default
-        ):
-            fields.append(field)
+    for base in node.bases:
+        if isinstance(base, ast.Name) and (parent := classes.get(base.id)):
+            fields.extend(_parse_field_definitions(parent))
+    fields.extend(_parse_field_definitions(node))
 
     return Settings(node.name, docstring, env_prefix, fields) if fields else None
 
@@ -164,6 +176,9 @@ def _parse_settings_class(node: ast.ClassDef) -> Settings | None:
 def parse_settings_file(path: Path) -> list[Settings]:
     """Parse all Settings classes from a Python file."""
     tree = ast.parse(path.read_text())
+    classes = {
+        node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+    }
     settings = []
 
     for node in ast.walk(tree):
@@ -171,7 +186,7 @@ def parse_settings_file(path: Path) -> list[Settings]:
             isinstance(node, ast.ClassDef)
             and node.name.startswith("_")
             and node.name.endswith("Settings")
-            and (parsed := _parse_settings_class(node))
+            and (parsed := _parse_settings_class(node, classes))
         ):
             settings.append(parsed)
 

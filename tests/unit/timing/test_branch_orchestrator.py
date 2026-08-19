@@ -78,7 +78,13 @@ async def test_intercept_with_spawn_dispatches_children_and_registers_sticky():
     assert orch.stats.children_spawned == 2
     # Sticky-routing refcount bumped once per spawned child.
     assert sticky_router.register_child_routing.call_count == 2
-    sticky_router.register_child_routing.assert_called_with("root")
+    # The child's own correlation id is passed too, so the router can alias it
+    # onto the root's entry -- otherwise a depth-2 grandchild, whose parent id
+    # is this child, misses the lookup and loses prefix-cache locality.
+    sticky_router.register_child_routing.assert_called_with("root", "child-b")
+    assert [
+        call.args for call in sticky_router.register_child_routing.call_args_list
+    ] == [("root", "child-a"), ("root", "child-b")]
 
 
 @pytest.mark.asyncio

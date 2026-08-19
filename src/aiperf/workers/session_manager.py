@@ -3,6 +3,8 @@
 
 """User session management for multi-turn conversation optimization."""
 
+from collections import OrderedDict
+
 from pydantic import Field
 
 from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
@@ -163,14 +165,29 @@ class UserSession(AIPerfBaseModel):
         self.turn_list.append(response_turn)
 
 
+DEFAULT_MAX_SESSIONS = 100_000
+"""Default per-worker cap on cached multi-turn sessions.
+
+Sessions are normally evicted on the final turn or on cancellation. Abandoned
+ones never are -- a non-final ``CreditReturn`` reclaimed sticky-router side on
+worker reconnect or detach, or a session migrated to another worker leaving the
+original entry stranded, receives no final-turn credit here. Unbounded, those
+accrue for the process lifetime until the container is OOMKilled. The bound is
+high enough that legitimate concurrent multi-turn sessions stay resident.
+"""
+
+
 class UserSessionManager:
     """User session manager for multi-turn processing.
 
     Manages user sessions for multi-turn processing.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[str, UserSession] = {}
+    def __init__(self, max_sessions: int = DEFAULT_MAX_SESSIONS) -> None:
+        if max_sessions < 1:
+            raise ValueError(f"max_sessions ({max_sessions}) must be >= 1")
+        self._max_sessions = max_sessions
+        self._cache: OrderedDict[str, UserSession] = OrderedDict()
         self._default_context_mode: ConversationContextMode | None = None
 
     @property
@@ -278,6 +295,11 @@ class UserSessionManager:
             user_session: User session
         """
         self._cache[x_correlation_id] = user_session
+        self._cache.move_to_end(x_correlation_id)
+        # Drop the least-recently-used entries; see DEFAULT_MAX_SESSIONS for
+        # why abandoned sessions would otherwise never leave.
+        while len(self._cache) > self._max_sessions:
+            self._cache.popitem(last=False)
 
     def get(self, x_correlation_id: str) -> UserSession | None:
         """
@@ -286,7 +308,10 @@ class UserSessionManager:
         Args:
             x_correlation_id: X-Correlation-ID header value
         """
-        return self._cache.get(x_correlation_id)
+        session = self._cache.get(x_correlation_id)
+        if session is not None:
+            self._cache.move_to_end(x_correlation_id)
+        return session
 
     def evict(self, x_correlation_id: str) -> None:
         """

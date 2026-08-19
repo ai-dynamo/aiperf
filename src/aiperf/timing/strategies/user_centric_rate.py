@@ -429,3 +429,10 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             user.next_send_time,
             self._credit_issuer.issue_credit(turn),
         )
+
+    async def handle_session_ended(self, credit: Credit) -> None:
+        """Drop user state when worker loss prevents session continuation."""
+        self._session_to_user.pop(credit.x_correlation_id, None)
+        self._conversation_source.release_marker_for_correlation_id(
+            credit.x_correlation_id
+        )

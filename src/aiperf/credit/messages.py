@@ -78,11 +78,68 @@ class CreditsCompleteMessage(BaseServiceMessage):
 class WorkerReady(Struct, frozen=True, kw_only=True, tag_field="t", tag="wr"):
     """Worker announces readiness to receive credits.
 
-    Sent by worker immediately after connecting to router.
-    Router uses this to add worker to load balancing pool.
+    Retained for compatibility with existing router protocol consumers.
     """
 
     worker_id: str
+
+
+class WorkerConnected(Struct, frozen=True, kw_only=True, tag_field="t", tag="wc"):
+    """Worker announces that its return path is connected.
+
+    Sent by worker after establishing the credit/return channels.
+    Router tracks the worker as connected but does not route credits yet.
+
+    Connectivity and dispatchability are deliberately separate: in
+    Kubernetes the worker is connected long before its pod-local dataset
+    exists, and a worker without a dataset cannot serve a credit. Routing on
+    connectivity alone hands credits to a worker that fails every one of
+    them, silently, and the RecordsManager barrier then waits forever for
+    records that never arrive.
+    """
+
+    worker_id: str
+    """Unique worker service identifier."""
+
+
+class WorkerDispatchable(Struct, frozen=True, kw_only=True, tag_field="t", tag="wd"):
+    """Worker announces readiness to receive routed credits.
+
+    Sent by worker after startup gates complete. Router uses this to add the
+    worker to the routing pool.
+    """
+
+    worker_id: str
+    """Unique worker service identifier."""
+
+
+class WorkerUndispatchable(
+    Struct, omit_defaults=True, frozen=True, kw_only=True, tag_field="t", tag="wu"
+):
+    """Worker announces that it should be removed from routing.
+
+    Sent by worker when it remains connected but must stop receiving new
+    credits.
+
+    NOT CURRENTLY SENT. StickyCreditRouter handles it, but no worker emits it:
+    the third leg of the dispatchability protocol is wired end-to-end except
+    for a trigger. Nothing in the worker today reaches "connected but must not
+    be routed to" -- shutdown announces WorkerShutdown from @on_stop, which
+    unregisters outright, and dataset readiness only ever latches forward via
+    WorkerDispatchable.
+
+    So a worker that degrades mid-run (loses its dataset, starts failing every
+    credit) has only two options: keep failing routed credits, or die and wait
+    roughly 3x STALE_TIME for evict_stale_workers to notice. Choosing the
+    trigger condition is a product decision -- deliberately not invented here,
+    because a wrong one silently stops routing to healthy workers.
+    """
+
+    worker_id: str
+    """Unique worker service identifier."""
+
+    reason: str | None = None
+    """Human-readable reason for becoming undispatchable."""
 
 
 class WorkerShutdown(Struct, frozen=True, kw_only=True, tag_field="t", tag="ws"):
@@ -153,9 +210,54 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
     phase_index: int | None = None
 
 
+# =============================================================================
+# Time Synchronization Messages (pre-flight RTT measurement)
+# =============================================================================
+
+
+class TimePing(Struct, frozen=True, kw_only=True, tag_field="t", tag="tp"):
+    """Worker requests RTT measurement from router.
+
+    Sent during startup before the worker declares itself dispatchable. The router
+    echoes it back as a TimePong so the worker can measure round-trip time on the
+    credit channel itself, rather than on a separate socket with different queuing.
+
+    Attributes:
+        sequence: Probe sequence number.
+        sent_at_ns: Worker perf_counter timestamp when the ping was sent
+            (``time.perf_counter_ns``).
+    """
+
+    sequence: int
+    sent_at_ns: int
+
+
+class TimePong(Struct, frozen=True, kw_only=True, tag_field="t", tag="tpo"):
+    """Router echoes back a TimePing as TimePong.
+
+    Both fields are echoed verbatim so the worker can match the reply to its probe
+    and compute RTT entirely against its own clock -- no router clock is involved,
+    which is what makes the RTT measurement immune to cross-machine skew.
+
+    Attributes:
+        sequence: Probe sequence number (echoed from TimePing).
+        sent_at_ns: Original worker send timestamp (echoed from TimePing).
+    """
+
+    sequence: int
+    sent_at_ns: int
+
+
 # Union type for decoding worker -> router messages
 WorkerToRouterMessage: TypeAlias = (
-    WorkerReady | WorkerShutdown | CreditReturn | FirstToken
+    WorkerReady
+    | WorkerConnected
+    | WorkerDispatchable
+    | WorkerUndispatchable
+    | WorkerShutdown
+    | CreditReturn
+    | FirstToken
+    | TimePing
 )
 
 # =============================================================================
@@ -177,4 +279,4 @@ class CancelCredits(Struct, frozen=True, kw_only=True, tag_field="t", tag="cc"):
 
 # Union type for decoding router -> worker messages
 # Credit is sent directly (no wrapper), CancelCredits for cancellation
-RouterToWorkerMessage: TypeAlias = Credit | CancelCredits
+RouterToWorkerMessage: TypeAlias = Credit | CancelCredits | TimePong

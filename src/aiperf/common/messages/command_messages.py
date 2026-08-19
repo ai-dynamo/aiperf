@@ -266,12 +266,54 @@ class ProfileCompleteCommand(CommandMessage):
     """
 
     command: CommandTypeT = CommandType.PROFILE_COMPLETE
+    start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Start of the authoritative profiling result window.",
+    )
+    end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="End of the authoritative profiling result window.",
+    )
+    warmup_start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Start of the aggregate warmup result window, when warmup ran.",
+    )
+    warmup_end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="End of the aggregate warmup result window, when warmup ran.",
+    )
 
 
 class ProfileCancelCommand(CommandMessage):
     """Command message sent to request services to cancel profiling."""
 
     command: CommandTypeT = CommandType.PROFILE_CANCEL
+
+
+class FinalizeArtifactsCommand(CommandMessage):
+    """Command sent while communications are live to finalize local artifacts."""
+
+    command: CommandTypeT = CommandType.FINALIZE_ARTIFACTS
+    request_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Non-negative timestamp of the finalization request",
+    )
+
+
+class GetPodStatesCommand(CommandMessage):
+    """Request the controller-owned worker-pod state snapshot."""
+
+    command: CommandTypeT = CommandType.GET_POD_STATES
+    request_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Non-negative timestamp of the worker-state request.",
+    )
 
 
 class ShutdownCommand(CommandMessage):
@@ -290,6 +332,14 @@ class RegisterServiceCommand(CommandMessage):
         ..., description="The type of the service to register"
     )
     state: LifecycleState = Field(..., description="The current state of the service")
+    pod_name: str | None = Field(
+        default=None,
+        description="Kubernetes pod name hosting the service, when applicable",
+    )
+    pod_index: str | None = Field(
+        default=None,
+        description="JobSet pod index hosting the service, when applicable",
+    )
     capabilities: tuple[str, ...] = Field(
         default=(),
         description=(

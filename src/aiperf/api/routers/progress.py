@@ -8,27 +8,14 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter
-from pydantic import Field
 
+from aiperf.api.models.responses import ProgressResponse
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.enums import CreditPhase
-from aiperf.common.mixins.progress_tracker_mixin import (
-    CombinedPhaseStats,
-    ProgressTrackerMixin,
-)
-from aiperf.common.models import AIPerfBaseModel
+from aiperf.common.mixins.progress_tracker_mixin import ProgressTrackerMixin
 
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
 
 progress_router = APIRouter()
-
-
-class ProgressResponse(AIPerfBaseModel):
-    """Benchmark progress response."""
-
-    phases: dict[CreditPhase, CombinedPhaseStats] = Field(
-        default_factory=dict, description="Per-phase progress stats"
-    )
 
 
 class ProgressRouter(ProgressTrackerMixin, BaseRouter):

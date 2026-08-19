@@ -605,6 +605,11 @@ class ConversationMetadata(AIPerfBaseModel):
             "one replay dependency graph. Independent scopes are never joined."
         ),
     )
+    context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="Optional per-conversation context-mode override. Falls back "
+        "to DatasetMetadata.default_context_mode when unset.",
+    )
     accuracy_ground_truth: str | None = Field(
         default=None,
         description="Ground-truth answer for this conversation (accuracy mode only). "
@@ -795,6 +800,7 @@ class Conversation(AIPerfBaseModel):
             subagent_type=self.subagent_type,
             parent_conversation_id=self.parent_conversation_id,
             replay_scope_id=self.replay_scope_id,
+            context_mode=self.context_mode,
             accuracy_ground_truth=self.accuracy_ground_truth,
             accuracy_task=self.accuracy_task,
         )

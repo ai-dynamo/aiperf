@@ -3,7 +3,7 @@
 
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -260,3 +260,63 @@ class TestTimingManagerStartProfilingAndInitialization:
             mgr._phase_orchestrator is None
             and not mgr._dataset_configured_event.is_set()
         )
+
+
+class TestTimingManagerWorkerFloor:
+    @pytest.mark.asyncio
+    async def test_deregistered_workers_below_floor_abort_after_grace(
+        self, configured_manager, monkeypatch
+    ) -> None:
+        """A sustained dispatchable-worker loss fails the benchmark at TimingManager."""
+        manager = configured_manager
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager.phase_publisher.publish_profile_cancel = AsyncMock()
+        manager._publish_phase_failure = MagicMock()
+        manager._kill = AsyncMock()
+        manager.sticky_router._workers = {
+            "worker-1": MagicMock(),
+        }
+        manager.sticky_router._workers_cache = list(
+            manager.sticky_router._workers.values()
+        )
+        manager.sticky_router._peak_worker_count = 2
+        monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.75)
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 0.0)
+
+        manager._on_dispatchable_worker_count_changed(1)
+        assert manager._worker_floor_abort_task is not None
+        await manager._worker_floor_abort_task
+
+        manager.phase_publisher.publish_profile_cancel.assert_awaited_once()
+        manager._phase_orchestrator.cancel.assert_awaited_once()
+        manager._publish_phase_failure.assert_called_once()
+        manager._kill.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_worker_reregistration_cancels_pending_floor_abort(
+        self, configured_manager, monkeypatch
+    ) -> None:
+        """A Kubernetes replacement that becomes dispatchable before grace is safe."""
+        manager = configured_manager
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager._publish_phase_failure = MagicMock()
+        manager.sticky_router._workers = {"worker-1": MagicMock()}
+        manager.sticky_router._workers_cache = list(
+            manager.sticky_router._workers.values()
+        )
+        manager.sticky_router._peak_worker_count = 2
+        monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.75)
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 0.01)
+
+        manager._on_dispatchable_worker_count_changed(1)
+        manager.sticky_router._workers["worker-2"] = MagicMock()
+        manager.sticky_router._workers_cache = list(
+            manager.sticky_router._workers.values()
+        )
+        manager._on_dispatchable_worker_count_changed(2)
+        await asyncio.sleep(0.02)
+
+        manager._phase_orchestrator.cancel.assert_not_awaited()
+        manager._publish_phase_failure.assert_not_called()

@@ -822,6 +822,13 @@ class MetricFlags(Flag):
     early), so metrics that assume ``max_tokens`` is a target — notably the
     OSL-mismatch family — are meaningless there and only produce noise."""
 
+    CANCELLED_ONLY = 1 << 20
+    """Metrics that are only applicable to client-cancelled records.
+
+    A cancellation carries an error-shaped response but is not a server error,
+    so it is processed separately from ``ERROR_ONLY`` metrics.
+    """
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.

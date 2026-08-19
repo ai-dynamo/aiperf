@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 from rich.console import Console, ConsoleRenderable, Group
 from rich.highlighter import ReprHighlighter
@@ -26,6 +26,9 @@ from aiperf.plugin.enums import PluginType, ServiceType, UIType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+LogQueue: TypeAlias = multiprocessing.Queue
+"""Multiprocessing queue carrying log records from child processes to the parent."""
 
 _logger = AIPerfLogger(__name__)
 _global_log_queue: "multiprocessing.Queue | None" = None
@@ -65,12 +68,27 @@ def get_global_log_queue() -> multiprocessing.Queue:
     """Get the global log queue. Will create a new queue if it doesn't exist.
 
     Thread-safe singleton pattern using double-checked locking.
+
+    The queue is built from ``get_mp_context()`` rather than the bare
+    ``multiprocessing.Queue``: service processes are spawned through that same
+    context (forkserver on Linux, spawn elsewhere), and CPython refuses to hand
+    a SemLock created under one start method to a child started under another
+    ("A SemLock created in a fork context is being shared with a process in a
+    spawn context"). The bare constructor uses the process-global default
+    context, which is ``fork`` on Linux, so it must not be used here.
+
+    ``mp_context`` is imported lazily: it starts the forkserver helper on first
+    call, and this module is imported far earlier than the point where that is
+    safe (the forkserver snapshots the environment once, and the tokenizer
+    preload env vars are set just before the first queue is created).
     """
     global _global_log_queue
     if _global_log_queue is None:
         with _log_queue_lock:
             if _global_log_queue is None:
-                _global_log_queue = multiprocessing.Queue(
+                from aiperf.common.mp_context import get_mp_context
+
+                _global_log_queue = get_mp_context().Queue(
                     maxsize=Environment.LOGGING.QUEUE_MAXSIZE
                 )
     return _global_log_queue

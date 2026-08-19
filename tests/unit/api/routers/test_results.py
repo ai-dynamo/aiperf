@@ -10,6 +10,9 @@ from fastapi import FastAPI
 from pytest import param
 from starlette.testclient import TestClient
 
+from aiperf.api.models.responses import BenchmarkResultsResponse, BenchmarkStatus
+from aiperf.api.models.results import ResultFileInfo, ResultsListResponse
+from aiperf.api.routers import results
 from aiperf.api.routers.results import ResultsRouter
 from aiperf.common.messages import ProcessRecordsResultMessage
 from aiperf.common.models import MetricResult
@@ -79,6 +82,12 @@ def results_client(results_router: ResultsRouter) -> TestClient:
 
 class TestResultsEndpoint:
     """Test the /api/results endpoint for benchmark results retrieval."""
+
+    def test_results_uses_shared_response_contracts(self) -> None:
+        assert results.BenchmarkStatus is BenchmarkStatus
+        assert results.BenchmarkResultsResponse is BenchmarkResultsResponse
+        assert results.ResultFileInfo is ResultFileInfo
+        assert results.ResultsListResponse is ResultsListResponse
 
     def test_results_running_no_results(
         self, results_client: TestClient, results_router: ResultsRouter

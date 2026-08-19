@@ -196,13 +196,14 @@ class TestLoadNormalization:
         multi = [
             {
                 "name": "warmup",
+                "kind": "warmup",
                 "type": "concurrency",
                 "concurrency": 2,
                 "requests": 10,
-                "exclude_from_results": True,
             },
             {
                 "name": "profiling",
+                "kind": "profiling",
                 "type": "concurrency",
                 "concurrency": 8,
                 "requests": 100,
@@ -297,12 +298,9 @@ class TestPhaseFlattening:
         cfg = BenchmarkConfig.model_validate(data)
 
         assert [p.name for p in cfg.phases] == ["warmup", "profiling"]
-        assert (
-            next(p for p in cfg.phases if p.name == "warmup").exclude_from_results
-            is True
-        )
+        assert next(p for p in cfg.phases if p.name == "warmup").kind == "warmup"
 
-    def test_warmup_auto_sets_exclude_from_results(self) -> None:
+    def test_warmup_shorthand_infers_warmup_kind(self) -> None:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
@@ -312,20 +310,12 @@ class TestPhaseFlattening:
         }
         cfg = BenchmarkConfig.model_validate(data)
 
-        assert (
-            next(p for p in cfg.phases if p.name == "warmup").exclude_from_results
-            is True
-        )
+        assert next(p for p in cfg.phases if p.name == "warmup").kind == "warmup"
 
-    def test_warmup_user_excludeFromResults_camelcase_does_not_collide(self) -> None:
-        """Regression: `warmup:` shorthand must not inject snake_case dup-key.
-
-        Previously the normalizer always set `exclude_from_results` via
-        ``setdefault``, which collided with a user-supplied camelCase
-        ``excludeFromResults`` and tripped Pydantic's `extra="forbid"` on the
-        phase model. Now the value is enforced by the phase validator instead
-        of injected by the normalizer, so the collision cannot occur.
-        """
+    def test_warmup_user_excludeFromResults_camelcase_accepted_and_ignored(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The retired exclusion switch is tolerated through its old alias."""
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
@@ -333,14 +323,15 @@ class TestPhaseFlattening:
             "warmup": {**_CONCURRENCY_PHASE, "excludeFromResults": True},
             "profiling": _CONCURRENCY_PHASE,
         }
-        cfg = BenchmarkConfig.model_validate(data)
+        with caplog.at_level("WARNING"):
+            cfg = BenchmarkConfig.model_validate(data)
 
-        assert (
-            next(p for p in cfg.phases if p.name == "warmup").exclude_from_results
-            is True
-        )
+        assert next(p for p in cfg.phases if p.name == "warmup").kind == "warmup"
+        assert "'excludeFromResults' is deprecated and ignored" in caplog.text
 
-    def test_warmup_explicit_exclude_false_rejected(self) -> None:
+    def test_warmup_user_exclude_from_results_accepted_and_ignored(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
@@ -348,18 +339,26 @@ class TestPhaseFlattening:
             "warmup": {**_CONCURRENCY_PHASE, "exclude_from_results": False},
             "profiling": _CONCURRENCY_PHASE,
         }
-        with pytest.raises(ValueError, match="exclude_from_results must be True"):
-            BenchmarkConfig.model_validate(data)
+        with caplog.at_level("WARNING"):
+            cfg = BenchmarkConfig.model_validate(data)
 
-    def test_profiling_explicit_exclude_true_rejected(self) -> None:
+        assert next(p for p in cfg.phases if p.name == "warmup").kind == "warmup"
+        assert "contradicts kind='warmup'" in caplog.text
+
+    def test_profiling_user_exclude_from_results_accepted_and_ignored(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         data = {
             "models": ["m"],
             "endpoint": _ENDPOINT,
             "datasets": [_DEFAULT_NAMED_DATASET],
             "profiling": {**_CONCURRENCY_PHASE, "exclude_from_results": True},
         }
-        with pytest.raises(ValueError, match="exclude_from_results must be False"):
-            BenchmarkConfig.model_validate(data)
+        with caplog.at_level("WARNING"):
+            cfg = BenchmarkConfig.model_validate(data)
+
+        assert next(p for p in cfg.phases if p.name == "profiling").kind == "profiling"
+        assert "contradicts kind='profiling'" in caplog.text
 
     def test_warmup_without_profiling_rejected(self) -> None:
         data = {

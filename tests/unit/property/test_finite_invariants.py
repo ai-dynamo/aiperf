@@ -357,9 +357,16 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # not a numeric leaf — same shape as the baselined endpoint_summaries
     # sibling; per-summary numeric fields carry their own bounds.
     "ServerMetricsResults.warmup_endpoint_summaries",
+    # RealtimeServerMetricsMessage.endpoint_summaries: same dict-of-summaries
+    # shape; the substring heuristic sees "int" inside "Endpoint".
+    "RealtimeServerMetricsMessage.endpoint_summaries",
     # RateSeriesConfig.points: list[RateSeriesPoint], not a numeric field. The
     # substring-based heuristic sees "int" inside "Point".
     "RateSeriesConfig.points",
+    # RequestRecord.clock_offset_ns: signed controller/worker clock difference
+    # (received - issued). Either sign is legitimate -- a worker clock behind
+    # the controller's is negative -- so no field-level bound applies.
+    "RequestRecord.clock_offset_ns",
     # OutputFragment.metrics: dict[str, MetricValueTypeT], not a numeric leaf.
     # Per-metric values are constrained by the metrics system; no field-level
     # bound is meaningful on the container.

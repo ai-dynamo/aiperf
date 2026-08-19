@@ -9,6 +9,8 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from aiperf.api.models.responses import ProgressResponse
+from aiperf.api.routers import progress
 from aiperf.api.routers.progress import ProgressRouter
 from aiperf.common.enums import CreditPhase
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
@@ -29,6 +31,9 @@ def progress_client(progress_router: ProgressRouter) -> TestClient:
 
 class TestProgressEndpoint:
     """Test the /api/progress endpoint."""
+
+    def test_progress_uses_shared_response_contract(self) -> None:
+        assert progress.ProgressResponse is ProgressResponse
 
     def test_progress_empty(self, progress_client: TestClient) -> None:
         response = progress_client.get("/api/progress")

@@ -697,6 +697,7 @@ async def test_poisoned_corpus_completes_without_deadlock(
         assert branch_stats.children_errored == 0, branch_stats
 
 
+@pytest.mark.slow
 async def test_disjoint_corpus_splits_into_fa_sessions(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:
@@ -727,6 +728,7 @@ async def test_disjoint_corpus_splits_into_fa_sessions(
     )
 
 
+@pytest.mark.slow
 async def test_two_identical_runs_produce_identical_split_structure(
     tmp_path: Path, aiperf_mock_server: AIPerfMockServer
 ) -> None:

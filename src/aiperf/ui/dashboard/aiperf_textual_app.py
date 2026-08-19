@@ -106,8 +106,7 @@ class AIPerfTextualApp(App):
         self.profile_results: list[RenderableType] = []
         self.run = run
         self.controller: SystemController = controller
-        self._warmup_stats: CombinedPhaseStats | None = None
-        self._profiling_stats: CombinedPhaseStats | None = None
+        self._phase_stats: dict[str, CombinedPhaseStats] = {}
         self._records_stats: CombinedPhaseStats | None = None
         self._has_result_data = False
 
@@ -234,65 +233,35 @@ class AIPerfTextualApp(App):
             else:
                 self.notify("No logs to copy", severity="warning")
 
-    async def on_warmup_progress(self, warmup_stats: CombinedPhaseStats) -> None:
-        """Forward warmup progress updates to the Textual App."""
+    async def on_phase_progress(self, phase_stats: CombinedPhaseStats) -> None:
+        """Forward named-phase progress updates to the Textual App."""
         if not self._has_result_data:
             self._on_first_result_data()
-        self._warmup_stats = warmup_stats
+        phase_name = phase_stats.phase_name or str(phase_stats.phase)
+        self._phase_stats[phase_name] = phase_stats
 
         if self.progress_dashboard:
             async with self.progress_dashboard.batch():
-                self.progress_dashboard.on_warmup_progress(warmup_stats)
+                self.progress_dashboard.on_phase_progress(phase_stats)
 
         if self.progress_header:
-            # During grace period, show progress as completed+cancelled out of sent
-            if warmup_stats.timeout_triggered:
-                total = warmup_stats.requests_sent
+            label = phase_name.title()
+            if phase_stats.timeout_triggered:
+                total = phase_stats.requests_sent
                 completed = (
-                    warmup_stats.requests_completed + warmup_stats.requests_cancelled
+                    phase_stats.requests_completed + phase_stats.requests_cancelled
                 )
                 progress = (completed / total * 100) if total > 0 else 0
                 self.progress_header.update_progress(
-                    header="Warmup Grace",
+                    header=f"{label} Grace",
                     progress=progress,
                     total=100,
                 )
             else:
-                progress = warmup_stats.requests_progress_percent
+                progress = phase_stats.requests_progress_percent
                 if progress is not None:
                     self.progress_header.update_progress(
-                        header="Warmup",
-                        progress=progress,
-                        total=100,
-                    )
-
-    async def on_profiling_progress(self, profiling_stats: CombinedPhaseStats) -> None:
-        """Forward requests phase progress updates to the Textual App."""
-        if not self._has_result_data:
-            self._on_first_result_data()
-        self._profiling_stats = profiling_stats
-        if self.progress_dashboard:
-            async with self.progress_dashboard.batch():
-                self.progress_dashboard.on_profiling_progress(profiling_stats)
-        if self.progress_header:
-            # During grace period, show progress as completed+cancelled out of sent
-            if profiling_stats.timeout_triggered:
-                total = profiling_stats.requests_sent
-                completed = (
-                    profiling_stats.requests_completed
-                    + profiling_stats.requests_cancelled
-                )
-                progress = (completed / total * 100) if total > 0 else 0
-                self.progress_header.update_progress(
-                    header="Grace Period",
-                    progress=progress,
-                    total=100,
-                )
-            else:
-                progress = profiling_stats.requests_progress_percent
-                if progress is not None:
-                    self.progress_header.update_progress(
-                        header="Profiling",
+                        header=label,
                         progress=progress,
                         total=100,
                     )
@@ -305,13 +274,11 @@ class AIPerfTextualApp(App):
                 self.progress_dashboard.on_records_progress(records_stats)
 
         pct = records_stats.records_progress_percent
-        if (
-            self._profiling_stats
-            and self._profiling_stats.is_requests_complete
-            and self.progress_header
-            and pct is not None
-            and pct > 0
-        ):
+        profiling_complete = any(
+            stats.is_profiling and stats.is_requests_complete
+            for stats in self._phase_stats.values()
+        )
+        if profiling_complete and self.progress_header and pct is not None and pct > 0:
             self.progress_header.update_progress(
                 header="Records",
                 progress=records_stats.records_progress_percent,

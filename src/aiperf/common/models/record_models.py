@@ -414,6 +414,11 @@ class PhaseProfileResults(AIPerfBaseModel):
         default_factory=list,
         description="Non-fatal server metrics warnings for phase artifact export.",
     )
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description="DAG branch orchestration counters scoped to this concrete "
+        "phase. None when the phase did not use a branch orchestrator.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -450,6 +455,19 @@ class ProfileResults(AIPerfBaseModel):
     was_cancelled: bool = Field(
         default=False,
         description="Whether the profile run was cancelled early",
+    )
+    is_complete: bool = Field(
+        default=True,
+        description="Whether every expected record was aggregated into these "
+        "results. False when the run was finalized without them -- e.g. the "
+        "record-stall watchdog gave up waiting, or result finalization failed "
+        "outright. Metrics in an incomplete result are computed over a subset "
+        "of the run and must not be compared against complete runs.",
+    )
+    incomplete_reason: str | None = Field(
+        default=None,
+        description="Human-readable explanation of why the results are "
+        "incomplete. None when ``is_complete`` is True.",
     )
     successful_request_count: int = Field(
         default=0,
@@ -1112,6 +1130,45 @@ class RequestRecord(AIPerfBaseModel):
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
     )
+    clock_offset_ns: int | None = Field(
+        default=None,
+        description="Measured offset between this worker's wall clock and the "
+        "controller's, in nanoseconds, at the moment the record was emitted. "
+        "Sign convention is ``received - issued``, so a worker clock running "
+        "ahead of the controller is positive and the correction SUBTRACTS: "
+        "``controller_time = worker_time - clock_offset_ns``. None outside "
+        "Kubernetes mode, where both clocks are the same clock and no "
+        "correction is meaningful. Signed, so no bounds apply. Measured in the "
+        "tracker's anchored clock domain (a wall-clock anchor advanced by "
+        "perf_counter deltas) while ``timestamp_ns`` is raw ``time.time_ns``, "
+        "so an NTP step mid-run leaves the correction carrying that step as "
+        "residual error - bounded by the step size, typically sub-millisecond.",
+    )
+
+    @property
+    def controller_timestamp_ns(self) -> int:
+        """``timestamp_ns`` mapped into the controller's clock frame.
+
+        The one conversion from worker time to controller time:
+        ``controller_time = worker_time - clock_offset_ns``. Returns
+        ``timestamp_ns`` unchanged when no offset was measured (every
+        non-Kubernetes run, and a Kubernetes worker before its first credit),
+        so callers need no mode check.
+
+        Use this wherever a wall-clock timestamp is compared or exported
+        against anything produced outside this worker's pod - credit issue
+        times, replay schedule zero, or another pod's records. The raw
+        ``timestamp_ns`` stays untouched as the provenance record.
+
+        Example:
+            >>> record = RequestRecord(timestamp_ns=1_000_000_500, clock_offset_ns=500)
+            >>> record.controller_timestamp_ns
+            1000000000
+        """
+        if self.clock_offset_ns is None:
+            return self.timestamp_ns
+        return self.timestamp_ns - self.clock_offset_ns
+
     trace_data: SerializeAsAny[BaseTraceData] | None = Field(
         default=None,
         description="Comprehensive trace data captured via a trace config. "
@@ -1527,8 +1584,17 @@ class ParsedResponseRecord:
 
     @cached_property
     def timestamp_ns(self) -> int:
-        """Get the wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns)."""
-        return self.request.timestamp_ns
+        """Wall-clock request timestamp in the CONTROLLER's frame, in nanoseconds.
+
+        Clock-offset corrected (see ``RequestRecord.controller_timestamp_ns``),
+        because every consumer of this value compares it across pods or against
+        controller-produced times: benchmark start/end are folded to the min and
+        max over all workers, and replay lag is measured against the timing
+        manager's schedule zero. Identical to the raw ``request.timestamp_ns``
+        outside Kubernetes mode. DO NOT USE FOR LATENCY CALCULATIONS
+        (perf-counter deltas own that).
+        """
+        return self.request.controller_timestamp_ns
 
     # TODO: How do we differentiate the end of the request vs the time of the last response?
     #       Which one should we use for the latency metrics?
