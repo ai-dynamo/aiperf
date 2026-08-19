@@ -1,0 +1,9 @@
+{"type":"session_meta","payload":{"id":"safe-after-results"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"run it"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{}","call_id":"call-one"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-one","output":"done"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"first summary"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"again"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{}","call_id":"call-two"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-two","output":"done again"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"second summary"}]}}
