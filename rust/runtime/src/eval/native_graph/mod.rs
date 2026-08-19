@@ -148,6 +148,6 @@ pub use supervision::{
     AdapterCheckout, AdapterCheckoutOrigin, AdapterExit, AdapterLifecycleDeadlines, AdapterPool,
     AdapterPoolKey, AdapterProcess, AdapterRuntimeFactory, AdapterSpawnRequest,
     AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError, CancelReason,
-    NativeGraphAdapterAuthorization, ProtocolAdapterRuntimeFactory, StrictSupervisedAdapter,
-    SupervisedAdapter,
+    ExternallyDrivenAdapterAuthorization, NativeGraphAdapterAuthorization,
+    ProtocolAdapterRuntimeFactory, StrictSupervisedAdapter, SupervisedAdapter,
 };

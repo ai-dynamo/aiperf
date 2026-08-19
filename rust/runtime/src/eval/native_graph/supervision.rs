@@ -4,6 +4,7 @@
 //! Supervised adapter lifecycle, exact-profile authority, and reuse contracts.
 
 use std::{
+    cell::Cell,
     collections::{BTreeMap, BTreeSet, VecDeque},
     fmt::{self, Display, Formatter},
     rc::Rc,
@@ -15,8 +16,9 @@ use async_trait::async_trait;
 use crate::eval::provider::{ModelEndpointAuthority, ProviderError, ProviderProfile};
 use crate::eval::{
     AdapterProtocol, AdapterProtocolConfig, AdapterProtocolFactory, AdapterRole, ArtifactDigest,
-    ArtifactDownloadHandle, EvalExecutionError, HostEnvelope, ModelSecretId,
+    ArtifactDownloadHandle, EvalExecutionError, HarborTaskPackage, HostEnvelope, ModelSecretId,
     NativeGraphPackagePlan, NativeGraphProfile, PROTOCOL_VERSION, ProviderCapabilities,
+    ResolvedEpisodeTrial,
 };
 
 use super::protocol::DriverTerminalProtocol;
@@ -172,6 +174,7 @@ pub struct AdapterSpawnRequest {
     max_stdout_frame_bytes: usize,
     max_stderr_bytes: usize,
     exact_spawn_token: Option<ExactSpawnToken>,
+    external_spawn_token: Option<ExactSpawnToken>,
 }
 
 impl AdapterSpawnRequest {
@@ -196,6 +199,7 @@ impl AdapterSpawnRequest {
             max_stdout_frame_bytes: DEFAULT_MAX_STDOUT_FRAME_BYTES,
             max_stderr_bytes: DEFAULT_MAX_STDERR_BYTES,
             exact_spawn_token: None,
+            external_spawn_token: None,
         })
     }
 
@@ -207,6 +211,16 @@ impl AdapterSpawnRequest {
     ) -> Result<Self, AdapterSupervisionError> {
         let mut request = Self::for_non_model_adapter(argv, environment, deadlines)?;
         request.exact_spawn_token = Some(exact_spawn_token);
+        Ok(request)
+    }
+
+    fn for_external_driver(
+        argv: impl IntoIterator<Item = String>,
+        deadlines: AdapterLifecycleDeadlines,
+        external_spawn_token: ExactSpawnToken,
+    ) -> Result<Self, AdapterSupervisionError> {
+        let mut request = Self::for_non_model_adapter(argv, BTreeMap::new(), deadlines)?;
+        request.external_spawn_token = Some(external_spawn_token);
         Ok(request)
     }
 
@@ -1125,6 +1139,108 @@ impl NativeGraphAdapterAuthorization {
         if !self.exact_spawn_token.matches(token) {
             return Err(AdapterSupervisionError::InvalidSpawnRequest(
                 "native graph authorization",
+            ));
+        }
+        Ok(request)
+    }
+}
+
+/// Runtime-minted permission for one declared externally driven Docker request.
+///
+/// This authority is distinct from [`NativeGraphAdapterAuthorization`]: it
+/// carries no model endpoint proof or secret mapping and can mint only the
+/// immutable Driver argv selected by the resolved external package.
+#[derive(Clone, Debug)]
+pub struct ExternallyDrivenAdapterAuthorization {
+    driver_argv: Vec<String>,
+    container: String,
+    deadlines: AdapterLifecycleDeadlines,
+    external_spawn_token: ExactSpawnToken,
+    has_minted_request: Rc<Cell<bool>>,
+    has_authorized_request: Rc<Cell<bool>>,
+}
+
+impl ExternallyDrivenAdapterAuthorization {
+    pub(crate) fn resolve(
+        package: &HarborTaskPackage,
+        trial: &ResolvedEpisodeTrial,
+        container: &str,
+        deadlines: AdapterLifecycleDeadlines,
+    ) -> Result<Self, EvalExecutionError> {
+        let native_graph = package
+            .native_graph()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "externally driven package",
+            ))?;
+        if native_graph.profile() != NativeGraphProfile::ExternallyDriven {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "externally driven package profile",
+            ));
+        }
+        if trial.package().source_digest() != package.source_digest()
+            || trial.package().native_graph() != Some(native_graph)
+        {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "resolved external Driver trial",
+            ));
+        }
+        let driver = native_graph
+            .driver_adapter()
+            .ok_or(EvalExecutionError::InvalidRecipe(
+                "declared external Driver adapter",
+            ))?;
+        if driver.role != AdapterRole::Driver {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "declared external Driver adapter role",
+            ));
+        }
+        if container.trim().is_empty() {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "external Driver task container",
+            ));
+        }
+        Ok(Self {
+            driver_argv: driver.argv.clone(),
+            container: container.to_owned(),
+            deadlines,
+            external_spawn_token: ExactSpawnToken::new(),
+            has_minted_request: Rc::new(Cell::new(false)),
+            has_authorized_request: Rc::new(Cell::new(false)),
+        })
+    }
+
+    pub(crate) fn spawn_request(&self) -> Result<AdapterSpawnRequest, AdapterSupervisionError> {
+        if self.has_minted_request.replace(true) {
+            return Err(AdapterSupervisionError::InvalidSpawnRequest(
+                "external Driver request already minted",
+            ));
+        }
+        AdapterSpawnRequest::for_external_driver(
+            self.driver_argv.clone(),
+            self.deadlines,
+            self.external_spawn_token.clone(),
+        )
+    }
+
+    pub(crate) fn authorize_spawn_request(
+        &self,
+        container: &str,
+        request: AdapterSpawnRequest,
+    ) -> Result<AdapterSpawnRequest, AdapterSupervisionError> {
+        let Some(token) = request.external_spawn_token.as_ref() else {
+            return Err(AdapterSupervisionError::InvalidSpawnRequest(
+                "external Driver authorization",
+            ));
+        };
+        if self.container != container
+            || !self.external_spawn_token.matches(token)
+            || request.argv != self.driver_argv
+            || !request.environment.is_empty()
+            || request.deadlines != self.deadlines
+            || self.has_authorized_request.replace(true)
+        {
+            return Err(AdapterSupervisionError::InvalidSpawnRequest(
+                "external Driver authorization",
             ));
         }
         Ok(request)

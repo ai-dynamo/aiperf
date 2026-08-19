@@ -29,6 +29,7 @@ pub use coordinator::{
     HarborLocalEvaluationRequest,
 };
 pub use docker_process::DockerProcessSandbox;
+pub(crate) use docker_runtime::prepare_external_driver_spawn;
 pub(crate) use docker_runtime::resolve_native_graph_adapter_authorization;
 #[allow(unused_imports)]
 pub use docker_runtime::{
@@ -38,7 +39,8 @@ pub use docker_runtime::{
     DockerComposeDownRequest, DockerComposeExecRequest, DockerComposeRuntime,
     DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest,
     DockerEnvironment, DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
-    OwnedComposeResources, preflight_docker, resolve_environment, resolve_phase_environment,
+    ExternalDriverDockerSpawn, OwnedComposeResources, preflight_docker, resolve_environment,
+    resolve_phase_environment,
 };
 pub use local_process::{
     LocalAdapterSpawner, LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox,

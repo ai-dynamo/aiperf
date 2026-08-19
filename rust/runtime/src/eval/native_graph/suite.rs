@@ -182,7 +182,7 @@ pub struct SuiteTrialSpec {
     repetitions: NonZeroUsize,
     resources: Rc<ResourceLeaseRequest>,
     paired_factors: Rc<BTreeMap<String, String>>,
-    selected_model_binding: SelectedModelBinding,
+    selected_model_binding: Option<SelectedModelBinding>,
 }
 
 impl SuiteTrialSpec {
@@ -242,11 +242,17 @@ impl SuiteTrialSpec {
                 key: foreign_key.digest().clone(),
             });
         }
-        let selected_model_binding = match selected_model_binding {
-            Some(binding) => binding,
-            None => {
-                select_trial_model_binding(&imported.task, native_graph.model_bindings(), &trial)?
+        let selected_model_binding = match (native_graph.profile(), selected_model_binding) {
+            (super::NativeGraphProfile::ExternallyDriven, None) => None,
+            (super::NativeGraphProfile::ExternallyDriven, Some(_)) => {
+                return Err(SuiteError::ExternalTrialModelBinding);
             }
+            (super::NativeGraphProfile::NativeGraph, Some(binding)) => Some(binding),
+            (super::NativeGraphProfile::NativeGraph, None) => Some(select_trial_model_binding(
+                &imported.task,
+                native_graph.model_bindings(),
+                &trial,
+            )?),
         };
         Ok(Self {
             imported,
@@ -294,8 +300,8 @@ impl SuiteTrialSpec {
     }
 
     /// Borrows the complete immutable model-binding selection for this trial axis.
-    pub fn selected_model_binding(&self) -> &SelectedModelBinding {
-        &self.selected_model_binding
+    pub fn selected_model_binding(&self) -> Option<&SelectedModelBinding> {
+        self.selected_model_binding.as_ref()
     }
 }
 
@@ -361,25 +367,21 @@ impl NativeGraphSuiteManifest {
                 "repetitions",
                 trial.repetitions.get().to_string().as_bytes(),
             );
-            append_field(
-                &mut material,
-                "selected-model-binding-identity",
-                trial
-                    .selected_model_binding
-                    .identity_digest()
-                    .as_str()
-                    .as_bytes(),
-            );
-            append_field(
-                &mut material,
-                "selected-model-capacity-key",
-                trial
-                    .selected_model_binding
-                    .capacity_key()
-                    .digest()
-                    .as_str()
-                    .as_bytes(),
-            );
+            if let Some(binding) = &trial.selected_model_binding {
+                append_field(
+                    &mut material,
+                    "selected-model-binding-identity",
+                    binding.identity_digest().as_str().as_bytes(),
+                );
+                append_field(
+                    &mut material,
+                    "selected-model-capacity-key",
+                    binding.capacity_key().digest().as_str().as_bytes(),
+                );
+            } else {
+                append_field(&mut material, "selected-model-binding-identity", b"none");
+                append_field(&mut material, "selected-model-capacity-key", b"none");
+            }
             append_resource_request(&mut material, trial.resources());
             append_paired_factors(&mut material, trial.paired_factors());
         }
@@ -548,7 +550,7 @@ impl ResolvedEpisodeTrial {
     }
 
     /// Borrows the complete immutable binding selection used by this attempt.
-    pub fn selected_model_binding(&self) -> &SelectedModelBinding {
+    pub fn selected_model_binding(&self) -> Option<&SelectedModelBinding> {
         self.specification.selected_model_binding()
     }
 
@@ -1261,6 +1263,8 @@ pub enum SuiteError {
     TrialTaskMismatch,
     /// A programmatic trial selected no binding in its imported package snapshot.
     MissingTrialModelBinding,
+    /// An externally driven trial attempted to select a model binding.
+    ExternalTrialModelBinding,
     /// A programmatic trial selected more than one binding in its imported package snapshot.
     AmbiguousTrialModelBinding,
 }
@@ -1433,6 +1437,9 @@ impl fmt::Display for SuiteError {
             Self::MissingTrialModelBinding => formatter.write_str(
                 "native graph suite trial model does not select an imported package binding",
             ),
+            Self::ExternalTrialModelBinding => {
+                formatter.write_str("externally driven trial must not select a model binding")
+            }
             Self::AmbiguousTrialModelBinding => formatter.write_str(
                 "native graph suite trial model selects multiple imported package bindings",
             ),

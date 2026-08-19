@@ -252,6 +252,7 @@ fn strict_suite_toml_resolves_ordered_two_task_axes_with_resource_limits() {
     assert_eq!(
         resolved.trials()[0]
             .selected_model_binding()
+            .unwrap()
             .binding_id()
             .as_str(),
         "primary"
@@ -259,6 +260,7 @@ fn strict_suite_toml_resolves_ordered_two_task_axes_with_resource_limits() {
     assert_eq!(
         resolved.trials()[4]
             .selected_model_binding()
+            .unwrap()
             .binding_id()
             .as_str(),
         "secondary"
@@ -266,16 +268,20 @@ fn strict_suite_toml_resolves_ordered_two_task_axes_with_resource_limits() {
     assert_ne!(
         resolved.trials()[0]
             .selected_model_binding()
+            .unwrap()
             .identity_digest(),
         resolved.trials()[4]
             .selected_model_binding()
+            .unwrap()
             .identity_digest()
     );
     assert_eq!(
-        resolved.trials()[0]
-            .resources()
-            .model_binding_units()
-            .get(resolved.trials()[0].selected_model_binding().capacity_key()),
+        resolved.trials()[0].resources().model_binding_units().get(
+            resolved.trials()[0]
+                .selected_model_binding()
+                .unwrap()
+                .capacity_key(),
+        ),
         Some(&1)
     );
     assert_eq!(
@@ -540,6 +546,58 @@ fn programmatic_trial_rejects_a_foreign_task_capacity_key() {
 }
 
 #[test]
+fn externally_driven_single_task_resolves_with_no_model_binding() {
+    let task = external_driver_task_fixture();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task.path().to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = external_trial(imported.task.clone());
+    let manifest = NativeGraphSuiteManifest::new(vec![
+        SuiteTrialSpec::from_imported(
+            imported,
+            trial,
+            NonZeroUsize::new(1).unwrap(),
+            ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+        )
+        .expect("an external single-task trial carries an explicit no-model selection"),
+    ])
+    .unwrap();
+
+    let resolved = manifest
+        .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
+            b"external-single-task",
+        )))
+        .unwrap();
+
+    assert_eq!(resolved.trials().len(), 1);
+    assert!(resolved.trials()[0].selected_model_binding().is_none());
+    assert!(
+        resolved.trials()[0]
+            .resources()
+            .model_binding_units()
+            .is_empty()
+    );
+}
+
+#[test]
+fn native_graph_trial_without_a_matching_model_binding_still_refuses() {
+    let task = native_task_fixture();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task.path().to_string_lossy()).unwrap())
+        .unwrap();
+
+    let error = SuiteTrialSpec::from_imported(
+        imported.clone(),
+        external_trial(imported.task.clone()),
+        NonZeroUsize::new(1).unwrap(),
+        ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+    )
+    .expect_err("only the externally_driven profile may select no model binding");
+
+    assert_eq!(error, SuiteError::MissingTrialModelBinding);
+}
+
+#[test]
 fn suite_identity_changes_for_paired_factors_and_resource_weights() {
     let task = native_task_fixture();
     let imported = HarborImporter::new(&NativeSourceAcquirer)
@@ -627,6 +685,21 @@ fn trial(task: aiperf_runtime::eval::EvalTaskRef, seed: u64) -> TrialSpec {
         ArtifactDigest::from_bytes(b"environment"),
         ArtifactDigest::from_bytes(b"verifier"),
         RuntimeIdentity::new("native").unwrap(),
+    )
+    .unwrap()
+}
+
+fn external_trial(task: aiperf_runtime::eval::EvalTaskRef) -> TrialSpec {
+    TrialSpec::new(
+        task,
+        AgentVariantRef::new("external-driver").unwrap(),
+        ModelIdentity::new("compatibility", "opaque-driver").unwrap(),
+        7,
+        PolicyIdentity::new(ArtifactDigest::from_bytes(b"external-policy")),
+        TrialBudget::new(30.0, 30.0).unwrap(),
+        ArtifactDigest::from_bytes(b"external-environment"),
+        ArtifactDigest::from_bytes(b"external-verifier"),
+        RuntimeIdentity::new("external-compatibility").unwrap(),
     )
     .unwrap()
 }
@@ -894,5 +967,46 @@ executable = "tools/adapter.py"
     )
     .unwrap();
     fs::write(task.path().join("tools/adapter.py"), b"print('adapter')\n").unwrap();
+    task
+}
+
+fn external_driver_task_fixture() -> tempfile::TempDir {
+    let task = tempfile::tempdir().unwrap();
+    fs::create_dir_all(task.path().join("environment")).unwrap();
+    fs::create_dir_all(task.path().join("tests")).unwrap();
+    fs::create_dir_all(task.path().join("tools")).unwrap();
+    fs::write(
+        task.path().join("environment/Dockerfile"),
+        b"FROM scratch\n",
+    )
+    .unwrap();
+    fs::write(task.path().join("instruction.md"), b"Do external work.\n").unwrap();
+    fs::write(task.path().join("tests/test.sh"), b"exit 0\n").unwrap();
+    fs::write(
+        task.path().join("task.toml"),
+        r#"schema_version = "1.1"
+
+[task]
+name = "example/external-driver-suite"
+
+[native_graph]
+profile = "externally_driven"
+adapter_manifest = "adapters.toml"
+driver = "driver-adapter"
+external_driver_factory_id = "refuse"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        task.path().join("adapters.toml"),
+        r#"[[adapters]]
+id = "driver-adapter"
+role = "driver"
+argv = ["tools/driver.sh"]
+executable = "tools/driver.sh"
+"#,
+    )
+    .unwrap();
+    fs::write(task.path().join("tools/driver.sh"), b"#!/bin/sh\nexit 0\n").unwrap();
     task
 }

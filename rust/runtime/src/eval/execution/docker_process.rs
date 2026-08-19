@@ -45,8 +45,8 @@ use crate::{
         CancelReason, HarborTaskPackage, ModelEndpointIsolationProof, ModelSecretId,
         NativeGraphAdapterAuthorization, NativeGraphEnvironmentAdapterStart,
         NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
-        ProviderCapability, ProviderProfile, RewardDocument, VerifierMode,
-        run_native_graph_episode_callback,
+        PreparedExternalDriver, ProviderCapability, ProviderProfile, ResolvedEpisodeTrial,
+        RewardDocument, VerifierMode, run_native_graph_episode_callback,
     },
 };
 
@@ -58,9 +58,9 @@ use super::{
     DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
     DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
     DockerRemoveRequest, DockerRuntime, DockerStartRequest, EvalExecutionError, EvalExecutionPhase,
-    HarborSandboxRecipe, LocalExecutionResult, MultiStepExecutionResult, NetworkPolicy,
-    SecretProvider, preflight_docker, resolve_environment,
-    resolve_native_graph_adapter_authorization, resolve_phase_environment,
+    ExternalDriverDockerSpawn, HarborSandboxRecipe, LocalExecutionResult, MultiStepExecutionResult,
+    NetworkPolicy, SecretProvider, preflight_docker, prepare_external_driver_spawn,
+    resolve_environment, resolve_native_graph_adapter_authorization, resolve_phase_environment,
     shared_workdir_conflicts_reserved_verifier_path, verifier_artifact_target_collision,
 };
 
@@ -890,6 +890,31 @@ impl DockerProcessSandbox {
     /// Creates a Docker-backed task executor using the supplied execution clock.
     pub fn with_clock(clock: Rc<dyn Clock>) -> Self {
         Self { clock }
+    }
+
+    /// Preflights and mints one secret-free external Driver spawn before provisioning.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_external_driver_spawn_with_runtime(
+        &self,
+        runtime: &dyn DockerRuntime,
+        package: &HarborTaskPackage,
+        trial: &ResolvedEpisodeTrial,
+        plan: &BenchmarkExecutionPlan,
+        prepared_driver: Option<Box<dyn PreparedExternalDriver>>,
+        container: &str,
+        project: ComposeProjectId,
+        deadlines: AdapterLifecycleDeadlines,
+    ) -> Result<ExternalDriverDockerSpawn, EvalExecutionError> {
+        prepare_external_driver_spawn(
+            runtime,
+            package,
+            trial,
+            plan,
+            prepared_driver,
+            container,
+            project,
+            deadlines,
+        )
     }
 
     /// Builds the task environment, executes an external agent, and runs a shared verifier.
@@ -3176,6 +3201,12 @@ struct DockerCliAdapterSpawner {
     clock: Rc<dyn Clock>,
 }
 
+struct DockerCliExternalDriverSpawner {
+    request: DockerAdapterSpawnerRequest,
+    authorization: crate::eval::ExternallyDrivenAdapterAuthorization,
+    clock: Rc<dyn Clock>,
+}
+
 struct DockerCliAdapterLease {
     container_id: String,
 }
@@ -3311,6 +3342,46 @@ impl AdapterSpawner for DockerCliAdapterSpawner {
     }
 }
 
+impl AdapterSpawner for DockerCliExternalDriverSpawner {
+    fn begin_spawn(
+        &self,
+        request: AdapterSpawnRequest,
+    ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        let request = self
+            .authorization
+            .authorize_spawn_request(self.request.container(), request)?;
+        let container_id = resolve_owned_adapter_container(
+            self.clock.clone(),
+            &self.request,
+            request.deadlines().startup(),
+        )?;
+        let mut command = TokioCommand::new("docker");
+        command.args(["exec", "-i"]);
+        if let Some(user) = self.request.user() {
+            command.args(["--user", user]);
+        }
+        if let Some(workdir) = self.request.workdir() {
+            command.args(["--workdir", workdir]);
+        }
+        command
+            .arg(&container_id)
+            .args(request.argv())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        configure_adapter_process_group(&mut command);
+        let client = spawn_adapter_child(command, request.max_stderr_bytes())?;
+        let process = Box::new(DockerAdapterProcess::new(
+            client,
+            Rc::new(DockerCliAdapterLease { container_id }),
+        ));
+        Ok(Box::new(DockerAdapterSpawnTransaction {
+            process: Some(process),
+        }))
+    }
+}
+
 /// Launch transaction retaining the Docker exec client until process ownership transfers.
 struct DockerAdapterSpawnTransaction {
     process: Option<Box<dyn AdapterProcess>>,
@@ -3407,6 +3478,18 @@ impl DockerRuntime for DockerCliRuntime {
         authorization: &crate::eval::NativeGraphAdapterAuthorization,
     ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
         Ok(Rc::new(DockerCliAdapterSpawner {
+            request: request.clone(),
+            authorization: authorization.clone(),
+            clock: self.clock.clone(),
+        }))
+    }
+
+    fn external_driver_spawner(
+        &self,
+        request: &DockerAdapterSpawnerRequest,
+        authorization: &crate::eval::ExternallyDrivenAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        Ok(Rc::new(DockerCliExternalDriverSpawner {
             request: request.clone(),
             authorization: authorization.clone(),
             clock: self.clock.clone(),

@@ -15,9 +15,10 @@ use std::rc::Rc;
 use async_trait::async_trait;
 
 use crate::eval::{
-    AdapterExit, AdapterProcess, AdapterSpawner, AdapterSupervisionError, CancelReason,
-    HarborTaskPackage, ModelSecretId, NativeGraphAdapterAuthorization, NativeGraphPackagePlan,
-    NativeGraphProfile, ProviderProfile,
+    AdapterExit, AdapterProcess, AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner,
+    AdapterSupervisionError, CancelReason, ExternallyDrivenAdapterAuthorization, HarborTaskPackage,
+    ModelSecretId, NativeGraphAdapterAuthorization, NativeGraphPackagePlan, NativeGraphProfile,
+    PreparedExternalDriver, ProviderProfile, ResolvedEpisodeTrial,
 };
 
 use super::{
@@ -65,6 +66,101 @@ pub(crate) fn resolve_native_graph_adapter_authorization(
         secret_environment,
     )
     .map(Some)
+}
+
+/// One pre-provisioned external Driver launch with no model or result authority.
+pub struct ExternalDriverDockerSpawn {
+    prepared_driver: Box<dyn PreparedExternalDriver>,
+    authorization: ExternallyDrivenAdapterAuthorization,
+    request: AdapterSpawnRequest,
+    spawner: Rc<dyn AdapterSpawner>,
+}
+
+impl std::fmt::Debug for ExternalDriverDockerSpawn {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExternalDriverDockerSpawn")
+            .field("has_prepared_driver", &true)
+            .field("request", &self.request)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ExternalDriverDockerSpawn {
+    /// Borrows the sole declared request before ownership transfers to the spawner.
+    pub fn spawn_request(&self) -> &AdapterSpawnRequest {
+        &self.request
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Box<dyn PreparedExternalDriver>,
+        ExternallyDrivenAdapterAuthorization,
+        AdapterSpawnRequest,
+        Rc<dyn AdapterSpawner>,
+    ) {
+        (
+            self.prepared_driver,
+            self.authorization,
+            self.request,
+            self.spawner,
+        )
+    }
+
+    /// Begins the one authorized Driver spawn.
+    pub fn begin_spawn(self) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        let (prepared_driver, authorization, request, spawner) = self.into_parts();
+        let transaction = spawner.begin_spawn(request)?;
+        drop(prepared_driver);
+        drop(authorization);
+        Ok(transaction)
+    }
+}
+
+pub(crate) fn prepare_external_driver_spawn(
+    runtime: &dyn DockerRuntime,
+    package: &HarborTaskPackage,
+    trial: &ResolvedEpisodeTrial,
+    plan: &BenchmarkExecutionPlan,
+    prepared_driver: Option<Box<dyn PreparedExternalDriver>>,
+    container: &str,
+    project: ComposeProjectId,
+    deadlines: crate::eval::AdapterLifecycleDeadlines,
+) -> Result<ExternalDriverDockerSpawn, EvalExecutionError> {
+    if plan.is_multi_step() || package.execution_plan().is_multi_step() {
+        return Err(EvalExecutionError::UnsupportedMultiStep);
+    }
+    if plan.compose().is_some() || package.execution_plan().compose().is_some() {
+        return Err(EvalExecutionError::UnsupportedEnforcement(
+            "external Driver Docker Compose",
+        ));
+    }
+    let prepared_driver = prepared_driver.ok_or(EvalExecutionError::InvalidRecipe(
+        "prepared external Driver",
+    ))?;
+    if !package.is_standard_directory()
+        || package.execution_plan() != plan
+        || trial.package().execution_plan() != plan
+    {
+        return Err(EvalExecutionError::InvalidRecipe(
+            "external Driver execution plan",
+        ));
+    }
+    preflight_docker(runtime, plan)?;
+    let authorization =
+        ExternallyDrivenAdapterAuthorization::resolve(package, trial, container, deadlines)?;
+    let request = authorization
+        .spawn_request()
+        .map_err(|_| EvalExecutionError::InvalidRecipe("external Driver spawn request"))?;
+    let spawner_request = DockerAdapterSpawnerRequest::new(container, project)?;
+    let spawner = runtime.external_driver_spawner(&spawner_request, &authorization)?;
+    Ok(ExternalDriverDockerSpawn {
+        prepared_driver,
+        authorization,
+        request,
+        spawner,
+    })
 }
 
 pub(crate) struct ComposePreflightRequest<'a> {
@@ -1288,6 +1384,17 @@ pub trait DockerRuntime {
     ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
         Err(EvalExecutionError::UnsupportedEnforcement(
             "streaming Docker adapter spawn",
+        ))
+    }
+
+    /// Returns a spawner bound only to one externally driven task container.
+    fn external_driver_spawner(
+        &self,
+        _: &DockerAdapterSpawnerRequest,
+        _: &ExternallyDrivenAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        Err(EvalExecutionError::UnsupportedEnforcement(
+            "external Driver Docker adapter spawn",
         ))
     }
 

@@ -8,27 +8,35 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
     io::{self, Read},
+    num::NonZeroUsize,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
 use aiperf_runtime::clock::SimClock;
 use aiperf_runtime::eval::{
-    AdapterEnvelope, AdapterExit, AdapterMessage, AdapterProcess, AdapterSpawnRequest,
-    AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError, ArtifactDigest, CancelReason,
-    ComposeProjectId, DockerAdapterLease, DockerAdapterProcess, DockerBuildRequest,
-    DockerComposeArchiveRequest, DockerComposeBuildRequest, DockerComposeConfigRequest,
-    DockerComposeCopyRequest, DockerComposeDownRequest, DockerComposeExecRequest,
-    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
-    DockerCreateRequest, DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest,
-    DockerRuntime, DockerStartRequest, EnvName, EvalExecutionError, HarborImporter,
-    HarborSandboxRecipe, HarborSource, HostEnvelope, HostMessage, ModelEndpointIsolationProof,
-    ModelSecretId, NativeGraphEpisodeCallback, NativeGraphEpisodeLease, NativeGraphPackagePlan,
-    NativeSourceAcquirer, OwnedComposeResources, ProtocolCapability, ProviderCapabilities,
-    ProviderCapability, ProviderProfile, SecretProvider, SecretValue, preflight_docker,
+    AdapterEnvelope, AdapterExit, AdapterLifecycleDeadlines, AdapterMessage, AdapterProcess,
+    AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError,
+    AgentVariantRef, ArtifactDigest, CancelReason, CompatibilityTerminalReceipt, ComposeProjectId,
+    DockerAdapterLease, DockerAdapterProcess, DockerBuildRequest, DockerComposeArchiveRequest,
+    DockerComposeBuildRequest, DockerComposeConfigRequest, DockerComposeCopyRequest,
+    DockerComposeDownRequest, DockerComposeExecRequest, DockerComposeRuntime,
+    DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest,
+    DockerExecRequest, DockerProcessSandbox, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, EnvName, EvalExecutionError, ExternalDriverError, ExternalDriverSession,
+    HarborImporter, HarborSandboxRecipe, HarborSource, HostEnvelope, HostMessage,
+    ModelEndpointIsolationProof, ModelIdentity, ModelSecretId, NativeGraphEpisodeCallback,
+    NativeGraphEpisodeLease, NativeGraphExternalDriverFactory, NativeGraphPackagePlan,
+    NativeGraphSuiteManifest, NativeSourceAcquirer, OwnedComposeResources, PolicyIdentity,
+    PreparedExternalDriver, ProtocolCapability, ProviderCapabilities, ProviderCapability,
+    ProviderProfile, ResourceLeaseRequest, RuntimeIdentity, SecretProvider, SecretValue,
+    SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, preflight_docker,
 };
 use async_trait::async_trait;
 use std::rc::Rc;
@@ -327,9 +335,12 @@ struct LegacyRuntime {
     images: RefCell<Vec<String>>,
     creates: RefCell<Vec<Vec<String>>>,
     adapter_spawner_labels: RefCell<Vec<BTreeMap<String, String>>>,
+    external_driver_spawner_calls: Cell<usize>,
+    native_graph_secret_provider_calls: Cell<usize>,
     native_graph_profile: Option<ProviderProfile>,
     image_workdir: Option<String>,
     adapter_spawner: Option<Rc<dyn AdapterSpawner>>,
+    external_driver_spawner: Option<Rc<dyn AdapterSpawner>>,
 }
 
 impl DockerRuntime for LegacyRuntime {
@@ -366,6 +377,8 @@ impl DockerRuntime for LegacyRuntime {
         &self,
         _: &NativeGraphPackagePlan,
     ) -> Result<BTreeMap<ModelSecretId, EnvName>, EvalExecutionError> {
+        self.native_graph_secret_provider_calls
+            .set(self.native_graph_secret_provider_calls.get() + 1);
         if self.native_graph_profile.is_some() {
             Ok(BTreeMap::new())
         } else {
@@ -387,6 +400,23 @@ impl DockerRuntime for LegacyRuntime {
             .clone()
             .ok_or(EvalExecutionError::UnsupportedEnforcement(
                 "streaming Docker adapter spawn",
+            ))
+    }
+
+    fn external_driver_spawner(
+        &self,
+        _: &aiperf_runtime::eval::DockerAdapterSpawnerRequest,
+        _: &aiperf_runtime::eval::ExternallyDrivenAdapterAuthorization,
+    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
+        self.external_driver_spawner_calls
+            .set(self.external_driver_spawner_calls.get() + 1);
+        self.events
+            .borrow_mut()
+            .push("external-driver-spawner".to_owned());
+        self.external_driver_spawner
+            .clone()
+            .ok_or(EvalExecutionError::UnsupportedEnforcement(
+                "external Driver Docker adapter spawn",
             ))
     }
 
@@ -4696,6 +4726,391 @@ executable = "tools/adapter.sh"
     .unwrap();
     fs::write(task_root.join("tools/adapter.sh"), "#!/bin/sh\nexit 0\n").unwrap();
     task_root
+}
+
+fn external_driver_task_root(
+    temporary: &tempfile::TempDir,
+    manifest_suffix: &str,
+) -> std::path::PathBuf {
+    let task_root = temporary.path().join("external-driver-task");
+    fs::create_dir_all(task_root.join("environment")).unwrap();
+    fs::create_dir_all(task_root.join("tests")).unwrap();
+    fs::create_dir_all(task_root.join("tools")).unwrap();
+    fs::write(task_root.join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+    fs::write(task_root.join("instruction.md"), "Do external work.\n").unwrap();
+    fs::write(task_root.join("tests/test.sh"), "exit 0\n").unwrap();
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            r#"schema_version = "1.1"
+
+[task]
+name = "example/external-driver-docker-authority"
+
+[native_graph]
+profile = "externally_driven"
+adapter_manifest = "adapters.toml"
+driver = "driver-adapter"
+external_driver_factory_id = "fixture"
+
+{manifest_suffix}"#,
+        ),
+    )
+    .unwrap();
+    fs::write(
+        task_root.join("adapters.toml"),
+        r#"[[adapters]]
+id = "driver-adapter"
+role = "driver"
+argv = ["tools/driver.sh"]
+executable = "tools/driver.sh"
+"#,
+    )
+    .unwrap();
+    fs::write(task_root.join("tools/driver.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+    task_root
+}
+
+fn resolve_docker_driver_trial(
+    imported: aiperf_runtime::eval::ImportedTask,
+) -> aiperf_runtime::eval::ResolvedEpisodeTrial {
+    let trial = TrialSpec::new(
+        imported.task.clone(),
+        AgentVariantRef::new("external-driver").unwrap(),
+        ModelIdentity::new("compatibility", "opaque-driver").unwrap(),
+        7,
+        PolicyIdentity::new(ArtifactDigest::from_bytes(b"external-policy")),
+        TrialBudget::new(30.0, 30.0).unwrap(),
+        ArtifactDigest::from_bytes(b"external-environment"),
+        ArtifactDigest::from_bytes(b"external-verifier"),
+        RuntimeIdentity::new("external-compatibility").unwrap(),
+    )
+    .unwrap();
+    NativeGraphSuiteManifest::new(vec![
+        SuiteTrialSpec::from_imported(
+            imported,
+            trial,
+            NonZeroUsize::new(1).unwrap(),
+            ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+        )
+        .unwrap(),
+    ])
+    .unwrap()
+    .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
+        b"external-driver-docker-run",
+    )))
+    .unwrap()
+    .trials()
+    .first()
+    .unwrap()
+    .clone()
+}
+
+fn external_driver_deadlines() -> AdapterLifecycleDeadlines {
+    AdapterLifecycleDeadlines::new(
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .unwrap()
+}
+
+struct PreparedDriverFixture;
+
+#[async_trait(?Send)]
+impl PreparedExternalDriver for PreparedDriverFixture {
+    async fn run(
+        &mut self,
+        session: &mut dyn ExternalDriverSession,
+    ) -> Result<CompatibilityTerminalReceipt, ExternalDriverError> {
+        session.request_terminal().await
+    }
+}
+
+struct RecordingExternalDriverFactory {
+    prepare_calls: Arc<AtomicUsize>,
+}
+
+impl NativeGraphExternalDriverFactory for RecordingExternalDriverFactory {
+    fn id(&self) -> &str {
+        "fixture"
+    }
+
+    fn prepare(
+        &self,
+        _: &NativeGraphPackagePlan,
+        _: &aiperf_runtime::eval::ResolvedEpisodeTrial,
+    ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError> {
+        self.prepare_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(Box::new(PreparedDriverFixture))
+    }
+}
+
+#[test]
+fn external_driver_authorization_is_prepared_before_build_and_spawns_only_declared_secret_free_argv()
+ {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let runtime = LegacyRuntime {
+        events: Rc::clone(&events),
+        external_driver_spawner: Some(Rc::new(RecordingAdapterSpawner {
+            events: Rc::clone(&events),
+            requests: Rc::clone(&requests),
+        })),
+        ..LegacyRuntime::default()
+    };
+    let prepare_calls = Arc::new(AtomicUsize::new(0));
+    let factory = RecordingExternalDriverFactory {
+        prepare_calls: Arc::clone(&prepare_calls),
+    };
+    let prepared = factory
+        .prepare(imported.package.native_graph().unwrap(), &trial)
+        .unwrap();
+    assert_eq!(prepare_calls.load(Ordering::Relaxed), 1);
+
+    let launch = DockerProcessSandbox::new()
+        .prepare_external_driver_spawn_with_runtime(
+            &runtime,
+            &imported.package,
+            &trial,
+            imported.package.execution_plan(),
+            Some(prepared),
+            "external-driver-task-container",
+            ComposeProjectId::new("aiperf-external-driver"),
+            external_driver_deadlines(),
+        )
+        .expect("the exact external Driver launch is authorized before provisioning");
+
+    assert_eq!(launch.spawn_request().argv(), ["tools/driver.sh"]);
+    assert!(launch.spawn_request().environment().is_empty());
+    assert_eq!(runtime.native_graph_secret_provider_calls.get(), 0);
+    runtime
+        .build(&DockerBuildRequest::new(["build"]))
+        .expect("fixture build succeeds");
+    let _transaction = launch.begin_spawn().expect("authorized spawn begins once");
+    assert_eq!(
+        requests.borrow().as_slice(),
+        &[(vec!["tools/driver.sh".to_owned()], BTreeMap::new())]
+    );
+    assert_eq!(
+        events.borrow().as_slice(),
+        ["external-driver-spawner", "build", "adapter-spawn",]
+    );
+}
+
+#[test]
+fn external_driver_missing_spawner_refuses_before_docker_create() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let runtime = LegacyRuntime::default();
+    let prepared = PreparedDriverFixture;
+
+    let error = DockerProcessSandbox::new()
+        .prepare_external_driver_spawn_with_runtime(
+            &runtime,
+            &imported.package,
+            &trial,
+            imported.package.execution_plan(),
+            Some(Box::new(prepared)),
+            "external-driver-task-container",
+            ComposeProjectId::new("aiperf-external-driver"),
+            external_driver_deadlines(),
+        )
+        .expect_err("a runtime without the distinct external spawner must fail closed");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::UnsupportedEnforcement("external Driver Docker adapter spawn")
+    ));
+    assert!(runtime.creates.borrow().is_empty());
+    assert_eq!(runtime.native_graph_secret_provider_calls.get(), 0);
+}
+
+#[test]
+fn external_driver_compose_plan_refuses_before_docker_create() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    fs::write(
+        task_root.join("environment/docker-compose.yaml"),
+        "services:\n  helper:\n    image: helper:fixture\n",
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let runtime = LegacyRuntime {
+        external_driver_spawner: Some(Rc::new(RecordingAdapterSpawner {
+            events: Rc::new(RefCell::new(Vec::new())),
+            requests: Rc::new(RefCell::new(Vec::new())),
+        })),
+        ..LegacyRuntime::default()
+    };
+    let prepared = PreparedDriverFixture;
+
+    let error = DockerProcessSandbox::new()
+        .prepare_external_driver_spawn_with_runtime(
+            &runtime,
+            &imported.package,
+            &trial,
+            imported.package.execution_plan(),
+            Some(Box::new(prepared)),
+            "external-driver-task-container",
+            ComposeProjectId::new("aiperf-external-driver"),
+            external_driver_deadlines(),
+        )
+        .expect_err("external compatibility does not authorize Compose");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::UnsupportedEnforcement("external Driver Docker Compose")
+    ));
+    assert!(runtime.creates.borrow().is_empty());
+    assert_eq!(runtime.external_driver_spawner_calls.get(), 0);
+}
+
+#[test]
+fn external_driver_multi_step_plan_refuses_before_docker_create() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let multi_step_temporary = tempfile::tempdir().unwrap();
+    let multi_step_root = multi_step_task_root(&multi_step_temporary, true);
+    let multi_step_imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(multi_step_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = LegacyRuntime {
+        external_driver_spawner: Some(Rc::new(RecordingAdapterSpawner {
+            events: Rc::new(RefCell::new(Vec::new())),
+            requests: Rc::new(RefCell::new(Vec::new())),
+        })),
+        ..LegacyRuntime::default()
+    };
+    let prepared = PreparedDriverFixture;
+
+    let error = DockerProcessSandbox::new()
+        .prepare_external_driver_spawn_with_runtime(
+            &runtime,
+            &imported.package,
+            &trial,
+            multi_step_imported.package.execution_plan(),
+            Some(Box::new(prepared)),
+            "external-driver-task-container",
+            ComposeProjectId::new("aiperf-external-driver"),
+            external_driver_deadlines(),
+        )
+        .expect_err("external compatibility does not authorize explicit steps");
+
+    assert!(matches!(error, EvalExecutionError::UnsupportedMultiStep));
+    assert!(runtime.creates.borrow().is_empty());
+    assert_eq!(runtime.external_driver_spawner_calls.get(), 0);
+}
+
+#[test]
+fn external_driver_missing_prepared_driver_refuses_before_docker_create() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let runtime = LegacyRuntime {
+        external_driver_spawner: Some(Rc::new(RecordingAdapterSpawner {
+            events: Rc::new(RefCell::new(Vec::new())),
+            requests: Rc::new(RefCell::new(Vec::new())),
+        })),
+        ..LegacyRuntime::default()
+    };
+
+    let error = DockerProcessSandbox::new()
+        .prepare_external_driver_spawn_with_runtime(
+            &runtime,
+            &imported.package,
+            &trial,
+            imported.package.execution_plan(),
+            None,
+            "external-driver-task-container",
+            ComposeProjectId::new("aiperf-external-driver"),
+            external_driver_deadlines(),
+        )
+        .expect_err("external compatibility requires completed driver preparation");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidRecipe("prepared external Driver")
+    ));
+    assert!(runtime.creates.borrow().is_empty());
+    assert_eq!(runtime.external_driver_spawner_calls.get(), 0);
+}
+
+#[test]
+fn external_driver_mismatched_resolved_trial_refuses_before_docker_create() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let foreign_temporary = tempfile::tempdir().unwrap();
+    let foreign_root = external_driver_task_root(&foreign_temporary, "");
+    fs::write(
+        foreign_root.join("adapters.toml"),
+        r#"[[adapters]]
+id = "driver-adapter"
+role = "driver"
+argv = ["tools/driver.sh", "--foreign"]
+executable = "tools/driver.sh"
+"#,
+    )
+    .unwrap();
+    let foreign_imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(foreign_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let foreign_trial = resolve_docker_driver_trial(foreign_imported);
+    let runtime = LegacyRuntime {
+        external_driver_spawner: Some(Rc::new(RecordingAdapterSpawner {
+            events: Rc::new(RefCell::new(Vec::new())),
+            requests: Rc::new(RefCell::new(Vec::new())),
+        })),
+        ..LegacyRuntime::default()
+    };
+    let prepared = PreparedDriverFixture;
+
+    let error = DockerProcessSandbox::new()
+        .prepare_external_driver_spawn_with_runtime(
+            &runtime,
+            &imported.package,
+            &foreign_trial,
+            imported.package.execution_plan(),
+            Some(Box::new(prepared)),
+            "external-driver-task-container",
+            ComposeProjectId::new("aiperf-external-driver"),
+            external_driver_deadlines(),
+        )
+        .expect_err("a prepared driver cannot substitute another resolved external trial");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::InvalidRecipe("resolved external Driver trial")
+    ));
+    assert!(runtime.creates.borrow().is_empty());
+    assert_eq!(runtime.external_driver_spawner_calls.get(), 0);
 }
 
 fn native_graph_rollout_task_root(temporary: &tempfile::TempDir) -> std::path::PathBuf {
