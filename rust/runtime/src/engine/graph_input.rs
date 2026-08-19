@@ -339,6 +339,7 @@ pub async fn prepare_local_graph_inspection_input(
     source: &Path,
     format: &str,
     tokenizer: &dyn TextTokenizer,
+    endpoint_id: &str,
     seed: u64,
 ) -> Result<PreparedRunnerGraphInput> {
     let raw = serde_json::value::to_raw_value(&serde_json::json!({
@@ -353,7 +354,7 @@ pub async fn prepare_local_graph_inspection_input(
             &GraphInputContext {
                 tokenizer,
                 run_random_seed: Some(seed),
-                endpoint_id: "chat",
+                endpoint_id,
             },
         )
         .await
@@ -888,6 +889,7 @@ pub fn plan_recorded_agent_cell_assignments(
     phases: &[PhaseSpec],
     cell_id: u32,
     cell_count: u32,
+    endpoint_id: &str,
 ) -> Result<BTreeSet<PlannedReplayTraceInstance>> {
     let input: RecordedAgentDatasetInput = serde_json::from_value(dataset.clone())
         .context("decoding recorded-agent input for cellular assignment planning")?;
@@ -898,7 +900,7 @@ pub fn plan_recorded_agent_cell_assignments(
         cell_count > 0 && cell_id < cell_count,
         "invalid cellular graph assignment"
     );
-    let prepared = input.prepare("agent_recording", "chat")?;
+    let prepared = input.prepare("agent_recording", endpoint_id)?;
     let profiling = phases
         .iter()
         .filter(|phase| !phase.common().exclude_from_results)
@@ -963,6 +965,11 @@ fn resolve_recorded_agent_graph_source(
     include_subagents: Option<bool>,
 ) -> Result<ResolvedRecordedAgentGraphSource> {
     if source_format == RecordedAgentSourceFormat::MiniSweAgent {
+        ensure!(
+            path.extension()
+                .is_none_or(|extension| extension != "jsonl"),
+            "strict Mini-SWE-Agent replay rejects JSONL session sources"
+        );
         return strict_recorded_agent_graph_source(path, replay_root);
     }
     if matches!(
@@ -977,22 +984,24 @@ fn resolve_recorded_agent_graph_source(
         );
     }
     let candidate = replay_root.map_or_else(|| path.clone(), |root| root.join(path));
-    match strict_recorded_agent_graph_source(path, replay_root) {
-        Ok(strict) => Ok(strict),
-        Err(_)
-            if candidate
-                .extension()
-                .is_some_and(|extension| extension == "jsonl") =>
-        {
-            imported_recorded_agent_graph_source(
-                path,
-                replay_root,
-                RecordedAgentSourceFormat::Auto,
-                include_subagents,
-            )
-        }
-        Err(error) => Err(error),
+    let metadata = fs::metadata(&candidate)
+        .with_context(|| format!("reading recorded-agent input {}", candidate.display()))?;
+    ensure!(
+        !metadata.is_dir(),
+        "directory imports require an explicit source_format"
+    );
+    if candidate
+        .extension()
+        .is_some_and(|extension| extension == "jsonl")
+    {
+        return imported_recorded_agent_graph_source(
+            path,
+            replay_root,
+            RecordedAgentSourceFormat::Auto,
+            include_subagents,
+        );
     }
+    strict_recorded_agent_graph_source(path, replay_root)
 }
 
 fn strict_recorded_agent_graph_source(
@@ -1856,6 +1865,7 @@ mod tests {
             std::path::Path::new("/tmp/input.dag.jsonl"),
             "dag_jsonl",
             &tokenizer,
+            "chat",
             73,
         )
         .await

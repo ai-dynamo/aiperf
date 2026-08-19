@@ -88,6 +88,7 @@ struct CodexState<'a> {
     seen_call_ids: HashSet<String>,
     seen_result_ids: HashSet<String>,
     observed_tool_count: u64,
+    completed_tool_count: u64,
     ignored_record_count: u64,
     omitted_reasoning_count: u64,
     tool_results_complete: bool,
@@ -109,6 +110,7 @@ impl<'a> CodexState<'a> {
             seen_call_ids: HashSet::new(),
             seen_result_ids: HashSet::new(),
             observed_tool_count: 0,
+            completed_tool_count: 0,
             ignored_record_count: 0,
             omitted_reasoning_count: 0,
             tool_results_complete: true,
@@ -366,6 +368,7 @@ impl<'a> CodexState<'a> {
             ));
         }
         bundle.had_result = true;
+        self.completed_tool_count += 1;
         bundle.results.push(ToolResult {
             call_id,
             output,
@@ -466,6 +469,7 @@ impl<'a> CodexState<'a> {
             parent: None,
             calls: self.calls,
             observed_tool_count: self.observed_tool_count,
+            completed_tool_count: self.completed_tool_count,
             ignored_record_count: self.ignored_record_count,
             omitted_reasoning_count: self.omitted_reasoning_count,
             tool_results_complete: self.tool_results_complete,

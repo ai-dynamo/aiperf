@@ -1639,8 +1639,16 @@ fn build_cell_envelope(
             .context("cellular graph run has no phases")?;
         let phases: Vec<crate::engine::protocol::PhaseSpec> = serde_json::from_value(phases)
             .context("decoding cellular graph phases for replay assignment planning")?;
+        let endpoint_id = cell
+            .pointer("/run/cfg/endpoint/type")
+            .and_then(serde_json::Value::as_str)
+            .context("cellular graph run has no endpoint type")?;
         crate::engine::graph_input::plan_recorded_agent_cell_assignments(
-            dataset, &phases, cell_id, cell_count,
+            dataset,
+            &phases,
+            cell_id,
+            cell_count,
+            endpoint_id,
         )?
     } else {
         BTreeSet::new()

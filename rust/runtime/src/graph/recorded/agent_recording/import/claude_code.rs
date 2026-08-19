@@ -101,6 +101,7 @@ struct ClaudeState<'a> {
     last_result_timestamp: Option<DateTime<FixedOffset>>,
     next_model_delay_after_previous_us: Option<f64>,
     observed_tool_count: u64,
+    completed_tool_count: u64,
     ignored_record_count: u64,
     omitted_reasoning_count: u64,
     tool_results_complete: bool,
@@ -129,6 +130,7 @@ impl<'a> ClaudeState<'a> {
             last_result_timestamp: None,
             next_model_delay_after_previous_us: None,
             observed_tool_count: 0,
+            completed_tool_count: 0,
             ignored_record_count: 0,
             omitted_reasoning_count: 0,
             tool_results_complete: true,
@@ -309,6 +311,7 @@ impl<'a> ClaudeState<'a> {
                     "result does not identify an open tool use",
                 ));
             }
+            self.completed_tool_count += 1;
             retained.push(Value::Object(object.clone()));
         }
         if retained.is_empty() {
@@ -682,6 +685,7 @@ impl<'a> ClaudeState<'a> {
             parent,
             calls: self.calls,
             observed_tool_count: self.observed_tool_count,
+            completed_tool_count: self.completed_tool_count,
             ignored_record_count: self.ignored_record_count,
             omitted_reasoning_count: self.omitted_reasoning_count,
             tool_results_complete: self.tool_results_complete,

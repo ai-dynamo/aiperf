@@ -3,19 +3,23 @@
 
 //! Lowering and adapter integration coverage for imported agent sessions.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use aiperf_runtime::config::model::dataset::RecordedAgentSourceFormat;
 use aiperf_runtime::dataset::{Payload, TiktokenTokenizer};
 use aiperf_runtime::engine::graph_input::{
-    CacheBustTarget, GraphInputAdapter, GraphInputContext, RecordedAgentRunnerGraphInputAdapter,
+    BuiltinRunnerGraphInputAdapterResolver, CacheBustTarget, GraphInputAdapter, GraphInputContext,
+    RecordedAgentRunnerGraphInputAdapter, prepare_local_graph_inspection_input,
 };
 use aiperf_runtime::graph::model::{ChannelType, ExecutableGraphNode, PromptItem, ReducerName};
 use aiperf_runtime::graph::recorded::agent_recording::{
-    BuiltinReplayRequestProfileResolver, ImportedAgentSource, ImportedSessionFamily,
-    discover_imported_agent_read_set, lower_imported_agent_sessions, parse_imported_agent_sessions,
+    BuiltinReplayRequestProfileResolver, ImportedAgentSession, ImportedAgentSource,
+    ImportedModelCall, ImportedSessionFamily, RawJsonMessage, discover_imported_agent_read_set,
+    lower_imported_agent_sessions, parse_imported_agent_sessions,
 };
 use aiperf_runtime::graph::segment::SegmentPool;
+use bytes::Bytes;
 use serde_json::json;
 
 fn fixture(path: &str) -> PathBuf {
@@ -192,6 +196,434 @@ fn imported_tool_delay_applies_only_to_the_next_llm_edge() {
             .expect("replay")
             .expected_tool_node_count,
         1
+    );
+}
+
+#[test]
+fn interrupted_imported_tool_bundle_is_not_counted_as_completed() {
+    let session = ImportedAgentSession {
+        session_id: "interrupted".into(),
+        source: ImportedAgentSource::Codex,
+        source_path: fixture("codex/linear.jsonl"),
+        source_digest: "digest".into(),
+        model: None,
+        system_prompt: None,
+        cwd_present: false,
+        git_branch_present: false,
+        parent: None,
+        calls: vec![ImportedModelCall {
+            source_id: "call".into(),
+            request_messages: vec![RawJsonMessage {
+                role: "user".into(),
+                wire: Bytes::from_static(b"{\"role\":\"user\",\"content\":\"x\"}"),
+            }],
+            model: None,
+            delay_after_previous_us: None,
+            tool_schema_available: false,
+            output_tokens: None,
+        }],
+        observed_tool_count: 1,
+        completed_tool_count: 0,
+        ignored_record_count: 0,
+        omitted_reasoning_count: 0,
+        tool_results_complete: false,
+    };
+    let bundle = lower_imported_agent_sessions(
+        &[session],
+        &BuiltinReplayRequestProfileResolver::default(),
+        &mut SegmentPool::new(),
+    )
+    .expect("lower interrupted session");
+    assert_eq!(
+        bundle.programs[0]
+            .replay
+            .as_ref()
+            .expect("replay")
+            .expected_tool_node_count,
+        0
+    );
+}
+
+#[test]
+fn imported_lowering_rejects_empty_or_mismatched_message_roles() {
+    for (role, wire) in [
+        ("", b"{\"role\":\"user\",\"content\":\"x\"}".as_slice()),
+        (
+            "assistant",
+            b"{\"role\":\"user\",\"content\":\"x\"}".as_slice(),
+        ),
+    ] {
+        let session = ImportedAgentSession {
+            session_id: "roles".into(),
+            source: ImportedAgentSource::Codex,
+            source_path: fixture("codex/linear.jsonl"),
+            source_digest: "digest".into(),
+            model: None,
+            system_prompt: None,
+            cwd_present: false,
+            git_branch_present: false,
+            parent: None,
+            observed_tool_count: 0,
+            completed_tool_count: 0,
+            ignored_record_count: 0,
+            omitted_reasoning_count: 0,
+            tool_results_complete: true,
+            calls: vec![ImportedModelCall {
+                source_id: "call".into(),
+                request_messages: vec![RawJsonMessage {
+                    role: role.into(),
+                    wire: Bytes::copy_from_slice(wire),
+                }],
+                model: None,
+                delay_after_previous_us: None,
+                tool_schema_available: false,
+                output_tokens: None,
+            }],
+        };
+        assert!(
+            lower_imported_agent_sessions(
+                &[session],
+                &BuiltinReplayRequestProfileResolver::default(),
+                &mut SegmentPool::new(),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
+fn imported_adapter_rejects_tools_sampling_and_standard_scenario() {
+    let adapter = RecordedAgentRunnerGraphInputAdapter;
+    let tokenizer = TiktokenTokenizer::builtin();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    for (graph_extra, extra) in [
+        (json!({"execute_tools": true}), json!({})),
+        (json!({}), json!({"use_recorded_sampling": true})),
+        (json!({}), json!({"standard_scenario": true})),
+    ] {
+        let mut input = json!({
+            "type": "file", "format": "agent_recording", "path": fixture("codex/linear.jsonl"),
+            "sampling": "sequential", "graph": {"source_format": "codex"},
+        });
+        input["graph"]
+            .as_object_mut()
+            .expect("graph")
+            .extend(graph_extra.as_object().expect("object").clone());
+        input
+            .as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        let raw = serde_json::value::to_raw_value(&input).expect("raw graph input");
+        assert!(
+            runtime
+                .block_on(adapter.load(
+                    &raw,
+                    &GraphInputContext {
+                        tokenizer: &tokenizer,
+                        run_random_seed: Some(7),
+                        endpoint_id: "chat"
+                    },
+                ))
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn imported_lowering_emits_complete_metadata_without_adapter_warning() {
+    let read_set = discover_imported_agent_read_set(
+        &fixture("codex/linear.jsonl"),
+        None,
+        RecordedAgentSourceFormat::Codex,
+        None,
+    )
+    .expect("discover Codex");
+    let sessions = parse_imported_agent_sessions(&read_set).expect("parse Codex");
+    let mut pool = SegmentPool::new();
+    let bundle = lower_imported_agent_sessions(
+        &sessions,
+        &BuiltinReplayRequestProfileResolver::new(true, 321, false, true, false, false)
+            .expect("resolver"),
+        &mut pool,
+    )
+    .expect("lower Codex");
+    let replay = bundle.programs[0].replay.as_ref().expect("replay");
+    assert_eq!(bundle.metadata.warning_facts.len(), 0);
+    assert_eq!(
+        bundle.programs[0].profiling.graph.nodes["llm_0"]
+            .as_llm()
+            .expect("llm")
+            .request
+            .as_ref()
+            .expect("request")
+            .model
+            .as_deref(),
+        sessions[0].model.as_deref()
+    );
+    for (key, value) in [
+        ("source_format", json!("codex")),
+        ("request_wire_exact", json!(false)),
+        ("tool_schema_available", json!(false)),
+        ("output_tokens_available", json!(false)),
+        ("model_latency_available", json!(false)),
+        ("reasoning_included", json!(false)),
+        ("tool_results_complete", json!(true)),
+        ("subagent_topology", json!("none")),
+        ("ignored_record_count", json!(4)),
+        ("omitted_reasoning_count", json!(1)),
+        ("cwd_present", json!(true)),
+        ("git_branch_present", json!(true)),
+    ] {
+        assert_eq!(replay.comparability_annotations[key], value);
+    }
+}
+
+#[test]
+fn recorded_agent_auto_directory_is_rejected() {
+    let error = discover_imported_agent_read_set(
+        &fixture("codex"),
+        None,
+        RecordedAgentSourceFormat::Auto,
+        None,
+    )
+    .expect_err("auto directories require explicit source format");
+    assert!(error.to_string().contains("explicit source_format"));
+}
+
+#[test]
+fn recorded_agent_adapter_auto_directory_requires_explicit_source() {
+    let adapter = RecordedAgentRunnerGraphInputAdapter;
+    let tokenizer = TiktokenTokenizer::builtin();
+    let raw = serde_json::value::to_raw_value(&json!({
+        "type": "file", "format": "agent_recording", "path": fixture("codex"),
+        "sampling": "sequential", "graph": {"source_format": "auto"},
+    }))
+    .expect("raw graph input");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let error = runtime
+        .block_on(adapter.load(
+            &raw,
+            &GraphInputContext {
+                tokenizer: &tokenizer,
+                run_random_seed: Some(7),
+                endpoint_id: "chat",
+            },
+        ))
+        .expect_err("auto directory must fail before strict discovery");
+    assert!(error.to_string().contains("explicit source_format"));
+}
+
+#[test]
+fn recorded_agent_adapter_mini_swe_rejects_jsonl() {
+    let adapter = RecordedAgentRunnerGraphInputAdapter;
+    let tokenizer = TiktokenTokenizer::builtin();
+    let raw = serde_json::value::to_raw_value(&json!({
+        "type": "file", "format": "agent_recording", "path": fixture("codex/linear.jsonl"),
+        "sampling": "sequential", "graph": {"source_format": "mini_swe_agent"},
+    }))
+    .expect("raw graph input");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let error = runtime
+        .block_on(adapter.load(
+            &raw,
+            &GraphInputContext {
+                tokenizer: &tokenizer,
+                run_random_seed: Some(7),
+                endpoint_id: "chat",
+            },
+        ))
+        .expect_err("Mini-SWE must reject JSONL before strict discovery");
+    assert!(error.to_string().contains("rejects JSONL"));
+}
+
+#[test]
+fn recorded_agent_adapter_auto_sniffs_codex_jsonl() {
+    let adapter = RecordedAgentRunnerGraphInputAdapter;
+    let tokenizer = TiktokenTokenizer::builtin();
+    let raw = serde_json::value::to_raw_value(&json!({
+        "type": "file", "format": "agent_recording", "path": fixture("codex/linear.jsonl"),
+        "sampling": "sequential", "graph": {"source_format": "auto"},
+    }))
+    .expect("raw graph input");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let prepared = runtime
+        .block_on(adapter.load(
+            &raw,
+            &GraphInputContext {
+                tokenizer: &tokenizer,
+                run_random_seed: Some(7),
+                endpoint_id: "chat",
+            },
+        ))
+        .expect("bounded auto Codex import");
+    assert_eq!(prepared.bundle.metadata.format, "agent_recording");
+    assert_eq!(
+        prepared.bundle.programs[0]
+            .replay
+            .as_ref()
+            .expect("replay")
+            .identity
+            .adapter,
+        "codex"
+    );
+}
+
+#[test]
+fn recorded_agent_adapter_auto_rejects_ambiguous_jsonl() {
+    let temporary = tempfile::tempdir().expect("temporary source root");
+    let source = temporary.path().join("ambiguous.jsonl");
+    fs::write(
+        &source,
+        r#"{"type":"session_meta","payload":{},"sessionId":"ambiguous","parentUuid":null}"#,
+    )
+    .expect("write ambiguous source");
+    let adapter = RecordedAgentRunnerGraphInputAdapter;
+    let tokenizer = TiktokenTokenizer::builtin();
+    let raw = serde_json::value::to_raw_value(&json!({
+        "type": "file", "format": "agent_recording", "path": source,
+        "sampling": "sequential", "graph": {"source_format": "auto"},
+    }))
+    .expect("raw graph input");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let error = runtime
+        .block_on(adapter.load(
+            &raw,
+            &GraphInputContext {
+                tokenizer: &tokenizer,
+                run_random_seed: Some(7),
+                endpoint_id: "chat",
+            },
+        ))
+        .expect_err("ambiguous Auto source must fail");
+    assert!(format!("{error:#}").contains("ambiguous source markers"));
+}
+
+#[test]
+fn recorded_agent_adapter_auto_uses_bounded_import_sniff_before_parser_tail_error() {
+    let temporary = tempfile::tempdir().expect("temporary source root");
+    let source = temporary.path().join("bounded.jsonl");
+    let first_record = fs::read_to_string(fixture("codex/linear.jsonl"))
+        .expect("read fixture")
+        .lines()
+        .next()
+        .expect("first fixture record")
+        .to_owned();
+    let mut contents = std::iter::repeat_n(first_record.as_str(), 20)
+        .collect::<Vec<_>>()
+        .join("\n");
+    contents.push_str("\n{malformed-secret-tail\n");
+    fs::write(&source, contents).expect("write bounded source");
+    let adapter = RecordedAgentRunnerGraphInputAdapter;
+    let tokenizer = TiktokenTokenizer::builtin();
+    let raw = serde_json::value::to_raw_value(&json!({
+        "type": "file", "format": "agent_recording", "path": source,
+        "sampling": "sequential", "graph": {"source_format": "auto"},
+    }))
+    .expect("raw graph input");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let error = runtime
+        .block_on(adapter.load(
+            &raw,
+            &GraphInputContext {
+                tokenizer: &tokenizer,
+                run_random_seed: Some(7),
+                endpoint_id: "chat",
+            },
+        ))
+        .expect_err("parser must report the tail after bounded Auto sniffing");
+    let message = format!("{error:#}");
+    assert!(message.contains("parsing imported recorded-agent session input"));
+    assert!(message.contains("invalid JSON"));
+    assert!(!message.contains("decoding recorded-agent input"));
+}
+
+#[test]
+fn recorded_agent_adapter_auto_sniffs_claude_before_endpoint_preflight() {
+    let adapter = RecordedAgentRunnerGraphInputAdapter;
+    let tokenizer = TiktokenTokenizer::builtin();
+    let raw = serde_json::value::to_raw_value(&json!({
+        "type": "file", "format": "agent_recording", "path": fixture("claude_code/linear.jsonl"),
+        "sampling": "sequential", "graph": {"source_format": "auto"},
+    }))
+    .expect("raw graph input");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let chat = runtime.block_on(adapter.load(
+        &raw,
+        &GraphInputContext {
+            tokenizer: &tokenizer,
+            run_random_seed: Some(7),
+            endpoint_id: "chat",
+        },
+    ));
+    assert!(
+        chat.expect_err("Auto Claude rejects chat")
+            .to_string()
+            .contains("messages")
+    );
+    assert!(
+        runtime
+            .block_on(adapter.load(
+                &raw,
+                &GraphInputContext {
+                    tokenizer: &tokenizer,
+                    run_random_seed: Some(7),
+                    endpoint_id: "messages",
+                },
+            ))
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn local_graph_inspection_forwards_selected_endpoint_identity() {
+    let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+    let tokenizer = TiktokenTokenizer::builtin();
+    let chat = prepare_local_graph_inspection_input(
+        &resolver,
+        &fixture("claude_code/linear.jsonl"),
+        "agent_recording",
+        &tokenizer,
+        "chat",
+        7,
+    )
+    .await;
+    assert!(
+        chat.expect_err("Claude chat preflight")
+            .to_string()
+            .contains("messages")
+    );
+    assert!(
+        prepare_local_graph_inspection_input(
+            &resolver,
+            &fixture("claude_code/linear.jsonl"),
+            "agent_recording",
+            &tokenizer,
+            "messages",
+            7,
+        )
+        .await
+        .is_ok()
     );
 }
 

@@ -285,6 +285,7 @@ fn load(args: CommonArgs) -> Result<LoadedGraphInput, GraphCommandError> {
             &source,
             &args.graph_format,
             tokenizer.as_ref(),
+            "chat",
             args.seed,
         ),
     );

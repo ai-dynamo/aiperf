@@ -108,6 +108,21 @@ fn lower_session(
         let mut parent = None;
         let mut items = Vec::with_capacity(call.request_messages.len());
         for message in &call.request_messages {
+            if message.role.is_empty() {
+                return Err(session_error(
+                    session,
+                    "imported request message has an empty role",
+                ));
+            }
+            let wire: serde_json::Value = serde_json::from_slice(&message.wire).map_err(|_| {
+                session_error(session, "imported request message is not valid JSON")
+            })?;
+            if wire.get("role").and_then(serde_json::Value::as_str) != Some(&message.role) {
+                return Err(session_error(
+                    session,
+                    "imported request message role disagrees with serialized wire",
+                ));
+            }
             let handle = pool
                 .intern_message(
                     parent,
@@ -233,7 +248,7 @@ fn lower_session(
             normalization_target_digest: None,
             target_output_tokens,
             expected_llm_node_count: session.calls.len() as u64,
-            expected_tool_node_count: session.observed_tool_count,
+            expected_tool_node_count: session.completed_tool_count,
             request_profile_identity: profile.identity,
             comparability_annotations: annotations,
         }),

@@ -181,6 +181,8 @@ pub struct ImportedAgentSession {
     pub calls: Vec<ImportedModelCall>,
     /// Number of observed function-call records.
     pub observed_tool_count: u64,
+    /// Number of observed tool uses with a correlated result.
+    pub completed_tool_count: u64,
     /// Number of ignored additive records or unsupported content blocks.
     pub ignored_record_count: u64,
     /// Number of omitted reasoning records.
