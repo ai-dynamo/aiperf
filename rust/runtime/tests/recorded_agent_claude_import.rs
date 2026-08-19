@@ -112,6 +112,86 @@ fn subagent_sessions_are_linked_as_deterministic_siblings() {
         sessions[1].parent.as_ref().expect("parent").tool_use_id,
         "toolu_task_01"
     );
+    assert_eq!(sessions[0].observed_tool_count, 1);
+    let main_history = messages(&sessions[0].calls[1]);
+    assert_eq!(main_history[1]["content"][0]["name"], "Task");
+    assert_eq!(sessions[1].calls.len(), 1);
+    assert!(
+        messages(&sessions[1].calls[0]).iter().all(
+            |message| message["content"].get("type") != Some(&Value::String("tool_use".into()))
+        )
+    );
+}
+
+#[test]
+fn subagent_sessions_reject_invalid_or_colliding_derived_identifiers() {
+    let root = tempdir().expect("temporary fixtures");
+    let long_main = "m".repeat(250);
+    let long_tool = "task";
+    let main = root.path().join("long-main.jsonl");
+    let subagent = root.path().join("long-subagent.jsonl");
+    fs::write(
+        &main,
+        format!(
+            "{{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"{long_main}\",\"uuid\":\"u\",\"message\":{{\"role\":\"user\",\"content\":\"ask\"}}}}\n{{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"{long_main}\",\"uuid\":\"a\",\"message\":{{\"role\":\"assistant\",\"id\":\"a\",\"content\":[{{\"type\":\"tool_use\",\"id\":\"{long_tool}\",\"name\":\"Task\",\"input\":{{}}}}]}}}}\n"
+        ),
+    )
+    .expect("long main fixture");
+    fs::write(
+        &subagent,
+        format!(
+            "{{\"type\":\"user\",\"isSidechain\":true,\"sessionId\":\"{long_main}\",\"parentToolUseId\":\"{long_tool}\",\"uuid\":\"u\",\"message\":{{\"role\":\"user\",\"content\":\"ask\"}}}}\n{{\"type\":\"assistant\",\"isSidechain\":true,\"sessionId\":\"{long_main}\",\"parentToolUseId\":\"{long_tool}\",\"uuid\":\"a\",\"message\":{{\"role\":\"assistant\",\"id\":\"a\",\"content\":[]}}}}\n"
+        ),
+    )
+    .expect("long subagent fixture");
+    let error = parse_imported_agent_sessions(&claude_read_set(
+        root.path().to_path_buf(),
+        vec![
+            (main, ImportedSessionFamily::Session),
+            (subagent, ImportedSessionFamily::Subagent),
+        ],
+    ))
+    .expect_err("overlength derived identifier")
+    .to_string();
+    assert!(error.contains("derived subagent session identifier is invalid"));
+
+    let main = write(
+        root.path(),
+        "main.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"main\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"main\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"a\",\"content\":[{\"type\":\"tool_use\",\"id\":\"task\",\"name\":\"Task\",\"input\":{}}]}}\n"
+        ),
+    );
+    let collision = write(
+        root.path(),
+        "collision.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"main#sa#task\",\"uuid\":\"u2\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"main#sa#task\",\"uuid\":\"a2\",\"message\":{\"role\":\"assistant\",\"id\":\"a2\",\"content\":[]}}\n"
+        ),
+    );
+    let subagent = claude_file(
+        root.path().join("long-subagent.jsonl"),
+        ImportedSessionFamily::Subagent,
+    );
+    fs::write(
+        &subagent.path,
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":true,\"sessionId\":\"main\",\"parentToolUseId\":\"task\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":true,\"sessionId\":\"main\",\"parentToolUseId\":\"task\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"a\",\"content\":[]}}\n"
+        ),
+    )
+    .expect("collision subagent fixture");
+    let error = parse_imported_agent_sessions(&ImportedAgentReadSet {
+        selected_path: root.path().to_path_buf(),
+        root: root.path().to_path_buf(),
+        source: ImportedAgentSource::ClaudeCode,
+        files: vec![main, collision, subagent],
+    })
+    .expect_err("derived identifier collision")
+    .to_string();
+    assert!(error.contains("duplicate imported session identifier"));
 }
 
 #[test]

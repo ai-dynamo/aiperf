@@ -217,7 +217,7 @@ fn parse_codex_read_set(
         }
         sessions.push(parse_codex_session(file)?);
     }
-    reject_duplicate_session_ids(&sessions)
+    validate_unique_session_ids(sessions)
 }
 
 fn parse_claude_read_set(
@@ -234,13 +234,13 @@ fn parse_claude_read_set(
 
     let mut sessions = Vec::with_capacity(read_set.files.len());
     let mut task_parents = HashMap::new();
-    let mut non_task_parents = HashSet::new();
+    let mut observed_tool_parents = HashSet::new();
     for file in main_files {
         let parsed = claude_code::parse_claude_session_details(file)?;
         let session_id = parsed.session.session_id.clone();
         let task_ids = parsed.task_tool_use_ids;
         for tool_use_id in &parsed.all_tool_use_ids {
-            non_task_parents.insert((session_id.clone(), tool_use_id.clone()));
+            observed_tool_parents.insert((session_id.clone(), tool_use_id.clone()));
         }
         for tool_use_id in task_ids {
             let key = (session_id.clone(), tool_use_id);
@@ -267,7 +267,7 @@ fn parse_claude_read_set(
                 ));
             }
             None => {
-                let detail = if non_task_parents.contains(&parent_key) {
+                let detail = if observed_tool_parents.contains(&parent_key) {
                     "parent tool-use does not identify a Task call"
                 } else {
                     "parent tool-use identifier not found"
@@ -295,14 +295,14 @@ fn parse_claude_read_set(
         });
         sessions.push(session);
     }
-    reject_duplicate_session_ids(&sessions)
+    validate_unique_session_ids(sessions)
 }
 
-fn reject_duplicate_session_ids(
-    sessions: &[ImportedAgentSession],
+fn validate_unique_session_ids(
+    sessions: Vec<ImportedAgentSession>,
 ) -> Result<Vec<ImportedAgentSession>, ImportedAgentError> {
     let mut session_ids = HashSet::new();
-    for session in sessions {
+    for session in &sessions {
         if !session_ids.insert(&session.session_id) {
             let source = match session.source {
                 ImportedAgentSource::Codex => "codex",
@@ -317,7 +317,7 @@ fn reject_duplicate_session_ids(
             ));
         }
     }
-    Ok(sessions.to_vec())
+    Ok(sessions)
 }
 
 fn read_set_error(file: &ImportedAgentSourceFile, detail: &'static str) -> ImportedAgentError {
