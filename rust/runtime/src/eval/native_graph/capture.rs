@@ -36,6 +36,44 @@ pub enum CompatibilityFidelity {
     Missing,
 }
 
+/// Opaque, bounded terminal acknowledgement supplied by one external driver session.
+///
+/// The receipt retains only a domain-separated digest. Its constructor accepts canonical terminal
+/// bytes at the private protocol boundary and never preserves them in the evaluation contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompatibilityTerminalReceipt {
+    identity_digest: ArtifactDigest,
+}
+
+impl CompatibilityTerminalReceipt {
+    /// Maximum canonical terminal payload bytes accepted before the payload is discarded.
+    pub const MAX_CANONICAL_BYTES: usize = 64 * 1024;
+
+    /// Seals a bounded canonical terminal payload without retaining its contents.
+    pub fn from_canonical_terminal_bytes(bytes: &[u8]) -> Result<Self, CaptureError> {
+        if bytes.len() > Self::MAX_CANONICAL_BYTES {
+            return Err(CaptureError::TerminalReceiptLimitExceeded {
+                limit: Self::MAX_CANONICAL_BYTES,
+            });
+        }
+        let mut material = Vec::new();
+        crate::eval::append_identity_field(
+            &mut material,
+            "domain",
+            b"aiperf-native-graph-compatibility-terminal-receipt-v1",
+        );
+        crate::eval::append_identity_field(&mut material, "canonical-terminal", bytes);
+        Ok(Self {
+            identity_digest: ArtifactDigest::from_bytes(&material),
+        })
+    }
+
+    /// Returns the opaque identity of the discarded canonical terminal receipt.
+    pub fn identity_digest(&self) -> &ArtifactDigest {
+        &self.identity_digest
+    }
+}
+
 /// Immutable capture authority derived solely from an imported external package plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapturePolicy {
@@ -302,6 +340,11 @@ pub enum CaptureError {
         /// Maximum allowed call facts.
         limit: u16,
     },
+    /// A terminal receipt exceeded its fixed public admission bound.
+    TerminalReceiptLimitExceeded {
+        /// Maximum canonical terminal receipt bytes.
+        limit: usize,
+    },
     /// A fixed observation counter could no longer be represented.
     CounterOverflow,
 }
@@ -316,6 +359,12 @@ impl Display for CaptureError {
                 write!(
                     formatter,
                     "compatibility observation limit {limit} exceeded"
+                )
+            }
+            Self::TerminalReceiptLimitExceeded { limit } => {
+                write!(
+                    formatter,
+                    "compatibility terminal receipt limit {limit} exceeded"
                 )
             }
             Self::CounterOverflow => {

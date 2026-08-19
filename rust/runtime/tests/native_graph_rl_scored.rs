@@ -8,18 +8,19 @@ use std::{cell::RefCell, collections::BTreeMap, fs, io::Cursor, num::NonZeroUsiz
 use async_trait::async_trait;
 
 use aiperf_runtime::eval::{
-    AgentVariantRef, ArtifactDigest, ArtifactQuota, EnvironmentTransitionRecord,
-    EpisodeArtifactStore, EpisodeComparability, EpisodeEvaluationError, EpisodeEvaluator,
-    EpisodeEvaluatorFactory, EpisodeExecution, EpisodeExecutionError, EvidenceEvent, EvidenceKind,
-    FrozenAttemptBundle, FrozenRolloutEvidence, HarborEpisodeEvaluator,
-    HarborEpisodeEvaluatorFactory, HarborImporter, HarborSource, LocalNativeGraphSuiteScheduler,
-    MatrixError, ModelIdentity, NativeGraphAttemptAuthority, NativeGraphCompletedAttempt,
-    NativeGraphCompletedAttemptError, NativeGraphEpisodeExecutor, NativeGraphEpisodeRunner,
-    NativeGraphRolloutReceipt, NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity,
-    RegradeRequest, ResolvedEpisodeTrial, ResolvedNativeGraphSuite, ResourceLeaseRequest,
-    ResourceLimits, RewardDocument, RlEvaluationPolicy, RolloutEvidenceIdentity, RuntimeIdentity,
-    ScoreVersion, SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult, regrade,
-    run_resolved_suite,
+    AgentVariantRef, ArtifactDigest, ArtifactQuota, CapturePolicy, CompatibilityFidelity,
+    CompatibilityTerminalSupplement, EnvironmentTransitionRecord, EpisodeArtifactStore,
+    EpisodeComparability, EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory,
+    EpisodeExecution, EpisodeExecutionError, EpisodeFidelity, EpisodeIntegrity, EpisodeResult,
+    EpisodeScoreState, EvidenceEvent, EvidenceKind, FrozenAttemptBundle, FrozenRolloutEvidence,
+    HarborEpisodeEvaluator, HarborEpisodeEvaluatorFactory, HarborImporter, HarborSource,
+    LocalNativeGraphSuiteScheduler, MatrixError, ModelIdentity, NativeGraphAttemptAuthority,
+    NativeGraphCompletedAttempt, NativeGraphCompletedAttemptError, NativeGraphEpisodeExecutor,
+    NativeGraphEpisodeRunner, NativeGraphRolloutReceipt, NativeGraphSuiteManifest,
+    NativeSourceAcquirer, PolicyIdentity, RegradeRequest, ResolvedEpisodeTrial,
+    ResolvedNativeGraphSuite, ResourceLeaseRequest, ResourceLimits, RewardDocument,
+    RlEvaluationPolicy, RolloutEvidenceIdentity, RuntimeIdentity, ScoreVersion, SuiteRunId,
+    SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult, regrade, run_resolved_suite,
 };
 
 fn frozen_harbor_attempt(
@@ -525,6 +526,129 @@ fn one_trial_scheduler() -> LocalNativeGraphSuiteScheduler {
             .expect("fixture scheduler resources are valid"),
     )
     .expect("fixture scheduler initializes")
+}
+
+fn compatibility_supplement() -> CompatibilityTerminalSupplement {
+    let task = tempfile::tempdir().expect("fixture external package root is created");
+    fs::create_dir_all(task.path().join("environment")).expect("fixture environment exists");
+    fs::create_dir_all(task.path().join("tests")).expect("fixture tests exist");
+    fs::create_dir_all(task.path().join("tools")).expect("fixture tools exist");
+    fs::write(
+        task.path().join("environment/Dockerfile"),
+        b"FROM scratch\n",
+    )
+    .expect("fixture Dockerfile writes");
+    fs::write(task.path().join("instruction.md"), b"do external work\n")
+        .expect("fixture instruction writes");
+    fs::write(task.path().join("tests/test.sh"), b"exit 0\n").expect("fixture test writes");
+    fs::write(
+        task.path().join("task.toml"),
+        br#"schema_version = "1.1"
+
+[task]
+name = "example/external-completion"
+
+[native_graph]
+profile = "externally_driven"
+adapter_manifest = "adapters.toml"
+driver = "driver-adapter"
+external_driver_factory_id = "refuse"
+"#,
+    )
+    .expect("fixture external task manifest writes");
+    fs::write(
+        task.path().join("adapters.toml"),
+        br#"[[adapters]]
+id = "driver-adapter"
+role = "driver"
+argv = ["tools/driver.sh"]
+executable = "tools/driver.sh"
+"#,
+    )
+    .expect("fixture adapter manifest writes");
+    fs::write(task.path().join("tools/driver.sh"), b"#!/bin/sh\nexit 0\n")
+        .expect("fixture driver writes");
+
+    let source = HarborSource::local(task.path().to_string_lossy())
+        .expect("fixture external source is accepted");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&source)
+        .expect("fixture external package imports");
+    CapturePolicy::from_package(
+        imported
+            .package
+            .native_graph()
+            .expect("fixture retains its external package"),
+    )
+    .expect("external fixture owns capture policy")
+    .begin_observation()
+    .freeze()
+    .into_terminal_supplement()
+}
+
+#[test]
+fn compatibility_completion_refuses_native_no_rollout_and_foreign_trial_authorities() {
+    let authority = NativeGraphAttemptAuthority::from_resolved_trial(
+        resolved_suite_without_rollout("native-compatibility", "run-native-compatibility")
+            .trials()
+            .first()
+            .expect("fixture has one native no-rollout attempt"),
+    );
+    let attempt = frozen_harbor_attempt(&authority, 0.75);
+    let supplement = compatibility_supplement();
+
+    let error = NativeGraphCompletedAttempt::freeze_compatibility(
+        &authority,
+        attempt.clone(),
+        supplement.clone(),
+    )
+    .expect_err("native no-rollout completions cannot accept external compatibility facts");
+    assert_eq!(
+        error,
+        NativeGraphCompletedAttemptError::CompatibilityRequiresExternalProfile
+    );
+    assert_eq!(attempt.lifecycle_evidence().len(), 1);
+
+    let foreign_authority = NativeGraphAttemptAuthority::from_resolved_trial(
+        resolved_suite_without_rollout("foreign-compatibility", "run-foreign-compatibility")
+            .trials()
+            .first()
+            .expect("fixture has one foreign attempt"),
+    );
+    let error = NativeGraphCompletedAttempt::freeze_compatibility(
+        &foreign_authority,
+        attempt.clone(),
+        supplement,
+    )
+    .expect_err("foreign trial facts cannot attach compatibility lifecycle evidence");
+    assert_eq!(
+        error,
+        NativeGraphCompletedAttemptError::TrialIdentityMismatch
+    );
+    assert_eq!(attempt.lifecycle_evidence().len(), 1);
+}
+
+#[test]
+fn externally_driven_result_fidelity_does_not_change_the_harbor_score_axes() {
+    let result = EpisodeResult::new_with_fidelity(
+        ArtifactDigest::from_bytes(b"external-trial"),
+        aiperf_runtime::eval::AttemptId::new("external-attempt").expect("fixture attempt is valid"),
+        EpisodeIntegrity::Valid,
+        EpisodeExecution::Completed,
+        EpisodeScoreState::Verified { reward: 0.75 },
+        EpisodeComparability::Scored,
+        vec![ArtifactDigest::from_bytes(b"harbor-verifier")],
+        EpisodeFidelity::ExternallyDriven(CompatibilityFidelity::Missing),
+    )
+    .expect("finite Harbor score remains valid at external fidelity");
+
+    assert!(result.fidelity().is_externally_driven());
+    assert_eq!(result.verified_reward(), Some(0.75));
+    assert_eq!(result.comparability(), EpisodeComparability::Scored);
+    assert_eq!(
+        result.evidence(),
+        [ArtifactDigest::from_bytes(b"harbor-verifier")]
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

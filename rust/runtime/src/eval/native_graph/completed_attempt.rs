@@ -10,7 +10,8 @@ use crate::eval::{
 };
 
 use super::{
-    FrozenRolloutEvidence, ResolvedEpisodeTrial, RolloutEvidenceIdentity, RolloutPolicyEvidence,
+    CapturePolicy, CompatibilityTerminalSupplement, EpisodeFidelity, FrozenRolloutEvidence,
+    NativeGraphProfile, ResolvedEpisodeTrial, RolloutEvidenceIdentity, RolloutPolicyEvidence,
     RolloutReturnAgreementError, result::EpisodeExecution,
 };
 
@@ -21,6 +22,8 @@ use super::{
 /// lifecycle evidence.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeGraphAttemptAuthority {
+    profile: NativeGraphProfile,
+    compatibility_capture_policy_identity: Option<ArtifactDigest>,
     rollout_identity: RolloutEvidenceIdentity,
     rollout_policy_identity: Option<ArtifactDigest>,
     rollout_selection_digest: Option<ArtifactDigest>,
@@ -31,11 +34,8 @@ pub struct NativeGraphAttemptAuthority {
 impl NativeGraphAttemptAuthority {
     /// Derives trusted rollout provenance from one immutable resolved NativeGraph trial.
     pub fn from_resolved_trial(trial: &ResolvedEpisodeTrial) -> Self {
-        let rollout = trial
-            .imported()
-            .package
-            .native_graph()
-            .and_then(|package| package.rollout());
+        let package = trial.imported().package.native_graph();
+        let rollout = package.and_then(|package| package.rollout());
         let rollout_selection_digest = rollout.map(|rollout| rollout.selection_digest());
         let rollout_policy_identity = rollout.map(|rollout| {
             RolloutPolicyEvidence::from_imported(
@@ -55,6 +55,14 @@ impl NativeGraphAttemptAuthority {
             rollout_identity = rollout_identity.with_rollout_selection_digest(selection_digest);
         }
         Self {
+            profile: package.map_or(NativeGraphProfile::NativeGraph, |package| package.profile()),
+            compatibility_capture_policy_identity: package
+                .filter(|package| package.profile() == NativeGraphProfile::ExternallyDriven)
+                .and_then(|package| {
+                    CapturePolicy::from_package(package)
+                        .ok()
+                        .map(|policy| policy.package_identity().clone())
+                }),
             rollout_identity,
             rollout_policy_identity,
             rollout_selection_digest,
@@ -71,6 +79,15 @@ impl NativeGraphAttemptAuthority {
     /// Reports whether the immutable imported trial selected a rollout.
     pub(crate) const fn requires_rollout_evidence(&self) -> bool {
         self.rollout_selection_digest.is_some()
+    }
+
+    /// Returns whether the immutable resolved trial selected the external compatibility profile.
+    pub(crate) const fn is_externally_driven(&self) -> bool {
+        matches!(self.profile, NativeGraphProfile::ExternallyDriven)
+    }
+
+    fn compatibility_capture_policy_identity(&self) -> Option<&ArtifactDigest> {
+        self.compatibility_capture_policy_identity.as_ref()
     }
 
     /// Borrows the one resolved trial that may receive this rollout's lifecycle evidence.
@@ -92,6 +109,8 @@ impl NativeGraphAttemptAuthority {
 pub struct NativeGraphCompletedAttempt {
     attempt: FrozenAttemptBundle,
     rollout: Option<FrozenRolloutEvidence>,
+    compatibility: Option<CompatibilityTerminalSupplement>,
+    fidelity: EpisodeFidelity,
 }
 
 impl NativeGraphCompletedAttempt {
@@ -100,6 +119,8 @@ impl NativeGraphCompletedAttempt {
         Self {
             attempt,
             rollout: None,
+            compatibility: None,
+            fidelity: EpisodeFidelity::Legacy,
         }
     }
 
@@ -114,11 +135,19 @@ impl NativeGraphCompletedAttempt {
         rollout: Option<FrozenRolloutEvidence>,
     ) -> Result<Self, NativeGraphCompletedAttemptError> {
         validate_attempt_authority(authority, &attempt)?;
+        if authority.is_externally_driven() {
+            return Err(NativeGraphCompletedAttemptError::NativeRolloutRequiresNativeProfile);
+        }
         if authority.requires_rollout_evidence() && rollout.is_none() {
             return Err(NativeGraphCompletedAttemptError::RolloutEvidenceRequired);
         }
         let Some(rollout) = rollout else {
-            return Ok(Self::from_frozen(attempt));
+            return Ok(Self {
+                attempt,
+                rollout: None,
+                compatibility: None,
+                fidelity: EpisodeFidelity::NativeGraph,
+            });
         };
         validate_rollout_identity(authority, &rollout)?;
         rollout
@@ -129,6 +158,39 @@ impl NativeGraphCompletedAttempt {
         Ok(Self {
             attempt,
             rollout: Some(rollout),
+            compatibility: None,
+            fidelity: EpisodeFidelity::NativeGraph,
+        })
+    }
+
+    /// Validates and freezes bounded external compatibility facts beside Harbor attempt facts.
+    ///
+    /// Compatibility facts append exactly one lifecycle event. They never modify verifier
+    /// evidence, verifier reward, or score lineage.
+    pub fn freeze_compatibility(
+        authority: &NativeGraphAttemptAuthority,
+        attempt: FrozenAttemptBundle,
+        supplement: CompatibilityTerminalSupplement,
+    ) -> Result<Self, NativeGraphCompletedAttemptError> {
+        validate_attempt_authority(authority, &attempt)?;
+        if !authority.is_externally_driven() {
+            return Err(NativeGraphCompletedAttemptError::CompatibilityRequiresExternalProfile);
+        }
+        if authority.requires_rollout_evidence() {
+            return Err(NativeGraphCompletedAttemptError::CompatibilityCannotUseRollout);
+        }
+        let expected_capture = authority
+            .compatibility_capture_policy_identity()
+            .ok_or(NativeGraphCompletedAttemptError::CompatibilityRequiresExternalProfile)?;
+        if supplement.report().package_identity() != expected_capture {
+            return Err(NativeGraphCompletedAttemptError::CompatibilityCaptureIdentityMismatch);
+        }
+        let attempt = append_compatibility_lifecycle(attempt, &supplement)?;
+        Ok(Self {
+            attempt,
+            rollout: None,
+            fidelity: EpisodeFidelity::ExternallyDriven(supplement.fidelity()),
+            compatibility: Some(supplement),
         })
     }
 
@@ -142,8 +204,21 @@ impl NativeGraphCompletedAttempt {
         self.rollout.as_ref()
     }
 
+    /// Borrows the sealed external compatibility facts, when this was externally driven.
+    pub fn compatibility(&self) -> Option<&CompatibilityTerminalSupplement> {
+        self.compatibility.as_ref()
+    }
+
     pub(crate) const fn has_rollout(&self) -> bool {
         self.rollout.is_some()
+    }
+
+    pub(crate) const fn has_compatibility(&self) -> bool {
+        self.compatibility.is_some()
+    }
+
+    pub(crate) const fn fidelity(&self) -> EpisodeFidelity {
+        self.fidelity
     }
 
     /// Transfers the frozen Harbor facts to a legacy evaluator that has no rollout-aware seam.
@@ -164,6 +239,24 @@ impl NativeGraphCompletedAttempt {
             EpisodeExecution::Completed
         }
     }
+}
+
+fn append_compatibility_lifecycle(
+    attempt: FrozenAttemptBundle,
+    supplement: &CompatibilityTerminalSupplement,
+) -> Result<FrozenAttemptBundle, NativeGraphCompletedAttemptError> {
+    let mut lifecycle = attempt.lifecycle_evidence().to_vec();
+    let sequence = u64::try_from(lifecycle.len())
+        .map_err(|_| NativeGraphCompletedAttemptError::LifecycleSequenceOverflow)?;
+    let parent = lifecycle.last().map(EvidenceEvent::identity_digest);
+    lifecycle.push(supplement.lifecycle_evidence(attempt.attempt().clone(), sequence, parent));
+    FrozenAttemptBundle::new(
+        attempt.trial_digest().clone(),
+        attempt.verifier_result().clone(),
+        lifecycle,
+        attempt.score_lineage().to_vec(),
+    )
+    .map_err(NativeGraphCompletedAttemptError::Frozen)
 }
 
 fn validate_attempt_authority(
@@ -248,6 +341,14 @@ pub enum NativeGraphCompletedAttemptError {
     TrialIdentityMismatch,
     /// The Harbor attempt did not belong to the authority's immutable expanded attempt.
     AttemptIdentityMismatch,
+    /// A native rollout completion was attempted for an externally driven trial.
+    NativeRolloutRequiresNativeProfile,
+    /// Compatibility facts require the imported externally driven profile.
+    CompatibilityRequiresExternalProfile,
+    /// Compatibility facts cannot coexist with an imported native rollout.
+    CompatibilityCannotUseRollout,
+    /// Compatibility capture facts do not belong to the imported external package.
+    CompatibilityCaptureIdentityMismatch,
     /// Rollout source provenance disagreed with the immutable imported task source.
     SourceIdentityMismatch,
     /// Rollout task provenance disagreed with the immutable selected task.
@@ -279,6 +380,15 @@ impl Display for NativeGraphCompletedAttemptError {
             Self::AttemptIdentityMismatch => {
                 formatter.write_str("completed Harbor attempt does not match the resolved attempt")
             }
+            Self::NativeRolloutRequiresNativeProfile => {
+                formatter.write_str("native rollout completion requires the native_graph profile")
+            }
+            Self::CompatibilityRequiresExternalProfile => formatter
+                .write_str("compatibility completion requires the externally_driven profile"),
+            Self::CompatibilityCannotUseRollout => formatter
+                .write_str("compatibility completion cannot attach native rollout evidence"),
+            Self::CompatibilityCaptureIdentityMismatch => formatter
+                .write_str("compatibility capture facts disagree with the imported package"),
             Self::SourceIdentityMismatch => formatter
                 .write_str("rollout source provenance disagrees with the completed attempt"),
             Self::TaskIdentityMismatch => {

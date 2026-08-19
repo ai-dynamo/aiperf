@@ -30,6 +30,7 @@ use crate::{
     eval::semantic::GraphLowererFactory,
     eval::{AdapterSpec, ArtifactDigest, ProviderRecovery},
 };
+use async_trait::async_trait;
 use bytes::Bytes;
 
 use super::action_encoder::{
@@ -56,6 +57,7 @@ use super::{
     NativeGraphRolloutReceipt, NativeGraphRolloutTransitionReceipt, ProtocolAdapterRuntimeFactory,
     ProtocolCapability, ProtocolLimits, RlEvaluationPolicy,
 };
+use super::{CompatibilityTerminalReceipt, ResolvedEpisodeTrial};
 
 /// Failure while selecting or binding one NativeGraph-only extension seam.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1003,10 +1005,20 @@ fn revoke_reset_reference(
     }
 }
 
-/// Compatibility driver selected only for explicitly externally driven packages.
-pub trait NativeGraphExternalDriver {
-    /// Runs one bounded externally driven episode.
-    fn run(&mut self) -> Result<(), NativeGraphFactoryError>;
+/// Capability-limited session supplied only after external compatibility preparation succeeds.
+///
+/// The protocol boundary adds terminal-request operations in a later slice. This marker keeps
+/// preparation independent of processes, environments, secrets, and native execution authority.
+pub trait ExternalDriverSession {}
+
+/// Prepared externally driven compatibility work bound to one exact package and trial.
+#[async_trait(?Send)]
+pub trait PreparedExternalDriver {
+    /// Runs one bounded compatibility interaction through the externally authorized session.
+    async fn run(
+        &mut self,
+        session: &mut dyn ExternalDriverSession,
+    ) -> Result<CompatibilityTerminalReceipt, NativeGraphFactoryError>;
 }
 
 /// Factory for compatibility-only externally driven package support.
@@ -1014,11 +1026,12 @@ pub trait NativeGraphExternalDriverFactory: Send + Sync {
     /// Returns the canonical immutable selector this factory permits.
     fn id(&self) -> &str;
 
-    /// Binds an external driver to the imported package authority.
-    fn bind(
+    /// Prepares an external driver from exact immutable package and trial authority.
+    fn prepare(
         &self,
         package: &NativeGraphPackagePlan,
-    ) -> Result<Box<dyn NativeGraphExternalDriver>, NativeGraphFactoryError>;
+        trial: &ResolvedEpisodeTrial,
+    ) -> Result<Box<dyn PreparedExternalDriver>, NativeGraphFactoryError>;
 }
 
 /// Explicit refusal until the externally driven compatibility slice is enabled.
@@ -1030,10 +1043,11 @@ impl NativeGraphExternalDriverFactory for RefusingExternalDriverFactory {
         "refuse"
     }
 
-    fn bind(
+    fn prepare(
         &self,
         _: &NativeGraphPackagePlan,
-    ) -> Result<Box<dyn NativeGraphExternalDriver>, NativeGraphFactoryError> {
+        _: &ResolvedEpisodeTrial,
+    ) -> Result<Box<dyn PreparedExternalDriver>, NativeGraphFactoryError> {
         Err(NativeGraphFactoryError::new(
             "externally driven NativeGraph packages are not enabled by the acyclic model slice",
         ))

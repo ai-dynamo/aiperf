@@ -34,7 +34,7 @@ pub trait EpisodeEvaluator {
         &self,
         attempt: NativeGraphCompletedAttempt,
     ) -> Result<EpisodeResult, EpisodeEvaluationError> {
-        if attempt.has_rollout() {
+        if attempt.has_rollout() || attempt.has_compatibility() {
             return Err(EpisodeEvaluationError::RolloutAwareEvaluatorRequired);
         }
         self.evaluate(attempt.into_frozen_attempt()).await
@@ -81,7 +81,7 @@ impl EpisodeEvaluator for HarborEpisodeEvaluator {
             .ok_or(EpisodeEvaluationError::Frozen(
                 FrozenAttemptError::EmptyScoreLineage,
             ))?;
-        let result = EpisodeResult::new(
+        let result = EpisodeResult::new_with_fidelity(
             frozen.trial_digest().clone(),
             frozen.attempt().clone(),
             EpisodeIntegrity::Valid,
@@ -91,6 +91,7 @@ impl EpisodeEvaluator for HarborEpisodeEvaluator {
             },
             EpisodeComparability::Scored,
             vec![frozen.identity_digest()],
+            attempt.fidelity(),
         )?;
         Ok(result)
     }

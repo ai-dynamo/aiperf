@@ -7,6 +7,8 @@ use std::{borrow::Borrow, fmt};
 
 use crate::eval::{ArtifactDigest, AttemptId};
 
+use super::CompatibilityFidelity;
+
 /// Integrity classification for one episode attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EpisodeIntegrity {
@@ -54,6 +56,24 @@ pub enum EpisodeComparability {
     Unscored,
 }
 
+/// Fidelity authority for the result's execution and observation claims.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EpisodeFidelity {
+    /// A legacy construction path did not preserve an explicit NativeGraph fidelity claim.
+    Legacy,
+    /// Rust controlled the NativeGraph execution and its model decisions.
+    NativeGraph,
+    /// An opaque external driver completed under bounded compatibility observation.
+    ExternallyDriven(CompatibilityFidelity),
+}
+
+impl EpisodeFidelity {
+    /// Returns whether this result was produced by an externally driven compatibility runner.
+    pub const fn is_externally_driven(self) -> bool {
+        matches!(self, Self::ExternallyDriven(_))
+    }
+}
+
 /// Immutable result facts emitted by one scheduled episode attempt.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EpisodeResult {
@@ -64,6 +84,7 @@ pub struct EpisodeResult {
     score: EpisodeScoreState,
     comparability: EpisodeComparability,
     evidence: Vec<ArtifactDigest>,
+    fidelity: EpisodeFidelity,
 }
 
 impl EpisodeResult {
@@ -78,6 +99,30 @@ impl EpisodeResult {
         comparability: EpisodeComparability,
         evidence: Vec<ArtifactDigest>,
     ) -> Result<Self, EpisodeResultError> {
+        Self::new_with_fidelity(
+            trial_digest,
+            attempt_id,
+            integrity,
+            execution,
+            score,
+            comparability,
+            evidence,
+            EpisodeFidelity::Legacy,
+        )
+    }
+
+    /// Creates one result with an explicit execution-fidelity authority.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_fidelity(
+        trial_digest: ArtifactDigest,
+        attempt_id: AttemptId,
+        integrity: EpisodeIntegrity,
+        execution: EpisodeExecution,
+        score: EpisodeScoreState,
+        comparability: EpisodeComparability,
+        evidence: Vec<ArtifactDigest>,
+        fidelity: EpisodeFidelity,
+    ) -> Result<Self, EpisodeResultError> {
         if let EpisodeScoreState::Verified { reward } = score
             && !reward.is_finite()
         {
@@ -91,6 +136,7 @@ impl EpisodeResult {
             score,
             comparability,
             evidence,
+            fidelity,
         })
     }
 
@@ -127,6 +173,11 @@ impl EpisodeResult {
     /// Borrows the immutable evidence identities carried by this result.
     pub fn evidence(&self) -> &[ArtifactDigest] {
         &self.evidence
+    }
+
+    /// Returns the explicit authority behind this result's fidelity classification.
+    pub const fn fidelity(&self) -> EpisodeFidelity {
+        self.fidelity
     }
 
     /// Returns the verified reward, when one exists.

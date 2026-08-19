@@ -4,9 +4,9 @@
 use std::{fs, path::Path};
 
 use aiperf_runtime::eval::{
-    ArtifactDigest, AttemptId, CaptureFidelity, CapturePolicy, CompatibilityFidelity, EvidenceKind,
-    FrozenAttemptBundle, HarborImporter, HarborSource, NativeGraphProfile, NativeSourceAcquirer,
-    RewardDocument, ScoreVersion, VerifierResult,
+    ArtifactDigest, AttemptId, CaptureFidelity, CapturePolicy, CompatibilityFidelity,
+    CompatibilityTerminalReceipt, EvidenceKind, FrozenAttemptBundle, HarborImporter, HarborSource,
+    NativeGraphProfile, NativeSourceAcquirer, RewardDocument, ScoreVersion, VerifierResult,
 };
 
 #[test]
@@ -96,6 +96,26 @@ fn compatibility_terminal_supplement_is_sealed_to_external_fidelity_and_lifecycl
             .kind,
         EvidenceKind::Compatibility,
         "compatibility facts remain lifecycle-only rather than verifier input"
+    );
+}
+
+#[test]
+fn compatibility_terminal_receipt_retains_only_a_bounded_digest() {
+    let receipt =
+        CompatibilityTerminalReceipt::from_canonical_terminal_bytes(br#"{"terminal":"accepted"}"#)
+            .expect("a bounded canonical terminal receipt seals to a digest");
+
+    assert_ne!(
+        receipt.identity_digest(),
+        &ArtifactDigest::from_bytes(br#"{"terminal":"accepted"}"#),
+        "the receipt identity is domain-separated from the raw terminal bytes"
+    );
+    assert!(
+        CompatibilityTerminalReceipt::from_canonical_terminal_bytes(
+            vec![b'x'; CompatibilityTerminalReceipt::MAX_CANONICAL_BYTES + 1].as_slice(),
+        )
+        .is_err(),
+        "oversized terminal data must be rejected before it can become public evidence"
     );
 }
 

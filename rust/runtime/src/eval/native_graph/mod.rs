@@ -39,7 +39,7 @@ pub use artifacts::{
 };
 pub use capture::{
     CaptureError, CaptureFidelity, CapturePolicy, CompatibilityFidelity, CompatibilityObservation,
-    CompatibilityObservationReport, CompatibilityTerminalSupplement,
+    CompatibilityObservationReport, CompatibilityTerminalReceipt, CompatibilityTerminalSupplement,
 };
 pub use cellular::{
     CellularFoldError, NativeGraphCellAssignment, NativeGraphCellLease,
@@ -69,12 +69,12 @@ pub use factories::{
 };
 pub use factories::{
     ConfirmedNativeGraphProviderRecoveryFactory, ExactNativeGraphFidelityObserverFactory,
-    MoveV1ActionEncoderFactory, NativeGraphActionEncoderFactory, NativeGraphAdapterRuntimeProvider,
-    NativeGraphAdapterRuntimeResolution, NativeGraphEnvironmentStepper,
-    NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriver,
+    ExternalDriverSession, MoveV1ActionEncoderFactory, NativeGraphActionEncoderFactory,
+    NativeGraphAdapterRuntimeProvider, NativeGraphAdapterRuntimeResolution,
+    NativeGraphEnvironmentStepper, NativeGraphEnvironmentStepperFactory,
     NativeGraphExternalDriverFactory, NativeGraphFactoryError, NativeGraphFidelityObserver,
     NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
-    NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider,
+    NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider, PreparedExternalDriver,
     RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, StrictAdapterRuntimeProvider,
     SupervisedEnvironmentStepperBinder,
 };
@@ -107,8 +107,8 @@ pub use model_runtime::{
     ResolvedTokenizerBinding,
 };
 pub use result::{
-    EpisodeAggregate, EpisodeComparability, EpisodeExecution, EpisodeIntegrity, EpisodeResult,
-    EpisodeResultError, EpisodeScoreState, aggregate_episode_results,
+    EpisodeAggregate, EpisodeComparability, EpisodeExecution, EpisodeFidelity, EpisodeIntegrity,
+    EpisodeResult, EpisodeResultError, EpisodeScoreState, aggregate_episode_results,
 };
 pub use rl::{
     EnvironmentTransitionRecord, FrozenRolloutTrajectory, RlEvaluationLimits, RlEvaluationPolicy,
