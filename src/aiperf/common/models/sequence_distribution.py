@@ -663,14 +663,6 @@ class VLLMRatioConfig(BaseConfig):
             description="Special tokens subtracted from isl_mean before bounds.",
         ),
     ] = 0
-    chat_template_len: Annotated[
-        int,
-        Field(
-            default=0,
-            ge=0,
-            description="Present for API symmetry with SGLangRatioConfig; unused in VLLM-style bounds.",
-        ),
-    ] = 0
     range_ratio: Annotated[
         tuple[float, float],
         Field(
@@ -724,8 +716,7 @@ class SGLangRatioConfig(BaseConfig):
     - a plain-float CLI string (``"0.3"``); JSON dict form is rejected
     - a 2-tuple ``(r, r)`` where both elements must be equal
 
-    Ratios must be in ``[0.0, 1.0]``. ``chat_template_len`` is subtracted from
-    ``isl_mean`` before bounds are computed.
+    Ratios must be in ``[0.0, 1.0]``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -754,14 +745,6 @@ class SGLangRatioConfig(BaseConfig):
             default=0,
             ge=0,
             description="Ignored; present for API symmetry with VLLMRatioConfig.",
-        ),
-    ] = 0
-    chat_template_len: Annotated[
-        int,
-        Field(
-            default=0,
-            ge=0,
-            description="Chat template token overhead subtracted from isl_mean.",
         ),
     ] = 0
     range_ratio: Annotated[
@@ -798,9 +781,8 @@ class SGLangRatioConfig(BaseConfig):
         return ir, or_
 
     def compute_input_bounds(self) -> tuple[int, int]:
-        adjusted = max(1, self.isl_mean - self.chat_template_len)
         r = self.range_ratio[0]
-        return max(1, int(adjusted * r)), adjusted
+        return max(1, int(self.isl_mean * r)), self.isl_mean
 
     def compute_output_bounds(self) -> tuple[int, int]:
         r = self.range_ratio[1]
@@ -958,14 +940,16 @@ class _LegacyRNG:
 class SGLangRangeRatioDistribution(RangeRatioDistribution):
     """RangeRatioDistribution with SGLang-compatible MT19937 preseed.
 
-    Also mirrors SGLang's ``use_chat_template`` bound adjustment: when
-    ``chat_template_len > 0``, it is subtracted from ``isl_mean`` before
-    the sampling window is computed — matching::
+    The sampling window derives from the raw configured ``isl_mean``. Overhead
+    for chat templates and special tokens is subtracted per-request *after*
+    sampling, via the composer's ``first_turn_isl_adjustment`` — matching
+    SGLang, which shifts drawn lengths rather than rescaling the window::
 
-        chat_template_len = len(tokenizer.encode(_apply_chat_template("a"))) - 1
-        input_len = input_len - chat_template_len      # SGLang adjusts mean first
-        lower = int(input_len * ratio)
-        upper = input_len
+        input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+
+    Subtracting from the mean beforehand would rescale the lower bound too
+    (``int((mean-c)*r)`` instead of ``int(mean*r)``), producing a different
+    distribution rather than a shifted one.
 
     Overrides :meth:`preseed` to use MT19937 (via a private
     ``numpy.random.RandomState``) instead of ``numpy.random.default_rng``

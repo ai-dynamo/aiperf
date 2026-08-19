@@ -291,7 +291,7 @@ class PromptConfig(BaseConfig):
         return self
 
     def get_sequence_distribution(
-        self, num_special_tokens: int = 0, chat_template_len: int = 0
+        self, num_special_tokens: int = 0
     ) -> SequenceLengthSampler | None:
         """Return a sampler for (ISL, OSL) pairs, or None if not configured."""
         if self.sequence_distribution is not None:
@@ -327,7 +327,6 @@ class PromptConfig(BaseConfig):
                 osl_stddev=0.0,
                 range_ratio=self.random_range_ratio,
                 num_special_tokens=num_special_tokens,
-                chat_template_len=chat_template_len,
             )
             return DistClass(config)
 

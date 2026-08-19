@@ -16,6 +16,7 @@ import math
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import RandomCorpusStyle
@@ -1023,6 +1024,38 @@ class TestRangeRatioDistributionSglangMode:
             _sglang(128, 128, 0.3).input_bounds
             == _sglang(128, 128, 0.3, num_special_tokens=5).input_bounds
         )
+
+    def test_chat_template_len_is_not_a_config_field(self):
+        """The window must derive from the raw mean.
+
+        `chat_template_len` used to shrink `isl_mean` before bounds while the
+        composer ALSO subtracted the same overhead from each sampled ISL via
+        `first_turn_isl_adjustment` — charging it twice and landing wire ISL
+        ~13 tokens under the configured value under `--apply-chat-template`.
+        The plumbing is gone; `extra="forbid"` makes reintroducing it by
+        accident a hard error rather than a silent regression.
+        """
+        with pytest.raises(ValidationError, match="chat_template_len"):
+            SGLangRatioConfig(
+                isl_mean=128, osl_mean=16, range_ratio=1.0, chat_template_len=13
+            )
+        with pytest.raises(ValidationError, match="chat_template_len"):
+            VLLMRatioConfig(
+                isl_mean=128, osl_mean=16, range_ratio=0.3, chat_template_len=13
+            )
+
+    def test_window_matches_sglang_upstream_shape(self):
+        """Bounds come from the raw mean, matching SGLang's compute_random_lens.
+
+        Upstream computes `[max(int(full_len * ratio), 1), full_len]` and then
+        shifts each drawn sample by the overhead. Subtracting the overhead from
+        the mean first would rescale the LOWER bound too -- `int((mean-c)*r)`
+        instead of `int(mean*r)` -- yielding a different distribution rather
+        than a shifted one. At mean=100, r=0.5, overhead=10 that was (45, 90)
+        where upstream gives (50, 100).
+        """
+        assert _sglang(100, 16, 0.5).input_bounds == (50, 100)
+        assert _sglang(128, 16, 1.0).input_bounds == (128, 128)
 
     def test_preseed_accepts_uint64_run_seed(self):
         """A 64-bit run seed must not blow up the MT19937 global seeder.

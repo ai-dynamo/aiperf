@@ -329,28 +329,16 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         both ``sequence_distribution`` (probabilistic ISL/OSL pairs) and
         ``random_range_ratio`` (uniform window sampling).
 
-        For ``RandomCorpusStyle.SGLANG`` with ``--apply-chat-template``, passes
-        the measured template overhead so ``SGLangRangeRatioDistribution`` can
-        subtract it from ``isl_mean`` before computing bounds — matching
-        SGLang's ``use_chat_template`` bound adjustment.
+        Chat-template overhead is deliberately NOT passed down. It is already
+        subtracted per-request by ``first_turn_isl_adjustment`` /
+        ``subsequent_turn_isl_adjustment``; feeding it to the window as well
+        charged it twice (AIP-873 review) and shrank wire ISL below the
+        configured value under ``--apply-chat-template``.
         """
         if self._synthetic_prompts is None:
             return None
-        from aiperf.common.enums import RandomCorpusStyle
-
-        chat_template_len = 0
-        if (
-            self._synthetic_prompts.random_corpus_style == RandomCorpusStyle.SGLANG
-            and self.run.cfg.tokenizer is not None
-            and self.run.cfg.tokenizer.apply_chat_template
-        ):
-            chat_template_len = (
-                self._chat_template_per_request_fixed_tokens
-                + self._chat_template_per_msg_wrap_tokens
-            )
         return self._synthetic_prompts.get_sequence_distribution(
             num_special_tokens=num_special_tokens,
-            chat_template_len=chat_template_len,
         )
 
     def _osl_distribution(self) -> SamplingDistribution | None:
