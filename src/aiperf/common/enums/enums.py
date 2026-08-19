@@ -798,17 +798,35 @@ class RandomCorpusStyle(CaseInsensitiveStrEnum):
          - ``valid_token_ids`` (special tokens excluded via ``all_special_ids``)
          - ``all_token_ids`` (full ``range(vocab_size)``, no exclusion)
        * - BOS / special-token adjustment
-         - ``max(0, mean - num_special_tokens)``
+         - ``max(0, mean - num_special_tokens)``, applied to the mean before
+           the window bounds are computed
          - No adjustment (raw configured mean used directly)
        * - ISL/OSL range formula
          - Symmetric: ``[floor(mean*(1-r)), ceil(mean*(1+r))]``
          - Lower-bounded: ``[max(1, int(mean*r)), mean]``
+       * - RNG algorithm (preseed)
+         - PCG64 via ``numpy.random.default_rng(seed)``
+         - MT19937 via a private ``numpy.random.RandomState(seed)``
        * - RNG draw order (with preseed)
-         - All ISLs → all OSLs → all offsets from ``default_rng(seed)``
-         - Uses ``_corpus_rng`` (derived RNG, no global-state preseed)
+         - All ISLs → all OSLs → all offsets
+         - All ISLs → all OSLs → all offsets (same order, different algorithm)
        * - Top-up RNG
          - Continues from the same ``default_rng`` stream (``_preseed_rng``)
-         - Uses ``_corpus_rng`` with independent random draws
+         - Continues from the same ``RandomState`` stream (``_preseed_rng``)
+
+    Both styles are preseeded whenever the corpus is
+    :attr:`PromptCorpus.RANDOM` — the composer gates on
+    ``isinstance(dist, RangeRatioDistribution)``, which the SGLANG subclass
+    satisfies. ``_corpus_rng`` is the fallback for the non-preseeded paths
+    (non-RANDOM corpora, and draws past cache exhaustion), not a per-style
+    difference.
+
+    .. note::
+       The SGLANG BOS row is a deliberate divergence from upstream, not a
+       transcription of it. ``sample_random_requests`` does subtract, but
+       per-request *after* sampling and only when ``return_text`` is set
+       (``input_lens[i] = max(1, input_lens[i] - num_special_tokens)``), which
+       shifts the whole distribution rather than rescaling its bounds.
     """
 
     VLLM = "vllm"
@@ -817,6 +835,10 @@ class RandomCorpusStyle(CaseInsensitiveStrEnum):
     Special tokens excluded from the sampling pool. BOS subtracted from ISL mean."""
 
     SGLANG = "sglang"
-    """sglang bench_serving semantics: lower-bounded window ``[max(1, int(mean*r)), mean]``.
+    """sglang ``benchmark.serving`` semantics under ``--dataset-name random-ids``:
+    lower-bounded window ``[max(1, int(mean*r)), mean]``.
     r=0 allows full variability [1, mean]; r=1 fixes length at mean. Full vocab_size range
-    used for token sampling (no special-token exclusion). No BOS adjustment."""
+    used for token sampling (no special-token exclusion). No BOS adjustment.
+
+    The default ``--dataset-name random`` is a different algorithm upstream
+    (repeat/truncate ShareGPT token ids) and is not what this style mirrors."""

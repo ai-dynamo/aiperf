@@ -15,7 +15,21 @@ or pass ``--prompt-corpus`` on the CLI.
 |-------|---------|
 | `sonnet` | Shakespeare sonnets (default for synthetic and most loaders) |
 | `coding` | Procedural coding / tool-use content |
-| `random` | Synthetic prompts from random vocabulary token IDs — no text file required. Matches the token-generation algorithm used by `vllm bench serve` and `sglang bench_serving`. Use with `--random-range-ratio` for ISL/OSL variance. |
+| `random` | Synthetic prompts from random vocabulary token IDs — no text file required. Matches the token-generation algorithm used by `vllm bench serve` and by `sglang.benchmark.serving` under `--dataset-name random-ids` (see note below). Use with `--random-range-ratio` for ISL/OSL variance. |
+
+> **Which SGLang algorithm this matches.** The vocab-offset arithmetic implemented
+> here is SGLang's `random_sample=False` branch, reached via
+> `--dataset-name random-ids`. SGLang's *default* `--dataset-name random` is a
+> different algorithm — it repeats/truncates ShareGPT token ids to hit the target
+> length. Behavior is pinned against SGLang HEAD; the OSL lower bound was
+> un-clamped before v0.5.x (`int(output_len * range_ratio)` with no `max(..., 1)`),
+> so older SGLang releases will not reproduce these lengths.
+>
+> Byte-exactness also stops at the prompt round trip: AIPerf runs vLLM's
+> decode → encode → trim/top-up loop, and those top-up draws consume the shared
+> preseed stream. SGLang decodes once and reports `prompt_len = input_lens[i]`,
+> consuming no such state — so `sglang`-style prompts diverge from SGLang
+> whenever that round trip drifts.
 
 ## When it applies
 
