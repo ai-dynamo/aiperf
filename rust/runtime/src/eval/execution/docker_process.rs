@@ -1825,6 +1825,9 @@ impl DockerProcessSandbox {
     }
 
     /// Executes one externally driven compatibility episode using only the package-owned plan.
+    ///
+    /// This requires the worker's current-thread `LocalSet`: cleanup retains a `!Send` Driver
+    /// future so it can finish reaping after the caller is canceled.
     #[cfg(feature = "engine")]
     pub async fn execute_externally_driven_with_runtime(
         &self,
@@ -2008,12 +2011,7 @@ impl DockerProcessSandbox {
                 Err(error) => Err(error),
             };
             if let Err(primary) = startup {
-                let cleanup = if started.has_started_cleanup() {
-                    started.retire_after_started_cleanup();
-                    Ok(())
-                } else {
-                    started.cancel_and_reap().await
-                };
+                let cleanup = started.cancel_and_reap().await;
                 return match cleanup {
                     Ok(()) => Err(primary),
                     Err(cleanup) => Err(EvalExecutionError::ProcessFailure(format!(

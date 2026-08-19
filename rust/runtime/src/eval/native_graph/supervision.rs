@@ -522,7 +522,6 @@ impl AdapterRuntimeFactory for ProtocolAdapterRuntimeFactory {
             max_stdout_frame_bytes,
             max_stderr_bytes,
             terminal_exit: None,
-            has_cleanup_started: false,
         };
         let hello = HostEnvelope::new(
             self.config.episode(),
@@ -601,7 +600,6 @@ pub struct StrictSupervisedAdapter {
     max_stdout_frame_bytes: usize,
     max_stderr_bytes: usize,
     terminal_exit: Option<AdapterExit>,
-    has_cleanup_started: bool,
 }
 
 impl StrictSupervisedAdapter {
@@ -624,13 +622,7 @@ impl StrictSupervisedAdapter {
             max_stdout_frame_bytes,
             max_stderr_bytes,
             terminal_exit: None,
-            has_cleanup_started: false,
         }
-    }
-
-    /// Whether terminal cleanup has already been attempted for this process owner.
-    pub(crate) const fn has_cleanup_started(&self) -> bool {
-        self.has_cleanup_started
     }
 
     /// Completes the strict Hello/Ready exchange for an already-owned process.
@@ -826,10 +818,6 @@ impl SupervisedAdapter for StrictSupervisedAdapter {
         if let Some(exit) = self.terminal_exit {
             return Ok(exit);
         }
-        if self.has_cleanup_started {
-            return Err(AdapterSupervisionError::CleanupAlreadyAttempted);
-        }
-        self.has_cleanup_started = true;
         let cancel_deadline = self.deadlines.cancel();
         let reap_deadline = self.deadlines.reap();
         let process = self.process_mut()?;
@@ -1364,8 +1352,6 @@ pub enum AdapterSupervisionError {
     DiagnosticOutputLimit { actual: usize, limit: usize },
     /// The process was already successfully reaped.
     AlreadyReaped,
-    /// Terminal cleanup was already attempted and cannot be repeated.
-    CleanupAlreadyAttempted,
     /// A fixture or implementation rejected a protocol reset.
     ResetRejected(String),
     /// Task 4 rejected an unauthorized or malformed protocol transition.
@@ -1432,9 +1418,6 @@ impl Display for AdapterSupervisionError {
                 )
             }
             Self::AlreadyReaped => formatter.write_str("adapter process was already reaped"),
-            Self::CleanupAlreadyAttempted => {
-                formatter.write_str("adapter terminal cleanup was already attempted")
-            }
             Self::ResetRejected(reason) => write!(formatter, "adapter reset rejected: {reason}"),
             Self::Protocol(error) => write!(formatter, "adapter protocol violation: {error}"),
             Self::Recovery { primary, recovery } => {
@@ -1460,7 +1443,9 @@ impl std::error::Error for AdapterSupervisionError {}
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs, num::NonZeroUsize, time::Duration};
+    use std::{
+        cell::RefCell, collections::BTreeMap, fs, num::NonZeroUsize, rc::Rc, time::Duration,
+    };
 
     use crate::eval::native_graph::CompatibilityCaptureSession;
     use crate::eval::{
@@ -1473,6 +1458,54 @@ mod tests {
     };
 
     use super::*;
+
+    struct ReapFailsOnceProcess {
+        attempts: Rc<RefCell<usize>>,
+    }
+
+    #[async_trait(?Send)]
+    impl AdapterProcess for ReapFailsOnceProcess {
+        async fn write_frame(
+            &mut self,
+            _: &[u8],
+            _: Duration,
+        ) -> Result<(), AdapterSupervisionError> {
+            Ok(())
+        }
+
+        async fn read_stdout_frame(
+            &mut self,
+            _: usize,
+            _: Duration,
+        ) -> Result<Vec<u8>, AdapterSupervisionError> {
+            Err(AdapterSupervisionError::EndOfStream)
+        }
+
+        async fn drain_stderr(&mut self, _: usize) -> Result<Vec<u8>, AdapterSupervisionError> {
+            Ok(Vec::new())
+        }
+
+        async fn cancel(
+            &mut self,
+            _: CancelReason,
+            _: Duration,
+        ) -> Result<(), AdapterSupervisionError> {
+            Ok(())
+        }
+
+        async fn reap(&mut self, _: Duration) -> Result<AdapterExit, AdapterSupervisionError> {
+            let mut attempts = self.attempts.borrow_mut();
+            *attempts += 1;
+            if *attempts == 1 {
+                return Err(AdapterSupervisionError::Process(
+                    "transient fixture reap failure".to_owned(),
+                ));
+            }
+            Ok(AdapterExit::Reaped)
+        }
+
+        fn fence(&mut self) {}
+    }
 
     #[test]
     fn external_authorization_validates_every_sealed_spawn_field_once() {
@@ -1547,6 +1580,32 @@ mod tests {
                 .is_err()
         );
         assert!(authorization.spawn_request().is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn strict_adapter_retries_cleanup_after_a_transient_reap_failure() {
+        let attempts = Rc::new(RefCell::new(0));
+        let mut adapter = StrictSupervisedAdapter::from_prestarted_process(
+            driver_config(),
+            Box::new(ReapFailsOnceProcess {
+                attempts: Rc::clone(&attempts),
+            }),
+            AdapterLifecycleDeadlines::default(),
+            1024,
+            1024,
+        );
+
+        assert!(
+            adapter
+                .cancel_and_reap(CancelReason::HostShutdown)
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            adapter.cancel_and_reap(CancelReason::HostShutdown).await,
+            Ok(AdapterExit::Reaped)
+        ));
+        assert_eq!(*attempts.borrow(), 2);
     }
 
     fn external_authorization_fixture() -> (crate::eval::ImportedTask, ResolvedEpisodeTrial) {

@@ -298,19 +298,9 @@ impl StartedExternalDriverDockerSpawn {
                 "external Driver startup cleanup",
             ))?;
         cleanup
-            .run()
+            .complete()
             .await
             .map_err(external_driver_supervision_error)
-    }
-
-    pub(crate) fn has_started_cleanup(&self) -> bool {
-        self.adapter
-            .as_ref()
-            .is_some_and(StrictSupervisedAdapter::has_cleanup_started)
-    }
-
-    pub(crate) fn retire_after_started_cleanup(&mut self) {
-        self.adapter.take();
     }
 
     fn take_cleanup(&mut self) -> Option<ExternalDriverCleanup> {
@@ -365,7 +355,7 @@ impl super::native_graph_episode::ExternallyDrivenEpisodeSession for ExternalDri
             .ok_or(EvalExecutionError::InvalidRecipe(
                 "live external Driver cleanup",
             ))?
-            .run()
+            .complete()
             .await
             .map_err(external_driver_supervision_error)
     }
@@ -413,10 +403,24 @@ impl ExternalDriverCleanup {
         result
     }
 
-    fn schedule(self) {
+    async fn complete(self) -> Result<(), AdapterSupervisionError> {
+        self.spawn().await.map_err(|_| {
+            AdapterSupervisionError::Process(
+                "external Driver cleanup task ended unexpectedly".to_owned(),
+            )
+        })?
+    }
+
+    fn spawn(self) -> tokio::sync::oneshot::Receiver<Result<(), AdapterSupervisionError>> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
         tokio::task::spawn_local(async move {
-            let _ = self.run().await;
+            let _ = sender.send(self.run().await);
         });
+        receiver
+    }
+
+    fn schedule(self) {
+        drop(self.spawn());
     }
 }
 

@@ -42,6 +42,7 @@ use aiperf_runtime::eval::{
 };
 use async_trait::async_trait;
 use std::rc::Rc;
+use tokio::sync::oneshot;
 
 static DOCKER_RUNTIME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -4915,6 +4916,11 @@ enum ExternalTerminalCase {
     MaliciousReady,
     StartupPending,
     ArtifactAndCleanupFailure,
+    CleanupPending,
+}
+
+thread_local! {
+    static EXTERNAL_CLEANUP_RELEASE: RefCell<Option<oneshot::Receiver<()>>> = const { RefCell::new(None) };
 }
 
 struct TransactionPreparedDriver {
@@ -5104,17 +5110,17 @@ impl AdapterProcess for TransactionExternalDriverProcess {
                 },
             )),
             HostMessage::RequestEpisodeTerminal { .. } => match self.case {
-                ExternalTerminalCase::Valid | ExternalTerminalCase::ArtifactAndCleanupFailure => {
-                    self.push(AdapterEnvelope::new(
-                        host.episode,
-                        "external-driver-terminal",
-                        1,
-                        "external-driver-terminal",
-                        AdapterMessage::EpisodeTerminalCandidate {
-                            output: serde_json::json!({"private": "discard-me"}),
-                        },
-                    ))
-                }
+                ExternalTerminalCase::Valid
+                | ExternalTerminalCase::ArtifactAndCleanupFailure
+                | ExternalTerminalCase::CleanupPending => self.push(AdapterEnvelope::new(
+                    host.episode,
+                    "external-driver-terminal",
+                    1,
+                    "external-driver-terminal",
+                    AdapterMessage::EpisodeTerminalCandidate {
+                        output: serde_json::json!({"private": "discard-me"}),
+                    },
+                )),
                 ExternalTerminalCase::MissingCandidate => self.push(AdapterEnvelope::new(
                     host.episode,
                     "external-driver-terminal",
@@ -5178,6 +5184,19 @@ impl AdapterProcess for TransactionExternalDriverProcess {
     }
 
     async fn reap(&mut self, _: Duration) -> Result<AdapterExit, AdapterSupervisionError> {
+        if matches!(self.case, ExternalTerminalCase::CleanupPending) {
+            self.events.lock().unwrap().push("reap-pending");
+            let release = EXTERNAL_CLEANUP_RELEASE.with(|slot| {
+                slot.borrow_mut().take().ok_or_else(|| {
+                    AdapterSupervisionError::Process(
+                        "fixture cleanup release was not configured".to_owned(),
+                    )
+                })
+            })?;
+            release.await.map_err(|_| {
+                AdapterSupervisionError::Process("fixture cleanup release was dropped".to_owned())
+            })?;
+        }
         self.events.lock().unwrap().push("reap");
         if matches!(self.case, ExternalTerminalCase::ArtifactAndCleanupFailure) {
             return Err(AdapterSupervisionError::Process(
@@ -5335,19 +5354,23 @@ async fn external_driver_transaction_orders_terminal_verifier_and_exact_cleanup(
         startup_clock: None,
     };
 
-    let (execution, supplement) = DockerProcessSandbox::new()
-        .execute_externally_driven_with_runtime(
-            &runtime,
-            &HarborSandboxRecipe::for_standard_task(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                Some("/work".to_owned()),
-            )
-            .unwrap(),
-            &imported.package,
-            &trial,
-            prepared,
-            &FixedSecret,
-        )
+    let (execution, supplement) = tokio::task::LocalSet::new()
+        .run_until(async {
+            DockerProcessSandbox::new()
+                .execute_externally_driven_with_runtime(
+                    &runtime,
+                    &HarborSandboxRecipe::for_standard_task(
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        Some("/work".to_owned()),
+                    )
+                    .unwrap(),
+                    &imported.package,
+                    &trial,
+                    prepared,
+                    &FixedSecret,
+                )
+                .await
+        })
         .await
         .expect("the approved external compatibility transaction completes");
 
@@ -5401,7 +5424,9 @@ async fn external_driver_terminal_failures_skip_verifier_and_cleanup_exactly_onc
             startup_clock: None,
         };
 
-        let error = DockerProcessSandbox::new()
+        let error = tokio::task::LocalSet::new()
+            .run_until(async {
+                DockerProcessSandbox::new()
             .execute_externally_driven_with_runtime(
                 &runtime,
                 &HarborSandboxRecipe::for_standard_task(
@@ -5414,6 +5439,8 @@ async fn external_driver_terminal_failures_skip_verifier_and_cleanup_exactly_onc
                 prepared,
                 &FixedSecret,
             )
+            .await
+            })
             .await
             .expect_err("an unsealed external terminal cannot reach Harbor verification");
 
@@ -5554,19 +5581,23 @@ async fn external_driver_cleanup_failure_prevents_artifact_collection() {
         startup_clock: None,
     };
 
-    let error = DockerProcessSandbox::new()
-        .execute_externally_driven_with_runtime(
-            &runtime,
-            &HarborSandboxRecipe::for_standard_task(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                Some("/work".to_owned()),
-            )
-            .unwrap(),
-            &imported.package,
-            &trial,
-            prepared,
-            &FixedSecret,
-        )
+    let error = tokio::task::LocalSet::new()
+        .run_until(async {
+            DockerProcessSandbox::new()
+                .execute_externally_driven_with_runtime(
+                    &runtime,
+                    &HarborSandboxRecipe::for_standard_task(
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        Some("/work".to_owned()),
+                    )
+                    .unwrap(),
+                    &imported.package,
+                    &trial,
+                    prepared,
+                    &FixedSecret,
+                )
+                .await
+        })
         .await
         .expect_err("Driver cleanup failure must prevent artifact and verifier access");
 
@@ -5618,19 +5649,23 @@ async fn external_driver_startup_abort_cleans_once_without_a_second_fence() {
         startup_clock: None,
     };
 
-    let error = DockerProcessSandbox::new()
-        .execute_externally_driven_with_runtime(
-            &runtime,
-            &HarborSandboxRecipe::for_standard_task(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                Some("/work".to_owned()),
-            )
-            .unwrap(),
-            &imported.package,
-            &trial,
-            prepared,
-            &FixedSecret,
-        )
+    let error = tokio::task::LocalSet::new()
+        .run_until(async {
+            DockerProcessSandbox::new()
+                .execute_externally_driven_with_runtime(
+                    &runtime,
+                    &HarborSandboxRecipe::for_standard_task(
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        Some("/work".to_owned()),
+                    )
+                    .unwrap(),
+                    &imported.package,
+                    &trial,
+                    prepared,
+                    &FixedSecret,
+                )
+                .await
+        })
         .await
         .expect_err("a pending Driver launch must reach its bounded startup abort");
 
@@ -5797,6 +5832,78 @@ async fn aborting_external_driver_terminal_future_confirms_cleanup_once() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn aborting_external_driver_during_reap_keeps_cleanup_owned_until_reaped() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let prepared = TransactionExternalDriverFactory {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::CleanupPending,
+    }
+    .prepare(&imported.package, &trial)
+    .unwrap();
+    let (release, wait_for_release) = oneshot::channel();
+    EXTERNAL_CLEANUP_RELEASE.with(|slot| *slot.borrow_mut() = Some(wait_for_release));
+    let runtime = TransactionDockerRuntime {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::CleanupPending,
+        is_environment_acquired: Cell::new(false),
+        driver_is_live: Rc::new(Cell::new(false)),
+        startup_clock: None,
+    };
+    let sandbox = DockerProcessSandbox::new();
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        Some("/work".to_owned()),
+    )
+    .unwrap();
+    let observed_events = Arc::clone(&events);
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            let execution = tokio::task::spawn_local(async move {
+                sandbox
+                    .execute_externally_driven_with_runtime(
+                        &runtime,
+                        &recipe,
+                        &imported.package,
+                        &trial,
+                        prepared,
+                        &FixedSecret,
+                    )
+                    .await
+            });
+            for _ in 0..1_024 {
+                if observed_events.lock().unwrap().contains(&"reap-pending") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert!(observed_events.lock().unwrap().contains(&"reap-pending"));
+            execution.abort();
+            assert!(execution.await.unwrap_err().is_cancelled());
+            release
+                .send(())
+                .expect("cleanup owner must retain the in-flight reap after parent abort");
+            for _ in 0..1_024 {
+                if observed_events.lock().unwrap().contains(&"reap") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+
+    let events = events.lock().unwrap();
+    assert_eq!(events.iter().filter(|event| **event == "cancel").count(), 1);
+    assert_eq!(events.iter().filter(|event| **event == "reap").count(), 1);
+    assert!(!events.contains(&"fence"), "{events:?}");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn external_driver_malformed_ready_identifier_is_redacted_before_public_return() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = external_driver_task_root(&temporary, "");
@@ -5819,19 +5926,23 @@ async fn external_driver_malformed_ready_identifier_is_redacted_before_public_re
         startup_clock: None,
     };
 
-    let error = DockerProcessSandbox::new()
-        .execute_externally_driven_with_runtime(
-            &runtime,
-            &HarborSandboxRecipe::for_standard_task(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                Some("/work".to_owned()),
-            )
-            .unwrap(),
-            &imported.package,
-            &trial,
-            prepared,
-            &FixedSecret,
-        )
+    let error = tokio::task::LocalSet::new()
+        .run_until(async {
+            DockerProcessSandbox::new()
+                .execute_externally_driven_with_runtime(
+                    &runtime,
+                    &HarborSandboxRecipe::for_standard_task(
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        Some("/work".to_owned()),
+                    )
+                    .unwrap(),
+                    &imported.package,
+                    &trial,
+                    prepared,
+                    &FixedSecret,
+                )
+                .await
+        })
         .await
         .expect_err("malformed Ready correlation must fail closed");
 
