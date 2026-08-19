@@ -567,6 +567,12 @@ class EndpointConfig(BaseConfig):
                 "--per-chunk-usage requires endpoint type 'chat' "
                 "(continuous_usage_stats is only injected on the chat endpoint)"
             )
+        if self.per_chunk_usage and not self.streaming:
+            raise ValueError(
+                "--per-chunk-usage requires --streaming "
+                "(continuous_usage_stats and inter-token latency apply only to "
+                "streaming responses)"
+            )
         return self
 
     @model_validator(mode="after")

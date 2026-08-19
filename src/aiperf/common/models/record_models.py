@@ -1395,29 +1395,26 @@ def find_last_non_empty_usage(responses: list[ParsedResponse]) -> Usage | None:
     return None
 
 
-def first_content_chunk_output_tokens(
+def first_content_chunk_completion_tokens(
     responses: list[ParsedResponse],
 ) -> int | None:
-    """Return the cumulative *output* token count reported on the first content
+    """Return the cumulative ``completion_tokens`` reported on the first content
     chunk (the chunk whose arrival defines TTFT).
 
     Requires per-chunk (``continuous_usage_stats``) usage: it walks forward to the
-    first response carrying content (``data`` is not None) and reads its usage.
-    The count is ``completion_tokens - reasoning_tokens`` so it is in the same
-    unit as ``TokenCounts.output`` / OSL (output-only, reasoning excluded) --
-    otherwise a reasoning model's first chunk would over-count and inter-token
-    latency could subtract more tokens than OSL contains. Because per-chunk usage
-    is cumulative, that value is the number of output tokens delivered through the
-    first content chunk -- exactly what inter-token latency subtracts. Returns
-    ``None`` when no content chunk carries usage (e.g. the server only reports the
-    final total), so callers fall back to assuming one token in the first chunk.
+    first response carrying content (``data`` is not None) and reads its usage's
+    ``completion_tokens``. This is deliberately the raw completion count
+    (reasoning included), matching ``OutputSequenceLengthMetric`` -- OSL is
+    ``output + reasoning`` = ``completion_tokens`` -- so inter-token latency
+    subtracts operands in the same unit. Because per-chunk usage is cumulative,
+    that value is the number of tokens delivered through the first content chunk.
+    Returns ``None`` when no content chunk carries usage (e.g. the server only
+    reports the final total), so callers fall back to assuming one token in the
+    first chunk.
     """
     for response in responses:
         if response.data and response.usage:
-            completion = response.usage.completion_tokens
-            if completion is None:
-                return None
-            return completion - (response.usage.reasoning_tokens or 0)
+            return response.usage.completion_tokens
     return None
 
 

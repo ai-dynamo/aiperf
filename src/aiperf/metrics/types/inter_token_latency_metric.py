@@ -75,21 +75,24 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
             if record.token_counts is not None
             else None
         )
-        if first_chunk_tokens is None or first_chunk_tokens <= 0:
+        if first_chunk_tokens is None:
+            # Not reported (no --per-chunk-usage, or server sent no per-chunk usage):
+            # legacy divisor, no warning -- this is the expected default path.
             decode_tokens = osl - 1  # type: ignore
         else:
             decode_tokens = osl - first_chunk_tokens  # type: ignore
-            if decode_tokens < 1:
-                # first-chunk count >= OSL: a count inconsistency (e.g. a
-                # reasoning/unit mismatch, or the entire output in one chunk).
-                # Degrade to `osl - 1` and warn once rather than silently dropping
-                # the headline metric from the summary.
+            # A server-reported count that is non-positive or >= OSL is inconsistent
+            # (e.g. per-chunk usage lagging a chunk, or the whole response in one
+            # chunk). Degrade to `osl - 1` and warn once rather than silently
+            # degrading a value the server actually reported.
+            if first_chunk_tokens <= 0 or decode_tokens < 1:
                 if not type(self)._mismatch_warned:
                     type(self)._mismatch_warned = True
                     _logger.warning(
-                        lambda: f"Inter-token latency: first content chunk token count "
-                        f"({first_chunk_tokens}) >= output sequence length ({osl}); "
-                        f"falling back to (OSL - 1). Check --per-chunk-usage server support."
+                        lambda: f"Inter-token latency: server-reported first content chunk "
+                        f"token count ({first_chunk_tokens}) is inconsistent with output "
+                        f"sequence length ({osl}); falling back to (OSL - 1). Check "
+                        f"--per-chunk-usage server support."
                     )
                 decode_tokens = osl - 1  # type: ignore
 

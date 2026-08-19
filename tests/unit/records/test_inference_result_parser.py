@@ -352,15 +352,16 @@ class TestServerTokenCount:
         assert result.token_counts.first_content_chunk_tokens == 20
         assert result.token_counts.output == 50  # final total, unchanged
 
-    async def test_first_content_chunk_subtracts_reasoning(
+    async def test_first_content_chunk_is_completion_unit_for_reasoning(
         self, per_chunk_usage_parser, request_record
     ):
-        """The first-chunk count is output-only (completion - reasoning), matching
-        OSL's unit, so a reasoning model's first chunk is not over-counted."""
+        """The first-chunk count is raw completion_tokens (reasoning included),
+        matching OSL (= output + reasoning = completion). For a reasoning model this
+        keeps the ITL operands in the same unit: OSL = output(20) + reasoning(32) =
+        52 = final completion, first chunk = 32, decode = 52 - 32 = 20 (positive)."""
         setup_parser_responses(
             per_chunk_usage_parser,
             [
-                # first content chunk: completion=32 but 32 are reasoning -> 0 output
                 make_parsed_response(
                     text="answer", completion_tokens=32, reasoning_tokens=32
                 ),
@@ -372,10 +373,11 @@ class TestServerTokenCount:
 
         result = await per_chunk_usage_parser.process_valid_record(request_record)
 
-        # 32 completion - 32 reasoning = 0 output tokens through the first chunk,
-        # consistent with OSL = 52 - 32 = 20 (output-only). Not 32.
-        assert result.token_counts.first_content_chunk_tokens == 0
+        # Raw completion (reasoning included), same unit as OSL. Not 0.
+        assert result.token_counts.first_content_chunk_tokens == 32
+        # OSL = output + reasoning = 20 + 32 = 52; first chunk (32) < OSL, decode = 20.
         assert result.token_counts.output == 20
+        assert result.token_counts.reasoning == 32
 
     async def test_first_content_chunk_not_read_without_per_chunk_usage(
         self, server_token_parser, request_record
