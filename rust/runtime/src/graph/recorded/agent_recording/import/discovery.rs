@@ -536,6 +536,9 @@ fn scan_source(
     let mut records = 0;
     let mut detected = None;
     loop {
+        if records == SCAN_RECORD_LIMIT {
+            break;
+        }
         bytes.clear();
         let read = reader.read_until(b'\n', &mut bytes).map_err(|_| {
             error(
@@ -554,9 +557,6 @@ fn scan_source(
             continue;
         }
         records += 1;
-        if records > SCAN_RECORD_LIMIT {
-            break;
-        }
         let value: Value = serde_json::from_slice(&bytes)
             .map_err(|_| error(path, line, source, "unknown", "invalid JSON"))?;
         let object = value.as_object().ok_or_else(|| {
@@ -568,8 +568,17 @@ fn scan_source(
                 "record must be a JSON object",
             )
         })?;
-        let is_codex = object.get("type").and_then(Value::as_str) == Some("session_meta");
-        let is_claude = object.contains_key("sessionId");
+        let record_type = object.get("type").and_then(Value::as_str);
+        let has_object_payload = object.get("payload").is_some_and(Value::is_object);
+        let is_codex = matches!(
+            record_type,
+            Some("session_meta" | "event_msg" | "response_item" | "turn_context")
+        ) && has_object_payload;
+        let is_claude = (object.contains_key("sessionId") && object.contains_key("parentUuid"))
+            || matches!(
+                record_type,
+                Some("permission-mode" | "file-history-snapshot" | "summary")
+            );
         if is_codex && is_claude {
             return Err(error(
                 path,
@@ -641,9 +650,14 @@ fn is_jsonl(path: &Path) -> bool {
 }
 
 fn is_agent_subagent_name(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with("agent-") && name.ends_with(".jsonl"))
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(stem) = name.strip_suffix(".jsonl") else {
+        return false;
+    };
+    stem.strip_prefix("agent-")
+        .is_some_and(|identifier| !identifier.is_empty())
 }
 
 fn resolved_source_name(source: ImportedAgentSource) -> &'static str {
