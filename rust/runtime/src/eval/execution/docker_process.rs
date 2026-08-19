@@ -28,7 +28,9 @@ use tokio::process::Command as TokioCommand;
 #[cfg(feature = "engine")]
 use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
 #[cfg(feature = "engine")]
-use crate::eval::native_graph::workspace_patch::apply_workspace_patch;
+use crate::eval::native_graph::workspace_patch::{
+    NativeGraphWorkspacePatchError, apply_workspace_patch,
+};
 #[cfg(feature = "engine")]
 use crate::eval::{
     EpisodeArtifactStore, FrozenArtifact, FrozenRolloutEvidence, NativeGraphAttemptAuthority,
@@ -146,6 +148,7 @@ struct DockerNativeGraphEnvironmentRolloutSession {
     workspace_patch: NativeGraphWorkspacePatchContract,
     accepted_patch_count: u64,
     accepted_patch_bytes: u64,
+    workspace_tainted: bool,
     _artifact_root: TempDir,
 }
 
@@ -196,6 +199,7 @@ impl DockerNativeGraphEnvironmentRolloutSession {
             workspace_patch,
             accepted_patch_count: 0,
             accepted_patch_bytes: 0,
+            workspace_tainted: false,
             _artifact_root: artifact_root,
         })
     }
@@ -244,13 +248,22 @@ impl DockerNativeGraphEnvironmentRolloutSession {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        apply_workspace_patch(
+        match apply_workspace_patch(
             &self.workspace_root,
             &bytes,
             &mutable_paths,
             self.workspace_patch.max_patch_bytes(),
-        )
-        .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
+        ) {
+            Ok(()) => {}
+            Err(NativeGraphWorkspacePatchError::Rollback) => {
+                self.workspace_tainted = true;
+                return Err(EvalExecutionError::NativeGraphModel(
+                    "NativeGraph workspace patch recovery is incomplete; the rollout session is tainted"
+                        .to_owned(),
+                ));
+            }
+            Err(error) => return Err(EvalExecutionError::NativeGraphModel(error.to_string())),
+        }
         self.accepted_patch_count = self.accepted_patch_count.checked_add(1).ok_or_else(|| {
             EvalExecutionError::NativeGraphModel(
                 "NativeGraph workspace patch count overflowed".to_owned(),
@@ -266,12 +279,23 @@ impl DockerNativeGraphEnvironmentRolloutSession {
             .await
             .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))
     }
+
+    fn ensure_workspace_is_safe(&self) -> Result<(), EvalExecutionError> {
+        if self.workspace_tainted {
+            return Err(EvalExecutionError::NativeGraphModel(
+                "NativeGraph rollout session is tainted by incomplete workspace-patch recovery"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(feature = "engine")]
 #[async_trait(?Send)]
 impl NativeGraphEnvironmentRolloutSession for DockerNativeGraphEnvironmentRolloutSession {
     async fn reset(&mut self) -> Result<FrozenArtifact, EvalExecutionError> {
+        self.ensure_workspace_is_safe()?;
         let observation = self
             .started
             .reset_live_rollout("native-graph-rollout-reset")
@@ -291,6 +315,7 @@ impl NativeGraphEnvironmentRolloutSession for DockerNativeGraphEnvironmentRollou
         &mut self,
         observation: &FrozenArtifact,
     ) -> Result<NativeGraphRolloutTransitionReceipt, EvalExecutionError> {
+        self.ensure_workspace_is_safe()?;
         let receipt = self
             .receipt
             .as_ref()
@@ -306,7 +331,17 @@ impl NativeGraphEnvironmentRolloutSession for DockerNativeGraphEnvironmentRollou
             .step_live_rollout(&mut self.coordinator, operation, observation)
             .await
             .map_err(|error| EvalExecutionError::NativeGraphModel(error.to_string()))?;
-        self.apply_transition_patch(&transition)?;
+        if let Err(primary) = self.apply_transition_patch(&transition) {
+            if self.workspace_tainted {
+                return match self.cancel_and_reap().await {
+                    Ok(()) => Err(primary),
+                    Err(cleanup) => Err(EvalExecutionError::ProcessFailure(format!(
+                        "{primary}; environment adapter cleanup failed: {cleanup}"
+                    ))),
+                };
+            }
+            return Err(primary);
+        }
         self.receipt
             .as_mut()
             .ok_or(EvalExecutionError::InvalidRecipe(
@@ -318,6 +353,7 @@ impl NativeGraphEnvironmentRolloutSession for DockerNativeGraphEnvironmentRollou
     }
 
     fn freeze(&mut self) -> Result<FrozenRolloutEvidence, EvalExecutionError> {
+        self.ensure_workspace_is_safe()?;
         let receipt = self
             .receipt
             .take()
