@@ -86,6 +86,35 @@ def test_kube_options_to_deployment_config_omits_unauthored_image_override():
     )
 
 
+def test_kube_spec_without_authored_image_uses_deployment_default_at_validation():
+    from aiperf.config import AIPerfConfig
+    from aiperf.config.deployment import DeploymentConfig
+    from aiperf.kubernetes.spec_converter import validate_job_spec
+
+    config = AIPerfConfig.model_validate(
+        {
+            "benchmark": {
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000"]},
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 1,
+                        "concurrency": 1,
+                    }
+                ],
+            }
+        }
+    )
+
+    spec = KubeOptions().to_crd_spec(config)
+
+    assert "image" not in spec
+    assert validate_job_spec(spec).image == DeploymentConfig().image
+
+
 def test_kube_options_to_deployment_config_preserves_explicit_default_values():
     opts = KubeOptions(
         image="aiperf:latest",

@@ -75,15 +75,6 @@ class CreditsCompleteMessage(BaseServiceMessage):
 # =============================================================================
 
 
-class WorkerReady(Struct, frozen=True, kw_only=True, tag_field="t", tag="wr"):
-    """Worker announces readiness to receive credits.
-
-    Retained for compatibility with existing router protocol consumers.
-    """
-
-    worker_id: str
-
-
 class WorkerConnected(Struct, frozen=True, kw_only=True, tag_field="t", tag="wc"):
     """Worker announces that its return path is connected.
 
@@ -250,8 +241,7 @@ class TimePong(Struct, frozen=True, kw_only=True, tag_field="t", tag="tpo"):
 
 # Union type for decoding worker -> router messages
 WorkerToRouterMessage: TypeAlias = (
-    WorkerReady
-    | WorkerConnected
+    WorkerConnected
     | WorkerDispatchable
     | WorkerUndispatchable
     | WorkerShutdown

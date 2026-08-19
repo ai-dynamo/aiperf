@@ -54,9 +54,12 @@ Kubernetes result publication is a fail-closed filesystem transaction. Before
 a controller starts benchmark work, and again immediately before export, it
 durably removes any stale ready marker and atomically installs a processing
 marker. After every required artifact is flushed and exported, it atomically
-installs and fsyncs the ready marker before clearing the processing marker.
-A crash or restarted export before that commit leaves top-level artifacts hidden
-from the results sidecar.
+installs and fsyncs the ready marker before clearing the processing marker. Only
+then does it publish `ResultsExportedMessage` and notify the operator. A crash
+or restarted export before that commit leaves top-level artifacts hidden from
+the results sidecar. Kubernetes sweep aggregation uses
+the same durable ready-marker commit after plotting and scratch-artifact pruning
+finish, so the operator never harvests a partially published aggregate tree.
 
 ### Dataset Manager
 
@@ -198,6 +201,7 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 **Key Responsibilities:**
 - Collecting metrics from Prometheus-compatible endpoints (inference server application metrics, system metrics, custom metrics)
 - Auto-discovering metrics endpoints from configured inference server URLs (`--url`)
+- Discovering eligible inference-server pods through the Kubernetes API, scoped to the benchmark namespace unless another namespace is explicitly configured
 - Supporting custom Prometheus endpoints via `--server-metrics` flag
 - Parsing any metrics exposed in Prometheus format (gauges, counters, histograms)
 - Owning raw server-metric accumulation and JSONL writes locally; only bounded realtime summaries and the final aggregate cross the message bus

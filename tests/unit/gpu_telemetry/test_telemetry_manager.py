@@ -812,7 +812,6 @@ class TestProfileStartCommand:
         ) as mock_create_task:
             manager = self._create_test_manager()
             manager.publish = AsyncMock()
-            manager._send_collection_complete_marker = AsyncMock()
             manager._collectors = {}  # No collectors
 
             start_msg = ProfileStartCommand(
@@ -823,7 +822,6 @@ class TestProfileStartCommand:
             # Verify shutdown was scheduled
             mock_create_task.assert_called_once()
             assert hasattr(manager, "_shutdown_task")
-            manager._send_collection_complete_marker.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_start_no_redundant_reachability_check_or_initialize(self):

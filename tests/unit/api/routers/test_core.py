@@ -24,7 +24,7 @@ class TestConfigEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "endpoint" in data
-        assert "artifacts" in data
+        assert "models" in data
 
     def test_config_does_not_expose_run_identity(
         self, api_test_client: TestClient
@@ -46,7 +46,7 @@ class TestRunEndpoint:
         response = api_test_client.get("/api/run")
         assert response.status_code == 200
         data = response.json()
-        assert data["benchmark_id"] == "test-bench"
+        assert data["benchmark_id"] == "api-test"
         assert isinstance(data["cli_command"], str)
         assert data["cli_command"].startswith("aiperf")
 
@@ -66,7 +66,7 @@ class TestRunEndpoint:
         self,
         monkeypatch: pytest.MonkeyPatch,
         mock_zmq,
-        api_cfg: CLIConfig,
+        cli_config: CLIConfig,
     ) -> None:
         """End-to-end: ``--api-key <secret>`` in sys.argv must not leak through
         ``/api/run.cli_command``. Mirrors the QA ``test_api_key_redaction``
@@ -79,7 +79,7 @@ class TestRunEndpoint:
             "argv",
             ["aiperf", "profile", "--model", "test-model", "--api-key", secret],
         )
-        run = make_run_from_cli(api_cfg)
+        run = make_run_from_cli(cli_config)
         run.benchmark_id = "test-bench"
         run.cfg.runtime.api_host = "127.0.0.1"
         run.cfg.runtime.api_port = 9999

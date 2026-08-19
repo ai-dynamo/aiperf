@@ -38,7 +38,15 @@ from tools._core import (
 # Configuration
 # =============================================================================
 
-ENV_FILE = Path("src/aiperf/common/environment.py")
+# Every module that declares private ``BaseSettings`` classes. Kubernetes and
+# operator settings live in their own modules, so documenting only the common
+# one silently omits their environment-variable surfaces while reporting
+# "up-to-date".
+ENV_FILES = (
+    Path("src/aiperf/common/environment.py"),
+    Path("src/aiperf/kubernetes/environment.py"),
+    Path("src/aiperf/operator/environment.py"),
+)
 OUTPUT_FILE = Path("docs/environment-variables.md")
 
 # =============================================================================
@@ -98,6 +106,9 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
     if isinstance(node.value, ast.Call):
         func = node.value.func
         if isinstance(func, ast.Name) and func.id == "Field":
+            if any(kw.arg == "default_factory" for kw in node.value.keywords):
+                return None
+
             # First positional arg is default
             if node.value.args:
                 default = ast.unparse(node.value.args[0])
@@ -123,8 +134,8 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
     return Field(name, default, description, constraints)
 
 
-def _parse_field_definitions(node: ast.ClassDef) -> list[Field]:
-    """Parse public field definitions declared directly on one class."""
+def _declared_fields(node: ast.ClassDef) -> list[Field]:
+    """Return documented fields declared directly on one class."""
     return [
         field
         for item in node.body
@@ -133,6 +144,28 @@ def _parse_field_definitions(node: ast.ClassDef) -> list[Field]:
         and not field.name.startswith("_")
         and "default_factory" not in field.default
     ]
+
+
+def _fields_with_bases(
+    node: ast.ClassDef,
+    classes: dict[str, ast.ClassDef],
+    seen: set[str] | None = None,
+) -> list[Field]:
+    """Collect inherited field mixins before the class's own declarations."""
+    seen = set() if seen is None else seen
+    if node.name in seen:
+        raise ParseError(f"cyclic settings inheritance involving {node.name}")
+    seen.add(node.name)
+
+    fields: dict[str, Field] = {}
+    for base in node.bases:
+        if not isinstance(base, ast.Name) or base.id not in classes:
+            continue
+        for field in _fields_with_bases(classes[base.id], classes, set(seen)):
+            fields[field.name] = field
+    for field in _declared_fields(node):
+        fields[field.name] = field
+    return list(fields.values())
 
 
 def _parse_settings_class(
@@ -161,35 +194,69 @@ def _parse_settings_class(
                         ):
                             env_prefix = kw.value.value
 
-    # Include fields from focused non-settings mixins in MRO order. These are
-    # valid Pydantic settings fields but do not appear directly in the concrete
-    # BaseSettings AST node.
-    fields = []
-    for base in node.bases:
-        if isinstance(base, ast.Name) and (parent := classes.get(base.id)):
-            fields.extend(_parse_field_definitions(parent))
-    fields.extend(_parse_field_definitions(node))
+    fields = _fields_with_bases(node, classes)
 
     return Settings(node.name, docstring, env_prefix, fields) if fields else None
 
 
+def _parse_resource_settings_calls(tree: ast.AST) -> list[Settings]:
+    """Parse ``_resource_settings("PREFIX_", cpu, memory)`` factory call sites.
+
+    These per-container resource settings are built with ``type()`` at runtime,
+    so no ``ClassDef`` exists for the AST walk to find -- but every call site
+    passes string literals, so the prefix and both defaults are still static.
+    Without this, ten containers' CPU/MEMORY knobs (including
+    ``AIPERF_K8S_RECORDS_MANAGER_CPU``) stay undocumented.
+    """
+    settings: list[Settings] = []
+    for node in ast.walk(tree):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Name)
+            or node.func.id != "_resource_settings"
+            or len(node.args) != 3
+            or not all(isinstance(a, ast.Constant) for a in node.args)
+        ):
+            continue
+        prefix, cpu, memory = (a.value for a in node.args)
+        name = prefix.rstrip("_").replace("_", " ").title()
+        settings.append(
+            Settings(
+                name=f"_{prefix.rstrip('_')}Settings",
+                docstring=f"{name} container CPU and memory (Guaranteed QoS).",
+                env_prefix=f"AIPERF_K8S_{prefix}",
+                fields=[
+                    Field("CPU", cpu, "CPU request and limit (Guaranteed QoS)", []),
+                    Field(
+                        "MEMORY",
+                        memory,
+                        "Memory request and limit (Guaranteed QoS)",
+                        [],
+                    ),
+                ],
+            )
+        )
+    return settings
+
+
 def parse_settings_file(path: Path) -> list[Settings]:
-    """Parse all Settings classes from a Python file."""
+    """Parse all private Settings and Environment classes from a Python file."""
     tree = ast.parse(path.read_text())
+    settings = []
     classes = {
         node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
     }
-    settings = []
 
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.ClassDef)
             and node.name.startswith("_")
-            and node.name.endswith("Settings")
+            and node.name.endswith(("Settings", "Environment"))
             and (parsed := _parse_settings_class(node, classes))
         ):
             settings.append(parsed)
 
+    settings.extend(_parse_resource_settings_calls(tree))
     return settings
 
 
@@ -290,27 +357,34 @@ class EnvVarsDocsGenerator(Generator):
     description = "Generate environment variable documentation for AIPerf"
 
     def generate(self) -> GeneratorResult:
-        if not ENV_FILE.exists():
+        missing = [f for f in ENV_FILES if not f.exists()]
+        if missing:
             raise ParseError(
-                f"Source file not found: {ENV_FILE}",
+                f"Source file not found: {missing[0]}",
                 {
                     "hint": "Run from the project root directory",
                 },
             )
 
-        try:
-            settings_list = parse_settings_file(ENV_FILE)
-        except SyntaxError as e:
-            raise ParseError(
-                "Failed to parse environment.py",
-                {
-                    "error": str(e),
-                    "line": e.lineno,
-                },
-            ) from e
+        settings_list: list[Settings] = []
+        for env_file in ENV_FILES:
+            try:
+                settings_list.extend(parse_settings_file(env_file))
+            except SyntaxError as e:
+                raise ParseError(
+                    f"Failed to parse {env_file.name}",
+                    {
+                        "file": str(env_file),
+                        "error": str(e),
+                        "line": e.lineno,
+                    },
+                ) from e
 
         if not settings_list:
-            raise ParseError("No settings classes found", {"file": str(ENV_FILE)})
+            raise ParseError(
+                "No settings classes found",
+                {"files": ", ".join(str(f) for f in ENV_FILES)},
+            )
 
         total_fields = sum(len(s.fields) for s in settings_list)
 

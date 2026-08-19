@@ -30,6 +30,22 @@ CLI runner post-run callback behavior. Controls whether OnComplete callback exce
 |----------------------|---------|-------------|-------------|
 | `AIPERF_RAISE_ON_CALLBACK_ERROR` | `False` | — | When true, re-raise the first OnComplete callback exception after running all remaining callbacks but before os._exit. Provides a strict-mode contract where a callback raise propagates out of the runner. When false (default) the exception is logged with full traceback, the exit code is forced non-zero, and the process still terminates via os._exit so leftover ZMQ/multiprocessing state cannot hang the interpreter. |
 
+## OPERATOR ENVIRONMENT
+
+Root operator environment configuration. Loads from environment variables. Nested settings use their own prefixes.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_JOB_TIMEOUT_SECONDS` | `0` | ≥ 0 | Job timeout in seconds (0 = no timeout) |
+| `AIPERF_POD_RESTART_THRESHOLD` | `3` | ≥ 0, ≤ 100 | Pod restart count before emitting a warning event |
+| `AIPERF_METRICS_PORT` | `9090` | ≥ 0, ≤ 65535 | Port for the Prometheus /metrics endpoint exposed by the kopf operator process. Set to 0 to disable. Scraped by ServiceMonitor. |
+| `AIPERF_ENDPOINT_CHECK_TIMEOUT` | `10.0` | > 0, ≤ 300 | Seconds to wait for endpoint health check |
+| `AIPERF_PREFLIGHT_TIMEOUT` | `30.0` | > 0, ≤ 120 | Seconds to wait for all pre-flight checks to complete |
+| `AIPERF_CONFIGMAP_PROPAGATION_DELAY_SECONDS` | `10.0` | ≥ 0, ≤ 60 | Seconds to wait after creating the benchmark ConfigMap before creating the JobSet. Allows kubelet caches on worker nodes to sync the ConfigMap before pods start mounting it, preventing FailedMount races on first deployment with a freshly pulled image. |
+| `AIPERF_MUTATING_ROUTES_ENABLED` | `False` | — | Enable results-server HTTP routes that mutate Kubernetes state. Defaults false so read-only results APIs remain exposed while POST routes fail closed unless an operator explicitly opts in. |
+| `AIPERF_MUTATING_ROUTES_TOKEN` | `''` | — | Bearer token required by enabled results-server mutating routes. Leave empty to fail closed even when MUTATING_ROUTES_ENABLED is true. |
+| `AIPERF_CLUSTER_NAME` | `''` | — | Optional human-readable cluster name surfaced in the UI top banner (e.g. 'dgx-prod', 'kind-aiperf'). When unset the banner falls back to the Kubernetes server version. Set via AIPERF_CLUSTER_NAME on the operator deployment. |
+
 ## ACCURACY
 
 Accuracy benchmark settings. Tunables for accuracy benchmarking: the cancel-path result-wait timeout and the LiveCodeBench dataset release pin, so accuracy behavior and numbers are reproducible across runs without requiring source edits.
@@ -90,23 +106,32 @@ Settings for DAG benchmark mode (`dag_jsonl` input type).
 |----------------------|---------|-------------|-------------|
 | `AIPERF_DAG_FAIL_FAST` | `False` | — | When True, a single DAG child error aborts the parent and every orphan sibling under the same branch (releases sticky refcounts and calls issuer.abort_session); unrelated root sessions continue. Default False - the orchestrator counts the error in BranchStats.children_errored, releases the join slot, drains pending siblings, and continues. Set via AIPERF_DAG_FAIL_FAST=1 for strict CI assertions. |
 
+## DASHBOARD
+
+Plotly Dashboard sidecar wiring (operator + results-server). The dashboard is an opt-in third container in the operator Pod; these settings let other containers locate it.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_DASHBOARD_PORT` | `0` | ≥ 0, ≤ 65535 | Pod-local HTTP port the dashboard sidecar listens on. 0 means the sidecar is disabled / absent. results-server uses this to reverse-proxy /dashboard/*; the operator uses it to fire fire-and-forget refresh POSTs after a benchmark completion claim. |
+| `AIPERF_DASHBOARD_PROXY_ENABLED` | `False` | — | When true, results-server forwards /dashboard/* to the sidecar at localhost:PORT and the SPA shows the 'Plots ↗' top-nav entry. When false, /dashboard/* returns 503 and the link is hidden. Set independently from PORT so a misconfigured chart fails closed. |
+
 ## DATASET
 
 Dataset loading and configuration. Controls timeouts and behavior for dataset loading operations, as well as memory-mapped dataset storage settings.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
+| `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for dataset configuration operations |
 | `AIPERF_DATASET_REBROADCAST_INTERVAL` | `2.0` | > 0.0, ≤ 60.0 | Seconds between re-announcements of the dataset-configured notification in Kubernetes. The notification is a one-shot broadcast and sibling worker pods start seconds apart, so a pod that subscribes late would otherwise never learn a dataset exists. |
 | `AIPERF_DATASET_REBROADCAST_WINDOW` | `120.0` | ≥ 0.0, ≤ 3600.0 | Total seconds to keep re-announcing the dataset-configured notification for late-joining worker pods. Set 0 to disable. |
-| `AIPERF_DATASET_STATE_POLL_INTERVAL` | `1.0` | > 0.0, ≤ 60.0 | Seconds between polls of pod-local dataset state while a worker waits to become dispatchable. The dataset arrives via one-shot broadcasts; a worker container that subscribes after they fire recovers by polling its WorkerGroupManager at this interval instead of waiting forever. |
-| `AIPERF_DATASET_DOWNLOAD_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Maximum number of retries for dataset download in Kubernetes worker pods |
-| `AIPERF_DATASET_DOWNLOAD_RETRY_DELAY` | `2.0` | ≥ 0.1, ≤ 60.0 | Initial delay in seconds between dataset download retries (doubles each retry) |
-| `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for dataset configuration operations |
 | `AIPERF_DATASET_BASETEN_SESSION_COLUMN` | `'provided_session_id'` | one of: 'provided_session_id' / 'poor_man_session_id' | Session column used by the Baseten trace loader when both supported columns exist. Set to poor_man_session_id for legacy traces. If the selected column is absent, the loader uses the available column. |
+| `AIPERF_DATASET_STATE_POLL_INTERVAL` | `1.0` | > 0.0, ≤ 60.0 | Seconds between polls of pod-local dataset state while a worker waits to become dispatchable. The dataset arrives via one-shot broadcasts; a worker container that subscribes after they fire recovers by polling its WorkerGroupManager at this interval instead of waiting forever. |
 | `AIPERF_DATASET_MMAP_BASE_PATH` | `None` | — | Base path for memory-mapped dataset files. If None, uses system temp directory. Set to a shared filesystem path for Kubernetes mounted volumes. Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/ |
 | `AIPERF_DATASET_MMAP_CACHE_ENABLED` | `True` | — | If True, AIPerf reuses memory-mapped dataset files across runs whose input bytes, tokenizer identity, and prompt/input settings are byte-identical. Set to False to force every run to re-tokenize and re-write its mmap files. Cache misses still produce byte-identical mmap files to a non-cached run. |
 | `AIPERF_DATASET_MMAP_CACHE_DIR` | `None` | — | Directory holding the content-addressed mmap cache. If None, defaults to ~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. No automatic eviction is implemented yet -- delete the directory to reclaim disk. |
 | `AIPERF_DATASET_PREFORMAT_PAYLOADS` | `False` | — | If True, pre-encode single-turn / self-contained synthetic conversations to the PAYLOAD_BYTES mmap fast path at dataset-build time so workers stream the bytes verbatim and skip per-request encoding. This is a throughput optimization that DROPS input-tokenization metrics (input_sequence_length, image counts) because the structured prompt is discarded. Default False keeps the structured-turns (CONVERSATION) path so those metrics are computed. Datasets that natively ship raw payloads (raw_payload / inputs_json / mooncake-with-payload) always use PAYLOAD_BYTES regardless of this flag; cache-bust runs always use CONVERSATION regardless. |
+| `AIPERF_DATASET_DOWNLOAD_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Maximum number of retries for dataset download in Kubernetes worker pods |
+| `AIPERF_DATASET_DOWNLOAD_RETRY_DELAY` | `2.0` | ≥ 0.1, ≤ 60.0 | Initial delay in seconds between dataset download retries (doubles each retry) |
 | `AIPERF_DATASET_PUBLIC_DATASET_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for public dataset loading operations |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds per media URL download when inline encoding is required |
 | `AIPERF_DATASET_MEDIA_DOWNLOAD_MAX_CONCURRENCY` | `10` | ≥ 1, ≤ 100 | Maximum number of concurrent media URL downloads |
@@ -176,6 +201,226 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID` | `False` | — | Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, plus X-Dynamo-Parent-Session-ID on subagent children. This transport setting is the supported affinity path for a Dynamo frontend running --router-session-affinity-ttl-secs, pinning every turn of a session to the replica holding its KV prefix. |
 | `AIPERF_HTTP_VIDEO_POLL_INTERVAL` | `0.1` | ≥ 0.001, ≤ 10.0 | Interval in seconds between status polls for async video generation jobs. Lower values provide faster completion detection but increase server load. Applies to the aiohttp transport. |
 
+## K8S
+
+Root Kubernetes environment configuration. Loads configuration from environment variables with the AIPERF_K8S_ prefix. Resource settings per container type are created via _resource_settings() with service-specific env prefixes and defaults.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST` | `None` | — | Optional per-record-processor CPU request override inside worker pods |
+| `AIPERF_K8S_RECORD_PROCESSOR_SCALE_FACTOR` | `1` | ≥ 1, ≤ 100 | Kubernetes-only default scale factor for record processors per worker pod. Formula: 1 record processor for every X workers. Default: 1 record processor per worker. |
+| `AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED` | `True` | — | Run the XPUB/XSUB event-bus proxy as a dedicated sidecar container in the controller pod rather than inside the control-plane (SystemController) container. Isolates pub/sub socket accept/forward from the control plane's event loop so large fan-ins (hundreds of simultaneous RP/worker connections) at startup don't starve the SystemController. Set to false to revert to the pre-sidecar behavior where SystemController owns the event-bus proxy. |
+| `AIPERF_K8S_SHARE_PROCESS_NAMESPACE` | `False` | — | When true, JobSet pods spawned by the operator set podSpec.shareProcessNamespace=true so all containers share a PID namespace. Enables cross-container `kubectl exec kill -9 <pid>` for chaos-testing workflows. Keep false in production; chaos fixtures flip it on via AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true. |
+| `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE` | `None` | — | Chaos-test hook: when set, the operator's progress-client uses this base URL (scheme+host+port, e.g. http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002) instead of the per-CR JobSet pod DNS + API_SERVICE port for controller HTTP calls. Production MUST leave unset — it collapses multi-job isolation because every CR funnels through the same URL. Chaos fixtures set it via AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE to steer traffic through toxiproxy for latency/blackhole injection. |
+| `AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE` | `None` | — | Chaos-test hook: when KUBERNETES_SERVICE_HOST points at an L4 proxy rather than kubernetes.default.svc, verify the apiserver certificate against this hostname while still dialing the proxy. Production MUST leave unset; C15 sets it to kubernetes.default.svc. |
+
+## K8SAPI
+
+Api container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_API_CPU` | `75m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_API_MEMORY` | `256Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SDATASETMANAGER
+
+Dataset Manager container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_DATASET_MANAGER_CPU` | `50m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_DATASET_MANAGER_MEMORY` | `256Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SDIAGNOSIS
+
+Thresholds for ``aiperf.kubernetes.benchmark_diagnosis`` heuristics.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_DIAGNOSIS_STALLED_PENDING_THRESHOLD_SECONDS` | `60.0` | ≥ 1.0, ≤ 3600.0 | Pending job is flagged as stalled after this many seconds. |
+| `AIPERF_K8S_DIAGNOSIS_STALLED_RUNNING_THRESHOLD_SECONDS` | `30.0` | ≥ 1.0, ≤ 3600.0 | Running job with no throughput and no completed requests is flagged as stalled after this many seconds. |
+| `AIPERF_K8S_DIAGNOSIS_HIGH_ERROR_RATE_THRESHOLD` | `0.05` | ≥ 0.0, ≤ 1.0 | Error rate (0.0-1.0) above which a high-error-rate finding is reported. |
+| `AIPERF_K8S_DIAGNOSIS_FAIL_ABOVE_ERROR_RATE` | `1.0` | > 0.0, ≤ 1.0 | Error rate (0.0-1.0) at or above which a finished benchmark is reported as Failed instead of Completed. Defaults to 1.0, so only a run in which every single request errored is failed outright; a run that merely errored heavily still completes and is flagged by the high-error-rate diagnosis. Lower it to enforce a stricter success bar. |
+| `AIPERF_K8S_DIAGNOSIS_HIGH_LATENCY_P99_MULTIPLIER` | `10.0` | ≥ 1.0, ≤ 1000.0 | Multiplier on average latency above which p99 is flagged as a tail-latency outlier. |
+
+## K8SEVENTBUSPROXY
+
+Event Bus Proxy container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_EVENT_BUS_PROXY_CPU` | `50m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_EVENT_BUS_PROXY_MEMORY` | `64Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SGPUTELEMETRYMANAGER
+
+Gpu Telemetry Manager container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU` | `25m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SHEALTH
+
+Health probe configuration for all containers.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_HEALTH_INITIAL_DELAY_SECONDS` | `5` | ≥ 0, ≤ 300 | Seconds before starting probes after container starts |
+| `AIPERF_K8S_HEALTH_PERIOD_SECONDS` | `10` | ≥ 1, ≤ 300 | Interval in seconds between probe checks |
+| `AIPERF_K8S_HEALTH_TIMEOUT_SECONDS` | `5` | ≥ 1, ≤ 60 | Seconds before probe times out |
+| `AIPERF_K8S_HEALTH_FAILURE_THRESHOLD` | `10` | ≥ 1, ≤ 20 | Consecutive failures before container is restarted/marked unready |
+| `AIPERF_K8S_HEALTH_SUCCESS_THRESHOLD` | `1` | ≥ 1, ≤ 10 | Consecutive successes before container is marked healthy |
+| `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS` | `5` | ≥ 1, ≤ 30 | Interval between startup probe checks |
+| `AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` | `30` | ≥ 1, ≤ 120 | Consecutive startup probe failures before pod is killed. Total startup time = STARTUP_PERIOD_SECONDS * STARTUP_FAILURE_THRESHOLD |
+
+## K8SJOBSET
+
+JobSet-level configuration.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED` | `300` | ≥ 0 | Seconds to keep JobSet after completion (None to disable) |
+| `AIPERF_K8S_JOBSET_DIRECT_MODE_TTL_SECONDS` | `28800` | ≥ 0 | TTL for operator-less (direct) deployments. Pods stay alive for manual results retrieval. Default 8 hours (28800s). |
+| `AIPERF_K8S_JOBSET_CONTROLLER_BACKOFF_LIMIT` | `0` | ≥ 0, ≤ 10 | Job backoff limit for controller (0 = no retries) |
+| `AIPERF_K8S_JOBSET_WORKER_BACKOFF_LIMIT` | `20` | ≥ 0, ≤ 20 | Job backoff limit for workers (allows retries for transient failures) |
+| `AIPERF_K8S_JOBSET_WORKER_CONNECTION_PROBE_TIMEOUT` | `60.0` | ≥ 30.0, ≤ 600.0 | Seconds worker pods wait for the PUB/SUB connection probe to succeed. Overrides AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT for k8s worker containers only. Pods that cannot connect exit cleanly so Kubernetes restarts them with a fresh ZMQ context; WORKER_BACKOFF_LIMIT absorbs transient first-deploy flakes. |
+| `AIPERF_K8S_JOBSET_CONFIG_MOUNT_PATH` | `'/etc/aiperf'` | — | Path to mount ConfigMap with configs |
+| `AIPERF_K8S_JOBSET_DATASETS_PATH` | `'/aiperf/datasets'` | — | Shared path for dataset files (dataset-manager writes, API serves) |
+| `AIPERF_K8S_JOBSET_SWEEP_AGGREGATE_INLINE_MAX_BYTES` | `600000` | ≥ 10000, ≤ 900000 | Max encoded size of the AIPerfSweep aggregate bundle inlined into status.aggregate. K8s rejects CR patches over ~1 MiB with HTTP 413; if the bundle exceeds this cap, the sweep-controller drops `confidence` (the largest contributor on big sweeps) and relies on the disk-backed results sidecar to serve the full document. Default 600 KB leaves headroom for status fields and apiserver framing under the 1 MiB ceiling. |
+| `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` | `''` | — | Operator-side default for Kueue gang-scheduling. When the AIPerfJob CR's spec.scheduling.queue_name is unset, the JobSet manifest falls back to this value. When non-empty, the JobSet gets the kueue.x-k8s.io/queue-name label, which Kueue's JobSet integration uses to admit the workload as a unit (gang-scheduling: controller + all worker pods admitted atomically, or none). Safe to leave unset on clusters without Kueue — the label is then never added. Set to e.g. 'aiperf-lq' on clusters where Kueue is installed and a LocalQueue of that name exists in the benchmark namespace. |
+| `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_PRIORITY_CLASS` | `''` | — | Operator-side default for Kueue WorkloadPriorityClass. Companion to KUEUE_DEFAULT_QUEUE_NAME. When unset, the JobSet gets no kueue.x-k8s.io/priority-class label and Kueue's default fairness applies. |
+
+## K8SPORT
+
+Container port assignments.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_PORT_SYSTEM_CONTROLLER_HEALTH` | `8080` | ≥ 1, ≤ 65535 | System controller health port |
+| `AIPERF_K8S_PORT_WORKER_MANAGER_HEALTH` | `8081` | ≥ 1, ≤ 65535 | Worker manager health port |
+| `AIPERF_K8S_PORT_TIMING_MANAGER_HEALTH` | `8082` | ≥ 1, ≤ 65535 | Timing manager health port |
+| `AIPERF_K8S_PORT_DATASET_MANAGER_HEALTH` | `8083` | ≥ 1, ≤ 65535 | Dataset manager health port |
+| `AIPERF_K8S_PORT_RECORDS_MANAGER_HEALTH` | `8084` | ≥ 1, ≤ 65535 | Records manager health port |
+| `AIPERF_K8S_PORT_API_SERVICE` | `9090` | ≥ 1, ≤ 65535 | API service port |
+| `AIPERF_K8S_PORT_RESULTS_SIDECAR` | `9091` | ≥ 1, ≤ 65535 | Results sidecar port for serving exported files after controller failure |
+| `AIPERF_K8S_PORT_API_SERVICE_HEALTH` | `8085` | ≥ 1, ≤ 65535 | API service health port |
+| `AIPERF_K8S_PORT_GPU_TELEMETRY_MANAGER_HEALTH` | `8086` | ≥ 1, ≤ 65535 | GPU telemetry manager health port |
+| `AIPERF_K8S_PORT_SERVER_METRICS_MANAGER_HEALTH` | `8087` | ≥ 1, ≤ 65535 | Server metrics manager health port |
+| `AIPERF_K8S_PORT_EVENT_BUS_PROXY_HEALTH` | `8088` | ≥ 1, ≤ 65535 | Event-bus proxy sidecar health port |
+| `AIPERF_K8S_PORT_EVENT_BUS_PROXY_PUB_FRONTEND` | `5663` | ≥ 1, ≤ 65535 | Event-bus XPUB/XSUB proxy publisher-frontend bind port (producers connect to this). |
+| `AIPERF_K8S_PORT_EVENT_BUS_PROXY_SUB_BACKEND` | `5664` | ≥ 1, ≤ 65535 | Event-bus XPUB/XSUB proxy subscriber-backend bind port (subscribers connect to this). |
+| `AIPERF_K8S_PORT_WORKER_HEALTH` | `8080` | ≥ 1, ≤ 65535 | Worker health port |
+| `AIPERF_K8S_PORT_RECORD_PROCESSOR_HEALTH` | `8081` | ≥ 1, ≤ 65535 | Record processor health port |
+
+## K8SPORTFORWARD
+
+Tunables for ``aiperf.kubernetes.port_forward`` kubectl-based forwards.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_PORT_FORWARD_TIMEOUT_SECONDS` | `60.0` | ≥ 1.0, ≤ 600.0 | Total seconds to wait for kubectl port-forward to start and (optionally) for the API to respond. |
+| `AIPERF_K8S_PORT_FORWARD_API_INITIAL_DELAY_SECONDS` | `0.5` | ≥ 0.0, ≤ 10.0 | Seconds to wait after the tunnel comes up before the first API health check. |
+| `AIPERF_K8S_PORT_FORWARD_API_RETRY_DELAY_SECONDS` | `2.0` | ≥ 0.1, ≤ 30.0 | Seconds to back off between port-forward restart attempts while the API isn't ready. |
+| `AIPERF_K8S_PORT_FORWARD_API_MAX_RETRIES` | `10` | ≥ 0, ≤ 50 | Maximum number of port-forward restarts before giving up on the API readiness probe. |
+| `AIPERF_K8S_PORT_FORWARD_PROCESS_CLEANUP_TIMEOUT_SECONDS` | `5.0` | ≥ 0.1, ≤ 60.0 | Seconds to wait for graceful kubectl termination before escalating to SIGKILL. |
+
+## K8SPROGRESSSTREAM
+
+Tunables for ``aiperf.kubernetes.progress_stream`` WebSocket reconnects.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_PROGRESS_STREAM_WS_INITIAL_BACKOFF_SECONDS` | `1.0` | ≥ 0.1, ≤ 60.0 | Initial reconnect backoff after a WebSocket transport error. |
+| `AIPERF_K8S_PROGRESS_STREAM_WS_MAX_BACKOFF_SECONDS` | `30.0` | ≥ 1.0, ≤ 300.0 | Cap on the exponential reconnect backoff. |
+| `AIPERF_K8S_PROGRESS_STREAM_WS_HEARTBEAT_SECONDS` | `30` | ≥ 1, ≤ 300 | Seconds between aiohttp WebSocket heartbeats. |
+
+## K8SRECORDSMANAGER
+
+Records Manager container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_RECORDS_MANAGER_CPU` | `75m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_RECORDS_MANAGER_MEMORY` | `256Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SRESULTSSIDECAR
+
+Results Sidecar container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_RESULTS_SIDECAR_CPU` | `25m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_RESULTS_SIDECAR_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SSERVERMETRICSMANAGER
+
+Server Metrics Manager container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` | `25m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SSWEEPCONTROLLER
+
+Sweep Controller container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_SWEEP_CONTROLLER_CPU` | `75m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_SWEEP_CONTROLLER_MEMORY` | `512Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SSYSTEMCONTROLLER
+
+System Controller container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` | `75m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8STIMINGMANAGER
+
+Timing Manager container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_TIMING_MANAGER_CPU` | `50m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_TIMING_MANAGER_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SWATCHDOG
+
+Thresholds for ``aiperf.kubernetes.watchdog`` pod-health heuristics. These were plain keyword defaults on ``BenchmarkWatchdog.__init__`` with no environment binding, so a cluster with slow image pulls or an intentionally restart-tolerant workload had no way to raise them.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_WATCHDOG_POLL_INTERVAL_SECONDS` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds between watchdog pod-state polls. |
+| `AIPERF_K8S_WATCHDOG_STATUS_INTERVAL_SECONDS` | `10.0` | ≥ 0.0, ≤ 3600.0 | Seconds between watchdog status log lines. |
+| `AIPERF_K8S_WATCHDOG_PENDING_THRESHOLD_SECONDS` | `30.0` | ≥ 1.0, ≤ 3600.0 | Seconds a pod startup blocker may remain stable before the CLI watchdog or operator raises a warning. |
+| `AIPERF_K8S_WATCHDOG_PENDING_CRITICAL_THRESHOLD_SECONDS` | `90.0` | ≥ 1.0, ≤ 3600.0 | Seconds a pod startup blocker may remain stable before escalation to critical. The operator fails only known non-recoverable image, configuration, crash-loop, or structural scheduling blockers; capacity-related scheduling remains retryable. |
+| `AIPERF_K8S_WATCHDOG_CRASHLOOP_RESTART_THRESHOLD` | `2` | ≥ 1, ≤ 100 | Container restart count at which a crash-loop warning is raised and the operator may treat a stable CrashLoopBackOff as terminal. |
+
+## K8SWORKERPOD
+
+Worker Pod container CPU and memory (Guaranteed QoS).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_WORKER_POD_CPU` | `150m` | — | CPU request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_WORKER_POD_MEMORY` | `4Gi` | — | Memory request and limit (Guaranteed QoS) |
+
+## K8SZMQ
+
+ZMQ communication settings for Kubernetes deployments.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_ZMQ_CONTROLLER_HOST` | `None` | — | Controller hostname for ZMQ dual-bind mode. Set on worker pods to connect via TCP to controller. When None, services use IPC (controller mode). |
+| `AIPERF_K8S_ZMQ_IPC_PATH` | `'/aiperf/ipc'` | — | Path for IPC socket files in pods |
+
 ## LOGGING
 
 Logging system configuration. Controls multiprocessing log queue size and other logging behavior.
@@ -218,6 +463,33 @@ Network latency calibration configuration. Controls the TCP-handshake RTT probes
 | `AIPERF_NETWORK_LATENCY_COMPLETE_TOPUP_TIMEOUT` | `3.0` | ≥ 0.0, ≤ 30.0 | Wall-clock budget in seconds for the final MIN_SAMPLES top-up probes at PROFILE_COMPLETE, kept well under the command-response budget so a slow endpoint cannot stall completion |
 | `AIPERF_NETWORK_LATENCY_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for the network latency jsonl writer export results processor |
 
+## OPERATOR
+
+Operator-service network identity. The operator Pod has three containers but only ONE FastAPI app: the ``results-server`` sidecar on ``resultsServer.port`` (8081 in the chart) hosts every ``/api/v1/*`` router (jobs, sweeps, results, config, admin, analytics, dashboard_proxy). The ``operator`` container on port 8080 runs kopf only — its sole HTTP surface is ``/healthz`` plus Prometheus ``/metrics``. So there is no separate "sweeps API URL" and "results API URL" — there is one base URL for everything, pointing at the results-server. Used when the operator stamps absolute URLs onto CR status (e.g. ``AIPerfSweep.status.apiUrl``, ``AIPerfSweep.status.runsTruncated.fetchURL``) that external clients dereference to fetch results, and when in-pod consumers (e.g. the sweep-controller's empty-summary fallback) need the operator's API endpoint.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OPERATOR_BASE_URL` | `'http://aiperf-operator.aiperf-system:8081'` | — | Base URL (no trailing slash) for the operator's HTTP API. All ``/api/v1/*`` routers — jobs, sweeps, results, config, admin, analytics, dashboard_proxy — are served by the ``results-server`` container on this port; the operator container exposes only ``/healthz`` + ``/metrics`` on port 8080. Stamped onto ``AIPerfSweep.status.apiUrl`` and ``AIPerfSweep.status.runsTruncated.fetchURL`` so external clients can fetch per-sweep summaries; also consumed by the sweep-controller's per-child summary fallback. Override via ``AIPERF_OPERATOR_BASE_URL`` when the operator's Service+Namespace differ from the Helm chart defaults (e.g. a non-default ``Release.Name`` or an alternate namespace). |
+
+## OPERATORMONITOR
+
+Timer settings for the kopf monitor handler.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OPERATOR_MONITOR_INTERVAL` | `10.0` | > 0, ≤ 3600 | Seconds between progress checks |
+| `AIPERF_OPERATOR_MONITOR_INITIAL_DELAY` | `5.0` | ≥ 0, ≤ 300 | Seconds before first progress check after job creation |
+
+## OPERATORPROGRESS
+
+Operator progress-client retry settings. Used by ``aiperf.operator.progress_client.ProgressClient`` when polling the controller pod's HTTP progress API. Retries apply to transient failures (connection errors, retryable HTTP statuses); other errors propagate.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OPERATOR_PROGRESS_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Max retry attempts on transient progress-API failures. |
+| `AIPERF_OPERATOR_PROGRESS_INITIAL_BACKOFF_SEC` | `0.5` | > 0, ≤ 60 | Initial backoff (seconds) between progress-API retries. |
+| `AIPERF_OPERATOR_PROGRESS_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Multiplicative backoff factor between progress-API retries. |
+
 ## OTEL
 
 OpenTelemetry metrics streaming configuration. Controls buffering and flush behavior for OTLP metric streaming.
@@ -253,6 +525,25 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
 | `AIPERF_RECORD_STRIP_PAYLOAD_BYTES` | `None` | — | Tri-state control for omitting canonical request payload bytes from RecordContext after a request is sent, which substantially reduces record-pipeline memory for very large prompts. None (default) auto-detects: bytes are stripped only when no downstream record consumer needs them (client-side input tokenization disabled, no synthetic image/audio/video inputs, and raw payload export off). True forces stripping even when a consumer wants the bytes, disabling client-side input tokenization, media counting from request bodies, and raw request payload export. False always retains them. Auto-detection does not see media embedded in custom dataset payloads under server-token-count mode; set False explicitly for that case. |
+
+## RESULTS
+
+Results fetching and storage settings.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_RESULTS_DIR` | `Path('/data')` | — | Base directory for storing benchmark results (mounted PVC) |
+| `AIPERF_RESULTS_K8S_INIT_TIMEOUT_SEC` | `10.0` | > 0, ≤ 120 | Seconds the results-server waits for its Kubernetes client to initialize at startup before giving up and serving PVC-only. The live-job endpoints need a cluster, but every results, sweeps, and artifact route reads the disk, so an unreachable apiserver must degrade the server rather than prevent it from starting. |
+| `AIPERF_RESULTS_MAX_RETRIES` | `5` | ≥ 0, ≤ 50 | Max retries when fetching results from controller |
+| `AIPERF_RESULTS_RETRY_DELAY` | `2.0` | ≥ 0, ≤ 60 | Seconds between result fetch retries |
+| `AIPERF_RESULTS_TTL_DAYS` | `30` | ≥ 0, ≤ 3650 | Days to keep results before cleanup (0 = never clean) |
+| `AIPERF_RESULTS_COMPRESS_ON_DISK` | `True` | — | Store downloaded result files as zstd-compressed (.zst) on disk |
+| `AIPERF_RESULTS_RETAIN_RUNS` | `10` | ≥ 1, ≤ 10000 | Max per-run result dirs to keep under <namespace>/<name>/ before retention trimming. Applied after every successful completion; the just-written epoch is always protected from deletion. |
+| `AIPERF_RESULTS_RETAIN_DAYS` | `0` | ≥ 0, ≤ 36500 | Age-based retention cap in days. 0 disables age policy. A run is deleted only when BOTH this age cap AND RETAIN_RUNS agree the run is outside the keep window; protect_epoch still wins. |
+| `AIPERF_RESULTS_TRANSIENT_FETCH_RETRY_BUDGET_SEC` | `60.0` | ≥ 0.0, ≤ 600.0 | Wall-clock budget (seconds, measured from the completion-claim annotation timestamp) within which a transient HTTP fetch failure is converted to a kopf.TemporaryError so the next monitor tick retries via the orphan-claim recovery path. Past this budget the operator gives up and marks the AIPerfJob Failed with the ResultsFetchFailed condition. WHY: sub-second benchmarks can race the controller's post-export shutdown — the marker has been written and key files exist on the controller PVC, but the operator's HTTP fetch hits a connection-refused or empty list as the controller container terminates. Set 0 to disable retries. |
+| `AIPERF_RESULTS_TRANSIENT_FETCH_RETRY_DELAY_SEC` | `5.0` | ≥ 0.5, ≤ 60.0 | Delay (seconds) passed to ``kopf.TemporaryError`` when retrying a transient results-fetch failure. Each retry runs through the orphan-claim recovery path on the next monitor tick. |
+| `AIPERF_RESULTS_PHASE_SETTLE_ATTEMPTS` | `3` | ≥ 0, ≤ 20 | How many times the completion handler re-samples controller progress while a phase reports its requests finished but its records still aggregating. Record aggregation trails the last request by a beat, so a single sample can leave status.phases showing isRecordsComplete=false on a run whose exports are complete. Set 0 to take exactly one sample. |
+| `AIPERF_RESULTS_PHASE_SETTLE_DELAY_SEC` | `2.0` | ≥ 0.1, ≤ 30.0 | Delay between the re-samples controlled by ``PHASE_SETTLE_ATTEMPTS``. The total wait is a hard ceiling on how long completion is delayed for a cosmetic status mirror. |
 
 ## SEARCHPLANNER
 
@@ -318,6 +609,17 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_HEALTH_REQUEST_TIMEOUT` | `5.0` | ≥ 0.1, ≤ 60.0 | Timeout in seconds for reading health check HTTP requests. |
 | `AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT` | `28000` | ≥ 1024, ≤ 65535 | Windows-only: starting port for the ZMQ IPC TCP-loopback fallback range. Per-endpoint ports are derived as ``base + (sha256_hash mod range)``. No-op on POSIX where ipc:// is used directly. |
 | `AIPERF_SERVICE_WINDOWS_TCP_PORT_RANGE` | `20000` | ≥ 64, ≤ 60000 | Windows-only: size of the TCP-loopback port window for the ZMQ IPC fallback. Birthday-paradox collision probability for n sockets is ``1 - exp(-n*n/(2*range))``. Widen if AIPerf grows to many more sockets per run, or relocate via ``AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT`` if 28000-48000 conflicts. |
+
+## SWEEPCONTROLLER
+
+Sweep-controller pod settings. Used by the sweep-controller pod (`aiperf.sweep_controller.k8s_executor`) when creating child AIPerfJob CRs.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_DELETION_TIMEOUT_SECONDS` | `60.0` | > 0, ≤ 600 | Max seconds the sweep-controller will wait for a same-named AIPerfJob from a prior sweep run to finish cascade-deletion before raising ChildNameConflictError. Hit when a user deletes and recreates a sweep with the same name while old children are still terminating. |
+| `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_POLL_INTERVAL_SECONDS` | `2.0` | > 0, ≤ 30 | Poll interval (seconds) while waiting for a deleting same-named AIPerfJob to disappear. See STALE_CHILD_DELETION_TIMEOUT_SECONDS. |
+| `AIPERF_SWEEP_CONTROLLER_CANCEL_GRACE_SECONDS` | `120.0` | > 0, ≤ 3600 | Max seconds the sweep-controller will keep polling a child AIPerfJob for a terminal phase after requesting cancel before giving up and advancing the sweep. Bounds the post-cancel wait so a stuck child (stalled operator cancel path, wedged pod, repeatedly-failing JobSet delete) cannot wedge the whole sweep indefinitely. |
+| `AIPERF_SWEEP_CONTROLLER_CHILD_MISSING_TIMEOUT_SECONDS` | `300.0` | > 0, ≤ 3600 | Max seconds the sweep-controller will keep polling for a child AIPerfJob that has gone missing (404) before its terminal phase, with no cancel requested, before giving up and advancing the sweep. Hit when a user (or the kube garbage collector) deletes a child AIPerfJob out-of-band mid-run; without this bound the sequential sweep wedges forever on the deleted variation. |
 
 ## TIMING
 

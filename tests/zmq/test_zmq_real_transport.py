@@ -22,7 +22,7 @@ import msgspec
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.messages import (
     CreditReturn,
-    WorkerReady,
+    WorkerDispatchable,
 )
 from aiperf.credit.structs import Credit
 from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
@@ -211,10 +211,10 @@ async def test_dealer_router_bidirectional_roundtrip(client_factory, new_addr):
     await asyncio.sleep(_SETTLE)
 
     # DEALER -> ROUTER
-    await dealer.send(WorkerReady(worker_id="worker-1"))
+    await dealer.send(WorkerDispatchable(worker_id="worker-1"))
     identity, msg = await asyncio.wait_for(router_inbox.get(), timeout=2.0)
     assert identity == "worker-1"
-    assert isinstance(msg, WorkerReady)
+    assert isinstance(msg, WorkerDispatchable)
     assert msg.worker_id == "worker-1"
 
     # ROUTER -> DEALER (routed back by the captured identity)

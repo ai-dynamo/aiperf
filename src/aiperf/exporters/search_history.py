@@ -151,19 +151,26 @@ def _compute_best_trials(
     """
     from aiperf.common.enums import OptimizationDirection
 
-    scored = [h for h in history if h.objective_values]
+    # An iteration that reports only the scalar mirror is still scored: most
+    # planners populate objective_value and a length-1 vector, but the vector
+    # is Optional and filtering on it alone dropped those iterations entirely
+    # (best_trials came back null for a fully scored search).
+    scored = [h for h in history if h.objective_values or h.objective_value is not None]
     feasible = [h for h in scored if h.feasible]
     ranking_pool = feasible if feasible else scored
     if not ranking_pool:
         return None
 
+    def _primary(h: SearchIteration) -> float:
+        return h.objective_values[0] if h.objective_values else h.objective_value
+
     n_obj = len(cfg.objectives)
     if n_obj == 1:
         direction = cfg.objectives[0].direction
         if direction == OptimizationDirection.MAXIMIZE:
-            best = max(ranking_pool, key=lambda h: h.objective_values[0])
+            best = max(ranking_pool, key=_primary)
         else:
-            best = min(ranking_pool, key=lambda h: h.objective_values[0])
+            best = min(ranking_pool, key=_primary)
         return [_serialize_trial(best, len(feasible), pareto_rank=0)]
 
     front = _pareto_front(ranking_pool, cfg.objectives)
@@ -183,38 +190,51 @@ def _serialize_trial(
     }
 
 
+def _objective_at(iteration: SearchIteration, index: int) -> float | None:
+    """Read one objective, tolerating a short or absent objective vector."""
+    values = iteration.objective_values
+    if values is not None and index < len(values):
+        return values[index]
+    return iteration.objective_value if index == 0 else None
+
+
+def _dominates(
+    candidate: SearchIteration,
+    other: SearchIteration,
+    objectives: list,
+) -> bool:
+    """Return whether ``candidate`` is no worse everywhere and better somewhere."""
+    from aiperf.common.enums import OptimizationDirection
+
+    strictly_better = False
+    for index, objective in enumerate(objectives):
+        candidate_value = _objective_at(candidate, index)
+        other_value = _objective_at(other, index)
+        if candidate_value is None or other_value is None:
+            continue
+        maximize = objective.direction == OptimizationDirection.MAXIMIZE
+        if (maximize and candidate_value < other_value) or (
+            not maximize and candidate_value > other_value
+        ):
+            return False
+        strictly_better |= candidate_value != other_value
+    return strictly_better
+
+
 def _pareto_front(
     pool: list[SearchIteration], objectives: list
 ) -> list[SearchIteration]:
-    """Non-dominated set under direction-aware comparison.
-
-    A point p dominates q iff for every objective i, p is no worse than q,
-    and for at least one objective p is strictly better. "Better" depends
-    on each objective's direction.
-    """
-    from aiperf.common.enums import OptimizationDirection
-
-    def dominates(a: SearchIteration, b: SearchIteration) -> bool:
-        strictly_better_anywhere = False
-        for i, obj in enumerate(objectives):
-            av, bv = a.objective_values[i], b.objective_values[i]
-            if obj.direction == OptimizationDirection.MAXIMIZE:
-                if av < bv:
-                    return False
-                if av > bv:
-                    strictly_better_anywhere = True
-            else:
-                if av > bv:
-                    return False
-                if av < bv:
-                    strictly_better_anywhere = True
-        return strictly_better_anywhere
+    """Return the direction-aware non-dominated set."""
 
     front: list[SearchIteration] = []
-    for p in pool:
-        if any(dominates(q, p) for q in pool if q is not p):
+    for point in pool:
+        if any(
+            _dominates(candidate, point, objectives)
+            for candidate in pool
+            if candidate is not point
+        ):
             continue
-        front.append(p)
+        front.append(point)
     return front
 
 

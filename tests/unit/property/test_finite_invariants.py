@@ -390,6 +390,17 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # _Environment.ENDPOINT: nested _EndpointSettings object, not a numeric
     # leaf. The heuristic fires because "int" appears in "_EndpointSettings".
     "_Environment.ENDPOINT",
+    # CellEntry.metrics: dict[str, dict[str, float]] -- metric_name -> stat_name
+    # -> value for one sweep cell. A field-level ge/le bound cannot apply to a
+    # nested dict container, and the leaf values span latencies, throughputs and
+    # signed deltas, so no single bound would be correct anyway. The values are
+    # copied verbatim from the child run's already-scrubbed aggregate bundle.
+    "CellEntry.metrics",
+    # SweepSummary.run_states: dict[str, int] of per-state child counts
+    # (pending/running/completed/failed/cancelled). Container field -- the
+    # non-negativity that matters lives on the sibling scalar roll-ups
+    # (completed_runs / failed_runs / cancelled_runs), which all carry ge=0.
+    "SweepSummary.run_states",
 }
 
 

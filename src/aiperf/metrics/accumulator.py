@@ -210,7 +210,6 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 "credit_issued_ns": meta.credit_issued_ns,
                 "request_ack_ns": meta.request_ack_ns,
                 "cancellation_time_ns": meta.cancellation_time_ns,
-                "turn_index": meta.turn_index,
             },
             metadata_string={},
             metadata_bool={
@@ -607,8 +606,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         If slice_duration is configured, also computes per-timeslice results
         by partitioning the data into time windows. Always derives the
         coordinated-omission-aware ``effective_latency`` and the
-        ``credit_to_start_latency`` queue-wait metric from stored timestamps,
-        plus a per-``turn_index`` TTFT trend that surfaces KV-cache effectiveness.
+        ``credit_to_start_latency`` queue-wait metric from stored timestamps.
         """
         export_ctx: ExportContext | None = None
         if ctx is not None and (ctx.start_ns or ctx.end_ns or ctx.phase is not None):

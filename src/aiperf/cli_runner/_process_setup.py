@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 def _configure_multiprocessing_start_method(using_dashboard: bool) -> None:
-    """Pick a multiprocessing start method compatible with the current UI.
+    """Align the process-global start method with the UI on macOS.
 
     NOTE: On macOS, when using the Textual UI with multiprocessing, terminal
     corruption (ASCII garbage, freezing) can occur when mouse events interfere
@@ -32,22 +32,18 @@ def _configure_multiprocessing_start_method(using_dashboard: bool) -> None:
       2. Create log_queue before any UI initialization
       3. Set FD_CLOEXEC on terminal file descriptors
       4. Close terminal FDs in child processes (done in bootstrap.py)
-    Env override takes precedence for all platforms.
+
+    This only affects code that goes through the process-global default
+    context (third-party libraries, stdlib pools). AIPerf's own subprocesses
+    and shared queues are created from
+    :func:`~aiperf.common.mp_context.get_mp_context` and are unaffected by
+    this call.
     """
     import multiprocessing
-    import platform
 
-    from aiperf.common.environment import Environment
+    from aiperf.common.constants import IS_MACOS
 
-    configured_start_method = getattr(
-        Environment.SERVICE, "MULTIPROCESSING_START_METHOD", None
-    )
-    if configured_start_method:
-        with contextlib.suppress(RuntimeError):
-            multiprocessing.set_start_method(configured_start_method, force=True)
-        return
-
-    if platform.system() == "Darwin" and using_dashboard:
+    if IS_MACOS and using_dashboard:
         with contextlib.suppress(RuntimeError):
             multiprocessing.set_start_method("spawn", force=True)
 
@@ -61,7 +57,7 @@ def _setup_ui_queues(
     Dashboard UI is running on macOS, FD_CLOEXEC is set on terminal
     descriptors to prevent child processes corrupting the parent terminal.
     """
-    import platform
+    from aiperf.common.constants import IS_MACOS
 
     if not using_dashboard:
         from aiperf.common.logging import setup_rich_logging
@@ -73,7 +69,7 @@ def _setup_ui_queues(
 
     log_queue = get_global_log_queue()
 
-    if platform.system() == "Darwin":
+    if IS_MACOS:
         _set_fd_cloexec_on_terminal(logger)
     return log_queue
 

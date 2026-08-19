@@ -71,9 +71,10 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             **kwargs,
         )
 
-        # Counter of records dropped by the fast-path due to non-JSON
-        # payload_bytes or serialisation failures. Exposed so operators can
-        # see silent-drop volume instead of it hiding behind a log line.
+        # Counter of records rejected by the fast path. The first failure is
+        # also retained in ``_write_error`` so the explicit artifact-finalize
+        # barrier fails closed instead of acknowledging an incomplete RAW
+        # export.
         self.dropped_record_count: int = 0
 
         self.info(

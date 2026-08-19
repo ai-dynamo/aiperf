@@ -8,6 +8,9 @@ import pytest
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.metrics.types.cancelled_request_count_metric import (
+    CancelledRequestCountMetric,
+)
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
@@ -52,8 +55,30 @@ class TestMetricRecordProcessor:
             ).parse_record
         )
 
-        assert mock_metric_registry.tags_applicable_to.call_count == 2
-        assert mock_metric_registry.create_dependency_order_for.call_count == 2
+        assert mock_metric_registry.tags_applicable_to.call_count == 3
+        assert mock_metric_registry.create_dependency_order_for.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_process_cancelled_record_uses_cancelled_metrics(
+        self,
+        mock_metric_registry: Mock,
+        mock_run,
+        cancelled_parsed_record: ParsedResponseRecord,
+    ) -> None:
+        setup_mock_registry_sequences(
+            mock_metric_registry,
+            [],
+            [ErrorRequestCountMetric],
+            [CancelledRequestCountMetric],
+        )
+
+        result = await MetricRecordProcessor(mock_run).process_record(
+            cancelled_parsed_record,
+            create_metric_metadata(),
+        )
+
+        assert result.metrics[CancelledRequestCountMetric.tag] == 1
+        assert ErrorRequestCountMetric.tag not in result.metrics
 
     @pytest.mark.asyncio
     async def test_process_valid_record(

@@ -142,6 +142,7 @@ service:
     metadata:
       required: false
       auto_start: false
+      replicable: true
 
 # =============================================================================
 # API Routers
@@ -154,6 +155,14 @@ api_router:
     class: aiperf.api.routers.core:CoreRouter
     description: Config, health, and readiness endpoints.
 
+  debug:
+    class: aiperf.api.routers.debug:DebugRouter
+    description: Controller-internal state snapshots for diagnosing CR status.workers issues.
+
+  dataset:
+    class: aiperf.api.routers.dataset:DatasetRouter
+    description: Dataset metadata and file streaming with compression support.
+
   metrics:
     class: aiperf.api.routers.metrics:MetricsRouter
     description: Real-time metrics state and Prometheus/JSON endpoints.
@@ -162,9 +171,21 @@ api_router:
     class: aiperf.api.routers.progress:ProgressRouter
     description: Benchmark progress tracking and /api/progress endpoint.
 
+  server_metrics:
+    class: aiperf.api.routers.server_metrics:ServerMetricsRouter
+    description: Real-time server metrics from inference-server Prometheus endpoints.
+
   results:
     class: aiperf.api.routers.results:ResultsRouter
     description: Final benchmark results and artifact file downloads.
+
+  static:
+    class: aiperf.api.routers.static:StaticRouter
+    description: Static HTML file serving for dashboard and index pages.
+
+  websocket:
+    class: aiperf.api.routers.websocket:WebSocketRouter
+    description: WebSocket endpoint for real-time ZMQ message streaming.
 
   workers:
     class: aiperf.api.routers.workers:WorkersRouter

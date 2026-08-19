@@ -42,8 +42,34 @@ class TestCompletedRequestCountMetric:
         with pytest.raises(NoMetricValue):
             CompletedRequestCountMetric().derive_value(results)
 
-    def test_completed_count_required_metrics_declared(self):
-        """Required-metric declaration drives MetricRegistry dependency order."""
+    def test_completed_count_dependencies_declared(self):
+        """Both dependencies order the metric; only one is a precondition.
+
+        ErrorRequestCountMetric is ERROR_ONLY, so on a clean run its tag never
+        enters the results dict. Declaring it *required* made _check_metrics
+        raise NoMetricValue before _derive_value ran, dropping this metric
+        from every export of every zero-error benchmark.
+        """
         assert CompletedRequestCountMetric.required_metrics == frozenset(
-            {RequestCountMetric.tag, ErrorRequestCountMetric.tag}
+            {RequestCountMetric.tag}
+        )
+        assert CompletedRequestCountMetric.optional_metrics == frozenset(
+            {ErrorRequestCountMetric.tag}
+        )
+
+    def test_completed_count_derives_on_a_zero_error_run(self):
+        """The whole point: no error tag present, metric still exports."""
+        results = MetricResultsDict()
+        results[RequestCountMetric.tag] = 7
+        assert CompletedRequestCountMetric().derive_value(results) == 7
+
+    def test_dependency_order_still_places_error_count_first(self):
+        """optional_metrics must order exactly like required_metrics."""
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        order = MetricRegistry.create_dependency_order_for(
+            [CompletedRequestCountMetric.tag]
+        )
+        assert order.index(ErrorRequestCountMetric.tag) < order.index(
+            CompletedRequestCountMetric.tag
         )

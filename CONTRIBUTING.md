@@ -14,6 +14,7 @@ For technical architecture, see [`docs/architecture.md`](docs/architecture.md). 
 - **Python 3.11+**
 - **uv**: Package manager (installed automatically by `make first-time-setup`)
 - **pre-commit**: For automated code quality checks
+- **Kubernetes tests only**: Docker, Kind, kubectl, and Helm
 
 ### Initial Setup
 
@@ -46,6 +47,7 @@ pre-commit install    # Install pre-commit hooks
 | `make test-integration` | Integration tests with mock server |
 | `make test-integration-verbose` | Integration tests with real-time output |
 | `make test-component-integration` | Component integration tests |
+| `make test-kubernetes-ci` | Serial Kubernetes PR gate on a fresh isolated Kind cluster |
 | `make test-ci` | CI mode: unit + component integration with coverage |
 | `make test-imports` | Verify all modules can be imported |
 | `make test-stress` | Stress tests with mock server |
@@ -59,6 +61,12 @@ pre-commit install    # Install pre-commit hooks
 | `make generate-all-docs` | Regenerate CLI + env var documentation |
 | `make generate-cli-docs` | Regenerate CLI documentation |
 | `make generate-env-vars-docs` | Regenerate environment variable documentation |
+| `make generate-crd` | Regenerate the Helm AIPerfJob and AIPerfSweep CRD templates |
+| `make check-crd` | Verify the generated CRD templates match the Python models |
+| `make crd-release` | Render standalone CRD manifests into `dist/` (override with `HELM_DIST_DIR`) |
+| `make helm-lint` | Lint the bundled AIPerf operator Helm chart |
+| `make helm-template` | Render the bundled Helm chart without cluster access |
+| `make helm-package` | Package the bundled Helm chart into `dist/` (override with `HELM_DIST_DIR`) |
 | `make docker` | Build Docker image |
 | `make docker-run` | Run Docker container |
 | `make clean` | Clean caches and build artifacts |
@@ -70,7 +78,15 @@ Direct pytest commands:
 uv run pytest tests/unit/ -n auto                          # Unit tests (parallel)
 uv run pytest -m integration -n auto                       # Integration tests (multiprocess)
 uv run pytest -m component_integration -n auto             # Component integration tests
+make test-kubernetes-ci                                   # Kubernetes acceptance tests (serial Kind)
 ```
+
+The CI workflow builds the local runtime and mock-server images before invoking
+this target. The test run loads those images, creates a uniquely named Kind
+cluster with an isolated kubeconfig, and deletes that cluster afterward. It
+excludes the opt-in GPU, slow, audit, and chaos suites. Keep the gate serial
+(`-n 0`): its tests intentionally share one operator installation and exercise
+ordered cluster lifecycle behavior.
 
 ### Pre-Commit Hooks
 

@@ -298,49 +298,7 @@ class _CLIRunnerSettings(BaseSettings):
     )
 
 
-class _DatasetDeliveryFields:
-    """Kubernetes dataset-delivery settings."""
-
-    REBROADCAST_INTERVAL: float = Field(
-        gt=0.0,
-        le=60.0,
-        default=2.0,
-        description="Seconds between re-announcements of the dataset-configured "
-        "notification in Kubernetes. The notification is a one-shot broadcast and "
-        "sibling worker pods start seconds apart, so a pod that subscribes late "
-        "would otherwise never learn a dataset exists.",
-    )
-    REBROADCAST_WINDOW: float = Field(
-        ge=0.0,
-        le=3600.0,
-        default=120.0,
-        description="Total seconds to keep re-announcing the dataset-configured "
-        "notification for late-joining worker pods. Set 0 to disable.",
-    )
-    STATE_POLL_INTERVAL: float = Field(
-        gt=0.0,
-        le=60.0,
-        default=1.0,
-        description="Seconds between polls of pod-local dataset state while a worker "
-        "waits to become dispatchable. The dataset arrives via one-shot broadcasts; "
-        "a worker container that subscribes after they fire recovers by polling its "
-        "WorkerGroupManager at this interval instead of waiting forever.",
-    )
-    DOWNLOAD_MAX_RETRIES: int = Field(
-        ge=0,
-        le=20,
-        default=3,
-        description="Maximum number of retries for dataset download in Kubernetes worker pods",
-    )
-    DOWNLOAD_RETRY_DELAY: float = Field(
-        ge=0.1,
-        le=60.0,
-        default=2.0,
-        description="Initial delay in seconds between dataset download retries (doubles each retry)",
-    )
-
-
-class _DatasetSettings(_DatasetDeliveryFields, BaseSettings):
+class _DatasetSettings(BaseSettings):
     """Dataset loading and configuration.
 
     Controls timeouts and behavior for dataset loading operations,
@@ -357,6 +315,22 @@ class _DatasetSettings(_DatasetDeliveryFields, BaseSettings):
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
     )
+    REBROADCAST_INTERVAL: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=2.0,
+        description="Seconds between re-announcements of the dataset-configured "
+        "notification in Kubernetes. The notification is a one-shot broadcast and "
+        "sibling worker pods start seconds apart, so a pod that subscribes late "
+        "would otherwise never learn a dataset exists.",
+    )
+    REBROADCAST_WINDOW: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=120.0,
+        description="Total seconds to keep re-announcing the dataset-configured "
+        "notification for late-joining worker pods. Set 0 to disable.",
+    )
     BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
         Field(
             default="provided_session_id",
@@ -364,6 +338,15 @@ class _DatasetSettings(_DatasetDeliveryFields, BaseSettings):
             "supported columns exist. Set to poor_man_session_id for legacy traces. "
             "If the selected column is absent, the loader uses the available column.",
         )
+    )
+    STATE_POLL_INTERVAL: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=1.0,
+        description="Seconds between polls of pod-local dataset state while a worker "
+        "waits to become dispatchable. The dataset arrives via one-shot broadcasts; "
+        "a worker container that subscribes after they fire recovers by polling its "
+        "WorkerGroupManager at this interval instead of waiting forever.",
     )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,
@@ -398,6 +381,18 @@ class _DatasetSettings(_DatasetDeliveryFields, BaseSettings):
         "(raw_payload / inputs_json / mooncake-with-payload) always use "
         "PAYLOAD_BYTES regardless of this flag; cache-bust runs always use "
         "CONVERSATION regardless.",
+    )
+    DOWNLOAD_MAX_RETRIES: int = Field(
+        ge=0,
+        le=20,
+        default=3,
+        description="Maximum number of retries for dataset download in Kubernetes worker pods",
+    )
+    DOWNLOAD_RETRY_DELAY: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Initial delay in seconds between dataset download retries (doubles each retry)",
     )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,

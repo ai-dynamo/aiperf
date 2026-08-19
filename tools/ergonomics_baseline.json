@@ -1,5 +1,5 @@
 {
-  "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. Key: (check, file, identifier). Function/class identifiers are qualnames (e.g. 'FixedTrialsStrategy.__init__'); call-site identifiers (stdlib-json, exception-message) are '<enclosing-qualname>::<call-or-message>'. A trailing '#N' (N>=2) marks the Nth occurrence of an identifier that genuinely repeats inside one scope (see _disambiguate). New entries here should be rare and justified; prefer fixing the underlying violation.",
+  "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. Key: (check, file, identifier). Function/class identifiers are qualnames (e.g. 'FixedTrialsStrategy.__init__'); call-site identifiers (stdlib-json, exception-message) are '<enclosing-qualname>::<call-or-message>'. A trailing '#N' (N>=2) marks the Nth occurrence of an identifier that genuinely repeats inside one scope (see _disambiguate). New entries here should be rare and justified; prefer fixing the underlying violation. Kubernetes-operator entries: kopf owns the calling convention for @kopf.on.* handlers (fixed positional kwarg set), so their keyword-only-args entries are permanent, not debt. The EventType duplicate-classes pair is likewise intentional: aiperf.operator.events.EventType is the Kubernetes Event 'type' field (Normal/Warning) and aiperf.endpoints.anthropic_messages.EventType is the Anthropic SSE event name; both match their upstream vocabulary.",
   "violations": [
     [
       "duplicate-classes",
@@ -10,6 +10,16 @@
       "duplicate-classes",
       "src/aiperf/config/loader/errors.py",
       "ConfigurationError"
+    ],
+    [
+      "duplicate-classes",
+      "src/aiperf/endpoints/anthropic_messages.py",
+      "EventType"
+    ],
+    [
+      "duplicate-classes",
+      "src/aiperf/operator/events.py",
+      "EventType"
     ],
     [
       "keyword-only-args",
@@ -65,6 +75,56 @@
       "keyword-only-args",
       "src/aiperf/exporters/metrics_csv_exporter.py",
       "MetricsCsvExporter._write_gpu_metric_row_from_summary"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/handlers/create.py",
+      "on_create"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/handlers/lifecycle.py",
+      "on_benchmark_complete"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/handlers/lifecycle.py",
+      "on_cancel"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/handlers/monitor.py",
+      "monitor_progress"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/main.py",
+      "monitor_progress"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/main.py",
+      "on_aiperfsweep_cancel"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/main.py",
+      "on_aiperfsweep_create"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/main.py",
+      "on_benchmark_complete"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/main.py",
+      "on_cancel"
+    ],
+    [
+      "keyword-only-args",
+      "src/aiperf/operator/main.py",
+      "on_create"
     ],
     [
       "keyword-only-args",

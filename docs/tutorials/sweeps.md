@@ -629,12 +629,13 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
-      exclude_from_results: true
       requests: 100
       concurrency: 8
 
     - name: profiling
+      kind: profiling
       type: poisson
       duration: 120
       rate: 30
@@ -841,7 +842,10 @@ aiperf profile --config sweep_ci.yaml
 
 **Check CV before drawing conclusions.** A variation with CV > 0.20 has too much noise to trust on its own — increase `num_runs`, add cooldown, or investigate the system at that load.
 
-**Use warmup exclusion and `disable_warmup_after_first`.** Define a warmup phase with `exclude_from_results: true` and enable `multi_run.disable_warmup_after_first` (default). The server is then warm without re-warming on every trial.
+**Use a warmup-kind phase and `disable_warmup_after_first`.** Define a phase
+with `kind: warmup` and enable `multi_run.disable_warmup_after_first` (default).
+The server is then warm without re-warming on every trial; warmup data remains
+phase-scoped and does not enter profiling aggregates.
 
 **Set `random_seed` for reproducibility.** A fixed seed ensures identical prompt selection and request ordering. When `multi_run.set_consistent_seed` is enabled (default), seed 42 is auto-set if you don't supply one.
 

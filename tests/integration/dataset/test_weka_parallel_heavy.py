@@ -310,7 +310,6 @@ def test_oversubscribed_workers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert len(convs) == 32
 
 
-@pytest.mark.performance
 def test_helper_reused_across_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Three sequential parallel convert calls reuse the forkserver helper with no dramatic per-call regression."""
     corpus = _make_corpus_dir(tmp_path, 8, "simple.json")

@@ -1,31 +1,584 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Progress router component -- owns benchmark progress state and /api/progress endpoint."""
+"""Progress router component -- owns benchmark progress state and /api/progress endpoint.
+
+When running in Kubernetes mode, periodically pushes controller status and a
+heartbeat to the AIPerfJob, then mirrors progress onto JobSet annotations.
+"""
 
 from __future__ import annotations
 
-from typing import Annotated
+import asyncio
+import os
+from typing import Annotated, Any
 
 from fastapi import APIRouter
+from starlette.requests import HTTPConnection
 
 from aiperf.api.models.responses import ProgressResponse
+from aiperf.api.pod_state_rpc import query_controller_pod_states
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.mixins.progress_tracker_mixin import ProgressTrackerMixin
+from aiperf.common.enums import MessageType, SystemState
+from aiperf.common.hooks import background_task, on_message
+from aiperf.common.messages import (
+    BaseServiceErrorMessage,
+    RealtimeMetricsMessage,
+    ResultsExportedMessage,
+    SystemStateChangedMessage,
+)
+from aiperf.common.mixins import PodStateTrackerMixin
+from aiperf.common.mixins.progress_tracker_mixin import (
+    CombinedPhaseStats,
+    ProgressTrackerMixin,
+)
+from aiperf.common.mixins.realtime_metrics_mixin import RealtimeMetricsMixin
+from aiperf.common.models import MetricResult
+from aiperf.controller.system_controller_models import (
+    AggregateWorkerStatus,
+    build_aggregate_worker_status,
+)
+from aiperf.kubernetes.constants import CONTROLLER_HEARTBEAT_INTERVAL_SECONDS
 
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
 
 progress_router = APIRouter()
 
+# Interval between JobSet annotation patches (seconds)
+_JOBSET_PATCH_INTERVAL = 10.0
 
-class ProgressRouter(ProgressTrackerMixin, BaseRouter):
-    """Owns benchmark progress state and exposes /api/progress."""
+
+def _build_progress_annotations(
+    phases: dict[str, CombinedPhaseStats],
+    system_state: SystemState,
+) -> dict[str, str]:
+    """Build annotation values from current progress state.
+
+    Returns a dict of annotation key -> value for patching onto the JobSet
+    and AIPerfJob CR. Always includes ``SYSTEM_STATE`` so observers can poll
+    controller-side outer-lifecycle state without parsing status objects.
+    """
+    from aiperf.kubernetes.constants import ProgressAnnotations
+
+    if not phases:
+        return {
+            ProgressAnnotations.STATUS: "initializing",
+            ProgressAnnotations.SYSTEM_STATE: str(system_state),
+        }
+
+    named_phases = {
+        phase_name: stats
+        for phase_name, stats in phases.items()
+        if stats.phase_name is not None
+    }
+    phase_name, active = max(
+        (named_phases or phases).items(),
+        key=lambda item: item[1].start_ns or 0,
+    )
+
+    completed = active.requests_completed
+    total = active.total_expected_requests
+    pct = active.requests_progress_percent
+
+    # Determine status
+    if pct is not None and pct >= 100.0:
+        status = "completing"
+    elif completed > 0:
+        status = "running"
+    else:
+        status = "starting"
+
+    annotations: dict[str, str] = {
+        ProgressAnnotations.PHASE: phase_name,
+        ProgressAnnotations.STATUS: status,
+        ProgressAnnotations.SYSTEM_STATE: str(system_state),
+    }
+
+    if pct is not None:
+        annotations[ProgressAnnotations.PERCENT] = f"{pct:.1f}"
+
+    if total is not None and total > 0:
+        annotations[ProgressAnnotations.REQUESTS] = f"{completed}/{total}"
+
+    return annotations
+
+
+def _controller_failure_status_patch(controller_failure: str | None) -> dict[str, str]:
+    """Return the controller's fatal failure field when one was reported."""
+    return {"controllerFailure": controller_failure} if controller_failure else {}
+
+
+class ProgressRouter(
+    PodStateTrackerMixin, RealtimeMetricsMixin, ProgressTrackerMixin, BaseRouter
+):
+    """Owns benchmark progress state and exposes /api/progress.
+
+    ``progress.workers`` prefers the SystemController's authoritative state,
+    queried over the command bus when the API is a Kubernetes sidecar. This
+    router's independently bus-fed ``PodStateTrackerMixin`` cache remains the
+    availability fallback while the controller is starting or stopping.
+
+    In Kubernetes mode, a background task periodically patches the JobSet
+    annotations with current progress so that ``kubectl get jobset`` or
+    external controllers can inspect benchmark status.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._k8s_job_id: str | None = os.environ.get("AIPERF_JOB_ID")
+        self._k8s_job_uid: str | None = os.environ.get("AIPERF_JOB_UID")
+        self._k8s_namespace: str | None = os.environ.get("AIPERF_NAMESPACE")
+        self._k8s_patching_enabled = bool(
+            self._k8s_job_id and self._k8s_job_uid and self._k8s_namespace
+        )
+        self._last_patched_jobset_annotations: dict[str, str] = {}
+        self._last_patched_aiperfjob_annotations: dict[str, str] = {}
+        # Flips True only after the SystemController publishes
+        # ResultsExportedMessage — i.e. after ExporterManager.export_data()
+        # AND (in K8s mode) write_ready_marker() have completed. The operator
+        # gates JobProgress.is_complete on this so sub-second benchmarks don't
+        # let the kopf-timer monitor claim completion mid-export.
+        self._results_exported: bool = False
+        self._controller_failure: str | None = None
+        # Mirrors SystemController's outer-lifecycle SystemState. Updated via
+        # SYSTEM_STATE_CHANGED bus messages so the API sidecar (which lives in
+        # a separate container) can surface controller-side state on
+        # /api/progress without an in-process controller handle.
+        self._system_state: SystemState = SystemState.INITIALIZING
 
     def get_router(self) -> APIRouter:
         return progress_router
 
+    @on_message(MessageType.RESULTS_EXPORTED)
+    async def _on_results_exported(self, _message: ResultsExportedMessage) -> None:
+        """Record that the controller has finished writing artifacts to disk."""
+        self._results_exported = True
+        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+
+    @on_message(MessageType.SERVICE_ERROR)
+    async def _on_service_error(self, message: BaseServiceErrorMessage) -> None:
+        """Push a controller-plane failure before its pod exits."""
+        self._controller_failure = f"{message.service_id}: {message.error.message}"
+        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+
+    @on_message(MessageType.SYSTEM_STATE_CHANGED)
+    async def _on_system_state_changed(
+        self, message: SystemStateChangedMessage
+    ) -> None:
+        """Record the controller's most-recent outer-lifecycle SystemState."""
+        self._system_state = message.state
+        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+
+    @on_message(MessageType.CREDIT_PHASE_PROGRESS)
+    async def _on_credit_phase_progress_status_push(self, _message: Any) -> None:
+        """Fire a status push on every phase-progress tick."""
+        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+
+    @on_message(MessageType.CREDIT_PHASE_COMPLETE)
+    async def _on_credit_phase_complete_status_push(self, _message: Any) -> None:
+        """Fire a status push when a credit phase finishes."""
+        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+
+    @on_message(MessageType.REALTIME_METRICS)
+    async def _on_realtime_metrics_status_push(
+        self, _message: RealtimeMetricsMessage
+    ) -> None:
+        """Fire a status push on every realtime-metrics update.
+
+        RealtimeMetricsMixin._on_realtime_metrics already updates self._metrics
+        before this handler runs (message dispatch is ordered by subscription
+        order; mixin subscribes first). The push writes liveMetrics and summary
+        so kubectl columns update without waiting for the kopf monitor timer.
+        """
+        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+
+    @background_task(
+        interval=CONTROLLER_HEARTBEAT_INTERVAL_SECONDS,
+        immediate=False,
+    )
+    async def _patch_aiperfjob_status(self) -> None:
+        """Push current progress state directly onto the AIPerfJob CR status subresource.
+
+        Called immediately on state/phase changes and at the bounded heartbeat
+        cadence. Best-effort: any k8s API failure is logged at debug and dropped;
+        the operator's reconciliation catches gaps.
+        """
+        if not self._k8s_patching_enabled:
+            return
+        try:
+            await _push_aiperfjob_status(
+                job_id=self._k8s_job_id,  # type: ignore[arg-type]
+                job_uid=self._k8s_job_uid,  # type: ignore[arg-type]
+                namespace=self._k8s_namespace,  # type: ignore[arg-type]
+                phases=dict(self._progress_tracker._phases),
+                system_state=self._system_state,
+                results_exported=self._results_exported,
+                controller_failure=self._controller_failure,
+                metrics=list(self._metrics),
+            )
+        except Exception:  # noqa: BLE001
+            self.debug("Failed to push AIPerfJob status update")
+
+    @background_task(interval=_JOBSET_PATCH_INTERVAL, immediate=False)
+    async def _patch_jobset_progress(self) -> None:
+        """Periodically patch JobSet annotations with current progress."""
+        if not self._k8s_patching_enabled:
+            return
+
+        annotations = _build_progress_annotations(
+            self._progress_tracker._phases,
+            self._system_state,
+        )
+
+        if annotations != self._last_patched_jobset_annotations:
+            try:
+                await _patch_jobset_annotations(
+                    job_id=self._k8s_job_id,  # type: ignore[arg-type]
+                    job_uid=self._k8s_job_uid,  # type: ignore[arg-type]
+                    namespace=self._k8s_namespace,  # type: ignore[arg-type]
+                    annotations=annotations,
+                )
+                self._last_patched_jobset_annotations = annotations
+            except Exception:  # noqa: BLE001 - periodic JobSet annotation patch is best-effort; k8s API flakes must not crash the background task
+                self.debug("Failed to patch JobSet progress annotations")
+
+        # Mirror the same annotations onto the AIPerfJob CR so kubectl
+        # watchers can poll a single object instead of chasing JobSets.
+        # Best-effort: AIPerfJob patch failures must not crash the loop
+        # nor invalidate the JobSet patch above.
+        if annotations != self._last_patched_aiperfjob_annotations:
+            try:
+                await _patch_aiperfjob_annotations(
+                    job_id=self._k8s_job_id,  # type: ignore[arg-type]
+                    job_uid=self._k8s_job_uid,  # type: ignore[arg-type]
+                    namespace=self._k8s_namespace,  # type: ignore[arg-type]
+                    annotations=annotations,
+                )
+                self._last_patched_aiperfjob_annotations = annotations
+            except Exception:  # noqa: BLE001 - best-effort; AIPerfJob patch must not crash the background task
+                self.debug("Failed to patch AIPerfJob progress annotations")
+
+
+async def _patch_jobset_annotations(
+    job_id: str,
+    job_uid: str,
+    namespace: str,
+    annotations: dict[str, str],
+) -> None:
+    """Patch annotations on the JobSet for the given job."""
+    from kubernetes_asyncio import client
+
+    from aiperf.kubernetes.client import k8s_client
+    from aiperf.kubernetes.cr_refs import (
+        AIPERF_API_VERSION,
+        JOBSET_GROUP,
+        JOBSET_PLURAL,
+        JOBSET_VERSION,
+    )
+
+    jobset_name = f"aiperf-{job_id}"
+
+    async with k8s_client() as api:
+        custom_api = client.CustomObjectsApi(api)
+        resource = await custom_api.get_namespaced_custom_object(
+            group=JOBSET_GROUP,
+            version=JOBSET_VERSION,
+            plural=JOBSET_PLURAL,
+            namespace=namespace,
+            name=jobset_name,
+        )
+        metadata = resource.get("metadata") if isinstance(resource, dict) else None
+        if not isinstance(metadata, dict):
+            raise ValueError(f"JobSet {namespace}/{jobset_name} has no metadata")
+        owner_references = metadata.get("ownerReferences") or []
+        owned_by_job = any(
+            isinstance(owner, dict)
+            and owner.get("apiVersion") == AIPERF_API_VERSION
+            and owner.get("kind") == "AIPerfJob"
+            and owner.get("name") == job_id
+            and owner.get("uid") == job_uid
+            and owner.get("controller") is True
+            for owner in owner_references
+        )
+        if not owned_by_job:
+            raise ValueError(
+                f"JobSet {namespace}/{jobset_name} is not owned by the expected "
+                "AIPerfJob incarnation"
+            )
+        patch_body = _uid_fenced_annotation_patch(
+            metadata=metadata,
+            expected_uid=metadata.get("uid"),
+            annotations=annotations,
+        )
+        await custom_api.patch_namespaced_custom_object(
+            group=JOBSET_GROUP,
+            version=JOBSET_VERSION,
+            plural=JOBSET_PLURAL,
+            namespace=namespace,
+            name=jobset_name,
+            body=patch_body,
+            _content_type="application/json-patch+json",
+        )
+
+
+async def _patch_aiperfjob_annotations(
+    job_id: str,
+    job_uid: str,
+    namespace: str,
+    annotations: dict[str, str],
+) -> None:
+    """Patch annotations on the AIPerfJob CR for the given job.
+
+    The exact AIPerfJob UID is tested atomically with the annotation update so
+    a controller pod from an old incarnation cannot mutate a replacement CR.
+    """
+    from kubernetes_asyncio import client
+
+    from aiperf.kubernetes.client import k8s_client
+    from aiperf.kubernetes.cr_refs import AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION
+
+    async with k8s_client() as api:
+        custom_api = client.CustomObjectsApi(api)
+        resource = await custom_api.get_namespaced_custom_object(
+            group=AIPERF_GROUP,
+            version=AIPERF_VERSION,
+            plural=AIPERF_PLURAL,
+            namespace=namespace,
+            name=job_id,
+        )
+        metadata = resource.get("metadata") if isinstance(resource, dict) else None
+        if not isinstance(metadata, dict) or metadata.get("uid") != job_uid:
+            raise ValueError(
+                f"AIPerfJob {namespace}/{job_id} is not the expected incarnation"
+            )
+        patch_body = _uid_fenced_annotation_patch(
+            metadata=metadata,
+            expected_uid=job_uid,
+            annotations=annotations,
+        )
+        await custom_api.patch_namespaced_custom_object(
+            group=AIPERF_GROUP,
+            version=AIPERF_VERSION,
+            plural=AIPERF_PLURAL,
+            namespace=namespace,
+            name=job_id,
+            body=patch_body,
+            _content_type="application/json-patch+json",
+        )
+
+
+async def _push_aiperfjob_status(
+    *,
+    job_id: str,
+    job_uid: str,
+    namespace: str,
+    phases: dict[str, CombinedPhaseStats],
+    system_state: SystemState,
+    results_exported: bool,
+    controller_failure: str | None = None,
+    metrics: list[MetricResult] | None = None,
+) -> None:
+    """Refresh the controller heartbeat and merge-patch current progress.
+
+    The heartbeat uses a UID-fenced metadata JSON patch. The progress update
+    keeps the existing status-subresource merge patch so operator-owned fields
+    (phase, conditions, etc.) remain untouched.
+    """
+    from kubernetes_asyncio import client
+
+    from aiperf.kubernetes.client import k8s_client
+    from aiperf.kubernetes.constants import Annotations
+    from aiperf.kubernetes.cr_refs import AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION
+    from aiperf.kubernetes.phase import format_timestamp
+
+    async with k8s_client() as api:
+        custom_api = client.CustomObjectsApi(api)
+
+        # UID fence: abort if this CR is a different incarnation
+        resource = await custom_api.get_namespaced_custom_object(
+            group=AIPERF_GROUP,
+            version=AIPERF_VERSION,
+            plural=AIPERF_PLURAL,
+            namespace=namespace,
+            name=job_id,
+        )
+        metadata = resource.get("metadata") if isinstance(resource, dict) else None
+        if not isinstance(metadata, dict) or metadata.get("uid") != job_uid:
+            raise ValueError(
+                f"AIPerfJob {namespace}/{job_id} UID mismatch — skipping push"
+            )
+
+        heartbeat_patch = _uid_fenced_annotation_patch(
+            metadata=metadata,
+            expected_uid=job_uid,
+            annotations={Annotations.CONTROLLER_HEARTBEAT: format_timestamp()},
+        )
+        await custom_api.patch_namespaced_custom_object(
+            group=AIPERF_GROUP,
+            version=AIPERF_VERSION,
+            plural=AIPERF_PLURAL,
+            namespace=namespace,
+            name=job_id,
+            body=heartbeat_patch,
+            _content_type="application/json-patch+json",
+        )
+
+        # Serialize phase data through PhaseProgress (camelCase, same schema as
+        # completion handler's final snapshot) so merge-patch never accumulates
+        # both snake_case and camelCase versions of the same fields.
+        from aiperf.operator.handlers.monitor import _build_phase_progress
+
+        phases_data: dict[str, Any] = {}
+        for name, stats in phases.items():
+            if phase_progress := _build_phase_progress(stats):
+                phases_data[name] = phase_progress.to_k8s_dict()
+
+        # Find the primary (profiling-kind) phase for top-level request counters,
+        # mirroring JobProgress.primary_phase_stats: take the profiling-kind phase
+        # with the latest start_ns.
+        profiling = {
+            n: s
+            for n, s in phases.items()
+            if (s.phase_kind or "profiling") == "profiling"
+        }
+        primary_stats = (
+            max(profiling.values(), key=lambda s: s.start_ns or 0)
+            if profiling
+            else None
+        )
+
+        # Build a metrics dict in the shape MetricsSummary.from_metrics() accepts.
+        live_metrics_dict: dict[str, Any] | None = None
+        if metrics:
+            live_metrics_dict = {
+                "metrics": {
+                    m.tag: m.model_dump(mode="json", exclude_none=True, exclude={"tag"})
+                    for m in metrics
+                }
+            }
+
+        # If results are already flowing but the controller hasn't published a
+        # state-change past INITIALIZING/CONFIGURING/READY yet, advance subPhase
+        # to "profiling" so kubectl columns don't show a stale lifecycle state.
+        effective_system_state = system_state
+        if live_metrics_dict and system_state in (
+            SystemState.INITIALIZING,
+            SystemState.CONFIGURING,
+            SystemState.READY,
+        ):
+            effective_system_state = SystemState.PROFILING
+
+        status_patch: dict[str, Any] = {
+            "subPhase": str(effective_system_state),
+            "phases": phases_data,
+        }
+        if primary_stats is not None:
+            status_patch["requestsCompleted"] = primary_stats.requests_completed
+            status_patch["requestsTotal"] = primary_stats.total_expected_requests or 0
+            status_patch["requestsPerSecond"] = round(
+                primary_stats.requests_per_second or 0.0, 2
+            )
+
+        if live_metrics_dict:
+            from aiperf.kubernetes.crd_models import MetricsSummary
+
+            summary = MetricsSummary.from_metrics(live_metrics_dict)
+            summary_dict = summary.to_status_dict()
+            if summary_dict:
+                status_patch["liveMetrics"] = live_metrics_dict
+                status_patch["liveSummary"] = summary_dict
+                # Also write to summary so kubectl printer columns
+                # (which reference status.summary.*) show live values during
+                # the run. The completion handler overwrites summary with final
+                # authoritative values when the benchmark finishes.
+                status_patch["summary"] = summary_dict
+
+        if results_exported:
+            status_patch["resultsExported"] = True
+        status_patch.update(_controller_failure_status_patch(controller_failure))
+
+        await custom_api.patch_namespaced_custom_object_status(
+            group=AIPERF_GROUP,
+            version=AIPERF_VERSION,
+            plural=AIPERF_PLURAL,
+            namespace=namespace,
+            name=job_id,
+            body={"status": status_patch},
+            _content_type="application/merge-patch+json",
+        )
+
+
+def _uid_fenced_annotation_patch(
+    *,
+    metadata: dict[str, Any],
+    expected_uid: str | None,
+    annotations: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build an annotation patch bound to one resource incarnation."""
+    if not isinstance(expected_uid, str) or not expected_uid:
+        raise ValueError("A Kubernetes resource UID is required for annotation writes")
+    if metadata.get("uid") != expected_uid:
+        raise ValueError("Kubernetes resource UID changed before patch construction")
+
+    patch: list[dict[str, Any]] = [
+        {"op": "test", "path": "/metadata/uid", "value": expected_uid}
+    ]
+    current_annotations = metadata.get("annotations")
+    if isinstance(current_annotations, dict):
+        patch.extend(
+            {
+                "op": "add",
+                "path": "/metadata/annotations/"
+                + key.replace("~", "~0").replace("/", "~1"),
+                "value": value,
+            }
+            for key, value in annotations.items()
+        )
+        return patch
+
+    resource_version = metadata.get("resourceVersion")
+    if not isinstance(resource_version, str) or not resource_version:
+        raise ValueError(
+            "Kubernetes resourceVersion is required when annotations are absent"
+        )
+    patch.extend(
+        [
+            {
+                "op": "test",
+                "path": "/metadata/resourceVersion",
+                "value": resource_version,
+            },
+            {"op": "add", "path": "/metadata/annotations", "value": annotations},
+        ]
+    )
+    return patch
+
+
+async def _get_controller_workers(
+    conn: HTTPConnection, component: ProgressRouter | None = None
+) -> AggregateWorkerStatus:
+    """Resolve aggregate status from the controller, then the bus cache.
+
+    An empty successful controller snapshot is authoritative. This distinction
+    prevents a stale sidecar cache from resurrecting workers after the
+    controller has intentionally cleared its state.
+    """
+    snapshot = await query_controller_pod_states(conn)
+    if snapshot is not None:
+        return build_aggregate_worker_status(snapshot.pod_states)
+    if component is not None:
+        return build_aggregate_worker_status(component._pod_state_tracker.pod_states)
+    return AggregateWorkerStatus()
+
 
 @progress_router.get("/api/progress", response_model=ProgressResponse, tags=["API"])
-async def get_progress(component: ProgressDep) -> ProgressResponse:
+async def get_progress(
+    conn: HTTPConnection, component: ProgressDep
+) -> ProgressResponse:
     """Get benchmark progress with full phase stats."""
-    return ProgressResponse(phases=component._progress_tracker._phases)
+    return ProgressResponse(
+        phases=component._progress_tracker._phases,
+        workers=await _get_controller_workers(conn, component),
+        results_exported=component._results_exported,
+        system_state=component._system_state,
+    )

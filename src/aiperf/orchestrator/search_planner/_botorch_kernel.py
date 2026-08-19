@@ -20,13 +20,13 @@ SAASBO; out of scope for this migration).
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gpytorch.kernels import ScaleKernel
 
 
-def make_dsp_kernel(d: int) -> ScaleKernel:
+def make_dsp_kernel(d: int, batch_shape: Any = None) -> ScaleKernel:
     """Return a Hvarfner-DSP-scaled Matern 5/2 kernel for ``d`` input dims.
 
     The output ``ScaleKernel`` wraps an ARD ``MaternKernel(nu=2.5)`` with a
@@ -34,6 +34,16 @@ def make_dsp_kernel(d: int) -> ScaleKernel:
     lengthscale -- the form verified by Hvarfner et al. 2024 section 3.3.
     The output-scale prior is the BoTorch default ``Gamma(2, 0.15)``,
     which is well-behaved for objectives normalized via ``Standardize``.
+
+    ``batch_shape`` must match the batch shape of the model this kernel is
+    handed to. A ``SingleTaskGP`` built over an ``m``-column train_y is a
+    batched multi-output model with ``batch_shape == Size([m])``, and every
+    kernel parameter has to carry that leading dimension. Omitting it
+    produces a kernel whose parameters are size 1, and the fit dies inside
+    BoTorch's scipy path with ``shape '[m, 1]' is invalid for input of size
+    1`` -- which is where constrained qLogNEI lands, because the constrained
+    path cat-stacks the objective with one column per SLA filter.
+    Pass ``None`` (the default) for the single-output case.
     """
     import torch
     from gpytorch.kernels import MaternKernel, ScaleKernel
@@ -43,11 +53,16 @@ def make_dsp_kernel(d: int) -> ScaleKernel:
         raise ValueError(f"d must be >= 1; got {d}")
     loc = torch.tensor(math.sqrt(2.0) + 0.5 * math.log(d), dtype=torch.float64)
     scale = torch.tensor(math.sqrt(3.0), dtype=torch.float64)
+    batch_kwargs: dict[str, Any] = (
+        {} if batch_shape is None else {"batch_shape": batch_shape}
+    )
     return ScaleKernel(
         MaternKernel(
             nu=2.5,
             ard_num_dims=d,
             lengthscale_prior=LogNormalPrior(loc=loc, scale=scale),
+            **batch_kwargs,
         ),
         outputscale_prior=GammaPrior(2.0, 0.15),
+        **batch_kwargs,
     )
