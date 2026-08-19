@@ -164,6 +164,15 @@ def test_docs_kubernetes_aiperf_cr_snippet_discovery_finds_examples() -> None:
     )
 
 
+def test_docs_kubernetes_prescribe_direct_helm_lifecycle_commands() -> None:
+    getting_started = (_DOCS_KUBERNETES / "getting-started.md").read_text()
+    production = (_DOCS_KUBERNETES / "production.md").read_text()
+
+    assert "helm install aiperf-operator deploy/helm/aiperf-operator" in getting_started
+    assert "helm upgrade aiperf-operator deploy/helm/aiperf-operator" in production
+    assert "helm uninstall aiperf-operator --namespace aiperf-system" in production
+
+
 # ============================================================================
 # Current kind dispatch and full validation
 # ============================================================================
