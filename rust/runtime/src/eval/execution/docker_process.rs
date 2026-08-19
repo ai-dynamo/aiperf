@@ -1817,7 +1817,6 @@ impl DockerProcessSandbox {
             &runtime,
             recipe,
             package,
-            package.execution_plan(),
             trial,
             prepared_driver,
             secrets,
@@ -1825,15 +1824,13 @@ impl DockerProcessSandbox {
         .await
     }
 
-    /// Executes one externally driven compatibility episode through the declared verifier.
+    /// Executes one externally driven compatibility episode using only the package-owned plan.
     #[cfg(feature = "engine")]
-    #[allow(clippy::too_many_arguments)]
     pub async fn execute_externally_driven_with_runtime(
         &self,
         runtime: &dyn DockerRuntime,
         recipe: &HarborSandboxRecipe,
         package: &HarborTaskPackage,
-        plan: &BenchmarkExecutionPlan,
         trial: &ResolvedEpisodeTrial,
         prepared_driver: PreparedExternalDriverCapability,
         secrets: &dyn SecretProvider,
@@ -1844,7 +1841,8 @@ impl DockerProcessSandbox {
         ),
         EvalExecutionError,
     > {
-        if package.execution_plan().is_multi_step() || plan.is_multi_step() {
+        let plan = package.execution_plan();
+        if plan.is_multi_step() {
             return Err(EvalExecutionError::UnsupportedMultiStep);
         }
         if !package.is_standard_directory() {
@@ -1900,6 +1898,7 @@ impl DockerProcessSandbox {
         let (image, container) = docker_run_names(package);
         let driver_project = ComposeProjectId::new("aiperf-external-driver");
         let driver_labels = driver_project.ownership_labels();
+        let driver_timeout = external_driver_timeout(plan, trial)?;
         let driver_spawn = prepare_external_driver_spawn(
             runtime,
             package,
@@ -1908,7 +1907,7 @@ impl DockerProcessSandbox {
             Some(prepared_driver),
             &container,
             driver_project,
-            AdapterLifecycleDeadlines::default(),
+            external_driver_lifecycle_deadlines(driver_timeout)?,
         )?;
         let materialized_source = package.materialize_source()?;
         let (source_root, environment_root) =
@@ -1972,49 +1971,60 @@ impl DockerProcessSandbox {
                 baseline_network,
                 remaining(&agent_deadline)?,
             )?;
+            let driver_deadline = Deadline::from_phase_timeout(
+                self.clock.clone(),
+                EvalExecutionPhase::Agent,
+                driver_timeout,
+            );
             let started = driver_spawn.start().map_err(|error| {
                 EvalExecutionError::ProcessFailure(format!("external Driver spawn failed: {error}"))
             })?;
             let mut driver = started
                 .into_session(protocol, capture_session.clone())
                 .await?;
-            run_externally_driven_episode_session(&mut driver, |receipt| {
-                let supplement = CapturePolicy::from_session(&capture_session)
-                    .begin_observation()
-                    .freeze()
-                    .into_terminal_supplement(receipt)
-                    .map_err(|error| {
-                        EvalExecutionError::ProcessFailure(format!(
-                            "external compatibility capture failed: {error}"
-                        ))
-                    })?;
-                let step = plan
-                    .steps()
-                    .first()
-                    .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?;
-                let mut session = DockerStepSession {
-                    clock: self.clock.clone(),
-                    runtime,
-                    recipe,
-                    source_root,
-                    environment,
-                    image: &image,
-                    agent_container: &container,
-                    secrets,
-                    containers: &mut containers,
-                    artifact_collection: None,
-                };
-                let artifacts = session.collect_artifacts(step)?;
-                let reward = session.run_verifier(step, &artifacts)?;
-                Ok((
-                    LocalExecutionResult {
-                        artifacts,
-                        reward,
-                        verifier: package.source_digest(),
-                    },
-                    supplement,
-                ))
-            })
+            run_externally_driven_episode_session(
+                self.clock.clone(),
+                driver_timeout,
+                driver_deadline.remaining(),
+                &mut driver,
+                |receipt| {
+                    let supplement = CapturePolicy::from_session(&capture_session)
+                        .begin_observation()
+                        .freeze()
+                        .into_terminal_supplement(receipt)
+                        .map_err(|error| {
+                            EvalExecutionError::ProcessFailure(format!(
+                                "external compatibility capture failed: {error}"
+                            ))
+                        })?;
+                    let step = plan
+                        .steps()
+                        .first()
+                        .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?;
+                    let mut session = DockerStepSession {
+                        clock: self.clock.clone(),
+                        runtime,
+                        recipe,
+                        source_root,
+                        environment,
+                        image: &image,
+                        agent_container: &container,
+                        secrets,
+                        containers: &mut containers,
+                        artifact_collection: None,
+                    };
+                    let artifacts = session.collect_artifacts(step)?;
+                    let reward = session.run_verifier(step, &artifacts)?;
+                    Ok((
+                        LocalExecutionResult {
+                            artifacts,
+                            reward,
+                            verifier: package.source_digest(),
+                        },
+                        supplement,
+                    ))
+                },
+            )
             .await
         }
         .await;
@@ -3058,6 +3068,37 @@ fn standard_task_roots<'a>(
         ));
     }
     Ok((source_root, environment_root))
+}
+
+#[cfg(feature = "engine")]
+fn external_driver_timeout(
+    plan: &BenchmarkExecutionPlan,
+    trial: &ResolvedEpisodeTrial,
+) -> Result<Duration, EvalExecutionError> {
+    let resolved_budget = Duration::try_from_secs_f64(trial.trial().budget.execution_seconds)
+        .map_err(|_| EvalExecutionError::InvalidRecipe("external Driver execution deadline"))?;
+    let timeout = plan
+        .agent()
+        .timeout()
+        .map_or(resolved_budget, |authored| authored.min(resolved_budget));
+    if timeout.is_zero() {
+        return Err(EvalExecutionError::InvalidRecipe(
+            "external Driver execution deadline",
+        ));
+    }
+    Ok(timeout)
+}
+
+#[cfg(feature = "engine")]
+fn external_driver_lifecycle_deadlines(
+    timeout: Duration,
+) -> Result<AdapterLifecycleDeadlines, EvalExecutionError> {
+    // The resolved execution budget is the outer Driver deadline. Every inner
+    // supervision action receives no more time than that same authored bound.
+    AdapterLifecycleDeadlines::new(
+        timeout, timeout, timeout, timeout, timeout, timeout, timeout,
+    )
+    .map_err(|_| EvalExecutionError::InvalidRecipe("external Driver execution deadline"))
 }
 
 fn docker_run_names(package: &HarborTaskPackage) -> (String, String) {

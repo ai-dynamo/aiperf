@@ -330,7 +330,6 @@ impl NativeGraphEpisodeExecutor for DockerExternallyDrivenEpisodeExecutor {
                         runtime.as_ref(),
                         &self.recipe,
                         &self.imported.package,
-                        self.imported.package.execution_plan(),
                         assignment.trial(),
                         prepared_driver,
                         self.secrets.as_ref(),

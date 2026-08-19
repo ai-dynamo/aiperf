@@ -280,6 +280,7 @@ impl StartedExternalDriverDockerSpawn {
             transaction: RefCell::new(Some(transaction)),
             deadlines: self.deadlines,
         });
+        let startup_timeout = self.deadlines.startup();
         let runtime = ProtocolAdapterRuntimeFactory::new(
             protocol.clone(),
             Rc::new(StrictAdapterProtocolFactory),
@@ -288,7 +289,7 @@ impl StartedExternalDriverDockerSpawn {
         let adapter = runtime
             .start(supervision_request)
             .await
-            .map_err(external_driver_supervision_error)?;
+            .map_err(|error| external_driver_startup_error(error, startup_timeout))?;
         let prepared_driver =
             self.prepared_driver
                 .take()
@@ -340,6 +341,20 @@ impl super::native_graph_episode::ExternallyDrivenEpisodeSession for ExternalDri
 #[cfg(feature = "engine")]
 fn external_driver_supervision_error(error: AdapterSupervisionError) -> EvalExecutionError {
     EvalExecutionError::ProcessFailure(format!("external Driver supervision failed: {error}"))
+}
+
+#[cfg(feature = "engine")]
+fn external_driver_startup_error(
+    error: AdapterSupervisionError,
+    timeout: Duration,
+) -> EvalExecutionError {
+    match error {
+        AdapterSupervisionError::StartupDeadlineElapsed => EvalExecutionError::Timeout {
+            phase: EvalExecutionPhase::Agent,
+            timeout,
+        },
+        error => external_driver_supervision_error(error),
+    }
 }
 
 impl Drop for StartedExternalDriverDockerSpawn {

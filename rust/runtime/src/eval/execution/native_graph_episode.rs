@@ -5,9 +5,16 @@
 
 use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc};
 
+#[cfg(feature = "engine")]
+use std::time::Duration;
+
 use async_trait::async_trait;
 
 use super::EvalExecutionError;
+#[cfg(feature = "engine")]
+use super::EvalExecutionPhase;
+#[cfg(feature = "engine")]
+use crate::clock::Clock;
 #[cfg(feature = "engine")]
 use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
 #[cfg(feature = "engine")]
@@ -33,11 +40,30 @@ pub(crate) trait ExternallyDrivenEpisodeSession {
 /// Runs one terminal-only external Driver transaction and preserves terminal cleanup ownership.
 #[cfg(feature = "engine")]
 pub(crate) async fn run_externally_driven_episode_session<T>(
+    clock: Rc<dyn Clock>,
+    timeout: Duration,
+    remaining: Result<Duration, EvalExecutionError>,
     session: &mut dyn ExternallyDrivenEpisodeSession,
     after_terminal: impl FnOnce(CompatibilityTerminalReceipt) -> Result<T, EvalExecutionError>,
 ) -> Result<T, EvalExecutionError> {
-    let outcome = match session.request_terminal().await {
-        Ok(receipt) => after_terminal(receipt),
+    let outcome = match remaining {
+        Ok(remaining) => {
+            let terminal = session.request_terminal();
+            let timer = clock.sleep(remaining.as_nanos().min(i64::MAX as u128) as i64);
+            tokio::pin!(terminal);
+            tokio::pin!(timer);
+            tokio::select! {
+                biased;
+                result = &mut terminal => match result {
+                    Ok(receipt) => after_terminal(receipt),
+                    Err(error) => Err(error),
+                },
+                () = &mut timer => Err(EvalExecutionError::Timeout {
+                    phase: EvalExecutionPhase::Agent,
+                    timeout,
+                }),
+            }
+        }
         Err(error) => Err(error),
     };
     let cleanup = session.cancel_and_reap().await;
