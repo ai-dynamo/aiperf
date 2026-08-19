@@ -270,11 +270,21 @@ def _build_routed_under_config() -> frozenset[str]:
 
     # _apply_endpoint_overrides: the field map, plus --url and the
     # --model-names/--model-selection-strategy pair that lands on `models`.
-    endpoint = set(_ENDPOINT_FIELD_MAP) | {
-        "urls",
-        "model_names",
-        "model_selection_strategy",
-    }
+    endpoint = (
+        set(_ENDPOINT_FIELD_MAP)
+        | {
+            "urls",
+            "model_names",
+            "model_selection_strategy",
+        }
+        | {
+            # probe sub-blocks, via _maybe_build_reset_kv_cache /
+            # _maybe_build_server_profiler
+            field
+            for field in ENDPOINT_FIELDS
+            if field.startswith(("reset_kv_cache", "server_profiler"))
+        }
+    )
 
     # _apply_input_overrides routes headers/extra onto the endpoint block;
     # every other dataset-shaping field goes through _apply_dataset_overrides,
@@ -354,13 +364,6 @@ MAGIC_LIST_ONLY_UNDER_CONFIG: frozenset[str] = _build_magic_list_only_fields()
 UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
     {
         # ----- endpoint -----
-        "reset_kv_cache",
-        "reset_kv_cache_path",
-        "reset_kv_cache_timeout_seconds",
-        "server_profiler",
-        "server_profiler_start_path",
-        "server_profiler_stop_path",
-        "server_profiler_timeout_seconds",
         # ----- input: dataset identity, owned by the config file -----
         # Every other INPUT field now routes through _apply_dataset_overrides;
         # these would swap the dataset the YAML declared rather than shape it.
