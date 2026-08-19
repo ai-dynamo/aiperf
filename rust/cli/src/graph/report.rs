@@ -408,21 +408,48 @@ mod tests {
             Some("graph.nodes.w"),
             BTreeMap::new(),
         );
+        let second_profiling_issue = issue(
+            "second-profiling-warning",
+            GraphInspectionSeverity::Warning,
+            Some("trace-2"),
+            Some(GraphPlanPhase::Profiling),
+            Some("graph.nodes.p2"),
+            BTreeMap::new(),
+        );
+        let second_warmup_issue = issue(
+            "second-warmup-error",
+            GraphInspectionSeverity::Error,
+            Some("trace-2"),
+            Some(GraphPlanPhase::Warmup),
+            Some("graph.nodes.w2"),
+            BTreeMap::new(),
+        );
         let inspection = GraphBundleInspection {
             format: "conditional_graph".to_owned(),
             root_count: 1,
             node_count: 2,
             segment_count: 0,
             issues: vec![bundle_issue],
-            programs: vec![GraphProgramInspection {
-                trace_id: "trace-1".to_owned(),
-                driver: "static_graph".to_owned(),
-                arrival_offset_ns: None,
-                has_environment: false,
-                has_replay: false,
-                profiling: plan(GraphPlanPhase::Profiling, vec![profiling_issue]),
-                warmup: Some(plan(GraphPlanPhase::Warmup, vec![warmup_issue])),
-            }],
+            programs: vec![
+                GraphProgramInspection {
+                    trace_id: "trace-1".to_owned(),
+                    driver: "static_graph".to_owned(),
+                    arrival_offset_ns: None,
+                    has_environment: false,
+                    has_replay: false,
+                    profiling: plan(GraphPlanPhase::Profiling, vec![profiling_issue]),
+                    warmup: Some(plan(GraphPlanPhase::Warmup, vec![warmup_issue])),
+                },
+                GraphProgramInspection {
+                    trace_id: "trace-2".to_owned(),
+                    driver: "static_graph".to_owned(),
+                    arrival_offset_ns: None,
+                    has_environment: false,
+                    has_replay: false,
+                    profiling: plan(GraphPlanPhase::Profiling, vec![second_profiling_issue]),
+                    warmup: Some(plan(GraphPlanPhase::Warmup, vec![second_warmup_issue])),
+                },
+            ],
         };
 
         let report = GraphValidateReport::from_inspection("/tmp/source".to_owned(), inspection);
@@ -433,7 +460,13 @@ mod tests {
                 .iter()
                 .map(|issue| issue.code.as_str())
                 .collect::<Vec<_>>(),
-            ["bundle-warning", "profiling-error", "warmup-warning"]
+            [
+                "bundle-warning",
+                "profiling-error",
+                "warmup-warning",
+                "second-profiling-warning",
+                "second-warmup-error",
+            ]
         );
         assert!(matches!(
             report.issues[0].severity,
@@ -454,8 +487,24 @@ mod tests {
             report.issues[2].phase,
             Some(GraphPlanPhaseReport::Warmup)
         ));
-        assert_eq!(report.summary.errors, 1);
-        assert_eq!(report.summary.warnings, 2);
+        assert!(matches!(
+            report.issues[3].severity,
+            GraphIssueSeverityReport::Warning
+        ));
+        assert!(matches!(
+            report.issues[3].phase,
+            Some(GraphPlanPhaseReport::Profiling)
+        ));
+        assert!(matches!(
+            report.issues[4].severity,
+            GraphIssueSeverityReport::Error
+        ));
+        assert!(matches!(
+            report.issues[4].phase,
+            Some(GraphPlanPhaseReport::Warmup)
+        ));
+        assert_eq!(report.summary.errors, 2);
+        assert_eq!(report.summary.warnings, 3);
         let json = serde_json::to_value(report).expect("serialize validation report");
         assert!(json["issues"][0]["trace_id"].is_null());
         assert!(json["issues"][0]["phase"].is_null());

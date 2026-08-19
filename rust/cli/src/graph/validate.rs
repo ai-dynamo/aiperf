@@ -29,7 +29,17 @@ pub(super) fn run(
     let report = GraphValidateReport::from_inspection(source.display().to_string(), inspection);
     let stdout = io::stdout();
     let mut output = stdout.lock();
-    render_report(&report, output_format, &mut output)
+    emit_report(&report, output_format, &mut output)?;
+    Ok(if report.summary.errors > 0 { 1 } else { 0 })
+}
+
+/// Render one prepared validation report to a caller-owned output stream.
+pub(super) fn emit_report<W: Write>(
+    report: &GraphValidateReport,
+    output_format: TextJsonFormat,
+    output: &mut W,
+) -> Result<i32, GraphCommandError> {
+    render_report(report, output_format, output)
         .map_err(|error| output_write_error(&report.source, error))?;
     Ok(if report.summary.errors > 0 { 1 } else { 0 })
 }
@@ -55,8 +65,10 @@ fn render_report<W: Write>(
 }
 
 fn render_json<W: Write>(report: &GraphValidateReport, output: &mut W) -> anyhow::Result<()> {
-    serde_json::to_writer_pretty(&mut *output, report)?;
-    output.write_all(b"\n")?;
+    let mut rendered = Vec::new();
+    serde_json::to_writer_pretty(&mut rendered, report)?;
+    rendered.push(b'\n');
+    output.write_all(&rendered)?;
     Ok(())
 }
 

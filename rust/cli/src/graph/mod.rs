@@ -7,6 +7,7 @@ pub mod report;
 mod validate;
 mod visualize;
 
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use aiperf_runtime::config::model::workload_kind::GRAPH_FORMATS;
@@ -144,9 +145,9 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
                     format!("invalid arguments: {}", error.kind()),
                     None,
                 );
-                write_error(operation_from_argv(argv), &failure, true);
+                write_error(operation_from_argv(argv), &failure, true)?;
             } else {
-                error.print().ok();
+                error.print()?;
             }
             return Ok(error.exit_code());
         }
@@ -181,7 +182,7 @@ fn run_validate(args: ValidateArgs) -> anyhow::Result<i32> {
                     GraphOperation::Validate,
                     &error,
                     matches!(args.output_format, TextJsonFormat::Json),
-                );
+                )?;
                 Ok(2)
             }
         },
@@ -190,7 +191,7 @@ fn run_validate(args: ValidateArgs) -> anyhow::Result<i32> {
                 GraphOperation::Validate,
                 &error,
                 matches!(args.output_format, TextJsonFormat::Json),
-            );
+            )?;
             Ok(2)
         }
     }
@@ -207,7 +208,7 @@ fn run_explain(args: ExplainArgs) -> anyhow::Result<i32> {
                 GraphOperation::Explain,
                 &error,
                 matches!(args.output_format, TextJsonFormat::Json),
-            );
+            )?;
             Ok(2)
         }
     }
@@ -226,7 +227,7 @@ fn run_visualize(args: VisualizeArgs) -> anyhow::Result<i32> {
             Ok(0)
         }
         Err(error) => {
-            write_error(GraphOperation::Visualize, &error, false);
+            write_error(GraphOperation::Visualize, &error, false)?;
             Ok(2)
         }
     }
@@ -366,23 +367,99 @@ fn operation_from_argv(argv: &[String]) -> GraphOperation {
     }
 }
 
-fn write_error(operation: GraphOperation, error: &GraphCommandError, is_json: bool) {
+fn write_error(
+    operation: GraphOperation,
+    error: &GraphCommandError,
+    is_json: bool,
+) -> anyhow::Result<()> {
     if is_json {
-        match serde_json::to_string(&error.report(operation)) {
-            Ok(report) => println!("{report}"),
-            Err(serialization_error) => eprintln!(
-                "aiperf graph {}: failed to serialize error report: {serialization_error}",
-                operation.as_str()
-            ),
-        }
+        let stdout = io::stdout();
+        let mut output = stdout.lock();
+        write_error_to(operation, error, true, &mut output)
     } else {
-        eprintln!("aiperf graph {}: {}", operation.as_str(), error.message);
+        let stderr = io::stderr();
+        let mut output = stderr.lock();
+        write_error_to(operation, error, false, &mut output)
     }
+}
+
+fn write_error_to<W: Write>(
+    operation: GraphOperation,
+    error: &GraphCommandError,
+    is_json: bool,
+    output: &mut W,
+) -> anyhow::Result<()> {
+    if is_json {
+        let mut report = serde_json::to_vec(&error.report(operation))?;
+        report.push(b'\n');
+        output.write_all(&report)?;
+    } else {
+        writeln!(
+            output,
+            "aiperf graph {}: {}",
+            operation.as_str(),
+            error.message
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_input_decode_error;
+    use std::collections::BTreeMap;
+    use std::io::{self, Write};
+
+    use super::{GraphOperation, TextJsonFormat, is_input_decode_error, validate, write_error_to};
+    use crate::graph::report::{
+        GraphErrorReport, GraphIssueReport, GraphIssueSeverityReport, GraphIssueSummary,
+        GraphValidateReport,
+    };
+
+    struct FailFirstWriter {
+        writes: usize,
+        bytes: Vec<u8>,
+    }
+
+    impl Write for FailFirstWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            if self.writes == 1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "test broken pipe",
+                ));
+            }
+            self.bytes.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn validation_report() -> GraphValidateReport {
+        GraphValidateReport {
+            schema_version: "aiperf.graph.validate.v1".to_owned(),
+            source: "/tmp/input.graph".to_owned(),
+            format: "dag_jsonl".to_owned(),
+            root_count: 1,
+            node_count: 1,
+            issues: vec![GraphIssueReport {
+                code: "test".to_owned(),
+                severity: GraphIssueSeverityReport::Error,
+                trace_id: None,
+                phase: None,
+                location: None,
+                message: "test issue".to_owned(),
+                context: BTreeMap::new(),
+            }],
+            summary: GraphIssueSummary {
+                errors: 1,
+                warnings: 0,
+            },
+        }
+    }
 
     #[test]
     fn decode_named_lowering_error_is_not_an_input_decode_error() {
@@ -390,5 +467,25 @@ mod tests {
             .context("lowering recorded graph materialization");
 
         assert!(!is_input_decode_error(&error));
+    }
+
+    #[test]
+    fn json_validation_write_failure_emits_only_one_fatal_document() {
+        let report = validation_report();
+        let mut writer = FailFirstWriter {
+            writes: 0,
+            bytes: Vec::new(),
+        };
+        let error = validate::emit_report(&report, TextJsonFormat::Json, &mut writer)
+            .expect_err("first write rejects validation JSON");
+
+        assert_eq!(error.code.as_str(), "output-write-failed");
+        write_error_to(GraphOperation::Validate, &error, true, &mut writer)
+            .expect("second write emits fatal document");
+        let fatal: GraphErrorReport =
+            serde_json::from_slice(&writer.bytes).expect("one parseable fatal JSON document");
+        assert_eq!(fatal.schema_version, "aiperf.graph.error.v1");
+        assert_eq!(fatal.code.as_str(), "output-write-failed");
+        assert_eq!(fatal.source.as_deref(), Some("/tmp/input.graph"));
     }
 }
