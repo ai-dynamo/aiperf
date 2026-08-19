@@ -574,11 +574,12 @@ fn scan_source(
             record_type,
             Some("session_meta" | "event_msg" | "response_item" | "turn_context")
         ) && has_object_payload;
-        let is_claude = (object.contains_key("sessionId") && object.contains_key("parentUuid"))
-            || matches!(
-                record_type,
-                Some("permission-mode" | "file-history-snapshot" | "summary")
-            );
+        let is_claude = object.contains_key("sessionId")
+            && (object.contains_key("parentUuid")
+                || matches!(
+                    record_type,
+                    Some("permission-mode" | "file-history-snapshot" | "summary")
+                ));
         if is_codex && is_claude {
             return Err(error(
                 path,

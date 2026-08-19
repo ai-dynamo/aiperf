@@ -153,9 +153,15 @@ fn source_detection_uses_only_supported_provider_markers() {
     }
     for (name, record) in [
         ("parent", "{\"sessionId\":\"x\",\"parentUuid\":null}\n"),
-        ("permission", "{\"type\":\"permission-mode\"}\n"),
-        ("history", "{\"type\":\"file-history-snapshot\"}\n"),
-        ("summary", "{\"type\":\"summary\"}\n"),
+        (
+            "permission",
+            "{\"type\":\"permission-mode\",\"sessionId\":\"x\"}\n",
+        ),
+        (
+            "history",
+            "{\"type\":\"file-history-snapshot\",\"sessionId\":\"x\"}\n",
+        ),
+        ("summary", "{\"type\":\"summary\",\"sessionId\":\"x\"}\n"),
     ] {
         let path = root.path().join(format!("claude-{name}.jsonl"));
         write(&path, record);
@@ -175,6 +181,15 @@ fn source_detection_uses_only_supported_provider_markers() {
             "claude-unknown-type",
             "{\"type\":\"unknown\",\"sessionId\":\"x\"}\n",
         ),
+        (
+            "claude-permission-without-session",
+            "{\"type\":\"permission-mode\"}\n",
+        ),
+        (
+            "claude-history-without-session",
+            "{\"type\":\"file-history-snapshot\"}\n",
+        ),
+        ("claude-summary-without-session", "{\"type\":\"summary\"}\n"),
     ] {
         let path = root.path().join(format!("near-{name}.jsonl"));
         write(&path, record);
