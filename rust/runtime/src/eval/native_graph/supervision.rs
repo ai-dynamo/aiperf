@@ -1362,17 +1362,188 @@ impl std::error::Error for AdapterSupervisionError {}
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs};
+    use std::{collections::BTreeMap, fs, num::NonZeroUsize, time::Duration};
 
     use crate::eval::native_graph::CompatibilityCaptureSession;
     use crate::eval::{
-        AdapterEnvelope, AdapterExit, AdapterMessage, AdapterRole, AttemptId,
-        CompatibilityTerminalReceipt, ExternalDriverError, ExternalDriverSession, HarborImporter,
-        HarborSource, ModelEndpointIsolationProof, NativeSourceAcquirer, ProtocolCapability,
-        ProtocolLimits, ProviderCapability,
+        AdapterEnvelope, AdapterExit, AdapterMessage, AdapterRole, AgentVariantRef, ArtifactDigest,
+        AttemptId, CompatibilityTerminalReceipt, ExternalDriverError, ExternalDriverSession,
+        HarborImporter, HarborSource, ModelEndpointIsolationProof, ModelIdentity,
+        NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity, ProtocolCapability,
+        ProtocolLimits, ProviderCapability, ResourceLeaseRequest, RuntimeIdentity, SuiteRunId,
+        SuiteTrialSpec, TrialBudget, TrialSpec,
     };
 
     use super::*;
+
+    #[test]
+    fn external_authorization_validates_every_sealed_spawn_field_once() {
+        let (imported, trial) = external_authorization_fixture();
+        let deadlines = external_authorization_deadlines();
+
+        let authorization = external_authorization(&imported, &trial, deadlines);
+        let request = authorization.spawn_request().unwrap();
+        assert!(request.external_spawn_token.is_some());
+        assert_eq!(request.argv(), ["tools/driver.sh"]);
+        assert!(request.environment().is_empty());
+        assert_eq!(request.deadlines(), deadlines);
+
+        let missing_token = AdapterSpawnRequest::for_non_model_adapter(
+            ["tools/driver.sh".to_owned()],
+            BTreeMap::new(),
+            deadlines,
+        )
+        .unwrap();
+        assert!(
+            authorization
+                .authorize_spawn_request("task-container", missing_token)
+                .is_err()
+        );
+
+        let authorization = external_authorization(&imported, &trial, deadlines);
+        let request = authorization.spawn_request().unwrap();
+        assert!(
+            authorization
+                .authorize_spawn_request("substituted-container", request)
+                .is_err()
+        );
+
+        let authorization = external_authorization(&imported, &trial, deadlines);
+        let mut request = authorization.spawn_request().unwrap();
+        request.argv.push("--substituted".to_owned());
+        assert!(
+            authorization
+                .authorize_spawn_request("task-container", request)
+                .is_err()
+        );
+
+        let authorization = external_authorization(&imported, &trial, deadlines);
+        let mut request = authorization.spawn_request().unwrap();
+        request
+            .environment
+            .insert("SECRET".to_owned(), "forbidden".to_owned());
+        assert!(
+            authorization
+                .authorize_spawn_request("task-container", request)
+                .is_err()
+        );
+
+        let authorization = external_authorization(&imported, &trial, deadlines);
+        let mut request = authorization.spawn_request().unwrap();
+        request.deadlines = AdapterLifecycleDeadlines::default();
+        assert!(
+            authorization
+                .authorize_spawn_request("task-container", request)
+                .is_err()
+        );
+
+        let authorization = external_authorization(&imported, &trial, deadlines);
+        let request = authorization.spawn_request().unwrap();
+        let replay = request.clone();
+        authorization
+            .authorize_spawn_request("task-container", request)
+            .unwrap();
+        assert!(
+            authorization
+                .authorize_spawn_request("task-container", replay)
+                .is_err()
+        );
+        assert!(authorization.spawn_request().is_err());
+    }
+
+    fn external_authorization_fixture() -> (crate::eval::ImportedTask, ResolvedEpisodeTrial) {
+        let task = tempfile::tempdir().unwrap();
+        fs::create_dir_all(task.path().join("environment")).unwrap();
+        fs::create_dir_all(task.path().join("tests")).unwrap();
+        fs::create_dir_all(task.path().join("tools")).unwrap();
+        fs::write(task.path().join("environment/Dockerfile"), "FROM scratch\n").unwrap();
+        fs::write(task.path().join("instruction.md"), "Do work.\n").unwrap();
+        fs::write(task.path().join("tests/test.sh"), "exit 0\n").unwrap();
+        fs::write(
+            task.path().join("task.toml"),
+            r#"schema_version = "1.1"
+
+[task]
+name = "example/external-authorization"
+
+[native_graph]
+profile = "externally_driven"
+adapter_manifest = "adapters.toml"
+driver = "driver-adapter"
+external_driver_factory_id = "fixture"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            task.path().join("adapters.toml"),
+            r#"[[adapters]]
+id = "driver-adapter"
+role = "driver"
+argv = ["tools/driver.sh"]
+executable = "tools/driver.sh"
+"#,
+        )
+        .unwrap();
+        fs::write(task.path().join("tools/driver.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task.path().to_string_lossy()).unwrap())
+            .unwrap();
+        let trial = TrialSpec::new(
+            imported.task.clone(),
+            AgentVariantRef::new("external-driver").unwrap(),
+            ModelIdentity::new("compatibility", "opaque-driver").unwrap(),
+            7,
+            PolicyIdentity::new(ArtifactDigest::from_bytes(b"policy")),
+            TrialBudget::new(30.0, 30.0).unwrap(),
+            ArtifactDigest::from_bytes(b"environment"),
+            ArtifactDigest::from_bytes(b"verifier"),
+            RuntimeIdentity::new("external").unwrap(),
+        )
+        .unwrap();
+        let manifest = NativeGraphSuiteManifest::new(vec![
+            SuiteTrialSpec::from_imported(
+                imported.clone(),
+                trial,
+                NonZeroUsize::new(1).unwrap(),
+                ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let trial = manifest
+            .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(b"external-run")))
+            .unwrap()
+            .trials()[0]
+            .clone();
+        (imported, trial)
+    }
+
+    fn external_authorization(
+        imported: &crate::eval::ImportedTask,
+        trial: &ResolvedEpisodeTrial,
+        deadlines: AdapterLifecycleDeadlines,
+    ) -> ExternallyDrivenAdapterAuthorization {
+        ExternallyDrivenAdapterAuthorization::resolve(
+            &imported.package,
+            trial,
+            "task-container",
+            deadlines,
+        )
+        .unwrap()
+    }
+
+    fn external_authorization_deadlines() -> AdapterLifecycleDeadlines {
+        AdapterLifecycleDeadlines::new(
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(3),
+            Duration::from_secs(4),
+            Duration::from_secs(5),
+            Duration::from_secs(6),
+            Duration::from_secs(7),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn resolved_native_authorization_rejects_missing_secret_mapping_and_strips_it_at_spawn() {

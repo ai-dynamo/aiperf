@@ -580,6 +580,77 @@ fn externally_driven_single_task_resolves_with_no_model_binding() {
 }
 
 #[test]
+fn externally_driven_trial_rejects_repetitions() {
+    let task = external_driver_task_fixture();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task.path().to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = SuiteTrialSpec::from_imported(
+        imported.clone(),
+        external_trial(imported.task.clone()),
+        NonZeroUsize::new(2).unwrap(),
+        ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        NativeGraphSuiteManifest::new(vec![trial]).unwrap_err(),
+        SuiteError::ExternalTrialRepetitionCount { requested: 2 }
+    );
+}
+
+#[test]
+fn externally_driven_manifest_rejects_multiple_external_axes() {
+    let task = external_driver_task_fixture();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task.path().to_string_lossy()).unwrap())
+        .unwrap();
+    let first = SuiteTrialSpec::from_imported(
+        imported.clone(),
+        external_trial(imported.task.clone()),
+        NonZeroUsize::new(1).unwrap(),
+        ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        NativeGraphSuiteManifest::new(vec![first.clone(), first]).unwrap_err(),
+        SuiteError::ExternalManifestTrialAxes { requested: 2 }
+    );
+}
+
+#[test]
+fn externally_driven_manifest_rejects_mixed_profiles() {
+    let external_task = external_driver_task_fixture();
+    let external_imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(external_task.path().to_string_lossy()).unwrap())
+        .unwrap();
+    let external = SuiteTrialSpec::from_imported(
+        external_imported.clone(),
+        external_trial(external_imported.task.clone()),
+        NonZeroUsize::new(1).unwrap(),
+        ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+    )
+    .unwrap();
+    let native_task = native_task_fixture();
+    let native_imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(native_task.path().to_string_lossy()).unwrap())
+        .unwrap();
+    let native = SuiteTrialSpec::from_imported(
+        native_imported.clone(),
+        trial(native_imported.task.clone(), 11),
+        NonZeroUsize::new(1).unwrap(),
+        ResourceLeaseRequest::new(1, 64, BTreeMap::new()).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        NativeGraphSuiteManifest::new(vec![external, native]).unwrap_err(),
+        SuiteError::MixedNativeGraphProfiles
+    );
+}
+
+#[test]
 fn native_graph_trial_without_a_matching_model_binding_still_refuses() {
     let task = native_task_fixture();
     let imported = HarborImporter::new(&NativeSourceAcquirer)

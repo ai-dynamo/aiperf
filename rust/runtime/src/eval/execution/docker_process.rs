@@ -45,22 +45,23 @@ use crate::{
         CancelReason, HarborTaskPackage, ModelEndpointIsolationProof, ModelSecretId,
         NativeGraphAdapterAuthorization, NativeGraphEnvironmentAdapterStart,
         NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
-        PreparedExternalDriver, ProviderCapability, ProviderProfile, ResolvedEpisodeTrial,
-        RewardDocument, VerifierMode, run_native_graph_episode_callback,
+        PreparedExternalDriverCapability, ProviderCapability, ProviderProfile,
+        ResolvedEpisodeTrial, RewardDocument, VerifierMode, run_native_graph_episode_callback,
     },
 };
 
 use super::{
-    BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId, DockerAdapterLease,
-    DockerAdapterProcess, DockerAdapterSpawnerRequest, DockerBuildRequest,
+    AuthorizedExternalDriverSpawn, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId,
+    DockerAdapterLease, DockerAdapterProcess, DockerAdapterSpawnerRequest, DockerBuildRequest,
     DockerComposeAdapterSpawnerRequest, DockerComposeArchiveRequest, DockerComposeBuildRequest,
     DockerComposeConfigRequest, DockerComposeCopyRequest, DockerComposeDownRequest,
     DockerComposeExecRequest, DockerComposeRuntime, DockerComposeStopRequest,
     DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
     DockerRemoveRequest, DockerRuntime, DockerStartRequest, EvalExecutionError, EvalExecutionPhase,
-    ExternalDriverDockerSpawn, HarborSandboxRecipe, LocalExecutionResult, MultiStepExecutionResult,
-    NetworkPolicy, SecretProvider, preflight_docker, prepare_external_driver_spawn,
-    resolve_environment, resolve_native_graph_adapter_authorization, resolve_phase_environment,
+    ExternalDriverDockerSpawnOperation, ExternalDriverDockerSpawner, ExternalDriverSpawnExecutor,
+    HarborSandboxRecipe, LocalExecutionResult, MultiStepExecutionResult, NetworkPolicy,
+    SecretProvider, preflight_docker, prepare_external_driver_spawn, resolve_environment,
+    resolve_native_graph_adapter_authorization, resolve_phase_environment,
     shared_workdir_conflicts_reserved_verifier_path, verifier_artifact_target_collision,
 };
 
@@ -900,11 +901,11 @@ impl DockerProcessSandbox {
         package: &HarborTaskPackage,
         trial: &ResolvedEpisodeTrial,
         plan: &BenchmarkExecutionPlan,
-        prepared_driver: Option<Box<dyn PreparedExternalDriver>>,
+        prepared_driver: Option<PreparedExternalDriverCapability>,
         container: &str,
         project: ComposeProjectId,
         deadlines: AdapterLifecycleDeadlines,
-    ) -> Result<ExternalDriverDockerSpawn, EvalExecutionError> {
+    ) -> Result<ExternalDriverDockerSpawnOperation, EvalExecutionError> {
         prepare_external_driver_spawn(
             runtime,
             package,
@@ -3203,7 +3204,6 @@ struct DockerCliAdapterSpawner {
 
 struct DockerCliExternalDriverSpawner {
     request: DockerAdapterSpawnerRequest,
-    authorization: crate::eval::ExternallyDrivenAdapterAuthorization,
     clock: Rc<dyn Clock>,
 }
 
@@ -3342,14 +3342,12 @@ impl AdapterSpawner for DockerCliAdapterSpawner {
     }
 }
 
-impl AdapterSpawner for DockerCliExternalDriverSpawner {
+impl ExternalDriverSpawnExecutor for DockerCliExternalDriverSpawner {
     fn begin_spawn(
         &self,
-        request: AdapterSpawnRequest,
+        request: AuthorizedExternalDriverSpawn,
     ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
-        let request = self
-            .authorization
-            .authorize_spawn_request(self.request.container(), request)?;
+        let request = request.into_request();
         let container_id = resolve_owned_adapter_container(
             self.clock.clone(),
             &self.request,
@@ -3487,13 +3485,14 @@ impl DockerRuntime for DockerCliRuntime {
     fn external_driver_spawner(
         &self,
         request: &DockerAdapterSpawnerRequest,
-        authorization: &crate::eval::ExternallyDrivenAdapterAuthorization,
-    ) -> Result<Rc<dyn AdapterSpawner>, EvalExecutionError> {
-        Ok(Rc::new(DockerCliExternalDriverSpawner {
-            request: request.clone(),
-            authorization: authorization.clone(),
-            clock: self.clock.clone(),
-        }))
+    ) -> Result<ExternalDriverDockerSpawner, EvalExecutionError> {
+        Ok(ExternalDriverDockerSpawner::new(
+            request,
+            Rc::new(DockerCliExternalDriverSpawner {
+                request: request.clone(),
+                clock: self.clock.clone(),
+            }),
+        ))
     }
 
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {

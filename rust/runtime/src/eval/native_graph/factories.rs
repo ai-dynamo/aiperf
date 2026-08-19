@@ -28,7 +28,7 @@ use crate::graph::tools::{
 };
 use crate::{
     eval::semantic::GraphLowererFactory,
-    eval::{AdapterSpec, ArtifactDigest, ProviderRecovery},
+    eval::{AdapterRole, AdapterSpec, ArtifactDigest, HarborTaskPackage, ProviderRecovery},
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -1062,12 +1062,106 @@ pub trait NativeGraphExternalDriverFactory: Send + Sync {
     /// Returns the canonical immutable selector this factory permits.
     fn id(&self) -> &str;
 
-    /// Prepares an external driver from exact immutable package and trial authority.
+    /// Prepares and seals one driver from exact immutable package and trial authority.
     fn prepare(
+        &self,
+        package: &HarborTaskPackage,
+        trial: &ResolvedEpisodeTrial,
+    ) -> Result<PreparedExternalDriverCapability, ExternalDriverError> {
+        prepare_native_graph_external_driver(self, package, trial)
+    }
+
+    /// Constructs the provider-specific driver retained inside sealed preparation.
+    fn prepare_driver(
         &self,
         package: &NativeGraphPackagePlan,
         trial: &ResolvedEpisodeTrial,
     ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError>;
+}
+
+/// Opaque factory-prepared driver bound to one package, adapter, and resolved trial.
+pub struct PreparedExternalDriverCapability {
+    driver: Box<dyn PreparedExternalDriver>,
+    package_source_digest: ArtifactDigest,
+    package_plan: NativeGraphPackagePlan,
+    driver_adapter: AdapterSpec,
+    resolved_trial: ResolvedEpisodeTrial,
+    factory_selector: String,
+}
+
+impl fmt::Debug for PreparedExternalDriverCapability {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedExternalDriverCapability")
+            .field("package_source_digest", &self.package_source_digest)
+            .field("driver_adapter", &self.driver_adapter.id)
+            .field(
+                "resolved_trial_digest",
+                &self.resolved_trial.resolved_digest(),
+            )
+            .field("factory_selector", &self.factory_selector)
+            .finish_non_exhaustive()
+    }
+}
+
+fn prepare_native_graph_external_driver<F: NativeGraphExternalDriverFactory + ?Sized>(
+    factory: &F,
+    package: &HarborTaskPackage,
+    trial: &ResolvedEpisodeTrial,
+) -> Result<PreparedExternalDriverCapability, ExternalDriverError> {
+    let package_plan = package
+        .native_graph()
+        .filter(|plan| plan.profile() == NativeGraphProfile::ExternallyDriven)
+        .ok_or(ExternalDriverError::PreparationRejected)?;
+    if trial.package().source_digest() != package.source_digest()
+        || trial.package().native_graph() != Some(package_plan)
+    {
+        return Err(ExternalDriverError::PreparationRejected);
+    }
+    let driver_adapter = package_plan
+        .driver_adapter()
+        .filter(|adapter| adapter.role == AdapterRole::Driver)
+        .ok_or(ExternalDriverError::PreparationRejected)?;
+    let selector = package_plan
+        .external_driver_factory_id()
+        .ok_or(ExternalDriverError::PreparationRejected)?;
+    if selector.as_str() != factory.id() {
+        return Err(ExternalDriverError::PreparationRejected);
+    }
+    let driver = factory.prepare_driver(package_plan, trial)?;
+    Ok(PreparedExternalDriverCapability {
+        driver,
+        package_source_digest: package.source_digest().clone(),
+        package_plan: package_plan.clone(),
+        driver_adapter: driver_adapter.clone(),
+        resolved_trial: trial.clone(),
+        factory_selector: selector.as_str().to_owned(),
+    })
+}
+
+impl PreparedExternalDriverCapability {
+    pub(crate) fn into_driver_for(
+        self,
+        package: &HarborTaskPackage,
+        trial: &ResolvedEpisodeTrial,
+    ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError> {
+        let package_plan = package
+            .native_graph()
+            .ok_or(ExternalDriverError::PreparationRejected)?;
+        if package.source_digest() != self.package_source_digest
+            || package_plan != &self.package_plan
+            || package_plan.driver_adapter() != Some(&self.driver_adapter)
+            || package_plan
+                .external_driver_factory_id()
+                .is_none_or(|selector| selector.as_str() != self.factory_selector)
+            || trial.package().source_digest() != package.source_digest()
+            || trial.package().native_graph() != Some(package_plan)
+            || trial != &self.resolved_trial
+        {
+            return Err(ExternalDriverError::PreparationRejected);
+        }
+        Ok(self.driver)
+    }
 }
 
 /// Explicit refusal until the externally driven compatibility slice is enabled.
@@ -1079,7 +1173,7 @@ impl NativeGraphExternalDriverFactory for RefusingExternalDriverFactory {
         "refuse"
     }
 
-    fn prepare(
+    fn prepare_driver(
         &self,
         _: &NativeGraphPackagePlan,
         _: &ResolvedEpisodeTrial,

@@ -323,6 +323,27 @@ impl NativeGraphSuiteManifest {
                 limit: MAX_EXPANDED_TRIALS,
             });
         }
+        let external_trials = trials
+            .iter()
+            .filter(|trial| {
+                trial.package().native_graph().is_some_and(|plan| {
+                    plan.profile() == super::NativeGraphProfile::ExternallyDriven
+                })
+            })
+            .count();
+        if external_trials != 0 && external_trials != trials.len() {
+            return Err(SuiteError::MixedNativeGraphProfiles);
+        }
+        if external_trials > 1 {
+            return Err(SuiteError::ExternalManifestTrialAxes {
+                requested: external_trials,
+            });
+        }
+        if external_trials == 1 && trials[0].repetitions().get() != 1 {
+            return Err(SuiteError::ExternalTrialRepetitionCount {
+                requested: trials[0].repetitions().get(),
+            });
+        }
         Ok(Self { trials })
     }
 
@@ -1265,6 +1286,18 @@ pub enum SuiteError {
     MissingTrialModelBinding,
     /// An externally driven trial attempted to select a model binding.
     ExternalTrialModelBinding,
+    /// An externally driven manifest requested more than its one admitted repetition.
+    ExternalTrialRepetitionCount {
+        /// Authored repetition count.
+        requested: usize,
+    },
+    /// An externally driven manifest contained more than one authored trial axis.
+    ExternalManifestTrialAxes {
+        /// Authored externally driven axis count.
+        requested: usize,
+    },
+    /// One manifest mixed native and externally driven profiles.
+    MixedNativeGraphProfiles,
     /// A programmatic trial selected more than one binding in its imported package snapshot.
     AmbiguousTrialModelBinding,
 }
@@ -1440,6 +1473,16 @@ impl fmt::Display for SuiteError {
             Self::ExternalTrialModelBinding => {
                 formatter.write_str("externally driven trial must not select a model binding")
             }
+            Self::ExternalTrialRepetitionCount { requested } => write!(
+                formatter,
+                "externally driven suite trial has {requested} repetitions; exactly one is required"
+            ),
+            Self::ExternalManifestTrialAxes { requested } => write!(
+                formatter,
+                "externally driven suite has {requested} trial axes; exactly one is required"
+            ),
+            Self::MixedNativeGraphProfiles => formatter
+                .write_str("native graph suite must not mix native and externally driven profiles"),
             Self::AmbiguousTrialModelBinding => formatter.write_str(
                 "native graph suite trial model selects multiple imported package bindings",
             ),

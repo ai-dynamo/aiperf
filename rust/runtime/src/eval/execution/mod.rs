@@ -33,14 +33,15 @@ pub(crate) use docker_runtime::prepare_external_driver_spawn;
 pub(crate) use docker_runtime::resolve_native_graph_adapter_authorization;
 #[allow(unused_imports)]
 pub use docker_runtime::{
-    ComposeProjectId, DockerAdapterLease, DockerAdapterProcess, DockerAdapterSpawnerRequest,
-    DockerBuildRequest, DockerComposeAdapterSpawnerRequest, DockerComposeArchiveRequest,
-    DockerComposeBuildRequest, DockerComposeConfigRequest, DockerComposeCopyRequest,
-    DockerComposeDownRequest, DockerComposeExecRequest, DockerComposeRuntime,
-    DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest,
-    DockerEnvironment, DockerExecRequest, DockerRemoveRequest, DockerRuntime, DockerStartRequest,
-    ExternalDriverDockerSpawn, OwnedComposeResources, preflight_docker, resolve_environment,
-    resolve_phase_environment,
+    AuthorizedExternalDriverSpawn, ComposeProjectId, DockerAdapterLease, DockerAdapterProcess,
+    DockerAdapterSpawnerRequest, DockerBuildRequest, DockerComposeAdapterSpawnerRequest,
+    DockerComposeArchiveRequest, DockerComposeBuildRequest, DockerComposeConfigRequest,
+    DockerComposeCopyRequest, DockerComposeDownRequest, DockerComposeExecRequest,
+    DockerComposeRuntime, DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest,
+    DockerCreateRequest, DockerEnvironment, DockerExecRequest, DockerRemoveRequest, DockerRuntime,
+    DockerStartRequest, ExternalDriverDockerSpawnOperation, ExternalDriverDockerSpawner,
+    ExternalDriverSpawnExecutor, OwnedComposeResources, StartedExternalDriverDockerSpawn,
+    preflight_docker, resolve_environment, resolve_phase_environment,
 };
 pub use local_process::{
     LocalAdapterSpawner, LocalExecutionResult, LocalProcessSandbox, MaterializedSandbox,
