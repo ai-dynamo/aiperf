@@ -63,17 +63,22 @@ struct PendingClaudeMessage {
     tool_ids: HashSet<String>,
 }
 
+struct NormalizedAssistantBlocks {
+    content: Vec<Value>,
+    fresh_tool_ids: HashSet<String>,
+}
+
 struct ClaudeState<'a> {
     file: &'a ImportedAgentSourceFile,
     session_id: Option<String>,
     model: Option<String>,
     cwd_present: bool,
     git_branch_present: bool,
-    metadata_seen: bool,
     parent_tool_use_id: Option<String>,
     history: Vec<RawJsonMessage>,
     calls: Vec<ImportedModelCall>,
     pending: Option<PendingClaudeMessage>,
+    finalized_messages: HashMap<String, Vec<Value>>,
     seen_tool_blocks: HashMap<String, Vec<u8>>,
     seen_result_ids: HashSet<String>,
     open_tool_ids: HashSet<String>,
@@ -94,11 +99,11 @@ impl<'a> ClaudeState<'a> {
             model: None,
             cwd_present: false,
             git_branch_present: false,
-            metadata_seen: false,
             parent_tool_use_id: None,
             history: Vec::new(),
             calls: Vec::new(),
             pending: None,
+            finalized_messages: HashMap::new(),
             seen_tool_blocks: HashMap::new(),
             seen_result_ids: HashSet::new(),
             open_tool_ids: HashSet::new(),
@@ -132,7 +137,6 @@ impl<'a> ClaudeState<'a> {
             return Ok(());
         }
         self.accept_metadata(record, line)?;
-        let timestamp = parse_timestamp(record, &self.file.path, line, "message")?;
         let message = record
             .get("message")
             .and_then(Value::as_object)
@@ -145,8 +149,8 @@ impl<'a> ClaudeState<'a> {
                 )
             })?;
         match record_type {
-            Some("user") => self.accept_user(message, timestamp, line),
-            Some("assistant") => self.accept_assistant(message, record, timestamp, line),
+            Some("user") => self.accept_user(message, record, line),
+            Some("assistant") => self.accept_assistant(message, record, line),
             _ => Ok(()),
         }
     }
@@ -199,18 +203,15 @@ impl<'a> ClaudeState<'a> {
                 }
             }
         }
-        if !self.metadata_seen {
-            self.metadata_seen = true;
-            self.cwd_present = record.get("cwd").is_some();
-            self.git_branch_present = record.get("gitBranch").is_some();
-        }
+        self.cwd_present |= record.contains_key("cwd");
+        self.git_branch_present |= record.contains_key("gitBranch");
         Ok(())
     }
 
     fn accept_user(
         &mut self,
         message: &Map<String, Value>,
-        timestamp: Option<DateTime<FixedOffset>>,
+        record: &Map<String, Value>,
         line: usize,
     ) -> Result<(), ImportedAgentError> {
         ensure_role(message, "user", &self.file.path, line)?;
@@ -229,7 +230,7 @@ impl<'a> ClaudeState<'a> {
                 )?);
                 Ok(())
             }
-            Value::Array(blocks) => self.accept_tool_results(blocks, timestamp, line),
+            Value::Array(blocks) => self.accept_tool_results(blocks, record, line),
             _ => Err(error(
                 &self.file.path,
                 line,
@@ -242,7 +243,7 @@ impl<'a> ClaudeState<'a> {
     fn accept_tool_results(
         &mut self,
         blocks: &[Value],
-        timestamp: Option<DateTime<FixedOffset>>,
+        record: &Map<String, Value>,
         line: usize,
     ) -> Result<(), ImportedAgentError> {
         self.flush_pending()?;
@@ -285,6 +286,7 @@ impl<'a> ClaudeState<'a> {
         if retained.is_empty() {
             return Ok(());
         }
+        let timestamp = parse_timestamp(record, &self.file.path, line, "tool_result")?;
         self.history.push(raw_value_message(
             "user",
             json!({"role": "user", "content": retained}),
@@ -310,7 +312,6 @@ impl<'a> ClaudeState<'a> {
         &mut self,
         message: &Map<String, Value>,
         record: &Map<String, Value>,
-        timestamp: Option<DateTime<FixedOffset>>,
         line: usize,
     ) -> Result<(), ImportedAgentError> {
         ensure_role(message, "assistant", &self.file.path, line)?;
@@ -350,6 +351,17 @@ impl<'a> ClaudeState<'a> {
                 )
             })?;
         let incoming = self.normalize_assistant_blocks(blocks, line)?;
+        if let Some(finalized) = self.finalized_messages.get(&source_id) {
+            if finalized != &incoming.content {
+                return Err(error(
+                    &self.file.path,
+                    line,
+                    "assistant",
+                    "conflicting finalized assistant snapshot",
+                ));
+            }
+            return Ok(());
+        }
         if self
             .pending
             .as_ref()
@@ -376,6 +388,11 @@ impl<'a> ClaudeState<'a> {
                 tool_ids: HashSet::new(),
             });
         }
+        let timestamp = if incoming.fresh_tool_ids.is_empty() {
+            None
+        } else {
+            parse_timestamp(record, &self.file.path, line, "tool_use")?
+        };
         self.merge_pending(incoming, timestamp, line)
     }
 
@@ -383,8 +400,9 @@ impl<'a> ClaudeState<'a> {
         &mut self,
         blocks: &[Value],
         line: usize,
-    ) -> Result<Vec<Value>, ImportedAgentError> {
+    ) -> Result<NormalizedAssistantBlocks, ImportedAgentError> {
         let mut retained = Vec::new();
+        let mut fresh_tool_ids = HashSet::new();
         for block in blocks {
             let Some(object) = block.as_object() else {
                 self.ignored_record_count += 1;
@@ -442,7 +460,8 @@ impl<'a> ClaudeState<'a> {
                             ));
                         }
                     } else {
-                        self.seen_tool_blocks.insert(id, canonical);
+                        self.seen_tool_blocks.insert(id.clone(), canonical);
+                        fresh_tool_ids.insert(id);
                     }
                     retained.push(Value::Object(object.clone()));
                 }
@@ -450,12 +469,15 @@ impl<'a> ClaudeState<'a> {
                 _ => self.ignored_record_count += 1,
             }
         }
-        Ok(retained)
+        Ok(NormalizedAssistantBlocks {
+            content: retained,
+            fresh_tool_ids,
+        })
     }
 
     fn merge_pending(
         &mut self,
-        incoming: Vec<Value>,
+        incoming: NormalizedAssistantBlocks,
         timestamp: Option<DateTime<FixedOffset>>,
         line: usize,
     ) -> Result<(), ImportedAgentError> {
@@ -463,7 +485,7 @@ impl<'a> ClaudeState<'a> {
             return Ok(());
         };
         let mut incoming_text = 0;
-        for block in incoming {
+        for block in incoming.content {
             match block.get("type").and_then(Value::as_str) {
                 Some("text") => {
                     let text = block
@@ -491,11 +513,13 @@ impl<'a> ClaudeState<'a> {
                         .unwrap_or_default()
                         .to_owned();
                     if pending.tool_ids.insert(id.clone()) {
-                        self.open_tool_ids.insert(id);
-                        if self.first_open_tool_timestamp.is_none() {
-                            self.first_open_tool_timestamp = timestamp;
+                        if incoming.fresh_tool_ids.contains(&id) {
+                            self.open_tool_ids.insert(id);
+                            if self.first_open_tool_timestamp.is_none() {
+                                self.first_open_tool_timestamp = timestamp;
+                            }
+                            self.observed_tool_count += 1;
                         }
-                        self.observed_tool_count += 1;
                         pending.content.push(block);
                     }
                 }
@@ -509,6 +533,8 @@ impl<'a> ClaudeState<'a> {
         let Some(pending) = self.pending.take() else {
             return Ok(());
         };
+        self.finalized_messages
+            .insert(pending.source_id.clone(), pending.content.clone());
         self.history.push(raw_value_message(
             "assistant",
             json!({"role": "assistant", "content": pending.content}),

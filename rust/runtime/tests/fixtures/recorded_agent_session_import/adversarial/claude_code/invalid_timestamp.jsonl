@@ -1,1 +1,2 @@
-{"type":"user","isSidechain":false,"sessionId":"safe","uuid":"u","timestamp":"PRIVATE_TIMESTAMP","message":{"role":"user","content":"PRIVATE_PROMPT"}}
+{"type":"user","isSidechain":false,"sessionId":"safe","uuid":"u","message":{"role":"user","content":"PRIVATE_PROMPT"}}
+{"type":"assistant","isSidechain":false,"sessionId":"safe","uuid":"a","timestamp":"PRIVATE_TIMESTAMP","message":{"role":"assistant","id":"msg","content":[{"type":"tool_use","id":"tool","name":"Read","input":{"path":"PRIVATE_ARGUMENT"}}]}}

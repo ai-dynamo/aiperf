@@ -130,7 +130,7 @@ fn main_rejects_conflicts_invalid_correlations_and_never_leaks_private_values() 
         ),
         (
             "invalid-time.jsonl",
-            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"timestamp\":\"PRIVATE_TIMESTAMP\",\"message\":{\"role\":\"user\",\"content\":\"PRIVATE_CWD\"}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"PRIVATE_PROMPT\"}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"timestamp\":\"PRIVATE_TIMESTAMP\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{\"path\":\"PRIVATE_ARGUMENT\"}}]}}\n",
             "invalid timestamp",
         ),
         (
@@ -300,5 +300,93 @@ fn main_adversarial_fixtures_keep_private_values_out_of_diagnostics() {
         ] {
             assert!(!error.contains(private), "{name} leaked {private}: {error}");
         }
+    }
+}
+
+#[test]
+fn main_does_not_reopen_finalized_assistant_or_exact_tool_blocks() {
+    let root = tempdir().expect("temporary fixtures");
+    let file = write(
+        root.path(),
+        "finalized-repeat.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":\"first\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a1\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Read\",\"input\":{\"path\":\"PRIVATE_ARGUMENT\"}}]}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"r1\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool-1\",\"content\":\"PRIVATE_RESULT\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a2\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-2\",\"content\":[]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a3\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Read\",\"input\":{\"path\":\"PRIVATE_ARGUMENT\"}}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a4\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-3\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Read\",\"input\":{\"path\":\"PRIVATE_ARGUMENT\"}}]}}\n"
+        ),
+    );
+    let session = parse_claude_session(&file).expect("finalized duplicate is ignored");
+    assert_eq!(session.calls.len(), 3);
+    assert_eq!(session.observed_tool_count, 1);
+    assert_eq!(session.calls[0].source_id, "msg-1");
+    assert_eq!(session.calls[1].source_id, "msg-2");
+    assert_eq!(session.calls[2].source_id, "msg-3");
+}
+
+#[test]
+fn main_limits_timestamp_validation_to_correlated_tools_and_latches_metadata() {
+    let root = tempdir().expect("temporary fixtures");
+    let ordinary = write(
+        root.path(),
+        "ordinary-invalid-time.jsonl",
+        concat!(
+            "{\"type\":\"permission-mode\",\"sessionId\":\"PRIVATE_SESSION\"}\n",
+            "{\"type\":\"unknown-metadata\",\"sessionId\":\"PRIVATE_SESSION\"}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u1\",\"timestamp\":\"PRIVATE_TIMESTAMP\",\"message\":{\"role\":\"user\",\"content\":\"PRIVATE_PROMPT\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a1\",\"timestamp\":\"PRIVATE_TIMESTAMP\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"model\":\"first-model\",\"content\":[{\"type\":\"text\",\"text\":\"same\"},{\"type\":\"redacted_thinking\",\"data\":\"PRIVATE_REASONING\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a2\",\"cwd\":\"PRIVATE_CWD\",\"gitBranch\":\"PRIVATE_BRANCH\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"model\":\"later-model\",\"content\":[{\"type\":\"text\",\"text\":\"same\"},{\"type\":\"text\",\"text\":\"appended\"}]}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u2\",\"message\":{\"role\":\"user\",\"content\":\"next\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a3\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-2\",\"content\":[]}}\n"
+        ),
+    );
+    let session = parse_claude_session(&ordinary).expect("ordinary malformed timestamps ignored");
+    assert_eq!(session.ignored_record_count, 2);
+    assert_eq!(session.omitted_reasoning_count, 1);
+    assert_eq!(session.model.as_deref(), Some("first-model"));
+    assert!(session.cwd_present && session.git_branch_present);
+    let history = messages(&session.calls[1]);
+    assert_eq!(history[1]["content"][0]["text"], "same");
+    assert_eq!(history[1]["content"][1]["text"], "appended");
+
+    let missing_time = write(
+        root.path(),
+        "missing-tool-time.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{}}]}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"r\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool\",\"content\":\"ok\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"b\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-2\",\"content\":[]}}\n"
+        ),
+    );
+    assert_eq!(
+        parse_claude_session(&missing_time)
+            .expect("missing tool timestamps")
+            .calls[1]
+            .delay_after_previous_us,
+        None
+    );
+
+    let malformed_tool = write(
+        root.path(),
+        "malformed-tool-time.jsonl",
+        "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"timestamp\":\"PRIVATE_TIMESTAMP\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{\"path\":\"PRIVATE_ARGUMENT\"}}]}}\n",
+    );
+    let error = parse_claude_session(&malformed_tool)
+        .expect_err("correlated malformed timestamp")
+        .to_string();
+    assert!(error.contains("invalid timestamp"));
+    for private in [
+        "PRIVATE_PROMPT",
+        "PRIVATE_REASONING",
+        "PRIVATE_RESULT",
+        "PRIVATE_TIMESTAMP",
+        "PRIVATE_CWD",
+        "PRIVATE_BRANCH",
+        "PRIVATE_ARGUMENT",
+    ] {
+        assert!(!error.contains(private), "leaked {private}: {error}");
     }
 }
