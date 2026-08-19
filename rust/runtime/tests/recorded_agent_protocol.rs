@@ -15,7 +15,7 @@ fn run_with_artifacts(artifacts: Value) -> BenchmarkRunWireV2 {
         "cfg": {
             "models": {"strategy": "round_robin", "items": [{"name": "model"}]},
             "endpoint": {
-                "type": "chat", "urls": ["http://127.0.0.1:8000"], "streaming": true,
+                "type": "messages", "urls": ["http://127.0.0.1:8000"], "streaming": true,
                 "use_legacy_max_tokens": false, "use_server_token_count": false,
                 "timeout_seconds": 30.0, "connection_reuse": "pooled", "ssl_verify": true,
                 "connection_limit": 1, "keepalive_timeout": 1.0,
