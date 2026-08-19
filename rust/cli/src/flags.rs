@@ -901,6 +901,16 @@ pub struct ProfileFlags {
     #[arg(long = "graph-format")]
     pub graph_format: Option<String>,
 
+    /// Recorded-agent session source format.
+    #[arg(
+        long = "graph-recording-source",
+        value_parser = ["auto", "mini-swe-agent", "codex", "claude-code"]
+    )]
+    pub graph_recording_source: Option<String>,
+    /// Include Claude Code subagent sessions in recorded-agent replay.
+    #[arg(long = "graph-include-subagents", num_args = 0..=1, default_missing_value = "true")]
+    pub graph_include_subagents: Option<bool>,
+
     /// Root for manifest-relative recorded-agent files and task assets.
     #[arg(long = "graph-replay-root")]
     pub graph_replay_root: Option<PathBuf>,

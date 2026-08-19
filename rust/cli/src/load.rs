@@ -9,6 +9,7 @@
 //! sites (and the YAML authoring path) resolve unchanged.
 
 use std::path::PathBuf;
+use std::str::FromStr;
 
 // The normalized-inputs types and the resolution moved into the runtime; re-export
 // them so `crate::load::{Inputs, Warmup, DatasetAnalysisInputs}` and `load::build`
@@ -20,8 +21,8 @@ pub use aiperf_runtime::config::resolve::{
 use crate::flags::ProfileFlags;
 use crate::model::BenchmarkRun;
 use crate::model::dataset::{
-    AudioSpec, Distribution, ImageSpec, PrefixPrompts, RecordedAgentGraphConfig, VideoAudio,
-    VideoSpec,
+    AudioSpec, Distribution, ImageSpec, PrefixPrompts, RecordedAgentGraphConfig,
+    RecordedAgentSourceFormat, VideoAudio, VideoSpec,
 };
 use crate::model::endpoint::{
     ConnectionReuse, RequestContentType, ResetKvCacheConfig, ServerProfilerConfig, WaitForModelMode,
@@ -209,9 +210,17 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         None
     };
     let cache_bust = flags.cache_bust.clone().filter(|t| t != "none");
+    let graph_recording_source = flags
+        .graph_recording_source
+        .as_deref()
+        .map(RecordedAgentSourceFormat::from_str)
+        .transpose()?
+        .unwrap_or_default();
     let recorded_agent_graph =
         (flags.graph_format.as_deref() == Some("agent_recording")).then(|| {
             RecordedAgentGraphConfig {
+                source_format: graph_recording_source,
+                include_subagents: flags.graph_include_subagents,
                 replay_root: flags.graph_replay_root.clone(),
                 execute_tools: flags.graph_execute_tools.unwrap_or(false),
                 tool_image: flags.graph_tool_image.clone(),
