@@ -60,6 +60,13 @@ purpose for each, so an agent knows which file to open for a given question.
   truth includes `src/aiperf/config`, `src/aiperf/orchestrator`, and
   `src/aiperf/cli_runner`. The old controller/service/ZMQ implementation under
   `src/` remains legacy and is not an alternate hot path.
+- **Native graph inspection:** `aiperf graph validate`, `aiperf graph explain`,
+  and `aiperf graph visualize` are local-only Rust commands. Each resolves one
+  selected stock built-in graph adapter exactly once, then inspects the retained
+  resolved Graph-IR without contacting a server or executing graph work. The
+  filesystem-free typed inspection seam is `rust/runtime/src/graph/inspect.rs`;
+  CLI parsing, report schemas, Mermaid/Markdown rendering, and output handling
+  are in `rust/cli/src/graph/`.
 - **Agent instructions:** `CLAUDE.md` = `AGENTS.md` = `.github/copilot-instructions.md`
   = `.cursor/rules/python.mdc` (byte-identical body; keep in sync via
   `python tools/check_agent_files_sync.py`).
@@ -627,7 +634,7 @@ Inputs, endpoints, and graph:
   into canonical `agent_recording` Graph-IR, with explicit replay-fidelity and
   sandbox boundaries.
 - [`docs/specs/2026-08-19-native-graph-inspection-tools.md`](docs/specs/2026-08-19-native-graph-inspection-tools.md) —
-  proposed Python-free `aiperf graph validate`, `explain`, and `visualize` commands
+  built Python-free `aiperf graph validate`, `explain`, and `visualize` commands
   that inspect resolved, lower-once native Graph-IR.
 - [`docs/specs/agentic-eval-platform.md`](docs/specs/agentic-eval-platform.md) —
   planned agentic SWE evaluation substrate: immutable task/dataset/trial identities,

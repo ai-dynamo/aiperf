@@ -20,6 +20,13 @@ Native commands also include `controller`, `cell`, `aggregator`, `results-sideca
 
 Native evaluation import acquires each package once into an owned canonical source snapshot; normalization and execution never reread the caller's origin. The source digest covers the complete artifact for provenance. The v2 package digest combines a canonical normalized plan, including sorted unique artifact exclusions, with an executable-source projection: standard directories bind the complete `environment/` tree and every resolved test tree, directory-backed `task.json` binds its complete tree, and standalone `task.json` binds its primary file. Tree identity includes entry kind, canonical mode, bytes, and empty directories. Docker and local execution materialize only the retained snapshot. When any resolved step uses a shared verifier, an authored, CLI, or image workdir equal to or below `/tests` or `/logs/verifier` is rejected; ancestors such as `/` and `/logs` remain valid.
 
+`aiperf graph validate`, `explain`, and `visualize` are native local-only
+commands. They lower a selected stock built-in graph input exactly once and
+inspect retained resolved Graph-IR without Python, an endpoint, a server, or
+graph execution. The filesystem-free typed inspection seam is
+`rust/runtime/src/graph/inspect.rs`; CLI parsing, reports, rendering, and output
+handling are in `rust/cli/src/graph/`.
+
 Source-of-truth locations:
 
 - Native CLI and process entry: `rust/cli/`.
@@ -80,7 +87,7 @@ The main `aiperf_runtime` module groups are:
 - `clock`, `timing`, `scheduled`, `scheduler`, `phase_runtime`, `request_rate`, `user_centric`, `fixed_schedule`, and `workload`: time and workload execution.
 - `transport::core`, `transport::http`, `transport::grpc`, `transport::reduce`, and `transport::measure`: request/response vocabulary, wire clients, shared reduction, and measurement.
 - `endpoints`, `dataset`, `body_plan`, `content_server`, and `rng`: endpoint binding, input resolution, payload planning, media publication, and deterministic randomness.
-- `graph`: graph compilation, segment storage, policies, execution, trajectory sampling, snapshots, and warmup handoff.
+- `graph`: graph compilation, lower-once inspection, segment storage, policies, execution, trajectory sampling, snapshots, and warmup handoff; `graph::inspect` provides the filesystem-free typed inspection seam.
 - `metrics_core`, `metrics`, `report`, and `export`: accumulation, runtime adaptation, reporting, and sinks.
 - `accuracy_core`, `accuracy`, `adaptive_core`, `adaptive`, and `failure`: evaluation and control policy.
 - `cellular`: partitioning, protocol, controller/cell behavior, folded stores, and Velo integration.

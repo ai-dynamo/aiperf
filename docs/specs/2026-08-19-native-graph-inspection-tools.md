@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Purpose
 
-Proposed design. This record defines a minimal Rust-native `aiperf graph`
-surface containing `validate`, `explain`, and `visualize`. It does not describe
-built behavior yet.
+This record describes the built Rust-native `aiperf graph` surface: `validate`,
+`explain`, and `visualize`. It is available in the native binary without
+Python, an inference endpoint, or benchmark traffic.
 
 The central decision is that these commands inspect the same lowered
 `GraphInputBundle` that benchmark execution consumes. They do not port the
@@ -18,9 +18,12 @@ graph representation from the source.
 
 ## Built
 
-The native runtime already owns the graph input adapters, Graph-IR data model,
-structural validator, and scheduler. The `aiperf graph` command family is not
-built; unknown top-level commands still delegate to Python.
+The native runtime owns the graph input adapters, Graph-IR data model,
+structural validator, scheduler, and filesystem-free inspection seam at
+`rust/runtime/src/graph/inspect.rs`. `aiperf graph` is routed natively before
+the Python fallback. The stock command uses the built-in resolver and its shared
+seven-format inventory; unrelated top-level commands retain their existing
+delegation behavior.
 
 ## Problem
 
@@ -34,11 +37,10 @@ The historical Python DAG-v3 branch provides useful offline commands:
 - `aiperf graph visualize <path>` emits docs-ready Markdown or an HTML page
   (`ajc/dag-v3:src/aiperf/cli_commands/graph_visualize.py:41-149`).
 
-The native binary does not currently route `graph`; unknown top-level commands
-fall through to Python delegation (`rust/cli/src/dispatch.rs:11-35`). This makes
-offline graph inspection unavailable in a Python-free installation even though
-the native runtime already owns the graph input adapters, Graph-IR data model,
-structural validator, and scheduler.
+Historically, `graph` fell through to Python delegation
+(`rust/cli/src/dispatch.rs:11-35`). Native inspection closes that offline gap
+while retaining the runtime-owned graph input adapters, Graph-IR data model,
+structural validator, and scheduler as the authority.
 
 A direct command-for-command translation would be incorrect. Python explains a
 rich pre-lowering `ParsedGraph` that includes conditional edges, replay-style
@@ -87,8 +89,6 @@ source editor or a complete replacement for every DAG-v3 graph command.
   Python namespace (`ajc/dag-v3:src/aiperf/cli_commands/graph.py:29-39`).
 - Browser rendering, HTML, Cytoscape, Dagre, ELK, Mermaid JavaScript, or any CDN
   dependency.
-
-## Future requirements
 
 ## CLI contract
 
@@ -166,8 +166,8 @@ actionable error rather than silently downloading it.
 
 ### Format inventory
 
-The command obtains supported values from the selected native resolver. It must
-not add another handwritten list. The built-in resolver currently composes:
+The command obtains supported values from the shared native inventory rather
+than a second handwritten list. The stock built-in resolver composes:
 
 - `dag_jsonl`;
 - `conditional_graph`;
@@ -177,12 +177,9 @@ not add another handwritten list. The built-in resolver currently composes:
 - `agent_recording`;
 - `otlp_genai`.
 
-That composition is visible at `rust/runtime/src/engine/graph_input.rs:244-260`.
-Before exposing it, implementation must resolve an existing inventory mismatch:
-`config::model::workload_kind::GRAPH_FORMATS` contains six entries and omits
-`aiperf_trace` (`rust/runtime/src/config/model/workload_kind.rs:15-26`). One
-shared built-in format inventory must drive workload classification, resolver
-composition tests, and graph-tool help/completion.
+The shared `config::model::workload_kind::GRAPH_FORMATS` inventory includes
+`aiperf_trace` and drives workload classification, resolver composition tests,
+and graph-command help/completion.
 
 ### Exit codes
 
@@ -207,11 +204,8 @@ The complete command flow is:
 1. Clap parses flags. The CLI verifies that `<PATH>` exists and is local, but
    does not inspect or sniff its contents.
 2. The CLI serializes the four-field dataset shorthand to one `RawValue`.
-3. One local tokenizer is built from `--tokenizer`. The current canonical loader
-   handles directories, tokenizer files, and built-in encodings at
-   `rust/runtime/src/engine/execute/ramp_adaptive.rs:611-633`; it must be moved
-   to or re-exported from a non-execution-specific preparation module rather
-   than copied into the CLI.
+3. One local tokenizer is built from `--tokenizer` by the shared preparation
+   seam. It handles directories, tokenizer files, and built-in encodings.
 4. A current-thread Tokio runtime and `LocalSet` call exactly one
    `GraphInputAdapterResolver::load` with `run_random_seed: Some(seed)`. This
    mirrors production's direct Graph-IR preparation at
@@ -239,8 +233,8 @@ Inspection must not discard those facts merely because its topology view borrows
 
 ### `aiperf-runtime`
 
-Add `rust/runtime/src/graph/inspect.rs` and export it from
-`rust/runtime/src/graph/mod.rs`. It owns pure, filesystem-free analysis:
+`rust/runtime/src/graph/inspect.rs`, exported from `graph/mod.rs`, owns pure,
+filesystem-free analysis:
 
 - detailed structural validation DTOs and codes;
 - bundle/program/plan summaries;
@@ -251,19 +245,17 @@ Add `rust/runtime/src/graph/inspect.rs` and export it from
 It does not print, colorize, serialize a complete CLI envelope, write files, or
 know Clap arguments.
 
-Extend `rust/runtime/src/engine/graph_input.rs` with a small public preparation
-entry point and a supported-format iterator. These wrap the existing resolver;
-they do not create a second registry. `GraphInputAdapterResolver` is already the
-open seam for validating a format identity and loading exactly one prepared
-input (`rust/runtime/src/engine/graph_input.rs:207-221`).
+`rust/runtime/src/engine/graph_input.rs` exposes a small public preparation
+entry point and the supported-format inventory. These wrap the existing
+resolver; they do not create a second registry.
 
-Move or re-export local tokenizer construction from its current execution-only
-location. Graph tooling must not depend on private `execute::ramp_adaptive`
-internals, and production and tooling must not diverge on tokenizer semantics.
+Local tokenizer construction is re-exported from the preparation boundary, so
+graph tooling and production share tokenizer semantics without depending on
+private execution internals.
 
 ### `aiperf-cli`
 
-Add:
+The CLI contains:
 
 ```text
 rust/cli/src/graph/
@@ -274,10 +266,8 @@ rust/cli/src/graph/
   report.rs       versioned serde CLI output DTOs
 ```
 
-Add `pub mod graph` to `rust/cli/src/lib.rs`, whose module inventory currently
-contains no graph tooling (`rust/cli/src/lib.rs:9-52`). Route `Some("graph")` in
-`rust/cli/src/dispatch.rs` before the Python fallback. No behavior changes for
-other delegated commands.
+`rust/cli/src/lib.rs` exports `graph`, and `rust/cli/src/dispatch.rs` routes
+`Some("graph")` before Python fallback. No other delegated command changes.
 
 Presentation belongs in the CLI:
 
@@ -347,6 +337,7 @@ Initial stable codes are:
 - `mixed-anchor-fan-in`;
 - `multi-start-anchor-fan-in`;
 - `bundle-empty`;
+- `trace-id-empty`;
 - `trace-id-duplicate`;
 - `metadata-root-count-mismatch`;
 - `metadata-node-count-mismatch`;
@@ -602,7 +593,7 @@ include the source chain, subject to the same redaction rule.
 
 ### Runtime unit tests
 
-Add unit coverage beside `graph::inspect` for:
+Runtime unit coverage beside `graph::inspect` covers:
 
 - a valid chain;
 - parallel fan-out and gated fan-in;
@@ -640,7 +631,7 @@ covers `aiperf_trace` so the current inventory mismatch cannot return.
 
 ### CLI process tests
 
-Add `rust/cli/tests/graph_tools.rs`, invoking
+`rust/cli/tests/graph_tools.rs` invokes
 `env!("CARGO_BIN_EXE_aiperf")` like the existing native CLI tests. Cover:
 
 - namespace help and exit 2;
@@ -672,55 +663,17 @@ cargo fmt --check
 cargo clippy -p aiperf-runtime -p aiperf-cli --all-targets
 ```
 
-Because the implementation changes native CLI behavior and graph support
-documentation, the eventual implementation change also updates the synchronized
-agent files, `llms.txt`, and the specs index, then runs the repository's required
-documentation checks. Those metadata edits are outside this design-record-only
-change.
+The implementation updates the synchronized agent files, `llms.txt`, and the
+spec index with the native CLI behavior, and runs the repository documentation
+checks with the focused runtime/CLI suite.
 
-## Staged rollout
+## Delivery
 
-### Stage 0: inventory and preparation seams
-
-- Establish one shared built-in graph-format inventory and resolve the
-  `aiperf_trace` mismatch.
-- Expose the resolver's supported formats.
-- Move/re-export local tokenizer construction at a preparation-level boundary.
-- Add the single-call local graph-tool preparation function.
-
-No public command ships until this stage is tested, because all later help and
-loading contracts depend on it.
-
-### Stage 1: native validate
-
-- Add `graph` routing and Clap types.
-- Add detailed inspection issues while preserving the existing validator API.
-- Implement bundle, scheduler, and arrival checks.
-- Ship human and versioned JSON validation output and exit-code behavior.
-
-This is independently useful and establishes the lower-once and error contracts.
-
-### Stage 2: native explain
-
-- Add bundle/program/plan summaries.
-- Add deterministic node, channel, and edge descriptions.
-- Add guarded illustrative readiness waves.
-- Ship human and `aiperf.graph.explain.v1` output.
-
-### Stage 3: native visualize
-
-- Add selected-trace resolution.
-- Add deterministic escaped Mermaid generation.
-- Add Markdown assembly, validation gating, and atomic file output.
-- Add process-level goldens across representative adapters.
-
-### Stage 4: product integration
-
-- Update command documentation, native capability descriptions, `llms.txt`, the
-  synchronized agent instruction bodies, and `docs/specs/README.md`.
-- Run full relevant runtime/CLI suites and documentation checks.
-- Remove Python delegation expectations only for these three subcommands; leave
-  the rest of the Python graph namespace unchanged.
+The shared inventory/preparation seam, native route, detailed inspection API,
+versioned validate/explain reports, deterministic Mermaid/Markdown renderer,
+atomic output behavior, process goldens, and product documentation are all
+delivered. The graph namespace owns only these three subcommands; the remaining
+Python graph namespace continues to delegate unchanged.
 
 ## Explicit exclusions from the first release
 
@@ -742,36 +695,20 @@ This is independently useful and establishes the lower-once and error contracts.
 - A stable serialization of internal `GraphTraceProgram`; only the versioned
   inspection report schemas are public.
 
-## Unresolved decisions
+## Resolved product decisions
 
-These decisions do not block the lower-once architecture but must be resolved at
-the named rollout boundary.
-
-1. **`aiperf_trace` product classification (Stage 0).** Either add it to the
-   shared graph-format inventory and make profile classification consistent, or
-   remove the dormant adapter from the advertised built-in tool inventory. The
-   tool must not advertise a format whose product routing is unintentionally
-   inconsistent.
-2. **Extension-provided graph adapters (Stage 0).** The stock CLI can use the
-   built-in resolver directly, but custom statically linked distributions pass a
-   resolver into `Application::new` (`rust/runtime/src/engine/application.rs:61-79`).
-   Decide whether graph tooling is built-in-only or obtains the exact
-   distribution resolver through `Application`. The preferred long-term answer
-   is the latter; the first public help output must state the actual choice.
-3. **Advanced adapter configuration (after Stage 3).** Decide whether to accept
-   a full Config-v2 benchmark via `--config` or a narrowly typed dataset/tokenizer
-   envelope. Do not invent both. The positional shorthand remains stable either
-   way.
-4. **Explain volume control (Stage 2).** The exact contract above explains every
-   program, matching Python's all-traces behavior. Very large bundles may need a
-   future `--trace` or `--summary-only`; if added, absence must continue to mean
-   all traces.
-5. **Atomic overwrite portability (Stage 3).** Define behavior on platforms
-   where rename-over-existing is not atomic. Unix atomic replace is required;
-   other platforms may reject an existing output rather than delete it first.
-6. **Machine-schema evolution.** Decide whether schemas are documented only in
-   this spec or also generated as JSON Schema. Versioned envelope names and the
-   listed required fields are stable regardless.
+1. **`aiperf_trace` classification.** It is included in the shared seven-format
+   inventory used by workload classification, resolver composition, and graph help.
+2. **Resolver scope.** The first public command uses the stock built-in resolver.
+   Extension-provided adapters are not part of this command's advertised surface.
+3. **Advanced configuration.** The public input is the narrowly typed local-path
+   shorthand; it does not accept Config-v2 extraction or arbitrary adapter options.
+4. **Explain volume.** Explain reports every retained program. Future filtering,
+   if added, must retain all-program behavior when absent.
+5. **Output portability.** Unix replaces a regular output file atomically. Other
+   platforms reject an existing output instead of deleting it first.
+6. **Schema publication.** The report schemas are documented in this record;
+   generated JSON Schema files are not part of the public contract.
 
 ## Source anchors
 
@@ -791,6 +728,8 @@ the named rollout boundary.
 - `rust/runtime/src/graph/model.rs:206-415` — executable node, graph, trace plan,
   and trace program contracts.
 - `rust/runtime/src/graph/validate.rs:27-169` — built structural validation.
+- `rust/runtime/src/graph/inspect.rs` — lower-once, filesystem-free inspection,
+  typed findings, normalized topology, and readiness analysis.
 - `rust/runtime/src/graph/scheduler.rs:24-163` — adjacency, entry/successor seams,
   and start-anchor fan-in refusal.
 - `rust/runtime/src/graph/conditional/mod.rs:55-120` — per-trace conditional

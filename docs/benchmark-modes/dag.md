@@ -18,6 +18,23 @@ Reach for DAG when your workload looks like one of these:
 
 If your workload is a plain sequence of turns with no branching, you do **not** need DAG — stick with `multi_turn` or `raw_payload`.
 
+## Inspect resolved Graph-IR
+
+The native inspection commands load a graph once and never contact an endpoint or
+server:
+
+```bash
+aiperf graph validate tests/fixtures/dag/small.dag.jsonl --graph-format dag_jsonl
+aiperf graph explain tests/fixtures/dag/small.dag.jsonl --graph-format dag_jsonl
+aiperf graph visualize tests/fixtures/dag/small.dag.jsonl --graph-format dag_jsonl
+```
+
+They report the selected, pruned, resolved Graph-IR that AIPerf will execute for
+each trace. That is deliberately different from an authored conditional graph:
+branch alternatives that lowering did not select are not rendered or explained.
+`validate` checks the resolved graph, `explain` reports every retained program,
+and `visualize` renders one selected profiling trace as Markdown or Mermaid.
+
 ## The two branch modes
 
 DAG mode exposes one primitive with two flavors, selected by a shorthand key on the parent turn:
