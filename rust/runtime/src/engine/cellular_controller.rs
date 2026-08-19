@@ -2211,6 +2211,7 @@ fn discover_imported_agent_read_set_from_envelope(
 ) -> Result<Option<ImportedAgentReadSet>> {
     let graph = envelope
         .pointer("/run/cfg/datasets/0/graph")
+        .filter(|value| !value.is_null())
         .map(|value| {
             serde_json::from_value::<RecordedAgentGraphConfig>(value.clone())
                 .context("decoding recorded-agent graph configuration for cellular shipping")
@@ -3462,6 +3463,31 @@ mod tests {
 
             assert!(error.contains(expected), "{name}: {error}");
         }
+    }
+
+    #[test]
+    fn agent_session_exact_set_auto_jsonl_treats_null_graph_as_omitted() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        std::fs::write(&source, b"{\"type\":\"session_meta\",\"payload\":{}}\n").unwrap();
+        let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+            "type": "file",
+            "format": "agent_recording",
+            "path": source,
+            "graph": null,
+        }]}}});
+
+        let (served, manifest) = build_dataset_serve_plan_from_envelope(
+            &envelope,
+            Some("agent_recording"),
+            &source,
+            None,
+        )
+        .expect("null graph must retain Auto JSONL imported-session dispatch");
+
+        assert_eq!(manifest.kind, "agent_session_set");
+        assert_eq!(manifest.files, ["session.jsonl"]);
+        assert_eq!(served.get("session.jsonl"), Some(&source));
     }
 
     #[test]
