@@ -2992,3 +2992,36 @@ async def test_profiling_setup_logs_rootless_lane_count(caplog):
 
     msgs = [r.getMessage() for r in caplog.records]
     assert any("rootless" in m and "1" in m for m in msgs), msgs
+
+
+@pytest.mark.asyncio
+async def test_accelerated_warmup_context_overflow_short_circuit() -> None:
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, scheduler, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_duration=600.0,
+    )
+
+    await strategy.execute_phase()
+    baseline = issuer.issue_credit.await_args_list[0].args[0]
+    assert baseline.turn_index == 1
+
+    # Hand back an overflow error on the baseline return during warmup.
+    # This should short-circuit the trajectory and NOT issue any more pressure credits.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=baseline.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        ),
+        error="This model's maximum context length is 131072 tokens",
+    )
+
+    # Verify the initial session was terminated early and a fresh recycled session was spawned at turn 0
+    assert len(issuer.issue_credit.await_args_list) == 2
+    recycled = issuer.issue_credit.await_args_list[1].args[0]
+    assert recycled.turn_index == 0
+    assert recycled.is_session_start is True

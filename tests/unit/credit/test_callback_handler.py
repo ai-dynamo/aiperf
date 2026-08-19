@@ -630,12 +630,12 @@ async def test_overflow_skips_intercept_and_runs_terminal_path(
 
 @pytest.mark.asyncio
 async def test_overflow_with_intercept_true_bypasses_warmup_failure_recording(
-    mock_concurrency,
-    mock_progress,
-    mock_lifecycle,
-    mock_stop_checker,
-    mock_branch_orchestrator,
-):
+    mock_concurrency: MagicMock,
+    mock_progress: MagicMock,
+    mock_lifecycle: MagicMock,
+    mock_stop_checker: MagicMock,
+    mock_branch_orchestrator: MagicMock,
+) -> None:
     """Overflow reaches ``_handle_warmup_failure`` but bypasses warmup failure recording (R4)."""
     registry = MagicMock()
     registry.has_tree.return_value = True
@@ -644,10 +644,12 @@ async def test_overflow_with_intercept_true_bypasses_warmup_failure_recording(
     strategy = MagicMock()
     strategy.handle_credit_return = AsyncMock()
     strategy.record_warmup_failure = MagicMock()
+    abort_cb = AsyncMock()
     handler = CreditCallbackHandler(
         mock_concurrency,
         branch_orchestrator=mock_branch_orchestrator,
         session_tree_registry=registry,
+        on_warmup_abort=abort_cb,
     )
     handler.register_phase(
         phase=CreditPhase.WARMUP,
@@ -666,7 +668,10 @@ async def test_overflow_with_intercept_true_bypasses_warmup_failure_recording(
 
     mock_branch_orchestrator.intercept.assert_not_awaited()
     strategy.record_warmup_failure.assert_not_called()
-    strategy.handle_credit_return.assert_awaited_once()
+    abort_cb.assert_not_called()
+    strategy.handle_credit_return.assert_awaited_once_with(
+        credit, error=_OVERFLOW_ERROR
+    )
 
 
 @pytest.mark.asyncio

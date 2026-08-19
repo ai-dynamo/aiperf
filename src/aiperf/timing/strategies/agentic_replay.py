@@ -775,14 +775,32 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 time.perf_counter_ns()
             )
 
-    async def _handle_accelerated_warmup_return(self, credit: Credit) -> None:
+    async def _handle_accelerated_warmup_return(
+        self, credit: Credit, *, error: str | None = None
+    ) -> None:
         """Issue the next compressed turn or recycle a completed tree."""
-        if credit.is_final_turn:
+        terminal_overflow = (
+            not credit.is_final_turn
+            and error is not None
+            and is_context_overflow_response(body=error)
+        )
+
+        if credit.is_final_turn or terminal_overflow:
+            if terminal_overflow:
+                self.info(
+                    lambda: (
+                        f"Terminating warmup trajectory {credit.conversation_id} early at "
+                        f"turn {credit.turn_index}/{credit.num_turns - 1}: "
+                        f"context-overflow error from server"
+                    )
+                )
             if credit.agent_depth == 0 and not self._has_tree_registry:
                 await self._spawn_from_recycle_or_id(
                     credit.conversation_id,
                     finished_correlation_id=credit.x_correlation_id,
                 )
+            if terminal_overflow and self.branch_orchestrator is not None:
+                await self.branch_orchestrator.on_child_stopped(credit.x_correlation_id)
             return
 
         next_meta = self.conversation_source.get_next_turn_metadata(credit)
@@ -1299,7 +1317,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         second time the parent re-runs.
         """
         if self.config.phase == CreditPhase.WARMUP:
-            await self._handle_warmup_return(credit)
+            await self._handle_warmup_return(credit, error=error)
             return
 
         terminal_overflow = (
@@ -1354,12 +1372,37 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             finished_correlation_id=credit.x_correlation_id,
         )
 
-    async def _handle_warmup_return(self, credit: Credit) -> None:
+    async def _handle_warmup_return(
+        self, credit: Credit, error: str | None = None
+    ) -> None:
         """Advance baseline warmup into the optional cache-pressure stage."""
         if self._cache_warmup_duration is None:
             return
+
+        terminal_overflow = (
+            not credit.is_final_turn
+            and error is not None
+            and is_context_overflow_response(body=error)
+        )
+        if terminal_overflow:
+            self.info(
+                lambda: (
+                    f"Terminating warmup trajectory {credit.conversation_id} early at "
+                    f"turn {credit.turn_index}/{credit.num_turns - 1}: "
+                    f"context-overflow error from server"
+                )
+            )
+            if credit.agent_depth == 0 and not self._has_tree_registry:
+                await self._spawn_from_recycle_or_id(
+                    credit.conversation_id,
+                    finished_correlation_id=credit.x_correlation_id,
+                )
+            if terminal_overflow and self.branch_orchestrator is not None:
+                await self.branch_orchestrator.on_child_stopped(credit.x_correlation_id)
+            return
+
         if self._accelerated_warmup_started:
-            await self._handle_accelerated_warmup_return(credit)
+            await self._handle_accelerated_warmup_return(credit, error=error)
             return
         self._baseline_warmup_returns[credit.x_correlation_id] = credit
         if (
