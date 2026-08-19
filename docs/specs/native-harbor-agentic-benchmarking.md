@@ -34,10 +34,14 @@ multi-step layout. Schema-1.1 `NativeGraph` runs one standard-task episode
 through the same matrix and verifier path. A sealed rollout selects its exact
 environment protocol, runtime, stepper, and action encoder before provisioning.
 Rust drives the bounded live policy/environment loop through the selected model
-binding and a task-minted, secret-free Docker adapter start; it retains only
-descriptor rollout evidence and bounded scalar policy-call lifecycle facts
-before independent verification and scoring. The task and agent Docker networks
-remain `no-network`, and Docker proves `NoAdapterEgress` for the sealed plan.
+binding and a task-minted, secret-free Docker adapter sidecar. The sidecar uses
+the task image with a private no-network workspace mount; it cannot write the
+verifier workspace. Each accepted transition uploads one bounded, declared-path
+workspace-patch archive, which Rust validates and atomically applies before
+committing descriptor rollout evidence. The sidecar is reaped before artifact
+collection, so post-terminal sidecar writes cannot affect independent
+verification or scoring. The task and agent Docker networks remain `no-network`,
+and Docker proves `NoAdapterEgress` for the sealed plan.
 Externally driven graphs remain fail-closed for this slice.
 
 The runtime also supplies native Graph-IR scheduling, state channels, reducers,
@@ -261,8 +265,10 @@ bounded environment rollout, its task and agent Docker networks must both be
 Rust validates the declared topology, rollout selectors, model binding, prompt,
 and decision limits before provisioning. It performs model calls through the
 selected AIPerf endpoint/transport/tokenizer seams; the Docker session accepts
-only its task-minted adapter start and produces descriptor-only reset/transition
-evidence. A task becomes one resolved, independently verified, scored matrix
+only its task-minted adapter sidecar start and produces descriptor-only
+reset/transition evidence. Accepted transitions carry bounded workspace patches
+that Rust atomically commits to the verifier workspace; no adapter mount reaches
+that workspace directly. A task becomes one resolved, independently verified, scored matrix
 trial. `--suite` uses that same path only when exactly one resolved trial
 matches the supplied lifecycle request. Externally driven graphs and
 multi-lifecycle suite provenance remain typed refusals pending their dedicated

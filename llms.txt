@@ -23,9 +23,11 @@ purpose for each, so an agent knows which file to open for a given question.
   agent Docker networks set to `no-network`, host-owned AIPerf model transport,
   and a plan-bound Docker `NoAdapterEgress` proof. A sealed rollout selects
   exact environment protocol/runtime/stepper/action-encoder seams, drives a
-  bounded live policy/environment loop through the selected model binding, and
-  retains only descriptor rollout facts plus bounded scalar policy lifecycle
-  evidence for independent verification and scoring. It runs as one scored
+  bounded live policy/environment loop through the selected model binding in a
+  private no-network adapter sidecar, and accepts only bounded declared-path
+  workspace-patch archives that Rust validates and atomically commits to the
+  verifier workspace before retaining descriptor rollout facts plus bounded
+  scalar policy lifecycle evidence. It runs as one scored
   matrix trial; cross-host episode transport is not runnable yet. The
   `externally_driven` profile instead validates an
   `externally_driven` lifecycle record against its immutable manifest driver,
