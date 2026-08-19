@@ -622,6 +622,13 @@ Inputs, endpoints, and graph:
   strict request lowering, typed LLM/tool nodes, trace-local local/Docker
   environments and sandboxes, controller-folded metrics/artifacts, safe resume,
   cellular preflight, and pinned-reference parity coverage.
+- [`docs/specs/2026-08-19-codex-claude-recorded-agent-import.md`](docs/specs/2026-08-19-codex-claude-recorded-agent-import.md) —
+  proposed source-normalization import for Codex CLI and Claude Code session logs
+  into canonical `agent_recording` Graph-IR, with explicit replay-fidelity and
+  sandbox boundaries.
+- [`docs/specs/2026-08-19-native-graph-inspection-tools.md`](docs/specs/2026-08-19-native-graph-inspection-tools.md) —
+  proposed Python-free `aiperf graph validate`, `explain`, and `visualize` commands
+  that inspect resolved, lower-once native Graph-IR.
 - [`docs/specs/agentic-eval-platform.md`](docs/specs/agentic-eval-platform.md) —
   planned agentic SWE evaluation substrate: immutable task/dataset/trial identities,
   sandbox and verifier contracts, semantic-graph lowering, task-health governance,
