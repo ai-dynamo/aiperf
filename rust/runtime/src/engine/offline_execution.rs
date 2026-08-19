@@ -1482,6 +1482,14 @@ pub(crate) fn prepare_dynosim_graph(
 ) -> Result<Box<dyn PreparedRunnerOperation>> {
     let backend = validated_dynosim_transport(transport.as_ref())?.clone();
     let workload = validated_graph_workload(workload.as_ref())?;
+    let endpoint_id = run
+        .endpoints
+        .identities()?
+        .first()
+        .ok_or_else(|| anyhow!("graph workload requires one endpoint profile"))?
+        .endpoint_id
+        .as_str()
+        .to_owned();
     let phases = workload.phases.clone();
     ensure!(
         run.models.items.len() == 1
@@ -1507,6 +1515,7 @@ pub(crate) fn prepare_dynosim_graph(
             &GraphInputContext {
                 tokenizer: tokenizer.as_ref(),
                 run_random_seed: run.identity.random_seed,
+                endpoint_id: &endpoint_id,
             },
         ))
         .context("loading direct authored Graph-IR input")?;

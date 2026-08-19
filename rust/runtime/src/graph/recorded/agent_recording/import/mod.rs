@@ -9,6 +9,7 @@
 mod claude_code;
 mod codex;
 mod discovery;
+mod lowering;
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -20,6 +21,7 @@ use bytes::Bytes;
 pub use claude_code::parse_claude_session;
 pub use codex::parse_codex_session;
 pub use discovery::{detect_imported_agent_source, discover_imported_agent_read_set};
+pub use lowering::lower_imported_agent_sessions;
 
 /// The provider-native session format selected for an imported recording.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

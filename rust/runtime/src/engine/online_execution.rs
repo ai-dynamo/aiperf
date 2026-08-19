@@ -1219,6 +1219,14 @@ fn lower_graph(
     tokenizers: &dyn OnlineTokenizerSourceResolver,
     transport: Arc<dyn crate::engine::registry::NativeTransportExecution>,
 ) -> Result<NativeRunSpec> {
+    let endpoint_id = run
+        .endpoints
+        .identities()?
+        .first()
+        .ok_or_else(|| anyhow!("graph workload requires one endpoint profile"))?
+        .endpoint_id
+        .as_str()
+        .to_owned();
     let tokenizer = lower_authored_tokenizer(&workload.tokenizer, tokenizers)?;
     let tokenizer_impl = load_local_tokenizer(Some(&tokenizer.name))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1234,6 +1242,7 @@ fn lower_graph(
                 &GraphInputContext {
                     tokenizer: tokenizer_impl.as_ref(),
                     run_random_seed: run.identity.random_seed,
+                    endpoint_id: &endpoint_id,
                 },
             ),
         )

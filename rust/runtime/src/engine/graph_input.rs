@@ -12,13 +12,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::config::model::dataset::RecordedAgentGraphConfig;
+use crate::config::model::dataset::{RecordedAgentGraphConfig, RecordedAgentSourceFormat};
 use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
 use crate::graph::conditional::compile_conditional_graph_input;
 use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
 use crate::graph::recorded::agent_recording::{
-    BuiltinReplayRequestProfileResolver, RecordedAgentInputSource, discover_recorded_agent_input,
-    lower_recorded_agent_corpus, resolve_recorded_environment,
+    BuiltinReplayRequestProfileResolver, RecordedAgentInputSource,
+    discover_imported_agent_read_set, discover_recorded_agent_input, lower_imported_agent_sessions,
+    lower_recorded_agent_corpus, parse_imported_agent_sessions, resolve_recorded_environment,
 };
 use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
@@ -189,6 +190,8 @@ pub struct GraphInputContext<'a> {
     pub tokenizer: &'a dyn TextTokenizer,
     /// Run-root seed used by recorded content reconstruction.
     pub run_random_seed: Option<u64>,
+    /// Selected default endpoint factory identifier for format compatibility checks.
+    pub endpoint_id: &'a str,
 }
 
 /// One direct authored graph-source adapter.
@@ -350,6 +353,7 @@ pub async fn prepare_local_graph_inspection_input(
             &GraphInputContext {
                 tokenizer,
                 run_random_seed: Some(seed),
+                endpoint_id: "chat",
             },
         )
         .await
@@ -502,11 +506,11 @@ impl GraphInputAdapter for RecordedAgentRunnerGraphInputAdapter {
     async fn load(
         &self,
         raw: &RawValue,
-        _context: &GraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedAgentDatasetInput =
             decode_graph_input(raw).context("decoding direct agent_recording graph input")?;
-        input.prepare(self.format())
+        input.prepare(self.format(), context.endpoint_id)
     }
 }
 
@@ -595,7 +599,7 @@ fn default_agent_recording_sampling() -> String {
 }
 
 impl RecordedAgentDatasetInput {
-    fn prepare(self, expected_format: &str) -> Result<PreparedRunnerGraphInput> {
+    fn prepare(self, expected_format: &str, endpoint_id: &str) -> Result<PreparedRunnerGraphInput> {
         ensure!(
             self.input_type == "file",
             "agent_recording graph input requires type=file"
@@ -627,10 +631,32 @@ impl RecordedAgentDatasetInput {
             .graph
             .as_ref()
             .map_or(self.execute_tools, |graph| graph.execute_tools);
-        let source = recorded_agent_source(&self.path, replay_root)?;
-        let corpus = discover_recorded_agent_input(replay_root, source)
-            .map_err(|error| anyhow!(error.to_string()))
-            .context("discovering recorded-agent graph input")?;
+        let source_format = self
+            .graph
+            .as_ref()
+            .map_or(RecordedAgentSourceFormat::Auto, |graph| graph.source_format);
+        let include_subagents = self
+            .graph
+            .as_ref()
+            .and_then(|graph| graph.include_subagents);
+        let resolved = resolve_recorded_agent_graph_source(
+            &self.path,
+            replay_root,
+            source_format,
+            include_subagents,
+        )?;
+        if matches!(
+            &resolved,
+            ResolvedRecordedAgentGraphSource::Imported {
+                source: crate::graph::recorded::agent_recording::ImportedAgentSource::ClaudeCode,
+                ..
+            }
+        ) {
+            ensure!(
+                endpoint_id == "messages",
+                "Claude Code imported session replay requires endpoint type messages"
+            );
+        }
         let resolver = BuiltinReplayRequestProfileResolver::new(
             self.streaming,
             fallback_max_tokens,
@@ -641,10 +667,24 @@ impl RecordedAgentDatasetInput {
         )
         .map_err(|error| anyhow!(error.to_string()))?;
         let mut pool = SegmentPool::new();
-        let mut bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
-            .map_err(|error| anyhow!(error.to_string()))
-            .context("lowering recorded-agent graph input")?;
+        let (mut bundle, strict_corpus) = match resolved {
+            ResolvedRecordedAgentGraphSource::Strict(corpus) => {
+                let bundle = lower_recorded_agent_corpus(&corpus, &resolver, &mut pool)
+                    .map_err(|error| anyhow!(error.to_string()))
+                    .context("lowering recorded-agent graph input")?;
+                (bundle, Some(corpus))
+            }
+            ResolvedRecordedAgentGraphSource::Imported { sessions, .. } => {
+                let bundle = lower_imported_agent_sessions(&sessions, &resolver, &mut pool)
+                    .map_err(|error| anyhow!(error.to_string()))
+                    .context("lowering imported recorded-agent session input")?;
+                (bundle, None)
+            }
+        };
         if execute_tools {
+            let corpus = strict_corpus
+                .as_ref()
+                .ok_or_else(|| anyhow!("imported recorded-agent sessions reject execute_tools"))?;
             let pinch_image = self
                 .graph
                 .as_ref()
@@ -858,7 +898,7 @@ pub fn plan_recorded_agent_cell_assignments(
         cell_count > 0 && cell_id < cell_count,
         "invalid cellular graph assignment"
     );
-    let prepared = input.prepare("agent_recording")?;
+    let prepared = input.prepare("agent_recording", "chat")?;
     let profiling = phases
         .iter()
         .filter(|phase| !phase.common().exclude_from_results)
@@ -906,6 +946,81 @@ pub fn plan_recorded_agent_cell_assignments(
             .ok_or_else(|| anyhow!("cellular recorded-agent assignment ordinal overflow"))?;
     }
     Ok(planned)
+}
+
+enum ResolvedRecordedAgentGraphSource {
+    Strict(crate::graph::recorded::agent_recording::ValidatedRecordedAgentCorpus),
+    Imported {
+        source: crate::graph::recorded::agent_recording::ImportedAgentSource,
+        sessions: Vec<crate::graph::recorded::agent_recording::ImportedAgentSession>,
+    },
+}
+
+fn resolve_recorded_agent_graph_source(
+    path: &PathBuf,
+    replay_root: Option<&std::path::Path>,
+    source_format: RecordedAgentSourceFormat,
+    include_subagents: Option<bool>,
+) -> Result<ResolvedRecordedAgentGraphSource> {
+    if source_format == RecordedAgentSourceFormat::MiniSweAgent {
+        return strict_recorded_agent_graph_source(path, replay_root);
+    }
+    if matches!(
+        source_format,
+        RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode
+    ) {
+        return imported_recorded_agent_graph_source(
+            path,
+            replay_root,
+            source_format,
+            include_subagents,
+        );
+    }
+    let candidate = replay_root.map_or_else(|| path.clone(), |root| root.join(path));
+    match strict_recorded_agent_graph_source(path, replay_root) {
+        Ok(strict) => Ok(strict),
+        Err(_)
+            if candidate
+                .extension()
+                .is_some_and(|extension| extension == "jsonl") =>
+        {
+            imported_recorded_agent_graph_source(
+                path,
+                replay_root,
+                RecordedAgentSourceFormat::Auto,
+                include_subagents,
+            )
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn strict_recorded_agent_graph_source(
+    path: &PathBuf,
+    replay_root: Option<&std::path::Path>,
+) -> Result<ResolvedRecordedAgentGraphSource> {
+    let source = recorded_agent_source(path, replay_root)?;
+    let corpus = discover_recorded_agent_input(replay_root, source)
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("discovering strict recorded-agent graph input")?;
+    Ok(ResolvedRecordedAgentGraphSource::Strict(corpus))
+}
+
+fn imported_recorded_agent_graph_source(
+    path: &PathBuf,
+    replay_root: Option<&std::path::Path>,
+    source_format: RecordedAgentSourceFormat,
+    include_subagents: Option<bool>,
+) -> Result<ResolvedRecordedAgentGraphSource> {
+    let read_set =
+        discover_imported_agent_read_set(path, replay_root, source_format, include_subagents)
+            .map_err(|error| anyhow!(error.to_string()))
+            .context("discovering imported recorded-agent session input")?;
+    let source = read_set.source;
+    let sessions = parse_imported_agent_sessions(&read_set)
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("parsing imported recorded-agent session input")?;
+    Ok(ResolvedRecordedAgentGraphSource::Imported { source, sessions })
 }
 
 fn recorded_agent_source(
@@ -1841,6 +1956,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -1901,6 +2017,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: None,
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -1961,6 +2078,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: None,
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2030,6 +2148,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2112,6 +2231,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2159,6 +2279,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2185,6 +2306,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2235,6 +2357,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2295,6 +2418,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2343,6 +2467,7 @@ mod tests {
             &GraphInputContext {
                 tokenizer: &TiktokenTokenizer::builtin(),
                 run_random_seed: Some(42),
+                endpoint_id: "chat",
             },
         )
         .expect("public recorded input with prompt corpus");
@@ -2375,6 +2500,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2435,6 +2561,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2489,6 +2616,7 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
+                    endpoint_id: "chat",
                 },
             )
             .await

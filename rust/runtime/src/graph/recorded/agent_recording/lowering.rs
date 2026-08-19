@@ -127,7 +127,7 @@ impl ReplayRequestProfileResolver for BuiltinReplayRequestProfileResolver {
                 additional_body.insert("repeat_penalty".into(), Value::from(1.05));
                 additional_body.insert("parallel_tool_calls".into(), Value::Bool(true));
             }
-            "pinchbench" => {}
+            "pinchbench" | "codex" | "claude_code" => {}
             adapter => {
                 warning_facts.push(GraphInputWarning::new(
                     "agent_recording_unknown_adapter",
