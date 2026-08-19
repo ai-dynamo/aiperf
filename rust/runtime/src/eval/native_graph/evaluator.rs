@@ -29,13 +29,16 @@ pub trait EpisodeEvaluator {
     /// Maps a sealed NativeGraph completion attempt to orthogonal episode result facts.
     ///
     /// Legacy implementations receive the already-frozen Harbor facts unchanged. The built-in
-    /// evaluator overrides this seam to preserve rollout terminality.
+    /// evaluator overrides this seam to preserve sealed terminality.
     async fn evaluate_native_graph(
         &self,
         attempt: NativeGraphCompletedAttempt,
     ) -> Result<EpisodeResult, EpisodeEvaluationError> {
-        if attempt.has_rollout() || attempt.has_compatibility() {
+        if attempt.has_rollout() {
             return Err(EpisodeEvaluationError::RolloutAwareEvaluatorRequired);
+        }
+        if attempt.has_compatibility() {
+            return Err(EpisodeEvaluationError::CompatibilityAwareEvaluatorRequired);
         }
         self.evaluate(attempt.into_frozen_attempt()).await
     }
@@ -115,6 +118,8 @@ impl EpisodeEvaluatorFactory for HarborEpisodeEvaluatorFactory {
 pub enum EpisodeEvaluationError {
     /// The selected evaluator did not opt in to preserving sealed rollout terminality.
     RolloutAwareEvaluatorRequired,
+    /// The selected evaluator did not opt in to preserving sealed compatibility terminality.
+    CompatibilityAwareEvaluatorRequired,
     /// The incoming attempt did not preserve immutable evidence or score lineage.
     Frozen(FrozenAttemptError),
     /// The result contract rejected the verifier reward.
@@ -127,6 +132,8 @@ impl Display for EpisodeEvaluationError {
             Self::RolloutAwareEvaluatorRequired => {
                 formatter.write_str("selected evaluator does not support sealed rollout evidence")
             }
+            Self::CompatibilityAwareEvaluatorRequired => formatter
+                .write_str("selected evaluator does not support sealed compatibility evidence"),
             Self::Frozen(error) => error.fmt(formatter),
             Self::Result(error) => error.fmt(formatter),
         }

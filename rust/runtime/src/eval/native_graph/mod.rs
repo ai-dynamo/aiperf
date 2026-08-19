@@ -37,6 +37,7 @@ pub use artifacts::{
     ArtifactDownloadHandle, ArtifactError, ArtifactQuota, ArtifactUploadHandle,
     EpisodeArtifactStore, FrozenArtifact, FrozenArtifactManifest, FrozenArtifactReference,
 };
+pub(crate) use capture::CompatibilityCaptureSession;
 pub use capture::{
     CaptureError, CaptureFidelity, CapturePolicy, CompatibilityFidelity, CompatibilityObservation,
     CompatibilityObservationReport, CompatibilityTerminalReceipt, CompatibilityTerminalSupplement,
@@ -69,13 +70,14 @@ pub use factories::{
 };
 pub use factories::{
     ConfirmedNativeGraphProviderRecoveryFactory, ExactNativeGraphFidelityObserverFactory,
-    ExternalDriverSession, MoveV1ActionEncoderFactory, NativeGraphActionEncoderFactory,
-    NativeGraphAdapterRuntimeProvider, NativeGraphAdapterRuntimeResolution,
-    NativeGraphEnvironmentStepper, NativeGraphEnvironmentStepperFactory,
-    NativeGraphExternalDriverFactory, NativeGraphFactoryError, NativeGraphFidelityObserver,
-    NativeGraphFidelityObserverFactory, NativeGraphLowererProvider,
-    NativeGraphProviderRecoveryFactory, PackageNativeGraphLowererProvider, PreparedExternalDriver,
-    RefusingEnvironmentStepperFactory, RefusingExternalDriverFactory, StrictAdapterRuntimeProvider,
+    ExternalDriverError, ExternalDriverSession, MoveV1ActionEncoderFactory,
+    NativeGraphActionEncoderFactory, NativeGraphAdapterRuntimeProvider,
+    NativeGraphAdapterRuntimeResolution, NativeGraphEnvironmentStepper,
+    NativeGraphEnvironmentStepperFactory, NativeGraphExternalDriverFactory,
+    NativeGraphFactoryError, NativeGraphFidelityObserver, NativeGraphFidelityObserverFactory,
+    NativeGraphLowererProvider, NativeGraphProviderRecoveryFactory,
+    PackageNativeGraphLowererProvider, PreparedExternalDriver, RefusingEnvironmentStepperFactory,
+    RefusingExternalDriverFactory, StrictAdapterRuntimeProvider,
     SupervisedEnvironmentStepperBinder,
 };
 pub(crate) use live_driver::NATIVE_GRAPH_LIVE_DRIVER_KIND;

@@ -10,9 +10,9 @@ use crate::eval::{
 };
 
 use super::{
-    CapturePolicy, CompatibilityTerminalSupplement, EpisodeFidelity, FrozenRolloutEvidence,
-    NativeGraphProfile, ResolvedEpisodeTrial, RolloutEvidenceIdentity, RolloutPolicyEvidence,
-    RolloutReturnAgreementError, result::EpisodeExecution,
+    CapturePolicy, CompatibilityCaptureSession, CompatibilityTerminalSupplement, EpisodeFidelity,
+    FrozenRolloutEvidence, NativeGraphProfile, ResolvedEpisodeTrial, RolloutEvidenceIdentity,
+    RolloutPolicyEvidence, RolloutReturnAgreementError, result::EpisodeExecution,
 };
 
 /// Immutable imported-attempt authority required before native rollout evidence can freeze.
@@ -23,7 +23,7 @@ use super::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeGraphAttemptAuthority {
     profile: NativeGraphProfile,
-    compatibility_capture_policy_identity: Option<ArtifactDigest>,
+    compatibility_capture_session: Option<CompatibilityCaptureSession>,
     rollout_identity: RolloutEvidenceIdentity,
     rollout_policy_identity: Option<ArtifactDigest>,
     rollout_selection_digest: Option<ArtifactDigest>,
@@ -56,12 +56,19 @@ impl NativeGraphAttemptAuthority {
         }
         Self {
             profile: package.map_or(NativeGraphProfile::NativeGraph, |package| package.profile()),
-            compatibility_capture_policy_identity: package
+            compatibility_capture_session: package
                 .filter(|package| package.profile() == NativeGraphProfile::ExternallyDriven)
                 .and_then(|package| {
-                    CapturePolicy::from_package(package)
-                        .ok()
-                        .map(|policy| policy.package_identity().clone())
+                    CapturePolicy::from_package(package).ok().map(|policy| {
+                        CompatibilityCaptureSession::new(
+                            policy.package_identity().clone(),
+                            trial.imported().report.source_digest.clone(),
+                            trial.imported().task.digest.clone(),
+                            trial.trial().environment.clone(),
+                            trial.trial_digest().clone(),
+                            trial.attempt_id().clone(),
+                        )
+                    })
                 }),
             rollout_identity,
             rollout_policy_identity,
@@ -86,8 +93,8 @@ impl NativeGraphAttemptAuthority {
         matches!(self.profile, NativeGraphProfile::ExternallyDriven)
     }
 
-    fn compatibility_capture_policy_identity(&self) -> Option<&ArtifactDigest> {
-        self.compatibility_capture_policy_identity.as_ref()
+    pub(crate) fn compatibility_capture_session(&self) -> Option<&CompatibilityCaptureSession> {
+        self.compatibility_capture_session.as_ref()
     }
 
     /// Borrows the one resolved trial that may receive this rollout's lifecycle evidence.
@@ -179,11 +186,18 @@ impl NativeGraphCompletedAttempt {
         if authority.requires_rollout_evidence() {
             return Err(NativeGraphCompletedAttemptError::CompatibilityCannotUseRollout);
         }
-        let expected_capture = authority
-            .compatibility_capture_policy_identity()
+        let expected_session = authority
+            .compatibility_capture_session()
             .ok_or(NativeGraphCompletedAttemptError::CompatibilityRequiresExternalProfile)?;
-        if supplement.report().package_identity() != expected_capture {
-            return Err(NativeGraphCompletedAttemptError::CompatibilityCaptureIdentityMismatch);
+        if supplement.session() != expected_session {
+            return Err(NativeGraphCompletedAttemptError::CompatibilitySessionIdentityMismatch);
+        }
+        if attempt
+            .lifecycle_evidence()
+            .iter()
+            .any(|event| event.kind == EvidenceKind::Compatibility)
+        {
+            return Err(NativeGraphCompletedAttemptError::CompatibilityLifecycleAlreadyPresent);
         }
         let attempt = append_compatibility_lifecycle(attempt, &supplement)?;
         Ok(Self {
@@ -347,8 +361,10 @@ pub enum NativeGraphCompletedAttemptError {
     CompatibilityRequiresExternalProfile,
     /// Compatibility facts cannot coexist with an imported native rollout.
     CompatibilityCannotUseRollout,
-    /// Compatibility capture facts do not belong to the imported external package.
-    CompatibilityCaptureIdentityMismatch,
+    /// Compatibility terminal facts do not belong to the resolved capture session.
+    CompatibilitySessionIdentityMismatch,
+    /// The frozen Harbor attempt already contains compatibility lifecycle evidence.
+    CompatibilityLifecycleAlreadyPresent,
     /// Rollout source provenance disagreed with the immutable imported task source.
     SourceIdentityMismatch,
     /// Rollout task provenance disagreed with the immutable selected task.
@@ -387,8 +403,11 @@ impl Display for NativeGraphCompletedAttemptError {
                 .write_str("compatibility completion requires the externally_driven profile"),
             Self::CompatibilityCannotUseRollout => formatter
                 .write_str("compatibility completion cannot attach native rollout evidence"),
-            Self::CompatibilityCaptureIdentityMismatch => formatter
-                .write_str("compatibility capture facts disagree with the imported package"),
+            Self::CompatibilitySessionIdentityMismatch => formatter.write_str(
+                "compatibility terminal facts disagree with the resolved capture session",
+            ),
+            Self::CompatibilityLifecycleAlreadyPresent => formatter
+                .write_str("completed attempt already contains compatibility lifecycle evidence"),
             Self::SourceIdentityMismatch => formatter
                 .write_str("rollout source provenance disagrees with the completed attempt"),
             Self::TaskIdentityMismatch => {
@@ -417,3 +436,191 @@ impl Display for NativeGraphCompletedAttemptError {
 }
 
 impl std::error::Error for NativeGraphCompletedAttemptError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eval::CompatibilityTerminalReceipt;
+    use crate::eval::{
+        EpisodeEvaluator, EpisodeScoreState, HarborEpisodeEvaluator, RewardDocument, ScoreVersion,
+        VerifierResult,
+    };
+
+    fn authority(attempt: &str) -> NativeGraphAttemptAuthority {
+        let package = ArtifactDigest::from_bytes(b"external-package");
+        let source = ArtifactDigest::from_bytes(b"external-source");
+        let task = ArtifactDigest::from_bytes(b"external-task");
+        let environment = ArtifactDigest::from_bytes(b"external-environment");
+        let trial = ArtifactDigest::from_bytes(b"external-trial");
+        let attempt_id = AttemptId::new(attempt).expect("fixture attempt is valid");
+        NativeGraphAttemptAuthority {
+            profile: NativeGraphProfile::ExternallyDriven,
+            compatibility_capture_session: Some(CompatibilityCaptureSession::new(
+                package,
+                source.clone(),
+                task.clone(),
+                environment.clone(),
+                trial.clone(),
+                attempt_id.clone(),
+            )),
+            rollout_identity: RolloutEvidenceIdentity::new(source, task, environment),
+            rollout_policy_identity: None,
+            rollout_selection_digest: None,
+            trial_digest: trial,
+            attempt_id,
+        }
+    }
+
+    fn frozen_attempt(
+        authority: &NativeGraphAttemptAuthority,
+        has_compatibility_lifecycle: bool,
+    ) -> FrozenAttemptBundle {
+        let attempt = authority.attempt_id().clone();
+        let verifier = VerifierResult::new(
+            attempt.clone(),
+            ArtifactDigest::from_bytes(b"verifier"),
+            vec![ArtifactDigest::from_bytes(b"declared-verifier-artifact")],
+            RewardDocument::parse(Some(br#"{"reward":0.75}"#), None)
+                .expect("fixture reward is valid"),
+            ArtifactDigest::from_bytes(b"verifier-rationale"),
+        )
+        .expect("fixture verifier result is valid");
+        let score = ScoreVersion::initial(
+            attempt.clone(),
+            verifier.verifier.clone(),
+            verifier.evidence.clone(),
+            "reward",
+            0.75,
+            ArtifactDigest::from_bytes(b"score-rationale"),
+        )
+        .expect("fixture score is valid");
+        let mut lifecycle = vec![EvidenceEvent::new(
+            attempt.clone(),
+            0,
+            EvidenceKind::Evaluator,
+            ArtifactDigest::from_bytes(b"existing-lifecycle"),
+            None,
+        )];
+        if has_compatibility_lifecycle {
+            let parent = lifecycle.last().map(EvidenceEvent::identity_digest);
+            lifecycle.push(EvidenceEvent::new(
+                attempt,
+                1,
+                EvidenceKind::Compatibility,
+                ArtifactDigest::from_bytes(b"forged-compatibility"),
+                parent,
+            ));
+        }
+        FrozenAttemptBundle::new(
+            authority.trial_digest().clone(),
+            verifier,
+            lifecycle,
+            vec![score],
+        )
+        .expect("fixture Harbor facts freeze")
+    }
+
+    fn supplement(authority: &NativeGraphAttemptAuthority) -> CompatibilityTerminalSupplement {
+        let session = authority
+            .compatibility_capture_session()
+            .expect("external authority has a capture session")
+            .clone();
+        let report = CapturePolicy::from_session(&session)
+            .begin_observation()
+            .freeze();
+        let receipt = CompatibilityTerminalReceipt::from_canonical_terminal_bytes(
+            session,
+            br#"{"terminal":"accepted"}"#,
+        )
+        .expect("bounded fixture terminal receipt seals");
+        report
+            .into_terminal_supplement(receipt)
+            .expect("matching report and receipt seal one supplement")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compatibility_completion_binds_one_session_and_preserves_harbor_scoring() {
+        let authority = authority("external-attempt-a");
+        let attempt = frozen_attempt(&authority, false);
+        let verifier_evidence = attempt.verifier_input_evidence().to_vec();
+        let reward = attempt.verifier_result().reward.clone();
+        let scores = attempt.score_lineage().to_vec();
+        let completed = NativeGraphCompletedAttempt::freeze_compatibility(
+            &authority,
+            attempt,
+            supplement(&authority),
+        )
+        .expect("matching external session freezes exactly one compatibility event");
+
+        assert_eq!(
+            completed.frozen_attempt().verifier_input_evidence(),
+            verifier_evidence
+        );
+        assert_eq!(completed.frozen_attempt().verifier_result().reward, reward);
+        assert_eq!(completed.frozen_attempt().score_lineage(), scores);
+        assert_eq!(completed.frozen_attempt().lifecycle_evidence().len(), 2);
+        assert_eq!(
+            completed.frozen_attempt().lifecycle_evidence()[1].kind,
+            EvidenceKind::Compatibility
+        );
+        let result = HarborEpisodeEvaluator::new()
+            .evaluate_native_graph(completed)
+            .await
+            .expect("sealed compatibility completion remains Harbor-scorable");
+        assert!(result.fidelity().is_externally_driven());
+        assert_eq!(result.score(), EpisodeScoreState::Verified { reward: 0.75 });
+    }
+
+    #[test]
+    fn compatibility_completion_refuses_same_package_receipt_from_another_attempt() {
+        let primary = authority("external-attempt-a");
+        let foreign = authority("external-attempt-b");
+        let error = NativeGraphCompletedAttempt::freeze_compatibility(
+            &foreign,
+            frozen_attempt(&foreign, false),
+            supplement(&primary),
+        )
+        .expect_err("same-package receipt from another attempt cannot be replayed");
+
+        assert_eq!(
+            error,
+            NativeGraphCompletedAttemptError::CompatibilitySessionIdentityMismatch
+        );
+    }
+
+    #[test]
+    fn compatibility_completion_refuses_a_native_no_rollout_authority() {
+        let external = authority("external-attempt-a");
+        let mut native = authority("external-attempt-a");
+        native.profile = NativeGraphProfile::NativeGraph;
+        native.compatibility_capture_session = None;
+
+        let error = NativeGraphCompletedAttempt::freeze_compatibility(
+            &native,
+            frozen_attempt(&native, false),
+            supplement(&external),
+        )
+        .expect_err("native no-rollout completion cannot accept compatibility evidence");
+
+        assert_eq!(
+            error,
+            NativeGraphCompletedAttemptError::CompatibilityRequiresExternalProfile
+        );
+    }
+
+    #[test]
+    fn compatibility_completion_refuses_an_existing_compatibility_lifecycle_event() {
+        let authority = authority("external-attempt-a");
+        let error = NativeGraphCompletedAttempt::freeze_compatibility(
+            &authority,
+            frozen_attempt(&authority, true),
+            supplement(&authority),
+        )
+        .expect_err("only one compatibility lifecycle event may be appended");
+
+        assert_eq!(
+            error,
+            NativeGraphCompletedAttemptError::CompatibilityLifecycleAlreadyPresent
+        );
+    }
+}

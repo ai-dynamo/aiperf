@@ -1007,9 +1007,38 @@ fn revoke_reset_reference(
 
 /// Capability-limited session supplied only after external compatibility preparation succeeds.
 ///
-/// The protocol boundary adds terminal-request operations in a later slice. This marker keeps
-/// preparation independent of processes, environments, secrets, and native execution authority.
+/// This marker keeps preparation independent of processes, environments, secrets, and native
+/// execution authority.
 pub trait ExternalDriverSession {}
+
+/// Redacted failure category for compatibility-driver preparation and terminal exchange.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExternalDriverError {
+    /// The selected external driver is not available in this product build.
+    Unavailable,
+    /// The selected package or trial did not satisfy compatibility preparation requirements.
+    PreparationRejected,
+    /// The supervised session did not return an admissible terminal receipt.
+    TerminalReceiptRejected,
+}
+
+impl Display for ExternalDriverError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unavailable => {
+                formatter.write_str("external compatibility driver is unavailable")
+            }
+            Self::PreparationRejected => {
+                formatter.write_str("external compatibility driver preparation was rejected")
+            }
+            Self::TerminalReceiptRejected => {
+                formatter.write_str("external compatibility terminal receipt was rejected")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ExternalDriverError {}
 
 /// Prepared externally driven compatibility work bound to one exact package and trial.
 #[async_trait(?Send)]
@@ -1018,7 +1047,7 @@ pub trait PreparedExternalDriver {
     async fn run(
         &mut self,
         session: &mut dyn ExternalDriverSession,
-    ) -> Result<CompatibilityTerminalReceipt, NativeGraphFactoryError>;
+    ) -> Result<CompatibilityTerminalReceipt, ExternalDriverError>;
 }
 
 /// Factory for compatibility-only externally driven package support.
@@ -1031,7 +1060,7 @@ pub trait NativeGraphExternalDriverFactory: Send + Sync {
         &self,
         package: &NativeGraphPackagePlan,
         trial: &ResolvedEpisodeTrial,
-    ) -> Result<Box<dyn PreparedExternalDriver>, NativeGraphFactoryError>;
+    ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError>;
 }
 
 /// Explicit refusal until the externally driven compatibility slice is enabled.
@@ -1047,10 +1076,8 @@ impl NativeGraphExternalDriverFactory for RefusingExternalDriverFactory {
         &self,
         _: &NativeGraphPackagePlan,
         _: &ResolvedEpisodeTrial,
-    ) -> Result<Box<dyn PreparedExternalDriver>, NativeGraphFactoryError> {
-        Err(NativeGraphFactoryError::new(
-            "externally driven NativeGraph packages are not enabled by the acyclic model slice",
-        ))
+    ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError> {
+        Err(ExternalDriverError::Unavailable)
     }
 }
 

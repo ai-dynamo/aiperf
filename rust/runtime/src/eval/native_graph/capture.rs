@@ -5,7 +5,7 @@
 
 use std::fmt::{self, Display, Formatter};
 
-use crate::eval::{ArtifactDigest, AttemptId, EvidenceEvent, EvidenceKind};
+use crate::eval::{ArtifactDigest, AttemptId, EvidenceEvent, EvidenceKind, append_identity_field};
 
 use super::{NativeGraphPackagePlan, NativeGraphProfile};
 
@@ -36,12 +36,76 @@ pub enum CompatibilityFidelity {
     Missing,
 }
 
+/// Immutable authority for one externally driven capture session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CompatibilityCaptureSession {
+    package_identity: ArtifactDigest,
+    source_identity: ArtifactDigest,
+    task_identity: ArtifactDigest,
+    environment_identity: ArtifactDigest,
+    trial_digest: ArtifactDigest,
+    attempt_id: AttemptId,
+    identity_digest: ArtifactDigest,
+}
+
+impl CompatibilityCaptureSession {
+    pub(crate) fn new(
+        package_identity: ArtifactDigest,
+        source_identity: ArtifactDigest,
+        task_identity: ArtifactDigest,
+        environment_identity: ArtifactDigest,
+        trial_digest: ArtifactDigest,
+        attempt_id: AttemptId,
+    ) -> Self {
+        let mut material = Vec::new();
+        append_identity_field(
+            &mut material,
+            "domain",
+            b"aiperf-native-graph-compatibility-capture-session-v1",
+        );
+        append_identity_field(
+            &mut material,
+            "package",
+            package_identity.as_str().as_bytes(),
+        );
+        append_identity_field(&mut material, "source", source_identity.as_str().as_bytes());
+        append_identity_field(&mut material, "task", task_identity.as_str().as_bytes());
+        append_identity_field(
+            &mut material,
+            "environment",
+            environment_identity.as_str().as_bytes(),
+        );
+        append_identity_field(&mut material, "trial", trial_digest.as_str().as_bytes());
+        append_identity_field(&mut material, "attempt", attempt_id.as_str().as_bytes());
+        Self {
+            package_identity,
+            source_identity,
+            task_identity,
+            environment_identity,
+            trial_digest,
+            attempt_id,
+            identity_digest: ArtifactDigest::from_bytes(&material),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn package_identity(&self) -> &ArtifactDigest {
+        &self.package_identity
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn identity_digest(&self) -> &ArtifactDigest {
+        &self.identity_digest
+    }
+}
+
 /// Opaque, bounded terminal acknowledgement supplied by one external driver session.
 ///
 /// The receipt retains only a domain-separated digest. Its constructor accepts canonical terminal
 /// bytes at the private protocol boundary and never preserves them in the evaluation contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompatibilityTerminalReceipt {
+    session: CompatibilityCaptureSession,
     identity_digest: ArtifactDigest,
 }
 
@@ -50,20 +114,30 @@ impl CompatibilityTerminalReceipt {
     pub const MAX_CANONICAL_BYTES: usize = 64 * 1024;
 
     /// Seals a bounded canonical terminal payload without retaining its contents.
-    pub fn from_canonical_terminal_bytes(bytes: &[u8]) -> Result<Self, CaptureError> {
+    #[allow(dead_code)]
+    pub(crate) fn from_canonical_terminal_bytes(
+        session: CompatibilityCaptureSession,
+        bytes: &[u8],
+    ) -> Result<Self, CaptureError> {
         if bytes.len() > Self::MAX_CANONICAL_BYTES {
             return Err(CaptureError::TerminalReceiptLimitExceeded {
                 limit: Self::MAX_CANONICAL_BYTES,
             });
         }
         let mut material = Vec::new();
-        crate::eval::append_identity_field(
+        append_identity_field(
             &mut material,
             "domain",
             b"aiperf-native-graph-compatibility-terminal-receipt-v1",
         );
-        crate::eval::append_identity_field(&mut material, "canonical-terminal", bytes);
+        append_identity_field(
+            &mut material,
+            "capture-session",
+            session.identity_digest().as_str().as_bytes(),
+        );
+        append_identity_field(&mut material, "canonical-terminal", bytes);
         Ok(Self {
+            session,
             identity_digest: ArtifactDigest::from_bytes(&material),
         })
     }
@@ -71,6 +145,10 @@ impl CompatibilityTerminalReceipt {
     /// Returns the opaque identity of the discarded canonical terminal receipt.
     pub fn identity_digest(&self) -> &ArtifactDigest {
         &self.identity_digest
+    }
+
+    pub(crate) fn session(&self) -> &CompatibilityCaptureSession {
+        &self.session
     }
 }
 
@@ -124,6 +202,13 @@ impl CapturePolicy {
             partial_calls: 0,
             unobservable_or_bypassed_calls: 0,
             hasher: observation_hasher(&self.package_identity),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_session(session: &CompatibilityCaptureSession) -> Self {
+        Self {
+            package_identity: session.package_identity().clone(),
         }
     }
 }
@@ -265,7 +350,14 @@ impl CompatibilityObservationReport {
     ///
     /// The conversion is deliberately one way: callers can retain or emit only the bounded
     /// report, never a raw capture or a NativeGraph/exact compatibility classification.
-    pub fn into_terminal_supplement(self) -> CompatibilityTerminalSupplement {
+    #[allow(dead_code)]
+    pub(crate) fn into_terminal_supplement(
+        self,
+        receipt: CompatibilityTerminalReceipt,
+    ) -> Result<CompatibilityTerminalSupplement, CaptureError> {
+        if self.package_identity != *receipt.session().package_identity() {
+            return Err(CaptureError::CaptureSessionIdentityMismatch);
+        }
         let fidelity = match self.fidelity {
             CaptureFidelity::ObservedProxy => CompatibilityFidelity::ObservedProxy,
             CaptureFidelity::Partial => CompatibilityFidelity::Partial,
@@ -273,26 +365,24 @@ impl CompatibilityObservationReport {
                 CompatibilityFidelity::Missing
             }
         };
-        CompatibilityTerminalSupplement {
+        let mut material = Vec::new();
+        append_identity_field(
+            &mut material,
+            "domain",
+            b"aiperf-native-graph-compatibility-terminal-supplement-v1",
+        );
+        append_identity_field(&mut material, "report", self.digest.as_str().as_bytes());
+        append_identity_field(
+            &mut material,
+            "terminal-receipt",
+            receipt.identity_digest().as_str().as_bytes(),
+        );
+        Ok(CompatibilityTerminalSupplement {
             report: self,
             fidelity,
-        }
-    }
-
-    /// Emits the report only as one ordered lifecycle fact, never verifier input evidence.
-    pub fn lifecycle_evidence(
-        &self,
-        attempt: AttemptId,
-        sequence: u64,
-        parent: Option<ArtifactDigest>,
-    ) -> EvidenceEvent {
-        EvidenceEvent::new(
-            attempt,
-            sequence,
-            EvidenceKind::Compatibility,
-            self.digest.clone(),
-            parent,
-        )
+            receipt,
+            digest: ArtifactDigest::from_bytes(&material),
+        })
     }
 }
 
@@ -301,6 +391,8 @@ impl CompatibilityObservationReport {
 pub struct CompatibilityTerminalSupplement {
     report: CompatibilityObservationReport,
     fidelity: CompatibilityFidelity,
+    receipt: CompatibilityTerminalReceipt,
+    digest: ArtifactDigest,
 }
 
 impl CompatibilityTerminalSupplement {
@@ -316,7 +408,7 @@ impl CompatibilityTerminalSupplement {
 
     /// Returns the sealed bounded compatibility summary identity.
     pub fn digest(&self) -> &ArtifactDigest {
-        self.report.digest()
+        &self.digest
     }
 
     /// Emits compatibility facts only as one ordered lifecycle event.
@@ -326,7 +418,17 @@ impl CompatibilityTerminalSupplement {
         sequence: u64,
         parent: Option<ArtifactDigest>,
     ) -> EvidenceEvent {
-        self.report.lifecycle_evidence(attempt, sequence, parent)
+        EvidenceEvent::new(
+            attempt,
+            sequence,
+            EvidenceKind::Compatibility,
+            self.digest.clone(),
+            parent,
+        )
+    }
+
+    pub(crate) fn session(&self) -> &CompatibilityCaptureSession {
+        self.receipt.session()
     }
 }
 
@@ -345,6 +447,8 @@ pub enum CaptureError {
         /// Maximum canonical terminal receipt bytes.
         limit: usize,
     },
+    /// A terminal receipt did not belong to the frozen capture session.
+    CaptureSessionIdentityMismatch,
     /// A fixed observation counter could no longer be represented.
     CounterOverflow,
 }
@@ -366,6 +470,9 @@ impl Display for CaptureError {
                     formatter,
                     "compatibility terminal receipt limit {limit} exceeded"
                 )
+            }
+            Self::CaptureSessionIdentityMismatch => {
+                formatter.write_str("compatibility receipt does not match the capture session")
             }
             Self::CounterOverflow => {
                 formatter.write_str("compatibility observation counter overflowed")

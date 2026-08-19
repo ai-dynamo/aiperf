@@ -113,7 +113,7 @@ impl EpisodeResult {
 
     /// Creates one result with an explicit execution-fidelity authority.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_fidelity(
+    pub(crate) fn new_with_fidelity(
         trial_digest: ArtifactDigest,
         attempt_id: AttemptId,
         integrity: EpisodeIntegrity,
