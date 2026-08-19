@@ -168,7 +168,7 @@ impl ExternalDriverDockerSpawnOperation {
         Ok(StartedExternalDriverDockerSpawn {
             prepared_driver: self.prepared_driver,
             authorization: self.authorization,
-            transaction,
+            transaction: Some(transaction),
         })
     }
 }
@@ -177,7 +177,7 @@ impl ExternalDriverDockerSpawnOperation {
 pub struct StartedExternalDriverDockerSpawn {
     prepared_driver: Box<dyn PreparedExternalDriver>,
     authorization: ExternallyDrivenAdapterAuthorization,
-    transaction: Box<dyn AdapterSpawnTransaction>,
+    transaction: Option<Box<dyn AdapterSpawnTransaction>>,
 }
 
 impl std::fmt::Debug for StartedExternalDriverDockerSpawn {
@@ -189,11 +189,16 @@ impl std::fmt::Debug for StartedExternalDriverDockerSpawn {
                 &std::any::type_name_of_val(&self.prepared_driver),
             )
             .field("authorization", &self.authorization)
-            .field(
-                "transaction",
-                &std::any::type_name_of_val(&self.transaction),
-            )
+            .field("has_transaction", &self.transaction.is_some())
             .finish_non_exhaustive()
+    }
+}
+
+impl Drop for StartedExternalDriverDockerSpawn {
+    fn drop(&mut self) {
+        if let Some(transaction) = self.transaction.as_deref_mut() {
+            transaction.fence();
+        }
     }
 }
 

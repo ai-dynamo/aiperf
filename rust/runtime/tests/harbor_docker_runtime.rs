@@ -4963,6 +4963,45 @@ fn external_driver_authorization_is_prepared_before_build_and_spawns_only_declar
 }
 
 #[test]
+fn dropping_started_external_driver_fences_its_live_transaction_once() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let runtime = LegacyRuntime {
+        events: Rc::clone(&events),
+        external_driver_spawn_executor: Some(Rc::new(RecordingExternalDriverSpawnExecutor {
+            events: Rc::clone(&events),
+            requests: Rc::new(RefCell::new(Vec::new())),
+        })),
+        ..LegacyRuntime::default()
+    };
+    let launch = DockerProcessSandbox::new()
+        .prepare_external_driver_spawn_with_runtime(
+            &runtime,
+            &imported.package,
+            &trial,
+            imported.package.execution_plan(),
+            Some(prepare_external_driver(&imported, &trial)),
+            "external-driver-task-container",
+            ComposeProjectId::new("aiperf-external-driver"),
+            external_driver_deadlines(),
+        )
+        .unwrap();
+
+    let started = launch.start().unwrap();
+    drop(started);
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        ["external-driver-spawner", "adapter-spawn", "client-fence"]
+    );
+}
+
+#[test]
 fn external_driver_missing_spawner_refuses_before_docker_create() {
     let temporary = tempfile::tempdir().unwrap();
     let task_root = external_driver_task_root(&temporary, "");
