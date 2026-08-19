@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Stable fatal-error vocabulary for native graph commands.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+use aiperf_runtime::graph::inspect::{
+    GraphBundleInspection, GraphInspectionIssue, GraphInspectionSeverity, GraphPlanPhase,
+};
 use serde::{Deserialize, Serialize};
 
 /// Native graph operation selected by the caller.
@@ -90,6 +94,133 @@ pub struct GraphErrorReport {
     pub message: String,
     /// Canonical local source if it was reached.
     pub source: Option<String>,
+}
+
+/// Versioned JSON document returned by `aiperf graph validate --output-format json`.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct GraphValidateReport {
+    /// Schema identifier.
+    pub schema_version: String,
+    /// Canonical local source that was lowered.
+    pub source: String,
+    /// Adapter-reported input format.
+    pub format: String,
+    /// Adapter-reported root trace count.
+    pub root_count: usize,
+    /// Adapter-reported aggregate LLM node count.
+    pub node_count: usize,
+    /// Deterministically ordered inspection issues.
+    pub issues: Vec<GraphIssueReport>,
+    /// Aggregate issue counts.
+    pub summary: GraphIssueSummary,
+}
+
+/// One stable graph-validation issue suitable for public output.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct GraphIssueReport {
+    /// Stable issue code.
+    pub code: String,
+    /// Issue severity.
+    pub severity: GraphIssueSeverityReport,
+    /// Trace scope, when applicable.
+    pub trace_id: Option<String>,
+    /// Plan phase, when applicable.
+    pub phase: Option<GraphPlanPhaseReport>,
+    /// Stable graph location, when applicable.
+    pub location: Option<String>,
+    /// Bounded, content-safe issue message.
+    pub message: String,
+    /// Deterministically ordered issue details.
+    pub context: BTreeMap<String, String>,
+}
+
+/// Public severity vocabulary for graph-validation reports.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphIssueSeverityReport {
+    /// The graph cannot be executed as authored.
+    Error,
+    /// The graph remains executable but has a notable condition.
+    Warning,
+}
+
+/// Public plan-phase vocabulary for graph-validation reports.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphPlanPhaseReport {
+    /// Profiling plan.
+    Profiling,
+    /// Warmup plan.
+    Warmup,
+}
+
+/// Aggregate issue counts for a graph-validation report.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct GraphIssueSummary {
+    /// Number of error-severity issues.
+    pub errors: usize,
+    /// Number of warning-severity issues.
+    pub warnings: usize,
+}
+
+impl GraphValidateReport {
+    /// Convert one retained inspection into the stable validation wire document.
+    pub fn from_inspection(source: String, inspection: GraphBundleInspection) -> Self {
+        let issues = flatten_issues(&inspection)
+            .into_iter()
+            .map(GraphIssueReport::from)
+            .collect::<Vec<_>>();
+        let summary = GraphIssueSummary {
+            errors: issues
+                .iter()
+                .filter(|issue| matches!(issue.severity, GraphIssueSeverityReport::Error))
+                .count(),
+            warnings: issues
+                .iter()
+                .filter(|issue| matches!(issue.severity, GraphIssueSeverityReport::Warning))
+                .count(),
+        };
+        Self {
+            schema_version: "aiperf.graph.validate.v1".to_owned(),
+            source,
+            format: inspection.format,
+            root_count: inspection.root_count,
+            node_count: inspection.node_count,
+            issues,
+            summary,
+        }
+    }
+}
+
+impl From<GraphInspectionIssue> for GraphIssueReport {
+    fn from(issue: GraphInspectionIssue) -> Self {
+        Self {
+            code: issue.code,
+            severity: match issue.severity {
+                GraphInspectionSeverity::Error => GraphIssueSeverityReport::Error,
+                GraphInspectionSeverity::Warning => GraphIssueSeverityReport::Warning,
+            },
+            trace_id: issue.trace_id,
+            phase: issue.phase.map(|phase| match phase {
+                GraphPlanPhase::Profiling => GraphPlanPhaseReport::Profiling,
+                GraphPlanPhase::Warmup => GraphPlanPhaseReport::Warmup,
+            }),
+            location: issue.location,
+            message: issue.message,
+            context: issue.context,
+        }
+    }
+}
+
+fn flatten_issues(inspection: &GraphBundleInspection) -> Vec<GraphInspectionIssue> {
+    let mut issues = inspection.issues.clone();
+    for program in &inspection.programs {
+        issues.extend(program.profiling.issues.clone());
+        if let Some(warmup) = &program.warmup {
+            issues.extend(warmup.issues.clone());
+        }
+    }
+    issues
 }
 
 /// An expected graph-command failure retained until dispatcher-owned rendering.

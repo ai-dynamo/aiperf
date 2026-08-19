@@ -172,12 +172,9 @@ fn graph_format_help() -> String {
 }
 
 fn run_validate(args: ValidateArgs) -> anyhow::Result<i32> {
+    let requires_arrival_offsets = matches!(args.pace, Some(Pace::Arrival));
     match load(args.common) {
-        Ok(input) => {
-            let _ = args.pace;
-            validate::run(input);
-            Ok(0)
-        }
+        Ok(input) => validate::run(input, args.output_format, requires_arrival_offsets),
         Err(error) => {
             write_error(
                 GraphOperation::Validate,

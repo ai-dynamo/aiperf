@@ -1,0 +1,26 @@
+graph:
+  state:
+    a_out: {type: text}
+    b_out: {type: text}
+    c_out: {type: text}
+  nodes:
+    a:
+      node_type: llm
+      prompt: ["a"]
+      output: a_out
+    b:
+      node_type: llm
+      prompt: ["b"]
+      output: b_out
+    c:
+      node_type: llm
+      prompt: ["c"]
+      output: c_out
+  edges:
+    - {source: START, target: a}
+    - {source: START, target: b}
+    - {source: a, target: c}
+    - {source: b, target: c, delay_after_predecessor_start_us: 0}
+    - {source: c, target: END}
+traces:
+  - id: t-mixed

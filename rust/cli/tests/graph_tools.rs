@@ -6,7 +6,10 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use aiperf_cli::graph::report::{GraphCommandErrorCode, GraphErrorReport, GraphOperation};
+use aiperf_cli::graph::report::{
+    GraphCommandErrorCode, GraphErrorReport, GraphIssueReport, GraphIssueSeverityReport,
+    GraphIssueSummary, GraphOperation, GraphPlanPhaseReport, GraphValidateReport,
+};
 use aiperf_runtime::config::model::workload_kind::GRAPH_FORMATS;
 use serde_json::json;
 
@@ -45,6 +48,171 @@ fn assert_json_error(report: GraphErrorReport, code: &str, message: &str, source
     assert_eq!(value["code"], code);
     assert_eq!(value["message"], message);
     assert_eq!(value["source"], json!(source));
+}
+
+fn fixture(path: &str) -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(path)
+        .canonicalize()
+        .expect("canonical graph fixture")
+        .display()
+        .to_string()
+}
+
+fn validate_output(path: &str, format: &str, extra: &[&str]) -> Output {
+    let mut args = vec!["graph", "validate", path, "--graph-format", format];
+    args.extend_from_slice(extra);
+    output(&args)
+}
+
+#[test]
+fn graph_validate_report_preserves_the_versioned_wire_shape() {
+    let report = GraphValidateReport {
+        schema_version: "aiperf.graph.validate.v1".to_owned(),
+        source: "/tmp/input.graph".to_owned(),
+        format: "dag_jsonl".to_owned(),
+        root_count: 1,
+        node_count: 2,
+        issues: vec![GraphIssueReport {
+            code: "node-unreachable".to_owned(),
+            severity: GraphIssueSeverityReport::Error,
+            trace_id: Some("t-1".to_owned()),
+            phase: Some(GraphPlanPhaseReport::Profiling),
+            location: Some("graph.nodes.foo".to_owned()),
+            message: "node is unreachable from START".to_owned(),
+            context: [("node_id".to_owned(), "foo".to_owned())]
+                .into_iter()
+                .collect(),
+        }],
+        summary: GraphIssueSummary {
+            errors: 1,
+            warnings: 0,
+        },
+    };
+
+    let value = serde_json::to_value(&report).expect("serialize validation report");
+    assert_eq!(value["schema_version"], "aiperf.graph.validate.v1");
+    assert_eq!(value["issues"][0]["severity"], "error");
+    assert_eq!(value["issues"][0]["phase"], "profiling");
+    assert_eq!(value["summary"]["errors"], 1);
+    let round_trip: GraphValidateReport =
+        serde_json::from_value(value).expect("deserialize validation report");
+    assert_eq!(round_trip.issues.len(), 1);
+}
+
+#[test]
+fn validate_clean_dag_reports_success() {
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = validate_output(&source, "dag_jsonl", &[]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    assert!(
+        String::from_utf8(output.stdout)
+            .expect("stdout UTF-8")
+            .ends_with("OK: 0 errors, 0 warning(s).\n")
+    );
+}
+
+#[test]
+fn validate_mixed_anchor_input_matches_the_human_golden() {
+    let source = fixture("tests/fixtures/graph_tools/mixed-anchor.conditional.yaml");
+    let output = validate_output(&source, "conditional_graph", &[]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).is_empty());
+    let expected = include_str!("goldens/graph_tools/validate-mixed-anchor.txt");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("stdout UTF-8"),
+        expected
+    );
+}
+
+#[test]
+fn validate_arrival_pace_requires_offsets() {
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = validate_output(&source, "dag_jsonl", &["--pace", "arrival"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).expect("stdout UTF-8");
+    assert!(stdout.contains("[arrival-offset-missing]"));
+    assert!(stdout.ends_with("warning(s).\n"));
+}
+
+#[test]
+fn validate_collapsed_replay_warning_does_not_fail() {
+    let source = fixture("tests/fixtures/graph_tools/collapsed-replay.otlp.json");
+    let output = validate_output(&source, "otlp_genai", &[]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("stdout UTF-8");
+    assert!(stdout.contains("[adapter-warning.otlp_genai_replay_spans_collapsed]"));
+    assert!(stdout.ends_with("OK: 0 errors, 1 warning(s).\n"));
+}
+
+#[test]
+fn validate_json_reports_only_the_versioned_document() {
+    let clean_source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let clean = validate_output(&clean_source, "dag_jsonl", &["--output-format", "json"]);
+    assert_eq!(clean.status.code(), Some(0));
+    assert!(stderr(&clean).is_empty());
+    let clean_json: GraphValidateReport =
+        serde_json::from_slice(&clean.stdout).expect("clean validation JSON");
+    assert_eq!(clean_json.schema_version, "aiperf.graph.validate.v1");
+    assert_eq!(clean_json.summary.errors, 0);
+    assert_eq!(clean_json.summary.warnings, 0);
+    assert!(
+        !String::from_utf8(clean.stdout)
+            .expect("stdout UTF-8")
+            .contains("OK:")
+    );
+
+    let invalid_source = fixture("tests/fixtures/graph_tools/mixed-anchor.conditional.yaml");
+    let invalid = validate_output(
+        &invalid_source,
+        "conditional_graph",
+        &["--output-format=json"],
+    );
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(stderr(&invalid).is_empty());
+    let invalid_json: GraphValidateReport =
+        serde_json::from_slice(&invalid.stdout).expect("invalid validation JSON");
+    assert_eq!(invalid_json.summary.errors, 1);
+    assert_eq!(invalid_json.issues[0].code, "mixed-anchor-fan-in");
+    assert!(matches!(
+        invalid_json.issues[0].severity,
+        GraphIssueSeverityReport::Error
+    ));
+    assert_eq!(invalid_json.issues[0].trace_id.as_deref(), Some("t-mixed"));
+    assert!(matches!(
+        invalid_json.issues[0].phase,
+        Some(GraphPlanPhaseReport::Profiling)
+    ));
+    assert_eq!(
+        invalid_json.issues[0].location.as_deref(),
+        Some("graph.nodes.c")
+    );
+    assert!(
+        !String::from_utf8(invalid.stdout)
+            .expect("stdout UTF-8")
+            .contains("FAIL:")
+    );
+}
+
+#[test]
+fn validate_json_malformed_input_stays_a_fatal_error_document() {
+    let fixture = tempfile::NamedTempFile::new().expect("create malformed fixture");
+    std::fs::write(fixture.path(), "not json").expect("write malformed fixture");
+    let output = validate_output(
+        fixture.path().to_str().expect("UTF-8 fixture path"),
+        "dag_jsonl",
+        &["--output-format", "json"],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    let fatal: GraphErrorReport = serde_json::from_slice(&output.stdout).expect("fatal JSON");
+    assert_eq!(fatal.schema_version, "aiperf.graph.error.v1");
 }
 
 #[test]

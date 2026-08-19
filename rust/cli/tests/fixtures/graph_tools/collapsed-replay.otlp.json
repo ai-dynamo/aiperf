@@ -1,0 +1,36 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "traceId": "TraceOne",
+              "spanId": "replay",
+              "name": "tool",
+              "kind": 1,
+              "startTimeUnixNano": "100",
+              "endTimeUnixNano": "200",
+              "attributes": [
+                {"key": "openinference.span.kind", "value": {"stringValue": "TOOL"}}
+              ]
+            },
+            {
+              "traceId": "TraceOne",
+              "spanId": "llm",
+              "parentSpanId": "replay",
+              "name": "chat",
+              "kind": 3,
+              "startTimeUnixNano": "200",
+              "endTimeUnixNano": "300",
+              "attributes": [
+                {"key": "openinference.span.kind", "value": {"stringValue": "LLM"}},
+                {"key": "input.value", "value": {"stringValue": "hello"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

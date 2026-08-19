@@ -1,0 +1,2 @@
+ERROR [mixed-anchor-fan-in] trace=t-mixed phase=profiling graph.nodes.c: node "c": mixed-anchor fan-in is unsupported: start-anchored edge "b" -> "c" (delay_after_predecessor_start_us) and completion edge "a" -> "c" arrive at the same node. A start-anchored in-edge must be its target's ONLY in-edge. (target=c)
+FAIL: 1 error(s), 0 warning(s).
