@@ -9,7 +9,7 @@ use std::{
     fs,
     io::{self, Read, Seek, SeekFrom, Write},
     os::unix::fs::PermissionsExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
     sync::{
@@ -569,8 +569,10 @@ fn native_graph_environment_adapter_start(
     image: &str,
     project: Option<&ComposeProjectId>,
     environment: &super::EnvironmentPlan,
+    agent_phase: &super::PhasePlan,
     environment_workdir: Option<&str>,
     workspace_root: &std::path::Path,
+    agent_deadline: Option<Duration>,
     containers: &mut Vec<String>,
     #[cfg(feature = "engine")] rollout_start: Option<NativeGraphLeaseRolloutStart>,
 ) -> Result<Option<DockerNativeGraphEnvironmentAdapterStart>, EvalExecutionError> {
@@ -620,6 +622,7 @@ fn native_graph_environment_adapter_start(
     .map_err(|_| EvalExecutionError::InvalidRecipe("NativeGraph adapter lifecycle deadlines"))?;
     let adapter_workspace = tempfile::tempdir()
         .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    initialize_native_graph_adapter_workspace(workspace_root, adapter_workspace.path())?;
     let adapter_container = format!("{container}-native-graph-adapter");
     let project = project.cloned().ok_or(EvalExecutionError::InvalidRecipe(
         "NativeGraph environment adapter ownership",
@@ -639,6 +642,16 @@ fn native_graph_environment_adapter_start(
     )?;
     containers.push(adapter_container.clone());
     runtime.start(&DockerStartRequest::new(&adapter_container))?;
+    prepare_native_graph_workdir_with_deadline(
+        runtime,
+        &adapter_container,
+        environment,
+        agent_phase,
+        EvalExecutionPhase::Agent,
+        environment_workdir,
+        no_network,
+        agent_deadline,
+    )?;
     let request = authorization
         .spawn_request(
             native_graph_adapter_runtime_argv(adapter)?,
@@ -680,6 +693,63 @@ fn native_graph_adapter_runtime_argv(
         ));
     }
     Ok(adapter.container_argv())
+}
+
+/// Creates the isolated adapter workspace from the task workspace snapshot.
+///
+/// The sidecar must not share the verifier's mutable mount, but it does need the same
+/// source-derived initial files. Only ordinary files and directories can cross this boundary;
+/// links or device nodes would make the host-side bind mount ambiguous.
+fn initialize_native_graph_adapter_workspace(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), EvalExecutionError> {
+    let source_metadata = fs::symlink_metadata(source)
+        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    if !source_metadata.is_dir() || source_metadata.file_type().is_symlink() {
+        return Err(EvalExecutionError::Materialization(
+            "NativeGraph adapter workspace source is not a directory".to_owned(),
+        ));
+    }
+    fs::set_permissions(destination, fs::Permissions::from_mode(0o755))
+        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+    copy_native_graph_workspace_tree(source, destination)
+}
+
+fn copy_native_graph_workspace_tree(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), EvalExecutionError> {
+    for entry in fs::read_dir(source)
+        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?
+    {
+        let entry =
+            entry.map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&source_path)
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        if metadata.file_type().is_symlink() {
+            return Err(EvalExecutionError::Materialization(
+                "NativeGraph adapter workspace source contains a symbolic link".to_owned(),
+            ));
+        }
+        if metadata.is_dir() {
+            fs::create_dir(&destination_path)
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            fs::set_permissions(&destination_path, fs::Permissions::from_mode(0o755))
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+            copy_native_graph_workspace_tree(&source_path, &destination_path)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &destination_path)
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        } else {
+            return Err(EvalExecutionError::Materialization(
+                "NativeGraph adapter workspace source contains a non-regular file".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 use super::docker_runtime::preflight_compose_configuration;
@@ -1032,16 +1102,24 @@ impl DockerProcessSandbox {
             let remaining = |deadline: &Option<Deadline>| {
                 deadline.as_ref().map(Deadline::remaining).transpose()
             };
-            prepare_workdir_with_deadline(
-                runtime,
-                &container,
-                environment,
-                plan.agent(),
-                EvalExecutionPhase::Agent,
-                environment_workdir,
-                baseline_network,
-                remaining(&agent_deadline)?,
-            )?;
+            // A rollout callback never executes in the task container. Keep this host-owned
+            // workspace untouched so sealed patches can be applied before verification; its
+            // isolated adapter sidecar prepares its own user-writable snapshot below.
+            if !package
+                .native_graph()
+                .is_some_and(|native_graph| native_graph.rollout().is_some())
+            {
+                prepare_workdir_with_deadline(
+                    runtime,
+                    &container,
+                    environment,
+                    plan.agent(),
+                    EvalExecutionPhase::Agent,
+                    environment_workdir,
+                    baseline_network,
+                    remaining(&agent_deadline)?,
+                )?;
+            }
             execute_planned_phase_with_deadline(
                 runtime,
                 &container,
@@ -1288,6 +1366,15 @@ impl DockerProcessSandbox {
             standard_task_roots(package, materialized_source.root())?;
         let workspace = tempfile::tempdir()
             .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        if package
+            .native_graph()
+            .is_some_and(|native_graph| native_graph.rollout().is_some())
+        {
+            // The host commits each sealed sidecar patch into this mount before verification.
+            // Keep it writable across the host/container UID boundary for the rollout lifetime.
+            fs::set_permissions(workspace.path(), fs::Permissions::from_mode(0o777))
+                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        }
         let safe_suffix = package
             .source_digest()
             .as_str()
@@ -1372,8 +1459,10 @@ impl DockerProcessSandbox {
                 &image,
                 adapter_project.as_ref(),
                 environment,
+                plan.agent(),
                 environment_workdir,
                 workspace.path(),
+                remaining(&agent_deadline)?,
                 &mut containers,
                 #[cfg(feature = "engine")]
                 rollout_start.take(),
@@ -2860,6 +2949,18 @@ fn prepare_workdir_arguments(workdir: &str, user: &str) -> Vec<String> {
         "/bin/sh".to_owned(),
         "-ec".to_owned(),
         "mkdir -p -- \"$1\"\nchown -- \"$2\" \"$1\"\nexec su -s /bin/sh -c 'test -w \"$0\"' -- \"$2\" \"$1\""
+            .to_owned(),
+        "--".to_owned(),
+        workdir.to_owned(),
+        user.to_owned(),
+    ]
+}
+
+fn prepare_native_graph_workdir_arguments(workdir: &str, user: &str) -> Vec<String> {
+    vec![
+        "/bin/sh".to_owned(),
+        "-ec".to_owned(),
+        "mkdir -p -- \"$1\"\nchmod 0777 -- \"$1\"\nexec su -s /bin/sh -c 'test -w \"$0\"' -- \"$2\" \"$1\""
             .to_owned(),
         "--".to_owned(),
         workdir.to_owned(),
@@ -4693,6 +4794,47 @@ fn prepare_workdir_with_deadline(
     )
 }
 
+/// Prepares a rollout workdir without transferring host workspace ownership to the container.
+///
+/// NativeGraph applies sealed patches from the host after each sidecar transition. The task user
+/// therefore needs write access while the host must retain the authority to replace declared
+/// workspace files. The isolated no-network rollout mount contains no model secrets.
+fn prepare_native_graph_workdir_with_deadline(
+    runtime: &dyn DockerRuntime,
+    container: &str,
+    environment: &super::EnvironmentPlan,
+    phase: &super::PhasePlan,
+    execution_phase: EvalExecutionPhase,
+    workdir: Option<&str>,
+    network_lease: &str,
+    deadline: Option<Duration>,
+) -> Result<(), EvalExecutionError> {
+    let Some(workdir) = workdir else {
+        return Ok(());
+    };
+    let Some(user) = phase.user().or(environment.user()) else {
+        return Ok(());
+    };
+    if user == "root" {
+        return Ok(());
+    }
+    runtime.exec(
+        &DockerExecRequest::new(
+            container,
+            prepare_native_graph_workdir_arguments(workdir, user),
+            Default::default(),
+            Default::default(),
+        )
+        .with_phase(
+            execution_phase,
+            Some("root"),
+            Some(workdir),
+            network_lease,
+            deadline.or(phase.timeout()),
+        ),
+    )
+}
+
 fn prepare_verifier_files_with_deadline(
     runtime: &dyn DockerRuntime,
     container: &str,
@@ -5472,9 +5614,10 @@ mod tests {
         compensate_late_create_with, compose_ownership_filters, compose_stop_arguments,
         copy_archive_stream_bounded, docker_cli_native_graph_no_egress_profile,
         docker_container_name, docker_image_name, drain_output_bounded, drive_docker_exec,
-        ensure_network_exists, parse_owned_adapter_container_id, read_optional_reward_archive,
-        read_reward_with_runtime, reap_fenced_docker_client, redact_secret_values,
-        reports_absent_container, run_docker_exec_without_deadline,
+        ensure_network_exists, initialize_native_graph_adapter_workspace,
+        parse_owned_adapter_container_id, prepare_native_graph_workdir_arguments,
+        read_optional_reward_archive, read_reward_with_runtime, reap_fenced_docker_client,
+        redact_secret_values, reports_absent_container, run_docker_exec_without_deadline,
     };
     use crate::{
         clock::SimClock,
@@ -5515,6 +5658,58 @@ mod tests {
                 .expect("root image executable argv"),
             ["/tools/environment.sh"]
         );
+    }
+
+    #[test]
+    fn native_graph_adapter_workspace_is_a_writable_private_copy_of_the_task_snapshot() {
+        let source = tempfile::tempdir().expect("fixture source workspace");
+        fs::create_dir(source.path().join("state")).expect("create source state directory");
+        fs::write(source.path().join("state/seed.txt"), b"source-derived\n")
+            .expect("write source workspace file");
+        let destination = tempfile::tempdir().expect("fixture adapter workspace");
+
+        initialize_native_graph_adapter_workspace(source.path(), destination.path())
+            .expect("adapter workspace snapshot initializes");
+
+        assert_eq!(
+            fs::read(destination.path().join("state/seed.txt")).expect("copied seed file"),
+            b"source-derived\n"
+        );
+        fs::write(destination.path().join("result.txt"), b"adapter-private\n")
+            .expect("adapter workspace root is writable");
+        assert!(
+            !source.path().join("result.txt").exists(),
+            "adapter writes must not alter the task workspace snapshot"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_graph_adapter_workspace_refuses_source_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let source = tempfile::tempdir().expect("fixture source workspace");
+        fs::write(source.path().join("outside.txt"), b"outside\n").expect("seed outside file");
+        symlink("outside.txt", source.path().join("linked.txt")).expect("create source link");
+        let destination = tempfile::tempdir().expect("fixture adapter workspace");
+
+        assert!(
+            initialize_native_graph_adapter_workspace(source.path(), destination.path()).is_err()
+        );
+        assert!(
+            !destination.path().join("linked.txt").exists(),
+            "a rejected source link cannot enter the adapter workspace"
+        );
+    }
+
+    #[test]
+    fn native_graph_workdir_keeps_host_patch_authority_while_granting_the_adapter_user_access() {
+        let arguments = prepare_native_graph_workdir_arguments("/work", "adapter");
+
+        assert!(arguments[2].contains("chmod 0777 -- \"$1\""));
+        assert!(!arguments[2].contains("chown"));
+        assert_eq!(arguments[4], "/work");
+        assert_eq!(arguments[5], "adapter");
     }
 
     struct RecordingLegacyStartSpawner {

@@ -31,7 +31,7 @@ pub(crate) enum NativeGraphWorkspacePatchError {
     /// A destination parent or existing destination is not a regular safe filesystem object.
     UnsafeDestination,
     /// A staging or replacement operation failed.
-    Io,
+    Io(&'static str),
 }
 
 impl Display for NativeGraphWorkspacePatchError {
@@ -44,7 +44,12 @@ impl Display for NativeGraphWorkspacePatchError {
             Self::DuplicatePath => "workspace patch contains a duplicate path",
             Self::UndeclaredPath => "workspace patch changes an undeclared path",
             Self::UnsafeDestination => "workspace patch destination is unsafe",
-            Self::Io => "workspace patch filesystem operation failed",
+            Self::Io(operation) => {
+                return write!(
+                    formatter,
+                    "workspace patch filesystem operation failed: {operation}"
+                );
+            }
         })
     }
 }
@@ -70,14 +75,15 @@ pub(crate) fn apply_workspace_patch(
     if declared.len() != mutable_paths.len() {
         return Err(NativeGraphWorkspacePatchError::DuplicatePath);
     }
-    let metadata = fs::symlink_metadata(root).map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|_| NativeGraphWorkspacePatchError::Io("workspace metadata"))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(NativeGraphWorkspacePatchError::UnsafeDestination);
     }
     let staging = tempfile::Builder::new()
         .prefix("native-graph-workspace-patch-")
         .tempdir_in(root)
-        .map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+        .map_err(|_| NativeGraphWorkspacePatchError::Io("create staging directory"))?;
     let mut archive = Archive::new(Cursor::new(archive_bytes));
     let mut seen = BTreeSet::new();
     let mut extracted_bytes = 0_u64;
@@ -113,16 +119,17 @@ pub(crate) fn apply_workspace_patch(
         let parent = destination
             .parent()
             .ok_or(NativeGraphWorkspacePatchError::InvalidPath)?;
-        fs::create_dir_all(parent).map_err(|_| NativeGraphWorkspacePatchError::Io)?;
-        let mut file =
-            fs::File::create(&destination).map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+        fs::create_dir_all(parent)
+            .map_err(|_| NativeGraphWorkspacePatchError::Io("create staging parent"))?;
+        let mut file = fs::File::create(&destination)
+            .map_err(|_| NativeGraphWorkspacePatchError::Io("create staged file"))?;
         let copied = std::io::copy(&mut entry.take(entry_bytes), &mut file)
             .map_err(|_| NativeGraphWorkspacePatchError::Archive)?;
         if copied != entry_bytes {
             return Err(NativeGraphWorkspacePatchError::Archive);
         }
         file.sync_all()
-            .map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+            .map_err(|_| NativeGraphWorkspacePatchError::Io("sync staged file"))?;
     }
     if seen.is_empty() {
         return Err(NativeGraphWorkspacePatchError::Archive);
@@ -142,7 +149,7 @@ fn commit_staged_patch(
     let rollback = tempfile::Builder::new()
         .prefix("native-graph-workspace-rollback-")
         .tempdir_in(root)
-        .map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+        .map_err(|_| NativeGraphWorkspacePatchError::Io("create rollback directory"))?;
     let mut committed = Vec::with_capacity(paths.len());
     for path in paths {
         let destination = root.join(&path);
@@ -152,10 +159,11 @@ fn commit_staged_patch(
             let parent = backup
                 .parent()
                 .ok_or(NativeGraphWorkspacePatchError::InvalidPath)?;
-            fs::create_dir_all(parent).map_err(|_| NativeGraphWorkspacePatchError::Io)?;
+            fs::create_dir_all(parent)
+                .map_err(|_| NativeGraphWorkspacePatchError::Io("create rollback parent"))?;
             if fs::rename(&destination, &backup).is_err() {
                 rollback_staged_patch(root, rollback.path(), &committed);
-                return Err(NativeGraphWorkspacePatchError::Io);
+                return Err(NativeGraphWorkspacePatchError::Io("back up destination"));
             }
         }
         if fs::rename(staging.join(&path), &destination).is_err() {
@@ -163,7 +171,7 @@ fn commit_staged_patch(
                 let _ = fs::rename(&backup, &destination);
             }
             rollback_staged_patch(root, rollback.path(), &committed);
-            return Err(NativeGraphWorkspacePatchError::Io);
+            return Err(NativeGraphWorkspacePatchError::Io("replace destination"));
         }
         committed.push((path, existed));
     }
@@ -218,7 +226,7 @@ fn validate_destination(root: &Path, path: &Path) -> Result<(), NativeGraphWorks
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(NativeGraphWorkspacePatchError::Io),
+            Err(_) => return Err(NativeGraphWorkspacePatchError::Io("inspect destination")),
         }
     }
     Ok(())

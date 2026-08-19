@@ -384,6 +384,7 @@ name = "example/harbor-native-graph-rollout"
 
 [environment]
 network = "no-network"
+user = "adapter"
 
 [agent]
 network = "no-network"
@@ -400,7 +401,7 @@ adapter_manifest = "adapters.toml"
         .expect("write instruction");
     fs::write(
         task.join("environment/Dockerfile"),
-        "FROM alpine:3.20\nCOPY environment.sh /environment/environment.sh\nRUN chmod 0755 /environment/environment.sh && mkdir -p /work /logs/verifier && printf rollout > /work/result.txt && chmod 0777 /work /logs/verifier\n",
+        "FROM alpine:3.20\nCOPY environment.sh /environment/environment.sh\nRUN adduser -D -u 10001 adapter && chmod 0755 /environment/environment.sh && mkdir -p /work /logs/verifier && printf rollout > /work/result.txt && chmod 0777 /work /logs/verifier\n",
     )
     .expect("write Dockerfile");
     fs::write(
