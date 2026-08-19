@@ -450,7 +450,9 @@ For multimodal workloads, `random_pool` supports per-modality batch-size flags t
 | `--audio-batch-size N` | `audio_batch_size` | 1 | Audio items per request. Set to `0` to disable audio inputs. |
 | `--video-batch-size N` | `video_batch_size` | 1 | Video items per request. Set to `0` to disable video inputs. |
 
-These flags are only valid with `--custom-dataset-type random_pool`. Using them with other file dataset types (e.g. `mooncake_trace`) is an error.
+These flags are only valid with `--custom-dataset-type random_pool`. Using them with other file dataset types (e.g. `mooncake_trace`) is an error. Batch sizes other than 1 are also rejected outright for directory-backed `random_pool` input (multiple named pool files): batching flattens every pool into one anonymous pool per modality, which would silently discard the per-file names (e.g. `query`/`passage`) that directory mode exists to preserve. Batch sizes only apply to single-file `random_pool` input.
+
+Batching does not preserve per-entry associations across modalities. If a pool entry pairs a specific text with a specific image, a batch size > 1 flattens each modality into an independent pool and samples from them separately, so the original text-image pairing is not preserved in the resulting request. Use `single_turn` instead of `random_pool` if exact pairing must be preserved.
 
 The `pool.jsonl` file above is text-only, so `--image-batch-size` would have no images to sample. A multimodal `random_pool` needs an `image` field in the pool entries:
 
