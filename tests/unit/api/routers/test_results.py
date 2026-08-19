@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from pytest import param
 from starlette.testclient import TestClient
 
+import aiperf.api.routers.results as results_module
 from aiperf.api.routers.results import ResultsRouter
 from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.models import MetricResult
@@ -185,6 +186,18 @@ class TestResultsEndpoint:
 
 
 class TestResultsUploadEndpoint:
+    def test_commit_uploaded_file_skips_fsync_on_windows(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        temporary_path = tmp_path / "records.uploading"
+        destination_path = tmp_path / "records.jsonl"
+        temporary_path.write_bytes(b"records")
+        monkeypatch.setattr(results_module, "IS_WINDOWS", True)
+
+        results_module._commit_uploaded_file(temporary_path, destination_path)
+
+        assert destination_path.read_bytes() == b"records"
+
     def test_upload_atomically_publishes_complete_raw_file(
         self,
         results_client: TestClient,

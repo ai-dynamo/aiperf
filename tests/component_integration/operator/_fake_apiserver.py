@@ -113,6 +113,7 @@ class FakeApiserver:
             "aiperf.operator.handlers.lifecycle.k8s_client",
             "aiperf.operator.handlers.create.k8s_client",
             "aiperf.operator.handlers.completion.k8s_client",
+            "aiperf.operator.handlers._job_identity.k8s_client",
         ]
         with contextlib.ExitStack() as stack:
             for site in k8s_client_binding_sites:

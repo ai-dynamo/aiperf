@@ -25,6 +25,7 @@ from aiperf.common.compression import (
     select_encoding,
     stream_file_compressed,
 )
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import MessageType
 from aiperf.common.hooks import on_message
 from aiperf.common.messages import ProcessAllResultsMessage
@@ -45,6 +46,10 @@ results_router = APIRouter(tags=["Results"])
 
 def _commit_uploaded_file(temporary_path: Path, destination_path: Path) -> None:
     """Fsync a completed upload, atomically publish it, then fsync its directory."""
+    if IS_WINDOWS:
+        os.replace(temporary_path, destination_path)
+        return
+
     file_descriptor = os.open(temporary_path, os.O_RDONLY)
     try:
         os.fsync(file_descriptor)
