@@ -2997,7 +2997,7 @@ async def test_profiling_setup_logs_rootless_lane_count(caplog):
 @pytest.mark.asyncio
 async def test_accelerated_warmup_context_overflow_short_circuit() -> None:
     trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
-    strategy, issuer, scheduler, _ = _make_strategy(
+    strategy, issuer, _, _ = _make_strategy(
         phase=CreditPhase.WARMUP,
         trajectories=[trajectory],
         cache_warmup_duration=600.0,
@@ -3025,3 +3025,6 @@ async def test_accelerated_warmup_context_overflow_short_circuit() -> None:
     recycled = issuer.issue_credit.await_args_list[1].args[0]
     assert recycled.turn_index == 0
     assert recycled.is_session_start is True
+
+    # Verify failed correlation ID is removed from handoff credits
+    assert baseline.x_correlation_id not in strategy._handoff_credits

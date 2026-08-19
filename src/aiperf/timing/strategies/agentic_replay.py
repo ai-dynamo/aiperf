@@ -794,6 +794,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                         f"context-overflow error from server"
                     )
                 )
+                self._handoff_credits.pop(credit.x_correlation_id, None)
+                self._handoff_returned_at_ns.pop(credit.x_correlation_id, None)
             if credit.agent_depth == 0 and not self._has_tree_registry:
                 await self._spawn_from_recycle_or_id(
                     credit.conversation_id,
@@ -1392,6 +1394,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     f"context-overflow error from server"
                 )
             )
+            self._handoff_credits.pop(credit.x_correlation_id, None)
+            self._handoff_returned_at_ns.pop(credit.x_correlation_id, None)
             if credit.agent_depth == 0 and not self._has_tree_registry:
                 await self._spawn_from_recycle_or_id(
                     credit.conversation_id,
