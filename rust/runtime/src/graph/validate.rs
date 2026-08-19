@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::graph::inspect::{GraphInspectionIssue, GraphInspectionSeverity};
-use crate::graph::model::{Count, END_NODE_ID, GraphRecord, START_NODE_ID};
+use crate::graph::model::{Count, END_NODE_ID, GraphRecord, PromptItem, START_NODE_ID};
 
 /// One structural problem found in a graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,10 +27,123 @@ impl std::error::Error for ValidationError {}
 
 /// Validate `graph`, returning every structural problem found (empty = valid).
 pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
-    validate_detailed(graph)
-        .into_iter()
-        .map(|issue| ValidationError(issue.message))
-        .collect()
+    validate_legacy(graph)
+}
+
+fn validate_legacy(graph: &GraphRecord) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    let node_ids: BTreeSet<&str> = graph.nodes.keys().map(String::as_str).collect();
+
+    for edge in &graph.edges {
+        if edge.source != START_NODE_ID && !node_ids.contains(edge.source.as_str()) {
+            errors.push(ValidationError(format!(
+                "edge source {:?} is not a declared node",
+                edge.source
+            )));
+        }
+        if edge.target != END_NODE_ID && !node_ids.contains(edge.target.as_str()) {
+            errors.push(ValidationError(format!(
+                "edge target {:?} is not a declared node",
+                edge.target
+            )));
+        }
+    }
+
+    for (nid, node) in &graph.nodes {
+        if !graph.state.contains_key(node.output()) {
+            errors.push(ValidationError(format!(
+                "node {nid:?} writes undeclared channel {:?}",
+                node.output()
+            )));
+        }
+        for channel in node.read_channels() {
+            if !graph.state.contains_key(channel) {
+                errors.push(ValidationError(format!(
+                    "node {nid:?} reads undeclared channel {:?}",
+                    channel
+                )));
+            }
+        }
+    }
+
+    let reachable = reachable_from_start(graph);
+    for nid in &node_ids {
+        if !reachable.contains(*nid) {
+            errors.push(ValidationError(format!(
+                "node {nid:?} is unreachable from START (it would never fire)"
+            )));
+        }
+    }
+
+    let mut writers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (nid, node) in &graph.nodes {
+        writers.entry(node.output()).or_default().push(nid);
+    }
+    let target = |chan: &str, count: &Count| -> usize {
+        match count {
+            Count::N(k) => (*k).max(0) as usize,
+            Count::Word(_) => writers.get(chan).map_or(0, Vec::len),
+        }
+    };
+    let fireable_producers = |chan: &str, fireable: &BTreeSet<&str>| -> usize {
+        writers.get(chan).map_or(0, |ws| {
+            ws.iter()
+                .filter(|writer| fireable.contains(**writer))
+                .count()
+        })
+    };
+
+    let mut fireable: BTreeSet<&str> = BTreeSet::new();
+    loop {
+        let mut changed = false;
+        for (nid, node) in &graph.nodes {
+            if !reachable.contains(nid.as_str()) || fireable.contains(nid.as_str()) {
+                continue;
+            }
+            let gated = node.input_requirements().iter().any(|requirement| {
+                fireable_producers(&requirement.channel, &fireable)
+                    < target(&requirement.channel, &requirement.count)
+            });
+            if !gated {
+                fireable.insert(nid.as_str());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for (nid, node) in &graph.nodes {
+        if !reachable.contains(nid.as_str()) || fireable.contains(nid.as_str()) {
+            continue;
+        }
+        for requirement in node.input_requirements() {
+            let channel = requirement.channel.as_str();
+            let needed = target(channel, &requirement.count);
+            let fireable_producers = fireable_producers(channel, &fireable);
+            if fireable_producers >= needed {
+                continue;
+            }
+            let all_producers = writers.get(channel).map_or(0, Vec::len);
+            let reason = if writers.get(channel).map(Vec::as_slice) == Some(&[nid.as_str()]) {
+                "it is the sole producer (self-deadlock)".to_string()
+            } else if all_producers < needed {
+                format!("only {all_producers} producer(s) exist")
+            } else {
+                format!(
+                    "only {fireable_producers} of {all_producers} producer(s) can fire (dependency cycle)"
+                )
+            };
+            errors.push(ValidationError(format!(
+                "node {nid:?} can never fire: input channel {channel:?} needs {needed} \
+producer(s) but {reason}"
+            )));
+            break;
+        }
+    }
+
+    errors
 }
 
 /// Validate `graph`, returning structural problems with stable inspection data.
@@ -78,15 +191,35 @@ pub fn validate_detailed(graph: &GraphRecord) -> Vec<GraphInspectionIssue> {
         }
     }
     for (nid, node) in &graph.nodes {
-        for (input_index, channel) in node.read_channels().iter().enumerate() {
-            if graph.state.contains_key(*channel) {
+        for (input_index, requirement) in node.input_requirements().iter().enumerate() {
+            if graph.state.contains_key(&requirement.channel) {
                 continue;
             }
             issues.push(issue(
                 "channel-read-undeclared",
                 Some(format!("graph.nodes.{nid}.inputs[{input_index}]")),
-                format!("node {nid:?} reads undeclared channel {:?}", channel),
-                [("node_id", nid.as_str()), ("channel", *channel)],
+                format!(
+                    "node {nid:?} reads undeclared channel {:?}",
+                    requirement.channel
+                ),
+                [("node_id", nid.as_str()), ("channel", &requirement.channel)],
+            ));
+        }
+        let Some(llm) = node.as_llm() else {
+            continue;
+        };
+        for (item_index, item) in llm.items.iter().enumerate() {
+            let PromptItem::Splice { splice } = item else {
+                continue;
+            };
+            if graph.state.contains_key(splice) {
+                continue;
+            }
+            issues.push(issue(
+                "channel-read-undeclared",
+                Some(format!("graph.nodes.{nid}.items[{item_index}].splice")),
+                format!("node {nid:?} reads undeclared channel {splice:?}"),
+                [("node_id", nid.as_str()), ("channel", splice)],
             ));
         }
     }
@@ -262,6 +395,81 @@ mod tests {
             .iter()
             .map(|issue| (issue.code.as_str(), issue.location.as_deref()))
             .collect()
+    }
+
+    #[test]
+    fn legacy_validation_preserves_message_order_and_cardinality() {
+        let g = graph(json!({
+            "state": {
+                "blocked_input": {"type":"messages","reducer":"add_messages"},
+                "good": {"type":"messages","reducer":"add_messages"}
+            },
+            "nodes": {
+                "blocked": {"node_type":"llm","prompt":[],"output":"good","inputs":[{"channel":"blocked_input","count":1}]},
+                "orphan": {"node_type":"llm","prompt":[],"output":"good"},
+                "reader": {"node_type":"llm","prompt":[],"output":"good","inputs":[{"channel":"missing_read","count":1}]},
+                "writer": {"node_type":"llm","prompt":[],"output":"missing_write"}
+            },
+            "edges": [
+                {"edge_type":"static","source":"ghost_source","target":"writer"},
+                {"edge_type":"static","source":"START","target":"ghost_target"},
+                {"edge_type":"static","source":"START","target":"writer"},
+                {"edge_type":"static","source":"START","target":"reader"},
+                {"edge_type":"static","source":"START","target":"blocked"}
+            ]
+        }));
+
+        assert_eq!(
+            validate(&g)
+                .into_iter()
+                .map(|error| error.0)
+                .collect::<Vec<_>>(),
+            vec![
+                "edge source \"ghost_source\" is not a declared node",
+                "edge target \"ghost_target\" is not a declared node",
+                "node \"reader\" reads undeclared channel \"missing_read\"",
+                "node \"writer\" writes undeclared channel \"missing_write\"",
+                "node \"orphan\" is unreachable from START (it would never fire)",
+                "node \"blocked\" can never fire: input channel \"blocked_input\" needs 1 producer(s) but only 0 producer(s) exist",
+                "node \"reader\" can never fire: input channel \"missing_read\" needs 1 producer(s) but only 0 producer(s) exist",
+            ],
+        );
+    }
+
+    #[test]
+    fn detailed_distinguishes_input_and_splice_read_locations() {
+        let g = graph(json!({
+            "state": {"output": {"type":"messages","reducer":"add_messages"}},
+            "nodes": {
+                "reader": {
+                    "node_type":"llm",
+                    "prompt":[],
+                    "output":"output",
+                    "inputs":[{"channel":"missing_input","count":1}],
+                    "items":[{"splice":"missing_splice"}]
+                }
+            },
+            "edges": [{"edge_type":"static","source":"START","target":"reader"}]
+        }));
+
+        assert_eq!(
+            issue_pairs(
+                &crate::graph::inspect::validate_detailed(&g)
+                    .into_iter()
+                    .filter(|issue| issue.code == "channel-read-undeclared")
+                    .collect::<Vec<_>>(),
+            ),
+            vec![
+                (
+                    "channel-read-undeclared",
+                    Some("graph.nodes.reader.inputs[0]")
+                ),
+                (
+                    "channel-read-undeclared",
+                    Some("graph.nodes.reader.items[0].splice")
+                ),
+            ],
+        );
     }
 
     #[test]
