@@ -28,9 +28,7 @@ use tokio::process::Command as TokioCommand;
 #[cfg(feature = "engine")]
 use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
 #[cfg(feature = "engine")]
-use crate::eval::native_graph::workspace_patch::{
-    NativeGraphWorkspacePatchError, apply_workspace_patch,
-};
+use crate::eval::native_graph::workspace_patch::apply_workspace_patch;
 #[cfg(feature = "engine")]
 use crate::eval::{
     EpisodeArtifactStore, FrozenArtifact, FrozenRolloutEvidence, NativeGraphAttemptAuthority,
@@ -255,14 +253,12 @@ impl DockerNativeGraphEnvironmentRolloutSession {
             self.workspace_patch.max_patch_bytes(),
         ) {
             Ok(()) => {}
-            Err(NativeGraphWorkspacePatchError::Rollback) => {
+            Err(error) => {
                 self.workspace_tainted = true;
-                return Err(EvalExecutionError::NativeGraphModel(
-                    "NativeGraph workspace patch recovery is incomplete; the rollout session is tainted"
-                        .to_owned(),
-                ));
+                return Err(EvalExecutionError::NativeGraphModel(format!(
+                    "NativeGraph workspace patch application failed; the rollout session is tainted: {error}"
+                )));
             }
-            Err(error) => return Err(EvalExecutionError::NativeGraphModel(error.to_string())),
         }
         self.accepted_patch_count = self.accepted_patch_count.checked_add(1).ok_or_else(|| {
             EvalExecutionError::NativeGraphModel(

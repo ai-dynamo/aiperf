@@ -30,14 +30,16 @@ use aiperf_runtime::eval::{
     HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
     HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource,
     HostEnvelope, HostMessage, LocalNativeGraphSuiteScheduler, ModelCapacityKey,
-    ModelEndpointIsolationProof, ModelIdentity, ModelRuntimeConfig, NativeGraphCompletedAttempt,
-    NativeGraphEnvironmentAdapterStart, NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback,
-    NativeGraphEpisodeExecutor, NativeGraphEpisodeLease, NativeGraphEpisodeRunner,
+    ModelEndpointIsolationProof, ModelIdentity, ModelRuntimeConfig, NativeGraphAttemptAuthority,
+    NativeGraphCompletedAttempt, NativeGraphEnvironmentAdapterStart,
+    NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor,
+    NativeGraphEpisodeLease, NativeGraphEpisodeRunner, NativeGraphLeaseRolloutStart,
     NativeGraphPackagePlan, NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity,
     ProtocolCapability, ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
     ResourceLeaseRequest, RewardDocument, RuntimeIdentity, ScoreVersion, SecretProvider,
-    SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult, regrade,
-    run_native_graph_episode_callback, run_resolved_suite,
+    SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult,
+    bind_native_graph_environment_stepper, regrade, run_native_graph_episode_callback,
+    run_resolved_suite,
 };
 use aiperf_runtime::{engine::application::Application, eval::EnvName};
 use async_trait::async_trait;
@@ -593,6 +595,187 @@ async fn docker_rollout_only_episode_appends_bounded_policy_lifecycle_evidence()
             .count(),
         1,
         "the lease reaps its trusted child exactly once"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn failed_workspace_patch_taints_the_live_session_before_any_followup_operation() {
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post({
+            let model_calls = Arc::clone(&model_calls);
+            move || {
+                let model_calls = Arc::clone(&model_calls);
+                async move {
+                    model_calls.fetch_add(1, Ordering::SeqCst);
+                    let frame = serde_json::json!({
+                        "id": "tainted-workspace-policy", "object": "chat.completion.chunk",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": r#"{"kind":"move","direction":"north"}"#},
+                            "finish_reason": null
+                        }]
+                    });
+                    (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        format!("data: {frame}\n\ndata: [DONE]\n\n"),
+                    )
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind tainted-workspace policy endpoint");
+    let address = listener
+        .local_addr()
+        .expect("read tainted-workspace policy address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve tainted-workspace policy endpoint");
+    });
+
+    let imported = import_rollout_only_graph_fixture(&format!("http://{address}"));
+    let lifecycle = native_graph_lifecycle_request();
+    let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)
+        .expect("resolve tainted-workspace trial");
+    let binding = imported
+        .package
+        .native_graph()
+        .expect("fixture has the NativeGraph package")
+        .model_bindings()
+        .first()
+        .expect("fixture has the selected policy binding");
+    let capacity_key = ModelCapacityKey::from_task_binding(&imported.task, binding);
+    let suite = NativeGraphSuiteManifest::new(vec![
+        SuiteTrialSpec::from_imported(
+            imported.clone(),
+            trial,
+            NonZeroUsize::new(1).expect("one tainted-workspace repetition"),
+            ResourceLeaseRequest::new(1, 64, BTreeMap::from([(capacity_key, 1)]))
+                .expect("finite tainted-workspace resources"),
+        )
+        .expect("tainted-workspace suite trial"),
+    ])
+    .expect("one tainted-workspace suite trial")
+    .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
+        b"tainted-workspace-suite",
+    )))
+    .expect("resolve tainted-workspace assignment");
+    let resolved_trial = suite
+        .trials()
+        .first()
+        .expect("fixture has one tainted-workspace resolved trial");
+    let application = Application::stock(format!("blake3:{}", "c".repeat(64)))
+        .expect("compose stock application");
+    let native = imported
+        .package
+        .native_graph()
+        .expect("fixture retains its NativeGraph package");
+    let runtime: ModelRuntimeConfig =
+        toml::from_str("version = 1\n").expect("empty model runtime configuration");
+    let mut engine_callback =
+        EngineNativeGraphEpisodeCallback::new(&application, native, &runtime, &EmptySecrets, None)
+            .expect("prepare the exact selected policy runtime");
+    let bound =
+        bind_native_graph_environment_stepper(application.product_registry(), resolved_trial)
+            .expect("bind the exact selected environment stepper");
+    engine_callback
+        .bind_live_rollout(
+            bound,
+            NativeGraphAttemptAuthority::from_resolved_trial(resolved_trial),
+            native
+                .rollout()
+                .expect("fixture retains its rollout plan")
+                .workspace_patch()
+                .clone(),
+        )
+        .expect("bind the sealed rollout start before Docker provisioning");
+    let observations = Rc::new(RefCell::new(Vec::new()));
+    let mut callback = TaintedWorkspacePatchCallback {
+        rollout_start: Some(
+            engine_callback
+                .take_lease_rollout_start()
+                .expect("callback transfers one sealed rollout start"),
+        ),
+        observations: Rc::clone(&observations),
+    };
+    let runtime_events = Rc::new(RefCell::new(Vec::new()));
+    let runtime = Rc::new(GraphDockerRuntime {
+        events: Rc::clone(&runtime_events),
+        adapter_spawner: Some(Rc::new(RolloutAdapterSpawner {
+            events: Rc::clone(&runtime_events),
+            workspace_patch: b"not a tar archive".to_vec(),
+        })),
+        ..GraphDockerRuntime::default()
+    });
+
+    let error = tokio::task::LocalSet::new()
+        .run_until(async {
+            DockerProcessSandbox::new()
+                .execute_native_graph_with_runtime(
+                    runtime.as_ref(),
+                    &HarborSandboxRecipe::for_standard_task(
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        Some("/work".to_owned()),
+                    )
+                    .expect("immutable tainted-workspace Docker recipe"),
+                    &imported.package,
+                    imported.package.execution_plan(),
+                    &EmptySecrets,
+                    &mut callback,
+                )
+                .await
+                .expect_err("a rejected workspace patch must fail the live rollout")
+        })
+        .await;
+
+    assert!(
+        error.to_string().contains("tainted"),
+        "the primary patch failure seals the session: {error}"
+    );
+    assert_eq!(
+        observations.borrow().len(),
+        4,
+        "the callback observed every session boundary"
+    );
+    assert_eq!(observations.borrow()[0], "step");
+    assert!(observations.borrow()[1].starts_with("reset: "));
+    assert!(observations.borrow()[2].starts_with("step: "));
+    assert!(observations.borrow()[3].starts_with("freeze: "));
+    assert_eq!(
+        model_calls.load(Ordering::SeqCst),
+        1,
+        "a tainted session must reject before another policy request"
+    );
+    for observation in observations.borrow().iter().skip(1) {
+        assert!(
+            observation.contains("tainted"),
+            "every follow-up live-session operation must refuse after a failed patch: {observation}"
+        );
+    }
+    let events = runtime.events.borrow();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| **event == "client-cancel")
+            .count(),
+        1,
+        "the failed patch cancels the isolated adapter exactly once"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| **event == "client-reap")
+            .count(),
+        1,
+        "the failed patch reaps the isolated adapter exactly once"
+    );
+    assert!(
+        !events.contains(&"verifier"),
+        "a tainted workspace cannot reach artifact collection or verification"
     );
 }
 
@@ -1200,6 +1383,7 @@ impl DockerRuntime for GraphDockerRuntime {
 
 struct RolloutAdapterSpawner {
     events: Rc<RefCell<Vec<&'static str>>>,
+    workspace_patch: Vec<u8>,
 }
 
 impl AdapterSpawner for RolloutAdapterSpawner {
@@ -1210,6 +1394,7 @@ impl AdapterSpawner for RolloutAdapterSpawner {
         Ok(Box::new(RolloutAdapterTransaction {
             process: Some(Box::new(RolloutAdapterChild {
                 events: Rc::clone(&self.events),
+                workspace_patch: self.workspace_patch.clone(),
                 ..RolloutAdapterChild::default()
             })),
         }))
@@ -1247,6 +1432,7 @@ struct RolloutAdapterChild {
     pending_read_parent: Option<String>,
     pending_download: Option<ArtifactDownloadHandle>,
     outputs: VecDeque<Vec<u8>>,
+    workspace_patch: Vec<u8>,
     references: Vec<FrozenArtifactReference>,
     is_reset_complete: bool,
 }
@@ -1325,7 +1511,7 @@ impl AdapterProcess for RolloutAdapterChild {
                 self.outputs = VecDeque::from([
                     b"rollout-transition-observation".to_vec(),
                     b"rollout-transition-info".to_vec(),
-                    Self::workspace_patch_archive(),
+                    self.workspace_patch.clone(),
                 ]);
                 self.request_output(host.episode)?;
             }
@@ -1768,6 +1954,7 @@ async fn execute_rollout_only_episode() -> RolloutOnlyExecution {
         events: Rc::clone(&runtime_events),
         adapter_spawner: Some(Rc::new(RolloutAdapterSpawner {
             events: runtime_events,
+            workspace_patch: RolloutAdapterChild::workspace_patch_archive(),
         })),
         ..GraphDockerRuntime::default()
     });
@@ -1824,6 +2011,52 @@ async fn execute_rollout_only_episode() -> RolloutOnlyExecution {
 struct CapturingExecutor {
     inner: DockerNativeGraphEpisodeExecutor,
     completed: Rc<RefCell<Option<NativeGraphCompletedAttempt>>>,
+}
+
+struct TaintedWorkspacePatchCallback {
+    rollout_start: Option<NativeGraphLeaseRolloutStart>,
+    observations: Rc<RefCell<Vec<String>>>,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeCallback for TaintedWorkspacePatchCallback {
+    async fn run(
+        &mut self,
+        lease: &mut dyn NativeGraphEpisodeLease,
+    ) -> Result<(), EvalExecutionError> {
+        let adapter = lease.environment_adapter_start()?;
+        adapter.start_rollout().await?;
+        let session = adapter.rollout_session()?;
+        let observation = session.reset().await?;
+        let primary = session
+            .step(&observation)
+            .await
+            .expect_err("the fixture's malformed workspace patch must be rejected");
+        self.observations.borrow_mut().push("step".to_owned());
+        let reset = session
+            .reset()
+            .await
+            .expect_err("a failed workspace patch must taint reset");
+        self.observations
+            .borrow_mut()
+            .push(format!("reset: {reset}"));
+        let step = session
+            .step(&observation)
+            .await
+            .expect_err("a failed workspace patch must taint step");
+        self.observations.borrow_mut().push(format!("step: {step}"));
+        let freeze = session
+            .freeze()
+            .expect_err("a failed workspace patch must taint freeze");
+        self.observations
+            .borrow_mut()
+            .push(format!("freeze: {freeze}"));
+        Err(primary)
+    }
+
+    fn take_lease_rollout_start(&mut self) -> Option<NativeGraphLeaseRolloutStart> {
+        self.rollout_start.take()
+    }
 }
 
 #[async_trait(?Send)]
