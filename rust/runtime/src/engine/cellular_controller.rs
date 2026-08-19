@@ -24,7 +24,7 @@ use crate::cellular::{
 use crate::clock::{Clock, RealClock, RealClockAnchor};
 use crate::config::model::dataset::{RecordedAgentGraphConfig, RecordedAgentSourceFormat};
 use crate::graph::recorded::agent_recording::{
-    ImportedAgentReadSet, detect_imported_agent_source, discover_imported_agent_read_set,
+    ImportedAgentReadSet, discover_imported_agent_read_set,
 };
 use crate::metrics_core::report::NativeReport;
 use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
@@ -2203,8 +2203,8 @@ fn build_dataset_serve_plan_from_envelope(
 }
 
 /// Decode the recorded-agent graph configuration once and return the exact imported
-/// source read set when the envelope selected an explicit imported format, or when a
-/// single JSONL auto source positively sniffs as an imported session.
+/// source read set when the envelope selects an imported format or a single JSONL
+/// auto source. Auto dispatch matches the graph loader before artifact binding.
 fn discover_imported_agent_read_set_from_envelope(
     envelope: &serde_json::Value,
     source: &Path,
@@ -2229,24 +2229,25 @@ fn discover_imported_agent_read_set_from_envelope(
     } else {
         replay_root.map_or_else(|| source.to_path_buf(), |root| root.join(source))
     };
-    if source_format == RecordedAgentSourceFormat::Auto
-        && source_candidate.is_dir()
-        && replay_root.is_some_and(|root| source_candidate != root)
-    {
-        bail!(
-            "recorded-agent directory imports require an explicit source_format; \
-             select codex or claude_code before cross-host cellular shipping"
-        );
-    }
-    let is_imported = matches!(
-        source_format,
-        RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode
-    ) || (source_format == RecordedAgentSourceFormat::Auto
-        && source_candidate.is_file()
-        && source_candidate
-            .extension()
-            .is_some_and(|extension| extension == "jsonl")
-        && detect_imported_agent_source(&source_candidate).is_ok());
+    let is_imported = match source_format {
+        RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode => true,
+        RecordedAgentSourceFormat::Auto => {
+            let metadata = std::fs::metadata(&source_candidate).with_context(|| {
+                format!(
+                    "reading recorded-agent input {}",
+                    source_candidate.display()
+                )
+            })?;
+            ensure!(
+                !metadata.is_dir(),
+                "directory imports require an explicit source_format"
+            );
+            source_candidate
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+        }
+        RecordedAgentSourceFormat::MiniSweAgent => false,
+    };
     if !is_imported {
         return Ok(None);
     }
@@ -3392,28 +3393,75 @@ mod tests {
     }
 
     #[test]
-    fn agent_session_exact_set_rejects_auto_directory_below_replay_root() {
-        let replay_root = tempfile::tempdir().unwrap();
-        let selected = replay_root.path().join("imported");
+    fn agent_session_exact_set_rejects_auto_directories_for_every_replay_root_relation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = temporary.path().join("imported");
         std::fs::create_dir_all(&selected).unwrap();
         std::fs::write(selected.join("secret.jsonl"), b"secret\n").unwrap();
 
-        let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
-            "type": "file",
-            "format": "agent_recording",
-            "path": selected,
-            "graph": {"replay_root": replay_root.path()}
-        }]}}});
-        let error = build_dataset_serve_plan_from_envelope(
-            &envelope,
-            Some("agent_recording"),
-            &selected,
-            Some(replay_root.path()),
-        )
-        .unwrap_err()
-        .to_string();
+        for (name, replay_root) in [
+            ("no replay root", None),
+            ("equal replay root", Some(selected.as_path())),
+            ("distinct replay root", Some(temporary.path())),
+        ] {
+            let graph = replay_root.map_or_else(
+                || serde_json::json!({}),
+                |root| serde_json::json!({"replay_root": root}),
+            );
+            let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+                "type": "file",
+                "format": "agent_recording",
+                "path": selected,
+                "graph": graph,
+            }]}}});
+            let error = build_dataset_serve_plan_from_envelope(
+                &envelope,
+                Some("agent_recording"),
+                &selected,
+                replay_root,
+            )
+            .expect_err(name)
+            .to_string();
 
-        assert!(error.contains("directory imports require an explicit source_format"));
+            assert!(
+                error.contains("directory imports require an explicit source_format"),
+                "{name}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_session_exact_set_propagates_auto_jsonl_detection_errors() {
+        let temporary = tempfile::tempdir().unwrap();
+
+        for (name, contents, expected) in [
+            ("malformed", "not json\n", "invalid JSON"),
+            (
+                "unrecognized",
+                "{\"type\":\"unrecognized\"}\n",
+                "no recognized source marker",
+            ),
+        ] {
+            let source = temporary.path().join(format!("{name}.jsonl"));
+            std::fs::write(&source, contents).unwrap();
+            let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+                "type": "file",
+                "format": "agent_recording",
+                "path": source,
+                "graph": {},
+            }]}}});
+
+            let error = build_dataset_serve_plan_from_envelope(
+                &envelope,
+                Some("agent_recording"),
+                &source,
+                None,
+            )
+            .expect_err(name);
+            let error = format!("{error:#}");
+
+            assert!(error.contains(expected), "{name}: {error}");
+        }
     }
 
     #[test]
