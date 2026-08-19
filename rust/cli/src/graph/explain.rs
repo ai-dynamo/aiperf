@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Task-4 explanation presentation boundary.
+//! Native graph explanation presentation boundary.
 
 use super::LoadedGraphInput;
 

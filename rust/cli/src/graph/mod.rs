@@ -16,16 +16,19 @@ use aiperf_runtime::engine::graph_input::{
 };
 use aiperf_runtime::engine::preparation::{LocalTokenizerError, load_local_tokenizer};
 use clap::builder::PossibleValuesParser;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use tokio::runtime::Builder;
 use tokio::task::LocalSet;
 
 use self::report::{GraphCommandError, GraphCommandErrorCode, GraphOperation};
 
-const BUILTIN_FORMAT_HELP: &str = "Supported built-in graph formats: dag_jsonl, conditional_graph, weka_trace, dynamo_trace, aiperf_trace, agent_recording, otlp_genai";
-
 #[derive(Debug, Parser)]
-#[command(name = "graph", disable_help_subcommand = true, subcommand_required = true, arg_required_else_help = true, after_help = BUILTIN_FORMAT_HELP)]
+#[command(
+    name = "graph",
+    disable_help_subcommand = true,
+    subcommand_required = true,
+    arg_required_else_help = true
+)]
 struct GraphCli {
     #[command(subcommand)]
     command: GraphCommand,
@@ -132,7 +135,7 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
     let full: Vec<String> = std::iter::once("graph".to_owned())
         .chain(argv.iter().cloned())
         .collect();
-    let cli = match GraphCli::try_parse_from(&full) {
+    let cli = match parse_graph_cli(&full) {
         Ok(cli) => cli,
         Err(error) => {
             if requested_json(argv) {
@@ -153,6 +156,19 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
         GraphCommand::Explain(args) => run_explain(args),
         GraphCommand::Visualize(args) => run_visualize(args),
     }
+}
+
+fn parse_graph_cli(argv: &[String]) -> Result<GraphCli, clap::Error> {
+    let command = GraphCli::command().after_help(graph_format_help());
+    let matches = command.try_get_matches_from(argv)?;
+    GraphCli::from_arg_matches(&matches)
+}
+
+fn graph_format_help() -> String {
+    format!(
+        "Supported built-in graph formats: {}",
+        GRAPH_FORMATS.join(", ")
+    )
 }
 
 fn run_validate(args: ValidateArgs) -> anyhow::Result<i32> {
@@ -212,27 +228,34 @@ fn run_visualize(args: VisualizeArgs) -> anyhow::Result<i32> {
 fn load(args: CommonArgs) -> Result<LoadedGraphInput, GraphCommandError> {
     let source = validate_local_source(&args.path)?;
     let source_text = source.display().to_string();
-    let tokenizer = load_local_tokenizer(Some(&args.tokenizer)).map_err(|error| match error {
-        LocalTokenizerError::Unsupported { .. } => GraphCommandError::new(
-            GraphCommandErrorCode::TokenizerUnsupported,
-            "tokenizer must be a built-in encoding or an existing local path",
+    let tokenizer = load_local_tokenizer(Some(&args.tokenizer)).map_err(|error| {
+        let code = match error {
+            LocalTokenizerError::Unsupported { .. } => GraphCommandErrorCode::TokenizerUnsupported,
+            LocalTokenizerError::Load { .. } => GraphCommandErrorCode::TokenizerLoadFailed,
+        };
+        let message = match code {
+            GraphCommandErrorCode::TokenizerUnsupported => {
+                "tokenizer must be a built-in encoding or an existing local path"
+            }
+            _ => "local tokenizer could not be loaded",
+        };
+        GraphCommandError::with_cause(
+            code,
+            message,
             Some(source_text.clone()),
-        ),
-        LocalTokenizerError::Load { .. } => GraphCommandError::new(
-            GraphCommandErrorCode::TokenizerLoadFailed,
-            "local tokenizer could not be loaded",
-            Some(source_text.clone()),
-        ),
+            anyhow::Error::new(error),
+        )
     })?;
     let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
     let runtime = Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|_| {
-            GraphCommandError::new(
+        .map_err(|error| {
+            GraphCommandError::with_cause(
                 GraphCommandErrorCode::InputLoweringFailed,
                 "could not initialize local graph inspection runtime",
                 Some(source_text.clone()),
+                anyhow::Error::new(error),
             )
         })?;
     let local = LocalSet::new();
@@ -247,12 +270,7 @@ fn load(args: CommonArgs) -> Result<LoadedGraphInput, GraphCommandError> {
         ),
     );
     let prepared = prepared.map_err(|error| {
-        let chain = error
-            .chain()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(" ");
-        let code = if chain.contains("decoding direct") || chain.contains("serde") {
+        let code = if is_input_decode_error(&error) {
             GraphCommandErrorCode::InputDecodeFailed
         } else {
             GraphCommandErrorCode::InputLoweringFailed
@@ -262,9 +280,23 @@ fn load(args: CommonArgs) -> Result<LoadedGraphInput, GraphCommandError> {
         } else {
             "graph input could not be lowered"
         };
-        GraphCommandError::new(code, message, Some(source_text))
+        GraphCommandError::with_cause(code, message, Some(source_text), error)
     })?;
     Ok(LoadedGraphInput { source, prepared })
+}
+
+fn is_input_decode_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<serde_json::Error>().is_some()
+            || matches!(
+                cause.to_string().to_ascii_lowercase().as_str(),
+                text if text.contains("decoding direct")
+                    || text.contains("decode")
+                    || text.contains("serde")
+                    || text.contains("deserializ")
+                    || text.contains("invalid json:")
+            )
+    })
 }
 
 fn validate_local_source(path: &Path) -> Result<PathBuf, GraphCommandError> {
@@ -290,19 +322,21 @@ fn validate_local_source(path: &Path) -> Result<PathBuf, GraphCommandError> {
                 Some(path.display().to_string()),
             ));
         }
-        Err(_) => {
-            return Err(GraphCommandError::new(
+        Err(error) => {
+            return Err(GraphCommandError::with_cause(
                 GraphCommandErrorCode::SourceNotFound,
                 "graph source does not exist locally",
                 Some(path.display().to_string()),
+                anyhow::Error::new(error),
             ));
         }
     }
-    path.canonicalize().map_err(|_| {
-        GraphCommandError::new(
+    path.canonicalize().map_err(|error| {
+        GraphCommandError::with_cause(
             GraphCommandErrorCode::SourceNotFound,
             "graph source could not be canonicalized",
             Some(path.display().to_string()),
+            anyhow::Error::new(error),
         )
     })
 }

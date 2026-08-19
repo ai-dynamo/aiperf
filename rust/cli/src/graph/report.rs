@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Stable fatal-error vocabulary for native graph commands.
 
+use std::error::Error;
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 /// Native graph operation selected by the caller.
@@ -98,6 +101,8 @@ pub struct GraphCommandError {
     pub message: String,
     /// Canonical local source if it was reached.
     pub source: Option<String>,
+    /// Opaque expected-failure chain retained for logging and callers only.
+    cause: Option<anyhow::Error>,
 }
 
 impl GraphCommandError {
@@ -111,6 +116,22 @@ impl GraphCommandError {
             code,
             message: bound_message(message.into()),
             source,
+            cause: None,
+        }
+    }
+
+    /// Build an expected command failure while retaining its opaque source chain.
+    pub fn with_cause(
+        code: GraphCommandErrorCode,
+        message: impl Into<String>,
+        source: Option<String>,
+        cause: anyhow::Error,
+    ) -> Self {
+        Self {
+            code,
+            message: bound_message(message.into()),
+            source,
+            cause: Some(cause),
         }
     }
 
@@ -126,6 +147,18 @@ impl GraphCommandError {
     }
 }
 
+impl fmt::Display for GraphCommandError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for GraphCommandError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.cause.as_ref().map(|cause| cause.as_ref())
+    }
+}
+
 /// Restrict public messages to 1024 Unicode scalar values.
 pub fn bound_message(message: String) -> String {
     const MAX_SCALARS: usize = 1024;
@@ -134,4 +167,29 @@ pub fn bound_message(message: String) -> String {
     }
     let prefix: String = message.chars().take(MAX_SCALARS - 1).collect();
     format!("{prefix}…")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::{GraphCommandError, GraphCommandErrorCode, GraphOperation};
+
+    #[test]
+    fn opaque_cause_is_retained_without_reaching_the_public_report() {
+        let error = GraphCommandError::with_cause(
+            GraphCommandErrorCode::InputLoweringFailed,
+            "graph input could not be lowered",
+            Some("/tmp/input.json".to_owned()),
+            anyhow::anyhow!("sensitive adapter context"),
+        );
+
+        assert_eq!(
+            error.source().map(ToString::to_string).as_deref(),
+            Some("sensitive adapter context")
+        );
+        let serialized = serde_json::to_string(&error.report(GraphOperation::Validate))
+            .expect("serialize public error report");
+        assert!(!serialized.contains("sensitive adapter context"));
+    }
 }
