@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -65,6 +66,21 @@ if not _stderr_logger.handlers:
 
 # Path to store the last benchmark info
 _LAST_BENCHMARK_FILE = Path.home() / ".aiperf" / "last_kube_benchmark.json"
+
+
+def format_age(created: str) -> str:
+    """Format a Kubernetes timestamp as a compact age string."""
+    if not created:
+        return "Unknown"
+    created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+    age_seconds = max((datetime.now(UTC) - created_dt).total_seconds(), 0)
+    if age_seconds < 60:
+        return f"{int(age_seconds)}s"
+    if age_seconds < 3600:
+        return f"{int(age_seconds / 60)}m"
+    if age_seconds < 86400:
+        return f"{int(age_seconds / 3600)}h"
+    return f"{int(age_seconds / 86400)}d"
 
 
 @dataclass(slots=True)
@@ -413,7 +429,6 @@ def print_aiperfjob_table(
         jobs: List of AIPerfJobInfo objects.
         wide: Show additional columns (model, endpoint, error).
     """
-    from aiperf.kubernetes.cli_helpers import format_age
     from aiperf.kubernetes.phase import Phase
 
     _phase_styles: dict[str, str] = {

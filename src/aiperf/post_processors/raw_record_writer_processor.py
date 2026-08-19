@@ -166,6 +166,8 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         except Exception as e:
             self.error(f"Failed to write raw record: {e!r}")
             self.dropped_record_count += 1
+            if self._write_error is None:
+                self._write_error = e
 
     async def observe(self, ctx: RecordObserverContext) -> None:
         """Write the raw request/response data for a single record."""
