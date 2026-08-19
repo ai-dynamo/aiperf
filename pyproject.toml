@@ -9,6 +9,9 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.hatch.build.targets.wheel.force-include]
+"deploy/helm/aiperf-operator" = "aiperf/kubernetes/helm/aiperf-operator"
+
 [project]
 name = "aiperf"
 version = "0.12.0"

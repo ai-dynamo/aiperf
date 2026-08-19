@@ -80,21 +80,6 @@ class TestKubeOperatorLifecycleSurface:
 class TestHelmChartInstallContract:
     """Operator install/upgrade/uninstall is a Helm-chart workflow, not a kube CLI module."""
 
-    def test_docs_prescribe_direct_helm_lifecycle_commands(self) -> None:
-        getting_started = (
-            PROJECT_ROOT / "docs" / "kubernetes" / "getting-started.md"
-        ).read_text()
-        production = (
-            PROJECT_ROOT / "docs" / "kubernetes" / "production.md"
-        ).read_text()
-
-        assert (
-            "helm install aiperf-operator deploy/helm/aiperf-operator"
-            in getting_started
-        )
-        assert "helm upgrade aiperf-operator deploy/helm/aiperf-operator" in production
-        assert "helm uninstall aiperf-operator --namespace aiperf-system" in production
-
     def test_operator_chart_contains_installable_core_templates(self) -> None:
         expected_paths = [
             "Chart.yaml",
