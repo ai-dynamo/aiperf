@@ -228,6 +228,14 @@ def build_cli_overrides(
     )
     _apply_scenario_overrides(out, cli)
 
+    if cli.goodput:
+        # Recipe-emitted SLOs win on key collision, matching
+        # convert_cli_to_aiperf: a goodput-style recipe owns the SLO contract
+        # for its run, so a stray --goodput must not override its thresholds.
+        slos = dict(cli.goodput)
+        slos.update(out.get("slos") or {})
+        out["slos"] = slos
+
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table
 
@@ -645,7 +653,15 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
 )
 
 # Fields routed onto the profiling phase that are not LOADGEN_FIELDS members.
-_NON_LOADGEN_PHASE_FIELDS: frozenset[str] = frozenset({"conversation_num"})
+_NON_LOADGEN_PHASE_FIELDS: frozenset[str] = frozenset(
+    {
+        "conversation_num",
+        "fixed_schedule",
+        "fixed_schedule_auto_offset",
+        "fixed_schedule_start_offset",
+        "fixed_schedule_end_offset",
+    }
+)
 
 
 def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
@@ -720,6 +736,12 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     ):
         target["grace_period"] = cli.benchmark_grace_period
 
+    if cli.fixed_schedule:
+        # _profiling_phase_type does this when building a phase from flags.
+        # Set it before _apply_phase_shaping_overrides so the fixed-schedule
+        # offset routes, which validate against the phase type, can apply.
+        target["type"] = PhaseType.FIXED_SCHEDULE
+
     _apply_agentic_replay_fields(target, cli)
     _apply_phase_shaping_overrides(target, cli)
 
@@ -748,6 +770,13 @@ def _apply_phase_shaping_overrides(target: dict[str, Any], cli: CLIConfig) -> No
     apply_cancellation(target, cli)
     if "type" in target:
         _apply_phase_specific_routes(target, cli)
+        # An explicit start offset contradicts auto_offset, whose default is
+        # True; build_profiling clears it the same way at
+        # _converter_profiling.py:531. Without this the user gets a raw
+        # "auto_offset cannot be True when start_offset is set" from
+        # validation for a combination the CLI-only path accepts.
+        if target["type"] == PhaseType.FIXED_SCHEDULE and "start_offset" in target:
+            target.setdefault("auto_offset", False)
 
 
 # CLI flags that shape the warmup phase. Derived from the section frozenset

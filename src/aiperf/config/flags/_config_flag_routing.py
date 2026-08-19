@@ -209,12 +209,20 @@ DATASET_SOURCE_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-# INPUT_FIELDS members that build_dataset does not carry -- they land
-# somewhere other than the dataset block (SLOs, phase timing), so routing
-# them is separate work and they stay loud for now.
+# INPUT_FIELDS members that build_dataset does not carry: they land on the
+# slos block or the profiling phase instead. They ARE routed (see
+# _apply_phase_loadgen_overrides and the goodput handling in
+# build_cli_overrides); this set exists to keep them out of the dataset
+# reconciliation, which would otherwise report them as inert because
+# build_dataset legitimately emits nothing for them.
 _INPUT_NOT_ON_DATASET: frozenset[str] = frozenset(
     {
+        # --goodput lands on the benchmark `slos` block.
         "goodput",
+        # The fixed-schedule flags select and shape the profiling phase, so
+        # they are routed by _apply_phase_loadgen_overrides rather than
+        # carried on the dataset -- and must stay out of the dataset
+        # reconciliation, which would otherwise report them as inert.
         "fixed_schedule",
         "fixed_schedule_auto_offset",
         "fixed_schedule_end_offset",
@@ -309,6 +317,10 @@ def _build_routed_under_config() -> frozenset[str]:
         | {"request_cancellation_rate", "request_cancellation_delay"}
         # Warmup phase shaping, applied by _apply_warmup_overrides.
         | {field for field in LOADGEN_FIELDS if field.startswith("warmup_")}
+        # Fixed-schedule phase selection and its offsets, and --goodput, which
+        # lands on the benchmark slos block.
+        | {field for field in INPUT_FIELDS if field.startswith("fixed_schedule")}
+        | {"goodput"}
     )
 
     # Whole-section builders consumed by build_cli_overrides: build_artifacts
@@ -368,9 +380,6 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         # Every other INPUT field now routes through _apply_dataset_overrides;
         # these would swap the dataset the YAML declared rather than shape it.
         *DATASET_SOURCE_FIELDS,
-        # ----- input: not carried on the dataset block -----
-        *_INPUT_NOT_ON_DATASET,
-        # ----- loadgen: warmup phase -----
         # ----- sweep flags that resolve cleanly and do nothing -----
         *SWEEP_FIELDS_NOT_ROUTED,
         # ----- outside every section frozenset -----
