@@ -111,6 +111,8 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
     - [Error Request Count](#error-request-count)
+    - [Cancelled Request Count](#cancelled-request-count)
+    - [Request Error Rate](#request-error-rate)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
@@ -1594,7 +1596,7 @@ good_request_count = sum(1 for r in records if r.all_slos_met)
 
 **Tag:** `good_request_fraction`
 
-The fraction of all attempted requests that satisfied every per-request SLO. Returns a ratio in `[0.0, 1.0]`. Errored requests count toward the denominator so a backend that drops traffic under load cannot look "good" simply because the surviving requests stayed under the latency budget.
+The fraction of all attempted requests that satisfied every per-request SLO. Returns a ratio in `[0.0, 1.0]`. Errored requests count toward the denominator so a backend that drops traffic under load cannot look "good" simply because the surviving requests stayed under the latency budget. Deliberate client cancellations are tracked separately and excluded.
 
 **Formula:**
 ```python
@@ -1606,7 +1608,7 @@ good_request_fraction = good_request_count / attempted if attempted > 0 else 0.0
 
 **Unit:** `RATIO` (0.0–1.0)
 
-**Required upstream metrics:** `good_request_count`, `request_count`. `error_request_count` is included in the denominator when present (it is `ERROR_ONLY` and absent on clean runs).
+**Required upstream metrics:** None. Each counter may legitimately be absent: valid-request counters on an all-error run, and `error_request_count` on a clean run.
 
 **Notes:**
 - Requires SLO thresholds to be configured (e.g., `--goodput`); without SLOs, `good_request_count` is always 0 and this metric is 0.
@@ -1732,11 +1734,45 @@ The total number of failed/error requests encountered during the benchmark. This
 
 **Formula:**
 ```python
-error_request_count = sum(1 for r in records if not r.valid)
+error_request_count = sum(1 for r in records if not r.valid and not r.was_cancelled)
 ```
 
 **Notes:**
-- Error rate can be computed as `error_request_count / (request_count + error_request_count)`.
+- Client-cancelled requests are counted separately and do not inflate server errors.
+
+---
+
+### Cancelled Request Count
+
+**Type:** [Aggregate Metric](#aggregate-metrics)
+
+The number of requests deliberately cancelled client-side via `--request-cancellation-rate`.
+
+**Formula:**
+```python
+cancelled_request_count = sum(1 for r in records if r.was_cancelled)
+```
+
+**Notes:**
+- Hidden from the console table; available in structured result exports.
+- Excluded from the Request Error Rate and Good Request Fraction denominators.
+
+---
+
+### Request Error Rate
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The percentage of non-cancelled completed requests that ended in error.
+
+**Formula:**
+```python
+request_error_rate = 100.0 * error_request_count / (request_count + error_request_count)
+```
+
+**Notes:**
+- Omitted only when both successful and error counts are zero.
+- Deliberate client cancellations do not affect the rate.
 
 ---
 

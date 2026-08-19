@@ -180,6 +180,8 @@ For canonical names, `kind` is optional. A phase named `warmup` defaults to `kin
 
 Named phases are useful for long soaks with multiple profiling windows. See [Multi-Phase Workflows](multi-phase-workflows.md) for a full example, multiple warmup phases, artifacts, sweeps, and seamless transitions.
 
+`kind` is the sole source of truth for result inclusion: `kind: warmup` is excluded from final results and `kind: profiling` is included. The older per-phase `exclude_from_results` (alias `excludeFromResults`) switch is deprecated — it is still accepted so older configs keep loading, but it is ignored and logs a warning. Remove it and set `kind` instead.
+
 ```yaml
 benchmark:
   phases:
@@ -316,11 +318,12 @@ benchmark:
         stddev: "{{ isl_target // 10 }}"        # 51 (integer division)
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       concurrency: "{{ base_concurrency // 2 }}"  # 8
       requests: "{{ base_concurrency * 5 }}"      # 80
-      exclude_from_results: true
     - name: profiling
+      kind: profiling
       type: gamma
       rate: 30
       duration: "{{ test_duration }}"
@@ -343,12 +346,13 @@ A typical benchmark is a quick warmup followed by the real measurement. CLI warm
 benchmark:
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       concurrency: 8
       requests: 50
-      exclude_from_results: true   # don't pollute the report
 
     - name: profiling
+      kind: profiling
       type: poisson
       rate: 30.0
       duration: 120
@@ -356,7 +360,11 @@ benchmark:
       grace_period: 60             # finish in-flight requests after duration
 ```
 
-Each phase is a complete arrival pattern in its own right, with its own concurrency, duration, and arrival shape (`concurrency`, `constant`, `poisson`, `gamma`, `fixed_schedule`, `user_centric`, ...).
+Each phase is a complete arrival pattern in its own right, with its own
+concurrency, duration, and arrival shape (`concurrency`, `constant`, `poisson`,
+`gamma`, `fixed_schedule`, `user_centric`, ...). Phase `kind` owns result
+semantics: warmup data remains available under that phase, while profiling
+phases contribute to profiling aggregates.
 
 ## Adaptive scale in YAML
 
@@ -476,6 +484,40 @@ The precedence order, lowest to highest:
 1. Defaults baked into AIPerf
 2. Values in the YAML file
 3. Explicit CLI flags
+
+For Jinja-backed sweeps, this precedence is applied before every variation is
+materialized. An explicit CLI flag that targets a templated field replaces the
+template for every variation, while unrelated templates remain live and render
+against each variation's `sweep.parameters` values. This keeps `aiperf profile
+--config`, `aiperf kube profile --config`, and `aiperf config expand` on the
+same raw-envelope semantics.
+
+The overlay covers endpoint/model selection, the sole dataset and its content
+modifiers, the unique profiling phase (including rate shape, ramps, and request
+cancellation), artifacts, SLOs, telemetry/export integrations, multi-run and
+sweep controls, runtime/logging, tokenizer, accuracy, and scenario locks.
+Explicit false, zero, and empty values still count as overrides; CLI defaults
+that were not passed do not replace YAML values. The one exception is the
+bare-boolean control hooks `--reset-kv-cache` and `--server-profiler`: passing
+them with no sub-flags means "enable this hook", so a YAML-supplied `path`,
+`startPath`, `stopPath`, or `timeoutSeconds` is preserved rather than reset to
+defaults. Pass the matching sub-flag (for example `--reset-kv-cache-path`) to
+change one of those values from the CLI.
+
+`--request-rate` and `--arrival-pattern` do not convert a YAML `user_centric`
+profiling phase into an open-loop one. A `user_centric` phase already carries a
+`rate`, so `--request-rate` sets it in place and the phase keeps its `users`
+count. `--arrival-pattern` is logged as ignored for that phase because
+user-centric load has no arrival distribution, and `--arrival-smoothness` is
+rejected outright. Change the phase `type` in YAML to `poisson`, `gamma`, or
+`constant` if you want open-loop arrivals.
+
+Warmup flags do not rewrite an existing phase list because inserting or
+choosing a warmup phase is ambiguous in an advanced multi-phase workflow. Set
+warmup phases in YAML. Likewise, if more than one phase has `kind: profiling`,
+put phase-local values in YAML so the target is explicit. Command-operation
+flags such as `--config` itself and Kubernetes deployment/manage options are
+consumed by their commands rather than merged into `benchmark:`.
 
 ## Where to go next
 
