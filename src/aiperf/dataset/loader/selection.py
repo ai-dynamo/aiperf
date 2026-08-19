@@ -31,6 +31,7 @@ class SelectionStats:
     rejected_by_maxctx: int = 0
     largest_observed: int = 0
     smallest_observed: int = 0
+    """The minimum peak context among scanned candidates."""
     eligible: int = 0
     loaded: int = 0
 
@@ -52,7 +53,7 @@ def filter_then_cap(
         stats.scanned += 1
         if peak > stats.largest_observed:
             stats.largest_observed = peak
-        if stats.smallest_observed == 0 or peak < stats.smallest_observed:
+        if stats.scanned == 1 or peak < stats.smallest_observed:
             stats.smallest_observed = peak
         if max_context_length is not None and peak > max_context_length:
             stats.rejected_by_maxctx += 1
@@ -86,8 +87,33 @@ def log_selection_summary(
     )
 
 
+def raise_on_empty_selection(
+    stats: SelectionStats,
+    *,
+    source: str,
+    num_dataset_entries: int | None,
+    max_context_length: int | None,
+) -> None:
+    """Raise DatasetLoaderError when no candidates are selected, with a size hint."""
+    from aiperf.common.exceptions import DatasetLoaderError
+
+    msg = (
+        f"No eligible traces in {source} after "
+        f"filter-then-cap (scanned {stats.scanned}, "
+        f"--max-context-length={max_context_length}, "
+        f"--num-dataset-entries={num_dataset_entries})."
+    )
+    if stats.smallest_observed > 0:
+        msg += (
+            f" Smallest trace requires {stats.smallest_observed} tokens; "
+            f"raise --max-context-length to at least that (e.g. --max-context-length {stats.smallest_observed}) to admit any trace."
+        )
+    raise DatasetLoaderError(msg)
+
+
 __all__ = [
     "SelectionStats",
     "filter_then_cap",
     "log_selection_summary",
+    "raise_on_empty_selection",
 ]

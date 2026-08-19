@@ -11,6 +11,7 @@ import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.loader.selection import SelectionStats, filter_then_cap
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 from tests.unit.dataset.loader.conftest import make_weka_run
@@ -153,8 +154,6 @@ def test_weka_file_loader_all_rejected_raises_with_smallest_observed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from aiperf.common.exceptions import DatasetLoaderError
-
     root = _write_weka_dir(tmp_path / "weka")
     # Set max_context_length very small so all are rejected (smallest trace peak context is 110)
     run = make_weka_run(
@@ -174,8 +173,8 @@ def test_weka_file_loader_all_rejected_raises_with_smallest_observed(
         )
 
     err_msg = str(exc_info.value)
-    assert "All traces rejected by filter-then-cap" in err_msg
+    assert "No eligible traces in weka_trace" in err_msg
     assert (
-        "Smallest trace requires 110 tokens; raise --max-context-length to at least that to admit any trace."
+        "Smallest trace requires 110 tokens; raise --max-context-length to at least that (e.g. --max-context-length 110) to admit any trace."
         in err_msg
     )
