@@ -835,6 +835,7 @@ class RangeRatioDistribution:
         self._isl_mean = config.isl_mean
         self._osl_mean = config.osl_mean
         self._config = config
+        self._warned_cache_exhausted = False
 
         self._input_low, self._input_high = config.compute_input_bounds()
         self._output_low, self._output_high = config.compute_output_bounds()
@@ -866,12 +867,29 @@ class RangeRatioDistribution:
         self._preseed_rng: object = g
 
     def sample(self) -> tuple[int, int]:
-        """Sample a single (ISL, OSL) pair with independent uniform integers."""
+        """Sample a single (ISL, OSL) pair with independent uniform integers.
+
+        Reads the preseed cache when one is active, falling back to live draws
+        once it is exhausted. The cache is sized by conversation count but read
+        once per turn, so any multi-turn run outruns it; degrading keeps the run
+        alive instead of raising ``IndexError`` from the dataset composer.
+        Alignment with the reference implementation is already lost past that
+        point -- vLLM has no notion of turns -- so there is nothing left to
+        preserve by failing hard.
+        """
         cache = getattr(self, "_isl_cache", None)
-        if cache is not None:
+        if cache is not None and self._cache_idx < len(cache):
             idx = self._cache_idx
             self._cache_idx = idx + 1
             return self._isl_cache[idx], self._osl_cache[idx]
+        if cache is not None and not self._warned_cache_exhausted:
+            self._warned_cache_exhausted = True
+            logger.warning(
+                f"Preseeded ISL/OSL cache exhausted after {len(cache)} draws "
+                "(sized by conversation count, consumed once per turn). "
+                "Falling back to live sampling; prompts past this point no "
+                f"longer match {type(self)._style} for the same seed."
+            )
         isl = int(self._rng.integers(self._input_low, self._input_high + 1))
         osl = int(self._rng.integers(self._output_low, self._output_high + 1))
         return isl, osl
@@ -898,13 +916,33 @@ class RangeRatioDistribution:
 
 
 class _LegacyRNG:
-    """Thin wrapper over ``numpy.random`` (MT19937 global state) exposing the
-    same ``.integers()`` interface as ``numpy.random.Generator`` (PCG64).
+    """Thin wrapper over a legacy ``numpy.random.RandomState`` (MT19937)
+    exposing the same ``.integers()`` interface as ``numpy.random.Generator``
+    (PCG64).
 
     Used by :class:`SGLangRangeRatioDistribution` so that preseed callers
     (including :meth:`PromptGenerator.preseed`) can treat both RNG backends
     identically without branching on algorithm.
+
+    Holds its own ``RandomState`` rather than driving module-level
+    ``numpy.random``: ``RandomState(s)`` yields draws identical to
+    ``numpy.random.seed(s)`` followed by module-level calls, so SGLang MT19937
+    parity is preserved, but the stream is private. That keeps a second
+    distribution (or any future global ``numpy.random`` user) from perturbing
+    an in-flight preseed stream, which matters because the same instance is
+    handed to :meth:`PromptGenerator.preseed` and then read again for BPE
+    top-up draws long after ``preseed`` returns.
     """
+
+    def __init__(self, seed: int | None = None) -> None:
+        """Create a private MT19937 stream.
+
+        Args:
+            seed: Seed in ``[0, 2**32 - 1]``, or None to draw from OS entropy.
+                Callers with a wider seed must fold it first (see
+                :func:`~aiperf.common.random_generator.fold_seed_to_uint32`).
+        """
+        self._state = np.random.RandomState(seed)
 
     def integers(
         self,
@@ -913,8 +951,8 @@ class _LegacyRNG:
         size: int | None = None,
     ) -> np.ndarray:
         if high is None:
-            return np.random.randint(0, low, size=size)
-        return np.random.randint(low, high, size=size)
+            return self._state.randint(0, low, size=size)
+        return self._state.randint(low, high, size=size)
 
 
 class SGLangRangeRatioDistribution(RangeRatioDistribution):
@@ -929,19 +967,19 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
         lower = int(input_len * ratio)
         upper = input_len
 
-    Overrides :meth:`preseed` to use ``numpy.random`` (MT19937 global state)
-    instead of ``numpy.random.default_rng`` (PCG64), matching the draw order
-    in SGLang's ``benchmark_serving.py``::
+    Overrides :meth:`preseed` to use MT19937 (via a private
+    ``numpy.random.RandomState``) instead of ``numpy.random.default_rng``
+    (PCG64), matching the draw order in SGLang's ``benchmark_serving.py``::
 
         input_lens  = np.random.randint(lower, upper + 1, size=n)
         output_lens = np.random.randint(lower, upper + 1, size=n)
         offsets     = np.random.randint(0, vocab_size, size=n)
 
-    When ``seed`` is provided, the global RNG is seeded before the draws so
-    that aiperf runs are reproducible even though SGLang itself never seeds
-    it before sampling. The seed is folded through
+    When ``seed`` is provided, the MT19937 stream is seeded before the draws
+    so that aiperf runs are reproducible even though SGLang itself never seeds
+    before sampling. The seed is folded through
     :func:`~aiperf.common.random_generator.fold_seed_to_uint32` first, since
-    ``numpy.random.seed`` rejects the 64-bit seeds that adaptive sweeps and
+    the legacy seeder rejects the 64-bit seeds that adaptive sweeps and
     ``multi_run.vary_seed_per_trial`` produce.
     """
 
@@ -955,13 +993,11 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
         super().__init__(config)
 
     def preseed(self, n: int, seed: int | None) -> None:
-        if seed is not None:
-            # numpy's legacy global seeder caps at 2**32-1, but run seeds are
-            # 64-bit on the adaptive-sweep and vary_seed_per_trial paths (and
-            # --random-seed is only bounded ge=0), so fold before seeding.
-            # The PCG64 parent path takes 64-bit seeds directly and needs no fold.
-            np.random.seed(rng.fold_seed_to_uint32(seed))
-        g = _LegacyRNG()
+        # numpy's legacy MT19937 seeder caps at 2**32-1, but run seeds are
+        # 64-bit on the adaptive-sweep and vary_seed_per_trial paths (and
+        # --random-seed is only bounded ge=0), so fold before seeding.
+        # The PCG64 parent path takes 64-bit seeds directly and needs no fold.
+        g = _LegacyRNG(rng.fold_seed_to_uint32(seed) if seed is not None else None)
         self._isl_cache = g.integers(
             self._input_low, self._input_high + 1, size=n
         ).tolist()

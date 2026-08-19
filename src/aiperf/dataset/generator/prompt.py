@@ -95,6 +95,7 @@ class PromptGenerator(BaseGenerator):
         self._allowed_tokens: list[int] = []
         self._random_request_index: int = 0
         self._prefix_prompts: list[str] = []
+        self._warned_offsets_exhausted = False
 
         # Conversation context prompts
         self._shared_system_prompt: str | None = None
@@ -600,10 +601,24 @@ class PromptGenerator(BaseGenerator):
                 raise NotInitializedError("Random vocab corpus is not initialized.")
             n = len(self._allowed_tokens)
             offset_cache = getattr(self, "_offset_cache", None)
-            if offset_cache is not None:
+            if offset_cache is not None and self._offset_idx < len(offset_cache):
                 offset = offset_cache[self._offset_idx]
                 self._offset_idx += 1
             else:
+                # The cache holds one offset per conversation but is read once
+                # per generate_prompt call, so multi-turn, --prompt-batch-size
+                # > 1, prefix pools and user-context prompts all outrun it.
+                # Degrade to a live draw rather than raising IndexError out of
+                # the dataset composer; reference alignment is already lost.
+                if offset_cache is not None and not self._warned_offsets_exhausted:
+                    self._warned_offsets_exhausted = True
+                    self.warning(
+                        f"Preseeded offset cache exhausted after "
+                        f"{len(offset_cache)} draws (sized by conversation "
+                        "count, consumed once per prompt). Falling back to "
+                        "live sampling; prompts past this point no longer "
+                        "match the reference implementation for the same seed."
+                    )
                 offset = int(self._corpus_rng.integers(0, n))
             idx = self._random_request_index
             self._random_request_index += 1

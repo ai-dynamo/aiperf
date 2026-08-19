@@ -897,6 +897,48 @@ class TestRangeRatioDistribution:
             isl, _ = dist.sample()
             assert low <= isl <= high
 
+    def test_sample_past_cache_falls_back_to_live_draw(self):
+        """The ISL/OSL cache is sized per conversation but read once per turn,
+        so any multi-turn run outruns it. Exhaustion must degrade to a live
+        draw rather than raising `IndexError` out of the dataset composer.
+        """
+        dist = _vllm(64, 16, 0.3)
+        dist.preseed(2, 42)
+
+        cached = [dist.sample() for _ in range(2)]
+        assert len(cached) == 2
+
+        for _ in range(4):
+            isl, osl = dist.sample()
+            assert dist.input_bounds[0] <= isl <= dist.input_bounds[1]
+            assert dist.output_bounds[0] <= osl <= dist.output_bounds[1]
+
+    def test_sample_past_cache_warns_once(self, caplog):
+        """Degradation is otherwise invisible, so it warns exactly once."""
+        import logging
+
+        dist = _vllm(64, 16, 0.3)
+        dist.preseed(1, 42)
+        dist.sample()
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5):
+                dist.sample()
+
+        exhausted = [
+            r for r in caplog.records if "ISL/OSL cache exhausted" in r.getMessage()
+        ]
+        assert len(exhausted) == 1
+        assert "consumed once per turn" in exhausted[0].getMessage()
+
+    def test_sample_within_cache_is_unaffected(self):
+        """Draws inside the cache still come from the preseed stream in order."""
+        dist = _vllm(64, 16, 0.3)
+        dist.preseed(4, 42)
+        expected = list(zip(dist._isl_cache, dist._osl_cache, strict=True))
+
+        assert [dist.sample() for _ in range(4)] == expected
+
     def test_preseed_exposes_rng_for_offset_draws(self):
         """_preseed_rng after preseed is advanced past ISL+OSL draws."""
         dist = _vllm(128, 128, 0.3)
@@ -1020,6 +1062,37 @@ class TestRangeRatioDistributionSglangMode:
         np.random.seed(42)
         expected_isl = np.random.randint(512, 1025, size=4).tolist()
         assert dist._isl_cache == expected_isl
+
+    def test_preseed_does_not_mutate_global_numpy_state(self):
+        """MT19937 parity is achieved with a private RandomState, not by
+        seeding module-level `numpy.random`, so an unrelated global consumer
+        sees the same stream before and after a preseed."""
+        np.random.seed(7)
+        baseline = np.random.randint(0, 1000, size=3).tolist()
+
+        np.random.seed(7)
+        _sglang(1024, 128, 0.5).preseed(64, 12345)
+        after = np.random.randint(0, 1000, size=3).tolist()
+
+        assert after == baseline
+
+    def test_concurrent_distributions_have_independent_streams(self):
+        """Two preseeded distributions must not consume each other's draws.
+
+        With module-level `numpy.random` the second preseed reseeded the shared
+        state, so `a`'s deferred `_preseed_rng` reads (offset + BPE top-up draws
+        in PromptGenerator) silently continued from `b`'s stream.
+        """
+        a = _sglang(1024, 128, 0.5)
+        a.preseed(4, 42)
+        solo = a._preseed_rng.integers(0, 50000, size=3).tolist()
+
+        a2, b2 = _sglang(1024, 128, 0.5), _sglang(1024, 128, 0.5)
+        a2.preseed(4, 42)
+        b2.preseed(4, 99)
+        interleaved = a2._preseed_rng.integers(0, 50000, size=3).tolist()
+
+        assert interleaved == solo
 
 
 class TestParseRandomRangeRatio:

@@ -985,3 +985,58 @@ class TestPromptGeneratorRandomCorpus:
 
         # SGLANG does not exclude special tokens — full range(vocab_size)
         assert len(generator._allowed_tokens) == 100
+
+    def test_offset_cache_exhaustion_falls_back_to_live_draw(self, random_generator):
+        """Preseed sizes the offset cache per conversation but it is read once
+        per prompt, so multi-turn / batched / prefix-pool runs outrun it.
+
+        Exhaustion must degrade to a live `_corpus_rng` draw rather than raising
+        `IndexError` out of the dataset composer.
+        """
+        import numpy as np
+
+        random_generator.preseed(2, np.random.default_rng(42))
+        assert len(random_generator._offset_cache) == 2
+
+        for _ in range(2):
+            random_generator._sample_tokens(4)
+        assert random_generator._offset_idx == 2
+
+        # Third read is past the end of the cache.
+        tokens = random_generator._sample_tokens(4)
+
+        assert len(tokens) == 4
+        assert all(t in random_generator._allowed_tokens for t in tokens)
+
+    def test_offset_cache_exhaustion_warns_once(self, random_generator, caplog):
+        """The fallback is silent-by-default degradation otherwise, so it warns
+        exactly once naming the cause rather than per prompt."""
+        import logging
+
+        import numpy as np
+
+        random_generator.preseed(1, np.random.default_rng(42))
+        random_generator._sample_tokens(4)
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5):
+                random_generator._sample_tokens(4)
+
+        exhausted = [
+            r for r in caplog.records if "offset cache exhausted" in r.getMessage()
+        ]
+        assert len(exhausted) == 1
+        assert "consumed once per prompt" in exhausted[0].getMessage()
+
+    def test_offset_cache_within_bounds_is_unaffected(self, random_generator):
+        """Reads inside the cache must still come from the preseed stream."""
+        import numpy as np
+
+        random_generator.preseed(4, np.random.default_rng(42))
+        expected = list(random_generator._offset_cache)
+
+        random_generator._sample_tokens(4)
+        random_generator._sample_tokens(4)
+
+        assert random_generator._offset_idx == 2
+        assert random_generator._offset_cache == expected
