@@ -453,10 +453,14 @@ def _apply_random_pool_batch_size_overrides(
     Zero is a valid value (``image/audio/video_batch_size=0`` disables that modality).
 
     Only applies to ``type: file`` datasets. Synthetic and public datasets have no
-    ``format`` field at all, and the generic ``build_cli_overrides`` deep-merge
-    (which runs before this function) already routes these same flags onto
-    ``SyntheticDataset.prompts/images/audio/video.batch_size`` -- so this function
-    must not touch or reject them here.
+    ``format`` field at all, so this function must not touch or reject them here.
+    Note this does NOT mean the flags take effect there: nothing in the YAML+CLI
+    path currently routes batch-size flags onto ``SyntheticDataset.prompts/
+    images/audio/video.batch_size`` (``_apply_input_overrides`` only handles
+    ``headers``/``extra_inputs``), so a batch-size flag against a synthetic YAML
+    dataset is silently ignored -- a pre-existing gap this function does not
+    close and is out of scope to fix here. The CLI-only path (no ``--config``)
+    applies these flags correctly; only the YAML+CLI overlay drops them.
 
     For a ``type: file`` dataset that isn't ``format: random_pool``, a ``ValueError``
     is raised with a message that names the flag and the format, matching the
