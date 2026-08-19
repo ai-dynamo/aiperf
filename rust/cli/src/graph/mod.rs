@@ -174,7 +174,17 @@ fn graph_format_help() -> String {
 fn run_validate(args: ValidateArgs) -> anyhow::Result<i32> {
     let requires_arrival_offsets = matches!(args.pace, Some(Pace::Arrival));
     match load(args.common) {
-        Ok(input) => validate::run(input, args.output_format, requires_arrival_offsets),
+        Ok(input) => match validate::run(input, args.output_format, requires_arrival_offsets) {
+            Ok(status) => Ok(status),
+            Err(error) => {
+                write_error(
+                    GraphOperation::Validate,
+                    &error,
+                    matches!(args.output_format, TextJsonFormat::Json),
+                );
+                Ok(2)
+            }
+        },
         Err(error) => {
             write_error(
                 GraphOperation::Validate,

@@ -166,7 +166,21 @@ pub struct GraphIssueSummary {
 impl GraphValidateReport {
     /// Convert one retained inspection into the stable validation wire document.
     pub fn from_inspection(source: String, inspection: GraphBundleInspection) -> Self {
-        let issues = flatten_issues(&inspection)
+        let GraphBundleInspection {
+            format,
+            root_count,
+            node_count,
+            mut issues,
+            programs,
+            ..
+        } = inspection;
+        for program in programs {
+            issues.extend(program.profiling.issues);
+            if let Some(warmup) = program.warmup {
+                issues.extend(warmup.issues);
+            }
+        }
+        let issues = issues
             .into_iter()
             .map(GraphIssueReport::from)
             .collect::<Vec<_>>();
@@ -183,9 +197,9 @@ impl GraphValidateReport {
         Self {
             schema_version: "aiperf.graph.validate.v1".to_owned(),
             source,
-            format: inspection.format,
-            root_count: inspection.root_count,
-            node_count: inspection.node_count,
+            format,
+            root_count,
+            node_count,
             issues,
             summary,
         }
@@ -210,17 +224,6 @@ impl From<GraphInspectionIssue> for GraphIssueReport {
             context: issue.context,
         }
     }
-}
-
-fn flatten_issues(inspection: &GraphBundleInspection) -> Vec<GraphInspectionIssue> {
-    let mut issues = inspection.issues.clone();
-    for program in &inspection.programs {
-        issues.extend(program.profiling.issues.clone());
-        if let Some(warmup) = &program.warmup {
-            issues.extend(warmup.issues.clone());
-        }
-    }
-    issues
 }
 
 /// An expected graph-command failure retained until dispatcher-owned rendering.
@@ -302,9 +305,61 @@ pub fn bound_message(message: String) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::error::Error as _;
 
-    use super::{GraphCommandError, GraphCommandErrorCode, GraphOperation};
+    use aiperf_runtime::graph::inspect::{
+        GraphBundleInspection, GraphInspectionIssue, GraphInspectionSeverity, GraphPlanInspection,
+        GraphPlanPhase, GraphPlanSummary, GraphProgramInspection, GraphTopologyInspection,
+        ReadinessInspection,
+    };
+
+    use super::{
+        GraphCommandError, GraphCommandErrorCode, GraphIssueSeverityReport, GraphOperation,
+        GraphPlanPhaseReport, GraphValidateReport,
+    };
+
+    fn issue(
+        code: &str,
+        severity: GraphInspectionSeverity,
+        trace_id: Option<&str>,
+        phase: Option<GraphPlanPhase>,
+        location: Option<&str>,
+        context: BTreeMap<String, String>,
+    ) -> GraphInspectionIssue {
+        GraphInspectionIssue {
+            code: code.to_owned(),
+            severity,
+            trace_id: trace_id.map(str::to_owned),
+            phase,
+            location: location.map(str::to_owned),
+            message: format!("{code} message"),
+            context,
+        }
+    }
+
+    fn plan(phase: GraphPlanPhase, issues: Vec<GraphInspectionIssue>) -> GraphPlanInspection {
+        GraphPlanInspection {
+            phase,
+            summary: GraphPlanSummary {
+                node_count: 0,
+                llm_node_count: 0,
+                tool_node_count: 0,
+                edge_count: 0,
+                channel_count: 0,
+            },
+            topology: GraphTopologyInspection {
+                nodes: Vec::new(),
+                channels: Vec::new(),
+                edges: Vec::new(),
+            },
+            issues,
+            readiness: ReadinessInspection::Unavailable {
+                code: "test".to_owned(),
+                message: "test only".to_owned(),
+            },
+        }
+    }
 
     #[test]
     fn opaque_cause_is_retained_without_reaching_the_public_report() {
@@ -322,5 +377,88 @@ mod tests {
         let serialized = serde_json::to_string(&error.report(GraphOperation::Validate))
             .expect("serialize public error report");
         assert!(!serialized.contains("sensitive adapter context"));
+    }
+
+    #[test]
+    fn validation_report_flattens_bundle_then_profiling_then_warmup() {
+        let bundle_issue = issue(
+            "bundle-warning",
+            GraphInspectionSeverity::Warning,
+            None,
+            None,
+            None,
+            BTreeMap::from([
+                ("z".to_owned(), "last".to_owned()),
+                ("a".to_owned(), "first".to_owned()),
+            ]),
+        );
+        let profiling_issue = issue(
+            "profiling-error",
+            GraphInspectionSeverity::Error,
+            Some("trace-1"),
+            Some(GraphPlanPhase::Profiling),
+            Some("graph.nodes.p"),
+            BTreeMap::new(),
+        );
+        let warmup_issue = issue(
+            "warmup-warning",
+            GraphInspectionSeverity::Warning,
+            Some("trace-1"),
+            Some(GraphPlanPhase::Warmup),
+            Some("graph.nodes.w"),
+            BTreeMap::new(),
+        );
+        let inspection = GraphBundleInspection {
+            format: "conditional_graph".to_owned(),
+            root_count: 1,
+            node_count: 2,
+            segment_count: 0,
+            issues: vec![bundle_issue],
+            programs: vec![GraphProgramInspection {
+                trace_id: "trace-1".to_owned(),
+                driver: "static_graph".to_owned(),
+                arrival_offset_ns: None,
+                has_environment: false,
+                has_replay: false,
+                profiling: plan(GraphPlanPhase::Profiling, vec![profiling_issue]),
+                warmup: Some(plan(GraphPlanPhase::Warmup, vec![warmup_issue])),
+            }],
+        };
+
+        let report = GraphValidateReport::from_inspection("/tmp/source".to_owned(), inspection);
+
+        assert_eq!(
+            report
+                .issues
+                .iter()
+                .map(|issue| issue.code.as_str())
+                .collect::<Vec<_>>(),
+            ["bundle-warning", "profiling-error", "warmup-warning"]
+        );
+        assert!(matches!(
+            report.issues[0].severity,
+            GraphIssueSeverityReport::Warning
+        ));
+        assert_eq!(report.issues[0].trace_id, None);
+        assert!(report.issues[0].phase.is_none());
+        assert_eq!(report.issues[0].location, None);
+        assert_eq!(
+            report.issues[0]
+                .context
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["a", "z"]
+        );
+        assert!(matches!(
+            report.issues[2].phase,
+            Some(GraphPlanPhaseReport::Warmup)
+        ));
+        assert_eq!(report.summary.errors, 1);
+        assert_eq!(report.summary.warnings, 2);
+        let json = serde_json::to_value(report).expect("serialize validation report");
+        assert!(json["issues"][0]["trace_id"].is_null());
+        assert!(json["issues"][0]["phase"].is_null());
+        assert!(json["issues"][0]["location"].is_null());
     }
 }

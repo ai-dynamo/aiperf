@@ -3,12 +3,13 @@
 //! Native graph validation presentation boundary.
 
 use std::fmt::Write as _;
-use std::io::{self, Write as _};
+use std::io::{self, Write};
 
 use aiperf_runtime::graph::inspect::{GraphInspectionOptions, inspect_bundle};
 
 use super::report::{
-    GraphIssueReport, GraphIssueSeverityReport, GraphPlanPhaseReport, GraphValidateReport,
+    GraphCommandError, GraphCommandErrorCode, GraphIssueReport, GraphIssueSeverityReport,
+    GraphPlanPhaseReport, GraphValidateReport,
 };
 use super::{LoadedGraphInput, TextJsonFormat};
 
@@ -17,7 +18,7 @@ pub(super) fn run(
     input: LoadedGraphInput,
     output_format: TextJsonFormat,
     requires_arrival_offsets: bool,
-) -> anyhow::Result<i32> {
+) -> Result<i32, GraphCommandError> {
     let LoadedGraphInput { source, prepared } = input;
     let inspection = inspect_bundle(
         &prepared.bundle,
@@ -26,22 +27,40 @@ pub(super) fn run(
         },
     );
     let report = GraphValidateReport::from_inspection(source.display().to_string(), inspection);
-    match output_format {
-        TextJsonFormat::Text => print_text(&report)?,
-        TextJsonFormat::Json => print_json(&report)?,
-    }
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    render_report(&report, output_format, &mut output)
+        .map_err(|error| output_write_error(&report.source, error))?;
     Ok(if report.summary.errors > 0 { 1 } else { 0 })
 }
 
-fn print_json(report: &GraphValidateReport) -> anyhow::Result<()> {
-    let stdout = io::stdout();
-    let mut output = stdout.lock();
-    serde_json::to_writer_pretty(&mut output, report)?;
+fn output_write_error(source: &str, cause: anyhow::Error) -> GraphCommandError {
+    GraphCommandError::with_cause(
+        GraphCommandErrorCode::OutputWriteFailed,
+        "could not write graph validation report",
+        Some(source.to_owned()),
+        cause,
+    )
+}
+
+fn render_report<W: Write>(
+    report: &GraphValidateReport,
+    output_format: TextJsonFormat,
+    output: &mut W,
+) -> anyhow::Result<()> {
+    match output_format {
+        TextJsonFormat::Text => render_text(report, output),
+        TextJsonFormat::Json => render_json(report, output),
+    }
+}
+
+fn render_json<W: Write>(report: &GraphValidateReport, output: &mut W) -> anyhow::Result<()> {
+    serde_json::to_writer_pretty(&mut *output, report)?;
     output.write_all(b"\n")?;
     Ok(())
 }
 
-fn print_text(report: &GraphValidateReport) -> anyhow::Result<()> {
+fn render_text<W: Write>(report: &GraphValidateReport, output: &mut W) -> anyhow::Result<()> {
     let mut rendered = String::new();
     for issue in &report.issues {
         rendered.push_str(&issue_line(issue));
@@ -61,7 +80,7 @@ fn print_text(report: &GraphValidateReport) -> anyhow::Result<()> {
         "{status}: {error_count}, {} warning(s).\n",
         report.summary.warnings,
     ));
-    io::stdout().lock().write_all(rendered.as_bytes())?;
+    output.write_all(rendered.as_bytes())?;
     Ok(())
 }
 
@@ -103,4 +122,71 @@ fn issue_message(issue: &GraphIssueReport) -> String {
         || issue.message.clone(),
         |code| format!("adapter warning {code}"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::io::{self, Write};
+
+    use super::{TextJsonFormat, output_write_error, render_report};
+    use crate::graph::report::{
+        GraphIssueReport, GraphIssueSeverityReport, GraphIssueSummary, GraphOperation,
+        GraphValidateReport,
+    };
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "test broken pipe",
+            ))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn report() -> GraphValidateReport {
+        GraphValidateReport {
+            schema_version: "aiperf.graph.validate.v1".to_owned(),
+            source: "/tmp/graph.json".to_owned(),
+            format: "dag_jsonl".to_owned(),
+            root_count: 1,
+            node_count: 1,
+            issues: vec![GraphIssueReport {
+                code: "test".to_owned(),
+                severity: GraphIssueSeverityReport::Error,
+                trace_id: None,
+                phase: None,
+                location: None,
+                message: "test issue".to_owned(),
+                context: BTreeMap::new(),
+            }],
+            summary: GraphIssueSummary {
+                errors: 1,
+                warnings: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn output_write_failure_is_a_typed_graph_error() {
+        let report = report();
+        let mut writer = FailingWriter;
+        let cause = render_report(&report, TextJsonFormat::Json, &mut writer)
+            .expect_err("failing writer must reject JSON output");
+        let error = output_write_error(&report.source, cause);
+
+        assert_eq!(error.code.as_str(), "output-write-failed");
+        assert_eq!(error.message, "could not write graph validation report");
+        assert_eq!(error.source.as_deref(), Some("/tmp/graph.json"));
+        let value = serde_json::to_value(error.report(GraphOperation::Validate))
+            .expect("serialize output failure");
+        assert_eq!(value["schema_version"], "aiperf.graph.error.v1");
+        assert_eq!(value["code"], "output-write-failed");
+    }
 }
