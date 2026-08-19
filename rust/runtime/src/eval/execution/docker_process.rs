@@ -622,7 +622,11 @@ fn native_graph_environment_adapter_start(
     .map_err(|_| EvalExecutionError::InvalidRecipe("NativeGraph adapter lifecycle deadlines"))?;
     let adapter_workspace = tempfile::tempdir()
         .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-    initialize_native_graph_adapter_workspace(workspace_root, adapter_workspace.path())?;
+    initialize_native_graph_adapter_workspace(
+        workspace_root,
+        adapter_workspace.path(),
+        rollout.workspace_patch().mutable_paths(),
+    )?;
     let adapter_container = format!("{container}-native-graph-adapter");
     let project = project.cloned().ok_or(EvalExecutionError::InvalidRecipe(
         "NativeGraph environment adapter ownership",
@@ -703,6 +707,7 @@ fn native_graph_adapter_runtime_argv(
 fn initialize_native_graph_adapter_workspace(
     source: &Path,
     destination: &Path,
+    mutable_paths: &[String],
 ) -> Result<(), EvalExecutionError> {
     let source_metadata = fs::symlink_metadata(source)
         .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
@@ -713,7 +718,68 @@ fn initialize_native_graph_adapter_workspace(
     }
     fs::set_permissions(destination, fs::Permissions::from_mode(0o755))
         .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-    copy_native_graph_workspace_tree(source, destination)
+    copy_native_graph_workspace_tree(source, destination)?;
+    grant_native_graph_adapter_mutable_paths(destination, mutable_paths)
+}
+
+fn grant_native_graph_adapter_mutable_paths(
+    root: &Path,
+    mutable_paths: &[String],
+) -> Result<(), EvalExecutionError> {
+    for mutable_path in mutable_paths {
+        let relative = Path::new(mutable_path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(EvalExecutionError::Materialization(
+                "NativeGraph adapter mutable workspace path is invalid".to_owned(),
+            ));
+        }
+        let mut current = root.to_path_buf();
+        let components = relative.components().collect::<Vec<_>>();
+        for (index, component) in components.iter().enumerate() {
+            let std::path::Component::Normal(component) = component else {
+                return Err(EvalExecutionError::Materialization(
+                    "NativeGraph adapter mutable workspace path is invalid".to_owned(),
+                ));
+            };
+            current.push(component);
+            let is_leaf = index + 1 == components.len();
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(EvalExecutionError::Materialization(
+                        "NativeGraph adapter mutable workspace path contains a symbolic link"
+                            .to_owned(),
+                    ));
+                }
+                Ok(metadata) if is_leaf && metadata.is_file() => {
+                    fs::set_permissions(&current, fs::Permissions::from_mode(0o666))
+                        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                }
+                Ok(metadata) if !is_leaf && metadata.is_dir() => {
+                    fs::set_permissions(&current, fs::Permissions::from_mode(0o777))
+                        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                }
+                Ok(_) => {
+                    return Err(EvalExecutionError::Materialization(
+                        "NativeGraph adapter mutable workspace path has an unsafe source type"
+                            .to_owned(),
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && !is_leaf => {
+                    fs::create_dir(&current)
+                        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                    fs::set_permissions(&current, fs::Permissions::from_mode(0o777))
+                        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(EvalExecutionError::Materialization(error.to_string())),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn copy_native_graph_workspace_tree(
@@ -5668,7 +5734,7 @@ mod tests {
             .expect("write source workspace file");
         let destination = tempfile::tempdir().expect("fixture adapter workspace");
 
-        initialize_native_graph_adapter_workspace(source.path(), destination.path())
+        initialize_native_graph_adapter_workspace(source.path(), destination.path(), &[])
             .expect("adapter workspace snapshot initializes");
 
         assert_eq!(
@@ -5694,12 +5760,50 @@ mod tests {
         let destination = tempfile::tempdir().expect("fixture adapter workspace");
 
         assert!(
-            initialize_native_graph_adapter_workspace(source.path(), destination.path()).is_err()
+            initialize_native_graph_adapter_workspace(source.path(), destination.path(), &[])
+                .is_err()
         );
         assert!(
             !destination.path().join("linked.txt").exists(),
             "a rejected source link cannot enter the adapter workspace"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_graph_adapter_workspace_grants_a_nonroot_writer_only_the_sealed_nested_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = tempfile::tempdir().expect("fixture source workspace");
+        fs::create_dir(source.path().join("state")).expect("create source state directory");
+        fs::write(source.path().join("state/result.txt"), b"seed\n")
+            .expect("write sealed mutable source file");
+        fs::write(source.path().join("state/private.txt"), b"private\n")
+            .expect("write immutable source file");
+        let destination = tempfile::tempdir().expect("fixture adapter workspace");
+
+        initialize_native_graph_adapter_workspace(
+            source.path(),
+            destination.path(),
+            &["state/result.txt".to_owned()],
+        )
+        .expect("adapter workspace initializes");
+
+        let state_mode = fs::metadata(destination.path().join("state"))
+            .expect("sealed parent exists")
+            .permissions()
+            .mode();
+        let result_mode = fs::metadata(destination.path().join("state/result.txt"))
+            .expect("sealed file exists")
+            .permissions()
+            .mode();
+        let private_mode = fs::metadata(destination.path().join("state/private.txt"))
+            .expect("immutable file exists")
+            .permissions()
+            .mode();
+        assert_eq!(state_mode & 0o777, 0o777);
+        assert_eq!(result_mode & 0o222, 0o222);
+        assert_ne!(private_mode & 0o222, 0o222);
     }
 
     #[test]

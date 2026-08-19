@@ -32,6 +32,8 @@ pub(crate) enum NativeGraphWorkspacePatchError {
     UnsafeDestination,
     /// A staging or replacement operation failed.
     Io(&'static str),
+    /// A failed replacement could not restore every prior destination.
+    Rollback,
 }
 
 impl Display for NativeGraphWorkspacePatchError {
@@ -49,6 +51,9 @@ impl Display for NativeGraphWorkspacePatchError {
                     formatter,
                     "workspace patch filesystem operation failed: {operation}"
                 );
+            }
+            Self::Rollback => {
+                "workspace patch replacement failed and recovery could not restore prior files"
             }
         })
     }
@@ -162,30 +167,45 @@ fn commit_staged_patch(
             fs::create_dir_all(parent)
                 .map_err(|_| NativeGraphWorkspacePatchError::Io("create rollback parent"))?;
             if fs::rename(&destination, &backup).is_err() {
-                rollback_staged_patch(root, rollback.path(), &committed);
-                return Err(NativeGraphWorkspacePatchError::Io("back up destination"));
+                return match rollback_staged_patch(root, rollback.path(), &committed) {
+                    Ok(()) => Err(NativeGraphWorkspacePatchError::Io("back up destination")),
+                    Err(()) => Err(NativeGraphWorkspacePatchError::Rollback),
+                };
             }
         }
         if fs::rename(staging.join(&path), &destination).is_err() {
-            if existed {
-                let _ = fs::rename(&backup, &destination);
-            }
-            rollback_staged_patch(root, rollback.path(), &committed);
-            return Err(NativeGraphWorkspacePatchError::Io("replace destination"));
+            let restored_current = !existed || fs::rename(&backup, &destination).is_ok();
+            let restored_previous =
+                rollback_staged_patch(root, rollback.path(), &committed).is_ok();
+            return if restored_current && restored_previous {
+                Err(NativeGraphWorkspacePatchError::Io("replace destination"))
+            } else {
+                Err(NativeGraphWorkspacePatchError::Rollback)
+            };
         }
         committed.push((path, existed));
     }
     Ok(())
 }
 
-fn rollback_staged_patch(root: &Path, rollback: &Path, committed: &[(PathBuf, bool)]) {
+fn rollback_staged_patch(
+    root: &Path,
+    rollback: &Path,
+    committed: &[(PathBuf, bool)],
+) -> Result<(), ()> {
+    let mut complete = true;
     for (path, existed) in committed.iter().rev() {
         let destination = root.join(path);
-        let _ = fs::remove_file(&destination);
-        if *existed {
-            let _ = fs::rename(rollback.join(path), destination);
+        if fs::remove_file(&destination)
+            .is_err_and(|error| error.kind() != std::io::ErrorKind::NotFound)
+        {
+            complete = false;
+        }
+        if *existed && fs::rename(rollback.join(path), destination).is_err() {
+            complete = false;
         }
     }
+    if complete { Ok(()) } else { Err(()) }
 }
 
 fn normalized_path(path: &Path) -> Result<PathBuf, NativeGraphWorkspacePatchError> {
@@ -234,11 +254,11 @@ fn validate_destination(root: &Path, path: &Path) -> Result<(), NativeGraphWorks
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::PathBuf};
 
     use tar::{Builder, EntryType, Header};
 
-    use super::apply_workspace_patch;
+    use super::{apply_workspace_patch, rollback_staged_patch};
 
     #[test]
     fn applies_only_declared_regular_files() {
@@ -322,6 +342,22 @@ mod tests {
         assert_eq!(
             fs::read(root.path().join("result.txt")).expect("seed remains"),
             b"original\n"
+        );
+    }
+
+    #[test]
+    fn rollback_failure_is_reported_instead_of_claiming_an_atomic_rejection() {
+        let root = tempfile::tempdir().expect("workspace root is created");
+        fs::write(root.path().join("result.txt"), b"patched\n").expect("seed replacement");
+        let rollback = tempfile::tempdir_in(root.path()).expect("rollback root is created");
+
+        assert!(
+            rollback_staged_patch(
+                root.path(),
+                rollback.path(),
+                &[(PathBuf::from("result.txt"), true)],
+            )
+            .is_err()
         );
     }
 
