@@ -361,7 +361,7 @@ fn bundle_issues(
             if warmup.trace.id.is_empty() {
                 issues.push(error_issue(
                     "trace-id-empty",
-                    Some(warmup.trace.id.clone()),
+                    Some(trace_id.clone()),
                     Some(GraphPlanPhase::Warmup),
                     None,
                     "warmup trace id must not be empty",
@@ -381,14 +381,10 @@ fn inspect_program(program: &crate::graph::model::GraphTraceProgram) -> GraphPro
         GraphPlanPhase::Profiling,
         &program.driver,
     );
-    let warmup = program.warmup.as_ref().map(|plan| {
-        inspect_plan(
-            plan,
-            &plan.trace.id,
-            GraphPlanPhase::Warmup,
-            &program.driver,
-        )
-    });
+    let warmup = program
+        .warmup
+        .as_ref()
+        .map(|plan| inspect_plan(plan, &trace_id, GraphPlanPhase::Warmup, &program.driver));
     GraphProgramInspection {
         trace_id,
         driver: program.driver.kind.clone(),
@@ -471,7 +467,7 @@ fn inspect_topology(graph: &GraphRecord) -> GraphTopologyInspection {
     let ranks = node_order
         .iter()
         .enumerate()
-        .map(|(rank, node)| (node.clone(), rank))
+        .map(|(rank, node)| (node.clone(), rank.saturating_add(1)))
         .collect::<BTreeMap<_, _>>();
     let nodes = node_order
         .into_iter()
@@ -585,16 +581,21 @@ fn edge_sort_key(
     ordinal: usize,
     ranks: &BTreeMap<String, usize>,
 ) -> (usize, String, usize, String, usize) {
-    let last = ranks.len().saturating_add(1);
+    let end_rank = ranks.len().saturating_add(1);
+    let unknown_rank = end_rank.saturating_add(1);
     let source_rank = if edge.source == START_NODE_ID {
         0
+    } else if edge.source == END_NODE_ID {
+        end_rank
     } else {
-        ranks.get(&edge.source).copied().unwrap_or(last)
+        ranks.get(&edge.source).copied().unwrap_or(unknown_rank)
     };
-    let target_rank = if edge.target == END_NODE_ID {
-        last
+    let target_rank = if edge.target == START_NODE_ID {
+        0
+    } else if edge.target == END_NODE_ID {
+        end_rank
     } else {
-        ranks.get(&edge.target).copied().unwrap_or(last)
+        ranks.get(&edge.target).copied().unwrap_or(unknown_rank)
     };
     (
         source_rank,
@@ -678,6 +679,11 @@ fn readiness_waves(graph: &GraphRecord, scheduler: &Scheduler) -> Option<Vec<Rea
             scheduler
                 .entry_nodes()
                 .filter(|node| graph.nodes.contains_key(*node))
+                .filter(|node| {
+                    graph.nodes.get(*node).is_some_and(|graph_node| {
+                        channels_ready(graph_node, &completed_channels, &writers)
+                    })
+                })
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         } else {
@@ -701,7 +707,7 @@ fn readiness_waves(graph: &GraphRecord, scheduler: &Scheduler) -> Option<Vec<Rea
         let trigger = if wave == 0 {
             "START".to_string()
         } else {
-            readiness_trigger(graph, &node_ids, &prior_wave)
+            readiness_trigger(graph, &node_ids, &prior_wave, &completed_channels, &writers)
         };
         for node_id in &node_ids {
             emitted.insert(node_id.clone());
@@ -743,12 +749,8 @@ fn channels_ready(
     writers: &BTreeMap<String, usize>,
 ) -> bool {
     node.input_requirements().iter().all(|requirement| {
-        let needed = match &requirement.count {
-            Count::N(count) => usize::try_from(*count).unwrap_or(0),
-            Count::Word(word) if word == "all" => {
-                writers.get(&requirement.channel).copied().unwrap_or(0)
-            }
-            Count::Word(_) => return false,
+        let Some(needed) = required_count(requirement, writers) else {
+            return false;
         };
         completed_channels
             .get(&requirement.channel)
@@ -758,7 +760,26 @@ fn channels_ready(
     })
 }
 
-fn readiness_trigger(graph: &GraphRecord, node_ids: &[String], prior_wave: &[String]) -> String {
+fn required_count(
+    requirement: &crate::graph::model::ChannelRequirement,
+    writers: &BTreeMap<String, usize>,
+) -> Option<usize> {
+    match &requirement.count {
+        Count::N(count) => usize::try_from(*count).ok(),
+        Count::Word(word) if word == "all" => {
+            Some(writers.get(&requirement.channel).copied().unwrap_or(0))
+        }
+        Count::Word(_) => None,
+    }
+}
+
+fn readiness_trigger(
+    graph: &GraphRecord,
+    node_ids: &[String],
+    prior_wave: &[String],
+    completed_channels: &BTreeMap<String, usize>,
+    writers: &BTreeMap<String, usize>,
+) -> String {
     let current = node_ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
     let prior = prior_wave
         .iter()
@@ -774,13 +795,35 @@ fn readiness_trigger(graph: &GraphRecord, node_ids: &[String], prior_wave: &[Str
         })
         .map(|edge| edge.source.as_str())
         .collect::<Vec<_>>();
-    if !dispatch_sources.is_empty()
-        && graph.edges.iter().all(|edge| {
-            !current.contains(edge.target.as_str())
-                || edge.delay_after_predecessor_start_us.is_some()
-                || !prior.contains(edge.source.as_str())
+    let completion_edge_unlocks = graph.edges.iter().any(|edge| {
+        current.contains(edge.target.as_str())
+            && prior.contains(edge.source.as_str())
+            && edge.delay_after_predecessor_start_us.is_none()
+    });
+    let channel_unlocks = node_ids.iter().any(|node_id| {
+        let Some(node) = graph.nodes.get(node_id) else {
+            return false;
+        };
+        node.input_requirements().iter().any(|requirement| {
+            let Some(needed) = required_count(requirement, writers) else {
+                return false;
+            };
+            let completed = completed_channels
+                .get(&requirement.channel)
+                .copied()
+                .unwrap_or(0);
+            let prior_completed = prior_wave
+                .iter()
+                .filter_map(|prior_node| graph.nodes.get(prior_node))
+                .filter(|prior_node| prior_node.output() == requirement.channel)
+                .count();
+            completed >= needed && completed.saturating_sub(prior_completed) < needed
         })
-    {
+    });
+    if completion_edge_unlocks || channel_unlocks || dispatch_sources.is_empty() {
+        return format!("completed: {}", prior_wave.join(","));
+    }
+    if !dispatch_sources.is_empty() {
         return format!(
             "dispatched: {}",
             deduplicate_refs(dispatch_sources).join(",")
@@ -807,7 +850,7 @@ fn deduplicate_refs(nodes: Vec<&str>) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod task_three_red_tests {
+mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -999,5 +1042,261 @@ mod task_three_red_tests {
         assert!(
             matches!(unavailable, ReadinessInspection::Unavailable { code, .. } if code == "validation-errors")
         );
+    }
+
+    #[test]
+    fn readiness_waits_for_entry_channel_gates_and_reports_completion_unlocks() {
+        let graph = graph(
+            r#"{
+                "state":{"out":{},"done":{}},
+                "nodes":{
+                    "source":{"output":"out"},
+                    "child":{"output":"done","inputs":[{"channel":"out","count":1}]}},
+                "edges":[
+                    {"source":"START","target":"source"},
+                    {"source":"START","target":"child"}
+                ]
+            }"#,
+        );
+        let readiness = &inspect_bundle(
+            &bundle(vec![program("t", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling
+            .readiness;
+        let ReadinessInspection::Available { waves } = readiness else {
+            panic!("valid graph must have waves")
+        };
+        assert_eq!(waves[0].node_ids, vec!["source"]);
+        assert_eq!(waves[1].node_ids, vec!["child"]);
+        assert_eq!(waves[1].trigger, "completed: source");
+    }
+
+    #[test]
+    fn dispatch_edge_with_a_completion_gate_reports_completion() {
+        let graph = graph(
+            r#"{
+                "state":{"out":{},"done":{}},
+                "nodes":{
+                    "source":{"output":"out"},
+                    "child":{"output":"done","inputs":[{"channel":"out","count":1}]}},
+                "edges":[
+                    {"source":"START","target":"source"},
+                    {"source":"source","target":"child","delay_after_predecessor_start_us":0.0}
+                ]
+            }"#,
+        );
+        let readiness = &inspect_bundle(
+            &bundle(vec![program("t", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling
+            .readiness;
+        let ReadinessInspection::Available { waves } = readiness else {
+            panic!("valid graph must have waves")
+        };
+        assert_eq!(waves[1].trigger, "completed: source");
+    }
+
+    #[test]
+    fn warmup_findings_keep_the_program_trace_scope() {
+        let mut trace = program(
+            "profile-id",
+            graph(r#"{"state":{"out":{}},"nodes":{"n":{"output":"out"}}}"#),
+        );
+        trace.warmup = Some(GraphTracePlan {
+            graph: graph(r#"{"nodes":{"bad":{"output":"missing"}}}"#),
+            trace: TraceRecord {
+                id: "different-warmup-id".into(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            },
+            arrival_offset_ns: None,
+        });
+        let inspection = inspect_bundle(&bundle(vec![trace]), GraphInspectionOptions::default());
+        let warmup = inspection.programs[0].warmup.as_ref().unwrap();
+        assert!(
+            warmup
+                .issues
+                .iter()
+                .all(|issue| issue.trace_id.as_deref() == Some("profile-id"))
+        );
+        assert!(
+            warmup
+                .issues
+                .iter()
+                .all(|issue| issue.phase == Some(GraphPlanPhase::Warmup))
+        );
+    }
+
+    #[test]
+    fn edge_ranks_reserve_start_and_end_and_keep_exact_order() {
+        let graph = graph(
+            r#"{
+                "nodes":{"a":{"output":"a"},"b":{"output":"b"}},
+                "edges":[
+                    {"source":"a","target":"END"},
+                    {"source":"START","target":"a"},
+                    {"source":"START","target":"b"},
+                    {"source":"b","target":"END"}
+                ]
+            }"#,
+        );
+        let topology = &inspect_bundle(
+            &bundle(vec![program("t", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling
+            .topology;
+        assert_eq!(
+            topology
+                .edges
+                .iter()
+                .map(|edge| (edge.source.as_str(), edge.target.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("START", "a"), ("START", "b"), ("a", "END"), ("b", "END")],
+        );
+    }
+
+    #[test]
+    fn topology_uses_start_order_then_unreachable_fallback_and_exact_edges() {
+        let graph = graph(
+            r#"{
+                "state":{"alpha":{},"zeta":{}},
+                "nodes":{"a":{"output":"alpha"},"b":{"output":"alpha"},"m":{"output":"zeta"},"z":{"output":"zeta"}},
+                "edges":[
+                    {"source":"m","target":"END","delay_after_predecessor_us":0.0},
+                    {"source":"z","target":"a","delay_after_predecessor_start_us":0.0},
+                    {"source":"START","target":"z"},
+                    {"source":"a","target":"m","delay_after_predecessor_first_token_us":3.0}
+                ]
+            }"#,
+        );
+        let topology = &inspect_bundle(
+            &bundle(vec![program("t", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling
+            .topology;
+        assert_eq!(
+            topology
+                .nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["z", "a", "m", "b"],
+        );
+        assert_eq!(
+            topology
+                .channels
+                .iter()
+                .map(|channel| channel.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "zeta"],
+        );
+        assert_eq!(
+            topology
+                .edges
+                .iter()
+                .map(|edge| (
+                    edge.source.as_str(),
+                    edge.target.as_str(),
+                    edge.anchor,
+                    edge.delay_us
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("START", "z", GraphEdgeAnchor::Completion, None),
+                ("z", "a", GraphEdgeAnchor::Dispatch, Some(0.0)),
+                ("a", "m", GraphEdgeAnchor::FirstToken, Some(3.0)),
+                ("m", "END", GraphEdgeAnchor::Completion, Some(0.0)),
+            ],
+        );
+    }
+
+    #[test]
+    fn profiling_trace_id_and_warning_contexts_are_preserved_exactly() {
+        let mut trace = program("", graph(r#"{"nodes":{}}"#));
+        trace.profiling.arrival_offset_ns = None;
+        let mut input = bundle(vec![trace]);
+        let warning_context = BTreeMap::from([
+            ("trace_id".into(), "source-trace".into()),
+            ("detail".into(), "kept".into()),
+        ]);
+        input.metadata.warning_facts = vec![
+            GraphInputWarning::new("scoped", warning_context.clone()),
+            GraphInputWarning::new(
+                "unscoped",
+                BTreeMap::from([("detail".into(), "also-kept".into())]),
+            ),
+        ];
+        let inspection = inspect_bundle(
+            &input,
+            GraphInspectionOptions {
+                requires_arrival_offsets: true,
+            },
+        );
+        let empty_id = inspection
+            .issues
+            .iter()
+            .find(|issue| issue.code == "trace-id-empty")
+            .unwrap();
+        assert_eq!(empty_id.trace_id.as_deref(), Some(""));
+        assert_eq!(empty_id.phase, Some(GraphPlanPhase::Profiling));
+        assert_eq!(inspection.issues[0].context, warning_context);
+        assert_eq!(
+            inspection.issues[0].trace_id.as_deref(),
+            Some("source-trace")
+        );
+        assert_eq!(inspection.issues[1].trace_id, None);
+        assert_eq!(
+            inspection.issues[1]
+                .context
+                .get("detail")
+                .map(String::as_str),
+            Some("also-kept")
+        );
+    }
+
+    #[test]
+    fn readiness_rejects_every_non_static_driver_shape_and_reports_incomplete_analysis() {
+        use crate::graph::driver::AgentContinuationSpec;
+
+        let empty_graph = graph(r#"{"nodes":{}}"#);
+        let drivers = vec![
+            TraceDriverSpec::with_data("other".into(), BTreeMap::new()),
+            TraceDriverSpec::with_data(
+                "static_graph".into(),
+                BTreeMap::from([("extra".into(), serde_json::json!(true))]),
+            ),
+            TraceDriverSpec::static_graph().with_continuation(AgentContinuationSpec::Load {
+                trajectory: "resume".into(),
+            }),
+            TraceDriverSpec::static_graph().with_delegation(),
+        ];
+        for driver in drivers {
+            let mut trace = program("t", empty_graph.clone());
+            trace.driver = driver;
+            assert!(matches!(
+                inspect_bundle(&bundle(vec![trace]), GraphInspectionOptions::default()).programs[0].profiling.readiness,
+                ReadinessInspection::Unavailable { ref code, .. } if code == "non-static-driver"
+            ));
+        }
+
+        let incomplete = graph(
+            r#"{
+                "state":{"out":{},"done":{}},
+                "nodes":{"source":{"output":"out"},"blocked":{"output":"done","inputs":[{"channel":"out","count":"not-all"}]}},
+                "edges":[{"source":"START","target":"source"},{"source":"START","target":"blocked"}]
+            }"#,
+        );
+        assert!(matches!(
+            inspect_bundle(&bundle(vec![program("t", incomplete)]), GraphInspectionOptions::default()).programs[0].profiling.readiness,
+            ReadinessInspection::Unavailable { ref code, .. } if code == "analysis-incomplete"
+        ));
     }
 }
