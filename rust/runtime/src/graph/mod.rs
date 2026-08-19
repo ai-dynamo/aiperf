@@ -29,6 +29,7 @@ pub mod execution;
 pub mod executor;
 pub mod flat;
 pub mod input;
+pub mod inspect;
 mod lowering;
 pub mod materialize;
 pub mod model;

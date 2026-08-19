@@ -11,12 +11,37 @@ use std::collections::BTreeMap;
 /// Returned at construction for a start-anchored in-edge that is not its
 /// target's only in-edge (mixed-anchor / multi-start-anchored fan-in), an
 /// unsupported topology the runtime rejects up front.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnchorFanInKind {
+    /// A target has both start-anchored and completion-anchored inputs.
+    Mixed,
+    /// A target has more than one start-anchored input.
+    MultipleStartAnchored,
+}
+
+/// A scheduler construction error for an unsupported anchored fan-in topology.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MixedAnchorFanInError(pub String);
+pub struct MixedAnchorFanInError {
+    kind: AnchorFanInKind,
+    target: String,
+    message: String,
+}
+
+impl MixedAnchorFanInError {
+    /// Returns the rejected anchored fan-in topology.
+    pub fn kind(&self) -> AnchorFanInKind {
+        self.kind
+    }
+
+    /// Returns the node receiving the unsupported fan-in.
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+}
 
 impl std::fmt::Display for MixedAnchorFanInError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        f.write_str(&self.message)
     }
 }
 impl std::error::Error for MixedAnchorFanInError {}
@@ -135,8 +160,9 @@ fn reject_mixed_anchor_fan_in(
             .iter()
             .filter(|e| e.delay_after_predecessor_start_us.is_none())
             .collect();
-        let (shape, detail) = if let Some(comp) = completion.first() {
+        let (kind, shape, detail) = if let Some(comp) = completion.first() {
             (
+                AnchorFanInKind::Mixed,
                 "mixed-anchor fan-in",
                 format!(
                     "start-anchored edge {:?} -> {:?} (delay_after_predecessor_start_us) and \
@@ -146,6 +172,7 @@ completion edge {:?} -> {:?} arrive at the same node",
             )
         } else {
             (
+                AnchorFanInKind::MultipleStartAnchored,
                 "multi-start-anchored fan-in",
                 format!(
                     "start-anchored edges {:?} -> {:?} and {:?} -> {:?} \
@@ -154,10 +181,14 @@ completion edge {:?} -> {:?} arrive at the same node",
                 ),
             )
         };
-        return Err(MixedAnchorFanInError(format!(
-            "node {target:?}: {shape} is unsupported: {detail}. A start-anchored in-edge \
+        return Err(MixedAnchorFanInError {
+            kind,
+            target: target.clone(),
+            message: format!(
+                "node {target:?}: {shape} is unsupported: {detail}. A start-anchored in-edge \
 must be its target's ONLY in-edge."
-        )));
+            ),
+        });
     }
     Ok(())
 }
@@ -252,7 +283,33 @@ mod tests {
             ]
         }"#,
         );
-        assert!(Scheduler::new(&g).is_err());
+        let error = match Scheduler::new(&g) {
+            Err(error) => error,
+            Ok(_) => panic!("mixed-anchor fan-in must be rejected"),
+        };
+        assert_eq!(error.kind(), AnchorFanInKind::Mixed);
+        assert_eq!(error.target(), "c");
+    }
+
+    #[test]
+    fn multi_start_anchor_fan_in_rejected() {
+        let g = graph(
+            r#"{
+            "nodes": {"a": {"node_type":"llm","prompt":[],"output":"oa"},
+                      "b": {"node_type":"llm","prompt":[],"output":"ob"},
+                      "c": {"node_type":"llm","prompt":[],"output":"oc"}},
+            "edges": [
+                {"edge_type":"static","source":"a","target":"c","delay_after_predecessor_start_us":5.0},
+                {"edge_type":"static","source":"b","target":"c","delay_after_predecessor_start_us":6.0}
+            ]
+        }"#,
+        );
+        let error = match Scheduler::new(&g) {
+            Err(error) => error,
+            Ok(_) => panic!("multi-start-anchored fan-in must be rejected"),
+        };
+        assert_eq!(error.kind(), AnchorFanInKind::MultipleStartAnchored);
+        assert_eq!(error.target(), "c");
     }
 
     #[test]

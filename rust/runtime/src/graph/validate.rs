@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use crate::graph::inspect::{GraphInspectionIssue, GraphInspectionSeverity};
 use crate::graph::model::{Count, END_NODE_ID, GraphRecord, START_NODE_ID};
 
 /// One structural problem found in a graph.
@@ -26,40 +27,67 @@ impl std::error::Error for ValidationError {}
 
 /// Validate `graph`, returning every structural problem found (empty = valid).
 pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
+    validate_detailed(graph)
+        .into_iter()
+        .map(|issue| ValidationError(issue.message))
+        .collect()
+}
+
+/// Validate `graph`, returning structural problems with stable inspection data.
+pub fn validate_detailed(graph: &GraphRecord) -> Vec<GraphInspectionIssue> {
+    let mut issues = Vec::new();
     let node_ids: BTreeSet<&str> = graph.nodes.keys().map(String::as_str).collect();
 
     // 1. Every edge endpoint is START/END or a declared node.
-    for edge in &graph.edges {
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
         if edge.source != START_NODE_ID && !node_ids.contains(edge.source.as_str()) {
-            errors.push(ValidationError(format!(
-                "edge source {:?} is not a declared node",
-                edge.source
-            )));
+            issues.push(issue(
+                "edge-source-unknown",
+                Some(format!("graph.edges[{edge_index}].source")),
+                format!("edge source {:?} is not a declared node", edge.source),
+                [
+                    ("source", edge.source.as_str()),
+                    ("target", edge.target.as_str()),
+                    ("edge_index", &edge_index.to_string()),
+                ],
+            ));
         }
         if edge.target != END_NODE_ID && !node_ids.contains(edge.target.as_str()) {
-            errors.push(ValidationError(format!(
-                "edge target {:?} is not a declared node",
-                edge.target
-            )));
+            issues.push(issue(
+                "edge-target-unknown",
+                Some(format!("graph.edges[{edge_index}].target")),
+                format!("edge target {:?} is not a declared node", edge.target),
+                [
+                    ("source", edge.source.as_str()),
+                    ("target", edge.target.as_str()),
+                    ("edge_index", &edge_index.to_string()),
+                ],
+            ));
         }
     }
 
     // 2. Every node's output and input channels are declared in `state`.
     for (nid, node) in &graph.nodes {
         if !graph.state.contains_key(node.output()) {
-            errors.push(ValidationError(format!(
-                "node {nid:?} writes undeclared channel {:?}",
-                node.output()
-            )));
+            issues.push(issue(
+                "channel-write-undeclared",
+                Some(format!("graph.nodes.{nid}.output")),
+                format!("node {nid:?} writes undeclared channel {:?}", node.output()),
+                [("node_id", nid.as_str()), ("channel", node.output())],
+            ));
         }
-        for channel in node.read_channels() {
-            if !graph.state.contains_key(channel) {
-                errors.push(ValidationError(format!(
-                    "node {nid:?} reads undeclared channel {:?}",
-                    channel
-                )));
+    }
+    for (nid, node) in &graph.nodes {
+        for (input_index, channel) in node.read_channels().iter().enumerate() {
+            if graph.state.contains_key(*channel) {
+                continue;
             }
+            issues.push(issue(
+                "channel-read-undeclared",
+                Some(format!("graph.nodes.{nid}.inputs[{input_index}]")),
+                format!("node {nid:?} reads undeclared channel {:?}", channel),
+                [("node_id", nid.as_str()), ("channel", *channel)],
+            ));
         }
     }
 
@@ -68,9 +96,12 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
     let reachable = reachable_from_start(graph);
     for nid in &node_ids {
         if !reachable.contains(*nid) {
-            errors.push(ValidationError(format!(
-                "node {nid:?} is unreachable from START (it would never fire)"
-            )));
+            issues.push(issue(
+                "node-unreachable",
+                Some(format!("graph.nodes.{nid}")),
+                format!("node {nid:?} is unreachable from START (it would never fire)"),
+                [("node_id", *nid)],
+            ));
         }
     }
 
@@ -104,6 +135,13 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
             if !reachable.contains(nid.as_str()) || fireable.contains(nid.as_str()) {
                 continue;
             }
+            if node
+                .input_requirements()
+                .iter()
+                .any(|requirement| !graph.state.contains_key(&requirement.channel))
+            {
+                continue;
+            }
             let gated = node.input_requirements().iter().any(|req| {
                 fireable_producers(&req.channel, &fireable) < target(&req.channel, &req.count)
             });
@@ -119,6 +157,13 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
 
     for (nid, node) in &graph.nodes {
         if !reachable.contains(nid.as_str()) || fireable.contains(nid.as_str()) {
+            continue;
+        }
+        if node
+            .input_requirements()
+            .iter()
+            .any(|requirement| !graph.state.contains_key(&requirement.channel))
+        {
             continue;
         }
         // Reachable but never fireable: name the blocking input and why.
@@ -137,15 +182,46 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
             } else {
                 format!("only {can} of {all_producers} producer(s) can fire (dependency cycle)")
             };
-            errors.push(ValidationError(format!(
-                "node {nid:?} can never fire: input channel {chan:?} needs {need} \
+            issues.push(issue(
+                "node-never-fireable",
+                Some(format!("graph.nodes.{nid}")),
+                format!(
+                    "node {nid:?} can never fire: input channel {chan:?} needs {need} \
 producer(s) but {reason}"
-            )));
+                ),
+                [
+                    ("node_id", nid.as_str()),
+                    ("channel", chan),
+                    ("needed", &need.to_string()),
+                    ("fireable_producers", &can.to_string()),
+                    ("all_producers", &all_producers.to_string()),
+                ],
+            ));
             break;
         }
     }
 
-    errors
+    issues
+}
+
+fn issue<'a, const N: usize>(
+    code: &str,
+    location: Option<String>,
+    message: String,
+    context: [(&'a str, &'a str); N],
+) -> GraphInspectionIssue {
+    GraphInspectionIssue {
+        code: code.to_string(),
+        severity: GraphInspectionSeverity::Error,
+        trace_id: None,
+        phase: None,
+        location,
+        message,
+        context: context
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect(),
+    }
 }
 
 /// Node ids reachable from START via any static edge (including start-anchored).
@@ -172,10 +248,102 @@ fn reachable_from_start(graph: &GraphRecord) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::inspect::GraphInspectionSeverity;
     use serde_json::json;
 
     fn graph(v: serde_json::Value) -> GraphRecord {
         serde_json::from_value(v).unwrap()
+    }
+
+    fn issue_pairs(
+        issues: &[crate::graph::inspect::GraphInspectionIssue],
+    ) -> Vec<(&str, Option<&str>)> {
+        issues
+            .iter()
+            .map(|issue| (issue.code.as_str(), issue.location.as_deref()))
+            .collect()
+    }
+
+    #[test]
+    fn detailed_reports_stable_code_locations_and_context() {
+        let g = graph(json!({
+            "state": {
+                "blocked_input": {"type":"messages","reducer":"add_messages"},
+                "good": {"type":"messages","reducer":"add_messages"}
+            },
+            "nodes": {
+                "blocked": {"node_type":"llm","prompt":[],"output":"good","inputs":[{"channel":"blocked_input","count":1}]},
+                "orphan": {"node_type":"llm","prompt":[],"output":"good"},
+                "reader": {"node_type":"llm","prompt":[],"output":"good","inputs":[{"channel":"missing_read","count":1}]},
+                "writer": {"node_type":"llm","prompt":[],"output":"missing_write"}
+            },
+            "edges": [
+                {"edge_type":"static","source":"ghost_source","target":"writer"},
+                {"edge_type":"static","source":"START","target":"ghost_target"},
+                {"edge_type":"static","source":"START","target":"writer"},
+                {"edge_type":"static","source":"START","target":"reader"},
+                {"edge_type":"static","source":"START","target":"blocked"}
+            ]
+        }));
+
+        let issues = crate::graph::inspect::validate_detailed(&g);
+        assert_eq!(
+            issue_pairs(&issues),
+            vec![
+                ("edge-source-unknown", Some("graph.edges[0].source")),
+                ("edge-target-unknown", Some("graph.edges[1].target")),
+                (
+                    "channel-write-undeclared",
+                    Some("graph.nodes.writer.output")
+                ),
+                (
+                    "channel-read-undeclared",
+                    Some("graph.nodes.reader.inputs[0]")
+                ),
+                ("node-unreachable", Some("graph.nodes.orphan")),
+                ("node-never-fireable", Some("graph.nodes.blocked")),
+            ],
+        );
+
+        let expected_contexts = [
+            [
+                ("edge_index", "0"),
+                ("source", "ghost_source"),
+                ("target", "writer"),
+            ]
+            .as_slice(),
+            [
+                ("edge_index", "1"),
+                ("source", "START"),
+                ("target", "ghost_target"),
+            ]
+            .as_slice(),
+            [("channel", "missing_write"), ("node_id", "writer")].as_slice(),
+            [("channel", "missing_read"), ("node_id", "reader")].as_slice(),
+            [("node_id", "orphan")].as_slice(),
+            [
+                ("all_producers", "0"),
+                ("channel", "blocked_input"),
+                ("fireable_producers", "0"),
+                ("needed", "1"),
+                ("node_id", "blocked"),
+            ]
+            .as_slice(),
+        ];
+        for (issue, expected_context) in issues.iter().zip(expected_contexts) {
+            assert_eq!(issue.severity, GraphInspectionSeverity::Error);
+            assert!(issue.trace_id.is_none());
+            assert!(issue.phase.is_none());
+            assert!(!issue.message.is_empty() && issue.message.len() <= 512);
+            assert_eq!(
+                issue
+                    .context
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str()))
+                    .collect::<Vec<_>>(),
+                expected_context,
+            );
+        }
     }
 
     #[test]
