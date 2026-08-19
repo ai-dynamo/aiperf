@@ -1,0 +1,7 @@
+{"timestamp":"2026-03-26T05:38:17.302Z","type":"session_meta","payload":{"id":"019d28a5-tools","cwd":"/tmp","originator":"codex_cli_rs","cli_version":"0.116.0","model_provider":"openai","base_instructions":{"text":"sys"}}}
+{"timestamp":"2026-03-26T05:38:17.303Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List the dir"}]}}
+{"timestamp":"2026-03-26T05:38:18.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"cmd\":[\"ls\",\"-la\"]}","call_id":"call_001"}}
+{"timestamp":"2026-03-26T05:38:18.250Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_001","output":"total 0\ndrwxr-xr-x 2 anthony anthony 40 Mar 26 22:37 ."}}
+{"timestamp":"2026-03-26T05:38:18.300Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"That dir is empty."}]}}
+{"timestamp":"2026-03-26T05:38:19.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"thanks"}]}}
+{"timestamp":"2026-03-26T05:38:19.500Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"You're welcome."}]}}

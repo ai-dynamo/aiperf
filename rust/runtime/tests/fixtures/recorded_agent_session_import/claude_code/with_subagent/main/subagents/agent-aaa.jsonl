@@ -1,0 +1,2 @@
+{"parentUuid":null,"isSidechain":true,"type":"user","message":{"role":"user","content":"go look"},"uuid":"sa-u-1","timestamp":"2026-04-02T23:35:02.000Z","sessionId":"sess-main","parentToolUseId":"toolu_task_01"}
+{"parentUuid":"sa-u-1","isSidechain":true,"type":"assistant","message":{"model":"claude-opus-4-6","id":"msg_sa1","role":"assistant","content":[{"type":"text","text":"Looking..."}]},"requestId":"req_sa1","uuid":"sa-a-1","timestamp":"2026-04-02T23:35:05.000Z","sessionId":"sess-main"}

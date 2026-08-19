@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Strict Mini-SWE-Agent recording input and canonical fixture discovery.
+//! Strict Mini-SWE-Agent replay and non-executable imported session discovery.
 
 mod discovery;
 mod fixture;
+pub mod import;
 mod lowering;
 mod recipes;
 mod schema;
@@ -17,6 +18,10 @@ pub use discovery::{
     ValidatedRecordedAgentTrace, discover_recorded_agent_input,
 };
 pub use fixture::{CanonicalReplayFixture, CanonicalReplayFixtureDigestIndex};
+pub use import::{
+    ImportedAgentError, ImportedAgentReadSet, ImportedAgentSource, ImportedAgentSourceFile,
+    ImportedSessionFamily, detect_imported_agent_source, discover_imported_agent_read_set,
+};
 pub use lowering::{
     BuiltinReplayRequestProfileResolver, RecordedAgentLoweringError, ReplayRequestProfile,
     ReplayRequestProfileResolver, lower_recorded_agent_corpus,

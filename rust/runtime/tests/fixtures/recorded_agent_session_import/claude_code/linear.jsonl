@@ -1,0 +1,5 @@
+{"type":"permission-mode","permissionMode":"acceptEdits","sessionId":"sess-cc-1"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Write fizzbuzz."},"uuid":"u-1","timestamp":"2026-04-02T23:35:48.000Z","sessionId":"sess-cc-1","cwd":"/tmp","gitBranch":"main","version":"2.1.90"}
+{"parentUuid":"u-1","isSidechain":false,"type":"assistant","message":{"model":"claude-opus-4-6","id":"msg_a1","role":"assistant","content":[{"type":"text","text":"Here is fizzbuzz."}]},"requestId":"req_1","uuid":"a-1","timestamp":"2026-04-02T23:35:50.000Z","sessionId":"sess-cc-1"}
+{"parentUuid":"a-1","isSidechain":false,"type":"user","message":{"role":"user","content":"Now in Go."},"uuid":"u-2","timestamp":"2026-04-02T23:36:00.000Z","sessionId":"sess-cc-1"}
+{"parentUuid":"u-2","isSidechain":false,"type":"assistant","message":{"model":"claude-opus-4-6","id":"msg_a2","role":"assistant","content":[{"type":"text","text":"Here is Go fizzbuzz."}]},"requestId":"req_2","uuid":"a-2","timestamp":"2026-04-02T23:36:05.000Z","sessionId":"sess-cc-1"}

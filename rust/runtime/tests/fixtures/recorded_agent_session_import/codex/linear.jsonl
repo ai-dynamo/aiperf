@@ -1,0 +1,10 @@
+{"timestamp":"2026-03-26T05:38:17.302Z","type":"session_meta","payload":{"id":"019d28a5-b4a1-7b33-ba0b-c1a7637337d9","timestamp":"2026-03-26T05:37:21.572Z","cwd":"/home/anthony/work","originator":"codex_cli_rs","cli_version":"0.116.0","model_provider":"openai","base_instructions":{"text":"You are Codex…"},"git":{"branch":"main"}}}
+{"timestamp":"2026-03-26T05:38:17.302Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"timestamp":"2026-03-26T05:38:17.303Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Write fizzbuzz."}]}}
+{"timestamp":"2026-03-26T05:38:18.000Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"think briefly"}]}}
+{"timestamp":"2026-03-26T05:38:18.500Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Sure, here it is."}]}}
+{"timestamp":"2026-03-26T05:38:19.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}
+{"timestamp":"2026-03-26T05:38:19.500Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}}
+{"timestamp":"2026-03-26T05:38:19.600Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Now in Go."}]}}
+{"timestamp":"2026-03-26T05:38:20.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Here is Go fizzbuzz."}]}}
+{"timestamp":"2026-03-26T05:38:20.500Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t2"}}
