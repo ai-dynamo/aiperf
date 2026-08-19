@@ -794,6 +794,11 @@ class TestProfileStartCommand:
         manager._user_explicitly_configured_telemetry = False
         manager._telemetry_disabled = False
         manager._collection_interval = 0.333
+        manager.records_push_client = AsyncMock()
+        manager._records_push_lock = asyncio.Lock()
+        manager._telemetry_records_closed = False
+        manager._completion_marker_sent = False
+        manager._telemetry_sequence = 0
         manager.tasks = set()
         manager.error = MagicMock()
         manager.warning = MagicMock()
