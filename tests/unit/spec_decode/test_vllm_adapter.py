@@ -264,6 +264,20 @@ class TestVLLMSpecDecodeAdapter:
                 {**SUMMARY_PAYLOAD, "acceptance_histogram": {"0": 39, "1": 1, "3": 3}},
                 id="histogram_dict_not_list",
             ),
+            param(
+                # A str is iterable, so without an explicit type check enumerate
+                # would build a bucket per character.
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": "303"},
+                id="histogram_str_not_list",
+            ),
+            param(
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": 5},
+                id="histogram_int_not_list",
+            ),
+            param(
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": None},
+                id="histogram_none_not_list",
+            ),
         ],
     )  # fmt: skip
     def test_adapt_malformed_payload_degrades_to_none(

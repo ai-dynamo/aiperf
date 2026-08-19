@@ -162,3 +162,31 @@ class TestCompletionsEndpoint:
         else:
             assert "stream_options" in payload
             assert payload["stream_options"] == expected_stream_options
+
+    def test_format_payload_does_not_mutate_endpoint_extra(
+        self, model_endpoint, sample_conversations
+    ):
+        """Auto-adding include_usage must not write back into endpoint.extra.
+
+        The payload merge aliases the shared config dict, and endpoint.extra
+        feeds the mmap dataset cache key, so an in-place edit would rewrite the
+        author's config mid-run.
+        """
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.use_server_token_count = False
+        model_endpoint.endpoint.extra = [
+            ("stream_options", {"continuous_updates": True})
+        ]
+
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream_options"] == {
+            "continuous_updates": True,
+            "include_usage": True,
+        }
+        assert model_endpoint.endpoint.extra == [
+            ("stream_options", {"continuous_updates": True})
+        ]

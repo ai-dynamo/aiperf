@@ -79,11 +79,15 @@ class VLLMSpecDecodeAdapter:
         try:
             # vLLM sends a dense ``list[int]`` (index j -> step count); inflate
             # into the neutral record's sparse map, dropping zero-count buckets.
-            histogram = {
-                j: count
-                for j, count in enumerate(payload["acceptance_histogram"])
-                if count
-            }
+            # Reject non-list shapes up front: a str/dict is iterable, so
+            # enumerate would silently build a bucket-per-character/key map that
+            # only the record's cross-field validators would catch.
+            raw_histogram = payload["acceptance_histogram"]
+            if not isinstance(raw_histogram, list):
+                raise TypeError(
+                    f"acceptance_histogram must be a list, got {type(raw_histogram).__name__}"
+                )
+            histogram = {j: count for j, count in enumerate(raw_histogram) if count}
             usage = find_last_non_empty_usage(responses)
             return SpecDecodeAcceptanceRecord(
                 engine=ENGINE,

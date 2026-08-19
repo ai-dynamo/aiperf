@@ -175,12 +175,20 @@ class ChatEndpoint(BaseEndpoint):
         extension (strict OpenAI rejects it), so it is only injected when the
         caller opts in via ``--per-chunk-usage``.
         """
-        stream_options = payload.setdefault("stream_options", {})
-        if not isinstance(stream_options, dict):
+        stream_options = payload.get("stream_options")
+        if stream_options is None:
+            stream_options = {}
+        elif not isinstance(stream_options, dict):
             return
-        stream_options.setdefault("include_usage", True)
+        # Copy rather than mutate: the payload merge aliases endpoint.extra /
+        # turn.extra_body, which are long-lived config reused across every
+        # request (and endpoint.extra feeds the mmap cache key), so an in-place
+        # edit would rewrite the author's config.
+        merged = {**stream_options}
+        merged.setdefault("include_usage", True)
         if continuous:
-            stream_options.setdefault("continuous_usage_stats", True)
+            merged.setdefault("continuous_usage_stats", True)
+        payload["stream_options"] = merged
 
     def parse_response(
         self, response: InferenceServerResponse
