@@ -1,0 +1,2 @@
+{"type":"user","isSidechain":true,"sessionId":"main","parentToolUseId":"task","uuid":"u","message":{"role":"user","content":"PRIVATE_PROMPT"}}
+{"type":"assistant","isSidechain":true,"sessionId":"main","parentToolUseId":"task","uuid":"a","message":{"role":"assistant","id":"a","content":[]}}

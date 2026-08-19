@@ -20,6 +20,13 @@ use super::{
 pub fn parse_claude_session(
     file: &ImportedAgentSourceFile,
 ) -> Result<ImportedAgentSession, ImportedAgentError> {
+    Ok(parse_claude_session_details(file)?.session)
+}
+
+/// Parse one Claude source file and retain correlation metadata for read-set linking.
+pub(crate) fn parse_claude_session_details(
+    file: &ImportedAgentSourceFile,
+) -> Result<ParsedClaudeSession, ImportedAgentError> {
     let handle = File::open(&file.path)
         .map_err(|_| error(&file.path, 0, "unknown", "cannot read source file"))?;
     let mut reader = BufReader::new(handle);
@@ -70,6 +77,12 @@ struct NormalizedAssistantBlocks {
     fresh_tool_ids: HashSet<String>,
 }
 
+pub(crate) struct ParsedClaudeSession {
+    pub(crate) session: ImportedAgentSession,
+    pub(crate) task_tool_use_ids: Vec<String>,
+    pub(crate) all_tool_use_ids: Vec<String>,
+}
+
 struct ClaudeState<'a> {
     file: &'a ImportedAgentSourceFile,
     session_id: Option<String>,
@@ -91,6 +104,9 @@ struct ClaudeState<'a> {
     ignored_record_count: u64,
     omitted_reasoning_count: u64,
     tool_results_complete: bool,
+    task_tool_use_ids: Vec<String>,
+    seen_task_tool_use_ids: HashSet<String>,
+    all_tool_use_ids: HashSet<String>,
 }
 
 impl<'a> ClaudeState<'a> {
@@ -116,6 +132,9 @@ impl<'a> ClaudeState<'a> {
             ignored_record_count: 0,
             omitted_reasoning_count: 0,
             tool_results_complete: true,
+            task_tool_use_ids: Vec::new(),
+            seen_task_tool_use_ids: HashSet::new(),
+            all_tool_use_ids: HashSet::new(),
         }
     }
 
@@ -203,6 +222,13 @@ impl<'a> ClaudeState<'a> {
                 } else {
                     self.parent_tool_use_id = Some(parent);
                 }
+            } else if self.parent_tool_use_id.is_none() {
+                return Err(error(
+                    &self.file.path,
+                    line,
+                    "message",
+                    "missing parent tool-use identifier",
+                ));
             }
         }
         self.cwd_present |= record.contains_key("cwd");
@@ -374,6 +400,7 @@ impl<'a> ClaudeState<'a> {
             self.abandon_open_tools();
         }
         if self.pending.is_none() {
+            self.reject_reused_task_tool_ids(blocks, line)?;
             let delay = self.next_model_delay_after_previous_us.take();
             self.calls.push(ImportedModelCall {
                 source_id: source_id.clone(),
@@ -398,6 +425,40 @@ impl<'a> ClaudeState<'a> {
             parse_timestamp(record, &self.file.path, line, "tool_use")?
         };
         self.merge_pending(incoming, timestamp, line)
+    }
+
+    fn reject_reused_task_tool_ids(
+        &self,
+        blocks: &[Value],
+        line: usize,
+    ) -> Result<(), ImportedAgentError> {
+        for block in blocks {
+            let Some(object) = block.as_object() else {
+                continue;
+            };
+            if object.get("type").and_then(Value::as_str) != Some("tool_use")
+                || object.get("name").and_then(Value::as_str) != Some("Task")
+            {
+                continue;
+            }
+            let id = required_identifier(
+                object,
+                "id",
+                &self.file.path,
+                line,
+                "tool_use",
+                "invalid tool-use identifier",
+            )?;
+            if self.seen_task_tool_use_ids.contains(&id) {
+                return Err(error(
+                    &self.file.path,
+                    line,
+                    "tool_use",
+                    "duplicate Task tool-use identifier",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn normalize_assistant_blocks(
@@ -491,52 +552,65 @@ impl<'a> ClaudeState<'a> {
         timestamp: Option<DateTime<FixedOffset>>,
         line: usize,
     ) -> Result<(), ImportedAgentError> {
-        let Some(pending) = self.pending.as_mut() else {
-            return Ok(());
-        };
-        pending.authored_content =
-            merge_authored_content(&pending.authored_content, &incoming.full_content)
-                .map_err(|detail| error(&self.file.path, line, "assistant", detail))?;
-        let mut incoming_text = 0;
-        for block in incoming.content {
-            match block.get("type").and_then(Value::as_str) {
-                Some("text") => {
-                    let text = block
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    if let Some(position) = pending.text_positions.get(incoming_text).copied() {
-                        let existing = pending.content[position]
+        let mut fresh_tools = Vec::new();
+        {
+            let Some(pending) = self.pending.as_mut() else {
+                return Ok(());
+            };
+            pending.authored_content =
+                merge_authored_content(&pending.authored_content, &incoming.full_content)
+                    .map_err(|detail| error(&self.file.path, line, "assistant", detail))?;
+            let mut incoming_text = 0;
+            for block in incoming.content {
+                match block.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        let text = block
                             .get("text")
                             .and_then(Value::as_str)
                             .unwrap_or_default();
-                        let merged = merge_text(existing, text)
-                            .map_err(|detail| error(&self.file.path, line, "assistant", detail))?;
-                        pending.content[position]["text"] = Value::String(merged);
-                    } else {
-                        pending.text_positions.push(pending.content.len());
-                        pending.content.push(block);
-                    }
-                    incoming_text += 1;
-                }
-                Some("tool_use") => {
-                    let id = block
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned();
-                    if pending.tool_ids.insert(id.clone()) {
-                        if incoming.fresh_tool_ids.contains(&id) {
-                            self.open_tool_ids.insert(id);
-                            if self.first_open_tool_timestamp.is_none() {
-                                self.first_open_tool_timestamp = Some(timestamp);
-                            }
-                            self.observed_tool_count += 1;
+                        if let Some(position) = pending.text_positions.get(incoming_text).copied() {
+                            let existing = pending.content[position]
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            let merged = merge_text(existing, text).map_err(|detail| {
+                                error(&self.file.path, line, "assistant", detail)
+                            })?;
+                            pending.content[position]["text"] = Value::String(merged);
+                        } else {
+                            pending.text_positions.push(pending.content.len());
+                            pending.content.push(block);
                         }
-                        pending.content.push(block);
+                        incoming_text += 1;
                     }
+                    Some("tool_use") => {
+                        let id = block
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
+                        let is_task = block.get("name").and_then(Value::as_str) == Some("Task");
+                        if pending.tool_ids.insert(id.clone()) {
+                            if incoming.fresh_tool_ids.contains(&id) {
+                                fresh_tools.push((id.clone(), is_task));
+                            }
+                            pending.content.push(block);
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+        }
+        for (id, is_task) in fresh_tools {
+            self.open_tool_ids.insert(id.clone());
+            if self.first_open_tool_timestamp.is_none() {
+                self.first_open_tool_timestamp = Some(timestamp);
+            }
+            self.observed_tool_count += 1;
+            self.all_tool_use_ids.insert(id.clone());
+            if is_task {
+                self.seen_task_tool_use_ids.insert(id.clone());
+                self.task_tool_use_ids.push(id);
             }
         }
         Ok(())
@@ -566,7 +640,7 @@ impl<'a> ClaudeState<'a> {
         }
     }
 
-    fn finish(mut self, source_digest: String) -> Result<ImportedAgentSession, ImportedAgentError> {
+    fn finish(mut self, source_digest: String) -> Result<ParsedClaudeSession, ImportedAgentError> {
         self.flush_pending()?;
         self.abandon_open_tools();
         let session_id = self
@@ -596,7 +670,7 @@ impl<'a> ClaudeState<'a> {
         } else {
             None
         };
-        Ok(ImportedAgentSession {
+        let session = ImportedAgentSession {
             session_id,
             source: ImportedAgentSource::ClaudeCode,
             source_path: self.file.path.clone(),
@@ -611,6 +685,11 @@ impl<'a> ClaudeState<'a> {
             ignored_record_count: self.ignored_record_count,
             omitted_reasoning_count: self.omitted_reasoning_count,
             tool_results_complete: self.tool_results_complete,
+        };
+        Ok(ParsedClaudeSession {
+            session,
+            task_tool_use_ids: self.task_tool_use_ids,
+            all_tool_use_ids: self.all_tool_use_ids.into_iter().collect(),
         })
     }
 }

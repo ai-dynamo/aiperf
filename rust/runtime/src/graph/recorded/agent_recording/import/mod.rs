@@ -10,6 +10,7 @@ mod claude_code;
 mod codex;
 mod discovery;
 
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::path::PathBuf;
@@ -184,4 +185,149 @@ pub struct ImportedAgentSession {
     pub omitted_reasoning_count: u64,
     /// Whether every retained tool bundle included all results.
     pub tool_results_complete: bool,
+}
+
+/// Parse the exact discovered source set into deterministically ordered sessions.
+///
+/// Claude main sessions are parsed before direct subagent sessions. A subagent is
+/// accepted only when its stable parent tool-use identifier resolves to exactly
+/// one `Task` call in its declared parent session.
+pub fn parse_imported_agent_sessions(
+    read_set: &ImportedAgentReadSet,
+) -> Result<Vec<ImportedAgentSession>, ImportedAgentError> {
+    match read_set.source {
+        ImportedAgentSource::Codex => parse_codex_read_set(read_set),
+        ImportedAgentSource::ClaudeCode => parse_claude_read_set(read_set),
+    }
+}
+
+fn parse_codex_read_set(
+    read_set: &ImportedAgentReadSet,
+) -> Result<Vec<ImportedAgentSession>, ImportedAgentError> {
+    let mut sessions = Vec::with_capacity(read_set.files.len());
+    for file in &read_set.files {
+        if file.family != ImportedSessionFamily::Session {
+            return Err(ImportedAgentError::new(
+                &file.path,
+                0,
+                "codex",
+                "message",
+                "subagent files are invalid for Codex session imports",
+            ));
+        }
+        sessions.push(parse_codex_session(file)?);
+    }
+    reject_duplicate_session_ids(&sessions)
+}
+
+fn parse_claude_read_set(
+    read_set: &ImportedAgentReadSet,
+) -> Result<Vec<ImportedAgentSession>, ImportedAgentError> {
+    let mut main_files = Vec::new();
+    let mut subagent_files = Vec::new();
+    for file in &read_set.files {
+        match file.family {
+            ImportedSessionFamily::Session => main_files.push(file),
+            ImportedSessionFamily::Subagent => subagent_files.push(file),
+        }
+    }
+
+    let mut sessions = Vec::with_capacity(read_set.files.len());
+    let mut task_parents = HashMap::new();
+    let mut non_task_parents = HashSet::new();
+    for file in main_files {
+        let parsed = claude_code::parse_claude_session_details(file)?;
+        let session_id = parsed.session.session_id.clone();
+        let task_ids = parsed.task_tool_use_ids;
+        for tool_use_id in &parsed.all_tool_use_ids {
+            non_task_parents.insert((session_id.clone(), tool_use_id.clone()));
+        }
+        for tool_use_id in task_ids {
+            let key = (session_id.clone(), tool_use_id);
+            *task_parents.entry(key).or_insert(0_usize) += 1;
+        }
+        sessions.push(parsed.session);
+    }
+
+    let mut linked_parents = HashSet::new();
+    for file in subagent_files {
+        let parsed = claude_code::parse_claude_session_details(file)?;
+        let mut session = parsed.session;
+        let parent = session
+            .parent
+            .as_ref()
+            .ok_or_else(|| read_set_error(file, "missing parent tool-use identifier"))?;
+        let parent_key = (session.session_id.clone(), parent.tool_use_id.clone());
+        match task_parents.get(&parent_key).copied() {
+            Some(1) => {}
+            Some(_) => {
+                return Err(read_set_error(
+                    file,
+                    "parent tool-use identifier matches multiple main sessions",
+                ));
+            }
+            None => {
+                let detail = if non_task_parents.contains(&parent_key) {
+                    "parent tool-use does not identify a Task call"
+                } else {
+                    "parent tool-use identifier not found"
+                };
+                return Err(read_set_error(file, detail));
+            }
+        }
+        if !linked_parents.insert(parent_key.clone()) {
+            return Err(read_set_error(
+                file,
+                "multiple subagent files identify one parent Task call",
+            ));
+        }
+        let sibling_id = format!("{}#sa#{}", parent_key.0, parent_key.1);
+        if !is_valid_identifier(&sibling_id) {
+            return Err(read_set_error(
+                file,
+                "derived subagent session identifier is invalid",
+            ));
+        }
+        session.session_id = sibling_id;
+        session.parent = Some(ImportedSubagentParent {
+            session_id: parent_key.0,
+            tool_use_id: parent_key.1,
+        });
+        sessions.push(session);
+    }
+    reject_duplicate_session_ids(&sessions)
+}
+
+fn reject_duplicate_session_ids(
+    sessions: &[ImportedAgentSession],
+) -> Result<Vec<ImportedAgentSession>, ImportedAgentError> {
+    let mut session_ids = HashSet::new();
+    for session in sessions {
+        if !session_ids.insert(&session.session_id) {
+            let source = match session.source {
+                ImportedAgentSource::Codex => "codex",
+                ImportedAgentSource::ClaudeCode => "claude_code",
+            };
+            return Err(ImportedAgentError::new(
+                &session.source_path,
+                0,
+                source,
+                "message",
+                "duplicate imported session identifier",
+            ));
+        }
+    }
+    Ok(sessions.to_vec())
+}
+
+fn read_set_error(file: &ImportedAgentSourceFile, detail: &'static str) -> ImportedAgentError {
+    ImportedAgentError::new(&file.path, 0, "claude_code", "message", detail)
+}
+
+fn is_valid_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'#' | b'-')
+        })
 }

@@ -7,7 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use aiperf_runtime::graph::recorded::agent_recording::{
-    ImportedAgentSourceFile, ImportedSessionFamily, parse_claude_session,
+    ImportedAgentReadSet, ImportedAgentSource, ImportedAgentSourceFile, ImportedSessionFamily,
+    parse_claude_session, parse_imported_agent_sessions,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -43,6 +44,140 @@ fn write(root: &Path, name: &str, body: &str) -> ImportedAgentSourceFile {
     let path = root.join(name);
     fs::write(&path, body).expect("write source fixture");
     session_file(path)
+}
+
+fn claude_read_set(
+    root: PathBuf,
+    files: Vec<(PathBuf, ImportedSessionFamily)>,
+) -> ImportedAgentReadSet {
+    ImportedAgentReadSet {
+        selected_path: root.clone(),
+        root,
+        source: ImportedAgentSource::ClaudeCode,
+        files: files
+            .into_iter()
+            .map(|(path, family)| claude_file(path, family))
+            .collect(),
+    }
+}
+
+fn fixture_read_set(name: &str) -> ImportedAgentReadSet {
+    let root = fixture(&format!("../adversarial/claude_code/subagents/{name}"));
+    let mut files = vec![(root.join("main.jsonl"), ImportedSessionFamily::Session)];
+    if name == "duplicate_final_session" {
+        files.push((root.join("other.jsonl"), ImportedSessionFamily::Session));
+    } else {
+        files.push((
+            root.join("main/subagents/agent-aaa.jsonl"),
+            ImportedSessionFamily::Subagent,
+        ));
+        if name == "duplicate_subagent" {
+            files.push((
+                root.join("main/subagents/agent-bbb.jsonl"),
+                ImportedSessionFamily::Subagent,
+            ));
+        }
+        if name == "multiple_main_matches" {
+            files.insert(
+                1,
+                (root.join("other.jsonl"), ImportedSessionFamily::Session),
+            );
+        }
+    }
+    claude_read_set(root, files)
+}
+
+#[test]
+fn subagent_sessions_are_linked_as_deterministic_siblings() {
+    let root = fixture("with_subagent");
+    let sessions = parse_imported_agent_sessions(&claude_read_set(
+        root.clone(),
+        vec![
+            (root.join("main.jsonl"), ImportedSessionFamily::Session),
+            (
+                root.join("main/subagents/agent-aaa.jsonl"),
+                ImportedSessionFamily::Subagent,
+            ),
+        ],
+    ))
+    .expect("linked sessions");
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0].session_id, "sess-main");
+    assert_eq!(sessions[1].session_id, "sess-main#sa#toolu_task_01");
+    assert_eq!(
+        sessions[1].parent.as_ref().expect("parent").session_id,
+        "sess-main"
+    );
+    assert_eq!(
+        sessions[1].parent.as_ref().expect("parent").tool_use_id,
+        "toolu_task_01"
+    );
+}
+
+#[test]
+fn subagent_sessions_reject_ambiguous_or_invalid_parent_links() {
+    for (name, detail) in [
+        ("missing_first_parent", "missing parent tool-use identifier"),
+        (
+            "inconsistent_parent",
+            "inconsistent parent tool-use identifier",
+        ),
+        ("parent_not_found", "parent tool-use identifier not found"),
+        (
+            "parent_not_task",
+            "parent tool-use does not identify a Task call",
+        ),
+        ("duplicate_main_task", "duplicate Task tool-use identifier"),
+        (
+            "duplicate_subagent",
+            "multiple subagent files identify one parent Task call",
+        ),
+        (
+            "multiple_main_matches",
+            "parent tool-use identifier matches multiple main sessions",
+        ),
+        (
+            "duplicate_final_session",
+            "duplicate imported session identifier",
+        ),
+    ] {
+        let error = parse_imported_agent_sessions(&fixture_read_set(name))
+            .expect_err(name)
+            .to_string();
+        assert!(error.contains(detail), "{name}: {error}");
+        assert!(
+            !error.contains("PRIVATE_"),
+            "{name} leaked source data: {error}"
+        );
+    }
+}
+
+#[test]
+fn subagent_sessions_never_open_excluded_sidechain_files() {
+    let root = tempdir().expect("temporary fixture");
+    fs::create_dir_all(root.path().join("main/subagents")).expect("subagent directory");
+    fs::write(
+        root.path().join("main.jsonl"),
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg\",\"content\":[]}}\n"
+        ),
+    )
+    .expect("main fixture");
+    fs::write(
+        root.path().join("main/subagents/agent-aaa.jsonl"),
+        "PRIVATE_UNREADABLE_NOT_JSON\n",
+    )
+    .expect("unreadable sidechain fixture");
+    let sessions = parse_imported_agent_sessions(&claude_read_set(
+        root.path().to_path_buf(),
+        vec![(
+            root.path().join("main.jsonl"),
+            ImportedSessionFamily::Session,
+        )],
+    ))
+    .expect("excluded subagent is never opened");
+    assert_eq!(sessions.len(), 1);
 }
 
 #[test]
