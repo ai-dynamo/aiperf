@@ -343,6 +343,30 @@ fn main_does_not_reopen_finalized_assistant_or_exact_tool_blocks() {
 }
 
 #[test]
+fn main_replays_a_finalized_filtered_global_tool_snapshot_idempotently() {
+    let root = tempdir().expect("temporary fixtures");
+    let file = write(
+        root.path(),
+        "filtered-finalized-replay.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-a\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{}}]}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"r\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool\",\"content\":\"result\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"b\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-b\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{}}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"flush\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-c\",\"content\":[]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"replay\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-b\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool\",\"name\":\"Read\",\"input\":{}}]}}\n"
+        ),
+    );
+    let session = parse_claude_session(&file).expect("exact replay is idempotent");
+    assert_eq!(session.calls.len(), 3);
+    assert!(session.tool_results_complete);
+    assert_eq!(
+        messages(&session.calls[2])[3]["content"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
 fn main_limits_timestamp_validation_to_correlated_tools_and_latches_metadata() {
     let root = tempdir().expect("temporary fixtures");
     let ordinary = write(

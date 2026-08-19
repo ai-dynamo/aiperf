@@ -59,6 +59,7 @@ struct PendingClaudeMessage {
     source_id: String,
     line: usize,
     content: Vec<Value>,
+    authored_content: Vec<Value>,
     text_positions: Vec<usize>,
     tool_ids: HashSet<String>,
 }
@@ -386,6 +387,7 @@ impl<'a> ClaudeState<'a> {
                 source_id,
                 line,
                 content: Vec::new(),
+                authored_content: Vec::new(),
                 text_positions: Vec::new(),
                 tool_ids: HashSet::new(),
             });
@@ -492,6 +494,9 @@ impl<'a> ClaudeState<'a> {
         let Some(pending) = self.pending.as_mut() else {
             return Ok(());
         };
+        pending.authored_content =
+            merge_authored_content(&pending.authored_content, &incoming.full_content)
+                .map_err(|detail| error(&self.file.path, line, "assistant", detail))?;
         let mut incoming_text = 0;
         for block in incoming.content {
             match block.get("type").and_then(Value::as_str) {
@@ -542,7 +547,7 @@ impl<'a> ClaudeState<'a> {
             return Ok(());
         };
         self.finalized_messages
-            .insert(pending.source_id.clone(), pending.content.clone());
+            .insert(pending.source_id.clone(), pending.authored_content.clone());
         self.history.push(raw_value_message(
             "assistant",
             json!({"role": "assistant", "content": pending.content}),
@@ -608,6 +613,65 @@ impl<'a> ClaudeState<'a> {
             tool_results_complete: self.tool_results_complete,
         })
     }
+}
+
+fn merge_authored_content(
+    existing: &[Value],
+    incoming: &[Value],
+) -> Result<Vec<Value>, &'static str> {
+    let mut merged = existing.to_vec();
+    let mut text_positions = Vec::new();
+    let mut tool_positions = HashMap::new();
+    for (position, block) in merged.iter().enumerate() {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => text_positions.push(position),
+            Some("tool_use") => {
+                if let Some(id) = block.get("id").and_then(Value::as_str) {
+                    tool_positions.insert(id.to_owned(), position);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut incoming_text = 0;
+    for block in incoming {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                let text = block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if let Some(position) = text_positions.get(incoming_text).copied() {
+                    let existing = merged[position]
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    merged[position]["text"] = Value::String(merge_text(existing, text)?);
+                } else {
+                    text_positions.push(merged.len());
+                    merged.push(block.clone());
+                }
+                incoming_text += 1;
+            }
+            Some("tool_use") => {
+                let id = block
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                if let Some(position) = tool_positions.get(&id).copied() {
+                    if merged[position] != *block {
+                        return Err("conflicting tool-use identifier reuse");
+                    }
+                } else {
+                    tool_positions.insert(id, merged.len());
+                    merged.push(block.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(merged)
 }
 
 fn merge_text(existing: &str, incoming: &str) -> Result<String, &'static str> {
