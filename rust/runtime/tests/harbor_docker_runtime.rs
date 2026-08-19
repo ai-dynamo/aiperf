@@ -22,9 +22,10 @@ use std::{
 use aiperf_runtime::clock::SimClock;
 use aiperf_runtime::eval::{
     AdapterEnvelope, AdapterExit, AdapterLifecycleDeadlines, AdapterMessage, AdapterProcess,
-    AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError,
-    AgentVariantRef, ArtifactDigest, CancelReason, CompatibilityTerminalReceipt, ComposeProjectId,
-    DockerAdapterLease, DockerAdapterProcess, DockerBuildRequest, DockerComposeArchiveRequest,
+    AdapterProtocolConfig, AdapterRuntimeFactory, AdapterSpawnRequest, AdapterSpawnTransaction,
+    AdapterSpawner, AdapterSupervisionError, AgentVariantRef, ArtifactDigest, CancelReason,
+    CompatibilityFidelity, CompatibilityTerminalReceipt, ComposeProjectId, DockerAdapterLease,
+    DockerAdapterProcess, DockerBuildRequest, DockerComposeArchiveRequest,
     DockerComposeBuildRequest, DockerComposeConfigRequest, DockerComposeCopyRequest,
     DockerComposeDownRequest, DockerComposeExecRequest, DockerComposeRuntime,
     DockerComposeStopRequest, DockerComposeUpRequest, DockerCopyRequest, DockerCreateRequest,
@@ -35,9 +36,11 @@ use aiperf_runtime::eval::{
     ModelIdentity, ModelSecretId, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
     NativeGraphExternalDriverFactory, NativeGraphPackagePlan, NativeGraphSuiteManifest,
     NativeSourceAcquirer, OwnedComposeResources, PolicyIdentity, PreparedExternalDriver,
-    PreparedExternalDriverCapability, ProtocolCapability, ProviderCapabilities, ProviderCapability,
-    ProviderProfile, ResourceLeaseRequest, RuntimeIdentity, SecretProvider, SecretValue,
-    SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, preflight_docker,
+    PreparedExternalDriverCapability, ProtocolAdapterRuntimeFactory, ProtocolCapability,
+    ProtocolLimits, ProviderCapabilities, ProviderCapability, ProviderProfile,
+    ResourceLeaseRequest, RuntimeIdentity, SecretProvider, SecretValue,
+    StrictAdapterProtocolFactory, SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec,
+    preflight_docker,
 };
 use async_trait::async_trait;
 use std::rc::Rc;
@@ -4778,6 +4781,7 @@ fn external_driver_task_root(
         task_root.join("task.toml"),
         format!(
             r#"schema_version = "1.1"
+artifacts = ["/work/result.txt"]
 
 [task]
 name = "example/external-driver-docker-authority"
@@ -4888,6 +4892,499 @@ impl NativeGraphExternalDriverFactory for RecordingExternalDriverFactory {
         self.prepare_calls.fetch_add(1, Ordering::Relaxed);
         Ok(Box::new(PreparedDriverFixture))
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ExternalTerminalCase {
+    Valid,
+    DriverError,
+    Timeout,
+    MissingCandidate,
+    InvalidCandidate,
+}
+
+struct TransactionPreparedDriver {
+    events: Arc<Mutex<Vec<&'static str>>>,
+    case: ExternalTerminalCase,
+}
+
+#[async_trait(?Send)]
+impl PreparedExternalDriver for TransactionPreparedDriver {
+    async fn run(
+        &mut self,
+        session: &mut dyn ExternalDriverSession,
+    ) -> Result<CompatibilityTerminalReceipt, ExternalDriverError> {
+        self.events.lock().unwrap().push("terminal");
+        if matches!(self.case, ExternalTerminalCase::DriverError) {
+            return Err(ExternalDriverError::TerminalReceiptRejected);
+        }
+        session.request_terminal().await
+    }
+}
+
+struct TransactionExternalDriverFactory {
+    events: Arc<Mutex<Vec<&'static str>>>,
+    case: ExternalTerminalCase,
+}
+
+impl NativeGraphExternalDriverFactory for TransactionExternalDriverFactory {
+    fn id(&self) -> &str {
+        "fixture"
+    }
+
+    fn prepare_driver(
+        &self,
+        _: &NativeGraphPackagePlan,
+        _: &aiperf_runtime::eval::ResolvedEpisodeTrial,
+    ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError> {
+        self.events.lock().unwrap().push("prepare");
+        Ok(Box::new(TransactionPreparedDriver {
+            events: Arc::clone(&self.events),
+            case: self.case,
+        }))
+    }
+}
+
+struct TransactionExternalDriverSpawnExecutor {
+    events: Arc<Mutex<Vec<&'static str>>>,
+    case: ExternalTerminalCase,
+}
+
+impl ExternalDriverSpawnExecutor for TransactionExternalDriverSpawnExecutor {
+    fn begin_spawn(
+        &self,
+        _: aiperf_runtime::eval::AuthorizedExternalDriverSpawn,
+    ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        Ok(Box::new(RecordingAdapterSpawnTransaction {
+            process: Some(Box::new(TransactionExternalDriverProcess {
+                events: Arc::clone(&self.events),
+                case: self.case,
+                stdout: VecDeque::new(),
+            })),
+        }))
+    }
+}
+
+struct PendingExternalDriverSpawnTransaction {
+    events: Arc<Mutex<Vec<&'static str>>>,
+    is_live: bool,
+}
+
+struct PendingExternalDriverSpawner {
+    events: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl AdapterSpawner for PendingExternalDriverSpawner {
+    fn begin_spawn(
+        &self,
+        _: AdapterSpawnRequest,
+    ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        Ok(Box::new(PendingExternalDriverSpawnTransaction {
+            events: Arc::clone(&self.events),
+            is_live: true,
+        }))
+    }
+}
+
+#[async_trait(?Send)]
+impl AdapterSpawnTransaction for PendingExternalDriverSpawnTransaction {
+    async fn await_process(&mut self) -> Result<Box<dyn AdapterProcess>, AdapterSupervisionError> {
+        std::future::pending().await
+    }
+
+    async fn abort(&mut self, _: Duration) -> Result<(), AdapterSupervisionError> {
+        if self.is_live {
+            self.events.lock().unwrap().push("cancel");
+            self.events.lock().unwrap().push("reap");
+            self.is_live = false;
+        }
+        Ok(())
+    }
+
+    fn fence(&mut self) {
+        if self.is_live {
+            self.events.lock().unwrap().push("fence");
+            self.is_live = false;
+        }
+    }
+}
+
+struct TransactionExternalDriverProcess {
+    events: Arc<Mutex<Vec<&'static str>>>,
+    case: ExternalTerminalCase,
+    stdout: VecDeque<Vec<u8>>,
+}
+
+impl TransactionExternalDriverProcess {
+    fn push(&mut self, envelope: AdapterEnvelope) -> Result<(), AdapterSupervisionError> {
+        let mut frame = serde_json::to_vec(&envelope).map_err(|error| {
+            AdapterSupervisionError::Process(format!(
+                "fixture external Driver frame is invalid: {error}"
+            ))
+        })?;
+        frame.push(b'\n');
+        self.stdout.push_back(frame);
+        Ok(())
+    }
+}
+
+#[async_trait(?Send)]
+impl AdapterProcess for TransactionExternalDriverProcess {
+    async fn write_frame(
+        &mut self,
+        frame: &[u8],
+        _: Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        let host: HostEnvelope = serde_json::from_slice(frame).map_err(|error| {
+            AdapterSupervisionError::Process(format!(
+                "fixture external Driver host frame is invalid: {error}"
+            ))
+        })?;
+        match host.message {
+            HostMessage::Hello { .. } => self.push(AdapterEnvelope::new(
+                host.episode,
+                "startup",
+                0,
+                host.operation,
+                AdapterMessage::Ready {
+                    protocol_version: 1,
+                    capabilities: vec![ProtocolCapability::Driver],
+                    implementation_digest: ArtifactDigest::from_bytes(
+                        b"external-driver-transaction",
+                    ),
+                },
+            )),
+            HostMessage::RequestEpisodeTerminal { .. } => match self.case {
+                ExternalTerminalCase::Valid => self.push(AdapterEnvelope::new(
+                    host.episode,
+                    "external-driver-terminal",
+                    1,
+                    "external-driver-terminal",
+                    AdapterMessage::EpisodeTerminalCandidate {
+                        output: serde_json::json!({"private": "discard-me"}),
+                    },
+                )),
+                ExternalTerminalCase::MissingCandidate => self.push(AdapterEnvelope::new(
+                    host.episode,
+                    "external-driver-terminal",
+                    1,
+                    "external-driver-terminal",
+                    AdapterMessage::OperationFailed {
+                        code: "no-candidate".to_owned(),
+                        details: serde_json::json!({"private": "discard-me"}),
+                    },
+                )),
+                ExternalTerminalCase::InvalidCandidate => self.push(AdapterEnvelope::new(
+                    host.episode,
+                    "external-driver-terminal",
+                    1,
+                    "substituted-terminal",
+                    AdapterMessage::EpisodeTerminalCandidate {
+                        output: serde_json::json!({"private": "discard-me"}),
+                    },
+                )),
+                ExternalTerminalCase::DriverError | ExternalTerminalCase::Timeout => Ok(()),
+            },
+            _ => Err(AdapterSupervisionError::InvalidResetTransition),
+        }
+    }
+
+    async fn read_stdout_frame(
+        &mut self,
+        _: usize,
+        _: Duration,
+    ) -> Result<Vec<u8>, AdapterSupervisionError> {
+        self.stdout.pop_front().ok_or_else(|| {
+            AdapterSupervisionError::Process("external Driver terminal timed out".to_owned())
+        })
+    }
+
+    async fn drain_stderr(&mut self, _: usize) -> Result<Vec<u8>, AdapterSupervisionError> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel(
+        &mut self,
+        _: CancelReason,
+        _: Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        self.events.lock().unwrap().push("cancel");
+        Ok(())
+    }
+
+    async fn reap(&mut self, _: Duration) -> Result<AdapterExit, AdapterSupervisionError> {
+        self.events.lock().unwrap().push("reap");
+        Ok(AdapterExit::Reaped)
+    }
+
+    fn fence(&mut self) {
+        self.events.lock().unwrap().push("fence");
+    }
+}
+
+struct TransactionDockerRuntime {
+    events: Arc<Mutex<Vec<&'static str>>>,
+    case: ExternalTerminalCase,
+    is_environment_acquired: Cell<bool>,
+}
+
+impl DockerRuntime for TransactionDockerRuntime {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::none()
+            .with_docker()
+            .with_image_source()
+            .with_workdir()
+            .with_separate_verifier()
+            .with_healthchecks()
+            .with_public_network()
+    }
+
+    fn external_driver_spawner(
+        &self,
+        request: &aiperf_runtime::eval::DockerAdapterSpawnerRequest,
+    ) -> Result<ExternalDriverDockerSpawner, EvalExecutionError> {
+        Ok(ExternalDriverDockerSpawner::new(
+            request,
+            Rc::new(TransactionExternalDriverSpawnExecutor {
+                events: Arc::clone(&self.events),
+                case: self.case,
+            }),
+        ))
+    }
+
+    fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+
+    fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+
+    fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+        if !self.is_environment_acquired.replace(true) {
+            self.events.lock().unwrap().push("acquire");
+        }
+        Ok(())
+    }
+
+    fn exec(&self, request: &DockerExecRequest) -> Result<(), EvalExecutionError> {
+        let phase = request.phase().to_string();
+        if phase == "healthcheck" {
+            self.events.lock().unwrap().push("healthcheck");
+        } else if phase == "verifier"
+            && request
+                .public_arguments()
+                .iter()
+                .any(|argument| argument == "/tests/test.sh")
+        {
+            self.events.lock().unwrap().push("verify");
+        }
+        Ok(())
+    }
+
+    fn copy(&self, _: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+
+    fn copy_archive(&self, _: &str, source: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
+        if source.ends_with("result.txt") {
+            self.events.lock().unwrap().push("collect");
+            return Ok(Box::new(io::Cursor::new(test_tar_archive(
+                "result.txt",
+                b"result\n",
+            ))));
+        }
+        if source.ends_with("reward.json") {
+            return Err(EvalExecutionError::ProcessFailure(
+                "reward.json absent".to_owned(),
+            ));
+        }
+        Ok(Box::new(io::Cursor::new(test_tar_archive(
+            "reward.txt",
+            b"1\n",
+        ))))
+    }
+
+    fn container_workdir(&self, _: &str) -> Result<String, EvalExecutionError> {
+        Ok("/work".to_owned())
+    }
+
+    fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn external_driver_transaction_orders_terminal_verifier_and_exact_cleanup() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(
+        &temporary,
+        "[environment.healthcheck]\ncommand = [\"ready\"]\n",
+    );
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let prepared = TransactionExternalDriverFactory {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::Valid,
+    }
+    .prepare(&imported.package, &trial)
+    .unwrap();
+    let runtime = TransactionDockerRuntime {
+        events: Arc::clone(&events),
+        case: ExternalTerminalCase::Valid,
+        is_environment_acquired: Cell::new(false),
+    };
+
+    let (_, supplement) = DockerProcessSandbox::new()
+        .execute_externally_driven_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Some("/work".to_owned()),
+            )
+            .unwrap(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &trial,
+            prepared,
+            &FixedSecret,
+        )
+        .await
+        .expect("the approved external compatibility transaction completes");
+
+    assert_eq!(supplement.fidelity(), CompatibilityFidelity::Missing);
+    assert!(!format!("{supplement:?}").contains("discard-me"));
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        [
+            "prepare",
+            "acquire",
+            "healthcheck",
+            "terminal",
+            "collect",
+            "verify",
+            "cancel",
+            "reap",
+        ]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn external_driver_terminal_failures_skip_verifier_and_cleanup_exactly_once() {
+    for case in [
+        ExternalTerminalCase::DriverError,
+        ExternalTerminalCase::Timeout,
+        ExternalTerminalCase::MissingCandidate,
+        ExternalTerminalCase::InvalidCandidate,
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let task_root = external_driver_task_root(
+            &temporary,
+            "[environment.healthcheck]\ncommand = [\"ready\"]\n",
+        );
+        let imported = HarborImporter::new(&NativeSourceAcquirer)
+            .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+            .unwrap();
+        let trial = resolve_docker_driver_trial(imported.clone());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let prepared = TransactionExternalDriverFactory {
+            events: Arc::clone(&events),
+            case,
+        }
+        .prepare(&imported.package, &trial)
+        .unwrap();
+        let runtime = TransactionDockerRuntime {
+            events: Arc::clone(&events),
+            case,
+            is_environment_acquired: Cell::new(false),
+        };
+
+        DockerProcessSandbox::new()
+            .execute_externally_driven_with_runtime(
+                &runtime,
+                &HarborSandboxRecipe::for_standard_task(
+                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    Some("/work".to_owned()),
+                )
+                .unwrap(),
+                &imported.package,
+                imported.package.execution_plan(),
+                &trial,
+                prepared,
+                &FixedSecret,
+            )
+            .await
+            .expect_err("an unsealed external terminal cannot reach Harbor verification");
+
+        let events = events.lock().unwrap();
+        assert!(!events.contains(&"collect"), "case {case:?}: {events:?}");
+        assert!(!events.contains(&"verify"), "case {case:?}: {events:?}");
+        assert_eq!(
+            events.iter().filter(|event| **event == "cancel").count(),
+            1,
+            "case {case:?}: {events:?}"
+        );
+        assert_eq!(
+            events.iter().filter(|event| **event == "reap").count(),
+            1,
+            "case {case:?}: {events:?}"
+        );
+        assert!(!events.contains(&"fence"), "case {case:?}: {events:?}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn external_driver_startup_abort_cleans_once_without_a_second_fence() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let deadlines = AdapterLifecycleDeadlines::new(
+        Duration::from_millis(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let protocol = AdapterProtocolConfig::new(
+        aiperf_runtime::eval::AdapterRole::Driver,
+        "external-startup-abort",
+        BTreeSet::from([ProtocolCapability::Driver]),
+        BTreeSet::new(),
+        ProtocolLimits::default(),
+    )
+    .unwrap();
+    let runtime = ProtocolAdapterRuntimeFactory::new(
+        protocol,
+        Rc::new(StrictAdapterProtocolFactory),
+        Rc::new(PendingExternalDriverSpawner {
+            events: Arc::clone(&events),
+        }),
+    );
+    let request = AdapterSpawnRequest::for_non_model_adapter(
+        ["sealed-external-driver".to_owned()],
+        BTreeMap::new(),
+        deadlines,
+    )
+    .unwrap();
+
+    let error = match runtime.start(request).await {
+        Ok(_) => panic!("a pending Driver launch must reach its bounded startup abort"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        AdapterSupervisionError::StartupDeadlineElapsed
+    ));
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        ["cancel", "reap"],
+        "the successful abort consumes ownership before the startup guard drops"
+    );
 }
 
 fn prepare_external_driver(

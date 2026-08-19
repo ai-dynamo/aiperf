@@ -21,6 +21,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "engine")]
+use std::collections::BTreeSet;
+
 use async_trait::async_trait;
 use tempfile::{NamedTempFile, TempDir};
 use tokio::process::Command as TokioCommand;
@@ -31,11 +34,11 @@ use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
 use crate::eval::native_graph::workspace_patch::apply_workspace_patch;
 #[cfg(feature = "engine")]
 use crate::eval::{
-    EpisodeArtifactStore, FrozenArtifact, FrozenRolloutEvidence, NativeGraphAttemptAuthority,
-    NativeGraphEnvironmentRolloutSession, NativeGraphLeaseRolloutStart,
-    NativeGraphLiveRolloutCoordinator, NativeGraphRolloutReceipt,
-    NativeGraphRolloutTransitionReceipt, NativeGraphWorkspacePatchContract,
-    StartedNativeGraphEnvironmentStepper,
+    AdapterProtocolConfig, CapturePolicy, EpisodeArtifactStore, FrozenArtifact,
+    FrozenRolloutEvidence, NativeGraphAttemptAuthority, NativeGraphEnvironmentRolloutSession,
+    NativeGraphLeaseRolloutStart, NativeGraphLiveRolloutCoordinator, NativeGraphRolloutReceipt,
+    NativeGraphRolloutTransitionReceipt, NativeGraphWorkspacePatchContract, ProtocolCapability,
+    ProtocolLimits, StartedNativeGraphEnvironmentStepper,
 };
 use crate::{
     clock::{Clock, RealClock},
@@ -50,6 +53,8 @@ use crate::{
     },
 };
 
+#[cfg(feature = "engine")]
+use super::native_graph_episode::run_externally_driven_episode_session;
 use super::{
     AuthorizedExternalDriverSpawn, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId,
     DockerAdapterLease, DockerAdapterProcess, DockerAdapterSpawnerRequest, DockerBuildRequest,
@@ -1776,6 +1781,239 @@ impl DockerProcessSandbox {
                     reward,
                     verifier: package.source_digest(),
                 })
+            })
+            .await
+        }
+        .await;
+        let cleanup = remove_containers_with_deadline(self.clock.clone(), runtime, containers);
+        combine_primary_and_cleanup(
+            outcome,
+            cleanup.map_or(Ok(()), Err),
+            "Docker evaluation containers",
+        )
+    }
+
+    /// Executes one externally driven compatibility episode with Docker's production runtime.
+    #[cfg(feature = "engine")]
+    pub async fn execute_externally_driven(
+        &self,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        trial: &ResolvedEpisodeTrial,
+        prepared_driver: PreparedExternalDriverCapability,
+        secrets: &dyn SecretProvider,
+    ) -> Result<
+        (
+            LocalExecutionResult,
+            crate::eval::CompatibilityTerminalSupplement,
+        ),
+        EvalExecutionError,
+    > {
+        let runtime = DockerCliRuntime {
+            clock: self.clock.clone(),
+            native_graph_model_secrets: None,
+        };
+        self.execute_externally_driven_with_runtime(
+            &runtime,
+            recipe,
+            package,
+            package.execution_plan(),
+            trial,
+            prepared_driver,
+            secrets,
+        )
+        .await
+    }
+
+    /// Executes one externally driven compatibility episode through the declared verifier.
+    #[cfg(feature = "engine")]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_externally_driven_with_runtime(
+        &self,
+        runtime: &dyn DockerRuntime,
+        recipe: &HarborSandboxRecipe,
+        package: &HarborTaskPackage,
+        plan: &BenchmarkExecutionPlan,
+        trial: &ResolvedEpisodeTrial,
+        prepared_driver: PreparedExternalDriverCapability,
+        secrets: &dyn SecretProvider,
+    ) -> Result<
+        (
+            LocalExecutionResult,
+            crate::eval::CompatibilityTerminalSupplement,
+        ),
+        EvalExecutionError,
+    > {
+        if package.execution_plan().is_multi_step() || plan.is_multi_step() {
+            return Err(EvalExecutionError::UnsupportedMultiStep);
+        }
+        if !package.is_standard_directory() {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "standard externally driven task package",
+            ));
+        }
+        if !package.native_graph().is_some_and(|native_graph| {
+            native_graph.profile() == crate::eval::NativeGraphProfile::ExternallyDriven
+        }) {
+            return Err(EvalExecutionError::InvalidRecipe(
+                "externally driven package profile",
+            ));
+        }
+        if plan.compose().is_some() {
+            return Err(EvalExecutionError::UnsupportedEnforcement(
+                "external Driver Docker Compose",
+            ));
+        }
+        let environment = plan.environment();
+        let verifier = plan.verifier();
+        if !runtime.supports_phase_network_transitions()
+            && (plan.agent().network() != environment.network()
+                || verifier.phase().network() != verifier.environment().network())
+        {
+            return Err(EvalExecutionError::UnsupportedEnforcement(
+                "phase network transition",
+            ));
+        }
+        let environment_workdir = recipe.resolve_workdir(environment.workdir());
+        validate_shared_verifier_workdir(runtime, plan, None, environment_workdir)?;
+        let authority = NativeGraphAttemptAuthority::from_resolved_trial(trial);
+        let capture_session = authority.compatibility_capture_session().cloned().ok_or(
+            EvalExecutionError::InvalidRecipe("external compatibility capture session"),
+        )?;
+        let protocol = AdapterProtocolConfig::new(
+            AdapterRole::Driver,
+            trial.attempt_id().as_str(),
+            BTreeSet::from([ProtocolCapability::Driver]),
+            BTreeSet::new(),
+            ProtocolLimits::default(),
+        )
+        .and_then(|protocol| {
+            protocol
+                .validate_external_driver_terminal()
+                .map(|_| protocol)
+        })
+        .map_err(|error| {
+            EvalExecutionError::ProcessFailure(format!(
+                "external Driver protocol admission failed: {error}"
+            ))
+        })?;
+        let (image, container) = docker_run_names(package);
+        let driver_project = ComposeProjectId::new("aiperf-external-driver");
+        let driver_labels = driver_project.ownership_labels();
+        let driver_spawn = prepare_external_driver_spawn(
+            runtime,
+            package,
+            trial,
+            plan,
+            Some(prepared_driver),
+            &container,
+            driver_project,
+            AdapterLifecycleDeadlines::default(),
+        )?;
+        let materialized_source = package.materialize_source()?;
+        let (source_root, environment_root) =
+            standard_task_roots(package, materialized_source.root())?;
+        let workspace = tempfile::tempdir()
+            .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
+        let mut containers = vec![container.clone()];
+
+        let outcome = async {
+            let baseline_network = network_lease(environment.network())?;
+            let build_network = build_network_lease(environment.network())?;
+            runtime.build(
+                &DockerBuildRequest::new([
+                    "build",
+                    "--network",
+                    build_network,
+                    "--tag",
+                    &image,
+                    environment_root.to_string_lossy().as_ref(),
+                ])
+                .with_network_lease(build_network),
+            )?;
+            create_planned_container(
+                runtime,
+                &container,
+                &image,
+                ContainerWorkspace::at_workdir(workspace.path(), environment_workdir)
+                    .with_ownership_labels(Some(&driver_labels)),
+                environment,
+                baseline_network,
+                Some(package.instruction()),
+                None,
+            )?;
+            runtime.start(&DockerStartRequest::new(&container))?;
+            validate_shared_verifier_workdir(runtime, plan, Some(&container), environment_workdir)?;
+            if let Some(healthcheck) = environment.healthcheck() {
+                run_healthcheck(
+                    self.clock.clone(),
+                    runtime,
+                    &container,
+                    environment,
+                    environment_workdir,
+                    healthcheck,
+                    baseline_network,
+                    secrets,
+                )?;
+            }
+            let agent_deadline = plan.agent().timeout().map(|timeout| {
+                Deadline::from_phase_timeout(self.clock.clone(), EvalExecutionPhase::Agent, timeout)
+            });
+            let remaining = |deadline: &Option<Deadline>| {
+                deadline.as_ref().map(Deadline::remaining).transpose()
+            };
+            prepare_workdir_with_deadline(
+                runtime,
+                &container,
+                environment,
+                plan.agent(),
+                EvalExecutionPhase::Agent,
+                environment_workdir,
+                baseline_network,
+                remaining(&agent_deadline)?,
+            )?;
+            let started = driver_spawn.start().map_err(|error| {
+                EvalExecutionError::ProcessFailure(format!("external Driver spawn failed: {error}"))
+            })?;
+            let mut driver = started
+                .into_session(protocol, capture_session.clone())
+                .await?;
+            run_externally_driven_episode_session(&mut driver, |receipt| {
+                let supplement = CapturePolicy::from_session(&capture_session)
+                    .begin_observation()
+                    .freeze()
+                    .into_terminal_supplement(receipt)
+                    .map_err(|error| {
+                        EvalExecutionError::ProcessFailure(format!(
+                            "external compatibility capture failed: {error}"
+                        ))
+                    })?;
+                let step = plan
+                    .steps()
+                    .first()
+                    .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?;
+                let mut session = DockerStepSession {
+                    clock: self.clock.clone(),
+                    runtime,
+                    recipe,
+                    source_root,
+                    environment,
+                    image: &image,
+                    agent_container: &container,
+                    secrets,
+                    containers: &mut containers,
+                    artifact_collection: None,
+                };
+                let artifacts = session.collect_artifacts(step)?;
+                let reward = session.run_verifier(step, &artifacts)?;
+                Ok((
+                    LocalExecutionResult {
+                        artifacts,
+                        reward,
+                        verifier: package.source_digest(),
+                    },
+                    supplement,
+                ))
             })
             .await
         }

@@ -54,8 +54,8 @@ pub use completed_attempt::{
 };
 #[cfg(feature = "engine")]
 pub use episode_runner::{
-    DockerNativeGraphEpisodeExecutor, EpisodeExecutionError, NativeGraphEpisodeExecutor,
-    NativeGraphEpisodeRunner,
+    DockerExternallyDrivenEpisodeExecutor, DockerNativeGraphEpisodeExecutor, EpisodeExecutionError,
+    NativeGraphEpisodeExecutor, NativeGraphEpisodeRunner,
 };
 pub use evaluator::{
     EpisodeEvaluationError, EpisodeEvaluator, EpisodeEvaluatorFactory, HarborEpisodeEvaluator,
@@ -144,6 +144,8 @@ pub use protocol::{
     ProtocolError, ProtocolLimits, ProtocolOperationState, ProtocolSessionState,
     StrictAdapterProtocolFactory, ValidatedAdapterMessage, ValidatedHostMessage,
 };
+#[cfg(feature = "engine")]
+pub(crate) use supervision::ProtocolExternalDriverSession;
 pub use supervision::{
     AdapterCheckout, AdapterCheckoutOrigin, AdapterExit, AdapterLifecycleDeadlines, AdapterPool,
     AdapterPoolKey, AdapterProcess, AdapterRuntimeFactory, AdapterSpawnRequest,

@@ -12,10 +12,43 @@ use super::EvalExecutionError;
 use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
 #[cfg(feature = "engine")]
 use crate::eval::{
-    BoundNativeGraphEnvironmentStepper, FrozenArtifact, FrozenRolloutEvidence,
-    NativeGraphAttemptAuthority, NativeGraphRolloutTransitionReceipt,
+    BoundNativeGraphEnvironmentStepper, CompatibilityTerminalReceipt, FrozenArtifact,
+    FrozenRolloutEvidence, NativeGraphAttemptAuthority, NativeGraphRolloutTransitionReceipt,
     NativeGraphWorkspacePatchContract, PreparedNativeGraphLiveRolloutCoordinator,
 };
+
+/// Backend-owned external Driver session with no raw process or terminal-payload access.
+#[cfg(feature = "engine")]
+#[async_trait(?Send)]
+pub(crate) trait ExternallyDrivenEpisodeSession {
+    /// Runs the exact prepared Driver through its sole terminal protocol exchange.
+    async fn request_terminal(
+        &mut self,
+    ) -> Result<CompatibilityTerminalReceipt, EvalExecutionError>;
+
+    /// Cancels and reaps the started Driver once the episode outcome is fixed.
+    async fn cancel_and_reap(&mut self) -> Result<(), EvalExecutionError>;
+}
+
+/// Runs one terminal-only external Driver transaction and preserves terminal cleanup ownership.
+#[cfg(feature = "engine")]
+pub(crate) async fn run_externally_driven_episode_session<T>(
+    session: &mut dyn ExternallyDrivenEpisodeSession,
+    after_terminal: impl FnOnce(CompatibilityTerminalReceipt) -> Result<T, EvalExecutionError>,
+) -> Result<T, EvalExecutionError> {
+    let outcome = match session.request_terminal().await {
+        Ok(receipt) => after_terminal(receipt),
+        Err(error) => Err(error),
+    };
+    let cleanup = session.cancel_and_reap().await;
+    match (outcome, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(error)) | (Err(error), Ok(())) => Err(error),
+        (Err(primary), Err(cleanup)) => Err(EvalExecutionError::ProcessFailure(format!(
+            "external Driver episode failed: {primary}; cleanup failed: {cleanup}"
+        ))),
+    }
+}
 
 /// Opaque, immutable rollout start facts retained by the Docker lease before provisioning.
 ///

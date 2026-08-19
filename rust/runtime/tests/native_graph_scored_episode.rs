@@ -21,20 +21,23 @@ use std::{
 use aiperf_runtime::eval::{
     AdapterEnvelope, AdapterExit, AdapterMessage, AdapterProcess, AdapterSpawnRequest,
     AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError, AgentVariantRef,
-    ArtifactDigest, ArtifactDownloadHandle, AttemptId, CancelReason, DockerAdapterSpawnerRequest,
+    ArtifactDigest, ArtifactDownloadHandle, AttemptId, AuthorizedExternalDriverSpawn, CancelReason,
+    CompatibilityFidelity, CompatibilityTerminalReceipt, DockerAdapterSpawnerRequest,
     DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
-    DockerNativeGraphEpisodeExecutor, DockerProcessSandbox, DockerRemoveRequest, DockerRuntime,
-    DockerStartRequest, EngineNativeGraphEpisodeCallback, EpisodeAssignment, EpisodeExecutionError,
-    EvalExecutionError, EvalNodeRecordArtifact, EvidenceEvent, EvidenceKind,
-    FrozenArtifactReference, FrozenAttemptBundle, HarborEpisodeEvaluatorFactory,
-    HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
-    HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource,
-    HostEnvelope, HostMessage, LocalNativeGraphSuiteScheduler, ModelCapacityKey,
-    ModelEndpointIsolationProof, ModelIdentity, ModelRuntimeConfig, NativeGraphAttemptAuthority,
-    NativeGraphCompletedAttempt, NativeGraphEnvironmentAdapterStart,
-    NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor,
-    NativeGraphEpisodeLease, NativeGraphEpisodeRunner, NativeGraphLeaseRolloutStart,
-    NativeGraphPackagePlan, NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity,
+    DockerExternallyDrivenEpisodeExecutor, DockerNativeGraphEpisodeExecutor, DockerProcessSandbox,
+    DockerRemoveRequest, DockerRuntime, DockerStartRequest, EngineNativeGraphEpisodeCallback,
+    EpisodeAssignment, EpisodeExecutionError, EvalExecutionError, EvalNodeRecordArtifact,
+    EvidenceEvent, EvidenceKind, ExternalDriverDockerSpawner, ExternalDriverError,
+    ExternalDriverSession, ExternalDriverSpawnExecutor, FrozenArtifactReference,
+    FrozenAttemptBundle, HarborEpisodeEvaluatorFactory, HarborEvaluationCoordinator,
+    HarborImporter, HarborLifecycleAgentContract, HarborLifecycleRequest,
+    HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource, HostEnvelope, HostMessage,
+    LocalNativeGraphSuiteScheduler, ModelCapacityKey, ModelEndpointIsolationProof, ModelIdentity,
+    ModelRuntimeConfig, NativeGraphAttemptAuthority, NativeGraphCompletedAttempt,
+    NativeGraphEnvironmentAdapterStart, NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback,
+    NativeGraphEpisodeExecutor, NativeGraphEpisodeLease, NativeGraphEpisodeRunner,
+    NativeGraphExternalDriverFactory, NativeGraphLeaseRolloutStart, NativeGraphPackagePlan,
+    NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity, PreparedExternalDriver,
     ProtocolCapability, ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
     ResourceLeaseRequest, RewardDocument, RuntimeIdentity, ScoreVersion, SecretProvider,
     SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult,
@@ -354,6 +357,7 @@ async fn runner_unit_maps_explicitly_stubbed_frozen_facts_after_observed_model_d
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].verified_reward(), Some(1.0));
+    assert!(!format!("{results:?}").contains("terminal payload"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -471,6 +475,107 @@ async fn docker_episode_executor_appends_two_suite_episodes_to_one_record_artifa
     );
     let rows = fs::read_to_string(&records_path).expect("read suite node record artifact");
     assert_eq!(rows.lines().count(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn docker_external_episode_preserves_harbor_score_and_compatibility_fidelity() {
+    let imported = import_external_driver_fixture();
+    let lifecycle = external_driver_lifecycle_request();
+    let trial = HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)
+        .expect("resolve external lifecycle trial before environment provisioning");
+    let suite = NativeGraphSuiteManifest::new(vec![
+        SuiteTrialSpec::from_imported(
+            imported.clone(),
+            trial,
+            NonZeroUsize::new(1).expect("one external episode"),
+            ResourceLeaseRequest::new(1, 64, BTreeMap::new())
+                .expect("external episode needs no model capacity"),
+        )
+        .expect("external suite trial"),
+    ])
+    .expect("one external suite trial")
+    .resolve(SuiteRunId::new(ArtifactDigest::from_bytes(
+        b"external-driver-scored-run",
+    )))
+    .expect("resolve one external matrix assignment");
+    let prepared = ScoredExternalDriverFactory
+        .prepare(
+            &imported.package,
+            suite
+                .trials()
+                .first()
+                .expect("resolved suite retains its one external trial"),
+        )
+        .expect("prepare the exact external trial before provisioning");
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let runtime = Rc::new(GraphDockerRuntime {
+        events: Rc::clone(&events),
+        external_driver_spawn_executor: Some(Rc::new(ScoredExternalDriverSpawnExecutor {
+            events: Rc::clone(&events),
+        })),
+        ..GraphDockerRuntime::default()
+    });
+    let executor = Rc::new(
+        DockerExternallyDrivenEpisodeExecutor::new_with_runtime(
+            DockerProcessSandbox::new(),
+            runtime,
+            HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Some("/work".to_owned()),
+            )
+            .expect("immutable external Docker recipe"),
+            imported,
+            lifecycle,
+            prepared,
+            Rc::new(EmptySecrets),
+        )
+        .expect("construct the consuming external episode executor"),
+    );
+    let runner = Rc::new(NativeGraphEpisodeRunner::new(
+        executor,
+        Rc::new(HarborEpisodeEvaluatorFactory),
+    ));
+    let scheduler = LocalNativeGraphSuiteScheduler::new(
+        aiperf_runtime::eval::ResourceLimits::new(1, 1, 64, BTreeMap::new())
+            .expect("finite no-model scheduler resources"),
+    )
+    .expect("external scheduler");
+
+    let consumed_suite = suite.clone();
+    let results = run_resolved_suite(&scheduler, suite, runner.clone())
+        .await
+        .expect("external terminal, Harbor verifier, freeze, and evaluator all complete");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].verified_reward(), Some(1.0));
+    assert_eq!(
+        results[0].fidelity(),
+        aiperf_runtime::eval::EpisodeFidelity::ExternallyDriven(CompatibilityFidelity::Missing)
+    );
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "build",
+            "create",
+            "start",
+            "driver-spawn",
+            "terminal",
+            "verifier",
+            "cancel",
+            "reap",
+            "remove",
+        ]
+    );
+    let completed_events = events.borrow().clone();
+    let error = run_resolved_suite(&scheduler, consumed_suite, runner)
+        .await
+        .expect_err("the sealed external capability cannot be reconstructed after consumption");
+    assert!(
+        error
+            .to_string()
+            .contains("external Driver preparation was already consumed")
+    );
+    assert_eq!(events.borrow().as_slice(), completed_events.as_slice());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1244,12 +1349,209 @@ fn native_graph_lifecycle_request() -> HarborLifecycleRequest {
     }
 }
 
+fn external_driver_lifecycle_request() -> HarborLifecycleRequest {
+    HarborLifecycleRequest {
+        version: 1,
+        agent_variant: AgentVariantRef::new("external-driver").expect("external driver variant"),
+        model: ModelIdentity::new("compatibility", "opaque-driver")
+            .expect("external compatibility identity"),
+        seed: 17,
+        policy: PolicyIdentity::new(ArtifactDigest::from_bytes(b"external-driver-policy")),
+        runtime: RuntimeIdentity::new("external-compatibility").expect("external runtime identity"),
+        attempt: AttemptId::new("caller-attempt").expect("caller attempt identity"),
+        budget: TrialBudget::new(30.0, 30.0).expect("finite trial budget"),
+        agent_contract: HarborLifecycleAgentContract::ExternallyDriven,
+        command: vec!["tools/driver.sh".to_owned()],
+        initial_score: HarborLifecycleScoreRequest {
+            metric: "reward".to_owned(),
+            rationale: ArtifactDigest::from_bytes(b"initial external rationale"),
+        },
+        regrade: HarborLifecycleScoreRequest {
+            metric: "reward".to_owned(),
+            rationale: ArtifactDigest::from_bytes(b"external regrade rationale"),
+        },
+    }
+}
+
+struct ScoredExternalDriverFactory;
+
+impl NativeGraphExternalDriverFactory for ScoredExternalDriverFactory {
+    fn id(&self) -> &str {
+        "scored-fixture"
+    }
+
+    fn prepare_driver(
+        &self,
+        _: &NativeGraphPackagePlan,
+        _: &aiperf_runtime::eval::ResolvedEpisodeTrial,
+    ) -> Result<Box<dyn PreparedExternalDriver>, ExternalDriverError> {
+        Ok(Box::new(ScoredPreparedExternalDriver))
+    }
+}
+
+struct ScoredPreparedExternalDriver;
+
+#[async_trait(?Send)]
+impl PreparedExternalDriver for ScoredPreparedExternalDriver {
+    async fn run(
+        &mut self,
+        session: &mut dyn ExternalDriverSession,
+    ) -> Result<CompatibilityTerminalReceipt, ExternalDriverError> {
+        session.request_terminal().await
+    }
+}
+
+struct ScoredExternalDriverSpawnExecutor {
+    events: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl ExternalDriverSpawnExecutor for ScoredExternalDriverSpawnExecutor {
+    fn begin_spawn(
+        &self,
+        _: AuthorizedExternalDriverSpawn,
+    ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        self.events.borrow_mut().push("driver-spawn");
+        Ok(Box::new(ScoredExternalDriverSpawnTransaction {
+            process: Some(Box::new(ScoredExternalDriverProcess {
+                events: Rc::clone(&self.events),
+                stdout: VecDeque::new(),
+            })),
+        }))
+    }
+}
+
+struct ScoredExternalDriverSpawnTransaction {
+    process: Option<Box<dyn AdapterProcess>>,
+}
+
+#[async_trait(?Send)]
+impl AdapterSpawnTransaction for ScoredExternalDriverSpawnTransaction {
+    async fn await_process(&mut self) -> Result<Box<dyn AdapterProcess>, AdapterSupervisionError> {
+        self.process
+            .take()
+            .ok_or(AdapterSupervisionError::AlreadyReaped)
+    }
+
+    async fn abort(
+        &mut self,
+        deadline: std::time::Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        let Some(mut process) = self.process.take() else {
+            return Ok(());
+        };
+        process.cancel(CancelReason::HostShutdown, deadline).await?;
+        process.reap(deadline).await?;
+        Ok(())
+    }
+
+    fn fence(&mut self) {
+        if let Some(process) = self.process.as_deref_mut() {
+            process.fence();
+        }
+    }
+}
+
+struct ScoredExternalDriverProcess {
+    events: Rc<RefCell<Vec<&'static str>>>,
+    stdout: VecDeque<Vec<u8>>,
+}
+
+impl ScoredExternalDriverProcess {
+    fn push(&mut self, envelope: AdapterEnvelope) -> Result<(), AdapterSupervisionError> {
+        let mut frame = serde_json::to_vec(&envelope).map_err(|error| {
+            AdapterSupervisionError::Process(format!(
+                "scored external Driver frame is invalid: {error}"
+            ))
+        })?;
+        frame.push(b'\n');
+        self.stdout.push_back(frame);
+        Ok(())
+    }
+}
+
+#[async_trait(?Send)]
+impl AdapterProcess for ScoredExternalDriverProcess {
+    async fn write_frame(
+        &mut self,
+        frame: &[u8],
+        _: std::time::Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        let host: HostEnvelope = serde_json::from_slice(frame).map_err(|error| {
+            AdapterSupervisionError::Process(format!(
+                "scored external Driver host frame is invalid: {error}"
+            ))
+        })?;
+        match host.message {
+            HostMessage::Hello { .. } => self.push(AdapterEnvelope::new(
+                host.episode,
+                "startup",
+                0,
+                host.operation,
+                AdapterMessage::Ready {
+                    protocol_version: 1,
+                    capabilities: vec![ProtocolCapability::Driver],
+                    implementation_digest: ArtifactDigest::from_bytes(b"scored-external-driver"),
+                },
+            )),
+            HostMessage::RequestEpisodeTerminal { .. } => {
+                self.events.borrow_mut().push("terminal");
+                self.push(AdapterEnvelope::new(
+                    host.episode,
+                    "external-driver-terminal",
+                    1,
+                    host.operation,
+                    AdapterMessage::EpisodeTerminalCandidate {
+                        output: serde_json::json!({"discarded": "terminal payload"}),
+                    },
+                ))
+            }
+            _ => Err(AdapterSupervisionError::InvalidResetTransition),
+        }
+    }
+
+    async fn read_stdout_frame(
+        &mut self,
+        _: usize,
+        _: std::time::Duration,
+    ) -> Result<Vec<u8>, AdapterSupervisionError> {
+        self.stdout.pop_front().ok_or_else(|| {
+            AdapterSupervisionError::Process("scored external Driver returned no frame".to_owned())
+        })
+    }
+
+    async fn drain_stderr(&mut self, _: usize) -> Result<Vec<u8>, AdapterSupervisionError> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel(
+        &mut self,
+        _: CancelReason,
+        _: std::time::Duration,
+    ) -> Result<(), AdapterSupervisionError> {
+        self.events.borrow_mut().push("cancel");
+        Ok(())
+    }
+
+    async fn reap(
+        &mut self,
+        _: std::time::Duration,
+    ) -> Result<AdapterExit, AdapterSupervisionError> {
+        self.events.borrow_mut().push("reap");
+        Ok(AdapterExit::Reaped)
+    }
+
+    fn fence(&mut self) {
+        self.events.borrow_mut().push("fence");
+    }
+}
+
 #[derive(Default)]
 struct GraphDockerRuntime {
     events: Rc<RefCell<Vec<&'static str>>>,
     adapter_spawner_labels: Rc<RefCell<Vec<BTreeMap<String, String>>>>,
     creates: Rc<RefCell<Vec<Vec<String>>>>,
     adapter_spawner: Option<Rc<dyn AdapterSpawner>>,
+    external_driver_spawn_executor: Option<Rc<dyn ExternalDriverSpawnExecutor>>,
 }
 
 impl DockerRuntime for GraphDockerRuntime {
@@ -1310,6 +1612,16 @@ impl DockerRuntime for GraphDockerRuntime {
             .ok_or(EvalExecutionError::UnsupportedEnforcement(
                 "streaming Docker adapter spawn",
             ))
+    }
+
+    fn external_driver_spawner(
+        &self,
+        request: &DockerAdapterSpawnerRequest,
+    ) -> Result<ExternalDriverDockerSpawner, EvalExecutionError> {
+        let executor = self.external_driver_spawn_executor.clone().ok_or(
+            EvalExecutionError::UnsupportedEnforcement("external Driver Docker adapter spawn"),
+        )?;
+        Ok(ExternalDriverDockerSpawner::new(request, executor))
     }
 
     fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
@@ -1709,6 +2021,58 @@ impl RolloutAdapterChild {
 
 fn import_live_graph_fixture(endpoint: &str) -> aiperf_runtime::eval::ImportedTask {
     import_live_graph_fixture_with_binding(endpoint, "primary")
+}
+
+fn import_external_driver_fixture() -> aiperf_runtime::eval::ImportedTask {
+    let task = tempfile::tempdir().expect("temporary external Driver task root");
+    fs::create_dir_all(task.path().join("environment"))
+        .expect("external Driver environment directory");
+    fs::create_dir_all(task.path().join("tests")).expect("external Driver verifier directory");
+    fs::create_dir_all(task.path().join("tools")).expect("external Driver tools directory");
+    fs::write(
+        task.path().join("environment/Dockerfile"),
+        b"FROM scratch\n",
+    )
+    .expect("external Driver Dockerfile");
+    fs::write(
+        task.path().join("instruction.md"),
+        b"Complete the external episode.\n",
+    )
+    .expect("external Driver instruction");
+    fs::write(task.path().join("tests/test.sh"), b"exit 0\n").expect("external Driver verifier");
+    fs::write(task.path().join("tools/driver.sh"), b"#!/bin/sh\nexit 0\n")
+        .expect("external Driver executable");
+    fs::write(
+        task.path().join("task.toml"),
+        r#"schema_version = "1.1"
+artifacts = ["/work/result.txt"]
+
+[task]
+name = "example/scored-external-driver"
+
+[native_graph]
+profile = "externally_driven"
+adapter_manifest = "adapters.toml"
+driver = "driver-adapter"
+external_driver_factory_id = "scored-fixture"
+"#,
+    )
+    .expect("external Driver task manifest");
+    fs::write(
+        task.path().join("adapters.toml"),
+        r#"[[adapters]]
+id = "driver-adapter"
+role = "driver"
+argv = ["tools/driver.sh"]
+executable = "tools/driver.sh"
+"#,
+    )
+    .expect("external Driver adapter manifest");
+    let source = HarborSource::local(task.path().to_string_lossy())
+        .expect("temporary external task path is a valid source");
+    HarborImporter::new(&NativeSourceAcquirer)
+        .import(&source)
+        .expect("external Driver fixture imports")
 }
 
 fn import_live_graph_fixture_with_binding(

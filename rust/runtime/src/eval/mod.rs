@@ -131,8 +131,9 @@ pub use native_graph::{
 #[cfg(feature = "engine")]
 pub use native_graph::{
     BoundNativeGraphEnvironmentStepper, CurrentNativeGraphModelBindingResolver,
-    DockerNativeGraphEpisodeExecutor, EngineNativeGraphEpisodeCallback, EpisodeExecutionError,
-    EvalNodeRecordArtifact, IssuedNativeGraphPolicyDecision, ModelRuntimeConfig, ModelRuntimeError,
+    DockerExternallyDrivenEpisodeExecutor, DockerNativeGraphEpisodeExecutor,
+    EngineNativeGraphEpisodeCallback, EpisodeExecutionError, EvalNodeRecordArtifact,
+    IssuedNativeGraphPolicyDecision, ModelRuntimeConfig, ModelRuntimeError,
     NativeGraphEpisodeExecutor, NativeGraphEpisodeRunner, NativeGraphLiveRolloutCoordinator,
     NativeGraphLiveRolloutError, NativeGraphModelBindingResolver, NativeGraphModelDecisionError,
     NativeGraphModelStageError, NativeGraphPolicyModelRuntime,

@@ -4,6 +4,7 @@
 //! Matrix episode execution over a Rust-owned NativeGraph callback and verifier facts.
 
 use std::{
+    cell::RefCell,
     fmt::{self, Display, Formatter},
     rc::Rc,
     sync::Arc,
@@ -16,7 +17,8 @@ use crate::{
     eval::{
         DockerProcessSandbox, DockerRuntime, HarborCompletedEvaluation,
         HarborEvaluationCoordinator, HarborLifecycleAgentContract, HarborLifecycleRequest,
-        HarborSandboxRecipe, ImportedTask, NativeGraphEpisodeCallback, SecretProvider,
+        HarborSandboxRecipe, ImportedTask, NativeGraphEpisodeCallback,
+        PreparedExternalDriverCapability, SecretProvider,
     },
     extensions::AIPerfRegistry,
 };
@@ -61,9 +63,126 @@ pub struct DockerNativeGraphEpisodeExecutor {
     record_artifact: Option<EvalNodeRecordArtifact>,
 }
 
+/// Concrete Docker-backed executor for one prepared externally driven episode.
+///
+/// The prepared Driver capability is consumed exactly once and remains opaque until the
+/// Docker transaction binds it to its authorized spawn. The executor then freezes only the
+/// bounded compatibility supplement beside the ordinary Harbor completion.
+pub struct DockerExternallyDrivenEpisodeExecutor {
+    sandbox: DockerProcessSandbox,
+    runtime: DockerExecutorRuntime,
+    recipe: HarborSandboxRecipe,
+    imported: ImportedTask,
+    lifecycle: HarborLifecycleRequest,
+    prepared_driver: RefCell<Option<PreparedExternalDriverCapability>>,
+    secrets: Rc<dyn SecretProvider>,
+}
+
 enum DockerExecutorRuntime {
     Host,
     Injected(Rc<dyn DockerRuntime>),
+}
+
+impl DockerExternallyDrivenEpisodeExecutor {
+    /// Binds Docker's production runtime to one already-prepared external trial.
+    pub fn new(
+        sandbox: DockerProcessSandbox,
+        recipe: HarborSandboxRecipe,
+        imported: ImportedTask,
+        lifecycle: HarborLifecycleRequest,
+        prepared_driver: PreparedExternalDriverCapability,
+        secrets: Rc<dyn SecretProvider>,
+    ) -> Result<Self, EpisodeExecutionError> {
+        Self::new_inner(
+            sandbox,
+            DockerExecutorRuntime::Host,
+            recipe,
+            imported,
+            lifecycle,
+            prepared_driver,
+            secrets,
+        )
+    }
+
+    /// Binds an injectable Docker provider to one already-prepared external trial.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_runtime(
+        sandbox: DockerProcessSandbox,
+        runtime: Rc<dyn DockerRuntime>,
+        recipe: HarborSandboxRecipe,
+        imported: ImportedTask,
+        lifecycle: HarborLifecycleRequest,
+        prepared_driver: PreparedExternalDriverCapability,
+        secrets: Rc<dyn SecretProvider>,
+    ) -> Result<Self, EpisodeExecutionError> {
+        Self::new_inner(
+            sandbox,
+            DockerExecutorRuntime::Injected(runtime),
+            recipe,
+            imported,
+            lifecycle,
+            prepared_driver,
+            secrets,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_inner(
+        sandbox: DockerProcessSandbox,
+        runtime: DockerExecutorRuntime,
+        recipe: HarborSandboxRecipe,
+        imported: ImportedTask,
+        lifecycle: HarborLifecycleRequest,
+        prepared_driver: PreparedExternalDriverCapability,
+        secrets: Rc<dyn SecretProvider>,
+    ) -> Result<Self, EpisodeExecutionError> {
+        if !imported.package.native_graph().is_some_and(|package| {
+            package.profile() == crate::eval::NativeGraphProfile::ExternallyDriven
+        }) {
+            return Err(EpisodeExecutionError::Configuration(
+                "Docker external executor requires an imported externally_driven package"
+                    .to_owned(),
+            ));
+        }
+        if lifecycle.agent_contract != HarborLifecycleAgentContract::ExternallyDriven {
+            return Err(EpisodeExecutionError::Configuration(
+                "Docker external executor requires externally_driven lifecycle provenance"
+                    .to_owned(),
+            ));
+        }
+        HarborEvaluationCoordinator::resolve_trial(&imported, &lifecycle)
+            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        Ok(Self {
+            sandbox,
+            runtime,
+            recipe,
+            imported,
+            lifecycle,
+            prepared_driver: RefCell::new(Some(prepared_driver)),
+            secrets,
+        })
+    }
+
+    fn lifecycle_for_assignment(
+        &self,
+        assignment: &EpisodeAssignment,
+    ) -> Result<(HarborLifecycleRequest, crate::eval::TrialSpec), EpisodeExecutionError> {
+        if assignment.package().identity_digest() != self.imported.package.identity_digest() {
+            return Err(EpisodeExecutionError::Configuration(
+                "external assignment package does not match the executor snapshot".to_owned(),
+            ));
+        }
+        let mut lifecycle = self.lifecycle.clone();
+        lifecycle.attempt = assignment.attempt_id().clone();
+        let trial = HarborEvaluationCoordinator::resolve_trial(&self.imported, &lifecycle)
+            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        if &trial.identity_digest() != assignment.trial_digest() {
+            return Err(EpisodeExecutionError::Configuration(
+                "external assignment trial does not match the lifecycle request".to_owned(),
+            ));
+        }
+        Ok((lifecycle, trial))
+    }
 }
 
 impl DockerNativeGraphEpisodeExecutor {
@@ -177,6 +296,62 @@ impl DockerNativeGraphEpisodeExecutor {
             ));
         }
         Ok((lifecycle, trial))
+    }
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeExecutor for DockerExternallyDrivenEpisodeExecutor {
+    async fn execute(
+        &self,
+        assignment: &EpisodeAssignment,
+    ) -> Result<NativeGraphCompletedAttempt, EpisodeExecutionError> {
+        let (lifecycle, trial) = self.lifecycle_for_assignment(assignment)?;
+        let prepared_driver = self.prepared_driver.borrow_mut().take().ok_or_else(|| {
+            EpisodeExecutionError::Configuration(
+                "external Driver preparation was already consumed".to_owned(),
+            )
+        })?;
+        let authority = NativeGraphAttemptAuthority::from_resolved_trial(assignment.trial());
+        let (execution, supplement) = match &self.runtime {
+            DockerExecutorRuntime::Host => {
+                self.sandbox
+                    .execute_externally_driven(
+                        &self.recipe,
+                        &self.imported.package,
+                        assignment.trial(),
+                        prepared_driver,
+                        self.secrets.as_ref(),
+                    )
+                    .await
+            }
+            DockerExecutorRuntime::Injected(runtime) => {
+                self.sandbox
+                    .execute_externally_driven_with_runtime(
+                        runtime.as_ref(),
+                        &self.recipe,
+                        &self.imported.package,
+                        self.imported.package.execution_plan(),
+                        assignment.trial(),
+                        prepared_driver,
+                        self.secrets.as_ref(),
+                    )
+                    .await
+            }
+        }
+        .map_err(EpisodeExecutionError::Callback)?;
+        let completed: HarborCompletedEvaluation = HarborEvaluationCoordinator::complete_attempt(
+            self.imported.clone(),
+            trial,
+            &lifecycle.command,
+            execution,
+            &lifecycle,
+        )
+        .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        let frozen = completed
+            .freeze()
+            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))?;
+        NativeGraphCompletedAttempt::freeze_compatibility(&authority, frozen, supplement)
+            .map_err(|error| EpisodeExecutionError::Facts(error.to_string()))
     }
 }
 
@@ -360,6 +535,12 @@ impl EpisodeRunner for NativeGraphEpisodeRunner {
         if authority.requires_rollout_evidence() != completed.has_rollout() {
             return Err(MatrixError::RunnerExecutionFailed(
                 "native graph executor omitted or added sealed rollout evidence contrary to the imported assignment"
+                    .to_owned(),
+            ));
+        }
+        if authority.is_externally_driven() != completed.has_compatibility() {
+            return Err(MatrixError::RunnerExecutionFailed(
+                "native graph executor omitted or added sealed compatibility evidence contrary to the imported assignment"
                     .to_owned(),
             ));
         }

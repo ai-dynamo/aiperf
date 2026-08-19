@@ -10,16 +10,26 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "engine")]
+use std::cell::RefCell;
+
 use std::rc::Rc;
 
 use async_trait::async_trait;
 
+#[cfg(feature = "engine")]
+use crate::eval::native_graph::{CompatibilityCaptureSession, ProtocolExternalDriverSession};
 use crate::eval::{
     AdapterExit, AdapterProcess, AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner,
     AdapterSupervisionError, CancelReason, ExternallyDrivenAdapterAuthorization, HarborTaskPackage,
     ModelSecretId, NativeGraphAdapterAuthorization, NativeGraphPackagePlan, NativeGraphProfile,
     PreparedExternalDriver, PreparedExternalDriverCapability, ProviderProfile,
     ResolvedEpisodeTrial,
+};
+#[cfg(feature = "engine")]
+use crate::eval::{
+    AdapterProtocolConfig, AdapterRuntimeFactory, CompatibilityTerminalReceipt,
+    ProtocolAdapterRuntimeFactory, StrictAdapterProtocolFactory, SupervisedAdapter,
 };
 
 use super::{
@@ -162,22 +172,28 @@ impl std::fmt::Debug for ExternalDriverDockerSpawnOperation {
 impl ExternalDriverDockerSpawnOperation {
     /// Starts the authorized Driver while retaining its exact prepared capability.
     pub fn start(self) -> Result<StartedExternalDriverDockerSpawn, AdapterSupervisionError> {
+        #[cfg(feature = "engine")]
+        let deadlines = self.request.deadlines();
         let transaction = self
             .spawner
             .begin_spawn(&self.authorization, self.request)?;
         Ok(StartedExternalDriverDockerSpawn {
-            prepared_driver: self.prepared_driver,
+            prepared_driver: Some(self.prepared_driver),
             authorization: self.authorization,
             transaction: Some(transaction),
+            #[cfg(feature = "engine")]
+            deadlines,
         })
     }
 }
 
 /// Started external Driver state retaining preparation and launch ownership together.
 pub struct StartedExternalDriverDockerSpawn {
-    prepared_driver: Box<dyn PreparedExternalDriver>,
+    prepared_driver: Option<Box<dyn PreparedExternalDriver>>,
     authorization: ExternallyDrivenAdapterAuthorization,
     transaction: Option<Box<dyn AdapterSpawnTransaction>>,
+    #[cfg(feature = "engine")]
+    deadlines: crate::eval::AdapterLifecycleDeadlines,
 }
 
 impl std::fmt::Debug for StartedExternalDriverDockerSpawn {
@@ -186,12 +202,144 @@ impl std::fmt::Debug for StartedExternalDriverDockerSpawn {
             .debug_struct("StartedExternalDriverDockerSpawn")
             .field(
                 "prepared_driver",
-                &std::any::type_name_of_val(&self.prepared_driver),
+                &self
+                    .prepared_driver
+                    .as_deref()
+                    .map(std::any::type_name_of_val),
             )
             .field("authorization", &self.authorization)
             .field("has_transaction", &self.transaction.is_some())
             .finish_non_exhaustive()
     }
+}
+
+#[cfg(feature = "engine")]
+const PRESTARTED_EXTERNAL_DRIVER_SESSION_ARGV: &str = "aiperf-sealed-external-driver-session";
+
+#[cfg(feature = "engine")]
+struct PrestartedExternalDriverSpawner {
+    transaction: RefCell<Option<Box<dyn AdapterSpawnTransaction>>>,
+    deadlines: crate::eval::AdapterLifecycleDeadlines,
+}
+
+#[cfg(feature = "engine")]
+impl AdapterSpawner for PrestartedExternalDriverSpawner {
+    fn begin_spawn(
+        &self,
+        request: AdapterSpawnRequest,
+    ) -> Result<Box<dyn AdapterSpawnTransaction>, AdapterSupervisionError> {
+        if request.argv() != [PRESTARTED_EXTERNAL_DRIVER_SESSION_ARGV]
+            || !request.environment().is_empty()
+            || request.deadlines() != self.deadlines
+        {
+            return Err(AdapterSupervisionError::InvalidSpawnRequest(
+                "prestarted external Driver supervision",
+            ));
+        }
+        self.transaction
+            .borrow_mut()
+            .take()
+            .ok_or(AdapterSupervisionError::AlreadyReaped)
+    }
+}
+
+#[cfg(feature = "engine")]
+impl Drop for PrestartedExternalDriverSpawner {
+    fn drop(&mut self) {
+        if let Some(transaction) = self.transaction.get_mut().as_deref_mut() {
+            transaction.fence();
+        }
+    }
+}
+
+#[cfg(feature = "engine")]
+pub(crate) struct ExternalDriverDockerSession {
+    prepared_driver: Box<dyn PreparedExternalDriver>,
+    adapter: Box<dyn SupervisedAdapter>,
+    protocol: AdapterProtocolConfig,
+    capture_session: CompatibilityCaptureSession,
+}
+
+#[cfg(feature = "engine")]
+impl StartedExternalDriverDockerSpawn {
+    pub(crate) async fn into_session(
+        mut self,
+        protocol: AdapterProtocolConfig,
+        capture_session: CompatibilityCaptureSession,
+    ) -> Result<ExternalDriverDockerSession, EvalExecutionError> {
+        let supervision_request = AdapterSpawnRequest::for_non_model_adapter(
+            [PRESTARTED_EXTERNAL_DRIVER_SESSION_ARGV.to_owned()],
+            BTreeMap::new(),
+            self.deadlines,
+        )
+        .map_err(external_driver_supervision_error)?;
+        let transaction = self.transaction.take().ok_or_else(|| {
+            external_driver_supervision_error(AdapterSupervisionError::AlreadyReaped)
+        })?;
+        let spawner = Rc::new(PrestartedExternalDriverSpawner {
+            transaction: RefCell::new(Some(transaction)),
+            deadlines: self.deadlines,
+        });
+        let runtime = ProtocolAdapterRuntimeFactory::new(
+            protocol.clone(),
+            Rc::new(StrictAdapterProtocolFactory),
+            spawner,
+        );
+        let adapter = runtime
+            .start(supervision_request)
+            .await
+            .map_err(external_driver_supervision_error)?;
+        let prepared_driver =
+            self.prepared_driver
+                .take()
+                .ok_or(EvalExecutionError::InvalidRecipe(
+                    "prepared external Driver session",
+                ))?;
+        Ok(ExternalDriverDockerSession {
+            prepared_driver,
+            adapter,
+            protocol,
+            capture_session,
+        })
+    }
+}
+
+#[cfg(feature = "engine")]
+#[async_trait(?Send)]
+impl super::native_graph_episode::ExternallyDrivenEpisodeSession for ExternalDriverDockerSession {
+    async fn request_terminal(
+        &mut self,
+    ) -> Result<CompatibilityTerminalReceipt, EvalExecutionError> {
+        let mut session = ProtocolExternalDriverSession::new(
+            self.adapter.as_mut(),
+            self.protocol.clone(),
+            self.capture_session.clone(),
+        )
+        .map_err(|error| {
+            EvalExecutionError::ProcessFailure(format!(
+                "external Driver protocol admission failed: {error}"
+            ))
+        })?;
+        self.prepared_driver
+            .run(&mut session)
+            .await
+            .map_err(|error| {
+                EvalExecutionError::ProcessFailure(format!("external Driver failed: {error}"))
+            })
+    }
+
+    async fn cancel_and_reap(&mut self) -> Result<(), EvalExecutionError> {
+        self.adapter
+            .cancel_and_reap(CancelReason::HostShutdown)
+            .await
+            .map(|_| ())
+            .map_err(external_driver_supervision_error)
+    }
+}
+
+#[cfg(feature = "engine")]
+fn external_driver_supervision_error(error: AdapterSupervisionError) -> EvalExecutionError {
+    EvalExecutionError::ProcessFailure(format!("external Driver supervision failed: {error}"))
 }
 
 impl Drop for StartedExternalDriverDockerSpawn {
