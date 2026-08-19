@@ -66,21 +66,7 @@ pub(super) fn run(
 
 /// Flush and atomically publish rendered visualization bytes beside their destination.
 pub(super) fn write_output_atomically(path: &Path, bytes: &[u8]) -> Result<(), GraphCommandError> {
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if !metadata.file_type().is_file() {
-            return Err(output_invalid_error(
-                path,
-                "graph visualization output must be a regular file path",
-            ));
-        }
-        #[cfg(not(unix))]
-        {
-            return Err(output_invalid_error(
-                path,
-                "existing graph visualization output cannot be replaced atomically on this platform",
-            ));
-        }
-    }
+    check_output_target(path, |target| fs::symlink_metadata(target))?;
 
     let parent = path
         .parent()
@@ -115,6 +101,32 @@ pub(super) fn write_output_atomically(path: &Path, bytes: &[u8]) -> Result<(), G
     Ok(())
 }
 
+fn check_output_target<F>(path: &Path, symlink_metadata: F) -> Result<(), GraphCommandError>
+where
+    F: FnOnce(&Path) -> io::Result<fs::Metadata>,
+{
+    match symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                return Err(output_invalid_error(
+                    path,
+                    "graph visualization output must be a regular file path",
+                ));
+            }
+            #[cfg(not(unix))]
+            {
+                return Err(output_invalid_error(
+                    path,
+                    "existing graph visualization output cannot be replaced atomically on this platform",
+                ));
+            }
+            Ok(())
+        }
+        Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(cause) => Err(output_write_error(path, cause)),
+    }
+}
+
 fn output_invalid_error(path: &Path, message: &'static str) -> GraphCommandError {
     GraphCommandError::new(
         GraphCommandErrorCode::OutputInvalid,
@@ -130,6 +142,28 @@ fn output_write_error(path: &Path, cause: impl Into<anyhow::Error>) -> GraphComm
         Some(path.display().to_string()),
         cause.into(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+    use std::path::Path;
+
+    use super::{GraphCommandErrorCode, check_output_target};
+
+    #[test]
+    fn metadata_failure_is_an_output_write_failure() {
+        let error = check_output_target(Path::new("/tmp/graph.mmd"), |_| {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        })
+        .expect_err("metadata failure must reject the output");
+
+        assert!(matches!(
+            error.code,
+            GraphCommandErrorCode::OutputWriteFailed
+        ));
+        assert!(error.message.contains("output-write-failed"));
+    }
 }
 
 fn select_program<'a>(
