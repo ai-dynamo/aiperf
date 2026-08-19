@@ -340,14 +340,19 @@ pub async fn prepare_local_graph_inspection_input(
     format: &str,
     tokenizer: &dyn TextTokenizer,
     endpoint_id: &str,
+    source_format: Option<RecordedAgentSourceFormat>,
     seed: u64,
 ) -> Result<PreparedRunnerGraphInput> {
-    let raw = serde_json::value::to_raw_value(&serde_json::json!({
+    let mut input = serde_json::json!({
         "type": "file",
         "format": format,
         "path": source,
         "sampling": "sequential",
-    }))?;
+    });
+    if let Some(source_format) = source_format {
+        input["graph"] = serde_json::json!({"source_format": source_format.to_string()});
+    }
+    let raw = serde_json::value::to_raw_value(&input)?;
     resolver
         .load(
             &raw,
@@ -646,6 +651,21 @@ impl RecordedAgentDatasetInput {
             source_format,
             include_subagents,
         )?;
+        if matches!(&resolved, ResolvedRecordedAgentGraphSource::Imported { .. }) {
+            let graph = self.graph.as_ref();
+            ensure!(
+                graph
+                    .and_then(|graph| graph.tool_image.as_deref())
+                    .is_none(),
+                "imported recorded-agent sessions reject tool_image"
+            );
+            ensure!(
+                graph
+                    .and_then(|graph| graph.pinch_image.as_deref())
+                    .is_none(),
+                "imported recorded-agent sessions reject pinch_image"
+            );
+        }
         if matches!(
             &resolved,
             ResolvedRecordedAgentGraphSource::Imported {
@@ -1866,6 +1886,7 @@ mod tests {
             "dag_jsonl",
             &tokenizer,
             "chat",
+            None,
             73,
         )
         .await

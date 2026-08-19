@@ -42,6 +42,12 @@ fn json_error(args: &[&str]) -> GraphErrorReport {
     serde_json::from_slice(&output.stdout).expect("fatal JSON error report on stdout")
 }
 
+fn imported_agent_fixture(path: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../runtime/tests/fixtures/recorded_agent_session_import")
+        .join(path)
+}
+
 fn assert_json_error(report: GraphErrorReport, code: &str, message: &str, source: Option<&str>) {
     let value = serde_json::to_value(report).expect("serialize graph error report");
     assert_eq!(value["schema_version"], "aiperf.graph.error.v1");
@@ -513,4 +519,45 @@ fn json_fatal_envelope_has_no_generic_fallback() {
     assert!(matches!(report.code, GraphCommandErrorCode::SourceNotFound));
     assert!(!report.message.is_empty());
     assert!(report.source.is_some());
+}
+
+#[test]
+fn graph_inspection_authors_imported_endpoint_and_source_format() {
+    let claude = imported_agent_fixture("claude_code/linear.jsonl");
+    let claude_path = claude.to_str().expect("UTF-8 Claude fixture");
+    let messages = output(&[
+        "graph",
+        "validate",
+        claude_path,
+        "--graph-format",
+        "agent_recording",
+        "--source-format",
+        "claude_code",
+        "--endpoint-type",
+        "messages",
+    ]);
+    assert_eq!(messages.status.code(), Some(0), "{}", stderr(&messages));
+    let chat = output(&[
+        "graph",
+        "validate",
+        claude_path,
+        "--graph-format",
+        "agent_recording",
+        "--source-format",
+        "claude_code",
+    ]);
+    assert_eq!(chat.status.code(), Some(2));
+    assert!(stderr(&chat).contains("graph input could not be lowered"));
+
+    let codex_directory = imported_agent_fixture("codex");
+    let directory = output(&[
+        "graph",
+        "validate",
+        codex_directory.to_str().expect("UTF-8 Codex fixture"),
+        "--graph-format",
+        "agent_recording",
+        "--source-format",
+        "codex",
+    ]);
+    assert_eq!(directory.status.code(), Some(0), "{}", stderr(&directory));
 }

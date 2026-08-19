@@ -333,6 +333,41 @@ fn imported_adapter_rejects_tools_sampling_and_standard_scenario() {
 }
 
 #[test]
+fn imported_adapter_rejects_tool_and_pinch_images_without_tool_execution() {
+    let adapter = RecordedAgentRunnerGraphInputAdapter;
+    let tokenizer = TiktokenTokenizer::builtin();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    for graph_extra in [
+        json!({"tool_image": "registry.invalid/tool:latest"}),
+        json!({"pinch_image": "registry.invalid/pinch:latest"}),
+    ] {
+        let mut input = json!({
+            "type": "file", "format": "agent_recording", "path": fixture("codex/linear.jsonl"),
+            "sampling": "sequential", "graph": {"source_format": "codex"},
+        });
+        input["graph"]
+            .as_object_mut()
+            .expect("graph")
+            .extend(graph_extra.as_object().expect("object").clone());
+        let raw = serde_json::value::to_raw_value(&input).expect("raw graph input");
+        let error = runtime
+            .block_on(adapter.load(
+                &raw,
+                &GraphInputContext {
+                    tokenizer: &tokenizer,
+                    run_random_seed: Some(7),
+                    endpoint_id: "chat",
+                },
+            ))
+            .expect_err("imported source must reject image authority");
+        assert!(format!("{error:#}").contains("imported recorded-agent sessions reject"));
+    }
+}
+
+#[test]
 fn imported_lowering_emits_complete_metadata_without_adapter_warning() {
     let read_set = discover_imported_agent_read_set(
         &fixture("codex/linear.jsonl"),
@@ -605,6 +640,7 @@ async fn local_graph_inspection_forwards_selected_endpoint_identity() {
         "agent_recording",
         &tokenizer,
         "chat",
+        None,
         7,
     )
     .await;
@@ -620,6 +656,7 @@ async fn local_graph_inspection_forwards_selected_endpoint_identity() {
             "agent_recording",
             &tokenizer,
             "messages",
+            None,
             7,
         )
         .await

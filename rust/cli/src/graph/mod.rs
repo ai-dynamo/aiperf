@@ -10,6 +10,7 @@ mod visualize;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use aiperf_runtime::config::model::dataset::RecordedAgentSourceFormat;
 use aiperf_runtime::config::model::workload_kind::GRAPH_FORMATS;
 use aiperf_runtime::engine::graph_input::{
     BuiltinRunnerGraphInputAdapterResolver, PreparedRunnerGraphInput,
@@ -55,6 +56,12 @@ struct CommonArgs {
     /// Built-in tokenizer name or existing local tokenizer path.
     #[arg(long, default_value = "builtin")]
     tokenizer: String,
+    /// Endpoint type used to validate graph-input compatibility.
+    #[arg(long, default_value = "chat")]
+    endpoint_type: String,
+    /// Imported recorded-agent source format.
+    #[arg(long)]
+    source_format: Option<RecordedAgentSourceFormat>,
     /// Deterministic graph lowering seed.
     #[arg(long, default_value_t = 0)]
     seed: u64,
@@ -285,7 +292,8 @@ fn load(args: CommonArgs) -> Result<LoadedGraphInput, GraphCommandError> {
             &source,
             &args.graph_format,
             tokenizer.as_ref(),
-            "chat",
+            &args.endpoint_type,
+            args.source_format,
             args.seed,
         ),
     );
