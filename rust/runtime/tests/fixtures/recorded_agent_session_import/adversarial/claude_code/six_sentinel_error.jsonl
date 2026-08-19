@@ -1,0 +1,4 @@
+{"type":"user","isSidechain":false,"sessionId":"safe","uuid":"u","cwd":"PRIVATE_CWD","gitBranch":"PRIVATE_BRANCH","message":{"role":"user","content":"PRIVATE_PROMPT"}}
+{"type":"assistant","isSidechain":false,"sessionId":"safe","uuid":"a","message":{"role":"assistant","id":"msg","content":[{"type":"thinking","thinking":"PRIVATE_REASONING"},{"type":"tool_use","id":"tool","name":"Read","input":{"path":"PRIVATE_ARGUMENT"}}]}}
+{"type":"user","isSidechain":false,"sessionId":"safe","uuid":"r","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool","content":"PRIVATE_RESULT"}]}}
+{"type":"assistant","isSidechain":false,"sessionId":"safe","uuid":"a2","message":{"role":"assistant","id":"msg","content":[{"type":"tool_use","id":"tool","name":"Bash","input":{"path":"PRIVATE_ARGUMENT"}}]}}

@@ -65,6 +65,7 @@ struct PendingClaudeMessage {
 
 struct NormalizedAssistantBlocks {
     content: Vec<Value>,
+    full_content: Vec<Value>,
     fresh_tool_ids: HashSet<String>,
 }
 
@@ -82,7 +83,7 @@ struct ClaudeState<'a> {
     seen_tool_blocks: HashMap<String, Vec<u8>>,
     seen_result_ids: HashSet<String>,
     open_tool_ids: HashSet<String>,
-    first_open_tool_timestamp: Option<DateTime<FixedOffset>>,
+    first_open_tool_timestamp: Option<Option<DateTime<FixedOffset>>>,
     last_result_timestamp: Option<DateTime<FixedOffset>>,
     next_model_delay_after_previous_us: Option<f64>,
     observed_tool_count: u64,
@@ -298,6 +299,7 @@ impl<'a> ClaudeState<'a> {
             self.next_model_delay_after_previous_us = self
                 .first_open_tool_timestamp
                 .as_ref()
+                .and_then(Option::as_ref)
                 .zip(self.last_result_timestamp.as_ref())
                 .and_then(|(first, last)| last.signed_duration_since(*first).num_microseconds())
                 .filter(|micros| *micros > 0)
@@ -352,7 +354,7 @@ impl<'a> ClaudeState<'a> {
             })?;
         let incoming = self.normalize_assistant_blocks(blocks, line)?;
         if let Some(finalized) = self.finalized_messages.get(&source_id) {
-            if finalized != &incoming.content {
+            if finalized != &incoming.full_content {
                 return Err(error(
                     &self.file.path,
                     line,
@@ -402,6 +404,7 @@ impl<'a> ClaudeState<'a> {
         line: usize,
     ) -> Result<NormalizedAssistantBlocks, ImportedAgentError> {
         let mut retained = Vec::new();
+        let mut full_content = Vec::new();
         let mut fresh_tool_ids = HashSet::new();
         for block in blocks {
             let Some(object) = block.as_object() else {
@@ -418,7 +421,9 @@ impl<'a> ClaudeState<'a> {
                             "invalid text block",
                         ));
                     }
-                    retained.push(Value::Object(object.clone()));
+                    let block = Value::Object(object.clone());
+                    full_content.push(block.clone());
+                    retained.push(block);
                 }
                 Some("tool_use") => {
                     let id = required_identifier(
@@ -450,6 +455,8 @@ impl<'a> ClaudeState<'a> {
                             "cannot canonicalize tool block",
                         )
                     })?;
+                    let block = Value::Object(object.clone());
+                    full_content.push(block.clone());
                     if let Some(previous) = self.seen_tool_blocks.get(&id) {
                         if previous != &canonical {
                             return Err(error(
@@ -462,8 +469,8 @@ impl<'a> ClaudeState<'a> {
                     } else {
                         self.seen_tool_blocks.insert(id.clone(), canonical);
                         fresh_tool_ids.insert(id);
+                        retained.push(block);
                     }
-                    retained.push(Value::Object(object.clone()));
                 }
                 Some("thinking" | "redacted_thinking") => self.omitted_reasoning_count += 1,
                 _ => self.ignored_record_count += 1,
@@ -471,6 +478,7 @@ impl<'a> ClaudeState<'a> {
         }
         Ok(NormalizedAssistantBlocks {
             content: retained,
+            full_content,
             fresh_tool_ids,
         })
     }
@@ -516,7 +524,7 @@ impl<'a> ClaudeState<'a> {
                         if incoming.fresh_tool_ids.contains(&id) {
                             self.open_tool_ids.insert(id);
                             if self.first_open_tool_timestamp.is_none() {
-                                self.first_open_tool_timestamp = timestamp;
+                                self.first_open_tool_timestamp = Some(timestamp);
                             }
                             self.observed_tool_count += 1;
                         }

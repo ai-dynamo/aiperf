@@ -171,6 +171,8 @@ fn main_filters_sidechains_and_validates_subagent_parent() {
     let session = parse_claude_session(&file).expect("main session");
     assert_eq!(session.calls.len(), 1);
     assert!(session.parent.is_none());
+    assert_eq!(session.ignored_record_count, 1);
+    assert_eq!(messages(&session.calls[0])[0]["content"], "keep");
 
     let subagent = parse_claude_session(&claude_file(
         fixture("with_subagent/main/subagents/agent-aaa.jsonl"),
@@ -285,6 +287,10 @@ fn main_adversarial_fixtures_keep_private_values_out_of_diagnostics() {
             "result does not identify an open tool use",
         ),
         ("invalid_timestamp.jsonl", "invalid timestamp"),
+        (
+            "six_sentinel_error.jsonl",
+            "conflicting tool-use identifier reuse",
+        ),
     ] {
         let error = parse_claude_session(&session_file(fixture(&format!(
             "../adversarial/claude_code/{name}"
@@ -297,6 +303,9 @@ fn main_adversarial_fixtures_keep_private_values_out_of_diagnostics() {
             "PRIVATE_REASONING",
             "PRIVATE_RESULT",
             "PRIVATE_TIMESTAMP",
+            "PRIVATE_CWD",
+            "PRIVATE_BRANCH",
+            "PRIVATE_ARGUMENT",
         ] {
             assert!(!error.contains(private), "{name} leaked {private}: {error}");
         }
@@ -315,15 +324,22 @@ fn main_does_not_reopen_finalized_assistant_or_exact_tool_blocks() {
             "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"r1\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool-1\",\"content\":\"PRIVATE_RESULT\"}]}}\n",
             "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a2\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-2\",\"content\":[]}}\n",
             "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a3\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Read\",\"input\":{\"path\":\"PRIVATE_ARGUMENT\"}}]}}\n",
-            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a4\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-3\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Read\",\"input\":{\"path\":\"PRIVATE_ARGUMENT\"}}]}}\n"
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a4\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-3\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Read\",\"input\":{\"path\":\"PRIVATE_ARGUMENT\"}}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a5\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-4\",\"content\":[]}}\n"
         ),
     );
     let session = parse_claude_session(&file).expect("finalized duplicate is ignored");
-    assert_eq!(session.calls.len(), 3);
+    assert_eq!(session.calls.len(), 4);
     assert_eq!(session.observed_tool_count, 1);
+    assert!(session.tool_results_complete);
     assert_eq!(session.calls[0].source_id, "msg-1");
     assert_eq!(session.calls[1].source_id, "msg-2");
     assert_eq!(session.calls[2].source_id, "msg-3");
+    assert_eq!(session.calls[3].source_id, "msg-4");
+    assert_eq!(
+        messages(&session.calls[3])[4]["content"],
+        Value::Array(Vec::new())
+    );
 }
 
 #[test]
@@ -364,6 +380,25 @@ fn main_limits_timestamp_validation_to_correlated_tools_and_latches_metadata() {
     assert_eq!(
         parse_claude_session(&missing_time)
             .expect("missing tool timestamps")
+            .calls[1]
+            .delay_after_previous_us,
+        None
+    );
+
+    let first_missing_later_present = write(
+        root.path(),
+        "first-missing-later-present.jsonl",
+        concat!(
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"u\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"one\",\"name\":\"Read\",\"input\":{}}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"a2\",\"timestamp\":\"2026-04-02T00:00:01Z\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"one\",\"name\":\"Read\",\"input\":{}},{\"type\":\"tool_use\",\"id\":\"two\",\"name\":\"Bash\",\"input\":{}}]}}\n",
+            "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"r\",\"timestamp\":\"2026-04-02T00:00:02Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"one\",\"content\":\"one\"},{\"type\":\"tool_result\",\"tool_use_id\":\"two\",\"content\":\"two\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe\",\"uuid\":\"b\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-2\",\"content\":[]}}\n"
+        ),
+    );
+    assert_eq!(
+        parse_claude_session(&first_missing_later_present)
+            .expect("first timestamp remains missing")
             .calls[1]
             .delay_after_previous_us,
         None
