@@ -237,11 +237,13 @@ class TestChatEndpoint:
     @pytest.mark.parametrize(
         "streaming,per_chunk_usage,expected",
         [
+            # per_chunk_usage implies use_server_token_count (validator), so these
+            # are the only reachable states; use_server_token_count is always True.
             (True, True, {"include_usage": True, "continuous_usage_stats": True}),
-            (True, False, None),
+            (True, False, {"include_usage": True}),
             (False, True, None),
         ],
-        ids=["on", "off_no_stream_options", "non_streaming_no_injection"],
+        ids=["on", "server_count_only", "non_streaming_no_injection"],
     )  # fmt: skip
     def test_per_chunk_usage_injects_continuous_usage_stats(
         self,
@@ -251,12 +253,13 @@ class TestChatEndpoint:
         per_chunk_usage,
         expected,
     ):
-        """--per-chunk-usage adds stream_options.continuous_usage_stats (plus
-        include_usage) on streaming requests, and nothing when off or non-streaming."""
+        """--per-chunk-usage adds stream_options.continuous_usage_stats (on top of
+        include_usage) on streaming server-token-count requests; server-token-count
+        alone adds only include_usage; non-streaming injects nothing."""
         endpoint = ChatEndpoint(model_endpoint)
         turns = [sample_conversations["session_1"].turns[0]]
         model_endpoint.endpoint.streaming = streaming
-        model_endpoint.endpoint.use_server_token_count = False
+        model_endpoint.endpoint.use_server_token_count = True
         model_endpoint.endpoint.per_chunk_usage = per_chunk_usage
         request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
         payload = endpoint.format_payload(request_info)

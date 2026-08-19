@@ -86,9 +86,11 @@ class ChatEndpoint(BaseEndpoint):
         if extra_body:
             payload.update(extra_body)
 
-        if model_endpoint.endpoint.streaming and (
-            model_endpoint.endpoint.use_server_token_count
-            or model_endpoint.endpoint.per_chunk_usage
+        # per_chunk_usage implies use_server_token_count (enforced by the endpoint
+        # config validator), so gating on use_server_token_count alone is sufficient.
+        if (
+            model_endpoint.endpoint.streaming
+            and model_endpoint.endpoint.use_server_token_count
         ):
             self._ensure_include_usage(
                 payload, continuous=model_endpoint.endpoint.per_chunk_usage

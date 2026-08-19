@@ -60,9 +60,20 @@ def test_per_chunk_usage_requires_server_token_count() -> None:
         )
 
 
+def test_per_chunk_usage_requires_chat_endpoint() -> None:
+    with pytest.raises(ValueError, match="requires endpoint type 'chat'"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.COMPLETIONS,
+            per_chunk_usage=True,
+            use_server_token_count=True,
+        )
+
+
 def test_per_chunk_usage_with_server_token_count_is_valid() -> None:
     endpoint = EndpointConfig(
         urls=["http://localhost:8000"],
+        type=EndpointType.CHAT,
         per_chunk_usage=True,
         use_server_token_count=True,
     )

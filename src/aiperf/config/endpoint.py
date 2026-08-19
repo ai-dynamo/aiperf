@@ -562,6 +562,11 @@ class EndpointConfig(BaseConfig):
                 "--per-chunk-usage requires --use-server-token-count "
                 "(the first-chunk token count comes from server-reported per-chunk usage)"
             )
+        if self.per_chunk_usage and self.type != EndpointType.CHAT:
+            raise ValueError(
+                "--per-chunk-usage requires endpoint type 'chat' "
+                "(continuous_usage_stats is only injected on the chat endpoint)"
+            )
         return self
 
     @model_validator(mode="after")

@@ -47,6 +47,14 @@ def server_token_parser(setup_inference_parser):
     return setup_inference_parser
 
 
+@pytest.fixture
+def per_chunk_usage_parser(setup_inference_parser):
+    """Parser with server token count AND per-chunk usage enabled."""
+    setup_inference_parser.run.cfg.endpoint.use_server_token_count = True
+    setup_inference_parser.run.cfg.endpoint.per_chunk_usage = True
+    return setup_inference_parser
+
+
 def make_parsed_response(
     text: str = "output",
     perf_ns: int = 1000,
@@ -326,11 +334,55 @@ class TestServerTokenCount:
         assert result.token_counts.reasoning is None
 
     async def test_first_content_chunk_from_per_chunk_usage(
+        self, per_chunk_usage_parser, request_record
+    ):
+        """With --per-chunk-usage, first_content_chunk_tokens is the cumulative
+        output-token count on the first content chunk -- the real bundled-first-chunk
+        count ITL subtracts."""
+        setup_parser_responses(
+            per_chunk_usage_parser,
+            [
+                make_parsed_response(text="hello world", completion_tokens=20),
+                make_parsed_response(text=" more", completion_tokens=50),
+            ],
+        )
+
+        result = await per_chunk_usage_parser.process_valid_record(request_record)
+
+        assert result.token_counts.first_content_chunk_tokens == 20
+        assert result.token_counts.output == 50  # final total, unchanged
+
+    async def test_first_content_chunk_subtracts_reasoning(
+        self, per_chunk_usage_parser, request_record
+    ):
+        """The first-chunk count is output-only (completion - reasoning), matching
+        OSL's unit, so a reasoning model's first chunk is not over-counted."""
+        setup_parser_responses(
+            per_chunk_usage_parser,
+            [
+                # first content chunk: completion=32 but 32 are reasoning -> 0 output
+                make_parsed_response(
+                    text="answer", completion_tokens=32, reasoning_tokens=32
+                ),
+                make_parsed_response(
+                    text=" more", completion_tokens=52, reasoning_tokens=32
+                ),
+            ],
+        )
+
+        result = await per_chunk_usage_parser.process_valid_record(request_record)
+
+        # 32 completion - 32 reasoning = 0 output tokens through the first chunk,
+        # consistent with OSL = 52 - 32 = 20 (output-only). Not 32.
+        assert result.token_counts.first_content_chunk_tokens == 0
+        assert result.token_counts.output == 20
+
+    async def test_first_content_chunk_not_read_without_per_chunk_usage(
         self, server_token_parser, request_record
     ):
-        """With per-chunk (continuous) usage, first_content_chunk_tokens is the
-        cumulative completion_tokens reported on the first content chunk -- the
-        real bundled-first-chunk count ITL subtracts."""
+        """The read path is gated: with --use-server-token-count but NOT
+        --per-chunk-usage, first_content_chunk_tokens stays None even when the
+        server volunteers usage on a content chunk, so ITL is unchanged from main."""
         setup_parser_responses(
             server_token_parser,
             [
@@ -341,23 +393,23 @@ class TestServerTokenCount:
 
         result = await server_token_parser.process_valid_record(request_record)
 
-        assert result.token_counts.first_content_chunk_tokens == 20
-        assert result.token_counts.output == 50  # final total, unchanged
+        assert result.token_counts.first_content_chunk_tokens is None
+        assert result.token_counts.output == 50
 
-    async def test_first_content_chunk_none_without_per_chunk_usage(
-        self, server_token_parser, request_record
+    async def test_first_content_chunk_none_when_only_final_usage(
+        self, per_chunk_usage_parser, request_record
     ):
-        """Without per-chunk usage (only the final chunk carries usage),
+        """Even with --per-chunk-usage, if only the final chunk carries usage,
         first_content_chunk_tokens is None so ITL falls back to subtracting one."""
         setup_parser_responses(
-            server_token_parser,
+            per_chunk_usage_parser,
             [
                 make_parsed_response(text="hello", include_usage=False),
                 make_parsed_response(text="", completion_tokens=50),  # final usage-only
             ],
         )
 
-        result = await server_token_parser.process_valid_record(request_record)
+        result = await per_chunk_usage_parser.process_valid_record(request_record)
 
         assert result.token_counts.first_content_chunk_tokens is None
         assert result.token_counts.output == 50
