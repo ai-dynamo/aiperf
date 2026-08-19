@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import quote
 
 import httpx
@@ -25,6 +25,7 @@ import pytest
 from fastapi import FastAPI
 
 from aiperf.operator.results_layout import run_dir, write_latest
+from aiperf.operator.routers import results_files_io
 from aiperf.operator.routers.results_files import create_results_files_router
 
 # ============================================================
@@ -33,6 +34,18 @@ from aiperf.operator.routers.results_files import create_results_files_router
 
 _EPOCH = "1714150923"
 _READY_MARKER = ".aiperf_results_ready.json"
+
+
+def test_artifact_display_name_uses_posix_separators_for_windows_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep API-visible artifact paths portable across host platforms."""
+    monkeypatch.setattr(results_files_io, "Path", PureWindowsPath)
+
+    assert (
+        results_files_io._artifact_display_name("sweep_aggregate/sweep_results.csv")
+        == "sweep_aggregate/sweep_results.csv"
+    )
 
 
 def _app_for_results_dir(results_dir: Path) -> FastAPI:

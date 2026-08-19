@@ -73,7 +73,7 @@ def _artifact_display_name(name: str) -> str:
     """Strip .zst from an API-visible relative artifact name."""
     path = Path(name)
     display_leaf = _display_name(path)
-    return str(path.with_name(display_leaf))
+    return path.with_name(display_leaf).as_posix()
 
 
 def _is_job_spec_artifact(name: str) -> bool:
