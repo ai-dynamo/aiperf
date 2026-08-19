@@ -890,8 +890,7 @@ fn externally_driven_factory_preflight_resolves_only_the_exact_immutable_selecto
 }
 
 #[test]
-fn built_in_terminal_driver_prepares_only_the_exact_external_trial_while_refuse_stays_unavailable()
-{
+fn external_driver_registry_rejects_a_mismatched_factory_identifier() {
     let mut registry = BuiltinAIPerfRegistryFactory
         .build()
         .expect("the built-in registry is available");
@@ -906,6 +905,13 @@ fn built_in_terminal_driver_prepares_only_the_exact_external_trial_while_refuse_
             .to_string()
             .contains("registry name does not match its declared identifier")
     );
+}
+
+#[test]
+fn terminal_v1_preparation_binds_the_exact_external_package_and_trial() {
+    let registry = BuiltinAIPerfRegistryFactory
+        .build()
+        .expect("the built-in registry is available");
     let terminal_task = externally_driven_task_fixture();
     let terminal_imported = import_native_task(terminal_task.path()).unwrap();
     let terminal_trial = resolved_external_trial(terminal_imported.clone());
@@ -919,6 +925,27 @@ fn built_in_terminal_driver_prepares_only_the_exact_external_trial_while_refuse_
         .prepare(&terminal_imported.package, &terminal_trial)
         .expect("terminal_v1 prepares one opaque terminal request for the exact trial");
 
+    let foreign_task = externally_driven_task_fixture();
+    fs::write(
+        foreign_task.path().join("instruction.md"),
+        "Foreign external task.\n",
+    )
+    .unwrap();
+    let foreign_imported = import_native_task(foreign_task.path()).unwrap();
+    let foreign_trial = resolved_external_trial(foreign_imported);
+    assert_eq!(
+        terminal_factory
+            .prepare(&terminal_imported.package, &foreign_trial)
+            .unwrap_err(),
+        ExternalDriverError::PreparationRejected
+    );
+}
+
+#[test]
+fn refuse_external_driver_factory_remains_explicitly_unavailable() {
+    let registry = BuiltinAIPerfRegistryFactory
+        .build()
+        .expect("the built-in registry is available");
     let refusing_task = externally_driven_task_fixture();
     replace(
         &refusing_task.path().join("task.toml"),

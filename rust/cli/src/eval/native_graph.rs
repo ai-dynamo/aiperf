@@ -82,7 +82,7 @@ pub(super) fn run_task(
             })?;
             let dist_id = current_distribution_id()
                 .context("deriving native graph distribution identity from the current binary")?;
-            let application = Rc::new(Application::stock(dist_id)?);
+            let application = Application::stock(dist_id)?;
             let factory =
                 select_native_graph_external_driver(application.product_registry(), native)?;
             let resolved_trial = resolved
@@ -96,7 +96,7 @@ pub(super) fn run_task(
                 options,
                 resolved,
                 limits,
-                application,
+                &application,
                 prepared_driver,
             )
         }
@@ -320,7 +320,7 @@ fn run_resolved_external_suite(
     options: NativeGraphCliOptions,
     suite: aiperf_runtime::eval::ResolvedNativeGraphSuite,
     limits: ResourceLimits,
-    application: Rc<Application>,
+    application: &Application,
     prepared_driver: PreparedExternalDriverCapability,
 ) -> anyhow::Result<i32> {
     let image = options.image.unwrap_or_else(|| {
@@ -332,10 +332,11 @@ fn run_resolved_external_suite(
         NATIVE_GRAPH_SCHEDULER,
         limits,
     )?;
+    let task = imported.task.id.as_str().to_owned();
     let executor = Rc::new(DockerExternallyDrivenEpisodeExecutor::new(
         DockerProcessSandbox::new(),
         recipe,
-        imported.clone(),
+        imported,
         lifecycle.clone(),
         prepared_driver,
         Rc::new(HostEnvironmentSecrets),
@@ -353,7 +354,7 @@ fn run_resolved_external_suite(
         &runtime,
         run_resolved_suite(scheduler.as_ref(), suite, runner),
     )?;
-    emit_results(imported.task.id.as_str(), lifecycle, &results)?;
+    emit_results(&task, lifecycle, &results)?;
     Ok(0)
 }
 
@@ -518,13 +519,18 @@ fn emit_results(
             CompatibilityFidelity::Missing => "missing",
         },
     });
-    let lifecycle_evidence = external.map(|(result, _)| {
-        result
-            .evidence()
-            .iter()
-            .map(|digest| digest.as_str().to_owned())
-            .collect()
-    });
+    let lifecycle_evidence = external
+        .map(|(result, _)| {
+            result
+                .compatibility_lifecycle_evidence()
+                .map(|evidence| vec![evidence.digest().as_str().to_owned()])
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "externally driven result omitted compatibility lifecycle evidence"
+                    )
+                })
+        })
+        .transpose()?;
     let output = NativeGraphEvalOutput {
         task,
         artifacts: [],

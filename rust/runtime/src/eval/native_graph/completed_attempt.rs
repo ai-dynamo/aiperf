@@ -10,9 +10,10 @@ use crate::eval::{
 };
 
 use super::{
-    CapturePolicy, CompatibilityCaptureSession, CompatibilityTerminalSupplement, EpisodeFidelity,
-    FrozenRolloutEvidence, NativeGraphProfile, ResolvedEpisodeTrial, RolloutEvidenceIdentity,
-    RolloutPolicyEvidence, RolloutReturnAgreementError, result::EpisodeExecution,
+    CapturePolicy, CompatibilityCaptureSession, CompatibilityLifecycleEvidence,
+    CompatibilityTerminalSupplement, EpisodeFidelity, FrozenRolloutEvidence, NativeGraphProfile,
+    ResolvedEpisodeTrial, RolloutEvidenceIdentity, RolloutPolicyEvidence,
+    RolloutReturnAgreementError, result::EpisodeExecution,
 };
 
 /// Immutable imported-attempt authority required before native rollout evidence can freeze.
@@ -223,6 +224,35 @@ impl NativeGraphCompletedAttempt {
         self.compatibility.as_ref()
     }
 
+    pub(crate) fn compatibility_lifecycle_evidence(
+        &self,
+    ) -> Result<Option<CompatibilityLifecycleEvidence>, NativeGraphCompletedAttemptError> {
+        let mut events = self
+            .attempt
+            .lifecycle_evidence()
+            .iter()
+            .filter(|event| event.kind == EvidenceKind::Compatibility);
+        let Some(supplement) = &self.compatibility else {
+            return if events.next().is_some() {
+                Err(NativeGraphCompletedAttemptError::CompatibilityLifecycleWithoutSupplement)
+            } else {
+                Ok(None)
+            };
+        };
+        let event = events
+            .next()
+            .ok_or(NativeGraphCompletedAttemptError::CompatibilityLifecycleMissing)?;
+        if events.next().is_some() {
+            return Err(NativeGraphCompletedAttemptError::CompatibilityLifecycleMultiple);
+        }
+        if &event.payload != supplement.digest() {
+            return Err(NativeGraphCompletedAttemptError::CompatibilityLifecyclePayloadMismatch);
+        }
+        Ok(Some(CompatibilityLifecycleEvidence::new(
+            event.identity_digest(),
+        )))
+    }
+
     pub(crate) const fn has_rollout(&self) -> bool {
         self.rollout.is_some()
     }
@@ -365,6 +395,14 @@ pub enum NativeGraphCompletedAttemptError {
     CompatibilitySessionIdentityMismatch,
     /// The frozen Harbor attempt already contains compatibility lifecycle evidence.
     CompatibilityLifecycleAlreadyPresent,
+    /// A sealed compatibility completion lost its required lifecycle event.
+    CompatibilityLifecycleMissing,
+    /// A sealed compatibility completion contained more than one lifecycle event.
+    CompatibilityLifecycleMultiple,
+    /// The compatibility event payload did not match the sealed terminal supplement.
+    CompatibilityLifecyclePayloadMismatch,
+    /// Lifecycle evidence claimed compatibility without a sealed terminal supplement.
+    CompatibilityLifecycleWithoutSupplement,
     /// Rollout source provenance disagreed with the immutable imported task source.
     SourceIdentityMismatch,
     /// Rollout task provenance disagreed with the immutable selected task.
@@ -408,6 +446,16 @@ impl Display for NativeGraphCompletedAttemptError {
             ),
             Self::CompatibilityLifecycleAlreadyPresent => formatter
                 .write_str("completed attempt already contains compatibility lifecycle evidence"),
+            Self::CompatibilityLifecycleMissing => {
+                formatter.write_str("compatibility completion omitted its lifecycle evidence")
+            }
+            Self::CompatibilityLifecycleMultiple => formatter
+                .write_str("compatibility completion contains multiple lifecycle evidence events"),
+            Self::CompatibilityLifecyclePayloadMismatch => formatter.write_str(
+                "compatibility lifecycle evidence disagrees with the terminal supplement",
+            ),
+            Self::CompatibilityLifecycleWithoutSupplement => formatter
+                .write_str("compatibility lifecycle evidence has no sealed terminal supplement"),
             Self::SourceIdentityMismatch => formatter
                 .write_str("rollout source provenance disagrees with the completed attempt"),
             Self::TaskIdentityMismatch => {
@@ -442,8 +490,8 @@ mod tests {
     use super::*;
     use crate::eval::{CaptureError, CompatibilityTerminalReceipt};
     use crate::eval::{
-        EpisodeEvaluator, EpisodeScoreState, HarborEpisodeEvaluator, RewardDocument, ScoreVersion,
-        VerifierResult,
+        EpisodeEvaluationError, EpisodeEvaluator, EpisodeScoreState, HarborEpisodeEvaluator,
+        RewardDocument, ScoreVersion, VerifierResult,
     };
 
     fn authority(attempt: &str) -> NativeGraphAttemptAuthority {
@@ -538,6 +586,32 @@ mod tests {
             .expect("matching report and receipt seal one supplement")
     }
 
+    fn frozen_attempt_with_compatibility_payloads(
+        authority: &NativeGraphAttemptAuthority,
+        payloads: &[&[u8]],
+    ) -> FrozenAttemptBundle {
+        let attempt = frozen_attempt(authority, false);
+        let mut lifecycle = attempt.lifecycle_evidence().to_vec();
+        for payload in payloads {
+            let sequence = u64::try_from(lifecycle.len()).unwrap();
+            let parent = lifecycle.last().map(EvidenceEvent::identity_digest);
+            lifecycle.push(EvidenceEvent::new(
+                attempt.attempt().clone(),
+                sequence,
+                EvidenceKind::Compatibility,
+                ArtifactDigest::from_bytes(payload),
+                parent,
+            ));
+        }
+        FrozenAttemptBundle::new(
+            attempt.trial_digest().clone(),
+            attempt.verifier_result().clone(),
+            lifecycle,
+            attempt.score_lineage().to_vec(),
+        )
+        .unwrap()
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn compatibility_completion_binds_one_session_and_preserves_harbor_scoring() {
         let authority = authority("external-attempt-a");
@@ -563,12 +637,60 @@ mod tests {
             completed.frozen_attempt().lifecycle_evidence()[1].kind,
             EvidenceKind::Compatibility
         );
+        let expected_compatibility =
+            completed.frozen_attempt().lifecycle_evidence()[1].identity_digest();
         let result = HarborEpisodeEvaluator::new()
             .evaluate_native_graph(completed)
             .await
             .expect("sealed compatibility completion remains Harbor-scorable");
         assert!(result.fidelity().is_externally_driven());
         assert_eq!(result.score(), EpisodeScoreState::Verified { reward: 0.75 });
+        assert_eq!(
+            result
+                .compatibility_lifecycle_evidence()
+                .map(|evidence| evidence.digest()),
+            Some(&expected_compatibility)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compatibility_evaluation_refuses_missing_repeated_or_mismatched_lifecycle_evidence() {
+        let authority = authority("external-attempt-a");
+        let cases = [
+            (
+                frozen_attempt(&authority, false),
+                NativeGraphCompletedAttemptError::CompatibilityLifecycleMissing,
+            ),
+            (
+                frozen_attempt_with_compatibility_payloads(&authority, &[b"wrong-payload"]),
+                NativeGraphCompletedAttemptError::CompatibilityLifecyclePayloadMismatch,
+            ),
+            (
+                frozen_attempt_with_compatibility_payloads(
+                    &authority,
+                    &[b"first-payload", b"second-payload"],
+                ),
+                NativeGraphCompletedAttemptError::CompatibilityLifecycleMultiple,
+            ),
+        ];
+
+        for (attempt, expected) in cases {
+            let mut completed = NativeGraphCompletedAttempt::freeze_compatibility(
+                &authority,
+                frozen_attempt(&authority, false),
+                supplement(&authority),
+            )
+            .unwrap();
+            completed.attempt = attempt;
+
+            assert_eq!(
+                HarborEpisodeEvaluator::new()
+                    .evaluate_native_graph(completed)
+                    .await
+                    .unwrap_err(),
+                EpisodeEvaluationError::CompletedAttempt(expected)
+            );
+        }
     }
 
     #[test]

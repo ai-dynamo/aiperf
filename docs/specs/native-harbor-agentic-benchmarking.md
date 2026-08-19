@@ -99,9 +99,10 @@ declared artifacts, verifier, score, and outer episode timing.
 The result is classified as `externally_driven`, never exact NativeGraph. With
 no capture proxy, its fidelity is `Missing`. Its verifier-authored reward and
 score remain ordinary Harbor authority, while the compatibility lifecycle is
-exported as one content-addressed digest. Raw driver terminal bytes are bounded,
-digested, discarded at the private protocol boundary, and absent from product
-output. The legacy `refuse` factory remains registered as an explicit
+exported as the typed identity of its sole `Compatibility` lifecycle event, not
+as generic verifier or frozen-attempt evidence. Raw driver terminal bytes are
+bounded, digested, discarded at the private protocol boundary, and absent from
+product output. The legacy `refuse` factory remains registered as an explicit
 unavailable selector.
 
 A planned optional AIPerf-native capture proxy and capture executor will
@@ -388,9 +389,9 @@ trial, and attempt before one ordered fold can release capacity. It remains a
 local controller boundary: Velo transport, remote artifact transfer, and cell
 launch integration are not yet implemented. External compatibility likewise
 uses the bounded digest/counter observation profile, executes one sealed terminal
-driver transaction, and emits digest-only lifecycle evidence. It does not
-capture model calls or retain raw driver data, so its current fidelity is always
-`Missing`.
+driver transaction, and emits only its typed compatibility lifecycle-event
+identity. It does not capture model calls or retain raw driver data, so its
+current fidelity is always `Missing`.
 
 ## Results, verifier, and RL authority
 
@@ -467,7 +468,7 @@ measurement.
 - `rust/runtime/src/eval/native_graph/episode_runner.rs` — sealed Docker
   compatibility transaction and ordinary Harbor completion.
 - `rust/cli/src/eval/native_graph.rs` — single-task NativeGraph and external
-  compatibility CLI composition plus digest-only result rendering.
+  compatibility CLI composition plus typed lifecycle-event result rendering.
 - `rust/e2e-tests/tests/test_harbor_external_compatibility.rs` — real Docker
   product acceptance for Missing fidelity, verifier score authority, and raw
   terminal-payload exclusion.

@@ -62,12 +62,12 @@ async fn external_task_preserves_compatibility_fidelity_and_verifier_score_end_t
     let lifecycle_evidence = report["lifecycle_evidence"]
         .as_array()
         .expect("external result exports digest-only lifecycle evidence");
-    assert_eq!(lifecycle_evidence.len(), 1);
-    assert!(
-        lifecycle_evidence[0]
-            .as_str()
-            .is_some_and(|digest| digest.starts_with("blake3:")),
-        "compatibility lifecycle evidence must remain content-addressed: {lifecycle_evidence:?}"
+    assert_eq!(
+        lifecycle_evidence,
+        &[Value::String(
+            "blake3:378edf317f397d30c8ae6abaf7264ff82f1c24a83602f01d9465eaaca16fe7df".to_owned()
+        )],
+        "the product must export the exact sealed compatibility lifecycle event identity"
     );
 }
 

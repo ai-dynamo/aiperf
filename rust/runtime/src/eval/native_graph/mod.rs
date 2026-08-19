@@ -109,8 +109,9 @@ pub use model_runtime::{
     ResolvedTokenizerBinding,
 };
 pub use result::{
-    EpisodeAggregate, EpisodeComparability, EpisodeExecution, EpisodeFidelity, EpisodeIntegrity,
-    EpisodeResult, EpisodeResultError, EpisodeScoreState, aggregate_episode_results,
+    CompatibilityLifecycleEvidence, EpisodeAggregate, EpisodeComparability, EpisodeExecution,
+    EpisodeFidelity, EpisodeIntegrity, EpisodeResult, EpisodeResultError, EpisodeScoreState,
+    aggregate_episode_results,
 };
 pub use rl::{
     EnvironmentTransitionRecord, FrozenRolloutTrajectory, RlEvaluationLimits, RlEvaluationPolicy,

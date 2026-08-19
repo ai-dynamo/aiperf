@@ -78,6 +78,9 @@ impl EpisodeEvaluator for HarborEpisodeEvaluator {
         &self,
         attempt: NativeGraphCompletedAttempt,
     ) -> Result<EpisodeResult, EpisodeEvaluationError> {
+        let compatibility_lifecycle_evidence = attempt
+            .compatibility_lifecycle_evidence()
+            .map_err(EpisodeEvaluationError::CompletedAttempt)?;
         let frozen = attempt.frozen_attempt();
         let score = frozen
             .selected_score()
@@ -95,6 +98,7 @@ impl EpisodeEvaluator for HarborEpisodeEvaluator {
             EpisodeComparability::Scored,
             vec![frozen.identity_digest()],
             attempt.fidelity(),
+            compatibility_lifecycle_evidence,
         )?;
         Ok(result)
     }
@@ -122,6 +126,8 @@ pub enum EpisodeEvaluationError {
     CompatibilityAwareEvaluatorRequired,
     /// The incoming attempt did not preserve immutable evidence or score lineage.
     Frozen(FrozenAttemptError),
+    /// The completed attempt did not preserve sealed lifecycle provenance.
+    CompletedAttempt(super::NativeGraphCompletedAttemptError),
     /// The result contract rejected the verifier reward.
     Result(EpisodeResultError),
 }
@@ -135,6 +141,7 @@ impl Display for EpisodeEvaluationError {
             Self::CompatibilityAwareEvaluatorRequired => formatter
                 .write_str("selected evaluator does not support sealed compatibility evidence"),
             Self::Frozen(error) => error.fmt(formatter),
+            Self::CompletedAttempt(error) => error.fmt(formatter),
             Self::Result(error) => error.fmt(formatter),
         }
     }

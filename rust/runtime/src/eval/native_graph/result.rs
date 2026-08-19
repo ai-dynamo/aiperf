@@ -74,6 +74,21 @@ impl EpisodeFidelity {
     }
 }
 
+/// Typed identity of the sole compatibility lifecycle event in an external episode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompatibilityLifecycleEvidence(ArtifactDigest);
+
+impl CompatibilityLifecycleEvidence {
+    pub(crate) fn new(identity: ArtifactDigest) -> Self {
+        Self(identity)
+    }
+
+    /// Borrows the immutable identity of the compatibility lifecycle event.
+    pub fn digest(&self) -> &ArtifactDigest {
+        &self.0
+    }
+}
+
 /// Immutable result facts emitted by one scheduled episode attempt.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EpisodeResult {
@@ -85,6 +100,7 @@ pub struct EpisodeResult {
     comparability: EpisodeComparability,
     evidence: Vec<ArtifactDigest>,
     fidelity: EpisodeFidelity,
+    compatibility_lifecycle_evidence: Option<CompatibilityLifecycleEvidence>,
 }
 
 impl EpisodeResult {
@@ -108,6 +124,7 @@ impl EpisodeResult {
             comparability,
             evidence,
             EpisodeFidelity::Legacy,
+            None,
         )
     }
 
@@ -122,11 +139,22 @@ impl EpisodeResult {
         comparability: EpisodeComparability,
         evidence: Vec<ArtifactDigest>,
         fidelity: EpisodeFidelity,
+        compatibility_lifecycle_evidence: Option<CompatibilityLifecycleEvidence>,
     ) -> Result<Self, EpisodeResultError> {
         if let EpisodeScoreState::Verified { reward } = score
             && !reward.is_finite()
         {
             return Err(EpisodeResultError::NonFiniteReward);
+        }
+        match (
+            fidelity.is_externally_driven(),
+            compatibility_lifecycle_evidence.is_some(),
+        ) {
+            (true, false) => return Err(EpisodeResultError::MissingCompatibilityLifecycleEvidence),
+            (false, true) => {
+                return Err(EpisodeResultError::UnexpectedCompatibilityLifecycleEvidence);
+            }
+            (true, true) | (false, false) => {}
         }
         Ok(Self {
             trial_digest,
@@ -137,6 +165,7 @@ impl EpisodeResult {
             comparability,
             evidence,
             fidelity,
+            compatibility_lifecycle_evidence,
         })
     }
 
@@ -178,6 +207,11 @@ impl EpisodeResult {
     /// Returns the explicit authority behind this result's fidelity classification.
     pub const fn fidelity(&self) -> EpisodeFidelity {
         self.fidelity
+    }
+
+    /// Borrows the sealed compatibility event identity for an externally driven result.
+    pub fn compatibility_lifecycle_evidence(&self) -> Option<&CompatibilityLifecycleEvidence> {
+        self.compatibility_lifecycle_evidence.as_ref()
     }
 
     /// Returns the verified reward, when one exists.
@@ -278,6 +312,10 @@ pub enum EpisodeResultError {
     NonFiniteReward,
     /// Aggregating otherwise finite rewards overflowed.
     RewardOverflow,
+    /// An external result omitted its sealed compatibility lifecycle identity.
+    MissingCompatibilityLifecycleEvidence,
+    /// A non-external result carried compatibility lifecycle authority.
+    UnexpectedCompatibilityLifecycleEvidence,
 }
 
 impl fmt::Display for EpisodeResultError {
@@ -285,6 +323,10 @@ impl fmt::Display for EpisodeResultError {
         match self {
             Self::NonFiniteReward => formatter.write_str("episode reward must be finite"),
             Self::RewardOverflow => formatter.write_str("episode reward aggregate overflowed"),
+            Self::MissingCompatibilityLifecycleEvidence => formatter
+                .write_str("externally driven result requires compatibility lifecycle evidence"),
+            Self::UnexpectedCompatibilityLifecycleEvidence => formatter
+                .write_str("non-external result cannot carry compatibility lifecycle evidence"),
         }
     }
 }
