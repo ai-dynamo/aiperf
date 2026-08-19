@@ -234,16 +234,18 @@ fn explain_error_status<W: Write>(error: &GraphCommandError, is_json: bool, outp
 
 fn run_visualize(args: VisualizeArgs) -> anyhow::Result<i32> {
     match load(args.common) {
-        Ok(input) => {
-            let _ = (
-                args.trace,
-                args.output,
-                args.output_format,
-                args.no_validate,
-            );
-            visualize::run(input);
-            Ok(0)
-        }
+        Ok(input) => match visualize::run(
+            input,
+            args.trace.as_deref(),
+            args.output_format,
+            args.no_validate,
+        ) {
+            Ok(status) => Ok(status),
+            Err(error) => {
+                write_error(GraphOperation::Visualize, &error, false)?;
+                Ok(2)
+            }
+        },
         Err(error) => {
             write_error(GraphOperation::Visualize, &error, false)?;
             Ok(2)

@@ -79,6 +79,278 @@ fn explain_output(path: &str, format: &str, extra: &[&str]) -> Output {
 }
 
 #[test]
+fn visualize_emits_mermaid_for_a_lowered_graph() {
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "dag_jsonl",
+        "--output-format",
+        "mermaid",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        String::from_utf8(output.stdout)
+            .expect("Mermaid is UTF-8")
+            .starts_with("flowchart LR\n")
+    );
+}
+
+#[test]
+fn visualize_small_mermaid_matches_the_deterministic_golden() {
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "dag_jsonl",
+        "--output-format",
+        "mermaid",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("Mermaid is UTF-8"),
+        include_str!("goldens/graph_tools/visualize-small.mmd")
+    );
+}
+
+#[test]
+fn visualize_markdown_describes_the_selected_resolved_plan() {
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = output(&["graph", "visualize", &source, "--graph-format", "dag_jsonl"]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    let markdown = String::from_utf8(output.stdout).expect("Markdown is UTF-8");
+    assert!(markdown.contains("## Graph topology\n\n```mermaid\nflowchart LR\n"));
+    assert!(markdown.contains("This is the selected trace's resolved Graph-IR topology."));
+    assert!(markdown.contains("- Trace: root\n- Driver: static_graph\n"));
+    assert!(
+        markdown.contains("## Illustrative readiness waves\n\n| Wave | Nodes ready | Trigger |")
+    );
+    assert!(markdown.ends_with('\n'));
+    assert_eq!(
+        markdown.replace(&source, "$REPO/tests/fixtures/dag/small.dag.jsonl"),
+        include_str!("goldens/graph_tools/visualize-small.md")
+    );
+}
+
+#[test]
+fn visualize_uses_authored_program_order_and_exact_profiling_trace_selection() {
+    let source = fixture("../../tests/fixtures/dag/multi_root_single_turn.dag.jsonl");
+    let first = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "dag_jsonl",
+        "--output-format",
+        "mermaid",
+    ]);
+    assert_eq!(first.status.code(), Some(0));
+    let first = String::from_utf8(first.stdout).expect("Mermaid is UTF-8");
+    assert!(first.contains("n0[\"n00000000\"]"));
+    assert!(!first.contains("n00000003"));
+
+    let later = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "dag_jsonl",
+        "--trace",
+        "r2",
+        "--output-format",
+        "mermaid",
+    ]);
+    assert_eq!(later.status.code(), Some(0));
+    let later = String::from_utf8(later.stdout).expect("Mermaid is UTF-8");
+    assert!(later.contains("n0[\"n00000000\"]"));
+    assert!(later.contains("n2[\"n00000002\"]"));
+}
+
+#[test]
+fn visualize_missing_trace_reports_authored_available_trace_order() {
+    let source = fixture("../../tests/fixtures/dag/multi_root_single_turn.dag.jsonl");
+    let output = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "dag_jsonl",
+        "--trace",
+        "missing",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = stderr(&output);
+    assert!(stderr.contains("trace-not-found"));
+    assert!(stderr.contains("available traces: r1, r2"));
+}
+
+#[test]
+fn visualize_blocks_invalid_graphs_unless_best_effort_is_requested() {
+    let source = fixture("tests/fixtures/graph_tools/mixed-anchor.conditional.yaml");
+    let blocked = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "conditional_graph",
+    ]);
+
+    assert_eq!(blocked.status.code(), Some(1));
+    assert!(blocked.stdout.is_empty());
+    let diagnostics = stderr(&blocked);
+    assert!(diagnostics.contains("[mixed-anchor-fan-in]"));
+    assert!(diagnostics.contains("rerun with --no-validate to render best-effort topology"));
+
+    let rendered = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "conditional_graph",
+        "--no-validate",
+        "--output-format",
+        "mermaid",
+    ]);
+    assert_eq!(rendered.status.code(), Some(0));
+    assert!(stderr(&rendered).is_empty());
+    assert!(
+        String::from_utf8(rendered.stdout)
+            .expect("Mermaid is UTF-8")
+            .starts_with("flowchart LR\n")
+    );
+}
+
+#[test]
+fn visualize_retains_every_explicit_edge_anchor_in_mermaid() {
+    let source = fixture("tests/fixtures/graph_tools/mixed-anchor.conditional.yaml");
+    let output = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "conditional_graph",
+        "--no-validate",
+        "--output-format",
+        "mermaid",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    let mermaid = String::from_utf8(output.stdout).expect("Mermaid is UTF-8");
+    assert!(mermaid.contains("start -->|\"completion\"| n0"));
+    assert!(mermaid.contains("n0 -->|\"completion\"| n2"));
+    assert!(mermaid.contains("n1 -->|\"dispatch\"| n2"));
+    assert!(mermaid.contains("n2 -->|\"completion\"| end_node"));
+}
+
+#[test]
+fn visualize_escapes_unsafe_authored_identifiers_in_visible_labels_only() {
+    let source = fixture("tests/fixtures/graph_tools/unsafe-node-ids.conditional.yaml");
+    let output = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "conditional_graph",
+        "--output-format",
+        "mermaid",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    let mermaid = String::from_utf8(output.stdout).expect("Mermaid is UTF-8");
+    assert!(mermaid.contains("n0[\"first | space &quot; [x] &amp; &lt;tag&gt;<br/>line\"]:::llm"));
+    assert!(mermaid.contains("n1[\"second [x] &quot; &amp; &lt;&gt;<br/>line\"]:::llm"));
+    assert!(mermaid.contains("n1 -. implicit .-> end_node"));
+    assert!(!mermaid.contains("first space \" [x] & <tag>"));
+    assert_eq!(
+        mermaid,
+        include_str!("goldens/graph_tools/visualize-unsafe-ids.mmd")
+    );
+}
+
+#[test]
+fn visualize_markdown_escapes_source_trace_and_readiness_values() {
+    let fixture = fixture("tests/fixtures/graph_tools/unsafe-node-ids.conditional.yaml");
+    let directory = tempfile::tempdir().expect("create unsafe source directory");
+    let source = directory.path().join("unsafe|<source>&\nnext.yaml");
+    std::fs::copy(&fixture, &source).expect("copy unsafe graph fixture");
+    let source = source.to_str().expect("unsafe source path is UTF-8");
+    let output = output(&[
+        "graph",
+        "visualize",
+        source,
+        "--graph-format",
+        "conditional_graph",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    let markdown = String::from_utf8(output.stdout).expect("Markdown is UTF-8");
+    assert!(markdown.contains("unsafe\\|&lt;source&gt;&amp;<br/>next.yaml"));
+    assert!(markdown.contains("- Trace: unsafe\\|&lt;trace&gt;&amp;<br/>next"));
+    assert!(markdown.contains("first \\| space \" \\[x\\] &amp; &lt;tag&gt;<br/>line"));
+    assert!(markdown.contains("second \\[x\\] \" &amp; &lt;&gt;<br/>line"));
+    assert!(!markdown.contains("unsafe|<trace>&\nnext"));
+    assert!(!markdown.contains("| space \" [x] & <tag>\nline"));
+}
+
+#[test]
+fn visualize_markdown_neutralizes_backslashes_links_and_images() {
+    let fixture = fixture("tests/fixtures/graph_tools/markdown-link-escape.conditional.yaml");
+    let directory = tempfile::tempdir().expect("create unsafe source directory");
+    let source = directory
+        .path()
+        .join("source\\|[text](URL)![alt](URL)<source>&\nnext.yaml");
+    std::fs::copy(&fixture, &source).expect("copy unsafe graph fixture");
+    let source = source.to_str().expect("unsafe source path is UTF-8");
+    let output = output(&[
+        "graph",
+        "visualize",
+        source,
+        "--graph-format",
+        "conditional_graph",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stderr(&output).is_empty());
+    let markdown = String::from_utf8(output.stdout).expect("Markdown is UTF-8");
+    let interpolated = markdown
+        .split("## Resolved plan")
+        .nth(1)
+        .expect("Markdown retains the resolved-plan section");
+    for active_syntax in ["[text](URL)", "![alt](URL)", "|[text](URL)"] {
+        assert!(
+            !interpolated.contains(active_syntax),
+            "Markdown must not retain active syntax {active_syntax:?}: {interpolated}"
+        );
+    }
+    assert!(
+        markdown.contains(
+            r"source\\\|\[text\]\(URL\)\!\[alt\]\(URL\)&lt;source&gt;&amp;<br/>next.yaml"
+        )
+    );
+    assert!(
+        markdown.contains(
+            r"- Trace: trace\\\|\[text\]\(URL\)\!\[alt\]\(URL\)&lt;trace&gt;&amp;<br/>next"
+        )
+    );
+    assert!(
+        markdown.contains(r"ready\\\|\[text\]\(URL\)\!\[alt\]\(URL\)&lt;tag&gt;&amp;<br/>line")
+    );
+}
+
+#[test]
 fn graph_explain_report_preserves_the_versioned_safe_wire_shape() {
     let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
     let output = explain_output(&source, "dag_jsonl", &["--output-format", "json"]);

@@ -1,0 +1,18 @@
+graph:
+  state:
+    first_out: {type: text}
+    second_out: {type: text}
+  nodes:
+    "first | space \" [x] & <tag>\nline":
+      node_type: llm
+      prompt: ["first"]
+      output: first_out
+    "second [x] \" & <>\r\nline":
+      node_type: llm
+      prompt: ["second"]
+      output: second_out
+  edges:
+    - {source: START, target: "first | space \" [x] & <tag>\nline"}
+    - {source: "first | space \" [x] & <tag>\nline", target: "second [x] \" & <>\r\nline"}
+traces:
+  - id: "unsafe|<trace>&\nnext"
