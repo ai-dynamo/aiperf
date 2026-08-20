@@ -30,10 +30,10 @@ from aiperf.common.endpoint_credentials import (
     redact_sweep_public_data,
 )
 from aiperf.common.redact import redact_endpoint_spec
+from aiperf.common.results_markers import EPOCH_RE
 from aiperf.kubernetes.models import AIPerfJobInfo
 from aiperf.operator.job_union import list_all_jobs
 from aiperf.operator.results_layout import (
-    EPOCH_RE,
     list_sweep_epochs_async,
     resolve_sweep_dir,
 )

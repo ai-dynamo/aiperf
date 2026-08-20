@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.results_markers import EPOCH_RE
 from aiperf.operator.results_layout import (
-    EPOCH_RE,
     LATEST_POINTER,
     enforce_retention,
     epoch_key_from_body,

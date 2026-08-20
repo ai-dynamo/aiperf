@@ -5,40 +5,15 @@
 AIPerfSweep is the parent CR that owns child AIPerfJob CRs and orchestrates
 parameter sweeps and multi-run trials. The orchestration loop runs in a
 dedicated sweep-controller pod, not in the kopf operator.
-
-`ConvergenceConfig` is re-exported from `aiperf.config.multi_run` so
-existing K8s-side callers keep importing from this module while the
-canonical class lives with the rest of the v2 config types. The re-export
-uses ``__getattr__`` to dodge the circular import: ``aiperf.config.benchmark``
-imports ``FailurePolicy`` from this module, so importing
-``aiperf.config.multi_run`` at module-load time would deadlock.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
 from pydantic import ConfigDict, Field
 
 from aiperf.config.base import BaseConfig
-from aiperf.config.resolution.plan import FailurePolicy
 
-if TYPE_CHECKING:
-    from aiperf.config.sweep.multi_run import ConvergenceConfig as ConvergenceConfig
-
-__all__ = [
-    "ConvergenceConfig",  # noqa: F822 — provided lazily via module __getattr__
-    "FailurePolicy",
-    "ObjectMetaPartial",
-]
-
-
-def __getattr__(name: str) -> Any:
-    if name == "ConvergenceConfig":
-        from aiperf.config.sweep.multi_run import ConvergenceConfig
-
-        return ConvergenceConfig
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+__all__ = ["ObjectMetaPartial"]
 
 
 class ObjectMetaPartial(BaseConfig):
@@ -59,9 +34,3 @@ class ObjectMetaPartial(BaseConfig):
         default_factory=dict,
         description="Annotations merged into every child AIPerfJob.",
     )
-
-
-# ``FailurePolicy`` is re-exported from ``aiperf.config.resolution.plan`` so
-# operator code and ``BenchmarkPlan.failure_policy`` share the same Pydantic
-# class. Importing it at module top-level keeps the symbol available without
-# a second class definition that would fail ``isinstance``/field-type checks.

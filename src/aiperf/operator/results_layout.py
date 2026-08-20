@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import shutil
 import sqlite3
 import time
@@ -34,13 +33,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from aiperf.common.results_markers import EPOCH_RE, READY_MARKER_NAME
+
 logger = logging.getLogger(__name__)
 
 LATEST_POINTER = "latest.txt"
-_READY_MARKER_NAME = ".aiperf_results_ready.json"
-# 9-20 digits covers legacy epoch-seconds directories, fractional-second
-# run keys, and whole-second Kubernetes keys with a uid-derived suffix.
-EPOCH_RE = re.compile(r"^\d{9,20}$")
 # Six digits keeps the whole-second key the same 16-digit width as the
 # fractional-second key (``f"{seconds}{microsecond:06d}"``), so every emitted
 # run key stays <= JS Number.MAX_SAFE_INTEGER (9_007_199_254_740_991). A wider
@@ -50,7 +47,6 @@ EPOCH_RE = re.compile(r"^\d{9,20}$")
 _UID_SUFFIX_MODULUS = 1_000_000
 
 __all__ = [
-    "EPOCH_RE",
     "LATEST_POINTER",
     "RunEntry",
     "enforce_retention",
@@ -145,7 +141,7 @@ class RunEntry:
 
 def is_run_ready(run_path: Path) -> bool:
     """Return whether final run artifacts have been durably published."""
-    return (run_path / _READY_MARKER_NAME).is_file()
+    return (run_path / READY_MARKER_NAME).is_file()
 
 
 def list_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
@@ -193,7 +189,7 @@ def _walk_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
         try:
             mtime = int(p.stat().st_mtime)
             files = [
-                f for f in p.iterdir() if f.is_file() and f.name != _READY_MARKER_NAME
+                f for f in p.iterdir() if f.is_file() and f.name != READY_MARKER_NAME
             ]
             total_size_bytes = sum(f.stat().st_size for f in files)
         except OSError:

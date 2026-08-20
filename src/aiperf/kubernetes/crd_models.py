@@ -23,8 +23,9 @@ from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.types import PhaseKind
 from aiperf.config import AIPerfConfig
 from aiperf.config.deployment import DeploymentConfig
+from aiperf.config.resolution.plan import FailurePolicy
 from aiperf.kubernetes.k8s_models import K8sCamelModel
-from aiperf.kubernetes.sweep_models import FailurePolicy, ObjectMetaPartial
+from aiperf.kubernetes.sweep_models import ObjectMetaPartial
 
 
 class OwnerReference(K8sCamelModel):

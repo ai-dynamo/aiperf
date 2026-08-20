@@ -15,12 +15,12 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from aiperf.common.results_markers import READY_MARKER_NAME, ready_marker_path
+from aiperf.common.results_markers import EPOCH_RE, READY_MARKER_NAME, ready_marker_path
 from aiperf.operator.artifact_names import (
     find_summary_path,
     key_export_names_from_run_dir,
 )
-from aiperf.operator.results_layout import EPOCH_RE, resolve_run_dir
+from aiperf.operator.results_layout import resolve_run_dir
 from aiperf.operator.routers._path_params import validate_results_path_params
 from aiperf.operator.routers.results_files_io import (
     PROFILE_EXPORT_FILENAME,

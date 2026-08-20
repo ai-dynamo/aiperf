@@ -5,12 +5,9 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.config.sweep.multi_run import MultiRunConfig
+from aiperf.config.resolution.plan import FailurePolicy
+from aiperf.config.sweep.multi_run import ConvergenceConfig, MultiRunConfig
 from aiperf.kubernetes.crd_models import AIPerfSweepSpec
-from aiperf.kubernetes.sweep_models import (
-    ConvergenceConfig,
-    FailurePolicy,
-)
 
 # Minimal benchmark dict accepted by AIPerfConfig (the type of
 # AIPerfWorkloadSpec.benchmark). Tests that focus on axis-combination rules

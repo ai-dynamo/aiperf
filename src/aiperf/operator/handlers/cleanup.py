@@ -17,11 +17,11 @@ from typing import Any
 
 import orjson
 
+from aiperf.common.results_markers import EPOCH_RE
 from aiperf.kubernetes.phase import Phase
 from aiperf.operator import events, runs_index
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.results_layout import (
-    EPOCH_RE,
     enforce_retention,
     job_dir,
     list_run_epochs,

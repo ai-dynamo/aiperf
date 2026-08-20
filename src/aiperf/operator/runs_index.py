@@ -44,9 +44,9 @@ import orjson
 import zstandard
 
 from aiperf.common.redact import redact_endpoint_spec, redact_url
+from aiperf.common.results_markers import EPOCH_RE
 from aiperf.operator.artifact_names import find_summary_path
 from aiperf.operator.results_layout import (
-    EPOCH_RE,
     is_run_ready,
     list_run_epochs,
     resolve_latest,

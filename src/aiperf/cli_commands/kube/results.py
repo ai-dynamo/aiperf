@@ -88,7 +88,7 @@ results_cmd = results
 
 def _validate_run_arg(run: str | None, *, from_pods: bool) -> None:
     """Reject malformed ``--run`` values before any k8s/HTTP traffic."""
-    from aiperf.operator.results_layout import EPOCH_RE
+    from aiperf.common.results_markers import EPOCH_RE
 
     if run is None:
         return

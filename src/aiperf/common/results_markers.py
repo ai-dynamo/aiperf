@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -28,6 +29,12 @@ logger = logging.getLogger(__name__)
 READY_MARKER_NAME = ".aiperf_results_ready.json"
 PROCESSING_MARKER_NAME = ".aiperf_results_processing.json"
 CHECKPOINTS_DIR_NAME = "checkpoints"
+
+# Run-directory key format, owned here so the operator and the config resolver
+# cannot drift apart. 9-20 digits covers legacy epoch-seconds directories,
+# fractional-second run keys, and whole-second Kubernetes keys with a
+# uid-derived suffix. A narrower bound silently misreads current run dirs.
+EPOCH_RE = re.compile(r"^\d{9,20}$")
 _RESERVED_MARKER_NAMES = frozenset({READY_MARKER_NAME, PROCESSING_MARKER_NAME})
 
 

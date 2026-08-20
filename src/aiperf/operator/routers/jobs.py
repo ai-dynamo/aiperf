@@ -18,6 +18,7 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.common.results_markers import EPOCH_RE
 from aiperf.kubernetes.client import (
     cancel_aiperf_job,
     cluster_version,
@@ -37,7 +38,6 @@ from aiperf.operator.job_union import (
     synthesize_status_from_summary,
 )
 from aiperf.operator.results_layout import (
-    EPOCH_RE,
     RunEntry,
     job_dir,
     list_runs_async,
