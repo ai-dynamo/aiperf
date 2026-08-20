@@ -8,9 +8,9 @@ import asyncio
 from typing import Any
 
 import yaml
+from dev.versions import KUEUE_MANIFEST_URL_TEMPLATE, KUEUE_VERSION
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from dev.versions import KUEUE_MANIFEST_URL_TEMPLATE, KUEUE_VERSION
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 logger = AIPerfLogger(__name__)

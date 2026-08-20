@@ -8,9 +8,9 @@ from pathlib import Path
 
 import orjson
 import pytest
+from aiperf.operator.results_layout import write_latest
 
 from aiperf.kubernetes.models import AIPerfJobInfo
-from aiperf.operator.results_layout import write_latest
 
 _TEST_EPOCH = "1714064523"
 

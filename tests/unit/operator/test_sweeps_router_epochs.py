@@ -7,10 +7,9 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from aiperf.operator.routers.sweeps import create_sweeps_router
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from aiperf.operator.routers.sweeps import create_sweeps_router
 
 
 def _client(api: object | None, base: Path) -> TestClient:

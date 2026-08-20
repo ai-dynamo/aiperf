@@ -20,11 +20,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 import zstandard
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
-from pytest import param
-
 from aiperf.operator.routers.sweeps import create_sweeps_router
 from aiperf.operator.routers.sweeps_models import (
     MAX_BEST_TRIALS,
@@ -34,6 +29,10 @@ from aiperf.operator.routers.sweeps_models import (
     SweepSearchSummary,
 )
 from aiperf.operator.sweep_union import SweepRecord
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from pytest import param
 
 NAMESPACE = "bench"
 SWEEP_NAME = "gemma-bo4"

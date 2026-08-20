@@ -4,6 +4,7 @@
 from pathlib import Path
 
 import orjson
+from aiperf.operator.handlers.sweep import _child_runs
 
 from aiperf.config import (
     BenchmarkConfig,
@@ -12,7 +13,6 @@ from aiperf.config import (
     build_benchmark_plan,
 )
 from aiperf.kubernetes.crd_models import AIPerfJobSpec
-from aiperf.operator.handlers.sweep import _child_runs
 from aiperf.sweep_controller.k8s_executor import (
     RUN_IDENTITY_ANNOTATION,
     VARIATION_VALUES_MAX_ANNOTATION_BYTES,

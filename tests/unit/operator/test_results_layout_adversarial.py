@@ -23,9 +23,9 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
+from aiperf.operator.results_layout import RunEntry
 
 from aiperf.operator import results_layout, runs_index
-from aiperf.operator.results_layout import RunEntry
 from aiperf.operator.runs_index_models import RunIndexRow
 
 # ============================================================================

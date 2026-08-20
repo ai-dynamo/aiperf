@@ -16,7 +16,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-
 from aiperf.operator.results_layout import epoch_key_from_body, epoch_key_seconds
 
 

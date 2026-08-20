@@ -5,10 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import kopf
 import pytest
-from pytest import param
-
 from aiperf.operator.handlers.sweep import create as sweep_create
 from aiperf.operator.results_layout import epoch_key_from_body
+from pytest import param
 
 
 def _valid_body() -> dict:

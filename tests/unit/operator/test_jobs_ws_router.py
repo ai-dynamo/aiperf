@@ -17,10 +17,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
+from aiperf.operator.routers.jobs_ws import create_jobs_ws_router
 from fastapi import FastAPI
 from starlette.testclient import TestClient
-
-from aiperf.operator.routers.jobs_ws import create_jobs_ws_router
 
 _NS = "aiperf-benchmarks"
 _NAME = "test-bench"

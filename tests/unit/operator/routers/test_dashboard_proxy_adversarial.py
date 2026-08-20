@@ -160,8 +160,9 @@ def _make_results_server_app(
     from aiperf.operator import environment as env_mod
 
     importlib.reload(env_mod)
-    from aiperf.operator import results_server
     from aiperf.operator.routers import dashboard_proxy
+
+    from aiperf.operator import results_server
 
     importlib.reload(dashboard_proxy)
     importlib.reload(results_server)

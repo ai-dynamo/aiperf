@@ -23,13 +23,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from aiperf.operator.routers.jobs import create_jobs_router
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
 from aiperf.kubernetes.models import AIPerfJobInfo
-from aiperf.operator.routers.jobs import create_jobs_router
 
 # ============================================================
 # Helpers

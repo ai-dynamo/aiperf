@@ -14,10 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
+from aiperf.operator.routers._etag import etag_response
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-
-from aiperf.operator.routers._etag import etag_response
 
 
 def _make_request(etag: str | None = None) -> MagicMock:

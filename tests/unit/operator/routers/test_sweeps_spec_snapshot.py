@@ -16,9 +16,6 @@ from typing import Any
 
 import orjson
 import pytest
-from pytest import param
-
-from aiperf.kubernetes.crd_models import AIPerfSweepSpec
 from aiperf.operator.routers._sweeps_spec import (
     _LATE_ADDED_SNAPSHOT_KEYS as _LATE_ADDED,
 )
@@ -28,6 +25,9 @@ from aiperf.operator.routers._sweeps_spec import (
     spec_summary_from_record,
     spec_summary_snapshot,
 )
+from pytest import param
+
+from aiperf.kubernetes.crd_models import AIPerfSweepSpec
 
 _RAW_SPEC: dict[str, Any] = {
     "benchmark": {

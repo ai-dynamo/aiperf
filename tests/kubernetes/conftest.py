@@ -30,10 +30,10 @@ if TYPE_CHECKING:
 
 import pytest
 import pytest_asyncio
+from dev.versions import JOBSET_CRD_URL_TEMPLATE, JOBSET_VERSION, KUEUE_VERSION
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.path_safety import safe_read_template_path
-from dev.versions import JOBSET_CRD_URL_TEMPLATE, JOBSET_VERSION, KUEUE_VERSION
 from tests.kubernetes.helpers.benchmark import (
     BenchmarkConfig,
     BenchmarkDeployer,

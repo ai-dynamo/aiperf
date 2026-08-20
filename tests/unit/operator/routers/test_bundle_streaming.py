@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 import zstandard
-
 from aiperf.operator.routers.results_files_io import (
     CHUNK_SIZE,
     _stream_artifact_bundle,

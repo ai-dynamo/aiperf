@@ -21,11 +21,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiperf.operator.routers import jobs
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes import client_pods
 from aiperf.operator import events
-from aiperf.operator.routers import jobs
 
 # =============================================================================
 # Helpers

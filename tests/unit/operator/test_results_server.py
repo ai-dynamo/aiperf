@@ -996,8 +996,9 @@ def _seed_epoch_run(
     filename: str,
     content: bytes = b"{}",
 ) -> Path:
-    from aiperf.kubernetes.results_sidecar import write_ready_marker
     from aiperf.operator.results_layout import run_dir, write_latest
+
+    from aiperf.kubernetes.results_sidecar import write_ready_marker
 
     d = run_dir(base, namespace, name, epoch)
     d.mkdir(parents=True, exist_ok=True)
@@ -1119,9 +1120,9 @@ def test_list_runs_404_when_no_runs(tmp_path: Path) -> None:
 
 
 def test_list_runs_skips_non_epoch_dirs(tmp_path: Path) -> None:
+    from aiperf.operator.results_layout import job_dir
     from fastapi.testclient import TestClient
 
-    from aiperf.operator.results_layout import job_dir
     from aiperf.operator.results_server import create_app
 
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
@@ -1244,10 +1245,10 @@ def test_profile_export_quick_route_decompresses_zst(tmp_path: Path) -> None:
     """The quick-export route falls back to the .zst companion when the
     uncompressed JSON is absent — mirrors the per-file route's transparent
     decompression but pins media_type to application/json."""
+    from aiperf.operator.results_layout import run_dir, write_latest
     from fastapi.testclient import TestClient
 
     from aiperf.kubernetes.results_sidecar import write_ready_marker
-    from aiperf.operator.results_layout import run_dir, write_latest
     from aiperf.operator.results_server import create_app
 
     payload = orjson.dumps({"output_token_throughput": {"avg": 987.6, "unit": "tok/s"}})

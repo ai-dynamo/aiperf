@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from aiperf.operator.results_layout import (
     EPOCH_RE,
     LATEST_POINTER,

@@ -21,16 +21,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from aiperf.operator.results_db import ResultsDB
+from aiperf.operator.routers import results_analytics as mod
+from aiperf.operator.routers.config import create_config_router
+from aiperf.operator.routers.results_analytics import create_results_analytics_router
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.operator import runs_index
-from aiperf.operator.results_db import ResultsDB
-from aiperf.operator.routers import results_analytics as mod
-from aiperf.operator.routers.config import create_config_router
-from aiperf.operator.routers.results_analytics import create_results_analytics_router
 
 # ============================================================
 # Helpers

@@ -27,8 +27,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Protocol
 
-from aiperf.common.aiperf_logger import AIPerfLogger
 from dev.versions import DEVICE_PLUGIN_VERSION
+
+from aiperf.common.aiperf_logger import AIPerfLogger
 
 logger = AIPerfLogger(__name__)
 

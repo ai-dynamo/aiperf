@@ -21,12 +21,12 @@ from pathlib import Path
 
 import httpx
 import pytest
+from aiperf.operator.routers.admin import create_admin_router
 from fastapi import FastAPI
 from pytest import param
 
 from aiperf.operator import runs_index
 from aiperf.operator.results_server import create_app
-from aiperf.operator.routers.admin import create_admin_router
 
 # ============================================================================
 # Helpers

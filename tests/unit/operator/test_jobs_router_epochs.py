@@ -8,10 +8,9 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from aiperf.operator.routers.jobs import create_jobs_router
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from aiperf.operator.routers.jobs import create_jobs_router
 
 
 def _client(api: object | None, base: Path) -> TestClient:
@@ -161,6 +160,7 @@ def test_list_job_epochs_merges_stale_index_with_newer_disk_epoch(
     """An indexed old epoch does not hide a newer disk-only epoch."""
     from aiperf.operator.results_layout import write_latest
     from aiperf.operator.routers import jobs as jobs_module
+
     from aiperf.operator.runs_index_models import RunIndexRow
 
     old_epoch = "1714069323"
@@ -220,8 +220,9 @@ def test_list_job_epochs_running_overrides_index_phase(
     """Live in-flight epoch reports status=running even if index phase is stale."""
     import asyncio
 
-    from aiperf.operator import runs_index
     from aiperf.operator.routers import jobs as jobs_module
+
+    from aiperf.operator import runs_index
 
     _patch_no_lazy_backfill(monkeypatch)
     _write_summary(tmp_path, "bench", "j1", "1714069400")
@@ -300,8 +301,9 @@ def test_list_job_epochs_phase_failed(tmp_path: Path, monkeypatch) -> None:
     """Phase=Failed in the index produces status=failed in the response."""
     import asyncio
 
-    from aiperf.operator import runs_index
     from aiperf.operator.routers import jobs as jobs_module
+
+    from aiperf.operator import runs_index
 
     _patch_no_lazy_backfill(monkeypatch)
     _write_summary(tmp_path, "bench", "j1", "1714069400")

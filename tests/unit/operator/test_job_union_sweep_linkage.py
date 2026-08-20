@@ -17,10 +17,10 @@ from unittest.mock import AsyncMock, patch
 
 import orjson
 import pytest
+from aiperf.operator.results_layout import write_latest
 
 from aiperf.kubernetes.models import AIPerfJobCR, AIPerfJobInfo
 from aiperf.operator import job_union
-from aiperf.operator.results_layout import write_latest
 
 _TEST_EPOCH = "1714064523"
 

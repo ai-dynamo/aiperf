@@ -17,12 +17,6 @@ from unittest.mock import patch as mock_patch
 
 import orjson
 import pytest
-
-from aiperf.kubernetes.phase import Phase
-from aiperf.operator import runs_index
-from aiperf.operator.environment import OperatorEnvironment
-from aiperf.operator.handlers import cleanup as cleanup_handler
-from aiperf.operator.handlers.cleanup import cleanup_old_results
 from aiperf.operator.results_layout import (
     LATEST_POINTER,
     resolve_latest,
@@ -32,6 +26,12 @@ from aiperf.operator.results_layout import (
     write_latest,
     write_sweep_latest,
 )
+
+from aiperf.kubernetes.phase import Phase
+from aiperf.operator import runs_index
+from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.handlers import cleanup as cleanup_handler
+from aiperf.operator.handlers.cleanup import cleanup_old_results
 
 
 class TestCleanupPathTraversalGuard:

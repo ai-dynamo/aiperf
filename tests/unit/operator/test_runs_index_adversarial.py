@@ -24,10 +24,10 @@ from pathlib import Path
 import orjson
 import pytest
 import zstandard
+from aiperf.operator.results_db import ResultsDB
 from pytest import param
 
 from aiperf.operator import results_layout, runs_index
-from aiperf.operator.results_db import ResultsDB
 
 # ============================================================================
 # Helpers

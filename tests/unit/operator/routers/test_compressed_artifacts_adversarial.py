@@ -24,10 +24,9 @@ import httpx
 import orjson
 import pytest
 import zstandard
-from fastapi import FastAPI
-
 from aiperf.operator.results_layout import run_dir, write_latest
 from aiperf.operator.routers.results_files import create_results_files_router
+from fastapi import FastAPI
 
 # ============================================================
 # Helpers

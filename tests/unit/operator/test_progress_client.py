@@ -341,8 +341,8 @@ class TestProgressClientGetWorkerStartupStates:
         WorkerGroupStats]) so future schema drift trips this test.
         """
         import orjson
-
         from aiperf.api.models.responses import WorkersResponse
+
         from aiperf.common.models import WorkerGroupStats, WorkerStats
 
         response_model = WorkersResponse(
@@ -426,8 +426,8 @@ class TestProgressClientGetWorkerStartupStates:
     ) -> None:
         """Test workers with no startup_state are excluded from the result."""
         import orjson
-
         from aiperf.api.models.responses import WorkersResponse
+
         from aiperf.common.models import WorkerGroupStats, WorkerStats
 
         response_model = WorkersResponse(

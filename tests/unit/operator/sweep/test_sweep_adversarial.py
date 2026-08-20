@@ -22,14 +22,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
-
-from aiperf.config import BenchmarkConfig, BenchmarkRun, SweepVariation
 from aiperf.operator.handlers.sweep import _aggregate_fetch as aggregate_fetch
 from aiperf.operator.handlers.sweep import (
     _child_phase_buckets,
     _child_runs,
     child_rollup,
 )
+
+from aiperf.config import BenchmarkConfig, BenchmarkRun, SweepVariation
 from aiperf.sweep_controller.k8s_executor import K8sChildJobExecutor
 
 # ============================================================

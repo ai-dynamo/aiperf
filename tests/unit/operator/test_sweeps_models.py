@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from aiperf.operator.routers.sweeps_models import (
     CellAggregatesResponse,
     CellEntry,
@@ -15,6 +13,7 @@ from aiperf.operator.routers.sweeps_models import (
     SweepListResponse,
     SweepSummary,
 )
+from pydantic import ValidationError
 
 
 def test_sweep_summary_required_fields() -> None:

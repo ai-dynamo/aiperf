@@ -9,9 +9,9 @@ from pathlib import Path
 
 import orjson
 import pytest
+from aiperf.operator.results_layout import list_runs
 
 from aiperf.operator import runs_index
-from aiperf.operator.results_layout import list_runs
 
 
 @pytest.fixture
