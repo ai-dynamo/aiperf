@@ -246,6 +246,14 @@ spec:
                         description: Use server-reported token counts from response usage field. When true, trusts usage.prompt_tokens
                           and usage.completion_tokens. When false, counts tokens locally using configured tokenizer.
                         default: false
+                      perChunkUsage:
+                        type: boolean
+                        description: Request per-chunk token usage on streaming responses by setting stream_options.continuous_usage_stats.
+                          When true, the server reports cumulative usage on every chunk (not just the final one), which lets
+                          inter-token latency subtract the first content chunk's real token count instead of assuming one
+                          token. Requires a server that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI
+                          rejects it. Requires use_server_token_count so OSL and the first-chunk count share the server source.
+                        default: false
                       template:
                         type: object
                         description: |-
