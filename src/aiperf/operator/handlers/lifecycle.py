@@ -30,7 +30,6 @@ from aiperf.operator.handlers._job_identity import (
     body_uid,
     current_aiperfjob_resource_version,
     delete_owned_aiperfjob_jobset,
-    fence_status_patch,
 )
 from aiperf.operator.handlers.cleanup import on_aiperfjob_delete_index_cleanup
 from aiperf.operator.handlers.completion import handle_completion
@@ -116,22 +115,19 @@ async def on_cancel(
     """
     parent_uid = expected_parent_uid or body_uid(body)
     try:
-        resource_version = await current_aiperfjob_resource_version(
-            namespace, name, parent_uid
-        )
+        # Read for its identity assertion only: it raises on a replaced UID.
+        await current_aiperfjob_resource_version(namespace, name, parent_uid)
     except StaleAIPerfJobCallback as exc:
         logger.info("Skipping stale cancel callback: %s", exc)
         return
 
     sb = StatusBuilder(patch, status)
     if not spec.get("cancel"):
-        fence_status_patch(sb, resource_version)
         _acknowledge_generation(body, patch)
         return
 
     current_phase = status.get("phase", Phase.PENDING)
     if current_phase in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED):
-        fence_status_patch(sb, resource_version)
         _acknowledge_generation(body, patch)
         return  # Already terminal
 
@@ -156,9 +152,7 @@ async def on_cancel(
             return
 
     try:
-        resource_version = await current_aiperfjob_resource_version(
-            namespace, name, parent_uid
-        )
+        await current_aiperfjob_resource_version(namespace, name, parent_uid)
     except StaleAIPerfJobCallback as exc:
         logger.info("Discarding stale cancel publication: %s", exc)
         await close_progress_client(key)
@@ -169,7 +163,15 @@ async def on_cancel(
     generation = body.get("metadata", {}).get("generation")
     if generation is not None:
         sb.set_observed_generation(int(generation))
-    fence_status_patch(sb, resource_version)
+    # Do NOT fence this patch with metadata.resourceVersion (see the same note
+    # in ``completion._publish_completion_after_jobset_delete``). The fence makes
+    # kopf's single merge PATCH (metadata+status) 409 on any concurrent CR write
+    # — a monitor tick or a controller heartbeat annotation is enough — and the
+    # status update is then silently dropped. Cancellation cannot recover from
+    # that: the JobSet is already deleted above and ``request_cancellation`` is
+    # sticky, so every later monitor tick short-circuits and the CR is stranded
+    # in its pre-cancel phase forever. Stale-write protection here comes from the
+    # UID-fenced ``current_aiperfjob_resource_version`` re-read just above.
     sb.finalize()
     events.cancelled(body, job_id)
 

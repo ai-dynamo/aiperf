@@ -377,6 +377,29 @@ async def _create_jobset(
     return jobset_name
 
 
+def _finalize_cancelled_creation(
+    *,
+    patch: kopf.Patch,
+    status: StatusBuilder,
+    job_id: str,
+    jobset_name: str | None = None,
+) -> dict[str, Any]:
+    """Record what was already created before a cancellation bail-out.
+
+    ``on_cancel`` deletes the backing JobSet by reading ``status.jobSetName``.
+    Returning from ``_create_resources`` without stamping it leaves a JobSet
+    running that nothing reaps: the CR itself is not deleted on a
+    ``spec.cancel`` request, so ownerReference GC never fires and the cancel
+    handler has no name to delete. Persist the identity of whatever was
+    created so the cancel path can clean up after us.
+    """
+    patch.status["jobId"] = job_id
+    if jobset_name is not None:
+        patch.status["jobSetName"] = jobset_name
+    status.finalize()
+    return {}
+
+
 def _finalize_success(
     *,
     patch: kopf.Patch,
@@ -430,7 +453,7 @@ async def _create_resources(
     validated_spec = _validate_spec(spec, body, status)
     await _check_endpoint_reachable(validated_spec, body, status)
     if is_cancelled():
-        return {}
+        return _finalize_cancelled_creation(patch=patch, status=status, job_id=job_id)
 
     deployment, total_workers = _build_deployment(
         spec, name, namespace, job_id, job_uid=uid
@@ -453,22 +476,36 @@ async def _create_resources(
             status=status,
         )
         if is_cancelled():
-            return {}
+            return _finalize_cancelled_creation(
+                patch=patch, status=status, job_id=job_id
+            )
 
         await _create_rbac(api, deployment, namespace, owner_ref_dict)
         if is_cancelled():
-            return {}
+            return _finalize_cancelled_creation(
+                patch=patch, status=status, job_id=job_id
+            )
         configmap_name = await _create_configmap(
             api, deployment, namespace, owner_ref_dict
         )
         if is_cancelled():
-            return {}
+            return _finalize_cancelled_creation(
+                patch=patch, status=status, job_id=job_id
+            )
         await _persist_spec_and_index(spec, namespace, name, job_id, body=body)
         if is_cancelled():
-            return {}
+            return _finalize_cancelled_creation(
+                patch=patch, status=status, job_id=job_id
+            )
         jobset_name = await _create_jobset(api, deployment, namespace, owner_ref_dict)
         if is_cancelled():
-            return {}
+            # The JobSet is live now: stamp its name so on_cancel can delete it.
+            return _finalize_cancelled_creation(
+                patch=patch,
+                status=status,
+                job_id=job_id,
+                jobset_name=jobset_name,
+            )
 
         return _finalize_success(
             patch=patch,

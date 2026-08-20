@@ -55,6 +55,22 @@ class _FetchCancelled(Exception):
     """Raised internally when CR deletion interrupts completion I/O."""
 
 
+class _ResultsVolumeMissingError(OSError):
+    """Raised when the operator's results volume is absent from the pod.
+
+    Subclasses ``OSError`` so the progress-aware retry loop treats it as a
+    normal transient I/O failure (a volume can appear late), but carries a
+    message that names the missing path so a permanently unmounted volume is
+    diagnosable from the CR status alone.
+    """
+
+    def __init__(self, results_dir: Path) -> None:
+        super().__init__(
+            f"operator results directory {results_dir} does not exist "
+            "(results volume not mounted)"
+        )
+
+
 def _raise_if_cancelled(is_cancelled: Callable[[], bool] | None) -> None:
     if is_cancelled is not None and is_cancelled():
         raise _FetchCancelled
@@ -328,7 +344,14 @@ async def _download_final_and_sidecar(
     missing, fall back to the sidecar port. Mutates ``state`` in place.
     """
     if not OperatorEnvironment.RESULTS.DIR.exists():
-        return
+        # Returning silently here is fatal and invisible: nothing creates this
+        # directory (``run_dir`` is pure path arithmetic), so every retry
+        # downloads nothing, byte growth stays at zero, and the progress-aware
+        # loop eventually gives up with a generic "Failed to fetch results"
+        # while the real cause — the results volume is not mounted — appears in
+        # no log line, event or condition. Raise a named error instead so the
+        # message that lands on the CR points at the missing mount.
+        raise _ResultsVolumeMissingError(OperatorEnvironment.RESULTS.DIR)
 
     _raise_if_cancelled(is_cancelled)
     downloaded = await _await_or_cancel(

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import kopf
 import orjson
 import zstandard
 
@@ -1753,8 +1754,15 @@ async def _update_job_index_safe(
                 parent_uid=parent_uid,
             ):
                 return False
+    except kopf.TemporaryError:
+        # The identity re-reads above raise ``kopf.TemporaryError`` on a
+        # transient apiserver failure (see ``_job_identity``). Swallowing it
+        # here would permanently degrade a healthy run to
+        # ``INDEX_UPDATED=False`` — and hide it from the history API — for what
+        # is really a retryable blip. Let kopf retry instead.
+        raise
     except Exception as e:
-        if await _delete_index_row_if_inactive(
+        if await _compensate_index_row_if_inactive(
             namespace,
             job_id,
             epoch,
@@ -1846,6 +1854,39 @@ async def _delete_index_row_if_inactive(
         await _drop_index_row(namespace, job_id, epoch)
         return True
     return False
+
+
+async def _compensate_index_row_if_inactive(
+    namespace: str,
+    job_id: str,
+    epoch: str,
+    *,
+    parent_name: str | None,
+    parent_uid: str | None,
+) -> bool:
+    """Best-effort ``_delete_index_row_if_inactive`` for an error path.
+
+    Runs while another exception is being handled, so its own failure (the
+    identity re-read raises ``kopf.TemporaryError`` on a transient apiserver
+    error) must not escape and replace the error we are about to report.
+    """
+    try:
+        return await _delete_index_row_if_inactive(
+            namespace,
+            job_id,
+            epoch,
+            parent_name=parent_name,
+            parent_uid=parent_uid,
+        )
+    except Exception:  # noqa: BLE001 - compensation is best-effort inside an except block
+        logger.warning(
+            "runs_index compensation check failed for %s/%s/%s",
+            namespace,
+            job_id,
+            epoch,
+            exc_info=True,
+        )
+        return False
 
 
 async def _delete_backing_jobset(
