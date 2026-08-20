@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import MediaType
-from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
+from aiperf.common.models import Audio, Conversation, Image, Media, Text, Turn, Video
 from aiperf.config.dataset.config import FileDataset
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
@@ -353,31 +353,70 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
     def _reject_batching_with_named_pools(
         data: dict[Filename, list[RandomPool]],
     ) -> None:
-        """Reject batch sizes other than 1 when the input is a directory of named pools.
+        """Reject batch sizes other than 1 when batching would discard pool identity.
 
-        Directory mode (multiple files in ``data``) exists specifically to give each
-        pool a name (e.g. ``queries.jsonl`` -> ``query``, ``passages.jsonl`` -> ``passage``)
-        so name-sensitive endpoints (e.g. rankings, which routes on the ``query``/``queries``
-        and ``passages`` field names) can find their fields. ``_convert_to_conversations_batched``
-        flattens every file's pool into one anonymous per-modality pool and emits
-        ``Text(name="")``, discarding that identity regardless of which modality's batch
-        size triggered the flattened path.
+        Two distinct ways this happens, both from the same root cause:
+        ``_build_flat_pool`` unwraps embedded ``Text``/``Image``/``Audio``/``Video``
+        objects down to bare content strings, and ``_convert_to_conversations_batched``
+        rebuilds them as ``X(name="", contents=...)`` -- discarding any authored
+        ``name`` and, for images, any authored ``uuids`` (vLLM cache-reuse IDs).
+
+        1. Directory mode (multiple files in ``data``): each file forms a separately
+           named pool (e.g. ``queries.jsonl`` -> ``query``, ``passages.jsonl`` ->
+           ``passage``) that name-sensitive endpoints (e.g. rankings, which routes
+           on the ``query``/``queries`` and ``passages`` field names) depend on.
+           Flattening across files merges them into one anonymous pool per modality.
+
+        2. A single pool whose entries embed named ``Text``/``Image``/``Audio``/
+           ``Video`` objects, or ``Image`` objects carrying ``uuids``. This is
+           reachable from a single file (or inline YAML ``records``) and is not
+           caught by file count alone.
 
         Raises:
-            ValueError: If ``data`` has more than one file (a named-pool directory).
+            ValueError: If either condition applies.
         """
-        if len(data) <= 1:
-            return
-        names = ", ".join(sorted(data))
-        raise ValueError(
-            f"random_pool batch sizes other than 1 are not supported for named pools: "
-            f"the input is a directory of {len(data)} files, so each file forms a "
-            f"separately named pool ({names}). Batching flattens every pool into one "
-            "anonymous pool per modality, which discards those names and breaks "
-            "name-sensitive endpoints (e.g. rankings, which routes on 'query'/'queries' "
-            "and 'passages'). Either drop the batch-size flags to keep one sample per "
-            "named pool, or use a single unnamed pool file to batch."
-        )
+        if len(data) > 1:
+            names = ", ".join(sorted(data))
+            raise ValueError(
+                f"random_pool batch sizes other than 1 are not supported for named pools: "
+                f"the input is a directory of {len(data)} files, so each file forms a "
+                f"separately named pool ({names}). Batching flattens every pool into one "
+                "anonymous pool per modality, which discards those names and breaks "
+                "name-sensitive endpoints (e.g. rankings, which routes on 'query'/'queries' "
+                "and 'passages'). Either drop the batch-size flags to keep one sample per "
+                "named pool, or use a single unnamed pool file to batch."
+            )
+        if RandomPoolDatasetLoader._pool_entries_carry_metadata(data):
+            raise ValueError(
+                "random_pool batch sizes other than 1 are not supported when pool "
+                "entries carry named Text/Image/Audio/Video objects or image cache "
+                "uuids: batching flattens every modality into an anonymous pool, "
+                "which discards those names and uuids (e.g. breaking rankings, which "
+                "routes on 'query'/'queries' and 'passages' text names, and silently "
+                "dropping authored vLLM image cache uuids). Either drop the batch-size "
+                "flags, or strip name/uuids from the pool entries if only their "
+                "contents matter."
+            )
+
+    @staticmethod
+    def _pool_entries_carry_metadata(data: dict[Filename, list[RandomPool]]) -> bool:
+        """Return True if any pool entry authors a Media name or (image) uuids.
+
+        Checks the plural list fields (``texts``/``images``/``audios``/``videos`` --
+        the only ones that can hold ``Media`` objects rather than bare strings)
+        across every ``RandomPool`` entry in every pool.
+        """
+        for pool in data.values():
+            for entry in pool:
+                for items in (entry.texts, entry.images, entry.audios, entry.videos):
+                    if not items:
+                        continue
+                    for item in items:
+                        if isinstance(item, Media) and (
+                            item.name or getattr(item, "uuids", None)
+                        ):
+                            return True
+        return False
 
     def _build_flat_pool(
         self,

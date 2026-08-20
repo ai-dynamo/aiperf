@@ -661,8 +661,11 @@ class TestRandomPoolBatchSize:
             assert len(turn.videos) == 1
             assert turn.videos[0].contents[0] in video_urls
 
-    def test_batch_mode_named_image_objects_flattened(self, default_cfg):
-        """Images specified as named Image objects should have their contents added to the pool."""
+    def test_batch_mode_named_image_objects_rejected(self, default_cfg):
+        """Batching (batch_size != 1) against a pool with named Image objects must be
+        rejected: _build_flat_pool/_convert_to_conversations_batched would discard
+        the authored name (and any uuids) by rebuilding as Image(name="", ...).
+        """
         config = self._make_config(batch_size_image=2)
         data = {
             "f.jsonl": [
@@ -682,15 +685,14 @@ class TestRandomPoolBatchSize:
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
-        conversations = loader.convert_to_conversations(data)
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
 
-        expected = {"https://example.com/a.png", "https://example.com/b.png"}
-        for conv in conversations:
-            for img_content in conv.turns[0].images[0].contents:
-                assert img_content in expected
-
-    def test_batch_mode_named_text_objects_flattened(self, default_cfg):
-        """Texts specified as named Text objects should have their contents added to the pool."""
+    def test_batch_mode_named_text_objects_rejected(self, default_cfg):
+        """Batching against a pool with named Text objects must be rejected: it
+        would discard the authored name (e.g. 'query'), breaking name-sensitive
+        endpoints like rankings.
+        """
         config = self._make_config(batch_size_text=2)
         data = {
             "f.jsonl": [
@@ -702,15 +704,11 @@ class TestRandomPoolBatchSize:
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
-        conversations = loader.convert_to_conversations(data)
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
 
-        expected = {"alpha", "beta", "gamma"}
-        for conv in conversations:
-            for txt_content in conv.turns[0].texts[0].contents:
-                assert txt_content in expected
-
-    def test_batch_mode_named_audio_objects_flattened(self, default_cfg):
-        """Audios specified as named Audio objects should have their contents added to the pool."""
+    def test_batch_mode_named_audio_objects_rejected(self, default_cfg):
+        """Batching against a pool with named Audio objects must be rejected."""
         config = self._make_config(batch_size_image=2)
         data = {
             "f.jsonl": [
@@ -735,20 +733,11 @@ class TestRandomPoolBatchSize:
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
-        conversations = loader.convert_to_conversations(data)
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
 
-        expected = {
-            "https://example.com/a1.wav",
-            "https://example.com/a2.wav",
-            "https://example.com/a3.wav",
-        }
-        for conv in conversations:
-            turn = conv.turns[0]
-            assert len(turn.audios) == 1
-            assert turn.audios[0].contents[0] in expected
-
-    def test_batch_mode_named_video_objects_flattened(self, default_cfg):
-        """Videos specified as named Video objects should have their contents added to the pool."""
+    def test_batch_mode_named_video_objects_rejected(self, default_cfg):
+        """Batching against a pool with named Video objects must be rejected."""
         config = self._make_config(batch_size_image=2)
         data = {
             "f.jsonl": [
@@ -773,17 +762,8 @@ class TestRandomPoolBatchSize:
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
-        conversations = loader.convert_to_conversations(data)
-
-        expected = {
-            "https://example.com/v1.mp4",
-            "https://example.com/v2.mp4",
-            "https://example.com/v3.mp4",
-        }
-        for conv in conversations:
-            turn = conv.turns[0]
-            assert len(turn.videos) == 1
-            assert turn.videos[0].contents[0] in expected
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
 
     def test_batch_mode_plain_string_videos_flattened(self, default_cfg):
         """Videos specified as plain strings should be included in the flat pool."""
@@ -1102,6 +1082,69 @@ class TestRandomPoolNamedPoolBatchingGuard:
         for conv in conversations:
             names = {text.name for text in conv.turns[0].texts}
             assert names == {"query", "passage"}
+
+    def test_batching_with_single_file_named_text_objects_raises(self, default_cfg):
+        """A single file whose entries embed named Text objects must still be
+        rejected: file count alone (len(data) == 1) doesn't catch this, but
+        batching would flatten the embedded names away exactly as directory
+        mode's file-level names would be.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
+        loader = RandomPoolDatasetLoader(
+            filename="pool.jsonl", run=make_run_from_cli(config), num_conversations=2
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(texts=[Text(name="query", contents=["q1"])]),
+                RandomPool(texts=[Text(name="passage", contents=["p1"])]),
+            ]
+        }
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
+
+    def test_batching_with_single_file_image_uuids_raises(self, default_cfg):
+        """A single file whose entries embed Image objects with authored uuids
+        (vLLM cache-reuse IDs) must be rejected: batching rebuilds images as
+        Image(name="", contents=...) with no uuids field at all, silently
+        dropping the cache-reuse behavior instead of erroring loudly.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_image=2)
+        loader = RandomPoolDatasetLoader(
+            filename="pool.jsonl", run=make_run_from_cli(config), num_conversations=1
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(
+                    images=[
+                        Image(
+                            name="img",
+                            contents=["https://example.com/a.png"],
+                            uuids=["uuid-a"],
+                        )
+                    ]
+                ),
+            ]
+        }
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
+
+    def test_batching_with_single_file_plain_strings_does_not_raise(self, default_cfg):
+        """A single file with plain-string (unnamed) entries must still batch
+        normally -- the metadata guard must not over-reject content with no
+        name or uuids to lose.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_image=2)
+        loader = RandomPoolDatasetLoader(
+            filename="pool.jsonl", run=make_run_from_cli(config), num_conversations=1
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(images=["https://example.com/a.png"]),
+                RandomPool(images=["https://example.com/b.png"]),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations[0].turns[0].images[0].contents) == 2
 
 
 class TestRandomPoolBatchSizeWithFileDataset:
