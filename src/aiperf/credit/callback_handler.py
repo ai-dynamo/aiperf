@@ -54,12 +54,26 @@ class PhaseCallbackContext:
     handle_first_token: Callable[[FirstToken], Awaitable[None]] | None = None
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class ReturnDisposition:
     """Conversation-level outcome of one returned credit."""
 
     session_ended: bool
     session_cancelled: bool | None = None
+
+
+_WORKER_UNAVAILABLE_PREFIX = "worker_unavailable:"
+"""Prefix the sticky router stamps on a return it synthesized for a lost worker."""
+
+_SESSION_CONTINUES = ReturnDisposition(session_ended=False)
+"""Shared instance for the dominant outcome: this return did not end a session.
+
+Frozen, so sharing it across returns is safe; allocating a fresh dataclass per
+credit return bought nothing since callers only read the two fields.
+"""
+
+_SESSION_ENDED_CANCELLED = ReturnDisposition(session_ended=True, session_cancelled=True)
+"""Shared instance for a root session truncated by refused worker migration."""
 
 
 # =============================================================================
@@ -639,9 +653,16 @@ class CreditCallbackHandler:
 
     @staticmethod
     def _requires_worker_migration(credit_return: CreditReturn) -> bool:
-        """Whether continuation requires moving the session to another worker."""
-        error = credit_return.error or ""
-        return credit_return.cancelled and error.startswith("worker_unavailable:")
+        """Whether continuation requires moving the session to another worker.
+
+        Runs on every credit return, so it exits on the cancelled flag before
+        touching the error string: an uncancelled return does no string work at
+        all.
+        """
+        if not credit_return.cancelled:
+            return False
+        error = credit_return.error
+        return error is not None and error.startswith(_WORKER_UNAVAILABLE_PREFIX)
 
     def _get_return_disposition(self, credit_return: CreditReturn) -> ReturnDisposition:
         """Decide whether the session can continue after this return."""
@@ -652,20 +673,17 @@ class CreditCallbackHandler:
                     session_ended=True,
                     session_cancelled=credit_return.cancelled,
                 )
-            return ReturnDisposition(session_ended=False)
+            return _SESSION_CONTINUES
 
         if (
             not self._requires_worker_migration(credit_return)
             or credit.allow_worker_migration
         ):
-            return ReturnDisposition(session_ended=False)
+            return _SESSION_CONTINUES
 
         if credit.agent_depth == 0:
-            return ReturnDisposition(
-                session_ended=True,
-                session_cancelled=True,
-            )
-        return ReturnDisposition(session_ended=False)
+            return _SESSION_ENDED_CANCELLED
+        return _SESSION_CONTINUES
 
     def _finish_return_processing(
         self,
