@@ -87,23 +87,3 @@ def format_bytes(bytes: int | None, none_str: str = "--") -> str:
             return f"{bytes / factor:.0f} {suffix}"
 
     raise ValueError(f"Bytes value is too large to format: {bytes}")
-
-
-def format_memory(bytes_value: int, signed: bool = False) -> str:
-    """Format a memory size in bytes as MB, or GB once it reaches ~1000 MB.
-
-    Distinct from :func:`format_bytes`: this renders process-memory deltas, so
-    it supports an explicit sign prefix and uses decimal MB/GB only.
-
-    Args:
-        bytes_value: Memory size in bytes. May be negative when rendering a delta.
-        signed: When True, always prefix the value with ``+`` or ``-``.
-
-    Returns:
-        Formatted string such as ``"512.0 MB"``, ``"1.25 GB"``, or ``"+18.3 MB"``.
-    """
-    mb = bytes_value / 1e6
-    if abs(mb) >= 999.5:
-        gb = bytes_value / 1e9
-        return f"{gb:+.2f} GB" if signed else f"{gb:.2f} GB"
-    return f"{mb:+.1f} MB" if signed else f"{mb:.1f} MB"
