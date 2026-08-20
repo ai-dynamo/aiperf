@@ -255,6 +255,28 @@ impl PlannedReplayTraceInstance {
     fn from_terminal(cell_id: u32, trace: &TraceTerminalSupplement) -> Self {
         Self::new(cell_id, &trace.trajectory_id, &trace.trace_id)
     }
+
+    pub(crate) fn from_cellular_instance(
+        cell_id: u32,
+        trajectory_id: String,
+        trace_id: String,
+    ) -> Self {
+        let template_trace_id =
+            trace_id
+                .rsplit_once("::instance-")
+                .and_then(|(template, ordinal)| {
+                    (!template.is_empty()
+                        && !ordinal.is_empty()
+                        && ordinal.bytes().all(|byte| byte.is_ascii_digit()))
+                    .then(|| template.to_owned())
+                });
+        Self {
+            cell_id,
+            template_trace_id,
+            trajectory_id,
+            trace_id,
+        }
+    }
 }
 
 /// Validated concrete backend identity transported with a cellular replay fold.

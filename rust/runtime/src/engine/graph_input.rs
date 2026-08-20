@@ -1943,6 +1943,41 @@ mod tests {
     }
 
     #[test]
+    fn assignment_plan_identity_matches_cell_terminal_fold() {
+        let plan = RecordedAgentCellAssignmentPlan {
+            template_trace_ids: vec!["cellular-import-0".into()],
+            session_limit: 3,
+        };
+        let expected = plan.assignments(2, 3).expect("valid cell assignment");
+        let trace_id = "cellular-import-0::instance-2".to_owned();
+        let trajectory_id = format!("{trace_id}::trajectory");
+        let terminal = crate::graph::supplement::TraceTerminalSupplement::new(
+            "run".into(),
+            trajectory_id.clone(),
+            trace_id.clone(),
+            0,
+            "recorded_replay",
+        )
+        .with_planned_identity(
+            crate::graph::supplement::PlannedReplayTraceInstance::from_cellular_instance(
+                2,
+                trajectory_id,
+                trace_id,
+            ),
+        );
+
+        assert!(crate::graph::supplement::merge_graph_cell_supplements(
+            &expected,
+            [crate::graph::supplement::GraphCellSupplement::new(
+                2,
+                vec![terminal],
+                std::collections::BTreeSet::new(),
+            )],
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn built_in_resolver_inventory_matches_workload_inventory() {
         let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
         assert_eq!(

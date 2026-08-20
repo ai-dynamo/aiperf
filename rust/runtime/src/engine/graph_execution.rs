@@ -1604,7 +1604,7 @@ impl TracePlacement for GraphWorkerBackend {
                         self.worker_id,
                         "recorded_replay",
                     )
-                    .with_planned_identity(PlannedReplayTraceInstance::new(
+                    .with_planned_identity(PlannedReplayTraceInstance::from_cellular_instance(
                         ModuloCellPartition::from_env().map_or(0, |partition| partition.cell_id()),
                         profiling_trajectory_id,
                         profiling_trace_id,
