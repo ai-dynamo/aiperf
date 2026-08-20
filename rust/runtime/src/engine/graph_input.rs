@@ -983,29 +983,62 @@ fn rooted_existing_path(
     Ok(resolved)
 }
 
-/// Enumerate the finite recorded-agent profiling assignments a controller gives one cell.
+/// Finite recorded-agent replay templates prepared once by the controller.
+pub struct RecordedAgentCellAssignmentPlan {
+    template_trace_ids: Vec<String>,
+    session_limit: u64,
+}
+
+impl RecordedAgentCellAssignmentPlan {
+    /// Enumerate the finite recorded-agent profiling assignments for one cell.
+    pub fn assignments(
+        &self,
+        cell_id: u32,
+        cell_count: u32,
+    ) -> Result<BTreeSet<PlannedReplayTraceInstance>> {
+        ensure!(
+            cell_count > 0 && cell_id < cell_count,
+            "invalid cellular graph assignment"
+        );
+        let mut planned = BTreeSet::new();
+        let mut ordinal = u64::from(cell_id);
+        while ordinal < self.session_limit {
+            let template =
+                &self.template_trace_ids[ordinal as usize % self.template_trace_ids.len()];
+            let trace_id = format!("{template}::instance-{ordinal}");
+            planned.insert(
+                PlannedReplayTraceInstance::new(
+                    cell_id,
+                    format!("{trace_id}::trajectory"),
+                    trace_id,
+                )
+                .with_template_trace_id(template),
+            );
+            ordinal = ordinal
+                .checked_add(u64::from(cell_count))
+                .ok_or_else(|| anyhow!("cellular recorded-agent assignment ordinal overflow"))?;
+        }
+        Ok(planned)
+    }
+}
+
+/// Compile recorded-agent replay templates once for a cellular controller run.
 ///
 /// The plan is built before cells receive START. Runtime `run_id` values are intentionally
 /// unavailable here; the resulting identity is instead the resolved trace instance plus its
 /// controller-selected cell. Duration-bounded replay is refused because its terminal set is
 /// not knowable before execution.
-pub fn plan_recorded_agent_cell_assignments(
+pub fn prepare_recorded_agent_cell_assignment_plan(
     dataset: &Value,
     phases: &[PhaseSpec],
-    cell_id: u32,
-    cell_count: u32,
     endpoint_id: &str,
     imported_read_set: Option<&ImportedAgentReadSet>,
-) -> Result<BTreeSet<PlannedReplayTraceInstance>> {
+) -> Result<Option<RecordedAgentCellAssignmentPlan>> {
+    if dataset.get("format").and_then(Value::as_str) != Some("agent_recording") {
+        return Ok(None);
+    }
     let input: RecordedAgentDatasetInput = serde_json::from_value(dataset.clone())
         .context("decoding recorded-agent input for cellular assignment planning")?;
-    if input.format != "agent_recording" {
-        return Ok(BTreeSet::new());
-    }
-    ensure!(
-        cell_count > 0 && cell_id < cell_count,
-        "invalid cellular graph assignment"
-    );
     let tokenizer = crate::dataset::TiktokenTokenizer::builtin();
     let prepared = input.prepare(
         "agent_recording",
@@ -1022,7 +1055,7 @@ pub fn plan_recorded_agent_cell_assignments(
         "cellular recorded-agent replay requires exactly one profiling phase"
     );
     let Some(phase) = profiling.first() else {
-        return Ok(BTreeSet::new());
+        return Ok(None);
     };
     let common = phase.common();
     ensure!(
@@ -1036,30 +1069,20 @@ pub fn plan_recorded_agent_cell_assignments(
     let session_limit = common
         .sessions
         .unwrap_or(prepared.bundle.programs.len() as u64);
-    let templates = prepared
+    let template_trace_ids = prepared
         .bundle
         .programs
         .iter()
-        .map(|program| program.profiling.trace.id.as_str())
+        .map(|program| program.profiling.trace.id.clone())
         .collect::<Vec<_>>();
     ensure!(
-        !templates.is_empty(),
+        !template_trace_ids.is_empty(),
         "recorded-agent graph input contains no root traces"
     );
-    let mut planned = BTreeSet::new();
-    let mut ordinal = u64::from(cell_id);
-    while ordinal < session_limit {
-        let template = templates[ordinal as usize % templates.len()];
-        let trace_id = format!("{template}::instance-{ordinal}");
-        planned.insert(
-            PlannedReplayTraceInstance::new(cell_id, format!("{trace_id}::trajectory"), trace_id)
-                .with_template_trace_id(template),
-        );
-        ordinal = ordinal
-            .checked_add(u64::from(cell_count))
-            .ok_or_else(|| anyhow!("cellular recorded-agent assignment ordinal overflow"))?;
-    }
-    Ok(planned)
+    Ok(Some(RecordedAgentCellAssignmentPlan {
+        template_trace_ids,
+        session_limit,
+    }))
 }
 
 enum ResolvedRecordedAgentGraphSource {
@@ -1859,6 +1882,22 @@ mod tests {
 
     fn raw(value: Value) -> Box<RawValue> {
         serde_json::value::to_raw_value(&value).unwrap()
+    }
+
+    #[test]
+    fn recorded_agent_assignment_plan_skips_non_agent_dataset_before_strict_decode() {
+        let dataset = json!({
+            "type": "file",
+            "format": "dag_jsonl",
+            "path": "/not-read.jsonl",
+            "dag_jsonl_options": {"projected_only": true}
+        });
+
+        assert!(
+            prepare_recorded_agent_cell_assignment_plan(&dataset, &[], "chat", None)
+                .expect("non-agent datasets must skip recorded-agent decoding")
+                .is_none()
+        );
     }
 
     #[test]

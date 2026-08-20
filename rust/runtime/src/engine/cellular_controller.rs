@@ -958,6 +958,35 @@ pub fn run_cellular(
         // partition by trace and never read it, so the graph kind returns an empty map.
         let phase_ordinal_bases = kind.phase_ordinal_bases(envelope)?;
 
+        let assignment_plan = if kind == CellularRunKind::Graph
+            && envelope
+                .pointer("/run/cfg/datasets/0/format")
+                .and_then(serde_json::Value::as_str)
+                == Some("agent_recording")
+        {
+            let dataset = envelope
+                .pointer("/run/cfg/datasets/0")
+                .context("cellular graph run has no dataset")?;
+            let phases = envelope
+                .pointer("/run/cfg/phases")
+                .cloned()
+                .context("cellular graph run has no phases")?;
+            let phases: Vec<crate::engine::protocol::PhaseSpec> = serde_json::from_value(phases)
+                .context("decoding cellular graph phases for replay assignment planning")?;
+            let endpoint_id = envelope
+                .pointer("/run/cfg/endpoint/type")
+                .and_then(serde_json::Value::as_str)
+                .context("cellular graph run has no endpoint type")?;
+            crate::engine::graph_input::prepare_recorded_agent_cell_assignment_plan(
+                dataset,
+                &phases,
+                endpoint_id,
+                imported_read_set,
+            )?
+        } else {
+            None
+        };
+
         // Precompute each cell's sliced execute envelope; the register handler serves
         // it as that cell's spec (replacing the stdin pipe).
         let mut specs: Vec<Vec<u8>> = Vec::with_capacity(cell_count as usize);
@@ -975,6 +1004,7 @@ pub fn run_cellular(
                     &cell_dir,
                     injected_seed,
                     imported_read_set,
+                    assignment_plan.as_ref(),
                 )?;
             let planned: BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance> =
                 cell_envelope
@@ -1781,6 +1811,7 @@ fn build_cell_envelope(
     cell_dir: &Path,
     injected_seed: Option<u64>,
     imported_read_set: Option<&ImportedAgentReadSet>,
+    assignment_plan: Option<&crate::engine::graph_input::RecordedAgentCellAssignmentPlan>,
 ) -> Result<serde_json::Value> {
     let mut cell = envelope.clone();
     if let Some(read_set) = imported_read_set {
@@ -1790,36 +1821,10 @@ fn build_cell_envelope(
             Some(&read_set.root),
         )?;
     }
-    let expected_replay_traces = if kind == CellularRunKind::Graph
-        && cell
-            .pointer("/run/cfg/datasets/0/format")
-            .and_then(serde_json::Value::as_str)
-            == Some("agent_recording")
-    {
-        let dataset = cell
-            .pointer("/run/cfg/datasets/0")
-            .context("cellular graph run has no dataset")?;
-        let phases = cell
-            .pointer("/run/cfg/phases")
-            .cloned()
-            .context("cellular graph run has no phases")?;
-        let phases: Vec<crate::engine::protocol::PhaseSpec> = serde_json::from_value(phases)
-            .context("decoding cellular graph phases for replay assignment planning")?;
-        let endpoint_id = cell
-            .pointer("/run/cfg/endpoint/type")
-            .and_then(serde_json::Value::as_str)
-            .context("cellular graph run has no endpoint type")?;
-        crate::engine::graph_input::plan_recorded_agent_cell_assignments(
-            dataset,
-            &phases,
-            cell_id,
-            cell_count,
-            endpoint_id,
-            imported_read_set,
-        )?
-    } else {
-        BTreeSet::new()
-    };
+    let expected_replay_traces = assignment_plan
+        .map(|plan| plan.assignments(cell_id, cell_count))
+        .transpose()?
+        .unwrap_or_default();
     let run = cell
         .get_mut("run")
         .and_then(serde_json::Value::as_object_mut)
@@ -3628,13 +3633,33 @@ mod tests {
             .acquire_in(temporary.path())
             .unwrap();
         let read_set = acquired.read_set();
+        let phases = serde_json::json!([
+            {
+                "type": "concurrency",
+                "name": "profiling",
+                "sessions": 1,
+                "concurrency": 1,
+                "exclude_from_results": false
+            }
+        ]);
+        let phase_specs: Vec<crate::engine::protocol::PhaseSpec> =
+            serde_json::from_value(phases.clone()).unwrap();
+        let assignment_plan =
+            crate::engine::graph_input::prepare_recorded_agent_cell_assignment_plan(
+                &dataset,
+                &phase_specs,
+                "chat",
+                Some(read_set),
+            )
+            .unwrap()
+            .unwrap();
         let replacement_path = temporary.path().join("replacement.jsonl");
         std::fs::write(&replacement_path, replacement).unwrap();
         std::fs::rename(&replacement_path, &source).unwrap();
 
         let envelope = serde_json::json!({"run": {"cfg": {
             "datasets": [dataset],
-            "phases": [{"type": "concurrency", "name": "profiling", "sessions": 1, "concurrency": 1, "exclude_from_results": false}],
+            "phases": phases,
             "endpoint": {"type": "chat"}
         }}});
         let cell_dir = temporary.path().join("cell");
@@ -3646,6 +3671,7 @@ mod tests {
             &cell_dir,
             None,
             Some(&read_set),
+            Some(&assignment_plan),
         )
         .unwrap();
         let cell_source = crate::engine::cellular_cell::cellular_file_dataset_path(&cell)
@@ -3686,6 +3712,87 @@ mod tests {
 
         assert_eq!(std::fs::read(landed).unwrap(), original);
         server.shutdown().await;
+    }
+
+    #[test]
+    fn recorded_agent_assignment_plan_survives_imported_source_removal() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        std::fs::write(
+            &source,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"template\"}}\n\
+{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n\
+{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}}\n",
+        )
+        .unwrap();
+        let dataset = serde_json::json!({
+            "type": "file",
+            "format": "agent_recording",
+            "path": source,
+            "graph": {"source_format": "codex"}
+        });
+        let acquired = crate::engine::graph_input::selected_imported_agent_request(&dataset)
+            .unwrap()
+            .unwrap()
+            .acquire_in(temporary.path())
+            .unwrap();
+        let read_set = acquired.read_set();
+        let session_limit = 7;
+        let phases = serde_json::json!([
+            {
+                "type": "concurrency",
+                "name": "profiling",
+                "sessions": session_limit,
+                "concurrency": 1,
+                "exclude_from_results": false
+            }
+        ]);
+        let phase_specs: Vec<crate::engine::protocol::PhaseSpec> =
+            serde_json::from_value(phases.clone()).unwrap();
+        let assignment_plan =
+            crate::engine::graph_input::prepare_recorded_agent_cell_assignment_plan(
+                &dataset,
+                &phase_specs,
+                "chat",
+                Some(read_set),
+            )
+            .unwrap()
+            .unwrap();
+        std::fs::remove_file(&read_set.files[0].path).unwrap();
+
+        let envelope = serde_json::json!({"run": {"cfg": {
+            "datasets": [dataset],
+            "phases": phases,
+            "endpoint": {"type": "chat"}
+        }}});
+        let mut all_planned = BTreeSet::new();
+        let mut owners = BTreeSet::new();
+        for cell_id in 0..3 {
+            let cell = build_cell_envelope(
+                &envelope,
+                CellularRunKind::Graph,
+                cell_id,
+                3,
+                &temporary.path().join(format!("cell-{cell_id}")),
+                None,
+                Some(read_set),
+                Some(&assignment_plan),
+            )
+            .unwrap();
+            let planned: BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance> =
+                serde_json::from_value(cell["run"]["planned_replay_traces"].clone()).unwrap();
+            owners.extend(planned.iter().map(|identity| identity.cell_id));
+            all_planned.extend(planned);
+        }
+
+        assert_eq!(all_planned.len(), session_limit as usize);
+        let mut unique = BTreeSet::new();
+        assert!(
+            all_planned
+                .iter()
+                .all(|identity| unique.insert(identity.clone()))
+        );
+        assert_eq!(owners, BTreeSet::from([0, 1, 2]));
     }
 
     #[test]
@@ -4024,6 +4131,7 @@ mod tests {
                         dir,
                         None,
                         None,
+                        None,
                     )
                     .unwrap();
                     let owned = cell
@@ -4055,6 +4163,7 @@ mod tests {
                 cell_id,
                 4,
                 dir,
+                None,
                 None,
                 None,
             )
@@ -4257,6 +4366,7 @@ mod tests {
                         dir,
                         None,
                         None,
+                        None,
                     )
                     .unwrap();
                     let phases = cell
@@ -4307,6 +4417,7 @@ mod tests {
                 cell_id,
                 cell_count,
                 dir,
+                None,
                 None,
                 None,
             )
