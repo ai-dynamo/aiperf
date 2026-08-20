@@ -686,9 +686,33 @@ def _reject_file_dataset_incompatible(
         for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
         if attr in s and attr in batch_size_attrs and not is_random_pool
     ]
-    # Under --config the user passed neither --input-file nor
-    # --public-dataset -- the config file owns the dataset, and both flags are
-    # rejected on that path -- so the CLI-only advice cannot be followed.
+    _raise_file_dataset_violation(
+        cli,
+        non_batch_violations,
+        batch_violations,
+        declared_type=declared_type,
+        declared_format=declared_format,
+    )
+
+
+def _raise_file_dataset_violation(
+    cli: CLIConfig,
+    non_batch_violations: list[str],
+    batch_violations: list[str],
+    *,
+    declared_type: Any,
+    declared_format: Any,
+) -> None:
+    """Raise the message that fits how this dataset was chosen.
+
+    Split out of _reject_file_dataset_incompatible to keep it under the
+    complexity gate; the branching is inherent to the three ways a dataset
+    can be selected (config file, --input-file, --public-dataset).
+
+    Under --config the user passed neither --input-file nor --public-dataset
+    -- the config file owns the dataset, and both flags are rejected on that
+    path -- so the CLI-only advice cannot be followed.
+    """
     declared = declared_type is not None
     if non_batch_violations:
         flags = ", ".join(non_batch_violations)
@@ -730,9 +754,15 @@ def _reject_file_dataset_incompatible(
         if declared:
             # The config file owns the format; --custom-dataset-type and
             # --input-file are the CLI-only remedies suggested below.
+            # An omitted `format:` reads back as None from the raw YAML dict
+            # even though FileDataset.format defaults to single_turn; report
+            # the effective format rather than a misleading "None".
+            from aiperf.plugin.enums import DatasetFormat
+
+            effective = declared_format or DatasetFormat.SINGLE_TURN
             raise ValueError(
                 f"{flags} requires a random_pool dataset, but the config file "
-                f"declares format: {declared_format}. Set format: random_pool "
+                f"declares format: {effective}. Set format: random_pool "
                 "in the config file, or drop these flags."
             )
     if batch_violations and cli.input_file is not None:
