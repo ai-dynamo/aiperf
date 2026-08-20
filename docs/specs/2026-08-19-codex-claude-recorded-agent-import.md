@@ -288,13 +288,18 @@ ImportedAgentSession
   cwd_present: bool
   git_branch_present: bool
   parent: Option<ImportedSubagentParent>
+  request_history: ImportedRequestHistory
   calls: Vec<ImportedModelCall>
   observed_tool_count: u64
   ignored_record_count: u64
 
+ImportedRequestHistory
+  messages: Vec<RawJsonMessage>
+  call_end_offsets: Vec<usize>
+
 ImportedModelCall
   source_id: String
-  request_messages: Vec<RawJsonMessage>
+  request_messages: Vec<RawJsonMessage>  # legacy direct-construction fallback
   model: Option<String>
   delay_after_previous_us: Option<f64>
   tool_schema_available: bool
@@ -306,14 +311,18 @@ authors. It does not claim to retain bytes of an unavailable original provider
 request. Cwd and git branch are retained only as presence facts; their raw
 values are neither lowered nor logged.
 
-Parsers maintain an ordered conversation history. Immediately before each
-observed assistant completion, they snapshot that history as one
-`ImportedModelCall.request_messages`. After the snapshot, the observed
-assistant content and correlated tool results extend history for later calls.
-This gives every native LLM node a self-contained static request history, which
-matches the existing recorded-agent lowerer's use of full source request
-snapshots rather than dynamic channel splices
-(`rust/runtime/src/graph/recorded/agent_recording/lowering.rs:406-488`).
+Parsers retain one contiguous `ImportedRequestHistory.messages` vector and
+record a call end offset immediately before each observed assistant completion.
+Parser-produced `ImportedModelCall` values leave their legacy
+`request_messages` vectors empty. Each end offset is the exclusive end of that
+call's request prefix; lowering borrows `messages[..end]` in source-call order.
+After a prefix is captured, observed assistant content and correlated tool
+results extend the shared history for later calls. Retained request-history
+metadata is O(messages + calls), rather than copying every prefix per call.
+
+An entirely default/empty session history selects each call's legacy
+`request_messages` vector, preserving direct constructors. This internal
+storage representation does not change the request wire.
 
 ## Canonical lowering contract
 
