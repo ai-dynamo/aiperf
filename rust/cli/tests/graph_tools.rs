@@ -1044,22 +1044,43 @@ fn malformed_input_serializes_input_decode_failed() {
 
 #[test]
 fn conditional_yaml_decode_failures_use_the_decode_envelope() {
-    for source in ["traces: [", "traces: []\nunknown_field: true\n"] {
-        let fixture = tempfile::NamedTempFile::new().expect("create conditional fixture");
-        std::fs::write(fixture.path(), source).expect("write conditional fixture");
-        let report = json_error(&[
-            "graph",
-            "validate",
-            fixture.path().to_str().expect("UTF-8 path"),
-            "--graph-format",
-            "conditional_graph",
-            "--output-format=json",
-        ]);
-        assert!(matches!(
-            report.code,
-            GraphCommandErrorCode::InputDecodeFailed
-        ));
-    }
+    let decode_fixture = tempfile::NamedTempFile::new().expect("create decode fixture");
+    std::fs::write(decode_fixture.path(), "traces: [").expect("write malformed YAML fixture");
+    let decode_report = json_error(&[
+        "graph",
+        "validate",
+        decode_fixture.path().to_str().expect("UTF-8 path"),
+        "--graph-format",
+        "conditional_graph",
+        "--output-format=json",
+    ]);
+    assert_eq!(decode_report.code, GraphCommandErrorCode::InputDecodeFailed);
+
+    let lowering_fixture = tempfile::NamedTempFile::new().expect("create lowering fixture");
+    std::fs::write(
+        lowering_fixture.path(),
+        r#"
+graph:
+  state:
+    result: {type: text, reducer: unsupported}
+  nodes: {}
+  edges: []
+traces: []
+"#,
+    )
+    .expect("write semantic YAML fixture");
+    let lowering_report = json_error(&[
+        "graph",
+        "validate",
+        lowering_fixture.path().to_str().expect("UTF-8 path"),
+        "--graph-format",
+        "conditional_graph",
+        "--output-format=json",
+    ]);
+    assert_eq!(
+        lowering_report.code,
+        GraphCommandErrorCode::InputLoweringFailed
+    );
 }
 
 #[test]

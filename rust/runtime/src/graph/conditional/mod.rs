@@ -34,6 +34,46 @@ pub use model::{
 };
 pub use resolve::{TakenEdge, TakenGraph, resolve_and_prune, resolve_branch_key};
 
+/// Internal classified conditional-graph input error for engine fatal handling.
+#[derive(Debug)]
+pub(crate) enum ConditionalGraphInputError {
+    Decode(serde_yaml::Error),
+    Conditional(ConditionalError),
+}
+
+impl std::fmt::Display for ConditionalGraphInputError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Decode(error) => error.fmt(formatter),
+            Self::Conditional(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for ConditionalGraphInputError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Decode(error) => Some(error),
+            Self::Conditional(error) => Some(error),
+        }
+    }
+}
+
+impl From<ConditionalError> for ConditionalGraphInputError {
+    fn from(error: ConditionalError) -> Self {
+        Self::Conditional(error)
+    }
+}
+
+impl ConditionalGraphInputError {
+    fn into_compat(self) -> ConditionalError {
+        match self {
+            Self::Decode(error) => error.into(),
+            Self::Conditional(error) => error,
+        }
+    }
+}
+
 /// Read one authored conditional-graph source as raw bytes (YAML or JSON).
 fn load_source_bytes(load: &LoadConfig) -> Result<Vec<u8>, ConditionalError> {
     match &load.source {
@@ -65,13 +105,35 @@ pub async fn compile_conditional_graph_input(
     tokenizer: &dyn TextTokenizer,
     workload_seed: u64,
 ) -> Result<GraphInputBundle, ConditionalError> {
+    compile_conditional_graph_input_classified(config, tokenizer, workload_seed)
+        .await
+        .map_err(ConditionalGraphInputError::into_compat)
+}
+
+pub(crate) async fn compile_conditional_graph_input_classified(
+    config: GraphInputConfig,
+    tokenizer: &dyn TextTokenizer,
+    workload_seed: u64,
+) -> Result<GraphInputBundle, ConditionalGraphInputError> {
     if config.root_limit == Some(0) {
-        return Err(ConditionalError::message(
-            "graph root_limit must be positive when configured",
-        ));
+        return Err(
+            ConditionalError::message("graph root_limit must be positive when configured").into(),
+        );
     }
     let bytes = load_source_bytes(&config.load)?;
-    let doc = parse_authored_graph(&bytes)?;
+    let raw = model::decode_authored_graph(&bytes).map_err(ConditionalGraphInputError::Decode)?;
+    let doc = model::convert_authored_graph(raw)?;
+    compile_decoded_conditional_graph_input(config, doc, tokenizer, workload_seed)
+        .await
+        .map_err(ConditionalGraphInputError::from)
+}
+
+async fn compile_decoded_conditional_graph_input(
+    config: GraphInputConfig,
+    doc: AuthoredGraphDoc,
+    tokenizer: &dyn TextTokenizer,
+    workload_seed: u64,
+) -> Result<GraphInputBundle, ConditionalError> {
     if doc.traces.is_empty() {
         return Err(ConditionalError::message(
             "conditional_graph source declares no traces",
@@ -126,6 +188,7 @@ mod tests {
     use super::*;
     use crate::dataset::{DatasetSource, TiktokenTokenizer};
     use std::collections::BTreeSet;
+    use std::error::Error;
 
     // A shopping-agent diamond: START fans to `route` (shopping/non_shopping) and
     // `safety` (safe/unsafe). The shopping path chains an LLM planner through two
@@ -188,6 +251,62 @@ traces:
         compile_conditional_graph_input(config, &TiktokenTokenizer::builtin(), 0)
             .await
             .unwrap()
+    }
+
+    fn config(source: &[u8]) -> GraphInputConfig {
+        GraphInputConfig {
+            load: LoadConfig::new(DatasetSource::Bytes(source.to_vec().into())),
+            root_limit: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn classified_error_compatibility_preserves_yaml_decode_source() {
+        let error = compile_conditional_graph_input_classified(
+            config(b"traces: ["),
+            &TiktokenTokenizer::builtin(),
+            0,
+        )
+        .await;
+        let Err(error) = error else {
+            panic!("malformed YAML must fail decoding");
+        };
+
+        assert!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<serde_yaml::Error>())
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn classified_error_compatibility_keeps_semantic_failure_out_of_yaml_chain() {
+        let error = compile_conditional_graph_input_classified(
+            config(
+                br#"
+graph:
+  state:
+    result: {type: text, reducer: unsupported}
+  nodes: {}
+  edges: []
+traces: []
+"#,
+            ),
+            &TiktokenTokenizer::builtin(),
+            0,
+        )
+        .await;
+        let Err(error) = error else {
+            panic!("unsupported reducer must fail conversion");
+        };
+
+        assert!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<serde_yaml::Error>())
+                .is_none()
+        );
     }
 
     fn nodes_of(bundle: &GraphInputBundle, trace_id: &str) -> BTreeSet<String> {

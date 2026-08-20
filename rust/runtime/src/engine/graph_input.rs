@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::config::model::dataset::{RecordedAgentGraphConfig, RecordedAgentSourceFormat};
 use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
-use crate::graph::conditional::compile_conditional_graph_input;
+use crate::graph::conditional::compile_conditional_graph_input_classified;
 use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
 use crate::graph::recorded::agent_recording::{
     BuiltinReplayRequestProfileResolver, ImportedAgentReadSet, RecordedAgentInputSource,
@@ -459,10 +459,13 @@ impl GraphInputAdapter for ConditionalGraphRunnerGraphInputAdapter {
             DagJsonlDatasetInput::Public(spec) => prepare_public(spec, self.format())?,
         };
         let workload_seed = context.run_random_seed.unwrap_or(0);
-        let bundle =
-            compile_conditional_graph_input(prepared.input, context.tokenizer, workload_seed)
-                .await
-                .context("loading and lowering direct authored conditional_graph input")?;
+        let bundle = compile_conditional_graph_input_classified(
+            prepared.input,
+            context.tokenizer,
+            workload_seed,
+        )
+        .await
+        .context("loading and lowering direct authored conditional_graph input")?;
         ensure!(
             !bundle.programs.is_empty(),
             "authored conditional_graph input contains no traces after root limiting"

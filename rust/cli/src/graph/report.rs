@@ -39,7 +39,7 @@ impl GraphOperation {
 }
 
 /// Stable class of a graph-command fatal error.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GraphCommandErrorCode {
     /// Clap rejected the public argument shape.

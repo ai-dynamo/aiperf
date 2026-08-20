@@ -22,24 +22,18 @@ use serde_json::Value;
 use crate::graph::model::{ChannelType, ReducerName};
 
 /// Focused authored-graph parse or lowering failure.
-#[derive(Debug)]
-pub enum ConditionalError {
-    Message(String),
-    YamlDecode(serde_yaml::Error),
-}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConditionalError(pub String);
 
 impl ConditionalError {
     pub fn message(message: impl Into<String>) -> Self {
-        Self::Message(message.into())
+        Self(message.into())
     }
 }
 
 impl Display for ConditionalError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Message(message) => formatter.write_str(message),
-            Self::YamlDecode(error) => error.fmt(formatter),
-        }
+        formatter.write_str(&self.0)
     }
 }
 
@@ -53,7 +47,7 @@ impl From<serde_json::Error> for ConditionalError {
 
 impl From<serde_yaml::Error> for ConditionalError {
     fn from(error: serde_yaml::Error) -> Self {
-        Self::YamlDecode(error)
+        Self::message(error.to_string())
     }
 }
 
@@ -207,7 +201,7 @@ pub struct AuthoredTrace {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawDoc {
+pub(super) struct RawDoc {
     graph: RawGraph,
     #[serde(default)]
     traces: Vec<AuthoredTrace>,
@@ -366,7 +360,14 @@ fn message_part(text: String) -> MessagePart {
 ///
 /// YAML is a superset of JSON, so one `serde_yaml` pass accepts both wire forms.
 pub fn parse_authored_graph(bytes: &[u8]) -> Result<AuthoredGraphDoc, ConditionalError> {
-    let raw: RawDoc = serde_yaml::from_slice(bytes)?;
+    convert_authored_graph(decode_authored_graph(bytes).map_err(ConditionalError::from)?)
+}
+
+pub(super) fn decode_authored_graph(bytes: &[u8]) -> Result<RawDoc, serde_yaml::Error> {
+    serde_yaml::from_slice(bytes)
+}
+
+pub(super) fn convert_authored_graph(raw: RawDoc) -> Result<AuthoredGraphDoc, ConditionalError> {
     let mut nodes = BTreeMap::new();
     for (id, node) in raw.graph.nodes {
         nodes.insert(id.clone(), convert_node(&id, node)?);
@@ -552,6 +553,12 @@ traces:
     replay_outputs:
       tool_exec: {raw_results: [], brand_cands: "Nike, Adidas"}
 "#;
+
+    #[test]
+    fn public_error_tuple_source_compatibility() {
+        let conditional = ConditionalError("conditional".to_owned());
+        assert_eq!(conditional.0, "conditional");
+    }
 
     #[test]
     fn decodes_minimal_conditional_doc() {

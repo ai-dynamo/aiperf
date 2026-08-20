@@ -323,10 +323,7 @@ fn is_input_decode_error(error: &anyhow::Error) -> bool {
         if cause.downcast_ref::<serde_json::Error>().is_some() {
             return true;
         }
-        if matches!(
-            cause.downcast_ref::<aiperf_runtime::graph::conditional::ConditionalError>(),
-            Some(aiperf_runtime::graph::conditional::ConditionalError::YamlDecode(_))
-        ) {
+        if cause.downcast_ref::<serde_yaml::Error>().is_some() {
             return true;
         }
         let text = cause.to_string().to_ascii_lowercase();

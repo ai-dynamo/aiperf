@@ -10,7 +10,7 @@ use crate::graph::model::{
     ChannelType, Count, END_NODE_ID, ExecutableGraphNode, GraphRecord, GraphTracePlan, PromptItem,
     ReducerName, START_NODE_ID, StaticEdge,
 };
-use crate::graph::scheduler::{AnchorFanInKind, Scheduler};
+use crate::graph::scheduler::{AnchorFanInKind, Scheduler, anchor_fan_in_finding};
 
 /// Validates graph structure and returns detailed inspection findings.
 pub use crate::graph::validate::validate_detailed;
@@ -410,10 +410,9 @@ fn inspect_plan(
             issue
         })
         .collect::<Vec<_>>();
-    let scheduler = Scheduler::new(&plan.graph);
-    if let Err(error) = &scheduler {
-        if !matches!(error.kind(), AnchorFanInKind::NonCompletionStart) {
-            let code = match error.kind() {
+    if let Some(finding) = anchor_fan_in_finding(&plan.graph) {
+        if !matches!(finding.kind(), AnchorFanInKind::NonCompletionStart) {
+            let code = match finding.kind() {
                 AnchorFanInKind::Mixed => "mixed-anchor-fan-in",
                 AnchorFanInKind::MultipleStartAnchored => "multi-start-anchor-fan-in",
                 AnchorFanInKind::NonCompletionStart => unreachable!(),
@@ -422,12 +421,13 @@ fn inspect_plan(
                 code,
                 Some(trace_id.to_string()),
                 Some(phase),
-                Some(format!("graph.nodes.{}", error.target())),
-                error.to_string(),
-                BTreeMap::from([("target".into(), error.target().to_string())]),
+                Some(format!("graph.nodes.{}", finding.target())),
+                finding.message(),
+                BTreeMap::from([("target".into(), finding.target().to_string())]),
             ));
         }
     }
+    let scheduler = Scheduler::new(&plan.graph);
     let topology = inspect_topology(&plan.graph);
     let summary = GraphPlanSummary {
         node_count: plan.graph.total_node_count(),

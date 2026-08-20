@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 /// target's only in-edge (mixed-anchor / multi-start-anchored fan-in), an
 /// unsupported topology the runtime rejects up front.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AnchorFanInKind {
+pub(crate) enum AnchorFanInKind {
     /// START cannot provide a dispatch or first-token event.
     NonCompletionStart,
     /// A target has both start-anchored and completion-anchored inputs.
@@ -21,29 +21,34 @@ pub enum AnchorFanInKind {
     MultipleStartAnchored,
 }
 
-/// A scheduler construction error for an unsupported anchored fan-in topology.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MixedAnchorFanInError {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AnchorFanInFinding {
     kind: AnchorFanInKind,
     target: String,
     message: String,
 }
 
-impl MixedAnchorFanInError {
-    /// Returns the rejected anchored fan-in topology.
-    pub fn kind(&self) -> AnchorFanInKind {
+impl AnchorFanInFinding {
+    pub(crate) fn kind(&self) -> AnchorFanInKind {
         self.kind
     }
 
-    /// Returns the node receiving the unsupported fan-in.
-    pub fn target(&self) -> &str {
+    pub(crate) fn target(&self) -> &str {
         &self.target
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
     }
 }
 
+/// A scheduler construction error for an unsupported anchored fan-in topology.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MixedAnchorFanInError(pub String);
+
 impl std::fmt::Display for MixedAnchorFanInError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        f.write_str(&self.0)
     }
 }
 impl std::error::Error for MixedAnchorFanInError {}
@@ -62,18 +67,8 @@ impl Scheduler {
         let mut static_pred_edges: BTreeMap<String, Vec<StaticEdge>> = BTreeMap::new();
 
         for edge in &graph.edges {
-            if edge.source == START_NODE_ID
-                && (edge.delay_after_predecessor_start_us.is_some()
-                    || edge.delay_after_predecessor_first_token_us.is_some())
-            {
-                return Err(MixedAnchorFanInError {
-                    kind: AnchorFanInKind::NonCompletionStart,
-                    target: edge.target.clone(),
-                    message: format!(
-                        "START edge to {:?} must use completion anchoring because START has no dispatch or first-token event",
-                        edge.target
-                    ),
-                });
+            if let Some(finding) = non_completion_start_finding(edge) {
+                return Err(MixedAnchorFanInError(finding.message().to_owned()));
             }
             if edge.delay_after_predecessor_start_us.is_some() {
                 start_anchored_succ
@@ -91,8 +86,9 @@ impl Scheduler {
                 .or_default()
                 .push(edge.clone());
         }
-
-        reject_mixed_anchor_fan_in(&static_pred_edges)?;
+        if let Some(finding) = anchor_fan_in_finding_from_predecessors(&static_pred_edges) {
+            return Err(MixedAnchorFanInError(finding.message().to_owned()));
+        }
 
         // Entry nodes: successors of START (dedup, END suppressed), edge order.
         let mut entry: Vec<String> = Vec::new();
@@ -160,9 +156,37 @@ impl Scheduler {
     }
 }
 
-fn reject_mixed_anchor_fan_in(
+pub(crate) fn anchor_fan_in_finding(graph: &GraphRecord) -> Option<AnchorFanInFinding> {
+    let mut static_pred_edges: BTreeMap<String, Vec<StaticEdge>> = BTreeMap::new();
+    for edge in &graph.edges {
+        if let Some(finding) = non_completion_start_finding(edge) {
+            return Some(finding);
+        }
+        static_pred_edges
+            .entry(edge.target.clone())
+            .or_default()
+            .push(edge.clone());
+    }
+    anchor_fan_in_finding_from_predecessors(&static_pred_edges)
+}
+
+fn non_completion_start_finding(edge: &StaticEdge) -> Option<AnchorFanInFinding> {
+    (edge.source == START_NODE_ID
+        && (edge.delay_after_predecessor_start_us.is_some()
+            || edge.delay_after_predecessor_first_token_us.is_some()))
+    .then(|| AnchorFanInFinding {
+        kind: AnchorFanInKind::NonCompletionStart,
+        target: edge.target.clone(),
+        message: format!(
+            "START edge to {:?} must use completion anchoring because START has no dispatch or first-token event",
+            edge.target
+        ),
+    })
+}
+
+fn anchor_fan_in_finding_from_predecessors(
     static_pred_edges: &BTreeMap<String, Vec<StaticEdge>>,
-) -> Result<(), MixedAnchorFanInError> {
+) -> Option<AnchorFanInFinding> {
     for (target, edges) in static_pred_edges {
         let start_anchored: Vec<&StaticEdge> = edges
             .iter()
@@ -196,7 +220,7 @@ completion edge {:?} -> {:?} arrive at the same node",
                 ),
             )
         };
-        return Err(MixedAnchorFanInError {
+        return Some(AnchorFanInFinding {
             kind,
             target: target.clone(),
             message: format!(
@@ -205,7 +229,7 @@ must be its target's ONLY in-edge."
             ),
         });
     }
-    Ok(())
+    None
 }
 
 /// Zero the leading phase-start offsets (`--burst-phase-starts` collapse).
@@ -242,6 +266,39 @@ mod tests {
 
     fn graph(json: &str) -> GraphRecord {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn public_error_tuple_source_compatibility() {
+        let fan_in = MixedAnchorFanInError("fan-in".to_owned());
+        assert_eq!(fan_in.0, "fan-in");
+    }
+
+    #[test]
+    fn error_compatibility_classifier_reads_existing_predecessor_adjacency() {
+        let g = graph(
+            r#"{
+            "nodes": {"a": {"node_type":"llm","prompt":[],"output":"oa"},
+                      "b": {"node_type":"llm","prompt":[],"output":"ob"},
+                      "c": {"node_type":"llm","prompt":[],"output":"oc"}},
+            "edges": [
+                {"edge_type":"static","source":"a","target":"c","delay_after_predecessor_start_us":5.0},
+                {"edge_type":"static","source":"b","target":"c"}
+            ]
+        }"#,
+        );
+        let mut predecessors = BTreeMap::new();
+        for edge in &g.edges {
+            predecessors
+                .entry(edge.target.clone())
+                .or_insert_with(Vec::new)
+                .push(edge.clone());
+        }
+
+        let finding =
+            anchor_fan_in_finding_from_predecessors(&predecessors).expect("mixed fan-in finding");
+        assert_eq!(finding.kind(), AnchorFanInKind::Mixed);
+        assert_eq!(finding.target(), "c");
     }
 
     #[test]
@@ -299,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_anchor_fan_in_rejected() {
+    fn mixed_anchor_fan_in_error_compatibility_projects_typed_finding() {
         let g = graph(
             r#"{
             "nodes": {"a": {"node_type":"llm","prompt":[],"output":"oa"},
@@ -315,12 +372,14 @@ mod tests {
             Err(error) => error,
             Ok(_) => panic!("mixed-anchor fan-in must be rejected"),
         };
-        assert_eq!(error.kind(), AnchorFanInKind::Mixed);
-        assert_eq!(error.target(), "c");
+        let finding = anchor_fan_in_finding(&g).expect("mixed fan-in finding");
+        assert_eq!(finding.kind(), AnchorFanInKind::Mixed);
+        assert_eq!(finding.target(), "c");
+        assert_eq!(error.0, finding.message());
     }
 
     #[test]
-    fn multi_start_anchor_fan_in_rejected() {
+    fn multi_start_anchor_fan_in_error_compatibility_projects_typed_finding() {
         let g = graph(
             r#"{
             "nodes": {"a": {"node_type":"llm","prompt":[],"output":"oa"},
@@ -336,8 +395,10 @@ mod tests {
             Err(error) => error,
             Ok(_) => panic!("multi-start-anchored fan-in must be rejected"),
         };
-        assert_eq!(error.kind(), AnchorFanInKind::MultipleStartAnchored);
-        assert_eq!(error.target(), "c");
+        let finding = anchor_fan_in_finding(&g).expect("multi-start fan-in finding");
+        assert_eq!(finding.kind(), AnchorFanInKind::MultipleStartAnchored);
+        assert_eq!(finding.target(), "c");
+        assert_eq!(error.0, finding.message());
     }
 
     #[test]
