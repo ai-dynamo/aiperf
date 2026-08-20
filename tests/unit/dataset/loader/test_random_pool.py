@@ -1165,6 +1165,25 @@ class TestRandomPoolNamedPoolBatchingGuard:
         conversations = loader.convert_to_conversations(data)
         assert len(conversations[0].turns[0].images[0].contents) == 2
 
+    def test_batching_with_inline_records_single_pool_does_not_raise(self, default_cfg):
+        """Batch sizes must apply to a single-pool inline `records:` list (not a
+        file at all), not just single-file input.
+
+        Regression test for a doc claim ("batch sizes only apply to single-file
+        random_pool input") that was false: the guard gates on pool count and
+        per-entry metadata, not on file-ness, so a flat inline records: list
+        (list-form, one unnamed pool) batches exactly like a single file.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
+        loader = RandomPoolDatasetLoader(
+            inline_records=[{"text": "alpha"}, {"text": "beta"}],
+            run=make_run_from_cli(config),
+            num_conversations=1,
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations[0].turns[0].texts[0].contents) == 2
+
 
 class TestRandomPoolBatchSizeWithFileDataset:
     """Batch sizes must work when the dataset is a FileDataset (--input-file path)."""

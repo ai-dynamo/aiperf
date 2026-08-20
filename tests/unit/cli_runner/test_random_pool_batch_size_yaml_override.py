@@ -326,3 +326,23 @@ def test_image_batch_size_flag_on_synthetic_yaml_is_silently_dropped(
     cli = _cli(image_batch_size=2)
     cfg = resolve_config(cli, yaml_path)
     assert cfg.benchmark.datasets[0].images is None
+
+
+def test_batch_size_flag_applies_without_cli_custom_dataset_type(
+    tmp_path: Path,
+) -> None:
+    """Batch-size flags must resolve via YAML `format: random_pool` alone, with
+    no `--custom-dataset-type` CLI flag set at all.
+
+    Regression test for a doc claim ("only valid with --custom-dataset-type
+    random_pool") that was false: the resolver keys off `dataset["format"]`
+    in the merged YAML dict, never `cli.custom_dataset_type` -- the YAML
+    `format:` key is the same knob, reachable without touching the CLI flag.
+    """
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_path = _write_random_pool_yaml(tmp_path, pool)
+    cli = _cli(prompt_batch_size=4)
+    assert "custom_dataset_type" not in cli.model_fields_set
+    cfg = resolve_config(cli, yaml_path)
+    assert _dataset(cfg).prompt_batch_size == 4
