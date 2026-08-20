@@ -311,7 +311,6 @@ class SubprocessManager:
         self._debug("Killing all subprocesses")
         to_kill = list(self.subprocesses)
         self.subprocesses.clear()
-        self._local_worker_group_manager = None
 
         for info in to_kill:
             if info.process and info.process.is_alive():

@@ -41,17 +41,12 @@ class RuntimeConfig(BaseConfig):
     @property
     def uses_worker_group_manager(self) -> bool:
         """Whether this runtime routes workers through WorkerGroupManager."""
-        # Component-integration tests share a single process and one
-        # FakeCommunication bus, so pod-lifecycle routing cannot be wired.
-        # Treat every service as locally-driven in that mode.
         import os
 
-        if os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1":
-            return False
-        return self.service_run_type in {
-            ServiceRunType.MULTIPROCESSING,
-            ServiceRunType.KUBERNETES,
-        }
+        return (
+            os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") != "1"
+            and self.service_run_type == ServiceRunType.KUBERNETES
+        )
 
     ui: Annotated[
         UIType,
