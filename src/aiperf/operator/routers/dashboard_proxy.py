@@ -26,7 +26,14 @@ logger = logging.getLogger(__name__)
 _FORWARD_REQUEST_HEADER_DROP = frozenset(
     {"host", "content-length", "connection", "transfer-encoding"}
 )
-_FORWARD_RESPONSE_HEADER_DROP = frozenset({"transfer-encoding", "connection"})
+# ``content-length`` must be dropped alongside the hop-by-hop headers: aiohttp
+# transparently decodes a compressed upstream body, so the upstream length no
+# longer describes the bytes we forward. Leaving it in truncates or hangs the
+# response for every gzip-encoded dashboard asset; Starlette re-derives the
+# correct framing for the body it actually writes.
+_FORWARD_RESPONSE_HEADER_DROP = frozenset(
+    {"transfer-encoding", "connection", "content-length", "content-encoding"}
+)
 
 
 def create_dashboard_proxy_router() -> APIRouter:

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import orjson
+import zstandard
 from fastapi import APIRouter, HTTPException, Query
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -351,17 +352,27 @@ async def _config_from_job_spec_file(
     Returns the ``{"source": "file", "spec": ...}`` response body when the
     run directory holds a parseable ``job_spec.json``; None when the file is
     missing or corrupt (logged) so the caller can try the next fallback.
+
+    Handles the ``.zst`` companion the same way ``_summary_path`` does: with
+    the default ``AIPERF_RESULTS_COMPRESS_ON_DISK=true`` an archived run's only
+    on-disk spec is ``job_spec.json.zst``, and a raw-only probe made this
+    fallback dead code for every archived job.
     """
     run = resolve_run_dir(base_dir, namespace, job_id, epoch)
     if run is None:
         return None
     spec_file = run / "job_spec.json"
     if not spec_file.exists():
-        return None
+        spec_file = run / "job_spec.json.zst"
+        if not spec_file.exists():
+            return None
     try:
-        data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
+        raw = await asyncio.to_thread(spec_file.read_bytes)
+        if spec_file.suffix == ".zst":
+            raw = await asyncio.to_thread(runs_index.zstd_decompress, raw)
+        data = orjson.loads(raw)
         return {"source": "file", "spec": redact_endpoint_spec(data)}
-    except (orjson.JSONDecodeError, OSError) as exc:
+    except (orjson.JSONDecodeError, OSError, zstandard.ZstdError) as exc:
         logger.warning(
             "Ignoring corrupt job_spec.json for %s/%s at %s: %s",
             namespace,

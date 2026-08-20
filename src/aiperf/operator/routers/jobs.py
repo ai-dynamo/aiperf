@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -403,17 +403,20 @@ async def _get_job_impl(
         raise HTTPException(404, f"Job {namespace}/{name} not found")
 
     if job.source == "archived":
-        job_dir = resolve_run_dir(results_dir, namespace, name, epoch=epoch)
-        if job_dir is None:
+        # Named ``run_path`` rather than ``job_dir``: the module imports a
+        # ``job_dir()`` helper, and rebinding that name here would shadow it
+        # for the rest of this function.
+        run_path = resolve_run_dir(results_dir, namespace, name, epoch=epoch)
+        if run_path is None:
             raise HTTPException(404, f"No persisted run for {namespace}/{name}")
         # ``_summary_path`` handles the .zst-then-raw fallback used elsewhere
         # in the codebase (results_db.py:76, runs_index.py:907) — without it
         # archived-job detail pages on a deployment with the default
         # AIPERF_RESULTS_COMPRESS_ON_DISK=true silently render empty Final KPIs.
-        summary_file = _summary_path(job_dir)
+        summary_file = _summary_path(run_path)
         summary = (_read_summary(summary_file) or {}) if summary_file else {}
         conditions: list[dict[str, Any]] | None = None
-        conditions_path = job_dir / "conditions.json"
+        conditions_path = run_path / "conditions.json"
         if conditions_path.is_file():
             try:
                 raw = orjson.loads(conditions_path.read_bytes())
@@ -765,6 +768,25 @@ def _event_to_entry(raw: Any) -> EventEntry:
     )
 
 
+def event_sort_key(entry: EventEntry) -> datetime:
+    """Sort key for :class:`EventEntry` — newest first under ``reverse=True``.
+
+    Lexicographic comparison of the raw ISO strings is wrong: the same instant
+    renders as ``...Z`` or ``...+00:00`` depending on which apiserver field the
+    timestamp came from (``lastTimestamp`` vs ``eventTime``), so string order
+    does not match chronological order. Parse instead, and map missing/
+    unparseable timestamps to ``datetime.min`` so they still sort last.
+    """
+    raw = entry.last_timestamp
+    if not raw:
+        return datetime.min.replace(tzinfo=UTC)
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 async def _list_events_impl(
     api: ApiClient,
     namespace: str,
@@ -827,7 +849,7 @@ async def _list_events_impl(
 
     entries = [_event_to_entry(e) for e in raw_events]
     # Sort by last_timestamp desc; push None (no timestamp) to the end.
-    entries.sort(key=lambda e: e.last_timestamp or "", reverse=True)
+    entries.sort(key=event_sort_key, reverse=True)
     return JobEventsResponse(events=entries[:MAX_EVENTS_RETURNED])
 
 
@@ -937,6 +959,7 @@ def _register_job_action_routes(
 
     @router.get("/jobs/{namespace}/{name}/events", response_model=JobEventsResponse)
     async def list_job_events(namespace: str, name: str) -> JobEventsResponse:
+        validate_results_path_params(namespace, name)
         return await _list_events_impl(require_api(), namespace, name)
 
     @router.get("/jobs/{namespace}/{name}/logs")
@@ -949,6 +972,7 @@ def _register_job_action_routes(
         tail_lines: int = 200,
         container: str | None = None,
     ) -> Response:
+        validate_results_path_params(namespace, name)
         return await get_pod_logs_impl(
             require_api(),
             namespace,

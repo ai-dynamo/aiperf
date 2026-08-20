@@ -19,13 +19,16 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from kubernetes_asyncio.client import ApiClient
+from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.client import get_pods, list_events_for_object
+from aiperf.operator.routers._path_params import validate_results_path_params
 from aiperf.operator.routers.jobs import (
     MAX_EVENTS_RETURNED,
     _event_to_entry,
     _is_noise_event,
     _pod_summary,
+    event_sort_key,
 )
 from aiperf.operator.routers.jobs_logs import (
     _default_container,
@@ -106,6 +109,8 @@ async def list_sweep_events_impl(
     """
     from aiperf.kubernetes.client import get_raw_aiperfsweep
 
+    validate_results_path_params(namespace, name)
+
     cr = await get_raw_aiperfsweep(api, namespace, name)
     if cr is None:
         return JobEventsResponse(events=[])
@@ -117,7 +122,22 @@ async def list_sweep_events_impl(
 
     pod_event_lists: list[list[Any]] = []
     for pod_name in pod_names:
-        pod_event_lists.append(await list_events_for_object(api, namespace, pod_name))
+        # Best-effort per pod, matching ``jobs._list_events_impl``: a
+        # sweep-controller pod garbage-collected between the pod listing and
+        # this call (404), or one RBAC denial, must not sink the whole
+        # response — the CR events fetched above are still worth returning.
+        try:
+            pod_event_lists.append(
+                await list_events_for_object(api, namespace, pod_name)
+            )
+        except ApiException as e:
+            logger.warning(
+                "Failed to list events for sweep pod %s/%s (apiserver %s): %s",
+                namespace,
+                pod_name,
+                e.status,
+                e,
+            )
 
     raw_events: list[Any] = [*cr_events]
     for lst in pod_event_lists:
@@ -126,7 +146,7 @@ async def list_sweep_events_impl(
     raw_events = [e for e in raw_events if not _is_noise_event(e)]
 
     entries = [_event_to_entry(e) for e in raw_events]
-    entries.sort(key=lambda e: e.last_timestamp or "", reverse=True)
+    entries.sort(key=event_sort_key, reverse=True)
     return JobEventsResponse(events=entries[:MAX_EVENTS_RETURNED])
 
 
@@ -157,6 +177,11 @@ async def get_sweep_logs_impl(
             malformed names.
     """
     from kubernetes_asyncio import client as k8s
+
+    # Validate before ``name`` reaches the JobSet label selector built by
+    # ``list_sweep_controller_pods`` — an unvalidated name can inject selector
+    # syntax and match pods outside this sweep.
+    validate_results_path_params(namespace, name)
 
     pods = await list_sweep_controller_pods(api, namespace, name)
     if not pods:

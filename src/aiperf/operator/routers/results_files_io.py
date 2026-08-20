@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import zipfile
 from collections.abc import AsyncIterator
@@ -333,14 +334,28 @@ async def _stream_artifact_bundle(
     artifacts = _list_file_artifacts(root, relative_dirs)
     sink = _ChunkSink()
     zf = zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_STORED, allowZip64=True)
+    closed = False
     try:
         for artifact in artifacts:
             async for chunk in _stream_artifact_member(zf, sink, artifact):
                 yield chunk
-    finally:
+        # Close and drain on the success path only. ``zf.close()`` writes the
+        # zip central directory into ``sink``, and those bytes must still be
+        # yielded -- doing it in ``finally`` dropped them whenever an exception
+        # propagated, handing the client a zip with no central directory.
         await asyncio.to_thread(zf.close)
-    for chunk in sink.drain(final=True):
-        yield chunk
+        closed = True
+        for chunk in sink.drain(final=True):
+            yield chunk
+    finally:
+        if not closed:
+            # Teardown path (client disconnect -> GeneratorExit, or a member
+            # read failure). Awaiting here would run during generator teardown
+            # and raise "async generator ignored GeneratorExit"; the trailer
+            # cannot be delivered anyway, so close synchronously and let the
+            # original exception propagate untouched.
+            with contextlib.suppress(Exception):
+                zf.close()
 
 
 async def _stream_artifact_member(
@@ -630,7 +645,15 @@ def _serve_artifact_file(
         resolved = path.resolve()
         if not allowed_relative_dirs:
             return resolved.is_relative_to(root.resolve())
-        return any(resolved.parent == allowed for allowed in allowed_roots)
+        # Root-level files stay non-recursive so only the allowlisted subtrees
+        # may be descended. Those subtrees, however, are enumerated recursively
+        # by ``_list_file_artifacts`` (rglob), so containment -- not parent
+        # equality -- is what keeps every listed file downloadable; the old
+        # ``resolved.parent == allowed`` check 404'd nested checkpoint files
+        # that the listing endpoint had just advertised.
+        if resolved.parent == root.resolve():
+            return True
+        return any(resolved.is_relative_to(allowed) for allowed in allowed_roots[1:])
 
     display_name = Path(filename).name
     if _is_allowed(zst_path) and zst_path is not None and zst_path.is_file():

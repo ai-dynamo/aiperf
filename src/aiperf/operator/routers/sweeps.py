@@ -158,6 +158,24 @@ def _as_int(raw: Any) -> int | None:
     return int(raw)
 
 
+def _as_count(raw: Any) -> int:
+    """Coerce a controller-written counter/index to a non-negative int.
+
+    ``int(raw or 0)`` raises ``ValueError`` on a non-numeric value and happily
+    produces a negative that then fails the ``ge=0`` constraint on the response
+    models — either way one malformed ``aggregate.json``/``children.json``
+    turns the whole endpoint into a 500. Degrade to 0 instead.
+    """
+    value = _as_int(raw)
+    return value if value is not None and value >= 0 else 0
+
+
+def _as_index(raw: Any) -> int | None:
+    """Coerce an optional non-negative index, dropping unusable values."""
+    value = _as_int(raw)
+    return value if value is not None and value >= 0 else None
+
+
 def _breach_from_doc(raw: Any) -> SearchSLABreach | None:
     if not isinstance(raw, dict):
         return None
@@ -428,7 +446,7 @@ def _cells_from_aggregate(doc: dict[str, Any]) -> list[CellEntry]:
             ChildJobRef(
                 namespace=child.get("namespace") or "",
                 name=child.get("name") or "",
-                trial_index=child.get("trial_index"),
+                trial_index=_as_index(child.get("trial_index")),
                 phase=child.get("phase"),
             )
             for child in children_raw
@@ -436,11 +454,11 @@ def _cells_from_aggregate(doc: dict[str, Any]) -> list[CellEntry]:
         ]
         out.append(
             CellEntry(
-                variation_index=int(c.get("variation_index") or 0),
+                variation_index=_as_count(c.get("variation_index")),
                 variation_label=str(c.get("variation_label") or ""),
                 values=dict(c.get("values") or {}),
-                trials_completed=int(c.get("trials_completed") or 0),
-                trials_failed=int(c.get("trials_failed") or 0),
+                trials_completed=_as_count(c.get("trials_completed")),
+                trials_failed=_as_count(c.get("trials_failed")),
                 metrics=dict(c.get("metrics") or {}),
                 children=children,
             )
@@ -600,10 +618,10 @@ def _children_manifest_from_doc(
             ChildrenManifestEntry(
                 namespace=c.get("namespace", ""),
                 name=c.get("name", ""),
-                variation_index=int(c.get("variation_index") or 0),
+                variation_index=_as_count(c.get("variation_index")),
                 variation_label=c.get("variation_label") or "",
                 variation_values=str(c.get("variation_values") or ""),
-                trial_index=c.get("trial_index"),
+                trial_index=_as_index(c.get("trial_index")),
                 child_run_epoch=str(c.get("child_run_epoch") or ""),
             )
             for c in (doc.get("children") or [])
