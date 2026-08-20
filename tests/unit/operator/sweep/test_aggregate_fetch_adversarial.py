@@ -23,11 +23,11 @@ import aiohttp
 import kopf
 import orjson
 import pytest
-from aiperf.operator.handlers.sweep import _aggregate_fetch as aggregate_fetch
 from pytest import param
 
 from aiperf.operator import main as operator_main
 from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.handlers.sweep import _aggregate_fetch as aggregate_fetch
 from aiperf.sweep_controller import main as sweep_main
 from aiperf.sweep_controller.k8s_executor import ChildRunRef
 

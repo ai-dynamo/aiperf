@@ -4,9 +4,8 @@
 
 from types import SimpleNamespace
 
-from aiperf.operator.routers.jobs_logs import _default_container
-
 from aiperf.kubernetes.constants import Containers
+from aiperf.operator.routers.jobs_logs import _default_container
 
 
 def _pod(names: list[str], *, annotated: str | None = None) -> SimpleNamespace:

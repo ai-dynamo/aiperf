@@ -5,12 +5,13 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from pytest import param
+
 from aiperf.operator.routers.jobs_ws import (
     _CLOSE_MAX_REASON_BYTES,
     _close_ws,
     _truncate_close_reason,
 )
-from pytest import param
 
 
 @pytest.mark.parametrize(

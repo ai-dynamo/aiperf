@@ -20,6 +20,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from fastapi import FastAPI, HTTPException
+from pytest import param
+
 from aiperf.operator.results_db import ResultsDB
 from aiperf.operator.routers.admin import create_admin_router
 from aiperf.operator.routers.config import create_config_router
@@ -27,8 +30,6 @@ from aiperf.operator.routers.jobs import create_jobs_router
 from aiperf.operator.routers.results_analytics import create_results_analytics_router
 from aiperf.operator.routers.results_files import create_results_files_router
 from aiperf.operator.routers.sweeps import create_sweeps_router
-from fastapi import FastAPI, HTTPException
-from pytest import param
 
 # ============================================================
 # Helpers

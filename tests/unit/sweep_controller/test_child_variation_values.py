@@ -17,14 +17,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
-from aiperf.operator.routers._sweeps_live import children_manifest_from_live_aiperfjobs
-from aiperf.operator.routers.sweeps import _children_manifest_from_doc
 
 from aiperf.common.endpoint_credentials import (
     AIPERF_INJECTED_ENDPOINT_URLS,
     redact_sweep_display_label,
 )
 from aiperf.config import BenchmarkConfig, BenchmarkRun, SweepVariation
+from aiperf.operator.routers._sweeps_live import children_manifest_from_live_aiperfjobs
+from aiperf.operator.routers.sweeps import _children_manifest_from_doc
 from aiperf.sweep_controller.k8s_executor import (
     VARIATION_VALUES_ANNOTATION,
     ChildRunRef,

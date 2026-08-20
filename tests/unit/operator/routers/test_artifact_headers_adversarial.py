@@ -21,11 +21,12 @@ from urllib.parse import quote
 import httpx
 import orjson
 import pytest
+from fastapi import FastAPI
+from pytest import param
+
 from aiperf.operator.results_layout import run_dir, write_latest
 from aiperf.operator.routers.results_files import create_results_files_router
 from aiperf.operator.routers.results_files_io import CHUNK_SIZE
-from fastapi import FastAPI
-from pytest import param
 
 # ============================================================
 # Helpers

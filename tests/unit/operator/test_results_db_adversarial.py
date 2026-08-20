@@ -25,7 +25,6 @@ import orjson
 import pytest
 import pytest_asyncio
 import zstandard
-from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB
 from pytest import param
 
 from aiperf.kubernetes.results_sidecar import (
@@ -33,6 +32,7 @@ from aiperf.kubernetes.results_sidecar import (
     write_ready_marker,
 )
 from aiperf.operator import results_layout, runs_index
+from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB
 
 # ============================================================================
 # Helpers

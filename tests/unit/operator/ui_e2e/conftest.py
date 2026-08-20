@@ -204,14 +204,13 @@ def _operator_server(
     # Apply patches BEFORE create_app() inspects the operator module graph.
     stack = contextlib.ExitStack()
 
+    from aiperf.operator import job_union, sweep_union
     from aiperf.operator.routers import (
         jobs as jobs_router_module,
     )
     from aiperf.operator.routers import (
         results_analytics as results_analytics_module,
     )
-
-    from aiperf.operator import job_union, sweep_union
 
     stack.enter_context(
         patch.object(

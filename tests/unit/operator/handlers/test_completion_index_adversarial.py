@@ -28,7 +28,6 @@ from unittest.mock import patch as mock_patch
 import orjson
 import pytest
 import zstandard
-from aiperf.operator.results_layout import epoch_key_from_body, run_dir
 
 from aiperf.kubernetes.constants import Annotations
 from aiperf.kubernetes.crd_models import ControllerFetchResult
@@ -36,6 +35,7 @@ from aiperf.kubernetes.phase import Phase
 from aiperf.operator import runs_index
 from aiperf.operator.client_cache import _reset_for_testing
 from aiperf.operator.handlers import completion, lifecycle
+from aiperf.operator.results_layout import epoch_key_from_body, run_dir
 from aiperf.operator.status import ConditionType, StatusBuilder
 
 # =============================================================================

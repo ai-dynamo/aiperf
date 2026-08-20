@@ -30,7 +30,6 @@ import kopf
 import orjson
 import pytest
 import zstandard
-from aiperf.operator.results_layout import epoch_key_from_body, run_dir
 from pytest import param
 
 from aiperf.kubernetes.constants import Annotations
@@ -42,6 +41,7 @@ from aiperf.operator.client_cache import (
     request_cancellation,
 )
 from aiperf.operator.handlers import completion
+from aiperf.operator.results_layout import epoch_key_from_body, run_dir
 from aiperf.operator.status import ConditionType, StatusBuilder
 
 # =============================================================================

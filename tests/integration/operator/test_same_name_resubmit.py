@@ -26,6 +26,9 @@ from pathlib import Path
 
 import orjson
 import pytest
+from fastapi.testclient import TestClient
+
+from aiperf.kubernetes.results_sidecar import write_ready_marker
 from aiperf.operator.results_layout import (
     enforce_retention,
     epoch_key_from_body,
@@ -33,9 +36,6 @@ from aiperf.operator.results_layout import (
     run_dir,
     write_latest,
 )
-from fastapi.testclient import TestClient
-
-from aiperf.kubernetes.results_sidecar import write_ready_marker
 from aiperf.operator.results_server import create_app
 
 _RETAIN_RUNS_DEFAULT = 10

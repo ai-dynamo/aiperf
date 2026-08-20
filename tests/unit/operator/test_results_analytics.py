@@ -13,16 +13,16 @@ from pathlib import Path
 
 import orjson
 import pytest
-from aiperf.operator.results_db import ResultsDB
-from aiperf.operator.results_layout import run_dir, write_latest
-from aiperf.operator.routers import results_analytics as mod
-from aiperf.operator.routers.results_analytics import create_results_analytics_router
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.kubernetes.results_sidecar import write_ready_marker
 from aiperf.operator import runs_index
+from aiperf.operator.results_db import ResultsDB
+from aiperf.operator.results_layout import run_dir, write_latest
+from aiperf.operator.routers import results_analytics as mod
+from aiperf.operator.routers.results_analytics import create_results_analytics_router
 
 
 @pytest.fixture

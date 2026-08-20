@@ -38,9 +38,8 @@ def _write_compressed_summary(
 
 @pytest.mark.asyncio
 async def test_find_any_job_epoch_specific_returns_old_epoch(tmp_path: Path) -> None:
-    from aiperf.operator.results_layout import write_latest
-
     from aiperf.operator import job_union
+    from aiperf.operator.results_layout import write_latest
 
     _write_summary(
         tmp_path,
@@ -90,9 +89,8 @@ async def test_find_any_job_epoch_specific_returns_old_epoch(tmp_path: Path) -> 
 async def test_find_any_job_epoch_reads_compressed_profile_export(
     tmp_path: Path,
 ) -> None:
-    from aiperf.operator.results_layout import write_latest
-
     from aiperf.operator import job_union
+    from aiperf.operator.results_layout import write_latest
 
     _write_compressed_summary(
         tmp_path,
@@ -126,9 +124,8 @@ async def test_find_any_job_epoch_reads_compressed_profile_export(
 
 @pytest.mark.asyncio
 async def test_find_any_job_no_epoch_uses_latest(tmp_path: Path) -> None:
-    from aiperf.operator.results_layout import write_latest
-
     from aiperf.operator import job_union
+    from aiperf.operator.results_layout import write_latest
 
     _write_summary(
         tmp_path,
@@ -172,9 +169,8 @@ async def test_find_any_job_no_epoch_uses_latest(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_find_any_job_unknown_epoch_returns_none(tmp_path: Path) -> None:
-    from aiperf.operator.results_layout import write_latest
-
     from aiperf.operator import job_union
+    from aiperf.operator.results_layout import write_latest
 
     _write_summary(
         tmp_path,
@@ -208,10 +204,9 @@ async def test_find_any_job_epoch_drops_live_half(tmp_path: Path) -> None:
     The live CR is dropped because it always reflects the *current* (latest)
     run — merging it into a historical record would conflate epochs.
     """
-    from aiperf.operator.results_layout import write_latest
-
     from aiperf.kubernetes.models import AIPerfJobInfo
     from aiperf.operator import job_union
+    from aiperf.operator.results_layout import write_latest
 
     _write_summary(
         tmp_path,
@@ -287,9 +282,8 @@ async def test_find_any_job_latest_pointer_without_summary_still_none(
     latest run dir has no summary yet, the live CR should still win —
     falling back to a stub here would mask in-flight runs as archived.
     """
-    from aiperf.operator.results_layout import write_latest
-
     from aiperf.operator import job_union
+    from aiperf.operator.results_layout import write_latest
 
     (tmp_path / "bench" / "j1" / "1714069323").mkdir(parents=True)
     write_latest(tmp_path, "bench", "j1", "1714069323")

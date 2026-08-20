@@ -18,9 +18,8 @@ def _write_aggregate(base: Path, ns: str, name: str, epoch: str, body: dict) -> 
 
 @pytest.mark.asyncio
 async def test_find_any_sweep_epoch_specific(tmp_path: Path) -> None:
-    from aiperf.operator.results_layout import write_sweep_latest
-
     from aiperf.operator import sweep_union
+    from aiperf.operator.results_layout import write_sweep_latest
 
     _write_aggregate(
         tmp_path,
@@ -66,9 +65,8 @@ async def test_find_any_sweep_epoch_specific(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_find_any_sweep_no_epoch_uses_latest(tmp_path: Path) -> None:
-    from aiperf.operator.results_layout import write_sweep_latest
-
     from aiperf.operator import sweep_union
+    from aiperf.operator.results_layout import write_sweep_latest
 
     _write_aggregate(
         tmp_path,

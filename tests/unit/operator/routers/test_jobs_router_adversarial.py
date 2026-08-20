@@ -22,8 +22,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import orjson
 import pytest
-from aiperf.operator.results_layout import write_latest
-from aiperf.operator.routers.jobs import create_jobs_router
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -31,6 +29,8 @@ from pytest import param
 
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.kubernetes.models import AIPerfJobInfo
+from aiperf.operator.results_layout import write_latest
+from aiperf.operator.routers.jobs import create_jobs_router
 
 # ============================================================
 # Helpers
@@ -181,9 +181,8 @@ class TestJobsRouterPathEncoding:
     async def test_get_job_url_encoded_dns_characters_resolve_to_decoded_job(
         self, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from aiperf.operator.routers import jobs as jobs_module
-
         from aiperf.operator import job_union as ju
+        from aiperf.operator.routers import jobs as jobs_module
 
         seen: list[tuple[str, str]] = []
 

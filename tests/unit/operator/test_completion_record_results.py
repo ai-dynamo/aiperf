@@ -17,11 +17,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import orjson
-from aiperf.operator.results_layout import epoch_key_from_body, write_latest
 
 from aiperf.kubernetes.crd_models import ControllerFetchResult
 from aiperf.kubernetes.results_sidecar import ready_marker_path
 from aiperf.operator.handlers.completion import _record_results_on_status
+from aiperf.operator.results_layout import epoch_key_from_body, write_latest
 
 FIXTURE_EPOCH = "1714064523"
 INT64_MAX = 9_223_372_036_854_775_807

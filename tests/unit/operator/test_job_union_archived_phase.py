@@ -7,9 +7,9 @@ from typing import Any
 
 import orjson
 import pytest
-from aiperf.operator.results_layout import write_latest
 
 from aiperf.operator import job_union
+from aiperf.operator.results_layout import write_latest
 from aiperf.operator.runs_index_models import RunIndexRow
 
 _EPOCH = "1714064523"

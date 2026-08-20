@@ -17,10 +17,10 @@ from unittest.mock import patch
 import orjson
 import pytest
 import zstandard
-from aiperf.operator.results_layout import write_latest
 from pytest import param
 
 from aiperf.operator.handlers.completion import _parse_metrics_from_files
+from aiperf.operator.results_layout import write_latest
 
 # ============================================================
 # Helpers

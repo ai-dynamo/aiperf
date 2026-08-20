@@ -201,9 +201,8 @@ async def test_list_all_sweeps_both(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_find_any_sweep_archived_corrupt_aggregate(tmp_path: Path) -> None:
-    from aiperf.operator.results_layout import write_sweep_latest
-
     from aiperf.operator import sweep_union
+    from aiperf.operator.results_layout import write_sweep_latest
 
     d = tmp_path / "bench" / "sweeps" / "s1" / _DEFAULT_EPOCH
     d.mkdir(parents=True)

@@ -13,6 +13,7 @@ nothing about what was tried and differs for every trial of the SAME point.
 from __future__ import annotations
 
 import pytest
+
 from aiperf.operator.runs_index import (
     _child_variation_values,
     _stable_variation_values,

@@ -10,10 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
-from aiperf.operator.results_layout import write_latest
-from aiperf.operator.routers.jobs import create_jobs_router
 from httpx import ASGITransport, AsyncClient
 from kubernetes_asyncio.client.exceptions import ApiException
+
+from aiperf.operator.results_layout import write_latest
+from aiperf.operator.routers.jobs import create_jobs_router
 
 _TEST_EPOCH = "1714064523"
 
@@ -345,11 +346,11 @@ class TestCancel:
 
 def test_get_job_archived_synthesizes_status(tmp_path: Path, monkeypatch):
     """GET /api/v1/jobs/{ns}/{name} for an archived job returns a full synthesized status."""
-    from aiperf.operator.routers.jobs import create_jobs_router
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from aiperf.operator import job_union as ju
+    from aiperf.operator.routers.jobs import create_jobs_router
 
     d = tmp_path / "ns" / "ghost" / _TEST_EPOCH
     d.mkdir(parents=True)
@@ -398,11 +399,11 @@ def test_get_job_archived_synthesizes_status(tmp_path: Path, monkeypatch):
 
 def test_list_jobs_includes_archived_only_entry(tmp_path: Path, monkeypatch):
     """GET /api/v1/jobs returns a PVC-only entry when no CR exists for it."""
-    from aiperf.operator.routers.jobs import create_jobs_router
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from aiperf.operator import job_union as ju
+    from aiperf.operator.routers.jobs import create_jobs_router
 
     d = tmp_path / "aiperf-bench" / "archive-only" / _TEST_EPOCH
     d.mkdir(parents=True)

@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import pytest
-from aiperf.operator.routers.jobs import derive_run_status
 from pytest import param
 
+from aiperf.operator.routers.jobs import derive_run_status
 from aiperf.operator.runs_index_models import RunIndexRow
 
 

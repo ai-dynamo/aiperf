@@ -21,10 +21,10 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from aiperf.operator.routers.admin import create_admin_router
 from fastapi import FastAPI
 
 from aiperf.operator import runs_index
+from aiperf.operator.routers.admin import create_admin_router
 
 
 def _admin_app(base_dir: Path, *, allow_rebuild: bool = True) -> FastAPI:

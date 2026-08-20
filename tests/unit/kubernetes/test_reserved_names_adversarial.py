@@ -23,7 +23,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aiperf.operator.handlers.sweep import create as sweep_create
 from pydantic import ValidationError
 from pytest import param
 
@@ -32,6 +31,7 @@ from aiperf.config.sweep import SweepVariation
 from aiperf.kubernetes.constants import AIPerfLabels, Annotations, Containers
 from aiperf.kubernetes.crd_models import AIPerfJobSpec, AIPerfSweepSpec
 from aiperf.operator.handlers.create import _build_deployment
+from aiperf.operator.handlers.sweep import create as sweep_create
 from aiperf.sweep_controller.k8s_executor import (
     SWEEP_LABEL,
     SWEEP_RUN_EPOCH_LABEL,
