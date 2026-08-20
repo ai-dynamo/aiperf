@@ -20,7 +20,7 @@ from aiperf.api.models.responses import ProgressResponse
 from aiperf.api.pod_state_rpc import query_controller_pod_states
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.enums import MessageType, SystemState
-from aiperf.common.hooks import background_task, on_message
+from aiperf.common.hooks import on_message, on_start
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
     RealtimeMetricsMessage,
@@ -149,17 +149,31 @@ class ProgressRouter(
     def get_router(self) -> APIRouter:
         return progress_router
 
+    def _schedule_status_push(self) -> None:
+        """Fire a best-effort AIPerfJob status push, but only in Kubernetes mode.
+
+        Every caller is a bus handler on a message the controller publishes in
+        EVERY run mode, several of them at per-tick rates (REALTIME_METRICS,
+        CREDIT_PHASE_PROGRESS). Outside Kubernetes there is no CR to patch, so
+        the guard lives here rather than inside the coroutine: checking a bool
+        is free, whereas spawning a task per bus message just to have it return
+        on its first line is not.
+        """
+        if not self._k8s_patching_enabled:
+            return
+        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+
     @on_message(MessageType.RESULTS_EXPORTED)
     async def _on_results_exported(self, _message: ResultsExportedMessage) -> None:
         """Record that the controller has finished writing artifacts to disk."""
         self._results_exported = True
-        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+        self._schedule_status_push()
 
     @on_message(MessageType.SERVICE_ERROR)
     async def _on_service_error(self, message: BaseServiceErrorMessage) -> None:
         """Push a controller-plane failure before its pod exits."""
         self._controller_failure = f"{message.service_id}: {message.error.message}"
-        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+        self._schedule_status_push()
 
     @on_message(MessageType.SYSTEM_STATE_CHANGED)
     async def _on_system_state_changed(
@@ -167,17 +181,17 @@ class ProgressRouter(
     ) -> None:
         """Record the controller's most-recent outer-lifecycle SystemState."""
         self._system_state = message.state
-        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+        self._schedule_status_push()
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
     async def _on_credit_phase_progress_status_push(self, _message: Any) -> None:
         """Fire a status push on every phase-progress tick."""
-        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+        self._schedule_status_push()
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete_status_push(self, _message: Any) -> None:
         """Fire a status push when a credit phase finishes."""
-        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+        self._schedule_status_push()
 
     @on_message(MessageType.REALTIME_METRICS)
     async def _on_realtime_metrics_status_push(
@@ -190,12 +204,32 @@ class ProgressRouter(
         order; mixin subscribes first). The push writes liveMetrics and summary
         so kubectl columns update without waiting for the kopf monitor timer.
         """
-        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+        self._schedule_status_push()
 
-    @background_task(
-        interval=CONTROLLER_HEARTBEAT_INTERVAL_SECONDS,
-        immediate=False,
-    )
+    @on_start
+    async def _start_k8s_patch_loops(self) -> None:
+        """Start the CR-patching loops, in Kubernetes mode only.
+
+        These are registered here rather than with ``@background_task`` because
+        the decorator starts them unconditionally: a local ``aiperf profile``
+        would then hold two forever-sleeping tasks whose only job is to wake up
+        and return because there is no AIPerfJob to patch.
+        """
+        if not self._k8s_patching_enabled:
+            return
+        self.start_background_task(
+            self._patch_aiperfjob_status,
+            interval=CONTROLLER_HEARTBEAT_INTERVAL_SECONDS,
+            immediate=False,
+            stop_event=self._stop_requested_event,
+        )
+        self.start_background_task(
+            self._patch_jobset_progress,
+            interval=_JOBSET_PATCH_INTERVAL,
+            immediate=False,
+            stop_event=self._stop_requested_event,
+        )
+
     async def _patch_aiperfjob_status(self) -> None:
         """Push current progress state directly onto the AIPerfJob CR status subresource.
 
@@ -219,7 +253,6 @@ class ProgressRouter(
         except Exception:  # noqa: BLE001
             self.debug("Failed to push AIPerfJob status update")
 
-    @background_task(interval=_JOBSET_PATCH_INTERVAL, immediate=False)
     async def _patch_jobset_progress(self) -> None:
         """Periodically patch JobSet annotations with current progress."""
         if not self._k8s_patching_enabled:
