@@ -28,10 +28,10 @@ from aiperf.common.endpoint_credentials import (
     redact_sweep_display_label,
     redact_sweep_public_data,
 )
+from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.results_artifacts import API_RESULTS_FILES_PATH
-from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME, write_ready_marker
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkPlan

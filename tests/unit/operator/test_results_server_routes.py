@@ -271,7 +271,7 @@ async def test_gzip_does_not_corrupt_streaming_zip_bundle(tmp_path: Path) -> Non
     import io
     import zipfile
 
-    from aiperf.kubernetes.results_sidecar import write_ready_marker
+    from aiperf.common.results_markers import write_ready_marker
     from aiperf.operator.results_layout import run_dir, write_latest
     from aiperf.operator.results_server import create_app
 

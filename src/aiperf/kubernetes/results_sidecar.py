@@ -28,8 +28,6 @@ from aiperf.common.compression import (
 )
 from aiperf.common.results_markers import (
     _RESERVED_MARKER_NAMES,
-    CHECKPOINTS_DIR_NAME,
-    PROCESSING_MARKER_NAME,
     READY_MARKER_NAME,
     _is_checkpoint_path,
     _is_processing,
@@ -37,11 +35,6 @@ from aiperf.common.results_markers import (
     _safe_resolve,
     _safe_size,
     checkpoints_dir,
-    clear_processing_marker,
-    processing_marker_path,
-    ready_marker_path,
-    write_processing_marker,
-    write_ready_marker,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,25 +49,6 @@ _CONTENT_TYPES: dict[str, str] = {
     ".parquet": "application/vnd.apache.parquet",
     ".txt": "text/plain",
 }
-
-# The marker contract lives in a dependency-free module so processes that only
-# read or write markers (system controller, records manager, results router) do
-# not import uvicorn/FastAPI. Re-exported here for existing importers.
-__all__ = [
-    "CHECKPOINTS_DIR_NAME",
-    "PROCESSING_MARKER_NAME",
-    "READY_MARKER_NAME",
-    "RESULTS_DIR",
-    "SERVER_PORT",
-    "checkpoints_dir",
-    "clear_processing_marker",
-    "create_app",
-    "main",
-    "processing_marker_path",
-    "ready_marker_path",
-    "write_processing_marker",
-    "write_ready_marker",
-]
 
 
 def _collect_result_files(base_dir: Path) -> list[ResultFileInfo]:

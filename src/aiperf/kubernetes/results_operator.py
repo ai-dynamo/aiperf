@@ -15,6 +15,7 @@ import aiofiles
 import aiohttp
 import orjson
 
+from aiperf.common.results_markers import READY_MARKER_NAME
 from aiperf.kubernetes.client import find_operator_pod
 from aiperf.kubernetes.console import (
     _human_size,
@@ -43,7 +44,6 @@ from aiperf.kubernetes.results_operator_sweeps import (
 from aiperf.kubernetes.results_operator_sweeps import (
     retrieve_sweep_aggregate_artifacts_from_operator as retrieve_sweep_aggregate_artifacts_from_operator,
 )
-from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient

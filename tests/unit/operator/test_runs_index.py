@@ -15,7 +15,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from aiperf.common.redact import REDACTED_VALUE
-from aiperf.kubernetes.results_sidecar import (
+from aiperf.common.results_markers import (
     write_processing_marker,
     write_ready_marker,
 )

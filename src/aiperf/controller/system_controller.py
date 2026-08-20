@@ -69,6 +69,10 @@ from aiperf.common.models import (
 from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
+from aiperf.common.results_markers import (
+    write_processing_marker,
+    write_ready_marker,
+)
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
@@ -89,10 +93,6 @@ from aiperf.controller.system_controller_models import (
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
-from aiperf.common.results_markers import (
-    write_processing_marker,
-    write_ready_marker,
-)
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.ui.protocols import AIPerfUIProtocol

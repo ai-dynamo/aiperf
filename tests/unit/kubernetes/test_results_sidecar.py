@@ -26,7 +26,7 @@ import orjson
 import pytest
 from pytest import param
 
-from aiperf.kubernetes.results_sidecar import (
+from aiperf.common.results_markers import (
     CHECKPOINTS_DIR_NAME,
     PROCESSING_MARKER_NAME,
     READY_MARKER_NAME,
@@ -34,12 +34,12 @@ from aiperf.kubernetes.results_sidecar import (
     _is_ready,
     _safe_resolve,
     checkpoints_dir,
-    create_app,
     processing_marker_path,
     ready_marker_path,
     write_processing_marker,
     write_ready_marker,
 )
+from aiperf.kubernetes.results_sidecar import create_app
 
 # ============================================================
 # Helpers
@@ -260,7 +260,7 @@ class TestWriteReadyMarker:
 
         with (
             patch(
-                "aiperf.kubernetes.results_markers.os.replace",
+                "aiperf.common.results_markers.os.replace",
                 side_effect=OSError("rename failed"),
             ),
             pytest.raises(OSError, match="rename failed"),
@@ -368,7 +368,7 @@ class TestListEndpoint:
     ) -> None:
         (base_dir / "metrics.json").write_bytes(b"{}")
         write_processing_marker(base_dir)
-        with patch("aiperf.kubernetes.results_markers.clear_processing_marker"):
+        with patch("aiperf.common.results_markers.clear_processing_marker"):
             write_ready_marker(base_dir)
 
         assert ready_marker_path(base_dir).is_file()

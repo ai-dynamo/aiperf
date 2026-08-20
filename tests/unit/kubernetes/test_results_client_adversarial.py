@@ -25,6 +25,7 @@ import aiohttp
 import pytest
 from pytest import param
 
+from aiperf.common.results_markers import READY_MARKER_NAME
 from aiperf.kubernetes.results_artifacts import (
     API_RESULTS_FILES_PATH,
     _download_all_artifacts,
@@ -37,7 +38,6 @@ from aiperf.kubernetes.results_operator import (
     _resolve_operator_run,
     retrieve_results_from_operator,
 )
-from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
 
 # ============================================================
 # Helpers

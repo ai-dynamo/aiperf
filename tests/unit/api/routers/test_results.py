@@ -17,13 +17,13 @@ from aiperf.api.routers.results import ResultsRouter
 from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
-from aiperf.config import BenchmarkRun
-from aiperf.config.defaults import OutputDefaults
-from aiperf.kubernetes.results_sidecar import (
+from aiperf.common.results_markers import (
     CHECKPOINTS_DIR_NAME,
     READY_MARKER_NAME,
     write_ready_marker,
 )
+from aiperf.config import BenchmarkRun
+from aiperf.config.defaults import OutputDefaults
 from tests.unit.api.routers.conftest import make_latency_metric
 
 
@@ -295,7 +295,7 @@ class TestResultsListEndpoint:
     ) -> None:
         """Checkpoints bypass the gate so the operator's stagnation-byte signal
         can still observe progress; top-level summary files stay hidden."""
-        from aiperf.kubernetes.results_sidecar import write_processing_marker
+        from aiperf.common.results_markers import write_processing_marker
 
         (tmp_path / "profile_export_aiperf.json").write_text("{}")
         cp_dir = tmp_path / CHECKPOINTS_DIR_NAME
@@ -363,7 +363,7 @@ class TestResultsFileEndpoints:
     ) -> None:
         """Sub-second jobs can produce partial summary files before export
         finishes; until the marker lands the primary endpoint must refuse."""
-        from aiperf.kubernetes.results_sidecar import write_processing_marker
+        from aiperf.common.results_markers import write_processing_marker
 
         (tmp_path / "profile_export_aiperf.json").write_text("{}")
         write_processing_marker(tmp_path)

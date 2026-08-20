@@ -18,9 +18,9 @@ from typing import Any, TypeVar
 import aiohttp
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
 from aiperf.kubernetes.crd_models import ControllerFetchResult
 from aiperf.kubernetes.environment import K8sEnvironment
-from aiperf.kubernetes.results_sidecar import CHECKPOINTS_DIR_NAME
 from aiperf.kubernetes.spec_converter import (
     DEFAULT_KEY_EXPORT_NAMES,
     key_export_names_from_body,

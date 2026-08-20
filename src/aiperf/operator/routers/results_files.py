@@ -15,7 +15,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME, ready_marker_path
+from aiperf.common.results_markers import READY_MARKER_NAME, ready_marker_path
 from aiperf.operator.artifact_names import (
     find_summary_path,
     key_export_names_from_run_dir,

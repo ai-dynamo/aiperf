@@ -996,7 +996,7 @@ def _seed_epoch_run(
     filename: str,
     content: bytes = b"{}",
 ) -> Path:
-    from aiperf.kubernetes.results_sidecar import write_ready_marker
+    from aiperf.common.results_markers import write_ready_marker
     from aiperf.operator.results_layout import run_dir, write_latest
 
     d = run_dir(base, namespace, name, epoch)
@@ -1246,7 +1246,7 @@ def test_profile_export_quick_route_decompresses_zst(tmp_path: Path) -> None:
     decompression but pins media_type to application/json."""
     from fastapi.testclient import TestClient
 
-    from aiperf.kubernetes.results_sidecar import write_ready_marker
+    from aiperf.common.results_markers import write_ready_marker
     from aiperf.operator.results_layout import run_dir, write_latest
     from aiperf.operator.results_server import create_app
 

@@ -25,13 +25,13 @@ import aiohttp
 import pytest
 from pytest import param
 
+from aiperf.common.results_markers import READY_MARKER_NAME
 from aiperf.kubernetes.results_artifacts import _download_artifact
 from aiperf.kubernetes.results_operator import (
     _download_and_decompress,
     _download_operator_file,
     _download_sweep_operator_file,
 )
-from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
 
 # ============================================================
 # Helpers

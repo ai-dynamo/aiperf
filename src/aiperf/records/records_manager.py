@@ -67,6 +67,7 @@ from aiperf.common.models import (
     TimesliceResult,
     WorkerProcessingStats,
 )
+from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
 from aiperf.common.types import MetricTagT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
@@ -78,7 +79,6 @@ from aiperf.credit.messages import (
     CreditsCompleteMessage,
 )
 from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
-from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import (
     CACHE_REPORTING_HINT,

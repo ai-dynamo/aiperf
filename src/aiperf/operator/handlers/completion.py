@@ -17,11 +17,11 @@ import orjson
 import zstandard
 
 from aiperf.common.finite import is_finite_value, scrub_non_finite
+from aiperf.common.results_markers import ready_marker_path, write_ready_marker
 from aiperf.kubernetes.crd_models import ControllerFetchResult, MetricsSummary
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.phase import Phase, parse_timestamp
-from aiperf.kubernetes.results_sidecar import ready_marker_path, write_ready_marker
 from aiperf.kubernetes.spec_converter import (
     DEFAULT_KEY_EXPORT_NAMES,
     KeyExportNames,

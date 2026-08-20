@@ -16,6 +16,7 @@ from urllib.parse import quote
 import aiohttp
 import orjson
 
+from aiperf.common.results_markers import READY_MARKER_NAME
 from aiperf.kubernetes.client import find_retrievable_pod
 from aiperf.kubernetes.console import (
     _human_size,
@@ -28,7 +29,6 @@ from aiperf.kubernetes.console import (
     print_warning,
 )
 from aiperf.kubernetes.port_forward import port_forward_with_status
-from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient

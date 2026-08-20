@@ -25,6 +25,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.enums import SystemState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
+from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import (
     CONTROLLER_HEARTBEAT_INTERVAL_SECONDS,
@@ -48,7 +49,6 @@ from aiperf.kubernetes.crd_models import (
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.phase import Phase, format_timestamp, parse_timestamp
-from aiperf.kubernetes.results_sidecar import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.spec_converter import (
     DEFAULT_KEY_EXPORT_NAMES,
     key_export_names_from_body,

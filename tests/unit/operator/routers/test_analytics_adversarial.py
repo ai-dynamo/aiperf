@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from pytest import param
 
 from aiperf.common.redact import REDACTED_VALUE
-from aiperf.kubernetes.results_sidecar import ready_marker_path, write_ready_marker
+from aiperf.common.results_markers import ready_marker_path, write_ready_marker
 from aiperf.operator import runs_index
 from aiperf.operator.results_db import ResultsDB
 from aiperf.operator.results_layout import run_dir, write_latest

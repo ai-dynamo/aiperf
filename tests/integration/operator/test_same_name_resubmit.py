@@ -28,7 +28,7 @@ import orjson
 import pytest
 from fastapi.testclient import TestClient
 
-from aiperf.kubernetes.results_sidecar import write_ready_marker
+from aiperf.common.results_markers import write_ready_marker
 from aiperf.operator.results_layout import (
     enforce_retention,
     epoch_key_from_body,

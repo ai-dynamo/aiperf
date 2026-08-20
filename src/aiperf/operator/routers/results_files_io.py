@@ -19,7 +19,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from aiperf.common.redact import redact_endpoint_spec
-from aiperf.kubernetes.results_sidecar import (
+from aiperf.common.results_markers import (
     CHECKPOINTS_DIR_NAME,
     READY_MARKER_NAME,
     ready_marker_path,

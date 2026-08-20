@@ -33,9 +33,9 @@ import pytest
 from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
+from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
 from aiperf.kubernetes.crd_models import ControllerFetchResult
 from aiperf.kubernetes.environment import K8sEnvironment
-from aiperf.kubernetes.results_sidecar import CHECKPOINTS_DIR_NAME
 from aiperf.operator.handlers import _completion_fetch as cf
 from aiperf.operator.handlers._completion_fetch import (
     _download_final_and_sidecar,

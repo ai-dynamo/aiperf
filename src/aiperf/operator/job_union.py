@@ -23,11 +23,12 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from aiperf.common.results_markers import ready_marker_path
+
 # Import at module level so tests can monkeypatch these bindings directly.
 from aiperf.kubernetes.client import find_aiperf_job, list_aiperf_jobs
 from aiperf.kubernetes.crd_models import MetricsSummary
 from aiperf.kubernetes.models import AIPerfJobInfo
-from aiperf.kubernetes.results_sidecar import ready_marker_path
 from aiperf.operator import runs_index
 from aiperf.operator._archived_stubs import archived_stub
 from aiperf.operator.artifact_names import find_summary_path

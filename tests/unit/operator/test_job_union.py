@@ -142,7 +142,7 @@ def test_scan_pvc_jobs_finds_custom_prefixed_summary(tmp_path):
 
 
 def test_scan_pvc_jobs_keeps_ready_csv_only_run_as_stub(tmp_path):
-    from aiperf.kubernetes.results_sidecar import write_ready_marker
+    from aiperf.common.results_markers import write_ready_marker
     from aiperf.operator.job_union import _scan_pvc_jobs
 
     run = tmp_path / "ns" / "csv-only" / _TEST_EPOCH

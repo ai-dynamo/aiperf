@@ -26,7 +26,7 @@ import orjson
 import pytest
 from fastapi import FastAPI
 
-from aiperf.kubernetes.results_sidecar import CHECKPOINTS_DIR_NAME, READY_MARKER_NAME
+from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME, READY_MARKER_NAME
 from aiperf.operator.results_layout import run_dir, write_latest
 from aiperf.operator.routers.results_files import create_results_files_router
 from aiperf.operator.routers.results_files_io import CHUNK_SIZE, _stream_job_bundle

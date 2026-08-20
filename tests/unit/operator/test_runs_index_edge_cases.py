@@ -31,7 +31,7 @@ import orjson
 import pytest
 import zstandard
 
-from aiperf.kubernetes.results_sidecar import write_ready_marker
+from aiperf.common.results_markers import write_ready_marker
 from aiperf.operator import runs_index
 
 # ============================================================

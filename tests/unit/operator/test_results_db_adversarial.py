@@ -27,7 +27,7 @@ import pytest_asyncio
 import zstandard
 from pytest import param
 
-from aiperf.kubernetes.results_sidecar import (
+from aiperf.common.results_markers import (
     write_processing_marker,
     write_ready_marker,
 )

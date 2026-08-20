@@ -25,7 +25,7 @@ import pytest
 from fastapi import FastAPI
 from pytest import param
 
-from aiperf.kubernetes.results_sidecar import write_ready_marker
+from aiperf.common.results_markers import write_ready_marker
 from aiperf.operator import runs_index
 from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB
 from aiperf.operator.results_layout import run_dir, write_latest
