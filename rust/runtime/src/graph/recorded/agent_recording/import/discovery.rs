@@ -8,14 +8,72 @@ use std::fs;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use serde_json::Value;
 
 use crate::config::model::dataset::RecordedAgentSourceFormat;
 
 use super::{
-    ImportedAgentError, ImportedAgentReadSet, ImportedAgentSource, ImportedAgentSourceFile,
-    ImportedSessionFamily,
+    AcquiredImportedAgentSelection, ImportedAgentError, ImportedAgentReadSet, ImportedAgentSource,
+    ImportedAgentSourceFile, ImportedSessionFamily,
 };
+
+/// Acquire one private immutable imported-session selection.
+pub fn acquire_imported_agent_selection(
+    path: &Path,
+    replay_root: Option<&Path>,
+    source: RecordedAgentSourceFormat,
+    include_subagents: Option<bool>,
+) -> Result<AcquiredImportedAgentSelection, ImportedAgentError> {
+    let scratch = tempfile::Builder::new()
+        .prefix("aiperf-imported-session-")
+        .tempdir()
+        .map_err(|_| {
+            error(
+                path,
+                0,
+                "unknown",
+                "unknown",
+                "cannot create import snapshot",
+            )
+        })?;
+    #[cfg(unix)]
+    std::fs::set_permissions(scratch.path(), std::fs::Permissions::from_mode(0o700)).map_err(
+        |_| {
+            error(
+                path,
+                0,
+                "unknown",
+                "unknown",
+                "cannot secure import snapshot",
+            )
+        },
+    )?;
+    let read_set = snapshot_imported_agent_read_set(
+        path,
+        replay_root,
+        source,
+        include_subagents,
+        scratch.path(),
+    )?;
+    #[cfg(unix)]
+    for file in &read_set.files {
+        std::fs::set_permissions(&file.path, std::fs::Permissions::from_mode(0o400)).map_err(
+            |_| {
+                error(
+                    &file.path,
+                    0,
+                    "unknown",
+                    "unknown",
+                    "cannot secure snapshot source",
+                )
+            },
+        )?;
+    }
+    Ok(AcquiredImportedAgentSelection { scratch, read_set })
+}
 
 const SCAN_RECORD_LIMIT: usize = 20;
 
@@ -810,6 +868,52 @@ fn error(
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[cfg(unix)]
+    #[test]
+    fn acquired_selection_uses_private_immutable_snapshot_after_source_swap() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        std::fs::write(
+            &source,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n",
+        )
+        .unwrap();
+        let selection =
+            acquire_imported_agent_selection(&source, None, RecordedAgentSourceFormat::Codex, None)
+                .unwrap();
+        std::fs::write(
+            &source,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n",
+        )
+        .unwrap();
+
+        let read_set = selection.read_set();
+        assert_eq!(
+            std::fs::metadata(&read_set.root)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&read_set.files[0].path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o400
+        );
+        assert!(
+            std::fs::read(&read_set.files[0].path)
+                .unwrap()
+                .windows(b"original".len())
+                .any(|part| part == b"original")
+        );
+    }
 
     #[test]
     fn snapshot_discovery_keeps_the_opened_source_after_a_caller_swap() {

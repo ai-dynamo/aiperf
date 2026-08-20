@@ -21,8 +21,8 @@ use bytes::Bytes;
 pub use claude_code::parse_claude_session;
 pub use codex::parse_codex_session;
 pub use discovery::{
-    detect_imported_agent_source, discover_imported_agent_read_set,
-    snapshot_imported_agent_read_set,
+    acquire_imported_agent_selection, detect_imported_agent_source,
+    discover_imported_agent_read_set, snapshot_imported_agent_read_set,
 };
 pub use lowering::lower_imported_agent_sessions;
 
@@ -78,6 +78,19 @@ pub struct ImportedAgentReadSet {
     pub source: ImportedAgentSource,
     /// Ordered canonical source files. Directories may select no files.
     pub files: Vec<ImportedAgentSourceFile>,
+}
+
+/// Private immutable acquisition backing one imported-session selection.
+pub struct AcquiredImportedAgentSelection {
+    pub(crate) scratch: tempfile::TempDir,
+    pub(crate) read_set: ImportedAgentReadSet,
+}
+
+impl AcquiredImportedAgentSelection {
+    /// Return the scratch-backed exact source authority.
+    pub fn read_set(&self) -> &ImportedAgentReadSet {
+        &self.read_set
+    }
 }
 
 /// A privacy-safe imported-session diagnostic.
