@@ -166,7 +166,9 @@ fn run_cell() -> ! {
         runtime.block_on(aiperf_runtime::engine::cellular_cell::verify_dataset_fanout())
     {
         tracing::error!(error = format!("{error:#}"), "cell dataset fan-out failed");
-        landing_guard.close();
+        if let Err(error) = landing_guard.close() {
+            tracing::warn!(error = %error, "cell dataset landing cleanup failed");
+        }
         std::process::exit(2);
     }
     drop(runtime);
@@ -177,7 +179,7 @@ fn run_cell() -> ! {
     configure_dynosim_process_defaults(&run_bytes);
     let application = compose_stock_application();
     run_v2_with_cleanup(&run_bytes, OperationV2::Execute, &application, move || {
-        landing_guard.close();
+        landing_guard.close()
     });
 }
 
@@ -430,7 +432,7 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
 /// selected by the re-exec mode (`--execute` or `--validate`), not carried on the
 /// wire. A malformed run produces a typed v2 protocol failure.
 fn run_v2(input: &[u8], operation: OperationV2, application: &Application) -> ! {
-    run_v2_with_cleanup(input, operation, application, || {});
+    run_v2_with_cleanup(input, operation, application, || Ok(()));
 }
 
 fn run_v2_with_cleanup<F>(
@@ -440,7 +442,7 @@ fn run_v2_with_cleanup<F>(
     cleanup: F,
 ) -> !
 where
-    F: FnOnce(),
+    F: FnOnce() -> anyhow::Result<()>,
 {
     let mut cleanup = Some(cleanup);
     let distribution_id = application.distribution_id().to_owned();
@@ -484,10 +486,12 @@ where
 
 fn run_v2_cleanup<F>(cleanup: &mut Option<F>)
 where
-    F: FnOnce(),
+    F: FnOnce() -> anyhow::Result<()>,
 {
     if let Some(cleanup) = cleanup.take() {
-        cleanup();
+        if let Err(error) = cleanup() {
+            tracing::warn!(error = %error, "cell dataset landing cleanup failed");
+        }
     }
 }
 
@@ -620,10 +624,13 @@ mod tests {
     use super::run_v2_cleanup;
 
     #[test]
-    fn run_v2_terminal_cleanup_runs_once() {
+    fn owned_cleanup_run_v2_terminal_cleanup_runs_once() {
         let cleanup_ran = Rc::new(Cell::new(0));
         let observed = Rc::clone(&cleanup_ran);
-        let mut cleanup = Some(move || observed.set(observed.get() + 1));
+        let mut cleanup = Some(move || {
+            observed.set(observed.get() + 1);
+            Ok(())
+        });
 
         run_v2_cleanup(&mut cleanup);
         run_v2_cleanup(&mut cleanup);

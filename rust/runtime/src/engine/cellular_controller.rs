@@ -14,7 +14,11 @@
 //! controller exposes cellular execution as one protocol-v2 run.
 
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "cellular")]
+use std::future::Future;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "cellular")]
+use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -44,7 +48,7 @@ use crate::cellular::transport::connect::{BindSpec, build_velo};
 #[cfg(feature = "cellular")]
 use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
 #[cfg(feature = "cellular")]
-use crate::engine::cell_launcher::{CellLaunchContext, select_launcher};
+use crate::engine::cell_launcher::{CellHandle, CellLaunchContext, select_launcher};
 #[cfg(feature = "cellular")]
 use crate::engine::control_hooks::{
     PreparedEndpointControlHooks, PreparedServerProfilerHook,
@@ -104,6 +108,71 @@ pub struct CellularRunOutcome {
     pub cell_count: u32,
     /// The merged record count across all cells.
     pub record_count: usize,
+}
+
+#[cfg(feature = "cellular")]
+const CONTROLLER_PROCESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+// Each task owns one local process handle until the terminal cleanup boundary.
+// Dropping the set aborts any task that did not finish within the drain timeout.
+#[cfg(feature = "cellular")]
+#[derive(Default)]
+struct ControllerProcessWatchers {
+    tasks: tokio::task::JoinSet<String>,
+}
+
+#[cfg(feature = "cellular")]
+impl ControllerProcessWatchers {
+    fn watch<F>(&mut self, watcher: F)
+    where
+        F: Future<Output = String> + Send + 'static,
+    {
+        self.tasks.spawn(watcher);
+    }
+
+    fn watch_cell(&mut self, mut handle: CellHandle) {
+        self.watch(async move { handle.wait_failure().await });
+    }
+
+    fn watch_aggregator(&mut self, aggregator_id: u32, mut child: tokio::process::Child) {
+        self.watch(async move {
+            match child.wait().await {
+                Ok(status) if !status.success() => {
+                    format!("aggregator {aggregator_id} exited with {status}")
+                }
+                Ok(_) => std::future::pending::<String>().await,
+                Err(error) => format!("aggregator {aggregator_id} could not be waited on: {error}"),
+            }
+        });
+    }
+
+    async fn recv_failure(&mut self) -> Option<String> {
+        match self.tasks.join_next().await {
+            Some(Ok(failure)) => Some(failure),
+            Some(Err(error)) => Some(format!("controller process watcher task failed: {error}")),
+            None => None,
+        }
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        self.shutdown_after_abort(CONTROLLER_PROCESS_SHUTDOWN_TIMEOUT)
+            .await
+    }
+
+    #[cfg(test)]
+    async fn shutdown_with_timeout(&mut self, timeout: Duration) -> Result<()> {
+        self.shutdown_after_abort(timeout).await
+    }
+
+    async fn shutdown_after_abort(&mut self, timeout: Duration) -> Result<()> {
+        self.tasks.abort_all();
+        tokio::time::timeout(timeout, async {
+            while self.tasks.join_next().await.is_some() {}
+        })
+        .await
+        .map_err(|_| anyhow!("timed out draining controller process watchers"))?;
+        Ok(())
+    }
 }
 
 /// Fold graph replay facts transported by terminal cell partitions. This lives at
@@ -177,6 +246,10 @@ impl ControllerScratchLease {
     fn path(&self) -> &Path {
         self.0.path()
     }
+
+    fn keep(self) -> PathBuf {
+        self.0.keep()
+    }
 }
 
 fn private_controller_scratch_lease() -> Result<ControllerScratchLease> {
@@ -188,6 +261,17 @@ fn private_controller_scratch_lease() -> Result<ControllerScratchLease> {
     std::fs::set_permissions(scratch.path(), std::fs::Permissions::from_mode(0o700))
         .context("securing private cellular scratch")?;
     Ok(ControllerScratchLease(scratch))
+}
+
+#[cfg(feature = "cellular")]
+fn retain_controller_sources_after_watcher_timeout(
+    scratch: ControllerScratchLease,
+    imported: Option<
+        crate::graph::recorded::agent_recording::import::AcquiredImportedAgentSelection,
+    >,
+) -> PathBuf {
+    std::mem::forget(imported);
+    scratch.keep()
 }
 
 impl CellularRunKind {
@@ -648,24 +732,18 @@ pub fn run_cellular(
 
     local.block_on(&runtime, async move {
         let scratch = private_controller_scratch_lease()?;
-        let temp_root = scratch.path().to_path_buf();
-        // Cleans the scratch tree on every exit path, including a bail. On a bail this
-        // guard drops (removing `temp_root`) as the async block returns, a moment
-        // BEFORE `runtime` drops and kill_on_drop SIGKILLs the cells; a surviving cell
-        // could briefly recreate part of its `cell_dir` in that window. That is benign
-        // — a cell's artifacts are discarded, and its records were already shipped if
-        // it got far enough to matter. (A crashed run's data is not trusted regardless.)
         let acquired_imported = imported_request
             .map(|request| {
                 request
-                    .acquire_in(&temp_root)
+                    .acquire_in(scratch.path())
                     .map_err(|error| anyhow!(error.to_string()))
             })
             .transpose()?;
-        let imported_read_set = acquired_imported
-            .as_ref()
-            .map(|selection| selection.read_set());
-        let dataset_plan = match imported_read_set.as_ref() {
+        let mut watchers = ControllerProcessWatchers::default();
+        let result = async {
+        let temp_root = scratch.path().to_path_buf();
+        let imported_read_set = acquired_imported.as_ref().map(|selection| selection.read_set());
+        let dataset_plan = match imported_read_set {
             Some(read_set) => Some(build_imported_agent_serve_plan(read_set)?),
             None => dataset_plan,
         };
@@ -1055,39 +1133,19 @@ pub fn run_cellular(
                 None
             },
         };
-        let mut handles = select_launcher()
+        let handles = select_launcher()
             .launch(&launch_ctx)
             .context("launching cells")?;
 
-        // Watch each cell for a hard failure and forward it, so a cell that dies
-        // BEFORE registering aborts the run rather than hanging the collect. A local
-        // child exit resolves; a k8s handle never resolves (the collect deadline
-        // below is the k8s backstop).
-        let (failure_tx, mut failure_rx) =
-            tokio::sync::mpsc::channel::<String>(cell_count.max(1) as usize);
-        for mut handle in handles.drain(..) {
-            let failure_tx = failure_tx.clone();
-            tokio::spawn(async move {
-                let report = handle.wait_failure().await;
-                let _ = failure_tx.send(report).await;
-            });
+        // Each watcher owns one local child until the terminal shutdown boundary.
+        // Cross-host handles stay pending and the existing transport deadline remains
+        // their liveness backstop.
+        for handle in handles {
+            watchers.watch_cell(handle);
         }
-        // Watch each aggregator for hard failure, so a dead
-        // aggregator aborts the run rather than hanging the controller's collect on a
-        // subtree partition that will never arrive.
-        for (agg_id, mut child) in aggregator_children.drain(..).enumerate() {
-            let failure_tx = failure_tx.clone();
-            tokio::spawn(async move {
-                if let Ok(status) = child.wait().await
-                    && !status.success()
-                {
-                    let _ = failure_tx
-                        .send(format!("aggregator {agg_id} exited with {status}"))
-                        .await;
-                }
-            });
+        for (aggregator_id, child) in aggregator_children.drain(..).enumerate() {
+            watchers.watch_aggregator(aggregator_id as u32, child);
         }
-        drop(failure_tx);
 
         // Start policy. The default is a SYNCHRONIZED start: wait for every cell to
         // register (bounded — cells only fetch their envelope, no work yet), then
@@ -1111,7 +1169,7 @@ pub fn run_cellular(
             tokio::select! {
                 biased;
                 () = transport.await_all_registered() => {}
-                Some(failure) = failure_rx.recv() => bail!("{failure}"),
+                Some(failure) = watchers.recv_failure() => bail!("{failure}"),
                 () = tokio::time::sleep(register_timeout()) => {
                     bail!("cells did not all register within the registration timeout")
                 }
@@ -1124,7 +1182,7 @@ pub fn run_cellular(
             result = transport.await_all_preflight() => {
                 result.map_err(|error| anyhow!("cellular replay preflight: {error}"))?;
             }
-            Some(failure) = failure_rx.recv() => bail!("{failure}"),
+            Some(failure) = watchers.recv_failure() => bail!("{failure}"),
             () = tokio::time::sleep(register_timeout()) => {
                 bail!("cells did not all complete replay preflight within the registration timeout")
             }
@@ -1213,7 +1271,7 @@ pub fn run_cellular(
                         collected(&partitions, &store_partitions)
                     ),
                 },
-                Some(failure) = failure_rx.recv() => bail!("{failure}"),
+                Some(failure) = watchers.recv_failure() => bail!("{failure}"),
                 _ = &mut deadline => bail!(
                     "cellular run timed out with {} of {expected_partitions} partitions",
                     collected(&partitions, &store_partitions)
@@ -1432,12 +1490,37 @@ pub fn run_cellular(
             server.shutdown().await;
         }
 
-        // `scratch` removes `temp_root` on drop.
         Ok(CellularRunOutcome {
             report_path: report_path.to_path_buf(),
             cell_count,
             record_count,
         })
+        }
+        .await;
+        let shutdown = watchers.shutdown().await;
+        // A timeout reports failed cleanup, but dropping JoinSet still aborts every
+        // remaining watcher and releases its kill_on_drop child before imported
+        // session snapshots or controller scratch are released.
+        drop(watchers);
+        match shutdown {
+            Ok(()) => {
+                drop(acquired_imported);
+                result
+            }
+            Err(shutdown_error) => {
+                let scratch_path =
+                    retain_controller_sources_after_watcher_timeout(scratch, acquired_imported);
+                tracing::error!(
+                    error = %shutdown_error,
+                    scratch = %scratch_path.display(),
+                    "retaining controller sources after process watcher shutdown timeout"
+                );
+                match result {
+                    Err(run_error) => Err(run_error),
+                    Ok(_) => Err(shutdown_error),
+                }
+            }
+        }
     })
 }
 
@@ -2982,7 +3065,65 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use super::*;
+
+    struct DropProbe(Arc<AtomicUsize>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn owned_cleanup_shutdown_drains_watcher_owners() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let probe = DropProbe(Arc::clone(&drops));
+        let mut watchers = ControllerProcessWatchers::default();
+        watchers.watch(async move {
+            let _probe = probe;
+            std::future::pending::<String>().await
+        });
+
+        watchers.shutdown().await.expect("drain watcher owners");
+
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert!(watchers.tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn owned_cleanup_timeout_retains_controller_scratch() {
+        let scratch = private_controller_scratch_lease().expect("create scratch");
+        let scratch_path = scratch.path().to_path_buf();
+        let mut watchers = ControllerProcessWatchers::default();
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+        watchers.tasks.spawn_blocking(move || {
+            started_tx.send(()).expect("signal blocking watcher start");
+            std::thread::sleep(Duration::from_millis(50));
+            String::new()
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("wait for blocking watcher start");
+
+        assert!(
+            watchers
+                .shutdown_with_timeout(Duration::from_millis(1))
+                .await
+                .is_err()
+        );
+        drop(watchers);
+
+        let retained_path = retain_controller_sources_after_watcher_timeout(scratch, None);
+        assert_eq!(retained_path, scratch_path);
+        assert!(retained_path.exists());
+        std::fs::remove_dir_all(retained_path).expect("remove retained scratch");
+    }
 
     #[cfg(unix)]
     #[test]

@@ -436,6 +436,10 @@ impl RemoteDatasetLandingLease {
     fn path(&self) -> &std::path::Path {
         self.0.path()
     }
+
+    fn close(self) -> std::io::Result<()> {
+        self.0.close()
+    }
 }
 
 /// A cell envelope whose optional landed dataset remains available until execution exits.
@@ -462,7 +466,7 @@ impl DownloadedCellEnvelope {
         (
             self.bytes,
             CellDatasetLandingGuard {
-                _landing_lease: self.landing_lease,
+                landing_lease: self.landing_lease,
             },
         )
     }
@@ -477,13 +481,17 @@ impl DownloadedCellEnvelope {
 
 /// Keeps an HTTP-landed cell dataset alive until `run_v2` terminates.
 pub struct CellDatasetLandingGuard {
-    _landing_lease: Option<RemoteDatasetLandingLease>,
+    landing_lease: Option<RemoteDatasetLandingLease>,
 }
 
 impl CellDatasetLandingGuard {
     /// Remove a landed dataset before a cell exits without unwinding its stack.
-    pub fn close(self) {
-        drop(self);
+    pub fn close(self) -> Result<()> {
+        self.landing_lease
+            .map(RemoteDatasetLandingLease::close)
+            .transpose()
+            .context("removing private cell dataset landing")?;
+        Ok(())
     }
 }
 
@@ -1440,7 +1448,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn cell_downloads_and_compiles_the_controller_session_snapshot_after_source_swap() {
+    async fn owned_cleanup_cell_dataset_landing_close_removes_directory() {
         let _environment = CELL_ENV_LOCK.lock().await;
         let environment = ScopedCellEnv::capture(&[
             crate::cellular::partition::CELL_ID_ENV,
@@ -1542,7 +1550,7 @@ mod tests {
                 .session_id,
             "original"
         );
-        landing_guard.close();
+        assert!(landing_guard.close().is_ok());
         assert!(!landing_path.exists());
         server.shutdown().await;
     }
