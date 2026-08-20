@@ -471,7 +471,14 @@ class TestCreateCancellationBoundaries:
     async def test_on_create_initial_cancel_terminalizes_without_external_work(
         self,
     ) -> None:
-        """An initially-cancelled CR skips creation and publishes a fenced terminal status."""
+        """An initially-cancelled CR skips creation and publishes a terminal status.
+
+        The status patch is deliberately NOT fenced with
+        ``metadata.resourceVersion`` -- see ``lifecycle.on_cancel``: the fence
+        409s kopf's merge PATCH and silently drops the cancel status. The
+        UID-fenced identity re-reads still run, which is what the await list
+        below asserts.
+        """
         key = job_key("production", "aiperf-bench-7f2a", "uid-aiperf-bench-7f2a")
         parent_fence = AsyncMock(return_value="19")
         patch = kopf.Patch()
@@ -498,7 +505,7 @@ class TestCreateCancellationBoundaries:
         assert patch.status["currentPhase"] is None
         assert patch.status["subPhase"] is None
         assert "completionTime" in patch.status
-        assert patch["metadata"]["resourceVersion"] == "19"
+        assert "resourceVersion" not in (patch.get("metadata") or {})
         assert parent_fence.await_args_list == [
             call("production", "aiperf-bench-7f2a", "uid-aiperf-bench-7f2a"),
             call("production", "aiperf-bench-7f2a", "uid-aiperf-bench-7f2a"),

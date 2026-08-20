@@ -717,10 +717,19 @@ class TestRunFetchLoopSafely:
 
 class TestDownloadFinalAndSidecar:
     @pytest.mark.asyncio
-    async def test_returns_when_results_dir_missing(
+    async def test_raises_named_error_when_results_dir_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A missing results volume must name itself, not fail as a stagnation.
+
+        Returning silently downloads nothing on every retry, so byte growth
+        stays at zero and the run dies with a generic "Failed to fetch results"
+        that never mentions the unmounted volume.
+        """
         from aiperf.operator.environment import OperatorEnvironment
+        from aiperf.operator.handlers._completion_fetch import (
+            _ResultsVolumeMissingError,
+        )
 
         missing = tmp_path / "definitely-missing"
         monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", missing)
@@ -731,12 +740,13 @@ class TestDownloadFinalAndSidecar:
             "checkpoints": None,
             "metrics": None,
         }
-        await _download_final_and_sidecar(
-            progress_client=client,
-            controller_host="host",
-            dest_dir=tmp_path,
-            state=state,
-        )
+        with pytest.raises(_ResultsVolumeMissingError, match=str(missing)):
+            await _download_final_and_sidecar(
+                progress_client=client,
+                controller_host="host",
+                dest_dir=tmp_path,
+                state=state,
+            )
         client.download_all_results.assert_not_called()
 
     @pytest.mark.asyncio

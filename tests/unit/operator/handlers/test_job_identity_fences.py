@@ -244,8 +244,15 @@ async def test_on_cancel_stale_parent_has_no_side_effects() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_cancel_fences_cache_delete_and_status_to_exact_identity() -> None:
-    """A valid cancel uses UID-scoped cache state and a resourceVersion patch fence."""
+async def test_on_cancel_fences_cache_delete_to_exact_identity() -> None:
+    """A valid cancel uses UID-scoped cache state and an unfenced status patch.
+
+    The status patch deliberately carries no ``metadata.resourceVersion``: that
+    fence makes kopf's single merge PATCH 409 on any concurrent CR write, which
+    silently drops the cancel status and strands the CR in its pre-cancel phase
+    forever (the JobSet is already gone and cancellation is sticky). Stale-write
+    protection comes from the UID-fenced identity re-reads instead.
+    """
     patch = kopf.Patch()
     with (
         mock_patch(
@@ -272,7 +279,7 @@ async def test_on_cancel_fences_cache_delete_and_status_to_exact_identity() -> N
             expected_parent_uid="job-uid-old",
         )
 
-    assert patch["metadata"]["resourceVersion"] == "12"
+    assert "resourceVersion" not in (patch.get("metadata") or {})
     assert patch.status["phase"] == Phase.CANCELLED
     assert is_cancellation_requested("ns/bench@job-uid-old") is True
     assert is_cancellation_requested("ns/bench@job-uid-new") is False

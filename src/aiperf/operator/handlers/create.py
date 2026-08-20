@@ -382,7 +382,7 @@ def _finalize_cancelled_creation(
     patch: kopf.Patch,
     status: StatusBuilder,
     job_id: str,
-    jobset_name: str | None = None,
+    jobset_name: str,
 ) -> dict[str, Any]:
     """Record what was already created before a cancellation bail-out.
 
@@ -394,8 +394,7 @@ def _finalize_cancelled_creation(
     created so the cancel path can clean up after us.
     """
     patch.status["jobId"] = job_id
-    if jobset_name is not None:
-        patch.status["jobSetName"] = jobset_name
+    patch.status["jobSetName"] = jobset_name
     status.finalize()
     return {}
 
@@ -453,7 +452,7 @@ async def _create_resources(
     validated_spec = _validate_spec(spec, body, status)
     await _check_endpoint_reachable(validated_spec, body, status)
     if is_cancelled():
-        return _finalize_cancelled_creation(patch=patch, status=status, job_id=job_id)
+        return {}
 
     deployment, total_workers = _build_deployment(
         spec, name, namespace, job_id, job_uid=uid
@@ -476,27 +475,19 @@ async def _create_resources(
             status=status,
         )
         if is_cancelled():
-            return _finalize_cancelled_creation(
-                patch=patch, status=status, job_id=job_id
-            )
+            return {}
 
         await _create_rbac(api, deployment, namespace, owner_ref_dict)
         if is_cancelled():
-            return _finalize_cancelled_creation(
-                patch=patch, status=status, job_id=job_id
-            )
+            return {}
         configmap_name = await _create_configmap(
             api, deployment, namespace, owner_ref_dict
         )
         if is_cancelled():
-            return _finalize_cancelled_creation(
-                patch=patch, status=status, job_id=job_id
-            )
+            return {}
         await _persist_spec_and_index(spec, namespace, name, job_id, body=body)
         if is_cancelled():
-            return _finalize_cancelled_creation(
-                patch=patch, status=status, job_id=job_id
-            )
+            return {}
         jobset_name = await _create_jobset(api, deployment, namespace, owner_ref_dict)
         if is_cancelled():
             # The JobSet is live now: stamp its name so on_cancel can delete it.

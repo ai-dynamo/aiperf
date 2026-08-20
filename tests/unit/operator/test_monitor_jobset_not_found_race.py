@@ -20,10 +20,16 @@ The defenses are in :func:`_reconcile_missing_jobset`:
     3. Fresh body's annotations are re-checked too — a peer operator
        pod (HA) or concurrent tick may have stamped the claim between
        our body snapshot and the fresh read.
+
+The claim annotation is metadata, i.e. writable by anyone who can edit the
+AIPerfJob, so defenses 1 and 3 only honour a claim whose timestamp is present,
+parsable, and younger than ``_CLAIM_TRUST_WINDOW_SEC``. An older or forged
+claim must not be able to suppress the FAILED stamp forever.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,7 +38,10 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.constants import Annotations
 from aiperf.kubernetes.phase import Phase
-from aiperf.operator.handlers.monitor import _reconcile_missing_jobset
+from aiperf.operator.handlers.monitor import (
+    _CLAIM_TRUST_WINDOW_SEC,
+    _reconcile_missing_jobset,
+)
 from aiperf.operator.status import StatusBuilder
 
 
@@ -42,12 +51,26 @@ def _make_status_builder() -> tuple[StatusBuilder, Any]:
     return StatusBuilder(patch, {}), patch
 
 
-def _body(*, claimed: bool = False, phase: str | None = None) -> dict[str, Any]:
+def _claim_stamp(age_sec: float = 0.0) -> str:
+    """A claim timestamp ``age_sec`` seconds in the past, in CR format."""
+    return (
+        (datetime.now(UTC) - timedelta(seconds=age_sec))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _body(
+    *,
+    claimed: bool = False,
+    phase: str | None = None,
+    claim_age_sec: float = 0.0,
+) -> dict[str, Any]:
     """Build an AIPerfJob CR body, optionally with claim annotation / phase."""
     metadata: dict[str, Any] = {}
     if claimed:
         metadata["annotations"] = {
-            Annotations.COMPLETION_CLAIMED: "2026-04-29T08:18:22Z"
+            Annotations.COMPLETION_CLAIMED: _claim_stamp(claim_age_sec)
         }
     body: dict[str, Any] = {"metadata": metadata}
     if phase is not None:
@@ -146,7 +169,7 @@ async def test_short_circuits_when_fresh_read_carries_claim_annotation() -> None
     custom.get_namespaced_custom_object = AsyncMock(
         return_value={
             "metadata": {
-                "annotations": {Annotations.COMPLETION_CLAIMED: "2026-04-29T08:18:22Z"}
+                "annotations": {Annotations.COMPLETION_CLAIMED: _claim_stamp()}
             },
             "status": {"phase": str(Phase.RUNNING)},
         }
@@ -226,3 +249,67 @@ async def test_stamps_failed_for_genuine_orphan_jobset() -> None:
     assert result is False
     assert patch.status["phase"] == str(Phase.FAILED)
     assert patch.status["error"] == "JobSet not found"
+
+
+@pytest.mark.asyncio
+async def test_stale_claim_annotation_does_not_suppress_failed_stamp() -> None:
+    """An expired claim is not evidence that a success handler owns the CR.
+
+    ``COMPLETION_CLAIMED`` lives in metadata, so a user (or an orphaned claim
+    from a long-dead completion attempt) can leave it set forever. Honouring it
+    without an age bound means the CR never reaches a terminal phase.
+    """
+    sb, patch = _make_status_builder()
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(
+        return_value={
+            "metadata": {"annotations": {}},
+            "status": {"phase": str(Phase.RUNNING)},
+        }
+    )
+
+    result = await _reconcile_missing_jobset(
+        custom,
+        body=_body(
+            claimed=True,
+            phase="Running",
+            claim_age_sec=_CLAIM_TRUST_WINDOW_SEC + 60,
+        ),
+        namespace="ns",
+        name="job",
+        jobset_name="js",
+        current_phase=Phase.RUNNING,
+        sb=sb,
+    )
+
+    assert result is False
+    assert patch.status["phase"] == str(Phase.FAILED)
+
+
+@pytest.mark.asyncio
+async def test_unparsable_claim_annotation_does_not_suppress_failed_stamp() -> None:
+    """A forged claim value carries no verifiable evidence at all."""
+    sb, patch = _make_status_builder()
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(
+        return_value={
+            "metadata": {"annotations": {}},
+            "status": {"phase": str(Phase.RUNNING)},
+        }
+    )
+
+    result = await _reconcile_missing_jobset(
+        custom,
+        body={
+            "metadata": {"annotations": {Annotations.COMPLETION_CLAIMED: "yes"}},
+            "status": {"phase": "Running"},
+        },
+        namespace="ns",
+        name="job",
+        jobset_name="js",
+        current_phase=Phase.RUNNING,
+        sb=sb,
+    )
+
+    assert result is False
+    assert patch.status["phase"] == str(Phase.FAILED)
