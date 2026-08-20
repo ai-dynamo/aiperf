@@ -170,6 +170,13 @@ async def _set_benchmark_complete_annotation(
 ) -> None:
     """Patch ``metadata.annotations[BENCHMARK_COMPLETE] = "true"`` on the AIPerfJob.
 
+    Has no production caller in this module: the only one it ever had keyed off
+    a JobSet ``Completed`` condition, which ``handle_jobset_conditions``
+    deliberately does not trust (Jobs exiting is not the controller's durable
+    results-ready handshake), so it was removed rather than left as a wired-up
+    way to forge the completion signal. The annotation itself is written by the
+    controller; this helper stays as the tested writer for that contract.
+
     Setting the annotation makes kopf dispatch ``on_benchmark_complete``,
     which is idempotent (it short-circuits if status.phase is terminal and
     ``try_claim_completion`` returns False if already claimed). Racing the
@@ -398,36 +405,6 @@ async def _patch_sweep_controller_failure(
             f"Failed to terminalize AIPerfSweep {namespace}/{sweep_name}: {exc}",
             delay=5,
         ) from exc
-
-
-async def _handle_aiperfjob_completion(
-    *, namespace: str, jobset_name: str, jobset_body: dict[str, Any] | None
-) -> None:
-    """Preserve the existing AIPerfJob terminal-success shortcut."""
-    body = await _lookup_aiperfjob_body(namespace, jobset_name)
-    if body is None:
-        return
-    if not _is_trusted_aiperf_jobset(
-        jobset_body=jobset_body,
-        parent_body=body,
-        jobset_name=jobset_name,
-    ):
-        return
-    metadata = body.get("metadata") or {}
-    existing = metadata.get("annotations") or {}
-    if existing.get(Annotations.BENCHMARK_COMPLETE) == "true":
-        return
-    parent_uid = metadata.get("uid")
-    resource_version = metadata.get("resourceVersion")
-    if not isinstance(parent_uid, str) or not isinstance(resource_version, str):
-        return
-    await _set_benchmark_complete_annotation(
-        namespace,
-        jobset_name.removeprefix("aiperf-"),
-        aiperfjob_uid=parent_uid,
-        resource_version=resource_version,
-        annotations=dict(existing),
-    )
 
 
 async def _handle_sweep_controller_failure(

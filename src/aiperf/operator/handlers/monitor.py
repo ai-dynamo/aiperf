@@ -64,6 +64,7 @@ from aiperf.operator.client_cache import (
     try_claim_completion,
 )
 from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.handlers._completion_retry import _claim_age_seconds
 from aiperf.operator.handlers._job_identity import (
     StaleAIPerfJobCallback,
     aiperfjob_jobset_uid,
@@ -89,6 +90,47 @@ from aiperf.operator.status import (
 )
 
 logger = logging.getLogger(__name__)
+
+# How long a completion claim is allowed to suppress a failure stamp.
+#
+# ``Annotations.COMPLETION_CLAIMED`` is stamped on the CR's *metadata*, which is
+# writable by anyone who can edit the AIPerfJob — ``client_cache`` calls the
+# annotation untrusted for exactly this reason. Trusting it without bound lets a
+# forged (or simply orphaned) value permanently disable ``spec.timeoutSeconds``
+# enforcement and the "JobSet not found" FAILED stamp, so a job can hang forever
+# with no terminal phase. The claim's legitimate purpose is narrow — it covers
+# the window where the success branch owns the CR and is still draining results
+# — so bound the trust to that window and treat an older or unparsable claim as
+# no evidence at all.
+_CLAIM_TRUST_WINDOW_SEC = 900.0
+
+
+def _completion_claim_is_live(body: dict[str, Any], namespace: str) -> bool:
+    """Return True if ``body`` carries a completion claim young enough to trust.
+
+    A claim with no parsable timestamp carries no verifiable evidence and is
+    therefore not honoured; neither is one older than ``_CLAIM_TRUST_WINDOW_SEC``.
+    """
+    if not is_completion_claimed(body):
+        return False
+    job_id = (body.get("status") or {}).get("jobId") or ""
+    age = _claim_age_seconds(body, namespace, str(job_id))
+    if age is None:
+        logger.warning(
+            "Ignoring completion-claim annotation on %s: no parsable timestamp",
+            (body.get("metadata") or {}).get("name"),
+        )
+        return False
+    if age >= _CLAIM_TRUST_WINDOW_SEC:
+        logger.warning(
+            "Ignoring stale completion-claim annotation on %s (age %.0fs >= %.0fs)",
+            (body.get("metadata") or {}).get("name"),
+            age,
+            _CLAIM_TRUST_WINDOW_SEC,
+        )
+        return False
+    return True
+
 
 IMAGE_PULL_WAITING_REASONS = frozenset(
     {"ErrImageNeverPull", "ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
@@ -407,7 +449,7 @@ async def _reconcile_missing_jobset(
     # snapshot (phase still pre-terminal because the watch event for our
     # own patch hasn't propagated to kopf's local cache yet) would stamp
     # ``Phase.FAILED`` over a CR that already wrote ``Phase.COMPLETED``.
-    if is_completion_claimed(body):
+    if _completion_claim_is_live(body, namespace):
         logger.debug(
             f"JobSet {jobset_name} not found but completion-claim annotation "
             f"is set on {namespace}/{name} - success handler owns this CR, "
@@ -465,8 +507,7 @@ async def _reconcile_missing_jobset(
     # caller's body snapshot and now, ``try_claim_completion`` may have
     # stamped the claim from a peer operator pod (HA) or from a concurrent
     # monitor tick that observed ``progress.is_complete`` first.
-    fresh_annotations = fresh.get("metadata", {}).get("annotations") or {}
-    if fresh_annotations.get(Annotations.COMPLETION_CLAIMED):
+    if _completion_claim_is_live(fresh, namespace):
         logger.debug(
             f"JobSet {jobset_name} not found and fresh CR carries "
             f"completion-claim annotation - skipping FAILED stamp"
@@ -728,13 +769,14 @@ async def _check_job_timeout(
     # gate this. Either signal means a subsequent ``_reconcile_and_handle_jobset``
     # tick will claim completion and harvest results — stamping FAILED here
     # would discard a succeeded run and delete its JobSet mid-drain.
-    if is_completion_claimed(body) or status.get("resultsExported"):
+    claim_is_live = _completion_claim_is_live(body, namespace)
+    if claim_is_live or status.get("resultsExported"):
         logger.debug(
             "Job timeout reached for %s but run is draining/claimed "
             "(resultsExported=%s, claimed=%s); deferring to completion handler",
             jobset_name,
             status.get("resultsExported"),
-            is_completion_claimed(body),
+            claim_is_live,
         )
         return False
 

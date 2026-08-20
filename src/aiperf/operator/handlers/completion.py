@@ -447,7 +447,7 @@ async def _publish_completion_after_jobset_delete(
     # silently dropped — and because try_claim_completion's durable annotation blocks
     # re-entry, the phase never transitions to Completed. Stale-write protection in the
     # completion path already comes from try_claim_completion + UID fences.
-    target_sb._patch.status.update(staged_sb._patch.status)
+    _merge_staged_status(target_sb, staged_sb._patch.status)
     _emit_accepted_completion_events(
         body=body,
         namespace=namespace,
@@ -459,6 +459,42 @@ async def _publish_completion_after_jobset_delete(
         key_names=key_names,
         duration_sec=duration_sec,
     )
+
+
+def _merge_staged_status(
+    target_sb: StatusBuilder, staged_status: dict[str, Any]
+) -> None:
+    """Merge a staged status patch into ``target_sb`` without losing conditions.
+
+    ``staged_sb`` is built over the same stored ``status`` as the caller, so its
+    ``finalize()`` regenerates ``conditions`` from the CR as it exists on the
+    apiserver -- it knows nothing about conditions the caller staged earlier in
+    this same tick (``WorkersReady`` from ``_update_worker_counts``, for
+    instance). A plain ``dict.update`` replaces the whole ``conditions`` key and
+    silently drops those. Merge per condition type instead, with the staged
+    (terminal) values winning on conflict.
+    """
+    staged = dict(staged_status)
+    staged_conditions = staged.pop("conditions", None)
+    target_sb._patch.status.update(staged)
+    if staged_conditions is None:
+        return
+
+    existing = target_sb._patch.status.get("conditions")
+    if not isinstance(existing, list) or not existing:
+        target_sb._patch.status["conditions"] = staged_conditions
+        return
+
+    merged: dict[Any, dict[str, Any]] = {}
+    order: list[Any] = []
+    for condition in [*existing, *staged_conditions]:
+        if not isinstance(condition, dict):
+            continue
+        cond_type = condition.get("type")
+        if cond_type not in merged:
+            order.append(cond_type)
+        merged[cond_type] = condition
+    target_sb._patch.status["conditions"] = [merged[t] for t in order]
 
 
 def _emit_accepted_completion_events(
@@ -712,7 +748,7 @@ def _reconcile_phase_counts_from_results(
     result: ControllerFetchResult,
     flags: _ResultFlags,
     phase_manifest: dict[str, Any] | None = None,
-) -> _ResultFlags:
+) -> None:
     """Trust final exports over a dying controller's sampled phase counters.
 
     ``status.phases`` mirrors live controller progress, and by completion the
