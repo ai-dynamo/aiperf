@@ -204,6 +204,38 @@ traces:
     (directory, source.display().to_string())
 }
 
+fn conditional_count_fixture(count: &str) -> (tempfile::TempDir, String) {
+    let directory = tempfile::tempdir().expect("create channel count fixture directory");
+    let source = directory.path().join("channel-count.conditional.yaml");
+    fs::write(
+        &source,
+        format!(
+            r#"graph:
+  state:
+    produced: {{type: text}}
+    done: {{type: text}}
+  nodes:
+    source:
+      node_type: llm
+      prompt: ["source"]
+      output: produced
+    reader:
+      node_type: llm
+      prompt: ["reader"]
+      output: done
+      inputs: [{{channel: produced, count: {count}}}]
+  edges:
+    - {{source: START, target: source}}
+    - {{source: source, target: reader}}
+traces:
+  - id: channel-count
+"#
+        ),
+    )
+    .expect("write channel count fixture");
+    (directory, source.display().to_string())
+}
+
 fn static_channel_readiness_anchor_fixture(edge: &str) -> (tempfile::TempDir, String) {
     let directory = tempfile::tempdir().expect("create readiness anchor fixture directory");
     let source = directory
@@ -707,6 +739,32 @@ fn static_channel_readiness_rejects_deadlocks_and_marks_explain_unavailable() {
             .map(|unavailable| unavailable.code.as_str()),
         Some("validation-errors")
     );
+}
+
+#[test]
+fn conditional_graph_rejects_invalid_channel_counts_before_readiness() {
+    for count in ["-1", "any"] {
+        let (_directory, source) = conditional_count_fixture(count);
+        let report = json_error(&[
+            "graph",
+            "validate",
+            &source,
+            "--graph-format",
+            "conditional_graph",
+            "--output-format=json",
+        ]);
+        assert_eq!(report.code, GraphCommandErrorCode::InputLoweringFailed);
+        assert_eq!(report.message, "graph input could not be lowered");
+    }
+
+    for count in ["all", "0"] {
+        let (_directory, source) = conditional_count_fixture(count);
+        let output = validate_output(&source, "conditional_graph", &["--output-format=json"]);
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let report: GraphValidateReport =
+            serde_json::from_slice(&output.stdout).expect("validation JSON");
+        assert_eq!(report.summary.errors, 0);
+    }
 }
 
 #[test]

@@ -11,6 +11,8 @@ use aiperf_runtime::engine::graph_input::{
     BuiltinRunnerGraphInputAdapterResolver, GraphInputAdapterResolver, GraphInputContext,
     PreparedRunnerGraphInput, prepare_local_graph_inspection_input,
 };
+use aiperf_runtime::graph::inspect::validate_detailed;
+use aiperf_runtime::graph::model::GraphRecord;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::value::RawValue;
@@ -121,5 +123,37 @@ async fn built_in_formats_lower_their_real_inspection_sources_once() {
         assert_eq!(prepared.bundle.metadata.format, source.format);
         assert!(!prepared.bundle.programs.is_empty());
         assert_eq!(resolver.load_calls(), 1, "{}", source.format);
+    }
+}
+
+#[test]
+fn direct_graph_count_validation_is_canonical() {
+    let graph = |count| {
+        serde_json::from_value::<GraphRecord>(serde_json::json!({
+            "state": {"produced": {}, "done": {}},
+            "nodes": {
+                "source": {"output": "produced"},
+                "reader": {"output": "done", "inputs": [{"channel": "produced", "count": count}]}
+            },
+            "edges": [
+                {"source": "START", "target": "source"},
+                {"source": "source", "target": "reader"}
+            ]
+        }))
+        .expect("direct graph record")
+    };
+
+    for count in [serde_json::json!(-1), serde_json::json!("any")] {
+        let issues = validate_detailed(&graph(count));
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, "channel-count-invalid");
+        assert_eq!(
+            issues[0].location.as_deref(),
+            Some("graph.nodes.reader.inputs[0].count")
+        );
+    }
+
+    for count in [serde_json::json!("all"), serde_json::json!(0)] {
+        assert!(validate_detailed(&graph(count)).is_empty());
     }
 }

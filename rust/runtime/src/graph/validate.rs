@@ -45,7 +45,7 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
 pub fn validate_detailed(graph: &GraphRecord) -> Vec<GraphInspectionIssue> {
     let findings = collect_findings(graph);
     let mut issues = Vec::new();
-    for rank in 0..=5 {
+    for rank in 0..=6 {
         for finding in &findings {
             if finding.detailed_rank() != rank {
                 continue;
@@ -98,6 +98,11 @@ enum Finding {
         channel: String,
         location: ChannelReadLocation,
     },
+    ChannelCountInvalid {
+        node_id: String,
+        input_index: usize,
+        count: Count,
+    },
     NodeUnreachable {
         node_id: String,
     },
@@ -136,6 +141,16 @@ impl Finding {
             Finding::ChannelReadUndeclared {
                 node_id, channel, ..
             } => format!("node {node_id:?} reads undeclared channel {channel:?}"),
+            Finding::ChannelCountInvalid {
+                node_id,
+                input_index,
+                count,
+            } => match count.validate() {
+                Err(error) => format!(
+                    "node {node_id:?} input {input_index} has invalid channel count {count}: {error}"
+                ),
+                Ok(_) => "channel count validation finding has a valid count".to_string(),
+            },
             Finding::NodeUnreachable { node_id } => {
                 format!("node {node_id:?} is unreachable from START (it would never fire)")
             }
@@ -165,9 +180,10 @@ producer(s) but {reason}"
             Finding::EdgeSourceUnknown { .. } | Finding::EdgeTargetUnknown { .. } => 0,
             Finding::ChannelWriteUndeclared { .. } => 1,
             Finding::ChannelReadUndeclared { .. } => 2,
-            Finding::NodeUnreachable { .. } => 3,
-            Finding::NodeNeverFireable { .. } => 4,
-            Finding::StaticChannelReadinessDeadlock { .. } => 5,
+            Finding::ChannelCountInvalid { .. } => 3,
+            Finding::NodeUnreachable { .. } => 4,
+            Finding::NodeNeverFireable { .. } => 5,
+            Finding::StaticChannelReadinessDeadlock { .. } => 6,
         }
     }
 
@@ -227,6 +243,20 @@ producer(s) but {reason}"
                     [("node_id", node_id.as_str()), ("channel", channel.as_str())],
                 ))
             }
+            Finding::ChannelCountInvalid {
+                node_id,
+                input_index,
+                count,
+            } => Some(issue(
+                "channel-count-invalid",
+                Some(format!("graph.nodes.{node_id}.inputs[{input_index}].count")),
+                self.message(),
+                [
+                    ("node_id", node_id.as_str()),
+                    ("input_index", &input_index.to_string()),
+                    ("count", &count.to_string()),
+                ],
+            )),
             Finding::NodeUnreachable { node_id } => Some(issue(
                 "node-unreachable",
                 Some(format!("graph.nodes.{node_id}")),
@@ -310,6 +340,13 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
                     location: ChannelReadLocation::Input(input_index),
                 });
             }
+            if requirement.count.validate().is_err() {
+                findings.push(Finding::ChannelCountInvalid {
+                    node_id: nid.clone(),
+                    input_index,
+                    count: requirement.count.clone(),
+                });
+            }
         }
         if let Some(llm) = node.as_llm() {
             for (item_index, item) in llm.items.iter().enumerate() {
@@ -327,6 +364,13 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
         }
     }
 
+    if findings
+        .iter()
+        .any(|finding| matches!(finding, Finding::ChannelCountInvalid { .. }))
+    {
+        return findings;
+    }
+
     let reachable = reachable_from_start(graph);
     for nid in &node_ids {
         if !reachable.contains(*nid) {
@@ -340,10 +384,11 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
     for (nid, node) in &graph.nodes {
         writers.entry(node.output()).or_default().push(nid);
     }
-    let target = |chan: &str, count: &Count| -> usize {
-        match count {
-            Count::N(k) => (*k).max(0) as usize,
-            Count::Word(_) => writers.get(chan).map_or(0, Vec::len),
+    let target = |chan: &str, count: &Count| -> Option<usize> {
+        match count.validate() {
+            Ok(Some(count)) => Some(count),
+            Ok(None) => Some(writers.get(chan).map_or(0, Vec::len)),
+            Err(_) => None,
         }
     };
     let fireable_producers = |chan: &str, fireable: &BTreeSet<&str>| -> usize {
@@ -362,8 +407,9 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
                 continue;
             }
             let gated = node.input_requirements().iter().any(|requirement| {
-                fireable_producers(&requirement.channel, &fireable)
-                    < target(&requirement.channel, &requirement.count)
+                target(&requirement.channel, &requirement.count).is_none_or(|needed| {
+                    fireable_producers(&requirement.channel, &fireable) < needed
+                })
             });
             if !gated {
                 fireable.insert(nid.as_str());
@@ -381,7 +427,9 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
         }
         for requirement in node.input_requirements() {
             let channel = requirement.channel.as_str();
-            let needed = target(channel, &requirement.count);
+            let Some(needed) = target(channel, &requirement.count) else {
+                continue;
+            };
             let fireable_producers = fireable_producers(channel, &fireable);
             if fireable_producers >= needed {
                 continue;
@@ -424,8 +472,9 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
         )
     });
     if prerequisites_hold && let Ok(scheduler) = Scheduler::new(graph) {
-        let analysis = analyze_static_readiness(graph, &scheduler);
-        if !analysis.blocked_node_ids.is_empty() {
+        if let Ok(analysis) = analyze_static_readiness(graph, &scheduler)
+            && !analysis.blocked_node_ids.is_empty()
+        {
             findings.push(Finding::StaticChannelReadinessDeadlock {
                 blocked_node_ids: analysis.blocked_node_ids,
             });

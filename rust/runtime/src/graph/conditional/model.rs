@@ -552,13 +552,13 @@ fn convert_input_requirements(
         .map(|(index, input)| {
             let count = match input.count {
                 RawChannelCount::N(count) => Count::N(count),
-                RawChannelCount::Word(word) if word == "all" => Count::Word(word),
-                RawChannelCount::Word(word) => {
-                    return Err(ConditionalError::message(format!(
-                        "llm node {node_id:?} inputs[{index}].count must be an integer or \"all\", got {word:?}"
-                    )));
-                }
+                RawChannelCount::Word(word) => Count::Word(word),
             };
+            count.validate().map_err(|error| {
+                ConditionalError::message(format!(
+                    "llm node {node_id:?} inputs[{index}].count is invalid: {error}"
+                ))
+            })?;
             Ok(ChannelRequirement {
                 channel: input.channel,
                 count,
@@ -726,6 +726,16 @@ traces:
         );
         let err = parse_authored_graph(bad.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("all"));
+    }
+
+    #[test]
+    fn rejects_negative_llm_input_counts() {
+        let bad = DOC.replace(
+            "output: intent",
+            "output: intent\n      inputs: [{channel: messages, count: -1}]",
+        );
+        let err = parse_authored_graph(bad.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("non-negative"));
     }
 
     #[test]

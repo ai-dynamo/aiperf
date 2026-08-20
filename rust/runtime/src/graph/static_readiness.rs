@@ -4,7 +4,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::graph::model::{Count, ExecutableGraphNode, GraphRecord, START_NODE_ID};
+use crate::graph::model::{
+    Count, CountValidationError, ExecutableGraphNode, GraphRecord, START_NODE_ID,
+};
 use crate::graph::scheduler::Scheduler;
 
 /// Deterministic static readiness facts for one declared graph.
@@ -29,7 +31,12 @@ pub(crate) struct StaticReadinessWave {
 pub(crate) fn analyze_static_readiness(
     graph: &GraphRecord,
     scheduler: &Scheduler,
-) -> StaticReadinessAnalysis {
+) -> Result<StaticReadinessAnalysis, CountValidationError> {
+    for node in graph.nodes.values() {
+        for requirement in node.input_requirements() {
+            requirement.count.validate()?;
+        }
+    }
     let node_order = normalized_node_order(graph);
     let writers = channel_writer_counts(graph);
     let mut scheduled = BTreeSet::new();
@@ -107,10 +114,10 @@ pub(crate) fn analyze_static_readiness(
         .into_iter()
         .filter(|node_id| !admitted.contains(node_id))
         .collect();
-    StaticReadinessAnalysis {
+    Ok(StaticReadinessAnalysis {
         waves,
         blocked_node_ids,
-    }
+    })
 }
 
 pub(crate) fn normalized_node_order(graph: &GraphRecord) -> Vec<String> {
@@ -174,10 +181,10 @@ fn required_count(
     channel: &str,
     writers: &BTreeMap<String, usize>,
 ) -> Option<usize> {
-    match count {
-        Count::N(count) => usize::try_from(*count).ok(),
-        Count::Word(word) if word == "all" => Some(writers.get(channel).copied().unwrap_or(0)),
-        Count::Word(_) => None,
+    match count.validate() {
+        Ok(Some(count)) => Some(count),
+        Ok(None) => Some(writers.get(channel).copied().unwrap_or(0)),
+        Err(_) => None,
     }
 }
 
@@ -325,7 +332,9 @@ mod tests {
         let scheduler = Scheduler::new(&graph).expect("constructible scheduler");
 
         assert_eq!(
-            analyze_static_readiness(&graph, &scheduler).blocked_node_ids,
+            analyze_static_readiness(&graph, &scheduler)
+                .expect("valid channel counts")
+                .blocked_node_ids,
             vec!["reader", "producer"]
         );
     }
@@ -348,7 +357,9 @@ mod tests {
         let scheduler = Scheduler::new(&graph).expect("constructible scheduler");
 
         assert_eq!(
-            analyze_static_readiness(&graph, &scheduler).waves,
+            analyze_static_readiness(&graph, &scheduler)
+                .expect("valid channel counts")
+                .waves,
             vec![
                 StaticReadinessWave {
                     node_ids: vec!["producer".to_string()],

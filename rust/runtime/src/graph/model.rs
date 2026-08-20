@@ -56,7 +56,51 @@ pub enum Count {
     Word(String),
 }
 
+impl std::fmt::Display for Count {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::N(count) => write!(f, "{count}"),
+            Self::Word(word) => write!(f, "{word:?}"),
+        }
+    }
+}
+
+/// Why an authored channel count cannot be used by the graph runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CountValidationError {
+    /// Integer counts must not be negative.
+    Negative(i64),
+    /// The target platform cannot represent the integer count.
+    OutOfRange(i64),
+    /// The only supported word count is the `"all"` sentinel.
+    UnknownWord(String),
+}
+
+impl std::fmt::Display for CountValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Negative(count) => write!(f, "{count} (counts must be non-negative)"),
+            Self::OutOfRange(count) => write!(f, "{count} (count is too large for this platform)"),
+            Self::UnknownWord(word) => write!(f, "{word:?} (expected an integer or \"all\")"),
+        }
+    }
+}
+
+impl std::error::Error for CountValidationError {}
+
 impl Count {
+    /// Resolve an authored count, retaining `None` for the `"all"` sentinel.
+    pub fn validate(&self) -> Result<Option<usize>, CountValidationError> {
+        match self {
+            Self::N(count) if *count >= 0 => usize::try_from(*count)
+                .map(Some)
+                .map_err(|_| CountValidationError::OutOfRange(*count)),
+            Self::N(count) => Err(CountValidationError::Negative(*count)),
+            Self::Word(word) if word == "all" => Ok(None),
+            Self::Word(word) => Err(CountValidationError::UnknownWord(word.clone())),
+        }
+    }
+
     /// True for the `"all"` sentinel (resolved to the static producer count).
     pub fn is_all(&self) -> bool {
         matches!(self, Count::Word(w) if w == "all")

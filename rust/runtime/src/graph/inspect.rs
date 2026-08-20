@@ -629,7 +629,15 @@ fn inspect_readiness(
             "readiness waves are unavailable while scheduler validation errors remain",
         );
     };
-    let analysis = analyze_static_readiness(graph, &scheduler);
+    let analysis = match analyze_static_readiness(graph, &scheduler) {
+        Ok(analysis) => analysis,
+        Err(_) => {
+            return unavailable(
+                "validation-errors",
+                "readiness waves are unavailable while validation errors remain",
+            );
+        }
+    };
     if analysis.blocked_node_ids.is_empty() {
         ReadinessInspection::Available {
             waves: analysis
