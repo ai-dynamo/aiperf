@@ -153,6 +153,17 @@ def _is_json_patch_test_failure(exc: Any) -> bool:
     )
 
 
+# Status keys whose JSON-patch value is a whole-object SNAPSHOT, not a merge.
+# _merge_patch_value recursively unions dicts, which is right for every key that
+# accumulates (phases, summary) and wrong for a key that must mirror one tick:
+# status.serverMetrics is keyed by metric name with dict-valued stats, so a
+# metric that stops being projected -- exactly what the projection's caps do --
+# would linger in the CR with stale values indistinguishable from live ones.
+# A JSON-patch "add" on an existing member replaces it outright, which is the
+# snapshot semantic. Keep this list minimal; merging is correct by default.
+_SNAPSHOT_STATUS_KEYS: frozenset[str] = frozenset({"serverMetrics"})
+
+
 def _merge_patch_value(existing: Any, patch: Any) -> Any:
     """Resolve one status key against its live value using RFC 7386 semantics.
 
@@ -246,7 +257,13 @@ class ProgressRouter(
         No push is scheduled here: server metrics scrape at their own cadence
         and the value rides along on the next progress push, which already
         fires at per-tick rates.
+
+        Guarded on Kubernetes mode for the same reason ``_schedule_status_push``
+        is: this fires at ~3Hz in every run mode, and the dump is pure waste
+        outside Kubernetes where there is no CR to carry it.
         """
+        if not self._k8s_patching_enabled:
+            return
         self._server_metrics = message.model_dump(
             mode="json", exclude={"message_type", "service_id"}, exclude_none=True
         )
@@ -732,7 +749,9 @@ async def _write_status_patch(
         {
             "op": "add",
             "path": f"/status/{key}",
-            "value": _merge_patch_value(existing_status.get(key), value),
+            "value": value
+            if key in _SNAPSHOT_STATUS_KEYS
+            else _merge_patch_value(existing_status.get(key), value),
         }
         for key, value in status_patch.items()
     )

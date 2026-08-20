@@ -1243,12 +1243,28 @@ class _ServerMetricsSettings(BaseSettings):
     CR_PROJECTION_MAX_SERIES: int = Field(
         ge=1,
         le=10000,
-        default=32,
+        default=256,
         description="Maximum series a single metric may carry into the Kubernetes "
         "AIPerfJob status.serverMetrics projection. A metric with more series than "
         "this is dropped whole rather than truncated, because a partial series list "
-        "would decode as a valid-but-wrong aggregate. Guards the 1.5 MB apiserver "
-        "object ceiling; the WebSocket feed and server_metrics_export.json are unaffected.",
+        "would decode as a valid-but-wrong aggregate. This is a cardinality sanity "
+        "bound only -- CR_PROJECTION_MAX_BYTES is the real size backstop -- and is "
+        "counted per metric across all endpoints, so it must clear the worker or GPU "
+        "count of the largest deployment. The WebSocket feed and "
+        "server_metrics_export.json are unaffected.",
+    )
+    CR_PROJECTION_MAX_BYTES: int = Field(
+        ge=1024,
+        le=1048576,
+        default=262144,
+        description="Maximum serialized size in bytes of the Kubernetes AIPerfJob "
+        "status.serverMetrics projection. The cardinality caps bound how many labels "
+        "a series may carry but not how long each label string is, so this is the "
+        "authoritative guard against the 1.5 MB apiserver object ceiling. An "
+        "over-budget projection is dropped whole: exceeding the ceiling would have "
+        "the apiserver reject the entire status patch, silently stopping every other "
+        "status update (phases, liveMetrics, resultsExported, controllerFailure) "
+        "along with it.",
     )
     CR_PROJECTION_MAX_LABELS: int = Field(
         ge=1,

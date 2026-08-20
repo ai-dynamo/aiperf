@@ -578,21 +578,45 @@ timeslices. It is an allow-list rather than a full copy minus excludes so it
 cannot silently regrow as new server metrics are added; adding a metric to
 `backendMetric` requires adding it to `CURATED_METRIC_NAMES` too.
 
-Two caps bound the write: `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_SERIES` and
-`AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_LABELS`. Overflow drops the offending
-metric **whole**, with a debug log. Nothing is truncated — labels are the series
-identity, and a trimmed series list or label set would decode as a
-valid-but-wrong aggregate rather than as missing data. The projected value is
-`scrub_non_finite`-cleaned, because a single NaN gauge is an invalid JSON number
-that would reject the entire status patch for that tick and freeze all status
-updates.
+Three limits bound the write. `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_SERIES`
+and `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_LABELS` are cardinality sanity
+bounds; overflow drops the offending metric **whole**, with a debug log. Nothing
+is truncated — labels are the series identity, and a trimmed series list or label
+set would decode as a valid-but-wrong aggregate rather than as missing data.
+`MAX_SERIES` is counted per metric across all endpoints, so it must clear the
+worker or GPU count of the largest deployment: a per-worker metric such as
+`dynamo_component_kvstats_gpu_cache_usage_percent` otherwise vanishes whole and
+takes its dashboard tile with it.
 
-Two consequences worth knowing: the CR fallback's per-endpoint details table
-lists fewer source-metric rows than `server_metrics_export.json` does, and the
-"KVBM" backend chip never lights from the CR path — `detectBackends` keys it off
-a `kvbm_*` prefix, and no `kvbm_*` metric appears in `backendMetric`, so none is
-projected. The live WebSocket path and the final `server_metrics_export.json`
-are unaffected and keep the full payload.
+`AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_BYTES` is the authoritative backstop,
+because the cardinality caps bound how *many* labels a series carries but not
+how long each label string is. An over-budget projection is dropped entirely.
+This matters more than it looks: exceeding the apiserver's 1.5 MB object ceiling
+rejects the whole status patch, `_write_status_patch` re-raises, and
+`_patch_aiperfjob_status` swallows it at debug — so every other status update
+(`phases`, `liveMetrics`, `resultsExported`, `controllerFailure`) stops silently
+too. The projected value is also `scrub_non_finite`-cleaned, because a single NaN
+gauge is an invalid JSON number that would reject the same patch the same way.
+
+`status.serverMetrics` is a **snapshot** of the latest scrape, not an
+accumulation. The push's JSON-patch path normally pre-resolves each key through
+`_merge_patch_value` (RFC 7386) so a fenced write stays equivalent to the merge
+patch it stands in for, but that recursively unions dicts — and this key is a
+map of metric name to dict-valued stats, so a metric that stops being projected
+would linger indefinitely with stale values indistinguishable from live ones.
+The caps are a disappearance generator by design, so `serverMetrics` is listed in
+`_SNAPSHOT_STATUS_KEYS` and emitted unresolved, letting the `add` op replace the
+member outright.
+
+Two consequences worth knowing. The CR fallback's per-endpoint details table
+lists fewer source-metric rows than `server_metrics_export.json` does. And a
+backend chip lights only when at least one of that backend's exposed metrics is
+in the allow-list: `detectBackends` scans metric names on whatever payload it is
+given, so any backend whose metrics do not intersect `CURATED_METRIC_NAMES` loses
+its chip on the CR path. KVBM is the guaranteed case — `detectBackends` keys it
+off a `kvbm_*` prefix and no `kvbm_*` metric appears in `backendMetric` — but it
+is a class of gap, not a single instance. The live WebSocket path and the final
+`server_metrics_export.json` are unaffected and keep the full payload.
 
 The operator's recurring watchdog inspects only this cached parent body while
 the heartbeat is fresh; broad JobSet, Pod, sidecar, and results recovery

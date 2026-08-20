@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import orjson
 import pytest
 from pytest import param
 
@@ -52,12 +53,17 @@ def test_curated_metric_names_match_the_dashboard_backend_metric_list() -> None:
     the projection carries but the JS never reads is pure CR weight.
     """
     source = _HELPERS_JS.read_text()
-    body = source[
-        source.index("function backendMetric") : source.index(
-            "function extractStatPerSeries"
-        )
-    ]
-    js_names = set(re.findall(r"has\('([^']+)'\)", body))
+    start = source.index("function backendMetric")
+    end = source.index("function extractStatPerSeries")
+    assert end > start, (
+        "helpers.js reordered: backendMetric no longer precedes "
+        "extractStatPerSeries, so this guard would slice an empty body"
+    )
+    js_names = set(re.findall(r"has\('([^']+)'\)", source[start:end]))
+    assert len(js_names) == 20, (
+        f"expected 20 metric names parsed out of backendMetric, got {len(js_names)}; "
+        "the extraction broke and this assertion would pass vacuously"
+    )
 
     assert js_names == set(CURATED_METRIC_NAMES)
 
@@ -126,16 +132,18 @@ def test_project_server_metrics_for_cr_keeps_only_curated_stat_fields() -> None:
 
 
 def test_project_server_metrics_for_cr_drops_metric_description_and_unit() -> None:
-    """Prometheus HELP text is unbounded and unread by the panel; it stays out of the CR."""
+    """Only ``series`` survives: HELP text is unbounded, and ``type`` is never read.
+
+    ``aggregateForHit`` in helpers.js uses the hardcoded ``hit.type`` from
+    ``backendMetric``, never ``metric.type``.
+    """
     result = project_server_metrics_for_cr(
         _summary({"sglang:token_usage": _gauge({"stats": {"max": 0.9}})})
     )
 
     assert result is not None
     metric = result["metrics"]["sglang:token_usage"]
-    assert metric["type"] == "gauge"
-    assert "description" not in metric
-    assert "unit" not in metric
+    assert set(metric) == {"series"}
 
 
 def test_project_server_metrics_for_cr_merges_series_across_endpoints() -> None:
@@ -300,3 +308,72 @@ def test_project_server_metrics_for_cr_carries_no_credential_fields() -> None:
     rendered = repr(result)
     assert "sk-should-never-appear" not in rendered
     assert "Authorization" not in rendered
+
+
+def test_project_server_metrics_for_cr_drops_everything_over_the_byte_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Label strings are unbounded, so cardinality caps alone cannot bound bytes.
+
+    Blowing the apiserver's 1.5 MB object ceiling rejects the WHOLE status
+    patch, which stops phases, liveMetrics, resultsExported and
+    controllerFailure along with it -- the exact silent loss this key exists to
+    repair. Under budget pressure the projection yields rather than take the
+    rest of status down with it.
+    """
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.SERVER_METRICS, "CR_PROJECTION_MAX_BYTES", 2048)
+
+    fat_label = {"model": "x" * 4096}
+    result = project_server_metrics_for_cr(
+        _summary(
+            {
+                "dynamo_frontend_requests": _gauge(
+                    {"labels": fat_label, "stats": {"rate": 1.0}}
+                )
+            }
+        )
+    )
+
+    assert result is None
+
+
+def test_project_server_metrics_for_cr_stays_within_the_byte_budget_by_default() -> (
+    None
+):
+    """A realistically wide deployment must fit, or the tile silently disappears."""
+    from aiperf.common.environment import Environment
+
+    wide = {
+        name: _gauge(
+            *(
+                {
+                    "labels": {"model": "meta-llama/Llama-3.1-70B", "tp_rank": str(i)},
+                    "stats": {"avg": 1.0, "max": 2.0, "rate": 3.0, "count": 4},
+                }
+                for i in range(64)
+            )
+        )
+        for name in CURATED_METRIC_NAMES
+    }
+
+    result = project_server_metrics_for_cr(_summary(wide))
+
+    assert result is not None
+    assert set(result["metrics"]) == set(CURATED_METRIC_NAMES)
+    assert (
+        len(orjson.dumps(result)) <= Environment.SERVER_METRICS.CR_PROJECTION_MAX_BYTES
+    )
+
+
+def test_default_series_cap_clears_a_large_per_worker_deployment() -> None:
+    """MAX_SERIES is a per-metric total across endpoints, so it must clear worker counts.
+
+    Per-worker metrics such as dynamo_component_kvstats_gpu_cache_usage_percent
+    carry one series per worker or GPU; a cap below the worker count drops the
+    metric whole and the KV-pressure tile vanishes with no user-visible signal.
+    """
+    from aiperf.common.environment import Environment
+
+    assert Environment.SERVER_METRICS.CR_PROJECTION_MAX_SERIES >= 256

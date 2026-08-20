@@ -22,6 +22,7 @@ from aiperf.common.messages import (
     ResultsExportedMessage,
     SystemStateChangedMessage,
 )
+from aiperf.common.models import MetricResult
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.kubernetes.constants import CONTROLLER_HEARTBEAT_INTERVAL_SECONDS
 
@@ -837,3 +838,70 @@ async def test_realtime_server_metrics_caches_payload_without_pushing() -> None:
     assert r._server_metrics is not None
     assert r._server_metrics["snapshot"] == {"x": 1.0}
     r._patch_aiperfjob_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_replaces_server_metrics_instead_of_merging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """serverMetrics is a snapshot of one scrape, not an accumulation.
+
+    Every other status key is pre-resolved through _merge_patch_value so the
+    fenced JSON patch stays equivalent to the merge patch it replaces. That
+    recursively unions dicts, and this key maps metric name -> dict-valued
+    stats, so a metric the current tick does not project -- exactly what the
+    projection's caps produce -- would linger in the CR forever with stale
+    values indistinguishable from live ones.
+    """
+    stale = {
+        "summary": {"endpoints_configured": ["http://old/metrics"]},
+        "metrics": {
+            "sglang:token_usage": {"series": [{"stats": {"max": 0.99}}]},
+            "dynamo_frontend_requests": {"series": [{"stats": {"rate": 1.0}}]},
+        },
+    }
+    custom = _install_fake_k8s(
+        monkeypatch, _cr({"phase": "Running", "serverMetrics": stale})
+    )
+
+    await _push(server_metrics=_server_metrics_payload())
+
+    written = _status_body(custom)["serverMetrics"]
+    assert set(written["metrics"]) == {"dynamo_frontend_requests"}
+    assert "sglang:token_usage" not in written["metrics"]
+    assert written["summary"]["endpoints_configured"] == ["http://svc:8000/metrics"]
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_still_merges_non_snapshot_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The snapshot exemption is one key wide; merge stays the default."""
+    custom = _install_fake_k8s(
+        monkeypatch,
+        _cr({"phase": "Running", "summary": {"kept_by_merge": {"avg": 1.0}}}),
+    )
+
+    await _push(
+        metrics=[
+            MetricResult(tag="request_latency", header="Latency", unit="ms", avg=2.0)
+        ],
+        server_metrics=_server_metrics_payload(),
+    )
+
+    assert "kept_by_merge" in _status_body(custom)["summary"]
+
+
+@pytest.mark.asyncio
+async def test_realtime_server_metrics_is_not_dumped_outside_kubernetes() -> None:
+    """The ~3Hz dump is pure waste in a local run where no CR carries it."""
+    from aiperf.common.messages import RealtimeServerMetricsMessage
+
+    r = _make_router()
+    r._k8s_patching_enabled = False
+
+    await r._on_realtime_server_metrics(
+        RealtimeServerMetricsMessage(service_id="sm", snapshot={"x": 1.0})
+    )
+
+    assert r._server_metrics is None

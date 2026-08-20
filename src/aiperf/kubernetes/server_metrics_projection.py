@@ -21,6 +21,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+import orjson
+
 from aiperf.common.environment import Environment
 from aiperf.common.finite import scrub_non_finite
 
@@ -128,7 +130,7 @@ def _merge_endpoint_metrics(
             continue
         if not isinstance(metric, dict):
             continue
-        entry = metrics.setdefault(name, {"type": metric.get("type"), "series": []})
+        entry = metrics.setdefault(name, {"series": []})
         for series in metric.get("series") or []:
             projected = _project_series(series, endpoint_url, max_labels)
             if projected is None:
@@ -222,7 +224,7 @@ def project_server_metrics_for_cr(
     if not metrics:
         return None
 
-    return scrub_non_finite(
+    projected = scrub_non_finite(
         {
             "summary": _build_summary(
                 endpoints_configured=endpoints_configured,
@@ -233,3 +235,16 @@ def project_server_metrics_for_cr(
             "metrics": metrics,
         }
     )
+
+    max_bytes = Environment.SERVER_METRICS.CR_PROJECTION_MAX_BYTES
+    size = len(orjson.dumps(projected))
+    if size > max_bytes:
+        logger.debug(
+            "Dropping the AIPerfJob status.serverMetrics projection: %d bytes exceeds "
+            "the %d-byte budget. The cardinality caps bound label counts, not label "
+            "string lengths, so an over-budget payload is possible at any cardinality.",
+            size,
+            max_bytes,
+        )
+        return None
+    return projected
