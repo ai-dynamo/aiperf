@@ -25,6 +25,7 @@ from aiperf.common.hooks import on_message, on_start
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
     RealtimeMetricsMessage,
+    RealtimeServerMetricsMessage,
     ResultsExportedMessage,
     SystemStateChangedMessage,
 )
@@ -208,6 +209,10 @@ class ProgressRouter(
         # a separate container) can surface controller-side state on
         # /api/progress without an in-process controller handle.
         self._system_state: SystemState = SystemState.INITIALIZING
+        # Latest REALTIME_SERVER_METRICS payload, kept for the curated
+        # status.serverMetrics projection. Held raw and projected at push time
+        # so the caps stay reconfigurable without a restart-ordering hazard.
+        self._server_metrics: dict[str, Any] | None = None
 
     def get_router(self) -> APIRouter:
         return progress_router
@@ -231,6 +236,20 @@ class ProgressRouter(
         """Record that the controller has finished writing artifacts to disk."""
         self._results_exported = True
         self._schedule_status_push()
+
+    @on_message(MessageType.REALTIME_SERVER_METRICS)
+    async def _on_realtime_server_metrics(
+        self, message: RealtimeServerMetricsMessage
+    ) -> None:
+        """Cache the latest server-metrics scrape for the CR fallback projection.
+
+        No push is scheduled here: server metrics scrape at their own cadence
+        and the value rides along on the next progress push, which already
+        fires at per-tick rates.
+        """
+        self._server_metrics = message.model_dump(
+            mode="json", exclude={"message_type", "service_id"}, exclude_none=True
+        )
 
     @on_message(MessageType.SERVICE_ERROR)
     async def _on_service_error(self, message: BaseServiceErrorMessage) -> None:
@@ -317,6 +336,7 @@ class ProgressRouter(
                 results_exported=self._results_exported,
                 controller_failure=self._controller_failure,
                 metrics=list(self._metrics),
+                server_metrics=self._server_metrics,
             )
         except Exception:  # noqa: BLE001
             self.debug("Failed to push AIPerfJob status update")
@@ -478,6 +498,7 @@ async def _push_aiperfjob_status(
     results_exported: bool,
     controller_failure: str | None = None,
     metrics: list[MetricResult] | None = None,
+    server_metrics: dict[str, Any] | None = None,
 ) -> None:
     """Refresh the controller heartbeat and merge-patch current progress.
 
@@ -492,6 +513,9 @@ async def _push_aiperfjob_status(
     from aiperf.kubernetes.constants import Annotations
     from aiperf.kubernetes.cr_refs import AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION
     from aiperf.kubernetes.phase import format_timestamp
+    from aiperf.kubernetes.server_metrics_projection import (
+        project_server_metrics_for_cr,
+    )
 
     async with k8s_client() as api:
         custom_api = client.CustomObjectsApi(api)
@@ -588,6 +612,9 @@ async def _push_aiperfjob_status(
                 # the run. The completion handler overwrites summary with final
                 # authoritative values when the benchmark finishes.
                 status_patch["summary"] = summary_dict
+
+        if curated_server_metrics := project_server_metrics_for_cr(server_metrics):
+            status_patch["serverMetrics"] = curated_server_metrics
 
         if results_exported:
             status_patch["resultsExported"] = True

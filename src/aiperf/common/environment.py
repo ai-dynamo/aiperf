@@ -1240,6 +1240,25 @@ class _ServerMetricsSettings(BaseSettings):
         default=5.0,
         description="Delay in seconds before shutting down server metrics service to allow command response transmission",
     )
+    CR_PROJECTION_MAX_SERIES: int = Field(
+        ge=1,
+        le=10000,
+        default=32,
+        description="Maximum series a single metric may carry into the Kubernetes "
+        "AIPerfJob status.serverMetrics projection. A metric with more series than "
+        "this is dropped whole rather than truncated, because a partial series list "
+        "would decode as a valid-but-wrong aggregate. Guards the 1.5 MB apiserver "
+        "object ceiling; the WebSocket feed and server_metrics_export.json are unaffected.",
+    )
+    CR_PROJECTION_MAX_LABELS: int = Field(
+        ge=1,
+        le=1000,
+        default=16,
+        description="Maximum Prometheus labels a single series may carry into the "
+        "Kubernetes AIPerfJob status.serverMetrics projection. Labels form the series "
+        "identity in the dashboard, so a metric with an over-labeled series is dropped "
+        "whole rather than having its labels trimmed.",
+    )
 
 
 class _NetworkLatencySettings(BaseSettings):

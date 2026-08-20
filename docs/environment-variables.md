@@ -569,6 +569,8 @@ Server metrics collection configuration. Controls server metrics collection freq
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for server metrics jsonl writer export results processor |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking server metrics endpoint reachability during init |
 | `AIPERF_SERVER_METRICS_SHUTDOWN_DELAY` | `5.0` | ≥ 1.0, ≤ 300.0 | Delay in seconds before shutting down server metrics service to allow command response transmission |
+| `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_SERIES` | `32` | ≥ 1, ≤ 10000 | Maximum series a single metric may carry into the Kubernetes AIPerfJob status.serverMetrics projection. A metric with more series than this is dropped whole rather than truncated, because a partial series list would decode as a valid-but-wrong aggregate. Guards the 1.5 MB apiserver object ceiling; the WebSocket feed and server_metrics_export.json are unaffected. |
+| `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_LABELS` | `16` | ≥ 1, ≤ 1000 | Maximum Prometheus labels a single series may carry into the Kubernetes AIPerfJob status.serverMetrics projection. Labels form the series identity in the dashboard, so a metric with an over-labeled series is dropped whole rather than having its labels trimmed. |
 
 ## SERVICE
 

@@ -562,6 +562,38 @@ CR with no `status.phase` at all still uses the plain merge patch — there is n
 terminal value to race against yet, and a `test` op on an absent path would
 fail with 422.
 
+`status.serverMetrics` rides on the same push. It is the dashboard's
+non-WebSocket fallback: `job-detail.js` prefers the live per-job socket's
+`serverSummary` and falls back to the CR value when the socket is down, which is
+a common port-forward failure mode. The status subresource has a 1.5 MB
+apiserver object ceiling that neither the WebSocket frame nor the in-memory REST
+cache has, so the CR carries a **curated subset**, not the full export.
+`project_server_metrics_for_cr`
+(`src/aiperf/kubernetes/server_metrics_projection.py`) emits an explicit
+allow-list of the ~20 metric names that
+`src/aiperf/operator/ui/components/server-metrics/helpers.js` (`backendMetric`)
+actually renders, and per series only its `endpoint_url`, `labels`, and the
+`avg`/`max`/`rate`/`p99_estimate`/`count` stats — never raw samples, buckets, or
+timeslices. It is an allow-list rather than a full copy minus excludes so it
+cannot silently regrow as new server metrics are added; adding a metric to
+`backendMetric` requires adding it to `CURATED_METRIC_NAMES` too.
+
+Two caps bound the write: `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_SERIES` and
+`AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_LABELS`. Overflow drops the offending
+metric **whole**, with a debug log. Nothing is truncated — labels are the series
+identity, and a trimmed series list or label set would decode as a
+valid-but-wrong aggregate rather than as missing data. The projected value is
+`scrub_non_finite`-cleaned, because a single NaN gauge is an invalid JSON number
+that would reject the entire status patch for that tick and freeze all status
+updates.
+
+Two consequences worth knowing: the CR fallback's per-endpoint details table
+lists fewer source-metric rows than `server_metrics_export.json` does, and the
+"KVBM" backend chip never lights from the CR path — `detectBackends` keys it off
+a `kvbm_*` prefix, and no `kvbm_*` metric appears in `backendMetric`, so none is
+projected. The live WebSocket path and the final `server_metrics_export.json`
+are unaffected and keep the full payload.
+
 The operator's recurring watchdog inspects only this cached parent body while
 the heartbeat is fresh; broad JobSet, Pod, sidecar, and results recovery
 runs only after heartbeat expiry or when an explicit `timeoutSeconds` deadline
