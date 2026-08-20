@@ -159,6 +159,22 @@ Use the `extra` field to inject arbitrary key-value pairs into the HTTP payload 
 
 **Merge semantics:** Merging is shallow — a per-entry `{"nvext": {...}}` replaces the entire global `nvext` key. Deep merge is not performed.
 
+## Output Token Replay
+
+When replaying against a backend configured for output token replay, a trace row can carry exact output token IDs:
+
+```json
+{"request_id": "req-1", "messages": [{"role": "user", "content": "Call the weather tool"}], "output_length": 5, "output_token_ids": [123, 456, 789, 321, 654]}
+```
+
+`output_token_ids` is optional. When present, `output_length` must equal the number of token IDs. AIPerf does not send `output_token_ids` to the server. Instead, it derives a replay key and adds a request annotation under `nvext.annotations`:
+
+- `request_id` when the row provides one
+- `<session_id>:<turn_index>` for rows with `session_id`
+- `line:<zero_based_line_index>` otherwise
+
+For the example above, AIPerf sends `nvext.annotations: ["output_replay_id:req-1"]`. A backend that supports output token replay can use that key to look up and emit the planned output token sequence.
+
 ## Profile using real Mooncake Trace
 
 For real-world benchmarking, use the FAST25 production trace data from the Mooncake research paper:

@@ -8,12 +8,13 @@ import orjson
 import pytest
 from pydantic import ValidationError
 
+from aiperf.common.models import Turn
 from aiperf.config.flags import CLIConfig
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 
 
-def test_mooncake_trace_accepts_extra():
+def test_mooncake_trace_accepts_extra() -> None:
     t = MooncakeTrace(
         text_input="Hello",
         extra={"vendor_top_k": 5, "ignore_eos": True},
@@ -21,9 +22,39 @@ def test_mooncake_trace_accepts_extra():
     assert t.extra == {"vendor_top_k": 5, "ignore_eos": True}
 
 
-def test_mooncake_trace_extra_defaults_to_none():
+def test_mooncake_trace_extra_defaults_to_none() -> None:
     t = MooncakeTrace(text_input="Hello")
     assert t.extra is None
+
+
+def test_mooncake_trace_accepts_replay_fields() -> None:
+    t = MooncakeTrace(
+        text_input="Hello",
+        output_length=3,
+        output_token_ids=[10, 11, 12],
+        request_id="request-a",
+    )
+    assert t.output_token_ids == [10, 11, 12]
+    assert t.request_id == "request-a"
+
+
+def test_mooncake_trace_rejects_replay_length_mismatch() -> None:
+    with pytest.raises(ValidationError, match="output_length.*len"):
+        MooncakeTrace(
+            text_input="Hello",
+            output_length=2,
+            output_token_ids=[10, 11, 12],
+        )
+
+
+def test_mooncake_trace_rejects_replay_tokens_without_output_length() -> None:
+    with pytest.raises(ValidationError, match="output_length.*required"):
+        MooncakeTrace(text_input="Hello", output_token_ids=[10])
+
+
+def test_mooncake_trace_rejects_negative_replay_token_ids() -> None:
+    with pytest.raises(ValidationError, match="non-negative"):
+        MooncakeTrace(text_input="Hello", output_length=1, output_token_ids=[-1])
 
 
 @pytest.fixture
@@ -32,7 +63,7 @@ def default_cfg() -> CLIConfig:
 
 
 @pytest.fixture
-def mock_prompt_generator():
+def mock_prompt_generator() -> Mock:
     generator = Mock()
     generator.generate.return_value = "Generated prompt text"
     generator._decoded_cache = {}
@@ -82,6 +113,31 @@ class TestMooncakeTracePayloadMode:
 
 
 class TestMooncakeTraceLoaderPayload:
+    @staticmethod
+    def _write_jsonl(
+        file: Path, rows: list[dict], *, leading_blank: bool = False
+    ) -> None:
+        with open(file, "wb") as f:
+            if leading_blank:
+                f.write(b"\n")
+            for row in rows:
+                f.write(orjson.dumps(row))
+                f.write(b"\n")
+
+    @staticmethod
+    def _load_turns(
+        file: Path,
+        default_cfg: CLIConfig,
+        mock_prompt_generator: Mock,
+    ) -> list[Turn]:
+        loader = MooncakeTraceDatasetLoader(
+            filename=file,
+            cfg=default_cfg,
+            prompt_generator=mock_prompt_generator,
+        )
+        conversations = loader.convert_to_conversations(loader.load_dataset())
+        return [turn for conv in conversations for turn in conv.turns]
+
     def test_payload_traces_produce_raw_payload_turns(
         self,
         tmp_path: Path,
@@ -179,3 +235,117 @@ class TestMooncakeTraceLoaderPayload:
         conversations = loader.convert_to_conversations(loader.load_dataset())
         turn = conversations[0].turns[0]
         assert turn.extra_body == {"vendor_x": 1, "stream": False}
+
+    def test_replay_request_id_injects_output_replay_annotation(
+        self,
+        tmp_path: Path,
+        default_cfg: CLIConfig,
+        mock_prompt_generator,
+    ):
+        file = tmp_path / "trace.jsonl"
+        self._write_jsonl(
+            file,
+            [
+                {
+                    "request_id": "req-1",
+                    "text_input": "hello",
+                    "output_length": 2,
+                    "output_token_ids": [100, 101],
+                    "extra": {"nvext": {"annotations": ["existing"]}},
+                }
+            ],
+        )
+
+        turns = self._load_turns(file, default_cfg, mock_prompt_generator)
+        assert turns[0].extra_body == {
+            "nvext": {"annotations": ["existing", "output_replay_id:req-1"]}
+        }
+
+    def test_replay_key_uses_session_turn_index_without_request_id(
+        self,
+        tmp_path: Path,
+        default_cfg: CLIConfig,
+        mock_prompt_generator,
+    ):
+        file = tmp_path / "trace.jsonl"
+        self._write_jsonl(
+            file,
+            [
+                {
+                    "session_id": "session-a",
+                    "text_input": "first",
+                    "output_length": 1,
+                    "output_token_ids": [100],
+                },
+                {
+                    "session_id": "session-a",
+                    "text_input": "second",
+                    "output_length": 1,
+                    "output_token_ids": [101],
+                },
+            ],
+        )
+
+        turns = self._load_turns(file, default_cfg, mock_prompt_generator)
+        annotations = [
+            turn.extra_body["nvext"]["annotations"][0]
+            for turn in turns
+            if turn.extra_body is not None
+        ]
+        assert annotations == [
+            "output_replay_id:session-a:0",
+            "output_replay_id:session-a:1",
+        ]
+
+    def test_replay_key_uses_physical_line_index_without_request_or_session(
+        self,
+        tmp_path: Path,
+        default_cfg: CLIConfig,
+        mock_prompt_generator,
+    ):
+        file = tmp_path / "trace.jsonl"
+        self._write_jsonl(
+            file,
+            [
+                {
+                    "text_input": "hello",
+                    "output_length": 1,
+                    "output_token_ids": [100],
+                }
+            ],
+            leading_blank=True,
+        )
+
+        turns = self._load_turns(file, default_cfg, mock_prompt_generator)
+        assert turns[0].extra_body == {
+            "nvext": {"annotations": ["output_replay_id:line:1"]}
+        }
+
+    def test_replay_annotation_is_injected_into_payload_mode_raw_payload(
+        self,
+        tmp_path: Path,
+        default_cfg: CLIConfig,
+        mock_prompt_generator,
+    ):
+        file = tmp_path / "trace.jsonl"
+        self._write_jsonl(
+            file,
+            [
+                {
+                    "request_id": "payload-req",
+                    "payload": {
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "model": "test-model",
+                        "nvext": {"annotations": ["existing"]},
+                    },
+                    "output_length": 1,
+                    "output_token_ids": [100],
+                }
+            ],
+        )
+
+        turns = self._load_turns(file, default_cfg, mock_prompt_generator)
+        assert turns[0].raw_payload["nvext"]["annotations"] == [
+            "existing",
+            "output_replay_id:payload-req",
+        ]
