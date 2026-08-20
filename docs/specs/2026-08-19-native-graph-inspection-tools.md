@@ -349,6 +349,7 @@ Initial stable codes are:
 - `node-never-fireable`;
 - `mixed-anchor-fan-in`;
 - `multi-start-anchor-fan-in`;
+- `start-anchor-non-completion`;
 - `bundle-empty`;
 - `trace-id-empty`;
 - `trace-id-duplicate`;

@@ -37,18 +37,19 @@ pub use resolve::{TakenEdge, TakenGraph, resolve_and_prune, resolve_branch_key};
 /// Read one authored conditional-graph source as raw bytes (YAML or JSON).
 fn load_source_bytes(load: &LoadConfig) -> Result<Vec<u8>, ConditionalError> {
     match &load.source {
-        DatasetSource::Path(path) if path.is_file() => {
-            fs::read(path).map_err(|error| ConditionalError(format!("{}: {error}", path.display())))
-        }
-        DatasetSource::Path(path) => Err(ConditionalError(format!(
+        DatasetSource::Path(path) if path.is_file() => fs::read(path)
+            .map_err(|error| ConditionalError::message(format!("{}: {error}", path.display()))),
+        DatasetSource::Path(path) => Err(ConditionalError::message(format!(
             "conditional_graph source {} is not a readable file",
             path.display()
         ))),
         DatasetSource::Bytes(bytes) => Ok(bytes.to_vec()),
         DatasetSource::Inline(value) => serde_json::to_vec(value).map_err(ConditionalError::from),
-        DatasetSource::Url(_) | DatasetSource::HuggingFace { .. } => Err(ConditionalError(
-            "conditional_graph does not support URL or HuggingFace sources".into(),
-        )),
+        DatasetSource::Url(_) | DatasetSource::HuggingFace { .. } => {
+            Err(ConditionalError::message(
+                "conditional_graph does not support URL or HuggingFace sources",
+            ))
+        }
     }
 }
 
@@ -65,15 +66,15 @@ pub async fn compile_conditional_graph_input(
     workload_seed: u64,
 ) -> Result<GraphInputBundle, ConditionalError> {
     if config.root_limit == Some(0) {
-        return Err(ConditionalError(
-            "graph root_limit must be positive when configured".into(),
+        return Err(ConditionalError::message(
+            "graph root_limit must be positive when configured",
         ));
     }
     let bytes = load_source_bytes(&config.load)?;
     let doc = parse_authored_graph(&bytes)?;
     if doc.traces.is_empty() {
-        return Err(ConditionalError(
-            "conditional_graph source declares no traces".into(),
+        return Err(ConditionalError::message(
+            "conditional_graph source declares no traces",
         ));
     }
 

@@ -323,6 +323,12 @@ fn is_input_decode_error(error: &anyhow::Error) -> bool {
         if cause.downcast_ref::<serde_json::Error>().is_some() {
             return true;
         }
+        if matches!(
+            cause.downcast_ref::<aiperf_runtime::graph::conditional::ConditionalError>(),
+            Some(aiperf_runtime::graph::conditional::ConditionalError::YamlDecode(_))
+        ) {
+            return true;
+        }
         let text = cause.to_string().to_ascii_lowercase();
         text.contains("decoding direct")
             || text.contains("decoding otlp json")

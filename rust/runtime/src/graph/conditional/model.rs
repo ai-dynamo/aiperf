@@ -22,12 +22,24 @@ use serde_json::Value;
 use crate::graph::model::{ChannelType, ReducerName};
 
 /// Focused authored-graph parse or lowering failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConditionalError(pub String);
+#[derive(Debug)]
+pub enum ConditionalError {
+    Message(String),
+    YamlDecode(serde_yaml::Error),
+}
+
+impl ConditionalError {
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::Message(message.into())
+    }
+}
 
 impl Display for ConditionalError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        match self {
+            Self::Message(message) => formatter.write_str(message),
+            Self::YamlDecode(error) => error.fmt(formatter),
+        }
     }
 }
 
@@ -35,13 +47,13 @@ impl Error for ConditionalError {}
 
 impl From<serde_json::Error> for ConditionalError {
     fn from(error: serde_json::Error) -> Self {
-        Self(error.to_string())
+        Self::message(error.to_string())
     }
 }
 
 impl From<serde_yaml::Error> for ConditionalError {
     fn from(error: serde_yaml::Error) -> Self {
-        Self(error.to_string())
+        Self::YamlDecode(error)
     }
 }
 
@@ -390,7 +402,7 @@ fn convert_channel_spec(
         // runtime image channel type to preserve.
         Some("image") => ChannelType::Messages,
         Some(other) => {
-            return Err(ConditionalError(format!(
+            return Err(ConditionalError::message(format!(
                 "channel {name:?} has unsupported type {other:?} (text|messages|json|image)"
             )));
         }
@@ -399,7 +411,7 @@ fn convert_channel_spec(
         None | Some("overwrite") => ReducerName::Overwrite,
         Some("add_messages") => ReducerName::AddMessages,
         Some(other) => {
-            return Err(ConditionalError(format!(
+            return Err(ConditionalError::message(format!(
                 "channel {name:?} has unsupported reducer {other:?} (overwrite|add_messages)"
             )));
         }
@@ -414,21 +426,21 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
     match node.node_type.as_str() {
         "llm" => {
             if node.outputs.is_some() {
-                return Err(ConditionalError(format!(
+                return Err(ConditionalError::message(format!(
                     "llm node {id:?} must use scalar `output`, not `outputs`"
                 )));
             }
             if node.duration_ms.is_some() {
-                return Err(ConditionalError(format!(
+                return Err(ConditionalError::message(format!(
                     "llm node {id:?} cannot set `duration_ms` (replay-only)"
                 )));
             }
-            let prompt = node
-                .prompt
-                .ok_or_else(|| ConditionalError(format!("llm node {id:?} is missing `prompt`")))?;
-            let output = node
-                .output
-                .ok_or_else(|| ConditionalError(format!("llm node {id:?} is missing `output`")))?;
+            let prompt = node.prompt.ok_or_else(|| {
+                ConditionalError::message(format!("llm node {id:?} is missing `prompt`"))
+            })?;
+            let output = node.output.ok_or_else(|| {
+                ConditionalError::message(format!("llm node {id:?} is missing `output`"))
+            })?;
             Ok(AuthoredNode::Llm(AuthoredLlmNode {
                 prompt,
                 output,
@@ -442,20 +454,20 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
         }
         "replay" => {
             if node.prompt.is_some() {
-                return Err(ConditionalError(format!(
+                return Err(ConditionalError::message(format!(
                     "replay node {id:?} cannot set `prompt`"
                 )));
             }
             if node.output.is_some() {
-                return Err(ConditionalError(format!(
+                return Err(ConditionalError::message(format!(
                     "replay node {id:?} must use `outputs`, not scalar `output`"
                 )));
             }
             let outputs = node.outputs.ok_or_else(|| {
-                ConditionalError(format!("replay node {id:?} is missing `outputs`"))
+                ConditionalError::message(format!("replay node {id:?} is missing `outputs`"))
             })?;
             if outputs.is_empty() {
-                return Err(ConditionalError(format!(
+                return Err(ConditionalError::message(format!(
                     "replay node {id:?} declares no output channels"
                 )));
             }
@@ -466,7 +478,7 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
                 min_start_delay_us: node.min_start_delay_us,
             }))
         }
-        other => Err(ConditionalError(format!(
+        other => Err(ConditionalError::message(format!(
             "node {id:?} has unknown node_type {other:?} (llm|replay)"
         ))),
     }
@@ -484,7 +496,7 @@ fn convert_edge(edge: RawEdge) -> Result<AuthoredEdge, ConditionalError> {
         })),
         (None, Some(branches)) => {
             if branches.is_empty() {
-                return Err(ConditionalError(format!(
+                return Err(ConditionalError::message(format!(
                     "conditional edge from {:?} declares no branches",
                     edge.source
                 )));
@@ -497,11 +509,11 @@ fn convert_edge(edge: RawEdge) -> Result<AuthoredEdge, ConditionalError> {
                 min_start_delay_us: edge.min_start_delay_us,
             }))
         }
-        (Some(_), Some(_)) => Err(ConditionalError(format!(
+        (Some(_), Some(_)) => Err(ConditionalError::message(format!(
             "edge from {:?} sets both `target` and `branches`",
             edge.source
         ))),
-        (None, None) => Err(ConditionalError(format!(
+        (None, None) => Err(ConditionalError::message(format!(
             "edge from {:?} sets neither `target` nor `branches`",
             edge.source
         ))),

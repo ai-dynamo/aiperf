@@ -1043,6 +1043,26 @@ fn malformed_input_serializes_input_decode_failed() {
 }
 
 #[test]
+fn conditional_yaml_decode_failures_use_the_decode_envelope() {
+    for source in ["traces: [", "traces: []\nunknown_field: true\n"] {
+        let fixture = tempfile::NamedTempFile::new().expect("create conditional fixture");
+        std::fs::write(fixture.path(), source).expect("write conditional fixture");
+        let report = json_error(&[
+            "graph",
+            "validate",
+            fixture.path().to_str().expect("UTF-8 path"),
+            "--graph-format",
+            "conditional_graph",
+            "--output-format=json",
+        ]);
+        assert!(matches!(
+            report.code,
+            GraphCommandErrorCode::InputDecodeFailed
+        ));
+    }
+}
+
+#[test]
 fn structurally_invalid_input_serializes_input_lowering_failed() {
     let fixture = tempfile::NamedTempFile::new().expect("create invalid graph fixture");
     std::fs::write(

@@ -67,14 +67,14 @@ pub fn resolve_branch_key(
     } else if let Some(weights) = &edge.branch_weights {
         sample_weighted(weights, workload_seed, &trace.id, &edge.source)?
     } else {
-        return Err(ConditionalError(format!(
+        return Err(ConditionalError::message(format!(
             "conditional edge from {:?} has no selected_branches pin, per-trace \
 distribution, or branch_weights; branching on a live output is not supported",
             edge.source
         )));
     };
     if !edge.branches.contains_key(&key) {
-        return Err(ConditionalError(format!(
+        return Err(ConditionalError::message(format!(
             "branch key {key:?} for conditional edge from {:?} is not one of {:?}",
             edge.source,
             edge.branches.keys().collect::<Vec<_>>()
@@ -102,7 +102,7 @@ fn sample_weighted(
     // `!(total > 0.0)` trips `clippy::neg_cmp_op_on_partial_ord`).
     let usable_total = total.is_finite() && total > 0.0;
     if !usable_total {
-        return Err(ConditionalError(format!(
+        return Err(ConditionalError::message(format!(
             "branch weights for source {source:?} are all non-positive"
         )));
     }
@@ -187,7 +187,7 @@ pub fn resolve_and_prune(
                 continue;
             }
             if !graph.nodes.contains_key(target) {
-                return Err(ConditionalError(format!(
+                return Err(ConditionalError::message(format!(
                     "edge targets undeclared node {target:?}"
                 )));
             }

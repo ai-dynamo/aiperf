@@ -108,8 +108,9 @@ fn message_item(
     tokenizer: &dyn TextTokenizer,
 ) -> Result<PromptItem, ConditionalError> {
     let message = OpenAiChatMessage::new(role, content);
-    let handle = intern_message(pool, &message, None, tokenizer)
-        .map_err(|error| ConditionalError(format!("node {id:?} prompt segment: {error}")))?;
+    let handle = intern_message(pool, &message, None, tokenizer).map_err(|error| {
+        ConditionalError::message(format!("node {id:?} prompt segment: {error}"))
+    })?;
     Ok(PromptItem::Seg { seg: handle })
 }
 
@@ -138,19 +139,19 @@ pub fn fold_replay_and_emit(
                 replay_ids.insert(id.clone());
                 replay_duration_ms.insert(id.clone(), replay.duration_ms);
                 let recorded = trace.replay_outputs.get(id).ok_or_else(|| {
-                    ConditionalError(format!(
+                    ConditionalError::message(format!(
                         "trace {:?} is missing replay_outputs for fired replay node {id:?}",
                         trace.id
                     ))
                 })?;
                 for channel in &replay.outputs {
                     if !state.contains_key(channel) {
-                        return Err(ConditionalError(format!(
+                        return Err(ConditionalError::message(format!(
                             "replay node {id:?} writes undeclared channel {channel:?}"
                         )));
                     }
                     let value = recorded.get(channel).ok_or_else(|| {
-                        ConditionalError(format!(
+                        ConditionalError::message(format!(
                             "trace {:?} replay_outputs[{id:?}] is missing channel {channel:?}",
                             trace.id
                         ))
@@ -211,7 +212,7 @@ pub fn fold_replay_and_emit(
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("; ");
-        return Err(ConditionalError(format!(
+        return Err(ConditionalError::message(format!(
             "trace {:?} lowered to an invalid graph: {detail}",
             trace.id
         )));
@@ -221,7 +222,7 @@ pub fn fold_replay_and_emit(
     // store rejects it at construction.
     for channel in initial_state.keys() {
         if !state.contains_key(channel) {
-            return Err(ConditionalError(format!(
+            return Err(ConditionalError::message(format!(
                 "trace {:?} seeds undeclared channel {channel:?}",
                 trace.id
             )));

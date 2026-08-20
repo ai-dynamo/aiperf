@@ -462,7 +462,6 @@ impl GraphInputAdapter for ConditionalGraphRunnerGraphInputAdapter {
         let bundle =
             compile_conditional_graph_input(prepared.input, context.tokenizer, workload_seed)
                 .await
-                .map_err(|error| anyhow!(error.to_string()))
                 .context("loading and lowering direct authored conditional_graph input")?;
         ensure!(
             !bundle.programs.is_empty(),
