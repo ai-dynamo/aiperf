@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import contextlib
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch as mock_patch
@@ -52,6 +52,7 @@ from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
 from aiperf.kubernetes.phase import Phase
 from aiperf.operator.client_cache import _reset_for_testing, request_cancellation
 from aiperf.operator.handlers.monitor import (
+    _CLAIM_TRUST_WINDOW_SEC,
     _check_job_timeout,
     _fetch_jobset_or_reconcile,
     _handle_jobset_failed_condition,
@@ -104,8 +105,21 @@ def _fake_k8s_client(api: Any) -> Any:
     return _ctx()
 
 
+def _claim_stamp(age_sec: float = 0.0) -> str:
+    """A completion-claim timestamp ``age_sec`` seconds old, in CR format."""
+    return (
+        (datetime.now(UTC) - timedelta(seconds=age_sec))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
 def _body(
-    *, claimed: bool = False, phase: str | None = None, uid: str | None = None
+    *,
+    claimed: bool = False,
+    phase: str | None = None,
+    uid: str | None = None,
+    claim_age_sec: float = 0.0,
 ) -> dict[str, Any]:
     """Build an AIPerfJob body snapshot for monitor-tick tests.
 
@@ -121,7 +135,7 @@ def _body(
         metadata["uid"] = uid
     if claimed:
         metadata["annotations"] = {
-            Annotations.COMPLETION_CLAIMED: "2026-04-29T08:18:22Z"
+            Annotations.COMPLETION_CLAIMED: _claim_stamp(claim_age_sec)
         }
     body: dict[str, Any] = {"metadata": metadata}
     if phase is not None:
@@ -397,6 +411,63 @@ class TestJobTimeoutEscalation:
         assert result is True
         assert patch.status["phase"] == str(Phase.FAILED)
         custom.delete_namespaced_custom_object.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_fresh_claim_defers_to_completion(self) -> None:
+        """A live completion claim means the run is draining; never stamp FAILED."""
+        sb, patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+
+        with mock_patch(
+            "aiperf.operator.handlers.monitor.events.job_timeout"
+        ) as mock_event:
+            result = await _check_job_timeout(
+                custom,
+                body=_body(claimed=True),
+                status={"startTime": "2020-01-01T00:00:00Z"},
+                spec={"timeoutSeconds": 1.0},
+                namespace="ns",
+                jobset_name="js",
+                job_id="job-1",
+                key="ns/job-1",
+                sb=sb,
+            )
+
+        assert result is False
+        assert "phase" not in patch.status
+        custom.delete_namespaced_custom_object.assert_not_awaited()
+        mock_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_stale_claim_still_escalates(self) -> None:
+        """A stale claim must not disable ``spec.timeoutSeconds`` forever.
+
+        ``COMPLETION_CLAIMED`` is a metadata annotation, so it is writable by
+        anyone who can edit the AIPerfJob and it survives an abandoned
+        completion attempt. Honouring it without an age bound leaves a hung job
+        running past its timeout with no terminal phase, forever.
+        """
+        sb, patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+
+        with mock_patch("aiperf.operator.handlers.monitor.events.job_timeout"):
+            result = await _check_job_timeout(
+                custom,
+                body=_body(claimed=True, claim_age_sec=_CLAIM_TRUST_WINDOW_SEC + 60),
+                status={"startTime": "2020-01-01T00:00:00Z"},
+                spec={"timeoutSeconds": 1.0},
+                namespace="ns",
+                jobset_name=None,
+                job_id="job-1",
+                key="ns/job-1",
+                sb=sb,
+            )
+
+        assert result is True
+        assert patch.status["phase"] == str(Phase.FAILED)
+        assert "Job timed out" in patch.status["error"]
 
     @pytest.mark.asyncio
     async def test_timeout_with_results_exported_defers_to_completion(self) -> None:
