@@ -17,10 +17,9 @@ use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
 use crate::graph::conditional::compile_conditional_graph_input_classified;
 use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
 use crate::graph::recorded::agent_recording::{
-    BuiltinReplayRequestProfileResolver, ImportedAgentReadSet, RecordedAgentInputSource,
-    acquire_imported_agent_selection, discover_imported_agent_read_set,
-    discover_recorded_agent_input, lower_imported_agent_sessions, lower_recorded_agent_corpus,
-    parse_imported_agent_sessions, resolve_recorded_environment, snapshot_imported_agent_read_set,
+    BuiltinReplayRequestProfileResolver, ImportedAgentReadSet, ImportedAgentSelectionRequest,
+    RecordedAgentInputSource, discover_recorded_agent_input, lower_imported_agent_sessions,
+    lower_recorded_agent_corpus, parse_imported_agent_sessions, resolve_recorded_environment,
 };
 use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
@@ -608,14 +607,7 @@ fn default_agent_recording_sampling() -> String {
 }
 
 impl RecordedAgentDatasetInput {
-    fn imported_read_set(&self) -> Result<Option<ImportedAgentReadSet>> {
-        self.imported_read_set_in(None)
-    }
-
-    fn imported_read_set_in(
-        &self,
-        snapshot_root: Option<&Path>,
-    ) -> Result<Option<ImportedAgentReadSet>> {
+    fn imported_selection_request(&self) -> Result<Option<ImportedAgentSelectionRequest>> {
         if self.format != "agent_recording" {
             return Ok(None);
         }
@@ -644,14 +636,6 @@ impl RecordedAgentDatasetInput {
         {
             bail!("include_subagents applies only to Claude Code sources");
         }
-        let metadata = fs::metadata(&candidate)
-            .with_context(|| format!("reading recorded-agent input {}", candidate.display()))?;
-        if self.graph.is_none() && self.replay_root.is_none() && metadata.is_dir() {
-            return Ok(None);
-        }
-        if source_format == RecordedAgentSourceFormat::Auto && metadata.is_dir() {
-            bail!("directory imports require an explicit source_format");
-        }
         let is_imported = matches!(
             source_format,
             RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode
@@ -662,25 +646,15 @@ impl RecordedAgentDatasetInput {
         if !is_imported {
             return Ok(None);
         }
-        let read_set = match snapshot_root {
-            Some(snapshot_root) => snapshot_imported_agent_read_set(
-                &self.path,
-                replay_root,
-                source_format,
-                include_subagents,
-                snapshot_root,
-            ),
-            None => discover_imported_agent_read_set(
-                &self.path,
-                replay_root,
-                source_format,
-                include_subagents,
-            ),
-        };
-        read_set
-            .map(Some)
-            .map_err(|error| anyhow!(error.to_string()))
-            .context("discovering imported recorded-agent session input")
+        ImportedAgentSelectionRequest::new(
+            self.path.clone(),
+            replay_root.map(Path::to_path_buf),
+            source_format,
+            include_subagents,
+        )
+        .map(Some)
+        .map_err(|error| anyhow!(error.to_string()))
+        .context("configuring imported recorded-agent session input")
     }
 
     fn prepare(
@@ -725,30 +699,17 @@ impl RecordedAgentDatasetInput {
             .graph
             .as_ref()
             .map_or(RecordedAgentSourceFormat::Auto, |graph| graph.source_format);
-        let include_subagents = self
-            .graph
-            .as_ref()
-            .and_then(|graph| graph.include_subagents);
         // The graph-inspection helper authors only the four file-dataset
         // fields. A bare local directory is therefore a strict recording
         // corpus, while any authored graph policy retains the explicit import
         // source-format requirement below.
-        let acquired = if imported_read_set.is_none()
-            && matches!(
-                source_format,
-                RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode
-            ) {
-            Some(
-                acquire_imported_agent_selection(
-                    &self.path,
-                    replay_root,
-                    source_format,
-                    include_subagents,
-                )
-                .map_err(|error| anyhow!(error.to_string()))?,
-            )
-        } else {
-            None
+        let acquired = match (imported_read_set, self.imported_selection_request()?) {
+            (None, Some(request)) => Some(
+                request
+                    .acquire()
+                    .map_err(|error| anyhow!(error.to_string()))?,
+            ),
+            _ => None,
         };
         let resolved = if let Some(read_set) =
             imported_read_set.or_else(|| acquired.as_ref().map(|selection| selection.read_set()))
@@ -763,12 +724,7 @@ impl RecordedAgentDatasetInput {
         } else if self.graph.is_none() && self.replay_root.is_none() && self.path.is_dir() {
             strict_recorded_agent_graph_source(&self.path, None)?
         } else {
-            resolve_recorded_agent_graph_source(
-                &self.path,
-                replay_root,
-                source_format,
-                include_subagents,
-            )?
+            resolve_recorded_agent_graph_source(&self.path, replay_root, source_format)?
         };
         if matches!(&resolved, ResolvedRecordedAgentGraphSource::Imported { .. }) {
             let graph = self.graph.as_ref();
@@ -926,24 +882,13 @@ impl RecordedAgentDatasetInput {
     }
 }
 
-/// Discover the immutable imported-session read set selected by one graph dataset.
-///
-/// The graph adapter and cellular controller share this selection seam so shipping
-/// cannot diverge from the loader's source-format discriminator.
-pub fn selected_imported_agent_read_set(dataset: &Value) -> Result<Option<ImportedAgentReadSet>> {
-    let input: RecordedAgentDatasetInput = serde_json::from_value(dataset.clone())
-        .context("decoding recorded-agent input for imported-session selection")?;
-    input.imported_read_set()
-}
-
-/// Select and materialize an imported-session read set in controller-owned scratch.
-pub fn snapshot_selected_imported_agent_read_set(
+/// Select the configuration-only imported-session acquisition request for one graph dataset.
+pub fn selected_imported_agent_request(
     dataset: &Value,
-    snapshot_root: &Path,
-) -> Result<Option<ImportedAgentReadSet>> {
+) -> Result<Option<ImportedAgentSelectionRequest>> {
     let input: RecordedAgentDatasetInput = serde_json::from_value(dataset.clone())
         .context("decoding recorded-agent input for imported-session selection")?;
-    input.imported_read_set_in(Some(snapshot_root))
+    input.imported_selection_request()
 }
 
 fn stage_pinch_task_workspace(
@@ -1129,7 +1074,6 @@ fn resolve_recorded_agent_graph_source(
     path: &PathBuf,
     replay_root: Option<&std::path::Path>,
     source_format: RecordedAgentSourceFormat,
-    include_subagents: Option<bool>,
 ) -> Result<ResolvedRecordedAgentGraphSource> {
     if source_format == RecordedAgentSourceFormat::MiniSweAgent {
         ensure!(
@@ -1138,35 +1082,6 @@ fn resolve_recorded_agent_graph_source(
             "strict Mini-SWE-Agent replay rejects JSONL session sources"
         );
         return strict_recorded_agent_graph_source(path, replay_root);
-    }
-    if matches!(
-        source_format,
-        RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode
-    ) {
-        return imported_recorded_agent_graph_source(
-            path,
-            replay_root,
-            source_format,
-            include_subagents,
-        );
-    }
-    let candidate = replay_root.map_or_else(|| path.clone(), |root| root.join(path));
-    let metadata = fs::metadata(&candidate)
-        .with_context(|| format!("reading recorded-agent input {}", candidate.display()))?;
-    ensure!(
-        !metadata.is_dir(),
-        "directory imports require an explicit source_format"
-    );
-    if candidate
-        .extension()
-        .is_some_and(|extension| extension == "jsonl")
-    {
-        return imported_recorded_agent_graph_source(
-            path,
-            replay_root,
-            RecordedAgentSourceFormat::Auto,
-            include_subagents,
-        );
     }
     strict_recorded_agent_graph_source(path, replay_root)
 }
@@ -1180,23 +1095,6 @@ fn strict_recorded_agent_graph_source(
         .map_err(|error| anyhow!(error.to_string()))
         .context("discovering strict recorded-agent graph input")?;
     Ok(ResolvedRecordedAgentGraphSource::Strict(corpus))
-}
-
-fn imported_recorded_agent_graph_source(
-    path: &PathBuf,
-    replay_root: Option<&std::path::Path>,
-    source_format: RecordedAgentSourceFormat,
-    include_subagents: Option<bool>,
-) -> Result<ResolvedRecordedAgentGraphSource> {
-    let read_set =
-        discover_imported_agent_read_set(path, replay_root, source_format, include_subagents)
-            .map_err(|error| anyhow!(error.to_string()))
-            .context("discovering imported recorded-agent session input")?;
-    let source = read_set.source;
-    let sessions = parse_imported_agent_sessions(&read_set)
-        .map_err(|error| anyhow!(error.to_string()))
-        .context("parsing imported recorded-agent session input")?;
-    Ok(ResolvedRecordedAgentGraphSource::Imported { source, sessions })
 }
 
 fn recorded_agent_source(

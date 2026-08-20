@@ -18,12 +18,11 @@ use std::path::PathBuf;
 
 use bytes::Bytes;
 
+use crate::config::model::dataset::RecordedAgentSourceFormat;
+
 pub use claude_code::parse_claude_session;
 pub use codex::parse_codex_session;
-pub use discovery::{
-    acquire_imported_agent_selection, detect_imported_agent_source,
-    discover_imported_agent_read_set, snapshot_imported_agent_read_set,
-};
+pub use discovery::{detect_imported_agent_source, discover_imported_agent_read_set};
 pub use lowering::lower_imported_agent_sessions;
 
 /// The provider-native session format selected for an imported recording.
@@ -86,9 +85,70 @@ pub struct AcquiredImportedAgentSelection {
     pub(crate) read_set: ImportedAgentReadSet,
 }
 
+/// A configuration-only request to acquire one imported session selection.
+///
+/// Constructing this request intentionally performs no filesystem inspection.
+/// Acquisition opens every selected source exactly once and retains those
+/// descriptors until their contents have been copied into private scratch.
+pub struct ImportedAgentSelectionRequest {
+    path: PathBuf,
+    replay_root: Option<PathBuf>,
+    source_format: RecordedAgentSourceFormat,
+    include_subagents: Option<bool>,
+}
+
+impl ImportedAgentSelectionRequest {
+    /// Validate source-format compatibility without reading the requested path.
+    pub(crate) fn new(
+        path: PathBuf,
+        replay_root: Option<PathBuf>,
+        source_format: RecordedAgentSourceFormat,
+        include_subagents: Option<bool>,
+    ) -> Result<Self, ImportedAgentError> {
+        if source_format == RecordedAgentSourceFormat::MiniSweAgent {
+            return Err(ImportedAgentError::new(
+                &path,
+                0,
+                "unknown",
+                "unknown",
+                "Mini-SWE-Agent is not an imported session source",
+            ));
+        }
+        if include_subagents.is_some() && source_format == RecordedAgentSourceFormat::Codex {
+            return Err(ImportedAgentError::new(
+                &path,
+                0,
+                "codex",
+                "unknown",
+                "include_subagents applies only to Claude Code sources",
+            ));
+        }
+        Ok(Self {
+            path,
+            replay_root,
+            source_format,
+            include_subagents,
+        })
+    }
+
+    /// Acquire into a private temporary directory.
+    pub fn acquire(self) -> Result<AcquiredImportedAgentSelection, ImportedAgentError> {
+        discovery::acquire_selection(self, None)
+    }
+
+    /// Acquire into a private temporary directory below `parent`.
+    pub fn acquire_in(
+        self,
+        parent: &std::path::Path,
+    ) -> Result<AcquiredImportedAgentSelection, ImportedAgentError> {
+        discovery::acquire_selection(self, Some(parent))
+    }
+}
+
 impl AcquiredImportedAgentSelection {
     /// Return the scratch-backed exact source authority.
     pub fn read_set(&self) -> &ImportedAgentReadSet {
+        debug_assert!(self.read_set.root.starts_with(self.scratch.path()));
         &self.read_set
     }
 }

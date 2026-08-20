@@ -16,34 +16,148 @@ use serde_json::Value;
 use crate::config::model::dataset::RecordedAgentSourceFormat;
 
 use super::{
-    AcquiredImportedAgentSelection, ImportedAgentError, ImportedAgentReadSet, ImportedAgentSource,
-    ImportedAgentSourceFile, ImportedSessionFamily,
+    AcquiredImportedAgentSelection, ImportedAgentError, ImportedAgentReadSet,
+    ImportedAgentSelectionRequest, ImportedAgentSource, ImportedAgentSourceFile,
+    ImportedSessionFamily,
 };
 
-/// Acquire one private immutable imported-session selection.
-pub fn acquire_imported_agent_selection(
-    path: &Path,
-    replay_root: Option<&Path>,
-    source: RecordedAgentSourceFormat,
-    include_subagents: Option<bool>,
-) -> Result<AcquiredImportedAgentSelection, ImportedAgentError> {
-    let scratch = tempfile::Builder::new()
-        .prefix("aiperf-imported-session-")
-        .tempdir()
-        .map_err(|_| {
+struct DiscoveredImportedSelection {
+    root: PathBuf,
+    selected_path: PathBuf,
+    requested_source: RecordedAgentSourceFormat,
+    candidates: Vec<(PathBuf, PathBuf, ImportedSessionFamily)>,
+}
+
+struct OpenedImportedAgentSource {
+    source_path: PathBuf,
+    relative_path: PathBuf,
+    family: ImportedSessionFamily,
+    file: fs::File,
+}
+
+impl OpenedImportedAgentSource {
+    fn open(
+        source_path: PathBuf,
+        relative_path: PathBuf,
+        family: ImportedSessionFamily,
+    ) -> Result<Self, ImportedAgentError> {
+        let file = open_source_file(&source_path, "unknown")?;
+        Ok(Self {
+            source_path,
+            relative_path,
+            family,
+            file,
+        })
+    }
+
+    fn materialize(
+        mut self,
+        snapshot_root: &Path,
+        expected_source: ImportedAgentSource,
+    ) -> Result<ImportedAgentSourceFile, ImportedAgentError> {
+        self.file.seek(SeekFrom::Start(0)).map_err(|_| {
             error(
-                path,
+                &self.source_path,
+                0,
+                resolved_source_name(expected_source),
+                "unknown",
+                "cannot read source file",
+            )
+        })?;
+        if scan_source(&self.source_path, &mut self.file, Some(expected_source))?
+            != Some(expected_source)
+        {
+            return Err(error(
+                &self.source_path,
+                0,
+                resolved_source_name(expected_source),
+                "unknown",
+                "source marker does not match selected source",
+            ));
+        }
+        self.file.seek(SeekFrom::Start(0)).map_err(|_| {
+            error(
+                &self.source_path,
+                0,
+                resolved_source_name(expected_source),
+                "unknown",
+                "cannot read source file",
+            )
+        })?;
+        let target = snapshot_root.join(&self.relative_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|_| {
+                error(
+                    &target,
+                    0,
+                    "unknown",
+                    "unknown",
+                    "cannot create snapshot directory",
+                )
+            })?;
+        }
+        let mut target_file = fs::File::create(&target).map_err(|_| {
+            error(
+                &target,
                 0,
                 "unknown",
                 "unknown",
-                "cannot create import snapshot",
+                "cannot create snapshot source",
             )
         })?;
+        std::io::copy(&mut self.file, &mut target_file).map_err(|_| {
+            error(
+                &self.source_path,
+                0,
+                resolved_source_name(expected_source),
+                "unknown",
+                "cannot snapshot source file",
+            )
+        })?;
+        #[cfg(unix)]
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o400)).map_err(|_| {
+            error(
+                &target,
+                0,
+                "unknown",
+                "unknown",
+                "cannot secure snapshot source",
+            )
+        })?;
+        Ok(ImportedAgentSourceFile {
+            path: target,
+            relative_path: self.relative_path,
+            family: self.family,
+        })
+    }
+}
+
+pub(super) fn acquire_selection(
+    request: ImportedAgentSelectionRequest,
+    parent: Option<&Path>,
+) -> Result<AcquiredImportedAgentSelection, ImportedAgentError> {
+    let scratch = match parent {
+        Some(parent) => tempfile::Builder::new()
+            .prefix("aiperf-imported-session-")
+            .tempdir_in(parent),
+        None => tempfile::Builder::new()
+            .prefix("aiperf-imported-session-")
+            .tempdir(),
+    }
+    .map_err(|_| {
+        error(
+            &request.path,
+            0,
+            "unknown",
+            "unknown",
+            "cannot create import snapshot",
+        )
+    })?;
     #[cfg(unix)]
     std::fs::set_permissions(scratch.path(), std::fs::Permissions::from_mode(0o700)).map_err(
         |_| {
             error(
-                path,
+                &request.path,
                 0,
                 "unknown",
                 "unknown",
@@ -51,27 +165,91 @@ pub fn acquire_imported_agent_selection(
             )
         },
     )?;
-    let read_set = snapshot_imported_agent_read_set(
-        path,
-        replay_root,
-        source,
-        include_subagents,
-        scratch.path(),
-    )?;
-    #[cfg(unix)]
-    for file in &read_set.files {
-        std::fs::set_permissions(&file.path, std::fs::Permissions::from_mode(0o400)).map_err(
-            |_| {
+    let mut discovered = discover_selection(&request)?;
+    let candidates = std::mem::take(&mut discovered.candidates);
+    let source = match discovered.requested_source {
+        RecordedAgentSourceFormat::Auto => {
+            let mut candidates = candidates.into_iter();
+            let (source_path, relative_path, family) = candidates.next().ok_or_else(|| {
                 error(
-                    &file.path,
+                    &discovered.selected_path,
                     0,
                     "unknown",
                     "unknown",
-                    "cannot secure snapshot source",
+                    "no recognized source marker in scan",
                 )
-            },
-        )?;
+            })?;
+            let mut opened = OpenedImportedAgentSource::open(source_path, relative_path, family)?;
+            let source =
+                scan_source(&opened.source_path, &mut opened.file, None)?.ok_or_else(|| {
+                    error(
+                        &opened.source_path,
+                        0,
+                        "unknown",
+                        "unknown",
+                        "no recognized source marker in scan",
+                    )
+                })?;
+            if request.include_subagents.is_some() && source != ImportedAgentSource::ClaudeCode {
+                return Err(error(
+                    &discovered.selected_path,
+                    0,
+                    resolved_source_name(source),
+                    "unknown",
+                    "include_subagents applies only to Claude Code sources",
+                ));
+            }
+            let files = vec![opened.materialize(scratch.path(), source)?];
+            return acquired_selection(discovered, scratch, source, files);
+        }
+        RecordedAgentSourceFormat::Codex => ImportedAgentSource::Codex,
+        RecordedAgentSourceFormat::ClaudeCode => ImportedAgentSource::ClaudeCode,
+        RecordedAgentSourceFormat::MiniSweAgent => unreachable!("validated by request"),
+    };
+    if request.include_subagents.is_some() && source != ImportedAgentSource::ClaudeCode {
+        return Err(error(
+            &discovered.selected_path,
+            0,
+            resolved_source_name(source),
+            "unknown",
+            "include_subagents applies only to Claude Code sources",
+        ));
     }
+    let mut files = Vec::with_capacity(candidates.len());
+    for (source_path, relative_path, family) in candidates {
+        let opened = OpenedImportedAgentSource::open(source_path, relative_path, family)?;
+        files.push(opened.materialize(scratch.path(), source)?);
+    }
+    if source == ImportedAgentSource::Codex {
+        files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    }
+    acquired_selection(discovered, scratch, source, files)
+}
+
+fn acquired_selection(
+    discovered: DiscoveredImportedSelection,
+    scratch: tempfile::TempDir,
+    source: ImportedAgentSource,
+    files: Vec<ImportedAgentSourceFile>,
+) -> Result<AcquiredImportedAgentSelection, ImportedAgentError> {
+    let selected_relative = discovered
+        .selected_path
+        .strip_prefix(&discovered.root)
+        .map_err(|_| {
+            error(
+                &discovered.selected_path,
+                0,
+                "unknown",
+                "unknown",
+                "selected source escapes discovery root",
+            )
+        })?;
+    let read_set = ImportedAgentReadSet {
+        root: scratch.path().to_path_buf(),
+        selected_path: scratch.path().join(selected_relative),
+        source,
+        files,
+    };
     Ok(AcquiredImportedAgentSelection { scratch, read_set })
 }
 
@@ -102,7 +280,56 @@ pub fn discover_imported_agent_read_set(
     source: RecordedAgentSourceFormat,
     include_subagents: Option<bool>,
 ) -> Result<ImportedAgentReadSet, ImportedAgentError> {
-    let selected_path = canonical_selected_path(path, replay_root)?;
+    let request = ImportedAgentSelectionRequest::new(
+        path.to_path_buf(),
+        replay_root.map(Path::to_path_buf),
+        source,
+        include_subagents,
+    )?;
+    let discovered = discover_selection(&request)?;
+    let source = match discovered.requested_source {
+        RecordedAgentSourceFormat::Auto => detect_imported_agent_source(&discovered.selected_path)?,
+        RecordedAgentSourceFormat::Codex => ImportedAgentSource::Codex,
+        RecordedAgentSourceFormat::ClaudeCode => ImportedAgentSource::ClaudeCode,
+        RecordedAgentSourceFormat::MiniSweAgent => unreachable!("validated by request"),
+    };
+    let mut files = Vec::with_capacity(discovered.candidates.len());
+    for (path, relative_path, family) in discovered.candidates {
+        if scan_source(
+            &path,
+            open_source_file(&path, resolved_source_name(source))?,
+            Some(source),
+        )? != Some(source)
+        {
+            return Err(error(
+                &path,
+                0,
+                resolved_source_name(source),
+                "unknown",
+                "source marker does not match selected source",
+            ));
+        }
+        files.push(ImportedAgentSourceFile {
+            path,
+            relative_path,
+            family,
+        });
+    }
+    if source == ImportedAgentSource::Codex {
+        files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    }
+    Ok(ImportedAgentReadSet {
+        root: discovered.root,
+        selected_path: discovered.selected_path,
+        source,
+        files,
+    })
+}
+
+fn discover_selection(
+    request: &ImportedAgentSelectionRequest,
+) -> Result<DiscoveredImportedSelection, ImportedAgentError> {
+    let selected_path = canonical_selected_path(&request.path, request.replay_root.as_deref())?;
     let metadata = fs::symlink_metadata(&selected_path).map_err(|_| {
         error(
             &selected_path,
@@ -123,22 +350,13 @@ pub fn discover_imported_agent_read_set(
             "selected path must be a regular file or directory",
         ));
     }
-    if source == RecordedAgentSourceFormat::Auto && is_directory {
+    if request.source_format == RecordedAgentSourceFormat::Auto && is_directory {
         return Err(error(
             &selected_path,
             0,
             "unknown",
             "unknown",
             "directory imports require an explicit source_format",
-        ));
-    }
-    if source == RecordedAgentSourceFormat::MiniSweAgent {
-        return Err(error(
-            &selected_path,
-            0,
-            "unknown",
-            "unknown",
-            "Mini-SWE-Agent is not an imported session source",
         ));
     }
     if is_file && !is_jsonl(&selected_path) {
@@ -151,54 +369,20 @@ pub fn discover_imported_agent_read_set(
         ));
     }
 
-    let root = resolve_root(&selected_path, is_directory, replay_root)?;
-    let resolved_source = match source {
-        RecordedAgentSourceFormat::Auto => scan_source(
-            &selected_path,
-            open_source_file(&selected_path, "unknown")?,
-            None,
-        )?
-        .ok_or_else(|| {
-            error(
-                &selected_path,
-                0,
-                "unknown",
-                "unknown",
-                "no recognized source marker in scan",
-            )
-        })?,
-        RecordedAgentSourceFormat::Codex => ImportedAgentSource::Codex,
-        RecordedAgentSourceFormat::ClaudeCode => ImportedAgentSource::ClaudeCode,
-        RecordedAgentSourceFormat::MiniSweAgent => {
-            return Err(error(
-                &selected_path,
-                0,
-                "unknown",
-                "unknown",
-                "Mini-SWE-Agent is not an imported session source",
-            ));
-        }
-    };
-    if include_subagents.is_some() && resolved_source != ImportedAgentSource::ClaudeCode {
-        return Err(error(
-            &selected_path,
-            0,
-            resolved_source_name(resolved_source),
-            "unknown",
-            "include_subagents applies only to Claude Code sources",
-        ));
-    }
-    let candidates = match (resolved_source, is_directory) {
-        (ImportedAgentSource::Codex, true) => enumerate_codex(&selected_path)?,
-        (ImportedAgentSource::Codex, false) => {
+    let root = resolve_root(&selected_path, is_directory, request.replay_root.as_deref())?;
+    let candidates = match (request.source_format, is_directory) {
+        (RecordedAgentSourceFormat::Codex, true) => enumerate_codex(&selected_path)?,
+        (RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::Auto, false) => {
             vec![(selected_path.clone(), ImportedSessionFamily::Session)]
         }
-        (ImportedAgentSource::ClaudeCode, true) => {
-            enumerate_claude(&selected_path, include_subagents.unwrap_or(true))?
+        (RecordedAgentSourceFormat::ClaudeCode, true) => {
+            enumerate_claude(&selected_path, request.include_subagents.unwrap_or(true))?
         }
-        (ImportedAgentSource::ClaudeCode, false) => {
+        (RecordedAgentSourceFormat::ClaudeCode, false) => {
             vec![(selected_path.clone(), ImportedSessionFamily::Session)]
         }
+        (RecordedAgentSourceFormat::Auto, true) => unreachable!("directory Auto is rejected"),
+        (RecordedAgentSourceFormat::MiniSweAgent, _) => unreachable!("validated by request"),
     };
 
     let mut canonical_paths = HashSet::new();
@@ -209,30 +393,16 @@ pub fn discover_imported_agent_read_set(
             return Err(error(
                 &candidate,
                 0,
-                resolved_source_name(resolved_source),
+                "unknown",
                 "unknown",
                 "duplicate canonical source path",
-            ));
-        }
-        if scan_source(
-            &canonical,
-            open_source_file(&canonical, resolved_source_name(resolved_source))?,
-            Some(resolved_source),
-        )? != Some(resolved_source)
-        {
-            return Err(error(
-                &canonical,
-                0,
-                resolved_source_name(resolved_source),
-                "unknown",
-                "source marker does not match selected source",
             ));
         }
         let relative_path = canonical.strip_prefix(&root).map_err(|_| {
             error(
                 &canonical,
                 0,
-                resolved_source_name(resolved_source),
+                "unknown",
                 "unknown",
                 "source escapes discovery root",
             )
@@ -242,109 +412,19 @@ pub fn discover_imported_agent_read_set(
             return Err(error(
                 &canonical,
                 0,
-                resolved_source_name(resolved_source),
+                "unknown",
                 "unknown",
                 "invalid root-relative source path",
             ));
         }
-        files.push(ImportedAgentSourceFile {
-            path: canonical,
-            relative_path,
-            family,
-        });
+        files.push((canonical, relative_path, family));
     }
-    if resolved_source == ImportedAgentSource::Codex {
-        files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    }
-    Ok(ImportedAgentReadSet {
+    Ok(DiscoveredImportedSelection {
         root,
         selected_path,
-        source: resolved_source,
-        files,
+        requested_source: request.source_format,
+        candidates: files,
     })
-}
-
-/// Copy the exact discovered source set into a private immutable scratch root.
-///
-/// The read set stores paths, not source bytes: session parsers and cellular HTTP
-/// serving therefore stream files from this controller-owned snapshot.
-pub fn snapshot_imported_agent_read_set(
-    path: &Path,
-    replay_root: Option<&Path>,
-    source: RecordedAgentSourceFormat,
-    include_subagents: Option<bool>,
-    snapshot_root: &Path,
-) -> Result<ImportedAgentReadSet, ImportedAgentError> {
-    let mut read_set =
-        discover_imported_agent_read_set(path, replay_root, source, include_subagents)?;
-    let selected_relative = read_set
-        .selected_path
-        .strip_prefix(&read_set.root)
-        .map_err(|_| {
-            error(
-                &read_set.selected_path,
-                0,
-                "unknown",
-                "unknown",
-                "selected source escapes discovery root",
-            )
-        })?
-        .to_path_buf();
-    for file in &mut read_set.files {
-        let mut source = open_source_file(&file.path, resolved_source_name(read_set.source))?;
-        if scan_source(&file.path, &mut source, Some(read_set.source))? != Some(read_set.source) {
-            return Err(error(
-                &file.path,
-                0,
-                resolved_source_name(read_set.source),
-                "unknown",
-                "source marker does not match selected source",
-            ));
-        }
-        let target = snapshot_root.join(&file.relative_path);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|_| {
-                error(
-                    &target,
-                    0,
-                    "unknown",
-                    "unknown",
-                    "cannot create snapshot directory",
-                )
-            })?;
-        }
-        source.seek(SeekFrom::Start(0)).map_err(|_| {
-            error(
-                &file.path,
-                0,
-                "unknown",
-                "unknown",
-                "cannot read source file",
-            )
-        })?;
-        let mut target_file = fs::File::create(&target).map_err(|_| {
-            error(
-                &target,
-                0,
-                "unknown",
-                "unknown",
-                "cannot create snapshot source",
-            )
-        })?;
-        std::io::copy(&mut source, &mut target_file).map_err(|_| {
-            error(
-                &file.path,
-                0,
-                "unknown",
-                "unknown",
-                "cannot snapshot source file",
-            )
-        })?;
-        file.path = target;
-    }
-    read_set.root = snapshot_root.to_path_buf();
-    read_set.selected_path = snapshot_root.join(selected_relative);
-    Ok(read_set)
 }
 
 fn resolve_root(
@@ -869,76 +949,112 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
-    #[cfg(unix)]
-    #[test]
-    fn acquired_selection_uses_private_immutable_snapshot_after_source_swap() {
-        use std::os::unix::fs::PermissionsExt;
+    const DESCRIPTOR_LIMIT_CHILD_ENV: &str = "AIPERF_IMPORTED_ACQUISITION_DESCRIPTOR_LIMIT";
 
+    #[test]
+    fn imported_acquisition_materializes_explicit_sources_with_bounded_descriptors() {
+        if std::env::var_os(DESCRIPTOR_LIMIT_CHILD_ENV).is_some() {
+            let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            unsafe {
+                assert_eq!(libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()), 0);
+            }
+            let mut limit = unsafe { limit.assume_init() };
+            limit.rlim_cur = limit.rlim_cur.min(32);
+            unsafe {
+                assert_eq!(libc::setrlimit(libc::RLIMIT_NOFILE, &limit), 0);
+            }
+            let temporary = tempfile::tempdir().unwrap();
+            for index in 0..64 {
+                std::fs::write(
+                    temporary.path().join(format!("session-{index:03}.jsonl")),
+                    b"{\"type\":\"session_meta\",\"payload\":{}}\n",
+                )
+                .unwrap();
+            }
+            let request = ImportedAgentSelectionRequest::new(
+                temporary.path().to_path_buf(),
+                None,
+                RecordedAgentSourceFormat::Codex,
+                None,
+            )
+            .unwrap();
+            let selection = request.acquire().expect("acquire all explicit sources");
+            assert_eq!(selection.read_set().files.len(), 64);
+            return;
+        }
+
+        let executable = std::env::current_exe().unwrap();
+        let status = std::process::Command::new(executable)
+            .arg("--exact")
+            .arg("graph::recorded::agent_recording::import::discovery::tests::imported_acquisition_materializes_explicit_sources_with_bounded_descriptors")
+            .arg("--nocapture")
+            .env(DESCRIPTOR_LIMIT_CHILD_ENV, "1")
+            .status()
+            .expect("run descriptor-limited acquisition child");
+        assert!(
+            status.success(),
+            "descriptor-limited child failed: {status}"
+        );
+    }
+
+    #[test]
+    fn imported_acquisition_opened_source_copy_is_bound_to_open_inode() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        let replacement = temporary.path().join("replacement.jsonl");
+        let original = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n";
+        std::fs::write(&source, original).unwrap();
+
+        let opened = OpenedImportedAgentSource::open(
+            source.clone(),
+            PathBuf::from("session.jsonl"),
+            ImportedSessionFamily::Session,
+        )
+        .expect("open original source once");
+        std::fs::write(
+            &replacement,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n",
+        )
+        .unwrap();
+        std::fs::rename(&replacement, &source).unwrap();
+
+        let scratch = tempfile::tempdir().unwrap();
+        let file = opened
+            .materialize(scratch.path(), ImportedAgentSource::Codex)
+            .expect("materialize opened source");
+        assert_eq!(std::fs::read(file.path).unwrap(), original);
+    }
+
+    #[test]
+    fn imported_acquisition_auto_jsonl_owns_original_after_path_replacement() {
         let temporary = tempfile::tempdir().unwrap();
         let source = temporary.path().join("session.jsonl");
         std::fs::write(
             &source,
-            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n",
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}}\n",
+            ),
         )
         .unwrap();
-        let selection =
-            acquire_imported_agent_selection(&source, None, RecordedAgentSourceFormat::Codex, None)
-                .unwrap();
+        let request = ImportedAgentSelectionRequest::new(
+            source.clone(),
+            None,
+            RecordedAgentSourceFormat::Auto,
+            None,
+        )
+        .unwrap();
+        let selection = request.acquire().unwrap();
         std::fs::write(
             &source,
             b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n",
         )
         .unwrap();
 
-        let read_set = selection.read_set();
-        assert_eq!(
-            std::fs::metadata(&read_set.root)
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-        assert_eq!(
-            std::fs::metadata(&read_set.files[0].path)
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o400
-        );
-        assert!(
-            std::fs::read(&read_set.files[0].path)
-                .unwrap()
-                .windows(b"original".len())
-                .any(|part| part == b"original")
-        );
-    }
-
-    #[test]
-    fn snapshot_discovery_keeps_the_opened_source_after_a_caller_swap() {
-        let temporary = tempfile::tempdir().unwrap();
-        let source = temporary.path().join("session.jsonl");
-        let snapshot = temporary.path().join("snapshot");
-        let original = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n";
-        std::fs::write(&source, original).unwrap();
-
-        let read_set = snapshot_imported_agent_read_set(
-            &source,
-            None,
-            RecordedAgentSourceFormat::Codex,
-            None,
-            &snapshot,
-        )
-        .unwrap();
-        std::fs::write(
-            &source,
-            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"swapped\"}}\n",
-        )
-        .unwrap();
-
-        assert_eq!(read_set.root, snapshot);
-        assert_eq!(std::fs::read(&read_set.files[0].path).unwrap(), original);
+        let sessions = super::super::parse_imported_agent_sessions(selection.read_set()).unwrap();
+        assert_eq!(selection.read_set().source, ImportedAgentSource::Codex);
+        assert_eq!(sessions[0].session_id, "original");
     }
 
     #[test]

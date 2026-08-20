@@ -1458,12 +1458,12 @@ mod tests {
             "path": caller_source,
             "graph": {"source_format": "codex"}
         });
-        let read_set = crate::engine::graph_input::snapshot_selected_imported_agent_read_set(
-            &dataset,
-            &temporary.path().join("controller-snapshot"),
-        )
-        .unwrap()
-        .unwrap();
+        let acquired = crate::engine::graph_input::selected_imported_agent_request(&dataset)
+            .unwrap()
+            .unwrap()
+            .acquire_in(temporary.path())
+            .unwrap();
+        let read_set = acquired.read_set();
         let name = read_set.files[0]
             .relative_path
             .to_string_lossy()
@@ -1526,11 +1526,14 @@ mod tests {
         );
         let (landed_bytes, landing_guard) = downloaded.into_execution_parts();
         let landed: serde_json::Value = serde_json::from_slice(&landed_bytes).unwrap();
-        let landed_read_set = crate::engine::graph_input::selected_imported_agent_read_set(
+        let landed_acquired = crate::engine::graph_input::selected_imported_agent_request(
             landed.pointer("/run/cfg/datasets/0").unwrap(),
         )
         .unwrap()
+        .unwrap()
+        .acquire()
         .unwrap();
+        let landed_read_set = landed_acquired.read_set();
         assert_eq!(
             crate::graph::recorded::agent_recording::parse_imported_agent_sessions(
                 &landed_read_set
@@ -1566,12 +1569,12 @@ mod tests {
             "path": caller_source,
             "graph": {"source_format": "codex"}
         });
-        let read_set = crate::engine::graph_input::snapshot_selected_imported_agent_read_set(
-            &dataset,
-            &temporary.path().join("controller-snapshot"),
-        )
-        .unwrap()
-        .unwrap();
+        let acquired = crate::engine::graph_input::selected_imported_agent_request(&dataset)
+            .unwrap()
+            .unwrap()
+            .acquire_in(temporary.path())
+            .unwrap();
+        let read_set = acquired.read_set();
         std::fs::write(
             &caller_source,
             b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"replacement\"}]}}\n",
@@ -1587,11 +1590,14 @@ mod tests {
         let landed =
             download_cell_dataset_if_needed(serde_json::to_vec(&envelope).unwrap()).unwrap();
         let landed: serde_json::Value = serde_json::from_slice(landed.bytes()).unwrap();
-        let landed_read_set = crate::engine::graph_input::selected_imported_agent_read_set(
+        let landed_acquired = crate::engine::graph_input::selected_imported_agent_request(
             landed.pointer("/run/cfg/datasets/0").unwrap(),
         )
         .unwrap()
+        .unwrap()
+        .acquire()
         .unwrap();
+        let landed_read_set = landed_acquired.read_set();
         assert_eq!(
             crate::graph::recorded::agent_recording::parse_imported_agent_sessions(
                 &landed_read_set

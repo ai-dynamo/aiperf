@@ -550,16 +550,16 @@ pub fn run_cellular(
     let dataset_format = envelope
         .pointer("/run/cfg/datasets/0/format")
         .and_then(serde_json::Value::as_str);
-    let imported_read_set = if dataset_format == Some("agent_recording") {
+    let imported_request = if dataset_format == Some("agent_recording") {
         envelope
             .pointer("/run/cfg/datasets/0")
-            .map(crate::engine::graph_input::selected_imported_agent_read_set)
+            .map(crate::engine::graph_input::selected_imported_agent_request)
             .transpose()?
             .flatten()
     } else {
         None
     };
-    let imported_delivery = imported_read_set
+    let imported_delivery = imported_request
         .as_ref()
         .map(|_| {
             if crate::engine::cellular_cell::http_artifact_shipping_enabled()
@@ -589,7 +589,7 @@ pub fn run_cellular(
     // loader would read (`enumerate_recorded_trace_files`), reconstructed per cell from
     // the manifest. dag_jsonl reads a single file only, so a dag_jsonl directory/prefix
     // still fails closed.
-    let dataset_plan = if dataset_ship && imported_read_set.is_none() {
+    let dataset_plan = if dataset_ship && imported_request.is_none() {
         let source = dataset_source
             .as_ref()
             .expect("dataset_ship implies a source");
@@ -603,7 +603,7 @@ pub fn run_cellular(
             format,
             source,
             replay_root,
-            imported_read_set.as_ref(),
+            None,
         )?)
     } else {
         None
@@ -655,21 +655,18 @@ pub fn run_cellular(
         // could briefly recreate part of its `cell_dir` in that window. That is benign
         // — a cell's artifacts are discarded, and its records were already shipped if
         // it got far enough to matter. (A crashed run's data is not trusted regardless.)
-        let imported_read_set = match imported_read_set {
-            Some(_) => envelope
-                .pointer("/run/cfg/datasets/0")
-                .map(|dataset| {
-                    crate::engine::graph_input::snapshot_selected_imported_agent_read_set(
-                        dataset,
-                        &temp_root.join("imported-session"),
-                    )
-                })
-                .transpose()?
-                .flatten(),
-            None => None,
-        };
+        let acquired_imported = imported_request
+            .map(|request| {
+                request
+                    .acquire_in(&temp_root)
+                    .map_err(|error| anyhow!(error.to_string()))
+            })
+            .transpose()?;
+        let imported_read_set = acquired_imported
+            .as_ref()
+            .map(|selection| selection.read_set());
         let dataset_plan = match imported_read_set.as_ref() {
-            Some(read_set) => Some(build_imported_agent_serve_plan(read_set.clone())?),
+            Some(read_set) => Some(build_imported_agent_serve_plan(read_set)?),
             None => dataset_plan,
         };
         let mut endpoint_control_hooks =
@@ -899,7 +896,7 @@ pub fn run_cellular(
                     cell_count,
                     &cell_dir,
                     injected_seed,
-                    imported_read_set.as_ref(),
+                    imported_read_set,
                 )?;
             let planned: BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance> =
                 cell_envelope
@@ -2264,7 +2261,7 @@ fn build_dataset_serve_plan(
 /// only authority for imported source files; strict Mini-SWE replay roots retain their
 /// existing task-pack traversal because their loader consumes the complete root.
 fn build_dataset_serve_plan_from_envelope(
-    envelope: &serde_json::Value,
+    _envelope: &serde_json::Value,
     format: Option<&str>,
     source: &Path,
     replay_root: Option<&Path>,
@@ -2273,18 +2270,10 @@ fn build_dataset_serve_plan_from_envelope(
     std::collections::HashMap<String, crate::engine::artifact_shipping::DatasetSource>,
     crate::engine::artifact_shipping::DatasetManifest,
 )> {
-    let imported_read_set = match imported_read_set {
-        Some(read_set) => Some(read_set.clone()),
-        None => envelope
-            .pointer("/run/cfg/datasets/0")
-            .map(crate::engine::graph_input::selected_imported_agent_read_set)
-            .transpose()?
-            .flatten(),
-    };
     if format == Some("agent_recording")
         && let Some(read_set) = imported_read_set
     {
-        return build_imported_agent_serve_plan(read_set.clone());
+        return build_imported_agent_serve_plan(read_set);
     }
     build_dataset_serve_plan(format, source, replay_root).map(|(files, manifest)| {
         (
@@ -2308,7 +2297,7 @@ fn build_dataset_serve_plan_from_envelope(
 /// preserves its order in the manifest and never re-enumerates the selected directory,
 /// so unrelated session exports and task files cannot become cross-host authority.
 fn build_imported_agent_serve_plan(
-    read_set: ImportedAgentReadSet,
+    read_set: &ImportedAgentReadSet,
 ) -> Result<(
     std::collections::HashMap<String, crate::engine::artifact_shipping::DatasetSource>,
     crate::engine::artifact_shipping::DatasetManifest,
@@ -2324,7 +2313,7 @@ fn build_imported_agent_serve_plan(
         .replace(std::path::MAIN_SEPARATOR, "/");
     let mut files = Vec::with_capacity(read_set.files.len());
     let mut served = std::collections::HashMap::with_capacity(read_set.files.len());
-    for source in read_set.files {
+    for source in &read_set.files {
         let relative_path = source
             .relative_path
             .to_str()
@@ -2343,7 +2332,7 @@ fn build_imported_agent_serve_plan(
             served
                 .insert(
                     relative_path.clone(),
-                    crate::engine::artifact_shipping::DatasetSource::Path(source.path),
+                    crate::engine::artifact_shipping::DatasetSource::Path(source.path.clone()),
                 )
                 .is_none(),
             "imported recorded-agent source set has duplicate path {relative_path:?}"
@@ -3460,7 +3449,7 @@ mod tests {
             Some(true),
         )
         .unwrap();
-        let (served, manifest) = build_imported_agent_serve_plan(read_set).unwrap();
+        let (served, manifest) = build_imported_agent_serve_plan(&read_set).unwrap();
 
         assert_eq!(manifest.kind, "agent_session_set");
         assert_eq!(
@@ -3492,12 +3481,12 @@ mod tests {
             "path": source,
             "graph": {"source_format": "codex"}
         });
-        let read_set = crate::engine::graph_input::snapshot_selected_imported_agent_read_set(
-            &dataset,
-            &temporary.path().join("controller-snapshot"),
-        )
-        .unwrap()
-        .unwrap();
+        let acquired = crate::engine::graph_input::selected_imported_agent_request(&dataset)
+            .unwrap()
+            .unwrap()
+            .acquire_in(temporary.path())
+            .unwrap();
+        let read_set = acquired.read_set();
         let replacement_path = temporary.path().join("replacement.jsonl");
         std::fs::write(&replacement_path, replacement).unwrap();
         std::fs::rename(&replacement_path, &source).unwrap();
@@ -3539,7 +3528,7 @@ mod tests {
             "original"
         );
 
-        let (served, manifest) = build_imported_agent_serve_plan(read_set).unwrap();
+        let (served, manifest) = build_imported_agent_serve_plan(&read_set).unwrap();
         let server = ArtifactUploadServer::start_with_dataset_plan(
             "127.0.0.1:0".parse().unwrap(),
             temporary.path().join("controller-temp"),
@@ -3571,7 +3560,7 @@ mod tests {
             .and_then(serde_json::Value::as_str);
         assert_ne!(format, Some("agent_recording"));
         assert!(
-            crate::engine::graph_input::selected_imported_agent_read_set(
+            crate::engine::graph_input::selected_imported_agent_request(
                 envelope.pointer("/run/cfg/datasets/0").unwrap(),
             )
             .is_ok()
@@ -3594,21 +3583,25 @@ mod tests {
                 || serde_json::json!({}),
                 |root| serde_json::json!({"replay_root": root}),
             );
-            let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
+            let _envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
                 "type": "file",
                 "format": "agent_recording",
                 "path": selected,
                 "graph": graph,
             }]}}});
-            let error = build_dataset_serve_plan_from_envelope(
-                &envelope,
-                Some("agent_recording"),
-                &selected,
-                replay_root,
-                None,
-            )
-            .expect_err(name)
-            .to_string();
+            let error =
+                match crate::graph::recorded::agent_recording::ImportedAgentSelectionRequest::new(
+                    selected.clone(),
+                    replay_root.map(Path::to_path_buf),
+                    crate::config::model::dataset::RecordedAgentSourceFormat::Auto,
+                    None,
+                )
+                .unwrap()
+                .acquire_in(temporary.path())
+                {
+                    Ok(_) => panic!("{name}: Auto directory acquisition unexpectedly succeeded"),
+                    Err(error) => error.to_string(),
+                };
 
             assert!(
                 error.contains("directory imports require an explicit source_format"),
@@ -3638,14 +3631,16 @@ mod tests {
                 "graph": {},
             }]}}});
 
-            let error = build_dataset_serve_plan_from_envelope(
-                &envelope,
-                Some("agent_recording"),
-                &source,
-                None,
-                None,
+            let error = match crate::engine::graph_input::selected_imported_agent_request(
+                envelope.pointer("/run/cfg/datasets/0").unwrap(),
             )
-            .expect_err(name);
+            .unwrap()
+            .unwrap()
+            .acquire_in(temporary.path())
+            {
+                Ok(_) => panic!("{name}: malformed Auto source acquisition unexpectedly succeeded"),
+                Err(error) => error,
+            };
             let error = format!("{error:#}");
 
             assert!(error.contains(expected), "{name}: {error}");
@@ -3723,12 +3718,19 @@ mod tests {
             "graph": null,
         }]}}});
 
+        let acquired = crate::engine::graph_input::selected_imported_agent_request(
+            envelope.pointer("/run/cfg/datasets/0").unwrap(),
+        )
+        .unwrap()
+        .unwrap()
+        .acquire_in(temporary.path())
+        .unwrap();
         let (served, manifest) = build_dataset_serve_plan_from_envelope(
             &envelope,
             Some("agent_recording"),
             &source,
             None,
-            None,
+            Some(acquired.read_set()),
         )
         .expect("null graph must retain Auto JSONL imported-session dispatch");
 
@@ -3737,7 +3739,7 @@ mod tests {
         assert_eq!(
             served.get("session.jsonl"),
             Some(&crate::engine::artifact_shipping::DatasetSource::Path(
-                source
+                acquired.read_set().files[0].path.clone()
             )),
         );
     }
@@ -3762,7 +3764,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let (served, manifest) = build_imported_agent_serve_plan(read_set).unwrap();
+        let (served, manifest) = build_imported_agent_serve_plan(&read_set).unwrap();
 
         assert_eq!(manifest.base_name, "sessions");
         assert_eq!(
