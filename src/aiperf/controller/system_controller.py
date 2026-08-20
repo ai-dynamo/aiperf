@@ -89,7 +89,7 @@ from aiperf.controller.system_controller_models import (
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
-from aiperf.kubernetes.results_sidecar import (
+from aiperf.common.results_markers import (
     write_processing_marker,
     write_ready_marker,
 )

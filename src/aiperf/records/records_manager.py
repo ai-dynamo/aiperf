@@ -78,7 +78,7 @@ from aiperf.credit.messages import (
     CreditsCompleteMessage,
 )
 from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
-from aiperf.kubernetes.results_sidecar import CHECKPOINTS_DIR_NAME
+from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import (
     CACHE_REPORTING_HINT,

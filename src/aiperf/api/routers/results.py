@@ -32,7 +32,7 @@ from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.config.defaults import OutputDefaults
-from aiperf.kubernetes.results_sidecar import (
+from aiperf.common.results_markers import (
     CHECKPOINTS_DIR_NAME,
     READY_MARKER_NAME,
     _is_processing,
