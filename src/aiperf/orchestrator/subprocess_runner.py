@@ -14,42 +14,15 @@ import orjson
 
 from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.endpoint_credentials import (
-    AIPERF_INJECTED_API_KEY as _INJECTED_API_KEY_ENV,  # noqa: F401
-)
-from aiperf.common.endpoint_credentials import (
-    AIPERF_INJECTED_ENDPOINT_URLS as _INJECTED_ENDPOINT_URLS_ENV,  # noqa: F401
-)
-from aiperf.common.endpoint_credentials import (
-    AIPERF_INJECTED_HEADERS as _INJECTED_HEADERS_ENV,  # noqa: F401
-)
-from aiperf.common.endpoint_credentials import (
     apply_endpoint_credentials,
     consume_endpoint_credentials,
 )
-from aiperf.common.endpoint_credentials import (
-    parse_injected_dict as _parse_injected_dict,  # noqa: F401
-)
-from aiperf.common.endpoint_credentials import (
-    parse_injected_str_list as _parse_injected_str_list,  # noqa: F401
-)
 
-# Parent passes the api_key through this env var rather than writing it
-# into run_config.json (which is redacted by EndpointConfig's
-# field_serializer). We pop+restore in main() so neither child processes
-# nor any logging path inherits the plaintext value.
-
-# Sensitive entries from EndpointConfig.headers (Authorization, X-API-Key, etc.)
-# are forwarded via this env var for the same reason: the headers serializer
-# replaces those values with "<redacted>" on every JSON dump, so the on-disk
-# run_config.json is secret-free but the child needs the real values to talk
-# to the upstream. Non-sensitive headers round-trip through run_config.json
-# normally and are not duplicated here.
-
-# Endpoint URLs that carry userinfo (``user:pass@host``) are forwarded via
-# this env var. ``EndpointConfig.urls`` has an unconditional _redact_urls
-# serializer (no when_used="json" guard), so even non-JSON dumps strip
-# userinfo. The parent sets this only when at least one URL would be
-# redacted, so plain http(s)://host URLs never round-trip through env vars.
+# Endpoint credentials (api_key, sensitive headers, userinfo-bearing URLs) are
+# redacted out of run_config.json by EndpointConfig's field serializers, so the
+# parent hands the real values to this child through environment variables
+# instead. aiperf.common.endpoint_credentials owns those variable names and the
+# pop-validate-apply sequence; see consume_endpoint_credentials there.
 
 
 def _release_inherited_pipes_on_windows() -> None:

@@ -752,16 +752,16 @@ def test_subprocess_runner_rejects_non_list_urls_env(
 
 
 def test_parse_injected_dict_rejects_non_string_values() -> None:
-    """REGRESSION-LOCK (dynamo-ops): ``_parse_injected_dict`` must reject a
+    """REGRESSION-LOCK (dynamo-ops): ``parse_injected_dict`` must reject a
     JSON object whose values are not strings. ``EndpointConfig.headers`` is
     ``dict[str, str]`` but ``run.cfg.endpoint.headers.update(...)`` mutates in
     place without re-validating, so an int value like ``{"Authorization": 123}``
     would otherwise reach aiohttp as an invalid header.
     """
-    from aiperf.orchestrator.subprocess_runner import _parse_injected_dict
+    from aiperf.common.endpoint_credentials import parse_injected_dict
 
     with pytest.raises(ValueError, match="string values"):
-        _parse_injected_dict("AIPERF_INJECTED_HEADERS", '{"Authorization": 123}')
+        parse_injected_dict("AIPERF_INJECTED_HEADERS", '{"Authorization": 123}')
 
 
 def test_parse_injected_dict_malformed_json_raises_value_error_not_decode_error() -> (
@@ -774,13 +774,13 @@ def test_parse_injected_dict_malformed_json_raises_value_error_not_decode_error(
     """
     import orjson as _orjson
 
-    from aiperf.orchestrator.subprocess_runner import _parse_injected_dict
+    from aiperf.common.endpoint_credentials import parse_injected_dict
 
     with pytest.raises(ValueError, match="AIPERF_INJECTED_HEADERS contains invalid"):
-        _parse_injected_dict("AIPERF_INJECTED_HEADERS", "{not valid json")
+        parse_injected_dict("AIPERF_INJECTED_HEADERS", "{not valid json")
     # And specifically not the bare decode error type.
     try:
-        _parse_injected_dict("AIPERF_INJECTED_HEADERS", "{not valid json")
+        parse_injected_dict("AIPERF_INJECTED_HEADERS", "{not valid json")
     except _orjson.JSONDecodeError:  # pragma: no cover - must not happen
         pytest.fail("malformed env var leaked a raw orjson.JSONDecodeError")
     except ValueError:
@@ -791,12 +791,12 @@ def test_parse_injected_str_list_malformed_json_raises_value_error() -> None:
     """REGRESSION-LOCK (coderabbitai): malformed ``AIPERF_INJECTED_ENDPOINT_URLS``
     JSON surfaces as a ``ValueError`` naming the env var, not a decode error.
     """
-    from aiperf.orchestrator.subprocess_runner import _parse_injected_str_list
+    from aiperf.common.endpoint_credentials import parse_injected_str_list
 
     with pytest.raises(
         ValueError, match="AIPERF_INJECTED_ENDPOINT_URLS contains invalid"
     ):
-        _parse_injected_str_list("AIPERF_INJECTED_ENDPOINT_URLS", "[not valid")
+        parse_injected_str_list("AIPERF_INJECTED_ENDPOINT_URLS", "[not valid")
 
 
 def test_subprocess_runner_rejects_non_string_header_values_env(
