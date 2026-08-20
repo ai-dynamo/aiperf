@@ -191,8 +191,16 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         if self.socket_type == zmq.ROUTER:
             self.socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
 
-        # Bound the reconnect backoff on connecting sockets so a restarted pod
-        # rejoins quickly rather than waiting out libzmq's unbounded default.
+        # Reconnect backoff on connecting sockets. MEASURED against libzmq
+        # 4.3.5 (pyzmq 26.4.0): the shipped defaults are RECONNECT_IVL=100 and
+        # RECONNECT_IVL_MAX=0, and 0 means "no exponential backoff, retry every
+        # RECONNECT_IVL forever" -- not an unbounded wait. So RECONNECT_IVL
+        # below restates the default (no-op), and RECONNECT_IVL_MAX *enables*
+        # backoff that libzmq otherwise does not perform, trading a slower
+        # rejoin for a restarted pod (up to 5 s instead of a flat 100 ms)
+        # against fewer connect attempts when a peer stays down. Keep both
+        # explicit so the value is a decision rather than a libzmq default that
+        # could change under us.
         if not self.bind:
             self.socket.setsockopt(zmq.RECONNECT_IVL, ZMQSocketDefaults.RECONNECT_IVL)
             self.socket.setsockopt(

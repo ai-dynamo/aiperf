@@ -185,8 +185,12 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         identity, message = item
         # Responses to an in-flight ``request_to`` are resolved here, before the
         # handler sees them: a reply belongs to its awaiting caller, not to the
-        # general receiver.
-        if self._try_resolve_pending_request(message):
+        # general receiver. The dict check is inline and first because the hot
+        # credit-plane ROUTER never calls request_to() -- an empty dict makes
+        # _try_resolve_pending_request unable to return anything but False, so
+        # skipping the call is behaviour-identical and saves a Python frame per
+        # inbound message. Mirrors the same guard in _dispatch_dealer.
+        if self._pending_requests and self._try_resolve_pending_request(message):
             return
         if self._receiver_handler is None:
             self.warning(f"Received {type(message).__name__} but no handler registered")
