@@ -26,7 +26,6 @@ from aiperf.common.enums import (
     WorkerStartupState,
 )
 from aiperf.common.environment import Environment
-from aiperf.common.error_queue import ErrorCollector, cleanup_global_error_queue
 from aiperf.common.hooks import (
     background_task,
     on_command,
@@ -57,12 +56,10 @@ from aiperf.common.pod_lifecycle_structs import (
     PeerToGroupManagerMessage,
 )
 from aiperf.common.protocols import StreamingRouterClientProtocol
-from aiperf.common.subprocess_manager import SubprocessInfo, SubprocessManager
 from aiperf.config import BenchmarkRun
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.plugin.enums import ServiceType
 from aiperf.workers import worker_pod_dataset_download as _dataset_dl
-from aiperf.workers.group_runtime import GroupRuntimeAdapter, GroupRuntimeRegistration
 from aiperf.workers.worker_group_state import (
     WorkerStatusInfo,
     build_worker_status_summary,
@@ -108,16 +105,9 @@ class WorkerGroupManagerBase(BaseComponentService):
         self,
         run: BenchmarkRun,
         service_id: str | None = None,
-        runtime_adapter: GroupRuntimeAdapter | None = None,
         **kwargs,
     ) -> None:
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
-        self._runtime_adapter = runtime_adapter
-        self._runtime_registration: GroupRuntimeRegistration | None = (
-            runtime_adapter.build_registration()
-            if runtime_adapter is not None
-            else None
-        )
         super().__init__(run=run, service_id=service_id, **kwargs)
         self._resolve_pod_capacity()
         self._init_pod_state()
@@ -135,38 +125,14 @@ class WorkerGroupManagerBase(BaseComponentService):
             enable_dataset_manager=False,
             enable_raw_inference=True,
         )
-        self._local_subprocess_manager: SubprocessManager | None = None
-        self._error_collector: ErrorCollector | None = None
-        if self._runtime_registration is not None:
-            # Worker / RecordProcessor containers are separate processes: their
-            # accumulated failures reach this manager only over the backchannel.
-            self._error_collector = ErrorCollector(
-                logger=self, exit_errors=self._exit_errors
-            )
-            self._local_subprocess_manager = SubprocessManager(
-                run=self.run,
-                logger=self,
-                error_queue=self._error_collector.error_queue,
-            )
-            self._local_subprocess_manager._local_worker_group_manager = SubprocessInfo(
-                service_type=ServiceType.WORKER_GROUP_MANAGER,
-                service_id=self.service_id,
-                launch_adapter=self._runtime_adapter,
-            )
         self.info(
             f"WorkerGroupManager configured for {self.workers_per_pod} worker container(s) "
             f"and {self.record_processors_per_pod} record processor container(s)"
         )
 
     def _resolve_pod_capacity(self) -> None:
-        """Set workers_per_pod / record_processors_per_pod from registration or config."""
+        """Set workers_per_pod / record_processors_per_pod from runtime config."""
         cfg = self.run.cfg
-        registration = self._runtime_registration
-        if registration is not None:
-            self.workers_per_pod = registration.declared_workers
-            self.record_processors_per_pod = registration.declared_record_processors
-            return
-
         self.workers_per_pod = (
             cfg.runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
         )
@@ -199,8 +165,6 @@ class WorkerGroupManagerBase(BaseComponentService):
         self._artifact_finalization_lock = asyncio.Lock()
         self._artifacts_finalized = False
         self._artifact_finalization_failed = False
-        self._local_children_stopped = False
-        self._errors_drained = False
 
     @on_init
     async def _initialize_proxy(self) -> None:
@@ -220,13 +184,6 @@ class WorkerGroupManagerBase(BaseComponentService):
         ):
             self._tokenizer_prefetch_task = self.execute_async(
                 self._prefetch_tokenizers()
-            )
-        if self._local_subprocess_manager is not None:
-            await self._local_subprocess_manager.spawn_services(
-                ServiceType.WORKER, self.workers_per_pod
-            )
-            await self._local_subprocess_manager.spawn_services(
-                ServiceType.RECORD_PROCESSOR, self.record_processors_per_pod
             )
         self.debug("Waiting for dataset configuration...")
 
@@ -253,10 +210,9 @@ class WorkerGroupManagerBase(BaseComponentService):
             await self._dataset_download_task
             return
 
-        # Local fast-path: runtime adapter or fake in-process mode — files
-        # already on the local filesystem, skip HTTP download.
+        # Fake in-process mode has files already on the local filesystem.
         fake_mode = os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1"
-        if self._runtime_registration is not None or fake_mode:
+        if fake_mode:
             self.info("Received dataset configuration, attaching local dataset state")
             self._dataset_client_metadata = message.client_metadata
             self._dataset_downloaded = True
@@ -456,19 +412,6 @@ class WorkerGroupManagerBase(BaseComponentService):
             logger=self,
         )
 
-    async def _stop_local_children_and_drain_errors(self) -> None:
-        """Stop manager-owned children and surface their failures once."""
-        if (
-            self._local_subprocess_manager is not None
-            and not self._local_children_stopped
-        ):
-            await self._local_subprocess_manager.stop_all()
-            self._local_children_stopped = True
-        if self._error_collector is not None and not self._errors_drained:
-            self._error_collector.drain_into()
-            await cleanup_global_error_queue()
-            self._errors_drained = True
-
     async def _notify_registered_workers_of_dataset(
         self,
         *,
@@ -586,8 +529,8 @@ class WorkerGroupManagerBase(BaseComponentService):
         if self._configure_started:
             return
         self._configure_started = True
-        # In-process fake mode: no group-local peers to wait for or fan out to.
-        if self._runtime_registration is None:
+        # In-process fake mode has no group-local peers to coordinate.
+        if os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1":
             await self._publish_worker_summary()
             return
         await wait_for_expected_peers(
@@ -696,12 +639,6 @@ class WorkerGroupManagerBase(BaseComponentService):
                     expected_service_ids=set(record_processor_ids),
                     shutdown_set=self._record_processors_shutdown,
                 )
-                await self._stop_local_children_and_drain_errors()
-                if self._exit_errors:
-                    raise RuntimeError(
-                        f"Local child failures prevent RAW artifact publication "
-                        f"for {self.service_id}: {len(self._exit_errors)} error(s)"
-                    )
                 await self._proxy_manager.stop()
                 await self._upload_raw_records()
             except asyncio.CancelledError:
@@ -773,7 +710,6 @@ class WorkerGroupManagerBase(BaseComponentService):
             return
 
         if self._artifacts_finalized or self._artifact_finalization_failed:
-            await self._stop_local_children_and_drain_errors()
             await self._proxy_manager.stop()
             return
 
@@ -795,5 +731,4 @@ class WorkerGroupManagerBase(BaseComponentService):
             logger=self,
         )
         await self._wait_for_record_processor_shutdowns()
-        await self._stop_local_children_and_drain_errors()
         await self._proxy_manager.stop()
