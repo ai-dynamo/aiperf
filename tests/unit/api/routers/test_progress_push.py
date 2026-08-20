@@ -34,6 +34,7 @@ def _make_router():
     r._system_state = SystemState.INITIALIZING
     r._results_exported = False
     r._controller_failure = None
+    r._server_metrics = None
     r._metrics = []
     r._progress_tracker = MagicMock()
     r._progress_tracker._phases = {}
@@ -758,3 +759,81 @@ async def test_push_aiperfjob_status_uses_merge_patch_before_a_phase_exists(
     call = custom.patch_namespaced_custom_object_status.await_args.kwargs
     assert call["_content_type"] == "application/merge-patch+json"
     assert call["body"]["status"]["currentPhase"] == "steady_state"
+
+
+def _server_metrics_payload() -> dict[str, object]:
+    """One scrape in RealtimeServerMetricsMessage dump shape."""
+    return {
+        "endpoint_summaries": {
+            "http://svc:8000/metrics": {
+                "endpoint_url": "http://svc:8000/metrics",
+                "info": {},
+                "metrics": {
+                    "dynamo_frontend_requests": {
+                        "type": "counter",
+                        "description": "HELP text",
+                        "series": [{"labels": {"model": "m"}, "stats": {"rate": 9.0}}],
+                    },
+                    "node_cpu_seconds_total": {
+                        "type": "counter",
+                        "series": [{"stats": {"rate": 1.0}}],
+                    },
+                },
+            }
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_writes_curated_server_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """status.serverMetrics is the dashboard's non-WebSocket fallback; the push owns it.
+
+    Zero writers existed at HEAD, so the REST fallback panel stayed blank for
+    any viewer whose per-job WebSocket was blocked.
+    """
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+
+    await _push(server_metrics=_server_metrics_payload())
+
+    status = _status_body(custom)
+    server_metrics = status["serverMetrics"]
+    assert set(server_metrics["metrics"]) == {"dynamo_frontend_requests"}
+    assert server_metrics["summary"]["endpoints_successful"] == [
+        "http://svc:8000/metrics"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_omits_server_metrics_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No scrape yet must leave the key absent rather than blanking a prior value."""
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+
+    await _push()
+
+    assert "serverMetrics" not in _status_body(custom)
+
+
+@pytest.mark.asyncio
+async def test_realtime_server_metrics_caches_payload_without_pushing() -> None:
+    """The scrape is cached for the next progress push, not pushed on its own.
+
+    Server metrics scrape at ~3Hz on their own timer; firing a CR round-trip per
+    scrape would multiply apiserver load for data that already rides along.
+    """
+    from aiperf.common.messages import RealtimeServerMetricsMessage
+
+    r = _make_router()
+    r._patch_aiperfjob_status = AsyncMock()
+
+    await r._on_realtime_server_metrics(
+        RealtimeServerMetricsMessage(service_id="sm", snapshot={"x": 1.0})
+    )
+    await asyncio.sleep(0)
+
+    assert r._server_metrics is not None
+    assert r._server_metrics["snapshot"] == {"x": 1.0}
+    r._patch_aiperfjob_status.assert_not_called()
