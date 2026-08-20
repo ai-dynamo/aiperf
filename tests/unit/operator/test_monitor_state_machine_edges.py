@@ -398,6 +398,62 @@ class TestJobTimeoutEscalation:
         assert patch.status["phase"] == str(Phase.FAILED)
         custom.delete_namespaced_custom_object.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_timeout_with_results_exported_defers_to_completion(self) -> None:
+        """``status.resultsExported`` means the run drained; never stamp FAILED."""
+        sb, patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+
+        with mock_patch(
+            "aiperf.operator.handlers.monitor.events.job_timeout"
+        ) as mock_event:
+            result = await _check_job_timeout(
+                custom,
+                body=_body(),
+                status={
+                    "startTime": "2020-01-01T00:00:00Z",
+                    "resultsExported": True,
+                },
+                spec={"timeoutSeconds": 1.0},
+                namespace="ns",
+                jobset_name="js",
+                job_id="job-1",
+                key="ns/job-1",
+                sb=sb,
+            )
+
+        assert result is False
+        assert "phase" not in patch.status
+        custom.delete_namespaced_custom_object.assert_not_awaited()
+        mock_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_timeout_without_results_exported_still_fails(self) -> None:
+        """A user phase named ``processing`` must not buy an unbounded drain window."""
+        sb, patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+
+        with mock_patch("aiperf.operator.handlers.monitor.events.job_timeout"):
+            result = await _check_job_timeout(
+                custom,
+                body=_body(),
+                status={
+                    "startTime": "2020-01-01T00:00:00Z",
+                    "currentPhase": "processing",
+                },
+                spec={"timeoutSeconds": 1.0},
+                namespace="ns",
+                jobset_name=None,
+                job_id="job-1",
+                key="ns/job-1",
+                sb=sb,
+            )
+
+        assert result is True
+        assert patch.status["phase"] == str(Phase.FAILED)
+
 
 # =============================================================================
 # Concurrent phase-write races and JobSet terminal handling

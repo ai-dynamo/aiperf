@@ -721,17 +721,19 @@ async def _check_job_timeout(
     # Do not fail a run that has already succeeded but is still draining.
     # The completion-claim annotation is the authoritative cross-tick signal
     # that the success branch owns the CR (mirrors ``_reconcile_missing_jobset``);
-    # ``currentPhase == "processing"`` means the controller reported
-    # ``is_complete`` and the operator is fetching/aggregating results.
-    # Either signal means a subsequent ``_reconcile_and_handle_jobset`` tick
-    # will claim completion and harvest results — stamping FAILED here would
-    # discard a succeeded run and delete its JobSet mid-drain.
-    if is_completion_claimed(body) or status.get("currentPhase") == "processing":
+    # ``status.resultsExported`` is pushed by the controller once it has
+    # flushed every exporter, which is the narrowest available proxy for
+    # ``JobProgress.is_complete``; ``currentPhase`` is only a pointer into
+    # ``status.phases`` and carries user-supplied phase names, so it must not
+    # gate this. Either signal means a subsequent ``_reconcile_and_handle_jobset``
+    # tick will claim completion and harvest results — stamping FAILED here
+    # would discard a succeeded run and delete its JobSet mid-drain.
+    if is_completion_claimed(body) or status.get("resultsExported"):
         logger.debug(
             "Job timeout reached for %s but run is draining/claimed "
-            "(currentPhase=%s, claimed=%s); deferring to completion handler",
+            "(resultsExported=%s, claimed=%s); deferring to completion handler",
             jobset_name,
-            status.get("currentPhase"),
+            status.get("resultsExported"),
             is_completion_claimed(body),
         )
         return False

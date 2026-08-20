@@ -576,6 +576,15 @@ SystemController handles `CreditsCompleteMessage` — that is, when request
 profile completion; the whole aggregation phase happens while `subPhase` reads
 `processing`.
 
+For the same reason, the job-timeout drain guard in `_check_job_timeout` keys off
+`status.resultsExported` — pushed by the controller only once every exporter has
+flushed — and never off `status.currentPhase`. `currentPhase` is a pointer into
+`status.phases` and carries user-supplied phase names, so a benchmark phase named
+`processing` would otherwise bypass the timeout. A timed-out run is deferred to
+the completion handler only when the completion claim is already held or
+`resultsExported` is true; a run whose aggregation or export hangs still fails on
+the deadline.
+
 ### Completion Signals
 
 - Controller receives `ALL_RECORDS_RECEIVED` message
