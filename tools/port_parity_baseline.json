@@ -76,6 +76,14 @@
       "lines": 6,
       "reason": "documentation/test wording evolved past the reference; no code content lost"
     },
+    "src/aiperf/api/models/responses.py": {
+      "lines": 2,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/api/routers/core.py": {
+      "lines": 1,
+      "reason": "/api/config response_model restored to main's contract"
+    },
     "src/aiperf/api/routers/progress.py": {
       "lines": 13,
       "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
@@ -83,6 +91,10 @@
     "src/aiperf/api/routers/results.py": {
       "lines": 2,
       "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/api/routers/workers.py": {
+      "lines": 1,
+      "reason": "emits both workers and worker_groups; reference line superseded"
     },
     "src/aiperf/cli_commands/kube/results.py": {
       "lines": 1,
@@ -97,8 +109,8 @@
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
     "src/aiperf/common/control_structs.py": {
-      "lines": 31,
-      "reason": "dead code removed on this branch after verifying zero callers in any mode"
+      "lines": 278,
+      "reason": "module deleted: dead control-channel protocol, recoverable from the port branches"
     },
     "src/aiperf/common/memory_tracker.py": {
       "lines": 253,
@@ -107,6 +119,10 @@
     "src/aiperf/common/models/base_models.py": {
       "lines": 2,
       "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/common/mp_context.py": {
+      "lines": 1,
+      "reason": "control_structs dropped from the forkserver preload with the module"
     },
     "src/aiperf/config/__init__.py": {
       "lines": 10,
@@ -265,8 +281,8 @@
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
     "src/aiperf/workers/worker_pod_manager.py": {
-      "lines": 1,
-      "reason": "re-export shim deleted; importers repointed at the owning module"
+      "lines": 27,
+      "reason": "dead _make_registration removed; handlers annotated CommandMessage"
     },
     "src/aiperf/workers/worker_pod_upload.py": {
       "lines": 1,
@@ -328,6 +344,10 @@
       "lines": 5,
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
+    "tests/unit/api/routers/test_workers.py": {
+      "lines": 1,
+      "reason": "asserts the dual-view payload"
+    },
     "tests/unit/api/test_api_service.py": {
       "lines": 5,
       "reason": "re-export shim deleted; importers repointed at the owning module"
@@ -337,8 +357,8 @@
       "reason": "documentation/test wording evolved past the reference; no code content lost"
     },
     "tests/unit/common/test_control_structs.py": {
-      "lines": 3,
-      "reason": "dead code removed on this branch after verifying zero callers in any mode"
+      "lines": 88,
+      "reason": "deleted with the module it tested"
     },
     "tests/unit/common/test_msgspec_enc_hook.py": {
       "lines": 5,
@@ -498,6 +518,10 @@
     },
     "tests/unit/workers/test_build_worker_group_stats.py": {
       "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/workers/test_worker_pod_manager.py": {
+      "lines": 6,
       "reason": "documentation/test wording evolved past the reference; no code content lost"
     }
   }

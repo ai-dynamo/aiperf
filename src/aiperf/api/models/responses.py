@@ -63,10 +63,12 @@ class WorkersResponse(AIPerfBaseModel):
     """
 
     workers: dict[str, WorkerStats] = Field(
+        default_factory=dict,
         description=(
             "Per-worker stats keyed by worker_id, flattened across all groups. "
-            "Stable contract; prefer worker_groups when group topology matters."
-        )
+            "Stable contract; prefer worker_groups when group topology matters. "
+            "Defaulted so responses from an older controller still parse."
+        ),
     )
     worker_groups: dict[str, WorkerGroupStats] = Field(
         description="Per-worker-group aggregated stats keyed by group_id."
