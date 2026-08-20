@@ -734,7 +734,11 @@ async def test_cascading_fork_chain_eviction_order() -> None:
 
     # Parent's terminal turn fires the FORK.
     await orch.intercept(_mk_credit("parent", "pcorr", turn_index=0, num_turns=1))
-    sticky.register_child_routing.assert_called_once_with("pcorr")
+    # The child's own correlation id is passed alongside the parent's so the
+    # router can alias it onto the parent's sticky entry -- without that, a
+    # depth-2 grandchild (whose parent id is this child) misses the lookup and
+    # scatters to least-loaded, losing prefix-cache locality.
+    sticky.register_child_routing.assert_called_once_with("pcorr", "corr-A-1")
     [a_corr] = list(orch._child_to_join.keys())
 
     # A reaches leaf -> sticky release for parent.

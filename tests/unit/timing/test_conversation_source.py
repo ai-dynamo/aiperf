@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import CacheBustTarget
+from aiperf.common.enums import CacheBustTarget, ConversationContextMode
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType
@@ -125,6 +125,38 @@ class TestConversationSource:
         src.next(x_correlation_id="session-1")
 
         assert src._cache_bust_markers == {}
+
+    @pytest.mark.parametrize(
+        ("mode", "expected"),
+        [
+            (ConversationContextMode.DELTAS_WITH_RESPONSES, True),
+            (ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES, True),
+            (ConversationContextMode.DELTAS_WITHOUT_RESPONSES, False),
+        ],
+    )
+    def test_worker_migration_flag_survives_session_turn_builders(
+        self, mode: ConversationContextMode, expected: bool
+    ) -> None:
+        source = _mk_source(
+            DatasetMetadata(
+                conversations=[
+                    ConversationMetadata(
+                        conversation_id="c1",
+                        context_mode=mode,
+                        turns=[TurnMetadata(), TurnMetadata()],
+                    )
+                ],
+                sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+            )
+        )
+
+        for session in (
+            source.next(),
+            source.session_for_conversation("c1"),
+        ):
+            assert session.allow_worker_migration is expected
+            assert session.build_first_turn().allow_worker_migration is expected
+            assert session.build_turn_at_index(1).allow_worker_migration is expected
 
 
 class TestMultiTurn:

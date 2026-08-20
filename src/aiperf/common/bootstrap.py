@@ -60,6 +60,7 @@ def bootstrap_and_run_service(
     run: "BenchmarkRun",
     service_id: str | None = None,
     log_queue: "multiprocessing.Queue | None" = None,
+    error_queue: "multiprocessing.Queue | None" = None,
     controller_pid: int | None = None,
     **kwargs,
 ):
@@ -72,6 +73,10 @@ def bootstrap_and_run_service(
         run: BenchmarkRun carrying the v2 BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance.
         log_queue: Optional multiprocessing queue for child process logging.
+        error_queue: Optional multiprocessing backchannel. Failures this
+            service accumulated are reported onto it just before the process
+            exits, so the parent can surface them; a child that dies takes its
+            ``_exit_errors`` with it otherwise.
         controller_pid: PID of the launching SystemController, used to arm the
             child's parent-death guard (see ``_install_parent_death_signal``).
         kwargs: Additional keyword arguments to pass to the service constructor.
@@ -193,6 +198,7 @@ def bootstrap_and_run_service(
         if Environment.DEV.ENABLE_YAPPI:
             _stop_yappi_profiling(service.service_id, run)
 
+        _report_service_errors(service, error_queue)
         _exit_if_service_failed(service)
 
     _configure_event_loop_policy_for_platform()
@@ -249,11 +255,55 @@ def _install_parent_death_signal(controller_pid: int | None = None) -> None:
     except (OSError, AttributeError):
         return
 
-    # If our parent is no longer the controller, it already died and we
-    # reparented during the race window — the death signal was missed forever,
-    # so exit now rather than orphan.
-    if os.getppid() != expected_ppid:
+    # If the controller is already gone, the death signal was missed forever
+    # (it fires only for deaths after arming), so exit now rather than orphan.
+    #
+    # Liveness, not parentage: under a forkserver/spawn context the direct
+    # parent is the forkserver helper, not the controller, so a getppid()
+    # comparison would be false for every healthy child and kill them all at
+    # startup. os.kill(pid, 0) answers the question actually being asked.
+    if not _pid_is_alive(expected_ppid):
         os._exit(1)
+
+    # PR_SET_PDEATHSIG only covers the direct parent. When that is not the
+    # controller (forkserver/spawn), watch the controller ourselves.
+    if os.getppid() != expected_ppid:
+        _watch_controller_liveness(expected_ppid)
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """True if ``pid`` exists and we may signal it."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def _watch_controller_liveness(controller_pid: int) -> None:
+    """SIGKILL this process once ``controller_pid`` disappears.
+
+    A daemon thread rather than a signal: the kernel can only deliver
+    PR_SET_PDEATHSIG for the direct parent, and under forkserver/spawn that is
+    the helper process, whose death says nothing about the controller.
+    """
+    import threading
+
+    interval = Environment.SERVICE.PARENT_LIVENESS_POLL_INTERVAL
+
+    def _watch() -> None:
+        while True:
+            time.sleep(interval)
+            if not _pid_is_alive(controller_pid):
+                os._exit(1)
+
+    threading.Thread(
+        target=_watch, name="controller-liveness-watchdog", daemon=True
+    ).start()
 
 
 def _configure_event_loop_policy_for_platform() -> None:
@@ -315,6 +365,25 @@ def _request_high_resolution_timer_on_windows() -> None:
             f"did not take effect. High-QPS test timing may be coarser "
             f"than 1ms. See bootstrap.py docstring for context."
         )
+
+
+def _report_service_errors(
+    service, error_queue: "multiprocessing.Queue | None"
+) -> None:
+    """Push this service's accumulated failures onto the parent's backchannel.
+
+    Runs before ``_exit_if_service_failed`` because that call terminates the
+    process: anything not on the queue by then is lost with the child. No-op
+    when the parent did not supply a queue (local multiprocessing mode).
+    """
+    if error_queue is None:
+        return
+    exit_errors = getattr(service, "_exit_errors", None)
+    if not exit_errors:
+        return
+    from aiperf.common.error_queue import report_errors
+
+    report_errors(error_queue, exit_errors)
 
 
 def _exit_if_service_failed(service) -> None:

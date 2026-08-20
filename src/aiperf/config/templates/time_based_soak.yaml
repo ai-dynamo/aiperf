@@ -52,7 +52,7 @@ benchmark:
     type: concurrency
     duration: 60s                   # 1-minute warmup so JIT/caches settle before measurement
     concurrency: 16
-    # excludeFromResults is implied by the `warmup:` shorthand — no need to set it.
+    # The `warmup:` shorthand assigns warmup result semantics automatically.
 
   profiling:
     type: concurrency

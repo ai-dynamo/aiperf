@@ -85,12 +85,13 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
-      excludeFromResults: true
       requests: 50
       concurrency: 8
 
     - name: profiling
+      kind: profiling
       type: concurrency
       # 80 prompts per qualitative category — issue each once so the report
       # reflects per-prompt acceptance, not random oversampling.

@@ -30,6 +30,12 @@ TESTS_DIR = REPO_ROOT / "tests"
 # branch below.
 _MARKER_GATED_DEPS = {"datasets", "pyarrow"}
 
+# Opt-in test-only extras. ``playwright`` backs the browser-driven dashboard
+# e2e suite (``tests/unit/api/dashboard_v2_e2e``), which is marked ``e2e`` and
+# deselected by default; install it with
+# ``uv pip install playwright && uv run playwright install chromium``.
+_OPTIONAL_TEST_DEPS = {"playwright"}
+
 
 def discover_modules(
     base_dir: Path,
@@ -126,10 +132,14 @@ def import_modules(modules: list[str]) -> dict[str, Exception]:
             importlib.import_module(module_path)
         except pytest.skip.Exception:
             continue
-        except ModuleNotFoundError as e:
+        except ImportError as e:
+            if not isinstance(e, ModuleNotFoundError):
+                failures[module_path] = e
+                continue
             # Expected when an environment-marker-gated optional dep is absent
             # on this platform (e.g. datasets/pyarrow on Windows-on-ARM).
-            if (e.name or "").split(".")[0] in _MARKER_GATED_DEPS:
+            missing = e.name or ""
+            if missing.split(".")[0] in _MARKER_GATED_DEPS | _OPTIONAL_TEST_DEPS:
                 continue
             failures[module_path] = e
         except Exception as e:

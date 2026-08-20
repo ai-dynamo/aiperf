@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     InvalidStateError,
     LifecycleOperationError,
@@ -123,8 +125,17 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         await self._set_state(transient_state)
         self.debug(lambda: f"{transient_state.title()} {self}")
+        # Startup transitions must fail-fast: continuing to run later hooks
+        # after an earlier one aborted produces a half-started service (e.g.
+        # background tasks spawned after a PUB/SUB probe already failed) that
+        # survives as a silent zombie container. Stop transitions stay
+        # best-effort so cleanup errors don't mask each other.
+        fail_fast = transient_state in (
+            LifecycleState.INITIALIZING,
+            LifecycleState.STARTING,
+        )
         try:
-            await self.run_hooks(hook_type, reverse=reverse)
+            await self.run_hooks(hook_type, reverse=reverse, fail_fast=fail_fast)
             await self._set_state(final_state)
             self.debug(lambda: f"{self} is now {final_state.title()}")
             event.set()
@@ -274,6 +285,32 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         await self.cancel_all_tasks()
 
+    @property
+    def _hard_exit_on_wedged_shutdown(self) -> bool:
+        """Whether a wedged failure-shutdown should force-exit the process.
+
+        Only containerized (operator-managed) services get the hard kill. A
+        service whose ``on_stop`` never returns keeps its Pod alive as a silent
+        zombie, so losing cleanup state beats never exiting. A local
+        ``aiperf profile`` run is the opposite trade: ``_fail`` is reached by
+        every ``AIPerfLifecycleMixin`` in the CLI's own process, so
+        ``os._exit`` there would discard the traceback, the artifact export,
+        and every buffered writer in the process. Locally the failure is left
+        to surface through the normal ``CancelledError`` path below.
+
+        ``self.run`` only exists on ``BaseService`` subclasses, so the run-type
+        lookup is defensive and falls back to the ``AIPERF_OPERATOR_MANAGED``
+        marker the operator sets on every JobSet container.
+        """
+        runtime = getattr(getattr(self, "run", None), "cfg", None)
+        run_type = getattr(getattr(runtime, "runtime", None), "service_run_type", None)
+        if run_type is not None:
+            # Compared as a string rather than importing ServiceRunType: the
+            # plugin enums are generated at registry-load time and importing
+            # them from this core mixin would invert the dependency order.
+            return str(run_type).lower() == "kubernetes"
+        return os.environ.get("AIPERF_OPERATOR_MANAGED") == "1"
+
     async def _fail(self, e: Exception) -> None:
         """Set the state to FAILED and raise an asyncio.CancelledError.
         This is used when the transition from one state to another fails.
@@ -290,7 +327,27 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             )
         if self.state != LifecycleState.STOPPING:
             self.debug(f"Stopping {self} due to failure")
-            await self.stop()
+            # Bound the shutdown: a blocked on_stop hook (a cancelled ZMQ
+            # client stuck in a C-extension recv) otherwise turns a failed
+            # service into a silent zombie that keeps its container alive.
+            # We are already on the failure path, so losing cleanup state
+            # beats never exiting -- but only in a container. See
+            # ``_hard_exit_on_wedged_shutdown``.
+            timeout = Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
+            try:
+                await asyncio.wait_for(self.stop(), timeout=timeout)
+            except TimeoutError:
+                if self._hard_exit_on_wedged_shutdown:
+                    self.error(
+                        f"Shutdown after failure did not complete in {timeout}s; "
+                        f"force-exiting"
+                    )
+                    os._exit(1)
+                else:
+                    self.error(
+                        f"Shutdown after failure did not complete in {timeout}s; "
+                        f"continuing teardown and reporting the failure"
+                    )
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 

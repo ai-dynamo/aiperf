@@ -12,7 +12,7 @@ import zmq
 
 from aiperf.common.enums import CreditPhase, LifecycleState
 from aiperf.common.exceptions import NotInitializedError
-from aiperf.credit.messages import RouterToWorkerMessage, WorkerReady
+from aiperf.credit.messages import RouterToWorkerMessage, WorkerDispatchable
 from aiperf.credit.structs import Credit
 from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 
@@ -153,7 +153,7 @@ class TestZMQStreamingDealerClientSend:
 
             mock_socket._sync_send.assert_called_once()
             sent_data = mock_socket._sync_send.call_args[0][0]
-            decoded = msgspec.msgpack.decode(sent_data, type=WorkerReady)
+            decoded = msgspec.msgpack.decode(sent_data, type=WorkerDispatchable)
             assert decoded.worker_id == sample_worker_ready.worker_id
 
     @pytest.mark.asyncio
@@ -163,7 +163,7 @@ class TestZMQStreamingDealerClientSend:
         """Test sending multiple structs."""
         async with streaming_dealer_test_helper.create_client() as client:
             mock_socket = client.socket
-            structs = [WorkerReady(worker_id=f"worker-{i}") for i in range(3)]
+            structs = [WorkerDispatchable(worker_id=f"worker-{i}") for i in range(3)]
 
             for struct in structs:
                 await client.send(struct)
@@ -419,6 +419,40 @@ class TestZMQStreamingDealerClientEdgeCases:
                 assert isinstance(credit, Credit)
                 assert credit.id == i
 
+    @pytest.mark.asyncio
+    async def test_multi_frame_message_decodes_the_first_frame(
+        self, streaming_dealer_test_helper, sample_credit
+    ):
+        """A DEALER socket strips the routing identity, so frame 1 IS the
+        payload -- unlike the ROUTER counterpart, whose frame 1 is the identity
+        it must skip. Copying the ROUTER's "keep the last frame" drain here
+        would decode a trailing frame instead of the message. No live trigger
+        today (the router sends exactly ``(identity, payload)``), so this pins
+        the shape before a second frame is ever added.
+        """
+        received = []
+        received_event = asyncio.Event()
+
+        streaming_dealer_test_helper.setup_mock_socket(
+            recv_multipart_side_effect=[
+                [msgspec.msgpack.encode(sample_credit), b"future-trailing-frame"]
+            ]
+        )
+
+        async def test_handler(message: RouterToWorkerMessage) -> None:
+            received.append(message)
+            received_event.set()
+
+        async with streaming_dealer_test_helper.create_client() as client:
+            client.register_receiver(test_handler)
+            await client.start()
+
+            await asyncio.wait_for(received_event.wait(), timeout=2.0)
+
+        assert len(received) == 1
+        assert isinstance(received[0], Credit)
+        assert received[0].id == sample_credit.id
+
     @pytest.mark.parametrize(
         "identity",
         ["worker-1", "worker_2", "worker.3", "worker:4", "worker@host"],
@@ -449,3 +483,51 @@ class TestZMQStreamingDealerClientEdgeCases:
         assert not mock_zmq_socket.connect.called
 
         await client.stop()
+
+
+class TestPendingRequestsOnStop:
+    """Stopping the client must not strand in-flight request futures."""
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_pending_request_futures(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """A request awaiting a reply is cancelled on stop, never left hanging.
+
+        Without this the awaiter blocks forever on a socket that is going away,
+        which is the class of hang that forces a hard process kill.
+        """
+        client = ZMQStreamingDealerClient(
+            address="tcp://127.0.0.1:5555", identity="worker-1", bind=False
+        )
+        await client.initialize()
+
+        loop = asyncio.get_running_loop()
+        pending = loop.create_future()
+        client._pending_requests["rid-1"] = pending
+
+        await client.stop()
+
+        assert pending.cancelled()
+        assert not client._pending_requests
+
+    @pytest.mark.asyncio
+    async def test_stop_leaves_already_resolved_futures_alone(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """A reply that landed before stop keeps its result."""
+        client = ZMQStreamingDealerClient(
+            address="tcp://127.0.0.1:5555", identity="worker-1", bind=False
+        )
+        await client.initialize()
+
+        loop = asyncio.get_running_loop()
+        done = loop.create_future()
+        done.set_result("reply")
+        client._pending_requests["rid-1"] = done
+
+        await client.stop()
+
+        assert not done.cancelled()
+        assert done.result() == "reply"
+        assert not client._pending_requests

@@ -19,7 +19,6 @@ htmlcov/
 artifacts/
 dist/
 .DS_Store
-uv.lock
 profile.json
 profile.html
 .vscode
@@ -57,4 +56,7 @@ src/aiperf/_build_info.py
 
 # Chaos/adversarial test run artifacts
 tests/scripts/.chaos_runs/
-.worktrees/
+
+# Kubernetes audit suite output (operator vs bare-pod artifact trees)
+tests/_artifacts/
+dev/ui-verify/node_modules

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -17,6 +19,7 @@ from aiperf.common.enums import (
     ConversationBranchMode,
     MemoryMapFormat,
     MessageType,
+    WorkerStartupState,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
@@ -31,9 +34,11 @@ from aiperf.common.hooks import (
 from aiperf.common.messages import (
     CommandMessage,
     DatasetConfiguredNotification,
+    DatasetDownloadedNotification,
     ErrorMessage,
     InferenceResultsMessage,
     WorkerHealthMessage,
+    WorkerStartupStateMessage,
 )
 from aiperf.common.messages.dataset_messages import (
     ConversationRequestMessage,
@@ -42,6 +47,8 @@ from aiperf.common.messages.dataset_messages import (
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
+    DatasetClientMetadata,
+    DatasetMetadata,
     ErrorDetails,
     MemoryMapClientMetadata,
     ModelEndpointInfo,
@@ -56,6 +63,13 @@ from aiperf.common.models import (
     WorkerTaskStats,
 )
 from aiperf.common.models.record_models import find_last_non_empty_usage
+from aiperf.common.pod_lifecycle_structs import (
+    GroupDatasetReady,
+    GroupDatasetStateQuery,
+    GroupDatasetStateSnapshot,
+    GroupManagerToPeerMessage,
+    _send_group_peer_hello_with_retry,
+)
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
@@ -71,7 +85,9 @@ from aiperf.credit.messages import (
     CreditReturn,
     FirstToken,
     RouterToWorkerMessage,
-    WorkerReady,
+    TimePong,
+    WorkerConnected,
+    WorkerDispatchable,
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit, CreditContext
@@ -81,8 +97,9 @@ from aiperf.dataset.memory_map_utils import (
 )
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
+from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
@@ -608,6 +625,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.credit_tasks: dict[int, asyncio.Task] = {}
 
+        # Worker clocks are not the controller's clock once workers live in
+        # their own pods; every credit receipt is an offset sample.
+        self.clock_offset_tracker = ClockOffsetTracker(logger_name=self.service_id)
+        self._is_kubernetes = (
+            self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        self._tracks_clock_offset = self._is_kubernetes
+        self._startup_state: WorkerStartupState | None = None
+        # Kubernetes: the pod index this container runs in. Dataset-downloaded
+        # notifications from other pods name files this container cannot see.
+        self._pod_index: str | None = os.environ.get("AIPERF_POD_INDEX")
+        self._pending_dataset_metadata: DatasetMetadata | None = None
+
         self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
                 CommAddress.RAW_INFERENCE_PROXY_FRONTEND,
@@ -642,10 +672,27 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self.credit_dealer_client.register_receiver(self._on_credit_message)
 
+        # Group-managed (Kubernetes) only: request channel to this pod's
+        # WorkerGroupManager, used to poll pod-local dataset state when the
+        # dataset broadcasts were missed.
+        self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
+        if self._is_group_managed_mode():
+            self.pod_lifecycle_dealer_client = (
+                self.comms.create_streaming_dealer_client(
+                    address=CommAddress.GROUP_LIFECYCLE,
+                    identity=self.service_id,
+                    bind=False,
+                    decode_type=GroupManagerToPeerMessage,
+                )
+            )
+            self.pod_lifecycle_dealer_client.register_receiver(
+                self._on_pod_lifecycle_message
+            )
+
         # Dual-channel returns: CreditReturn/FirstToken go out a dedicated typed
         # PUSH -> router PULL fan-in instead of back on the bidirectional credit
         # DEALER, so the dispatch DEALER is receive-only (no shared-FD send/recv
-        # contention). WorkerReady/WorkerShutdown still go on the DEALER so the
+        # contention). WorkerConnected/Dispatchable/Shutdown still go on the DEALER so the
         # ROUTER registers/tracks identity. Returns carry worker_id in-message
         # since PUSH/PULL has no ZMQ envelope identity.
         self.credit_return_push_client: StreamingPushClientProtocol = (
@@ -663,6 +710,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+
+        # Dispatchability gate. The worker announces WorkerConnected as soon as
+        # its return path is up, but only announces WorkerDispatchable once a
+        # dataset is actually open. In Kubernetes the dataset arrives via two
+        # one-shot broadcasts (DATASET_CONFIGURED then DATASET_DOWNLOADED); a
+        # pod whose containers subscribe after those fire receives neither and
+        # would otherwise sit in the routing pool failing every credit it got.
+        # _dataset_state_retry_task polls the pod's WorkerGroupManager so a
+        # missed broadcast self-heals instead of wedging the run.
+        self._worker_ready_event = asyncio.Event()
+        self._worker_ready_lock = asyncio.Lock()
+        self._dataset_state_retry_task: asyncio.Task[None] | None = None
+        self._latest_pod_dataset_state: GroupDatasetStateSnapshot | None = None
         # True when the mmap dataset ships pre-encoded per-turn payload bytes
         # (PAYLOAD_BYTES format); enables the verbatim-replay fast path.
         self._is_payload_bytes: bool = False
@@ -689,8 +749,266 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
-        """Send WorkerReady to announce presence."""
-        await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        """Announce connectivity, then become dispatchable when startup gates clear.
+
+        The startup-state transitions are what a Kubernetes controller watches
+        to distinguish "worker pod still coming up" from "worker pod wedged";
+        in single-node mode they are two extra bus publishes at startup.
+
+        WorkerConnected and WorkerDispatchable are deliberately separate. In
+        group-managed (Kubernetes) mode the pod-local dataset does not exist
+        yet at this point, and a worker without a dataset fails every credit
+        routed to it, so dispatchability is deferred until the dataset opens.
+        """
+        await self._publish_startup_state(WorkerStartupState.STARTING)
+        await self.credit_dealer_client.send(WorkerConnected(worker_id=self.service_id))
+
+        if self._tracks_clock_offset:
+            # Fire-and-forget: the baseline RTT is a diagnostic, so it must never
+            # sit on the readiness path. It previously ran before the worker
+            # announced itself, to keep pings from queueing behind real credits
+            # and inflating the measurement. On a real multi-pod cluster the
+            # credit ROUTER is not echoing yet at that point, so every probe
+            # timed out and the worker blocked for the whole budget -- long
+            # enough for service registration to time out and the pod to fail.
+            # A slightly inflated baseline is worth far less than a worker that
+            # starts, so the probe runs behind WorkerConnected and its failure
+            # is inert. It sits above the group-managed branch because
+            # _tracks_clock_offset is Kubernetes-only, which is exactly the
+            # branch that returns early.
+            self.execute_async(self._measure_baseline_rtt())
+
+        if self._is_group_managed_mode():
+            if self.pod_lifecycle_dealer_client is not None:
+                await _send_group_peer_hello_with_retry(
+                    self.pod_lifecycle_dealer_client,
+                    service_id=self.service_id,
+                    service_type=str(self.service_type),
+                    pod_index=self._pod_index,
+                    logger=self,
+                )
+            await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
+            self._ensure_group_dataset_state_retry()
+            await self._complete_group_startup_flow()
+            self.debug(
+                "Group-managed mode: deferring WorkerDispatchable until "
+                "group-local dataset state is ready"
+            )
+            return
+
+        await self._mark_worker_ready()
+
+    def _is_group_managed_mode(self) -> bool:
+        """Check if a WorkerGroupManager owns this worker's startup lifecycle."""
+        return self._is_kubernetes
+
+    async def _on_pod_lifecycle_message(
+        self, message: GroupManagerToPeerMessage
+    ) -> None:
+        """Handle group-local lifecycle messages from the WorkerGroupManager.
+
+        Only dataset-state messages are handled here; profile-configure and
+        shutdown reach this worker over the message bus (``@on_command``).
+        """
+        if isinstance(message, GroupDatasetReady):
+            if message.pod_index != self._pod_index or not message.success:
+                return
+            await self._open_dataset_client(
+                MemoryMapClientMetadata(
+                    data_file_path=Path(message.data_file_path),
+                    index_file_path=Path(message.index_file_path),
+                    conversation_count=message.conversation_count,
+                    total_size_bytes=message.total_size_bytes,
+                    format=message.mmap_format,
+                ),
+                mark_ready=False,
+            )
+            await self._apply_group_default_context_mode(message)
+            await self._mark_worker_ready()
+        elif isinstance(message, GroupDatasetStateSnapshot):
+            self._latest_pod_dataset_state = message
+            await self._complete_group_startup_flow(message)
+
+    async def _apply_group_default_context_mode(
+        self, message: GroupDatasetReady
+    ) -> None:
+        """Apply the context mode carried by the group-local push."""
+        context_mode = message.default_context_mode
+        if context_mode is None:
+            snapshot = await self._query_pod_dataset_state()
+            context_mode = snapshot.default_context_mode if snapshot else None
+        if context_mode is not None:
+            self.session_manager.set_default_context_mode(context_mode)
+
+    async def _query_pod_dataset_state(self) -> GroupDatasetStateSnapshot | None:
+        """Fetch the current group-local dataset state from the WorkerGroupManager."""
+        if self.pod_lifecycle_dealer_client is None or not hasattr(
+            self.pod_lifecycle_dealer_client, "request"
+        ):
+            return None
+        try:
+            response = await self.pod_lifecycle_dealer_client.request(
+                GroupDatasetStateQuery(
+                    rid=uuid.uuid4().hex,
+                    service_id=self.service_id,
+                ),
+                timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
+            )
+        except TimeoutError:
+            return None
+        if not isinstance(response, GroupDatasetStateSnapshot):
+            return None
+        self._latest_pod_dataset_state = response
+        return response
+
+    def _ensure_group_dataset_state_retry(self) -> None:
+        """Start the dataset-state retry loop if one is not already running."""
+        if not self._is_group_managed_mode() or self._worker_ready_event.is_set():
+            return
+        if (
+            self._dataset_state_retry_task is None
+            or self._dataset_state_retry_task.done()
+        ):
+            self._dataset_state_retry_task = self.execute_async(
+                self._retry_group_dataset_state_until_ready()
+            )
+
+    async def _retry_group_dataset_state_until_ready(self) -> None:
+        """Poll group-local dataset state until this worker becomes dispatchable.
+
+        This is what makes a missed dataset broadcast recoverable: the pod's
+        WorkerGroupManager is the authority on whether the dataset is on local
+        disk, so ask it rather than waiting forever for a one-shot publish.
+        """
+        while not self.stop_requested and not self._worker_ready_event.is_set():
+            await self._complete_group_startup_flow()
+            if self._worker_ready_event.is_set():
+                return
+            await asyncio.sleep(Environment.DATASET.STATE_POLL_INTERVAL)
+
+    async def _complete_group_startup_flow(
+        self,
+        snapshot: GroupDatasetStateSnapshot | None = None,
+    ) -> None:
+        """Make the worker dispatchable once group-local dataset state is ready."""
+        if not self._is_group_managed_mode() or self._worker_ready_event.is_set():
+            return
+
+        async with self._worker_ready_lock:
+            if self._worker_ready_event.is_set():
+                return
+
+            # The broadcast path already opened the dataset; nothing to recover.
+            if self._dataset_configured_event.is_set():
+                await self._mark_worker_ready_locked()
+                return
+
+            current_snapshot = snapshot or await self._query_pod_dataset_state()
+            if current_snapshot is None or not current_snapshot.ready:
+                self._ensure_group_dataset_state_retry()
+                return
+
+            if not self._dataset_configured_event.is_set():
+                await self._open_dataset_client(
+                    MemoryMapClientMetadata(
+                        data_file_path=Path(current_snapshot.data_file_path),
+                        index_file_path=Path(current_snapshot.index_file_path),
+                        conversation_count=current_snapshot.conversation_count,
+                        total_size_bytes=current_snapshot.total_size_bytes,
+                        format=current_snapshot.mmap_format,
+                    ),
+                    mark_ready=False,
+                )
+            if current_snapshot.default_context_mode is not None:
+                self.session_manager.set_default_context_mode(
+                    current_snapshot.default_context_mode
+                )
+            await self._mark_worker_ready_locked()
+
+    async def _mark_worker_ready(self) -> None:
+        """Send the dispatchable transition exactly once."""
+        async with self._worker_ready_lock:
+            await self._mark_worker_ready_locked()
+
+    async def _mark_worker_ready_locked(self) -> None:
+        """Send the dispatchable transition exactly once, holding the ready lock."""
+        if self._worker_ready_event.is_set():
+            return
+        await self.credit_dealer_client.send(
+            WorkerDispatchable(worker_id=self.service_id)
+        )
+        await self._publish_startup_state(WorkerStartupState.READY)
+        self._worker_ready_event.set()
+        retry_task = self._dataset_state_retry_task
+        if retry_task is not None and retry_task is not asyncio.current_task():
+            retry_task.cancel()
+
+    async def _measure_baseline_rtt(self) -> None:
+        """Probe credit-channel RTT under a hard total time budget.
+
+        Runs before the worker is dispatchable so the pings are not queued
+        behind real credits, which would inflate the baseline; the ROUTER
+        learns this DEALER's identity from the ping itself, so no prior
+        registration is needed.
+
+        The budget bounds the whole sequence, so a router that never echoes
+        cannot outlive the service registration window. Within the budget the
+        probes retry on a short per-probe timeout, because on a real cluster the
+        credit ROUTER is routinely not echoing yet when the worker container
+        starts; a single long probe would burn the budget before it is. On
+        expiry the worker proceeds with whatever RTTs already landed (possibly
+        none), which costs a diagnostic, not correctness.
+        """
+        budget = Environment.WORKER.CLOCK_PROBE_BUDGET
+        probe_timeout = Environment.WORKER.CLOCK_PROBE_TIMEOUT
+        try:
+            await asyncio.wait_for(
+                self.clock_offset_tracker.measure_baseline_rtt(
+                    send_ping=self.credit_dealer_client.send,
+                    timeout=probe_timeout,
+                    max_attempts=max(1, int(budget / probe_timeout)),
+                ),
+                timeout=budget,
+            )
+        except TimeoutError:
+            self.warning(
+                f"Clock-offset RTT probe exceeded its "
+                f"{Environment.WORKER.CLOCK_PROBE_BUDGET}s budget; announcing "
+                "readiness without a baseline RTT (offset tracking still runs "
+                "off credit receipts)"
+            )
+
+    async def _publish_startup_state(self, state: WorkerStartupState) -> None:
+        """Publish a worker startup-state transition, skipping repeats."""
+        if self._startup_state == state:
+            return
+        self._startup_state = state
+        await self.publish(
+            WorkerStartupStateMessage(
+                service_id=self.service_id,
+                startup_state=state,
+                pod_index=self._pod_index,
+            )
+        )
+
+    @on_message(MessageType.DATASET_DOWNLOADED_NOTIFICATION)
+    async def _on_dataset_downloaded(self, msg: DatasetDownloadedNotification) -> None:
+        """Open the dataset once this pod's WorkerGroupManager has materialized it.
+
+        Kubernetes only. Notifications from other pods are ignored: their files
+        live in a different emptyDir that this container cannot see.
+        """
+        if not self._is_kubernetes:
+            return
+        if msg.pod_index != self._pod_index or not msg.success:
+            return
+        if self._pending_dataset_metadata is None:
+            self.warning(
+                "Dataset download notification arrived before the dataset "
+                "configuration; ignoring, the configuration will open the client"
+            )
+            return
+        await self._open_dataset_client(msg.client_metadata)
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -700,16 +1018,43 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         The factory auto-extracts client_type from client_metadata, leveraging
         the discriminated union pattern for type-safe routing. This allows new
         storage backends (S3, Redis, etc.) to work without modifying Worker code.
+
+        In Kubernetes mode the paths in this message name files on the
+        *controller* pod, and this pod's copy does not exist yet: the
+        WorkerGroupManager starts its HTTP download when this same message
+        arrives. Record the dataset-level settings now and wait for
+        DatasetDownloadedNotification to open the mmap.
+        """
+        self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
+        self._pending_dataset_metadata = msg.metadata
+        if self._is_kubernetes:
+            self.debug(
+                "Kubernetes mode: deferring dataset open until pod-local download"
+            )
+            return
+        await self._open_dataset_client(msg.client_metadata)
+
+    async def _open_dataset_client(
+        self, client_metadata: DatasetClientMetadata, mark_ready: bool = True
+    ) -> None:
+        """Build and initialize the dataset client store for the given metadata.
+
+        Args:
+            client_metadata: Storage-backend-specific metadata for the client.
+            mark_ready: Whether to latch the dispatchable transition here. Callers
+                that already hold ``_worker_ready_lock`` must pass False:
+                ``_mark_worker_ready`` re-acquires that lock and
+                :class:`asyncio.Lock` is not reentrant, so leaving it True would
+                deadlock the worker's startup permanently.
         """
         ClientStoreClass = plugins.get_class(
-            PluginType.DATASET_CLIENT_STORE, msg.client_metadata.client_type
+            PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
         )
-        self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
+        self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
         await self._dataset_client.initialize()
-        self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
-        if isinstance(msg.client_metadata, MemoryMapClientMetadata):
+        if isinstance(client_metadata, MemoryMapClientMetadata):
             self._is_payload_bytes = (
-                msg.client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
+                client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
             )
             if (
                 self._is_payload_bytes
@@ -722,15 +1067,24 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
         self._dataset_configured_event.set()
         self.debug(
-            lambda: (
-                f"Dataset client initialized: type={msg.client_metadata.client_type}"
-            )
+            lambda: f"Dataset client initialized: type={client_metadata.client_type}"
         )
+        # A worker in group-managed mode is held out of the routing pool until
+        # a dataset is open. This is the broadcast path reaching that point;
+        # the poll in _retry_group_dataset_state_until_ready is the fallback
+        # for when the broadcast was missed. Both converge on the same latch,
+        # which is idempotent.
+        if self._is_group_managed_mode() and mark_ready:
+            await self._mark_worker_ready()
 
     @on_stop
     async def _send_worker_shutdown_message(self) -> None:
         """Send WorkerShutdown to announce shutdown."""
         try:
+            # Both sends are inside the guard: by @on_stop the bus may already
+            # be torn down, and a failed shutdown announcement must not turn a
+            # clean stop into an exception.
+            await self._publish_startup_state(WorkerStartupState.SHUTTING_DOWN)
             await self.credit_dealer_client.send(
                 WorkerShutdown(worker_id=self.service_id)
             )
@@ -758,6 +1112,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             service_id=self.service_id,
             health=health,
             task_stats=self.task_stats,
+            pod_index=self._pod_index,
         )
 
     async def _on_credit_message(self, message: RouterToWorkerMessage) -> None:
@@ -767,6 +1122,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 self._schedule_credit_drop_task(message)
             case CancelCredits():
                 await self._on_cancel_credits_message(message)
+            case TimePong():
+                self.clock_offset_tracker.handle_pong(message)
             case _:
                 self.warning(
                     f"Unknown credit message type: {message.__class__.__name__}"
@@ -780,6 +1137,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         ensure the credit is returned. It does not wait for it to actually execute.
         """
         drop_perf_ns = time.perf_counter_ns()
+        # Each credit carries the controller's issue timestamp, making every
+        # receipt a clock-offset sample (controller_time = worker_time -
+        # offset), read back by ``_send_inference_result_message`` onto
+        # ``RequestRecord.clock_offset_ns``. Still gated on Kubernetes mode:
+        # only there can the worker clock differ from the controller's. In
+        # local mode the two ARE the same clock, so every sample would be pure
+        # network transit - correcting by it would inject error rather than
+        # remove it - and the sample costs a deque append plus a window min()
+        # on the credit hot path. Local records therefore carry None, which is
+        # the honest "no correction applies" answer.
+        if self._tracks_clock_offset:
+            self.clock_offset_tracker.update(credit.issued_at_ns)
         credit_context = CreditContext(
             credit=credit,
             drop_perf_ns=drop_perf_ns,
@@ -1669,6 +2038,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         # All records will flow through here to be sent to the inference results push client.
         self.task_stats.task_finished(record.valid)
+
+        # Single egress point, so every record - success, error, and cancelled -
+        # carries the offset current at emit time once its minimum sample count
+        # establishes a reliable estimate. Do NOT rewrite timestamp_ns here: it
+        # anchors all exported timestamps and was set pre-request, so correcting
+        # it in place would also shift it by the request latency.
+        record.clock_offset_ns = (
+            self.clock_offset_tracker.offset_ns
+            if self.clock_offset_tracker.is_calibrated
+            else None
+        )
 
         msg = InferenceResultsMessage(
             service_id=self.service_id,

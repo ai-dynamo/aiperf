@@ -1,0 +1,831 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Result retrieval from Kubernetes benchmark pods and API service."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import aiohttp
+import orjson
+
+from aiperf.kubernetes.client import (
+    find_controller_pod,
+    find_operator_pod,
+    find_retrievable_pod,
+)
+from aiperf.kubernetes.console import (
+    console,
+    print_action,
+    print_error,
+    print_file_table,
+    print_header,
+    print_info,
+    print_metrics_summary,
+    print_step,
+    print_success,
+    print_warning,
+)
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE, Containers
+from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.port_forward import port_forward_with_status
+from aiperf.kubernetes.results_artifacts import (
+    API_RESULTS_FILES_PATH,
+    API_RESULTS_LIST_PATH,
+    retrieve_all_artifacts,
+)
+from aiperf.kubernetes.results_operator import (
+    RESULTS_SERVER_PORT,
+    _download_and_decompress,
+    _download_operator_file,
+    retrieve_results_from_operator,
+    retrieve_sweep_aggregate_artifacts_from_operator,
+)
+from aiperf.kubernetes.subproc import (
+    run_command,
+    start_streaming_process,
+    terminate_process,
+)
+
+if TYPE_CHECKING:
+    from kubernetes_asyncio.client import ApiClient
+
+    from aiperf.kubernetes.models import JobSetInfo
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "API_RESULTS_FILES_PATH",
+    "API_RESULTS_LIST_PATH",
+    "KEY_RESULT_FILES",
+    "RESULTS_SERVER_PORT",
+    "_download_and_decompress",
+    "_download_operator_file",
+    "_kubectl_kube_args",
+    "display_copied_results",
+    "kubectl_copy_results",
+    "retrieve_all_artifacts",
+    "retrieve_results_from_api",
+    "retrieve_results_from_operator",
+    "retrieve_results_from_pod",
+    "retrieve_sweep_aggregate_artifacts_from_operator",
+    "retrieve_sweep_results_from_operator",
+    "shutdown_api_service",
+    "stream_controller_logs",
+]
+
+# Subset of key result files for quick retrieval (default `results` command)
+KEY_RESULT_FILES = [
+    "metrics.json",
+    "profile_export_aiperf.json",
+    "profile_export_console.txt",
+]
+
+
+async def _get_aiperfjob_cr(
+    api: ApiClient, namespace: str, job_id: str
+) -> dict[str, object] | None:
+    """Fetch an AIPerfJob CR, returning None only when the API does so."""
+    from kubernetes_asyncio import client
+
+    from aiperf.kubernetes.cr_refs import (
+        AIPERF_JOB_GROUP,
+        AIPERF_JOB_PLURAL,
+        AIPERF_JOB_VERSION,
+    )
+
+    return await client.CustomObjectsApi(api).get_namespaced_custom_object(
+        group=AIPERF_JOB_GROUP,
+        version=AIPERF_JOB_VERSION,
+        plural=AIPERF_JOB_PLURAL,
+        namespace=namespace,
+        name=job_id,
+    )
+
+
+async def _resolve_export_names(
+    api: ApiClient, namespace: str, job_id: str
+) -> tuple[str, str]:
+    """Return the summary JSON and console-text filenames for a job."""
+    from aiperf.config.artifacts import ArtifactsConfig
+    from aiperf.kubernetes.spec_converter import resolve_artifacts_prefix
+
+    default = (KEY_RESULT_FILES[1], KEY_RESULT_FILES[2])
+    try:
+        cr = await _get_aiperfjob_cr(api, namespace, job_id)
+    except Exception as e:  # noqa: BLE001 - CR lookup is an optional filename hint
+        logger.debug(
+            "Could not read AIPerfJob %s/%s for export names: %s",
+            namespace,
+            job_id,
+            e,
+        )
+        return default
+
+    prefix = resolve_artifacts_prefix((cr or {}).get("spec"))
+    if prefix is None:
+        return default
+    try:
+        artifacts = ArtifactsConfig(prefix=prefix)
+    except Exception:  # noqa: BLE001 - rejected prefixes cannot rename exports
+        return default
+    return (
+        artifacts.profile_export_json_file.name,
+        artifacts.profile_export_console_txt_file.name,
+    )
+
+
+async def _resolve_key_result_files(
+    api: ApiClient, namespace: str, job_id: str
+) -> list[str]:
+    """Return quick-download filenames, honoring ``artifacts.prefix``."""
+    return ["metrics.json", *await _resolve_export_names(api, namespace, job_id)]
+
+
+def _kubectl_kube_args(kubeconfig: str | None, kube_context: str | None) -> list[str]:
+    """Build --kubeconfig/--context args for kubectl subprocesses."""
+    args: list[str] = []
+    if kubeconfig:
+        args.extend(["--kubeconfig", kubeconfig])
+    if kube_context:
+        args.extend(["--context", kube_context])
+    return args
+
+
+async def _write_api_response(
+    response: aiohttp.ClientResponse,
+    filename: str,
+    output_dir: Path,
+    *,
+    attempt: int,
+    max_retries: int,
+) -> bool | None:
+    """Write a 200-response body to disk and emit a metric summary if relevant.
+
+    Returns:
+        True on success, False after exhausted retries on incomplete body,
+        None to signal "retry this attempt" (incomplete body, retries remain).
+    """
+    content = await response.read()
+    expected = response.content_length
+    if expected is not None and len(content) != expected:
+        print_warning(
+            f"{filename}: expected {expected} bytes but received {len(content)}"
+        )
+        if attempt < max_retries:
+            return None
+        print_warning(f"Skipping {filename}: incomplete download after retries")
+        return False
+
+    output_file = output_dir / filename
+    await asyncio.to_thread(output_file.write_bytes, content)
+    print_success(f"Downloaded: {filename}")
+
+    if filename == "metrics.json":
+        try:
+            metrics = orjson.loads(content)
+            print_metrics_summary(metrics)
+        except (orjson.JSONDecodeError, KeyError, TypeError) as e:
+            print_warning(f"Could not parse metrics: {e}")
+    return True
+
+
+async def _download_api_file(
+    session: aiohttp.ClientSession,
+    files_base: str,
+    filename: str,
+    output_dir: Path,
+    *,
+    max_retries: int = 2,
+) -> bool:
+    """Download one key result file with retries.
+
+    Returns True if the file was written successfully (including the metrics
+    summary side-effect when the filename is ``metrics.json``).
+    """
+    for attempt in range(1 + max_retries):
+        try:
+            async with session.get(f"{files_base}/{filename}") as response:
+                if response.status == 200:
+                    outcome = await _write_api_response(
+                        response,
+                        filename,
+                        output_dir,
+                        attempt=attempt,
+                        max_retries=max_retries,
+                    )
+                    if outcome is None:
+                        continue
+                    return outcome
+                if response.status != 404:
+                    print_warning(f"Failed to download {filename}: {response.status}")
+                return False
+        except aiohttp.ClientConnectorError:
+            if attempt < max_retries:
+                continue
+            print_warning(f"Could not connect to API service for file {filename}")
+            return False
+        except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
+            if attempt < max_retries:
+                continue
+            print_warning(f"Error downloading {filename}: {e}")
+            return False
+    return False
+
+
+async def retrieve_results_from_api(
+    job_id: str,
+    namespace: str,
+    output_dir: Path,
+    jobset_info: JobSetInfo | None,
+    api: ApiClient,
+    *,
+    local_port: int = 0,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+    key_files: list[str] | None = None,
+) -> bool:
+    """Retrieve results from the API service via port-forward.
+
+    Downloads metrics.json and other key result files from the running controller pod.
+
+    Returns True if results were successfully retrieved, False otherwise.
+    """
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
+    if not jobset_info:
+        return False
+
+    pod = await find_retrievable_pod(api, namespace, job_id)
+    if not pod:
+        return False
+
+    if key_files is None:
+        key_files = await _resolve_key_result_files(api, namespace, job_id)
+
+    pod_name, pod_phase = pod
+    print_info(f"Found controller pod: {pod_name} (status: {pod_phase})")
+
+    try:
+        async with port_forward_with_status(
+            namespace,
+            pod_name,
+            local_port,
+            kubeconfig=kubeconfig,
+            kube_context=kube_context,
+        ) as port:
+            files_base = f"http://localhost:{port}{API_RESULTS_FILES_PATH}"
+
+            downloaded_any = False
+            timeout = aiohttp.ClientTimeout(total=30)
+            connector = create_tcp_connector()
+            async with aiohttp.ClientSession(
+                timeout=timeout, connector=connector
+            ) as session:
+                for filename in key_files:
+                    ok = await _download_api_file(
+                        session, files_base, filename, output_dir
+                    )
+                    downloaded_any = downloaded_any or ok
+
+            return downloaded_any
+
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
+        print_warning(f"Error connecting to API: {e}")
+        return False
+
+
+async def retrieve_results_from_pod(
+    job_id: str,
+    namespace: str,
+    output_dir: Path,
+    jobset_info: JobSetInfo | None,
+    api: ApiClient,
+    *,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> bool:
+    """Retrieve results by copying from pod.
+
+    Returns:
+        True if results were successfully copied, False otherwise.
+    """
+    if not jobset_info:
+        print_error(f"No job found with ID: {job_id}")
+        print_info("Results can only be retrieved from pods while the JobSet exists.")
+        return False
+
+    pod_info = await find_controller_pod(api, namespace, job_id)
+    if not pod_info:
+        print_error(f"No controller pod found for job {job_id}")
+        print_info("The job may have completed and pods were cleaned up.")
+        print_action("Use --ttl-seconds=0 during deploy to keep pods after completion.")
+        return False
+
+    pod_name, pod_phase = pod_info
+    container = Containers.CONTROL_PLANE
+
+    print_success(f"Found controller pod: {pod_name} (status: {pod_phase})")
+
+    if not pod_phase.is_retrievable:
+        print_error(f"Pod is in '{pod_phase}' state. Cannot retrieve results.")
+        if pod_phase == PodPhase.PENDING:
+            print_info("Wait for the pod to start running.")
+        elif pod_phase == PodPhase.FAILED:
+            print_action("Check logs with 'aiperf kube logs'.")
+        return False
+
+    print_step(f"Copying results from {pod_name}:/results to {output_dir}")
+
+    if not await kubectl_copy_results(
+        namespace,
+        pod_name,
+        container,
+        output_dir,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+    ):
+        return False
+
+    summary_name, _console_name = await _resolve_export_names(api, namespace, job_id)
+    return display_copied_results(output_dir, jobset_info, summary_name=summary_name)
+
+
+async def kubectl_copy_results(
+    namespace: str,
+    pod_name: str,
+    container: str,
+    output_dir: Path,
+    *,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> bool:
+    """Copy results from pod to local directory via kubectl cp.
+
+    Args:
+        namespace: Kubernetes namespace.
+        pod_name: Controller pod name.
+        container: Container name to copy from.
+        output_dir: Local directory to copy results into.
+        kubeconfig: Path to kubeconfig file.
+        kube_context: Kubernetes context name.
+
+    Returns:
+        True if copy succeeded, False otherwise.
+    """
+    kube_args = _kubectl_kube_args(kubeconfig, kube_context)
+    try:
+        cp_result = await run_command(
+            [
+                "kubectl",
+                "cp",
+                "-n",
+                namespace,
+                "-c",
+                container,
+                f"{pod_name}:/results/.",
+                str(output_dir),
+                *kube_args,
+            ],
+            timeout=1800.0,
+        )
+    except TimeoutError:
+        print_error(
+            f"Timed out copying results from {pod_name}:/results after 1800s. "
+            "The artifact tree may be very large; retry with the API path "
+            "(omit --from-pods) or copy a smaller subset manually."
+        )
+        return False
+
+    if cp_result.ok:
+        if cp_result.stdout:
+            console.print(cp_result.stdout)
+        return True
+
+    print_error(f"Error copying results: {cp_result.stderr}")
+    print_info("Trying to list available files...")
+
+    ls_result = await run_command(
+        [
+            "kubectl",
+            "exec",
+            "-n",
+            namespace,
+            "-c",
+            container,
+            pod_name,
+            *kube_args,
+            "--",
+            "ls",
+            "-la",
+            "/results",
+        ]
+    )
+    if ls_result.ok:
+        console.print(ls_result.stdout)
+    else:
+        print_error("Could not list results directory.")
+    return False
+
+
+def display_copied_results(
+    output_dir: Path,
+    jobset_info: JobSetInfo,
+    *,
+    summary_name: str = "profile_export_aiperf.json",
+) -> bool:
+    """Display summary of copied result files.
+
+    Args:
+        output_dir: Directory containing copied results.
+        jobset_info: JobSet info object with status.
+
+    Returns:
+        True if files were found, False otherwise.
+    """
+    copied_files = list(output_dir.glob("*"))
+    if not copied_files:
+        print_warning("No files found in results directory.")
+        print_info("The benchmark may still be running. Try again after completion.")
+        return False
+
+    print_file_table([(f.name, f.stat().st_size) for f in copied_files], verb="Copied")
+
+    summary_file = output_dir / summary_name
+    if summary_file.exists():
+        try:
+            summary = orjson.loads(summary_file.read_bytes())
+            if "summary" in summary:
+                print_header("Benchmark Summary")
+                for key, value in summary["summary"].items():
+                    console.print(f"  [dim]{key:<30}[/dim]  {value}")
+        except (orjson.JSONDecodeError, KeyError, TypeError, OSError) as e:
+            print_warning(f"Could not parse summary: {e}")
+
+    print_info(f"Job status: {jobset_info.status}")
+    print_success(f"Results saved to: {output_dir}")
+    return True
+
+
+async def shutdown_api_service(
+    job_id: str,
+    namespace: str,
+    api: ApiClient,
+    local_port: int = 0,
+    *,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> bool:
+    """Send shutdown request to the API service via port-forward.
+
+    Args:
+        job_id: AIPerf job ID.
+        namespace: Kubernetes namespace.
+        api: Connected kubernetes_asyncio ApiClient.
+        local_port: Local port for port-forward.
+
+    Returns:
+        True if shutdown was successfully requested.
+    """
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
+    api_shutdown_path = "/api/shutdown"
+
+    pod = await find_retrievable_pod(api, namespace, job_id, require_running=True)
+    if not pod:
+        pod_info = await find_controller_pod(api, namespace, job_id)
+        if not pod_info:
+            print_warning(
+                f"Controller pod not found for job {job_id}, cannot send shutdown signal"
+            )
+            return False
+        print_info("Controller pod is not running, no shutdown needed")
+        return True
+
+    pod_name, _ = pod
+
+    try:
+        async with port_forward_with_status(
+            namespace,
+            pod_name,
+            local_port,
+            kubeconfig=kubeconfig,
+            kube_context=kube_context,
+        ) as port:
+            timeout = aiohttp.ClientTimeout(total=10)
+            connector = create_tcp_connector()
+            async with (
+                aiohttp.ClientSession(timeout=timeout, connector=connector) as session,
+                session.post(f"http://localhost:{port}{api_shutdown_path}") as response,
+            ):
+                if response.status == 200:
+                    print_success("API service shutdown requested")
+                    return True
+                if response.status == 409:
+                    print_warning("Benchmark is still running. Cannot shut down yet.")
+                    return False
+                print_warning(
+                    f"Unexpected response from shutdown endpoint: {response.status}"
+                )
+                return False
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
+        print_warning(f"Could not send shutdown signal: {e}")
+        return False
+
+
+async def stream_controller_logs(
+    namespace: str,
+    pod_name: str,
+    *,
+    container: str = Containers.CONTROL_PLANE,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> None:
+    """Stream logs from controller pod until completion.
+
+    Args:
+        namespace: Kubernetes namespace
+        pod_name: Pod name to stream logs from
+        container: Container name within the pod
+        kubeconfig: Path to kubeconfig file.
+        kube_context: Kubernetes context name.
+    """
+    cmd = [
+        "kubectl",
+        "logs",
+        "-f",
+        "-n",
+        namespace,
+        "-c",
+        container,
+        pod_name,
+    ]
+    if kubeconfig:
+        cmd.extend(["--kubeconfig", kubeconfig])
+    if kube_context:
+        cmd.extend(["--context", kube_context])
+    proc = await start_streaming_process(cmd, merge_stderr=True)
+
+    try:
+        while True:
+            if proc.stdout is None:
+                break
+            line = await proc.stdout.readline()
+            if not line:
+                await proc.wait()
+                break
+            console.print(line.decode().rstrip(), markup=False, highlight=False)
+    except asyncio.CancelledError:
+        proc.terminate()
+        raise
+    finally:
+        await terminate_process(proc)
+
+
+async def _fetch_children_manifest(
+    *,
+    api: ApiClient,
+    sweep_name: str,
+    namespace: str,
+    operator_namespace: str,
+    local_port: int,
+    kubeconfig: str | None,
+    kube_context: str | None,
+    run: str | None = None,
+) -> dict | None:
+    """Fetch the per-epoch children manifest from the operator results server.
+
+    Port-forwards to the operator pod and GETs
+    ``/api/v1/sweeps/{namespace}/{sweep_name}/children`` (latest epoch). Returns
+    the parsed JSON document, or ``None`` if the operator pod is missing, the
+    endpoint returns 404, or any HTTP error occurs. Errors print actionable
+    messages via the kube console — callers translate ``None`` into a False
+    return on the public helper.
+
+    The response shape (camelCase from the operator) is::
+
+        {"sweepRunEpoch": "1714069323",
+         "children": [
+            {"namespace": "...", "name": "...",
+             "variationIndex": 0, "variationLabel": "c8",
+             "variationValues": "{\\"phases.profiling.concurrency\\":8}",
+             "trialIndex": null, "childRunEpoch": "..."}
+         ]}
+
+    ``variationValues`` is a JSON object string (same encoding as
+    ``AIPerfSweep.status.runs[].values``) and is empty for sweeps archived
+    before the field existed.
+    """
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
+    pod_info = await find_operator_pod(api, namespace=operator_namespace)
+    if not pod_info:
+        print_error("Operator pod not found")
+        print_info(f"Looked in namespace: {operator_namespace}")
+        return None
+    pod_name, _phase = pod_info
+
+    try:
+        async with port_forward_with_status(
+            operator_namespace,
+            pod_name,
+            local_port,
+            remote_port=RESULTS_SERVER_PORT,
+            verify_api=False,
+            kubeconfig=kubeconfig,
+            kube_context=kube_context,
+        ) as port:
+            url = f"http://localhost:{port}/api/v1/sweeps/{namespace}/{sweep_name}/children"
+            if run is not None:
+                url = f"{url}?epoch={run}"
+            timeout = aiohttp.ClientTimeout(total=30)
+            connector = create_tcp_connector()
+            async with (
+                aiohttp.ClientSession(timeout=timeout, connector=connector) as session,
+                session.get(url) as resp,
+            ):
+                if resp.status == 404:
+                    print_error(
+                        f"Sweep {namespace}/{sweep_name} has no children manifest "
+                        "yet (operator may still be assembling it, or the sweep "
+                        "name is wrong)."
+                    )
+                    return None
+                resp.raise_for_status()
+                return orjson.loads(await resp.read())
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
+        print_error(f"Error fetching children manifest: {e!r}")
+        return None
+
+
+def _cell_id(entry: dict) -> str:
+    """Render a child manifest entry as ``v<varidx>-t<trialidx>``.
+
+    ``trialIndex`` is ``None`` for non-multi-trial sweeps; treat as 0 so
+    single-trial sweep children land in ``v<idx>-t0/`` directories rather
+    than ``v<idx>-tNone/``.
+    """
+    var_idx = entry.get("variationIndex", entry.get("variation_index"))
+    trial_idx = entry.get("trialIndex", entry.get("trial_index"))
+    if trial_idx is None:
+        trial_idx = 0
+    return f"v{int(var_idx or 0)}-t{int(trial_idx)}"
+
+
+def _cell_values(entry: dict) -> str:
+    """Render a child's swept values compactly, e.g. ``concurrency=8``.
+
+    ``v8-t0 (sweep-v08-t0)`` names the directory but not the operating point,
+    and under an adaptive planner the variation label is ``search_iter_0008``,
+    which names nothing at all. An identifier is not a description: annotate
+    each download line with what that child actually benchmarked so the
+    progress output can be read without cross-referencing the manifest.
+
+    Dotted dimension paths are shortened to their leaf because the prefix is
+    identical on every line. Only scalars are rendered: a nested object has no
+    honest one-line form, and an elided blob would look authoritative while
+    saying nothing. Same rule as the UI's ``formatVariationValues`` so both
+    surfaces describe a variation identically.
+
+    Returns ``""`` -- never a partial descriptor -- for missing values,
+    unparseable JSON, the writer-side ``__aiperf_truncated__`` marker, and
+    entries with no scalar value; callers then print the plain line unchanged.
+    """
+    raw = entry.get("variationValues", entry.get("variation_values"))
+    if not raw:
+        return ""
+    try:
+        parsed = orjson.loads(raw) if isinstance(raw, (str, bytes)) else raw
+    except orjson.JSONDecodeError:
+        return ""
+    if not isinstance(parsed, dict) or parsed.get("__aiperf_truncated__"):
+        return ""
+    parts = [
+        f"{path.split('.')[-1] or path}={value}"
+        for path, value in parsed.items()
+        if value is not None and not isinstance(value, (dict, list))
+    ]
+    return ", ".join(parts)
+
+
+async def _download_sweep_children(
+    *,
+    children: list[dict],
+    namespace: str,
+    output_dir: Path,
+    api: ApiClient,
+    local_port: int,
+    operator_namespace: str,
+    kubeconfig: str | None,
+    kube_context: str | None,
+) -> bool:
+    """Download each child result named in a sweep children manifest."""
+    all_ok = True
+    for entry in children:
+        cell_id = _cell_id(entry)
+        child_name = entry.get("name") or ""
+        child_ns = entry.get("namespace") or namespace
+        values = _cell_values(entry)
+        cell_desc = f"{cell_id} ({child_name})" + (f" {values}" if values else "")
+        per_child_output = output_dir / cell_id
+        per_child_output.mkdir(parents=True, exist_ok=True)
+
+        ok = await retrieve_results_from_operator(
+            child_name,
+            child_ns,
+            per_child_output,
+            api,
+            local_port=local_port,
+            operator_namespace=operator_namespace,
+            kubeconfig=kubeconfig,
+            kube_context=kube_context,
+            run=entry.get("childRunEpoch") or entry.get("child_run_epoch"),
+        )
+        if ok:
+            print_success(f"{cell_desc}: OK")
+        else:
+            all_ok = False
+            print_error(f"{cell_desc}: FAILED")
+    return all_ok
+
+
+async def retrieve_sweep_results_from_operator(
+    sweep_name: str,
+    namespace: str,
+    output_dir: Path,
+    api: ApiClient,
+    *,
+    local_port: int = 0,
+    operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+    run: str | None = None,
+) -> bool:
+    """Download sweep parent + per-child results via the operator API.
+
+    For each cell ``(variation_index, trial_index)`` advertised by
+    ``GET /api/v1/sweeps/{ns}/{name}/children`` on the operator results-server,
+    invokes :func:`retrieve_results_from_operator` with the child CR name into
+    ``output_dir/v<variation_index>-t<trial_index>/``. The manifest itself is
+    persisted to ``output_dir/sweep_manifest.json`` to aid downstream tooling.
+
+    Returns True iff the parent manifest fetch and ALL child downloads
+    succeeded. On any child failure, prints which child failed and continues
+    retrieving the rest before returning False — so the user sees as much data
+    as possible from a partially-successful run.
+    """
+    manifest = await _fetch_children_manifest(
+        api=api,
+        sweep_name=sweep_name,
+        namespace=namespace,
+        operator_namespace=operator_namespace,
+        local_port=local_port,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+        run=run,
+    )
+    if manifest is None:
+        return False
+
+    children: list[dict] = list(manifest.get("children") or [])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "sweep_manifest.json"
+    await asyncio.to_thread(
+        manifest_path.write_bytes, orjson.dumps(manifest, option=orjson.OPT_INDENT_2)
+    )
+
+    if not children:
+        print_warning(
+            f"Sweep {namespace}/{sweep_name} children manifest is empty; "
+            "nothing to download."
+        )
+        return False
+
+    aggregate_ok = await retrieve_sweep_aggregate_artifacts_from_operator(
+        sweep_name,
+        namespace,
+        output_dir,
+        api,
+        local_port=local_port,
+        operator_namespace=operator_namespace,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+        run=run
+        or str(manifest.get("sweepRunEpoch") or manifest.get("sweep_run_epoch") or ""),
+    )
+
+    print_step(f"Sweep {sweep_name}: downloading {len(children)} children...")
+    children_ok = await _download_sweep_children(
+        children=children,
+        namespace=namespace,
+        output_dir=output_dir,
+        api=api,
+        local_port=local_port,
+        operator_namespace=operator_namespace,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+    )
+    return aggregate_ok and children_ok

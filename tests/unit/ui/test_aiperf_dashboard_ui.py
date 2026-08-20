@@ -75,8 +75,7 @@ class TestAIPerfDashboardUIInitialization:
     def test_init_attaches_all_hooks(self, dashboard_ui):
         """Test that all required hooks are attached correctly to the app."""
         assert hasattr(dashboard_ui.app, "on_records_progress")
-        assert hasattr(dashboard_ui.app, "on_profiling_progress")
-        assert hasattr(dashboard_ui.app, "on_warmup_progress")
+        assert hasattr(dashboard_ui.app, "on_phase_progress")
         assert hasattr(dashboard_ui.app, "on_worker_update")
         assert hasattr(dashboard_ui.app, "on_worker_status_summary")
         assert hasattr(dashboard_ui.app, "on_realtime_metrics")

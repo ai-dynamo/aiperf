@@ -49,6 +49,8 @@ class ZMQSocketDefaults:
     TCP_KEEPALIVE_CNT = 3
     IMMEDIATE = 1  # Don't queue messages
     LINGER = 0  # Don't wait on close
+    RECONNECT_IVL = 100  # ms before the first reconnect attempt
+    RECONNECT_IVL_MAX = 5000  # ms ceiling on the exponential reconnect backoff
 
     # High Water Mark
     # TODO: Investigate better ways to handle this

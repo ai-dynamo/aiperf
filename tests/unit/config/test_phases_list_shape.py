@@ -25,13 +25,14 @@ def test_phases_accepts_list_with_name_field():
         [
             {
                 "name": "warmup",
+                "kind": "warmup",
                 "type": "concurrency",
                 "requests": 10,
                 "concurrency": 2,
-                "exclude_from_results": True,
             },
             {
                 "name": "profiling",
+                "kind": "profiling",
                 "type": "concurrency",
                 "requests": 100,
                 "concurrency": 4,
@@ -47,13 +48,14 @@ def test_phases_preserves_input_order_warmup_first():
         [
             {
                 "name": "warmup",
+                "kind": "warmup",
                 "type": "concurrency",
                 "requests": 1,
                 "concurrency": 1,
-                "exclude_from_results": True,
             },
             {
                 "name": "profiling",
+                "kind": "profiling",
                 "type": "concurrency",
                 "requests": 1,
                 "concurrency": 1,
@@ -69,16 +71,17 @@ def test_phases_preserves_input_order_profiling_first():
         [
             {
                 "name": "profiling",
+                "kind": "profiling",
                 "type": "concurrency",
                 "requests": 1,
                 "concurrency": 1,
             },
             {
                 "name": "warmup",
+                "kind": "warmup",
                 "type": "concurrency",
                 "requests": 1,
                 "concurrency": 1,
-                "exclude_from_results": True,
             },
         ]
     )

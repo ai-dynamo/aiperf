@@ -600,13 +600,14 @@ class TestTimingResolver:
             phases=[
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "duration": 30,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "concurrency",
                     "duration": 120,
                     "concurrency": 4,
@@ -662,13 +663,14 @@ class TestTimingResolver:
             phases=[
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "duration": 30,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "concurrency",
                     "requests": 100,
                     "concurrency": 4,
@@ -876,11 +878,7 @@ class TestRatePhaseDescriptor:
         cfg = convert_cli_to_aiperf(
             CLIConfig(model_names=["m"], request_rate=request_rate, request_count=20)
         )
-        return next(
-            p
-            for p in cfg.benchmark.phases
-            if not getattr(p, "exclude_from_results", False)
-        )
+        return next(p for p in cfg.benchmark.phases if p.kind == "profiling")
 
     def test_rate_appears_in_descriptor(self):
         phase = self._rate_phase(25.0)

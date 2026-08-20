@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -133,13 +134,12 @@ def _auto_migrate_flat_shape(
     under a ``benchmark:`` envelope key. Older YAMLs (chaos fixtures, Helm
     templates, user docs) still use the flat shape. To preserve cyclopts-era
     parity, auto-migrate at load time and emit a one-line deprecation warning
-    pointing to the migrate-config tutorial. Idempotent: a no-op when the
-    envelope shape is already in use.
+    with instructions for updating the source YAML. Idempotent: a no-op when
+    the envelope shape is already in use.
 
     The migration covers the body-keys-to-benchmark wrap plus the singular
-    ``dataset:`` -> ``datasets: [...]`` promotion. Inner schema migrations
-    (e.g. ``isl: 16`` -> ``isl: {mean: 16}``) are not handled here - point
-    users at ``tools/migrate_config_yaml.py`` for those.
+    ``dataset:`` -> ``datasets: [...]`` promotion. Other invalid legacy fields
+    are reported by normal configuration validation.
     """
     body_present = sorted(_BODY_KEYS & set(data.keys()))
     if not body_present:
@@ -163,12 +163,12 @@ def _auto_migrate_flat_shape(
     else:
         data["benchmark"] = body
     fp = file_path or "<stdin>"
-    migrate_target = file_path or "<path>"
+    source = file_path or "the source YAML"
     _logger.warning(
         f"Config {fp} uses pre-restructure flat shape (top-level keys: {body_present}); "
-        f"auto-migrated to envelope shape under `benchmark:`. Run "
-        f"`uv run python tools/migrate_config_yaml.py {migrate_target} --in-place` to "
-        f"make the change permanent. See docs/tutorials/migrating-config.md."
+        f"auto-migrated to envelope shape under `benchmark:`. Update {source} by "
+        f"nesting those keys under `benchmark:` to make the change permanent. "
+        f"See docs/tutorials/yaml-config.md."
     )
 
 
@@ -435,6 +435,55 @@ def _validate_config_dict(
         raise
 
 
+def load_config_from_mapping(
+    data: dict[str, Any],
+    *,
+    file_path: Path | str | None = None,
+    substitute_env: bool = True,
+) -> AIPerfConfig:
+    """Load and validate an AIPerf configuration from an in-memory mapping.
+
+    This is the mapping equivalent of :func:`load_config_from_string`. It
+    preserves the same post-environment, pre-Jinja envelope needed for
+    per-variation sweep rendering, while leaving the caller's mapping
+    untouched.
+
+    Args:
+        data: AIPerf configuration mapping in envelope or legacy flat shape.
+        file_path: Optional source path for diagnostics and relative plot paths.
+        substitute_env: Whether to process environment variable substitution.
+
+    Returns:
+        Validated AIPerfConfig with its raw sweep envelope retained.
+
+    Raises:
+        ConfigurationError: If the mapping shape or expansion is invalid.
+        MissingEnvironmentVariableError: If a required env var is missing.
+        pydantic.ValidationError: If the configuration fails validation.
+    """
+    if not isinstance(data, dict):
+        raise ConfigurationError(
+            f"Configuration must be a mapping, got {type(data).__name__}",
+            file_path=file_path,
+        )
+
+    copied = copy.deepcopy(data)
+    try:
+        _assert_string_keys(copied)
+    except ConfigurationError as e:
+        raise ConfigurationError(
+            e.message, file_path=file_path, context=e.context
+        ) from e
+    _auto_migrate_flat_shape(copied, file_path)
+
+    expanded, pre_jinja = _expand_capture_pre_jinja(
+        copied, file_path, substitute_env=substitute_env
+    )
+    config = _validate_config_dict(expanded, file_path)
+    config._raw_envelope = pre_jinja
+    return config
+
+
 def load_config_from_string(
     yaml_content: str,
     *,
@@ -479,16 +528,11 @@ def load_config_from_string(
         >>> config = load_config_from_string(yaml_str)
     """
     data = _parse_yaml_mapping(yaml_content, file_path)
-    _auto_migrate_flat_shape(data, file_path)
-
-    expanded, pre_jinja = _expand_capture_pre_jinja(
-        data, file_path, substitute_env=substitute_env
+    return load_config_from_mapping(
+        data,
+        file_path=file_path,
+        substitute_env=substitute_env,
     )
-    config = _validate_config_dict(expanded, file_path)
-    # Stash the pre-Jinja envelope so build_benchmark_plan can re-render
-    # `{{ var }}` body fields against each variation's variables block.
-    config._raw_envelope = pre_jinja
-    return config
 
 
 def load_config_dict(
@@ -505,6 +549,36 @@ def load_config_dict(
 
     Raises ``ConfigurationError`` if the file is missing/unreadable; YAML/
     Jinja errors propagate from the underlying loaders.
+    """
+    rendered, _raw_envelope = load_config_dict_with_raw_envelope(
+        file_path,
+        substitute_env=substitute_env,
+    )
+    return rendered
+
+
+def load_config_dict_with_raw_envelope(
+    file_path: Path | str,
+    *,
+    substitute_env: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load rendered and pre-Jinja dictionaries from one YAML config file.
+
+    The first dictionary is post-environment and post-Jinja, suitable for
+    Pydantic validation. The second is post-environment but pre-Jinja, so
+    callers that transform the rendered dictionary can apply the same
+    transformation before retaining it as ``AIPerfConfig._raw_envelope``.
+
+    Args:
+        file_path: Path to the YAML configuration file.
+        substitute_env: Whether to process environment variable substitution.
+
+    Returns:
+        ``(rendered, raw_envelope)`` dictionaries in Config-v2 envelope shape.
+
+    Raises:
+        ConfigurationError: If the file cannot be read or parsed.
+        MissingEnvironmentVariableError: If a required env var is missing.
     """
     file_path = Path(file_path)
     if not file_path.exists():
@@ -524,7 +598,11 @@ def load_config_dict(
 
     data = _parse_yaml_mapping(content, file_path)
     _auto_migrate_flat_shape(data, file_path)
-    return _expand_with_recursion_guard(data, file_path, substitute_env=substitute_env)
+    return _expand_capture_pre_jinja(
+        data,
+        file_path,
+        substitute_env=substitute_env,
+    )
 
 
 def dump_config(

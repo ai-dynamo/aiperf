@@ -71,12 +71,13 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       requests: 50
       concurrency: 8
-      excludeFromResults: true
 
     - name: profiling
+      kind: profiling
       type: concurrency
       requests: 500
       concurrency: 32          # Overridden by sweep

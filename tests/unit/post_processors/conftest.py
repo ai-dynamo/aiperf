@@ -527,6 +527,40 @@ def error_parsed_record() -> ParsedResponseRecord:
     )
 
 
+@pytest.fixture
+def cancelled_parsed_record() -> ParsedResponseRecord:
+    """Create an invalid response record caused by deliberate client cancellation."""
+    from aiperf.common.models import Text, Turn
+
+    request = RequestRecord(
+        request_info=_create_test_request_info(
+            conversation_id="test-conversation-cancelled",
+            turns=[
+                Turn(
+                    texts=[Text(contents=["This will be cancelled"])],
+                    role="user",
+                    model="test-model",
+                )
+            ],
+        ),
+        model_name="test-model",
+        start_perf_ns=DEFAULT_START_TIME_NS,
+        timestamp_ns=DEFAULT_START_TIME_NS,
+        end_perf_ns=DEFAULT_START_TIME_NS,
+        error=ErrorDetails(
+            type="RequestCancellationError",
+            message="Request cancelled by external signal",
+            code=499,
+        ),
+        cancellation_perf_ns=DEFAULT_START_TIME_NS,
+    )
+    return ParsedResponseRecord(
+        request=request,
+        responses=[],
+        token_counts=TokenCounts(input=None, output=None, reasoning=None),
+    )
+
+
 def create_exporter_config(cli_config: CLIConfig) -> ExporterConfig:
     """Helper to create standard ExporterConfig for aggregator tests."""
     from tests.unit.conftest import make_cfg_from_v1
@@ -569,7 +603,8 @@ def setup_mock_registry_sequences(
     mock_registry: Mock,
     valid_metric_types: list[type[BaseMetric]],
     error_metric_types: list[type[BaseMetric]],
-) -> tuple[list[str], list[str]]:
+    cancelled_metric_types: list[type[BaseMetric]] | None = None,
+) -> tuple[list[str], list[str], list[str]]:
     """Setup mock registry for processors that need both valid and error metrics.
 
     Args:
@@ -578,22 +613,34 @@ def setup_mock_registry_sequences(
         error_metric_types: list of error metric class types
 
     Returns:
-        tuple of (valid_tags, error_tags)
+        tuple of (valid_tags, error_tags, cancelled_tags)
     """
+    cancelled_metric_types = cancelled_metric_types or []
     valid_tags = [metric_type.tag for metric_type in valid_metric_types]
     error_tags = [metric_type.tag for metric_type in error_metric_types]
+    cancelled_tags = [metric_type.tag for metric_type in cancelled_metric_types]
 
     # Create lookup map for all metric instances
     all_metric_instances = {
         metric_type.tag: metric_type()
-        for metric_type in valid_metric_types + error_metric_types
+        for metric_type in valid_metric_types
+        + error_metric_types
+        + cancelled_metric_types
     }
 
-    mock_registry.tags_applicable_to.side_effect = [valid_tags, error_tags]
-    mock_registry.create_dependency_order_for.side_effect = [valid_tags, error_tags]
+    mock_registry.tags_applicable_to.side_effect = [
+        valid_tags,
+        error_tags,
+        cancelled_tags,
+    ]
+    mock_registry.create_dependency_order_for.side_effect = [
+        valid_tags,
+        error_tags,
+        cancelled_tags,
+    ]
     mock_registry.get_instance.side_effect = lambda tag: all_metric_instances[tag]
 
-    return valid_tags, error_tags
+    return valid_tags, error_tags, cancelled_tags
 
 
 def create_accumulator_with_metrics(run, *metrics: type[BaseMetric]):

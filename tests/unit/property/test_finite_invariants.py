@@ -357,9 +357,16 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # not a numeric leaf — same shape as the baselined endpoint_summaries
     # sibling; per-summary numeric fields carry their own bounds.
     "ServerMetricsResults.warmup_endpoint_summaries",
+    # RealtimeServerMetricsMessage.endpoint_summaries: same dict-of-summaries
+    # shape; the substring heuristic sees "int" inside "Endpoint".
+    "RealtimeServerMetricsMessage.endpoint_summaries",
     # RateSeriesConfig.points: list[RateSeriesPoint], not a numeric field. The
     # substring-based heuristic sees "int" inside "Point".
     "RateSeriesConfig.points",
+    # RequestRecord.clock_offset_ns: signed controller/worker clock difference
+    # (received - issued). Either sign is legitimate -- a worker clock behind
+    # the controller's is negative -- so no field-level bound applies.
+    "RequestRecord.clock_offset_ns",
     # OutputFragment.metrics: dict[str, MetricValueTypeT], not a numeric leaf.
     # Per-metric values are constrained by the metrics system; no field-level
     # bound is meaningful on the container.
@@ -383,6 +390,17 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # _Environment.ENDPOINT: nested _EndpointSettings object, not a numeric
     # leaf. The heuristic fires because "int" appears in "_EndpointSettings".
     "_Environment.ENDPOINT",
+    # CellEntry.metrics: dict[str, dict[str, float]] -- metric_name -> stat_name
+    # -> value for one sweep cell. A field-level ge/le bound cannot apply to a
+    # nested dict container, and the leaf values span latencies, throughputs and
+    # signed deltas, so no single bound would be correct anyway. The values are
+    # copied verbatim from the child run's already-scrubbed aggregate bundle.
+    "CellEntry.metrics",
+    # SweepSummary.run_states: dict[str, int] of per-state child counts
+    # (pending/running/completed/failed/cancelled). Container field -- the
+    # non-negativity that matters lives on the sibling scalar roll-ups
+    # (completed_runs / failed_runs / cancelled_runs), which all carry ge=0.
+    "SweepSummary.run_states",
 }
 
 

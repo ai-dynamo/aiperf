@@ -161,6 +161,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.FIXED_SCHEDULE_ONLY
                 | MetricFlags.ERROR_ONLY
+                | MetricFlags.CANCELLED_ONLY
                 | MetricFlags.GOODPUT,
             ),
             # Test both flags (error_metrics_only takes precedence)
@@ -210,6 +211,22 @@ class TestBaseMetricsProcessor:
             expected_disallowed | MetricFlags.EXPERIMENTAL,
             MetricType.RECORD,
         )
+
+    def test_setup_metrics_cancelled_only_requires_cancelled_flag(
+        self, mock_metric_registry: Mock, mock_run
+    ) -> None:
+        mock_metric_registry.tags_applicable_to.return_value = set()
+
+        BaseMetricsProcessor(mock_run)._setup_metrics(
+            MetricType.RECORD,
+            cancelled_metrics_only=True,
+        )
+
+        required_flags, disallowed_flags = (
+            mock_metric_registry.tags_applicable_to.call_args.args[:2]
+        )
+        assert required_flags == MetricFlags.CANCELLED_ONLY
+        assert not disallowed_flags.has_any_flags(MetricFlags.CANCELLED_ONLY)
 
     def test_setup_metrics_empty_result(
         self, mock_metric_registry: Mock, mock_run

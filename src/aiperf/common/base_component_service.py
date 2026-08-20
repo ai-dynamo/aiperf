@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 import uuid
 from typing import TYPE_CHECKING, ClassVar
 
@@ -49,6 +50,7 @@ class BaseComponentService(BaseService):
         self,
         run: "BenchmarkRun",
         service_id: str | None = None,
+        api_port: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -56,6 +58,10 @@ class BaseComponentService(BaseService):
             service_id=service_id,
             **kwargs,
         )
+        # Explicit port override supplied by the launcher (the K8s service
+        # manager assigns ports per-pod); None means "fall back to config /
+        # environment defaults".
+        self._api_port = api_port
 
     @background_task(interval=Environment.SERVICE.HEARTBEAT_INTERVAL, immediate=False)
     async def _heartbeat_task(self) -> None:
@@ -82,6 +88,8 @@ class BaseComponentService(BaseService):
             # Target the system controller directly to avoid broadcasting to all services.
             target_service_type=ServiceType.SYSTEM_CONTROLLER,
             state=self.state,
+            pod_name=os.environ.get("HOSTNAME"),
+            pod_index=os.environ.get("AIPERF_POD_INDEX"),
             capabilities=tuple(self.extra_capabilities),
         )
         max_attempts = Environment.SERVICE.REGISTRATION_MAX_ATTEMPTS
