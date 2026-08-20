@@ -23,7 +23,7 @@ class AIPerfBaseModel(AutoRoutedModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
 
-def _msgspec_enc_hook(obj: Any) -> Any:
+def msgspec_enc_hook(obj: Any) -> Any:
     """enc_hook for ``msgspec.to_builtins`` / ``msgspec.msgpack.Encoder``.
 
     Handles types that msgspec's built-in encoder does not recognise:
@@ -41,7 +41,7 @@ def _msgspec_enc_hook(obj: Any) -> Any:
 
     Example:
         >>> from aiperf.common.enums import ModelSelectionStrategy
-        >>> _msgspec_enc_hook(ModelSelectionStrategy.ROUND_ROBIN)
+        >>> msgspec_enc_hook(ModelSelectionStrategy.ROUND_ROBIN)
         'round_robin'
     """
     if isinstance(obj, Enum):

@@ -13,12 +13,16 @@ from msgspec import Struct
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
+from aiperf.common.models.base_models import msgspec_enc_hook
 from aiperf.credit.messages import WorkerToRouterMessage
 from aiperf.zmq.fd_reader import FdEdgeReader
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
-# Shared encoder (stateless, safe to reuse across instances)
-_encoder = msgspec.msgpack.Encoder()
+# Shared encoder (stateless, safe to reuse across instances). enc_hook only
+# fires for types msgspec cannot encode natively, so it costs nothing on the
+# happy path and turns an unencodable field into a correct value instead of a
+# TypeError mid-send.
+_encoder = msgspec.msgpack.Encoder(enc_hook=msgspec_enc_hook)
 
 WorkerToRouterHandler: TypeAlias = Callable[[str, Any], Awaitable[Struct | None]]
 """Receiver signature: ``(identity, message) -> Struct | None``.

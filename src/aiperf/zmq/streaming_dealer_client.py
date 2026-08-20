@@ -13,12 +13,14 @@ from msgspec import Struct
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
+from aiperf.common.models.base_models import msgspec_enc_hook
 from aiperf.credit.messages import RouterToWorkerMessage
 from aiperf.zmq.fd_reader import FdEdgeReader
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
-# Pre-created encoder/decoder for performance (caches schema)
-_encoder = msgspec.msgpack.Encoder()
+# Pre-created encoder/decoder for performance (caches schema).
+# See streaming_router_client for why enc_hook is wired in.
+_encoder = msgspec.msgpack.Encoder(enc_hook=msgspec_enc_hook)
 _decoder = msgspec.msgpack.Decoder(RouterToWorkerMessage)
 
 RouterToWorkerHandler: TypeAlias = Callable[[RouterToWorkerMessage], Awaitable[None]]

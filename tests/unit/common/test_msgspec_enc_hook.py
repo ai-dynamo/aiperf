@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models.base_models import AIPerfBaseModel, _msgspec_enc_hook
+from aiperf.common.models.base_models import AIPerfBaseModel, msgspec_enc_hook
 
 
 class _Sample(AIPerfBaseModel):
@@ -13,19 +13,19 @@ class _Sample(AIPerfBaseModel):
 
 
 def test_enc_hook_encodes_extensible_str_enum():
-    assert _msgspec_enc_hook(ModelSelectionStrategy.ROUND_ROBIN) == "round_robin"
+    assert msgspec_enc_hook(ModelSelectionStrategy.ROUND_ROBIN) == "round_robin"
 
 
 def test_enc_hook_encodes_path_as_string():
-    assert _msgspec_enc_hook(Path("/tmp/artifacts")) == "/tmp/artifacts"
+    assert msgspec_enc_hook(Path("/tmp/artifacts")) == "/tmp/artifacts"
 
 
 def test_enc_hook_encodes_pydantic_model_as_dict():
-    assert _msgspec_enc_hook(_Sample(name="aiperf-bench-7f2a")) == {
+    assert msgspec_enc_hook(_Sample(name="aiperf-bench-7f2a")) == {
         "name": "aiperf-bench-7f2a"
     }
 
 
 def test_enc_hook_rejects_unsupported_type():
     with pytest.raises(NotImplementedError, match="object"):
-        _msgspec_enc_hook(object())
+        msgspec_enc_hook(object())

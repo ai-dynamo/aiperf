@@ -21,10 +21,12 @@ from msgspec import Struct
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import CommunicationError
+from aiperf.common.models.base_models import msgspec_enc_hook
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 # Pre-created encoder (caches schema); matches the streaming DEALER/ROUTER wire.
-_encoder = msgspec.msgpack.Encoder()
+# See streaming_router_client for why enc_hook is wired in.
+_encoder = msgspec.msgpack.Encoder(enc_hook=msgspec_enc_hook)
 
 
 class ZMQStreamingPushClient(BaseZMQClient):
