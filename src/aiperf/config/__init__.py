@@ -37,6 +37,8 @@ Example Usage:
 Schema Version: 2.0.0
 """
 
+from typing import Any
+
 from aiperf.config.artifacts import (
     ArtifactsConfig,
     OutputDefaults,
@@ -220,7 +222,8 @@ _LAZY_EXPORTS = {
 }
 
 
-def __getattr__(name: str):  # noqa: D401
+def __getattr__(name: str) -> Any:
+    """Resolve a Kubernetes-only config export on first access, then cache it."""
     module_path = _LAZY_EXPORTS.get(name)
     if module_path is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
