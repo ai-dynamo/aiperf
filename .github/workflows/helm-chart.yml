@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: "Validate Helm Chart"
+
+# Match the trusted-branch CI convention used by the unit and Kubernetes
+# workflows. Fork PRs enter this workflow after being mirrored to
+# pull-request/<number>.
+on:
+  push:
+    branches:
+      - main
+      - 'pull-request/[0-9]+'
+      - 'release/*'
+    paths:
+      - 'deploy/helm/**'
+      - 'Makefile'
+      - '.github/workflows/helm-chart.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint and render chart
+        run: |
+          make helm-lint
+          make helm-template
+
+      - name: Render release artifacts
+        run: |
+          make crd-release HELM_DIST_DIR=dist/crds
+          make helm-package HELM_DIST_DIR=dist/chart
+
+      - name: Upload rendered artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: aiperf-operator-helm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/chart/*.tgz
+            dist/crds/*.yaml
+          if-no-files-found: error
+          retention-days: 14
