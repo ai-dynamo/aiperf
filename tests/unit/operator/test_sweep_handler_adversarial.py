@@ -31,10 +31,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import kopf
 import pytest
-from pytest import param
-
 from aiperf.operator.handlers.sweep import child_rollup, lifecycle
 from aiperf.operator.handlers.sweep import create as sweep_create
+from pytest import param
 
 
 @pytest.fixture(autouse=True)

@@ -25,12 +25,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import kopf
 import pytest
+from aiperf.operator.handlers.sweep import child_rollup, lifecycle
 from kubernetes_asyncio.client import ApiException
 
 from aiperf.common.enums import OptimizationDirection
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension
-from aiperf.operator.handlers.sweep import child_rollup, lifecycle
 from aiperf.plugin.enums import SearchPlannerType
 from aiperf.sweep_controller.main import SWEEP_CONTROLLER_RESULTS_SIDECAR_PORT
 
@@ -673,6 +673,7 @@ class TestOperatorAggregateFetchCancellationGuard:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from aiperf.operator.handlers.sweep import _aggregate_fetch
+
         from aiperf.operator.main import on_aiperfsweep_aggregation_complete
 
         fetch = AsyncMock()

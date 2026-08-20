@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 
 import kopf
 import pytest
-
 from aiperf.operator.handlers.sweep import child_rollup, lifecycle
 
 

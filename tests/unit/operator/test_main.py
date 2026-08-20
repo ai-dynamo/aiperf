@@ -235,8 +235,9 @@ async def test_sweep_resume_noncomplete_is_noop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Resume registration must ignore sweeps whose aggregate is not complete."""
-    from aiperf.operator import main as operator_main
     from aiperf.operator.handlers.sweep import _aggregate_fetch
+
+    from aiperf.operator import main as operator_main
 
     fetch = AsyncMock()
     monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
@@ -257,8 +258,9 @@ async def test_sweep_resume_durable_archive_only_reaps_source_jobset(
     tmp_path: Path,
 ) -> None:
     """A post-publication restart skips download and finishes safe cleanup."""
-    from aiperf.operator import main as operator_main
     from aiperf.operator.handlers.sweep import _aggregate_fetch
+
+    from aiperf.operator import main as operator_main
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -298,11 +300,11 @@ async def test_sweep_aggregation_complete_zero_fetch_raises_temporary_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The field handler retries when the sidecar returns no aggregate files."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.main import on_aiperfsweep_aggregation_complete
 
     fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=0, listed=0))
@@ -329,12 +331,12 @@ async def test_sweep_aggregation_complete_missing_aggregate_keeps_jobset(
     other copy, so deleting on a partial download destroys it. The handler
     retries the harvest instead.
     """
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     # files fetched, but no aggregate.json on disk
     fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=3, listed=3))
@@ -365,12 +367,12 @@ async def test_sweep_aggregation_complete_partial_download_keeps_jobset(
     only on the controller pod's emptyDir; deleting the JobSet on a partial
     harvest destroys them permanently.
     """
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -403,12 +405,12 @@ async def test_sweep_aggregation_complete_full_fetch_deletes_jobset(
     mock_sweep_runs_index: AsyncMock,
 ) -> None:
     """A full harvest writes the harvest sentinel, then reaps the JobSet."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -456,12 +458,12 @@ async def test_sweep_archive_commit_orders_metadata_sentinel_latest_index_delete
     mock_durable_sweep_aggregate_ref_publication: AsyncMock,
 ) -> None:
     """UID publication fences latest/index commit before source deletion."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch = "1714064523"
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / epoch
@@ -652,12 +654,12 @@ async def test_sweep_archive_sentinel_failure_preserves_jobset_and_latest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A failed durable commit cannot publish latest or reap the only source."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch = "1714064523"
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / epoch
@@ -703,12 +705,12 @@ async def test_sweep_aggregation_complete_truncated_aggregate_keeps_jobset(
     exists() alone would accept the truncated file and delete the JobSet,
     permanently losing the only intact copy on the controller pod's emptyDir.
     """
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -741,12 +743,12 @@ async def test_sweep_aggregation_complete_zero_fetch_with_sentinel_treats_done(
     sentinel on disk is treated as an already-finished harvest, not an
     endless retry loop. The aggregate alone is NOT enough (see the
     no-sentinel tests below)."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -790,12 +792,12 @@ async def test_sweep_aggregation_partial_then_zero_download_keeps_jobset(
     emptyDir-only copy of the 6th file. Now the missing harvest sentinel plus
     the still-existing JobSet must keep the handler on the retry path.
     """
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -851,12 +853,12 @@ async def test_sweep_aggregation_full_harvest_then_crash_then_zero_deletes(
     """An operator that crashed AFTER a full harvest but BEFORE the JobSet
     delete must still converge: the sentinel written on the full-success tick
     lets the zero-download re-fire delete without re-reaching the sidecar."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -910,12 +912,12 @@ async def test_sweep_aggregation_zero_download_with_listed_files_retries(
     failed — never an already-finished harvest. Must retry, even when both
     the aggregate and the sentinel are already on disk from a prior epoch
     state, and must never delete the JobSet."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -952,12 +954,12 @@ async def test_sweep_aggregation_presentinel_harvest_jobset_gone_treats_done(
     the JobSet confirmed gone (already reaped by the old code) there is
     nothing left to recover, so the handler completes without retry — and
     without a pointless delete."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)
@@ -993,12 +995,12 @@ async def test_sweep_aggregation_complete_zero_fetch_truncated_aggregate_retries
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Zero-fetch + truncated on-disk aggregate stays on the re-fetch path."""
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
     from aiperf.operator.handlers.sweep._aggregate_fetch import (
         SweepAggregateFetchResult,
     )
 
     from aiperf.operator import main as operator_main
-    from aiperf.operator.handlers.sweep import _aggregate_fetch
 
     epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / "1714064523"
     epoch_dir.mkdir(parents=True)

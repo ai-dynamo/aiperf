@@ -23,12 +23,12 @@ from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch as mock_patch
 
 import pytest
+from aiperf.operator.handlers.sweep import create as sweep_create
 from pytest import param
 
 from aiperf.kubernetes.constants import AIPerfLabels, Containers
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.operator.handlers.create import _build_deployment, _create_jobset
-from aiperf.operator.handlers.sweep import create as sweep_create
 from tests.harness.operator import build_minimal_aiperfjob_spec
 
 # =============================================================================

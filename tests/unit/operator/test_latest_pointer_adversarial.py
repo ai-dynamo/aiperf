@@ -25,12 +25,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
+from aiperf.operator.handlers.sweep import _aggregate_fetch
 from pytest import param
 
 from aiperf.kubernetes.crd_models import ControllerFetchResult
 from aiperf.operator import results_layout, runs_index
 from aiperf.operator.handlers import completion
-from aiperf.operator.handlers.sweep import _aggregate_fetch
 from aiperf.operator.results_layout import LATEST_POINTER, epoch_key_from_body
 from aiperf.operator.status import StatusBuilder
 

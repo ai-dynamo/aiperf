@@ -26,9 +26,8 @@ from unittest.mock import AsyncMock, MagicMock
 import kopf
 import orjson
 import pytest
-from pytest import param
-
 from aiperf.operator.handlers.sweep import child_rollup
+from pytest import param
 
 # ============================================================
 # Shared k8s mocking helper
