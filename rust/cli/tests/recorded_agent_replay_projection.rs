@@ -24,6 +24,26 @@ fn graph_projection(run: &aiperf_cli::model::BenchmarkRun) -> Value {
     json_subset(&value["cfg"], &["datasets", "metadata", "artifacts"])
 }
 
+fn profile_flags_with_minimum_endpoint_and(args: &[&str]) -> ProfileFlags {
+    ProfileFlags::try_parse_from(
+        std::iter::once("aiperf")
+            .chain([
+                "--model",
+                "model",
+                "--url",
+                "http://127.0.0.1:8000",
+                "--endpoint-type",
+                "chat",
+                "--concurrency",
+                "1",
+                "--request-count",
+                "1",
+            ])
+            .chain(args.iter().copied()),
+    )
+    .expect("profile flags parse")
+}
+
 fn json_subset(value: &Value, keys: &[&str]) -> Value {
     let object = value.as_object().expect("config is an object");
     keys.iter()
@@ -73,6 +93,7 @@ fn cli_and_yaml_project_identical_agent_recording_graph_config_body() {
         "1.5",
         "--no-graph-use-family-sampling",
         "--graph-emit-warmup",
+        "--graph-resume",
         "--graph-stop-on-failure",
         "--hardware-description",
         "unknown",
@@ -105,6 +126,7 @@ benchmark:
       session_close_grace_seconds: 1.5
       use_family_sampling: false
       emit_warmup: true
+      resume: true
       stop_on_failure: true
   metadata:
     hardware: unknown
@@ -127,6 +149,107 @@ benchmark:
     assert_eq!(
         graph_projection(&cli_run)["datasets"][0]["graph"]["include_subagents"],
         false
+    );
+}
+
+#[test]
+fn recorded_agent_replay_flags_require_agent_recording_format() {
+    on_big_stack(recorded_agent_replay_flags_require_agent_recording_format_body);
+}
+
+fn recorded_agent_replay_flags_require_agent_recording_format_body() {
+    for (args, option) in [
+        (
+            vec!["--graph-recording-source", "codex"],
+            "--graph-recording-source",
+        ),
+        (
+            vec!["--graph-include-subagents"],
+            "--graph-include-subagents",
+        ),
+        (
+            vec!["--graph-include-subagents=false"],
+            "--graph-include-subagents",
+        ),
+        (
+            vec!["--graph-replay-root", "/tmp/replay"],
+            "--graph-replay-root",
+        ),
+        (vec!["--graph-execute-tools"], "--graph-execute-tools"),
+        (vec!["--graph-execute-tools=false"], "--graph-execute-tools"),
+        (
+            vec!["--graph-tool-image", "tools:latest"],
+            "--graph-tool-image",
+        ),
+        (
+            vec!["--graph-pinch-image", "pinch:latest"],
+            "--graph-pinch-image",
+        ),
+        (
+            vec!["--graph-tool-command-timeout", "9"],
+            "--graph-tool-command-timeout",
+        ),
+        (
+            vec!["--graph-tool-container-stop-timeout", "4"],
+            "--graph-tool-container-stop-timeout",
+        ),
+        (
+            vec!["--graph-tool-session-close-grace", "1.5"],
+            "--graph-tool-session-close-grace",
+        ),
+        (
+            vec!["--graph-use-family-sampling"],
+            "--graph-use-family-sampling",
+        ),
+        (
+            vec!["--graph-use-family-sampling=false"],
+            "--graph-use-family-sampling",
+        ),
+        (
+            vec!["--no-graph-use-family-sampling"],
+            "--no-graph-use-family-sampling",
+        ),
+        (
+            vec!["--no-graph-use-family-sampling=false"],
+            "--no-graph-use-family-sampling",
+        ),
+        (vec!["--graph-emit-warmup"], "--graph-emit-warmup"),
+        (vec!["--graph-emit-warmup=false"], "--graph-emit-warmup"),
+        (vec!["--graph-resume"], "--graph-resume"),
+        (vec!["--graph-resume=false"], "--graph-resume"),
+        (vec!["--graph-stop-on-failure"], "--graph-stop-on-failure"),
+        (
+            vec!["--graph-stop-on-failure=false"],
+            "--graph-stop-on-failure",
+        ),
+    ] {
+        let flags = profile_flags_with_minimum_endpoint_and(&args);
+        let error = aiperf_cli::load::resolve(&flags)
+            .expect_err("recorded-agent replay option must not disappear");
+        assert!(error.to_string().contains(option), "{args:?}: {error}");
+        assert!(
+            error.to_string().contains("--graph-format agent_recording"),
+            "{args:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn resolve_inputs_rejects_explicit_false_recorded_agent_flags() {
+    on_big_stack(resolve_inputs_rejects_explicit_false_recorded_agent_flags_body);
+}
+
+fn resolve_inputs_rejects_explicit_false_recorded_agent_flags_body() {
+    let flags = profile_flags_with_minimum_endpoint_and(&["--no-graph-use-family-sampling=false"]);
+    let error = aiperf_cli::load::resolve_inputs(&flags)
+        .expect_err("single-run input projection must not discard replay-only flags");
+    assert!(
+        error.to_string().contains("--no-graph-use-family-sampling"),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("--graph-format agent_recording"),
+        "{error}"
     );
 }
 

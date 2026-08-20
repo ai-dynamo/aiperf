@@ -127,12 +127,65 @@ pub fn resolve(flags: &ProfileFlags) -> anyhow::Result<BenchmarkRun> {
     build(resolve_inputs(flags)?)
 }
 
+fn reject_inapplicable_recorded_agent_flags(flags: &ProfileFlags) -> anyhow::Result<()> {
+    if flags.graph_format.as_deref() == Some("agent_recording") {
+        return Ok(());
+    }
+
+    for (is_authored, option) in [
+        (
+            flags.graph_recording_source.is_some(),
+            "--graph-recording-source",
+        ),
+        (
+            flags.graph_include_subagents.is_some(),
+            "--graph-include-subagents",
+        ),
+        (flags.graph_replay_root.is_some(), "--graph-replay-root"),
+        (flags.graph_execute_tools.is_some(), "--graph-execute-tools"),
+        (flags.graph_tool_image.is_some(), "--graph-tool-image"),
+        (flags.graph_pinch_image.is_some(), "--graph-pinch-image"),
+        (
+            flags.graph_tool_command_timeout.is_some(),
+            "--graph-tool-command-timeout",
+        ),
+        (
+            flags.graph_tool_container_stop_timeout.is_some(),
+            "--graph-tool-container-stop-timeout",
+        ),
+        (
+            flags.graph_tool_session_close_grace.is_some(),
+            "--graph-tool-session-close-grace",
+        ),
+        (
+            flags.graph_use_family_sampling.is_some(),
+            "--graph-use-family-sampling",
+        ),
+        (
+            flags.no_graph_use_family_sampling.is_some(),
+            "--no-graph-use-family-sampling",
+        ),
+        (flags.graph_emit_warmup.is_some(), "--graph-emit-warmup"),
+        (flags.graph_resume.is_some(), "--graph-resume"),
+        (
+            flags.graph_stop_on_failure.is_some(),
+            "--graph-stop-on-failure",
+        ),
+    ] {
+        if is_authored {
+            anyhow::bail!("{option} requires --graph-format agent_recording");
+        }
+    }
+    Ok(())
+}
+
 /// Normalize profile flags into authoring [`Inputs`] without resolving them.
 ///
 /// The single-run path serializes these authoring inputs onto the `--execute` wire
 /// so the runtime performs the authoritative resolution; [`resolve`] additionally
 /// builds the run for callers (sweeps, searches) that resolve CLI-side.
 pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
+    reject_inapplicable_recorded_agent_flags(flags)?;
     reject_sweep("--concurrency", flags.concurrency.as_deref())?;
     reject_sweep("--request-count", flags.request_count.as_deref())?;
     reject_sweep("--request-rate", flags.request_rate.as_deref())?;
