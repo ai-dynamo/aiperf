@@ -143,12 +143,31 @@ class TestStaleWorkerEviction:
         router.note_worker_heartbeat("w-1")
         assert router.evict_stale_workers(stale_after_s=60.0) == []
 
-    def test_credit_channel_traffic_alone_does_not_refresh_the_clock(self):
-        """``note_worker_activity`` is diagnostic freshness, not liveness --
+    @pytest.mark.asyncio
+    async def test_credit_channel_traffic_alone_does_not_refresh_the_clock(self):
+        """A CreditReturn is not proof of liveness for the staleness sweep --
         keeping the two separate is what stops a busy worker from looking
-        alive only while it happens to be chatty."""
+        alive only while it happens to be chatty. The router keeps no
+        credit-channel clock at all, so handling a return leaves the heartbeat
+        clock untouched and the sweep still fires."""
         router = _router(workers={"w-1": 300.0})
-        router.note_worker_activity("w-1")
+        before = router._workers["w-1"].last_heartbeat_ns
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="c1",
+            x_correlation_id="x1",
+            turn_index=0,
+            num_turns=1,
+            issued_at_ns=0,
+        )
+        await router._handle_router_message(
+            "w-1",
+            CreditReturn(
+                credit=credit, cancelled=False, error=None, first_token_sent=True
+            ),
+        )
+        assert router._workers["w-1"].last_heartbeat_ns == before
         assert router.evict_stale_workers(stale_after_s=60.0) == ["w-1"]
 
 
