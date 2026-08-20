@@ -165,7 +165,7 @@ class TestWriteProcessingMarker:
 
         with (
             patch(
-                "aiperf.kubernetes.results_sidecar._atomic_write_marker",
+                "aiperf.common.results_markers._atomic_write_marker",
                 side_effect=OSError("disk full"),
             ),
             pytest.raises(OSError, match="disk full"),
@@ -178,12 +178,12 @@ class TestWriteProcessingMarker:
     def test_atomic_install_fsyncs_file_then_replaces_then_fsyncs_directory(
         self, base_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from aiperf.kubernetes import results_sidecar
+        from aiperf.common import results_markers
 
         ready_marker_path(base_dir).write_bytes(b"stale")
         events: list[str] = []
-        real_fsync = results_sidecar.os.fsync
-        real_replace = results_sidecar.os.replace
+        real_fsync = results_markers.os.fsync
+        real_replace = results_markers.os.replace
 
         def tracking_fsync(file_descriptor: int) -> None:
             mode = os.fstat(file_descriptor).st_mode
@@ -194,8 +194,8 @@ class TestWriteProcessingMarker:
             events.append("replace")
             real_replace(source, target)
 
-        monkeypatch.setattr(results_sidecar.os, "fsync", tracking_fsync)
-        monkeypatch.setattr(results_sidecar.os, "replace", tracking_replace)
+        monkeypatch.setattr(results_markers.os, "fsync", tracking_fsync)
+        monkeypatch.setattr(results_markers.os, "replace", tracking_replace)
 
         write_processing_marker(base_dir)
 
@@ -235,17 +235,17 @@ class TestWriteReadyMarker:
     def test_ready_is_installed_before_processing_marker_is_cleared(
         self, base_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from aiperf.kubernetes import results_sidecar
+        from aiperf.common import results_markers
 
         write_processing_marker(base_dir)
-        real_clear = results_sidecar.clear_processing_marker
+        real_clear = results_markers.clear_processing_marker
 
         def assert_ready_then_clear(directory: Path) -> None:
             assert ready_marker_path(directory).is_file()
             real_clear(directory)
 
         monkeypatch.setattr(
-            results_sidecar, "clear_processing_marker", assert_ready_then_clear
+            results_markers, "clear_processing_marker", assert_ready_then_clear
         )
 
         write_ready_marker(base_dir)
@@ -260,7 +260,7 @@ class TestWriteReadyMarker:
 
         with (
             patch(
-                "aiperf.kubernetes.results_sidecar.os.replace",
+                "aiperf.kubernetes.results_markers.os.replace",
                 side_effect=OSError("rename failed"),
             ),
             pytest.raises(OSError, match="rename failed"),
@@ -278,7 +278,7 @@ class TestWriteReadyMarker:
 
         with (
             patch(
-                "aiperf.kubernetes.results_sidecar._fsync_directory",
+                "aiperf.common.results_markers._fsync_directory",
                 side_effect=OSError("directory fsync failed"),
             ),
             pytest.raises(OSError, match="directory fsync failed"),
@@ -291,10 +291,10 @@ class TestWriteReadyMarker:
     def test_processing_clear_fsync_failure_rolls_back_ready_and_restores_processing(
         self, base_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from aiperf.kubernetes import results_sidecar
+        from aiperf.common import results_markers
 
         write_processing_marker(base_dir)
-        real_fsync_directory = results_sidecar._fsync_directory
+        real_fsync_directory = results_markers._fsync_directory
         directory_fsync_calls = 0
 
         def fail_processing_clear(directory: Path) -> None:
@@ -304,7 +304,7 @@ class TestWriteReadyMarker:
                 raise OSError("processing clear fsync failed")
             real_fsync_directory(directory)
 
-        monkeypatch.setattr(results_sidecar, "_fsync_directory", fail_processing_clear)
+        monkeypatch.setattr(results_markers, "_fsync_directory", fail_processing_clear)
 
         with pytest.raises(OSError, match="processing clear fsync failed"):
             write_ready_marker(base_dir)
@@ -368,7 +368,7 @@ class TestListEndpoint:
     ) -> None:
         (base_dir / "metrics.json").write_bytes(b"{}")
         write_processing_marker(base_dir)
-        with patch("aiperf.kubernetes.results_sidecar.clear_processing_marker"):
+        with patch("aiperf.kubernetes.results_markers.clear_processing_marker"):
             write_ready_marker(base_dir)
 
         assert ready_marker_path(base_dir).is_file()

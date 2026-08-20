@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path(os.environ.get("AIPERF_RESULTS_DIR", "/results"))
 SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SIDECAR_PORT", "9091"))
+
+_CONTENT_TYPES: dict[str, str] = {
+    ".json": "application/json",
+    ".jsonl": "application/x-ndjson",
+    ".csv": "text/csv",
+    ".parquet": "application/vnd.apache.parquet",
+    ".txt": "text/plain",
+}
+
 # The marker contract lives in a dependency-free module so processes that only
 # read or write markers (system controller, records manager, results router)
 # do not import uvicorn/FastAPI. Re-exported here for the sidecar's own use and
