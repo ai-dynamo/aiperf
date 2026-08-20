@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import kopf
 import pytest
+
 from aiperf.operator.handlers.sweep.create import _record_spec_invalid
 
 

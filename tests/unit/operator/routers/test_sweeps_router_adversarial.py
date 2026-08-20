@@ -23,7 +23,6 @@ from typing import cast
 import httpx
 import orjson
 import pytest
-from aiperf.operator.sweep_union import SweepRecord
 from fastapi import FastAPI
 from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
@@ -33,6 +32,7 @@ from aiperf.operator.results_layout import write_sweep_latest
 from aiperf.operator.routers import _sweeps_live as live_mod
 from aiperf.operator.routers import sweeps as mod
 from aiperf.operator.routers.sweeps import create_sweeps_router
+from aiperf.operator.sweep_union import SweepRecord
 
 # ============================================================
 # Helpers

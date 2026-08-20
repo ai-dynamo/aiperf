@@ -7,12 +7,13 @@ from typing import Any
 
 import orjson
 import pytest
+from pytest import param
+
 from aiperf.operator.sweep_union import (
     _model_from_spec,
     _record_from_archive,
     _record_from_live,
 )
-from pytest import param
 
 
 @pytest.mark.parametrize(

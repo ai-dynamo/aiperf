@@ -413,7 +413,6 @@ class TestKubeSweepBuildCrDict:
 
     def test_build_sweep_cr_dict_envelope_shape(self, tmp_path) -> None:
         from aiperf.cli_commands.kube.sweep import _build_sweep_cr_dict
-
         from aiperf.config.kube import KubeOptions
 
         config_file = tmp_path / "sweep.yaml"

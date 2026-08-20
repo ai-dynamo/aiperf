@@ -24,6 +24,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from aiperf.operator.handlers.sweep._aggregate_fetch import (
     SweepAggregateFetchResult,
     fetch_sweep_aggregate_to_disk,

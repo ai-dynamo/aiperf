@@ -10,12 +10,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
-from aiperf.operator.sweep_union import SweepRecord
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from aiperf.common.enums import OptimizationDirection, SweepType
 from aiperf.operator.routers.sweeps import create_sweeps_router
+from aiperf.operator.sweep_union import SweepRecord
 
 
 def _client_with(api: object | None, base_dir: Path) -> TestClient:
