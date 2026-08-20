@@ -554,7 +554,7 @@ impl GraphInputAdapter for RecordedAgentRunnerGraphInputAdapter {
     async fn load_for_endpoint(
         &self,
         raw: &RawValue,
-        _context: &GraphInputContext<'_>,
+        context: &GraphInputContext<'_>,
         endpoint_id: &str,
     ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedAgentDatasetInput =
