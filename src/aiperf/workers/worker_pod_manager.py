@@ -13,13 +13,11 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
-import uuid
 from pathlib import Path
 
 import aiohttp
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.control_structs import Command, Registration
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -38,6 +36,7 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
+    CommandMessage,
     DatasetConfiguredNotification,
     DatasetDownloadedNotification,
     FinalizeArtifactsCommand,
@@ -202,28 +201,6 @@ class WorkerGroupManagerBase(BaseComponentService):
         self._artifact_finalization_failed = False
         self._local_children_stopped = False
         self._errors_drained = False
-
-    def _make_registration(self) -> Registration:
-        """Build a Registration extending the base with pod capacity info."""
-        registration = self._runtime_registration
-        return Registration(
-            sid=self.service_id,
-            rid=uuid.uuid4().hex,
-            stype=str(self.service_type),
-            state=str(self.state),
-            pod_name=os.environ.get("HOSTNAME"),
-            pod_index=self._pod_index,
-            num_workers=(
-                registration.declared_workers
-                if registration is not None
-                else self.workers_per_pod
-            ),
-            num_record_processors=(
-                registration.declared_record_processors
-                if registration is not None
-                else self.record_processors_per_pod
-            ),
-        )
 
     @on_init
     async def _initialize_proxy(self) -> None:
@@ -604,7 +581,7 @@ class WorkerGroupManagerBase(BaseComponentService):
         mark_stale_workers(self.worker_health)
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _on_profile_configure(self, message: Command) -> None:
+    async def _on_profile_configure(self, _message: CommandMessage) -> None:
         """Wait for group-local startup convergence before profiling."""
         if self._configure_started:
             return
@@ -673,7 +650,7 @@ class WorkerGroupManagerBase(BaseComponentService):
             await self.publish(message)
 
     @on_command(CommandType.REPORT_WORKER_STATUS_SUMMARY)
-    async def _on_report_worker_status_summary(self, message: Command) -> None:
+    async def _on_report_worker_status_summary(self, _message: CommandMessage) -> None:
         """Publish an immediate worker status summary on controller request."""
         await self._publish_worker_summary()
 

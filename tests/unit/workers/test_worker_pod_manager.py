@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest import param
 
-from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommandType,
     WorkerStartupState,
@@ -21,6 +20,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
+    CommandMessage,
     DatasetConfiguredNotification,
     WorkerHealthMessage,
 )
@@ -170,9 +170,9 @@ def dataset_notification() -> DatasetConfiguredNotification:
 
 
 @pytest.fixture
-def shutdown_command() -> Command:
+def shutdown_command() -> CommandMessage:
     """Create a valid shutdown Command for testing."""
-    return Command(cid="test", cmd=CommandType.SHUTDOWN)
+    return CommandMessage(command=CommandType.SHUTDOWN, service_id="test")
 
 
 # =============================================================================
@@ -240,7 +240,6 @@ class TestWorkerGroupManagerInit:
     ) -> None:
         """Kubernetes wiring should expose the group-manager service type."""
         assert worker_group_manager.service_type == "worker_group_manager"
-        assert worker_group_manager._make_registration().stype == "worker_group_manager"
 
     def test_proxy_manager_created(
         self, worker_group_manager: WorkerGroupManager
@@ -806,7 +805,9 @@ class TestHealthMonitoring:
         manager.publish.reset_mock()
 
         await manager._on_report_worker_status_summary(
-            Command(cmd=CommandType.REPORT_WORKER_STATUS_SUMMARY, cid="cid")
+            CommandMessage(
+                command=CommandType.REPORT_WORKER_STATUS_SUMMARY, service_id="test"
+            )
         )
 
         published_messages = [call.args[0] for call in manager.publish.await_args_list]
@@ -833,7 +834,7 @@ class TestShutdown:
 
     @pytest.mark.asyncio
     async def test_shutdown_command_triggers_stop(
-        self, worker_group_manager: WorkerGroupManager, shutdown_command: Command
+        self, worker_group_manager: WorkerGroupManager, shutdown_command: CommandMessage
     ) -> None:
         """Test shutdown command triggers stop."""
         manager = worker_group_manager

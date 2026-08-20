@@ -24,7 +24,6 @@ _FORKSERVER_PRELOAD = [
     "aiperf.common.hooks",
     "aiperf.common.messages",
     "aiperf.common.models",
-    "aiperf.common.control_structs",
     "aiperf.common.types",
     "aiperf.plugin",
     "aiperf.plugin.enums",
