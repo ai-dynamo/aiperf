@@ -18,7 +18,7 @@ import aiohttp
 import orjson
 
 from aiperf.common.enums import ExportLevel
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from aiperf.plugin.enums import ServiceRunType
 from aiperf.transports.aiohttp_client import create_tcp_connector
 

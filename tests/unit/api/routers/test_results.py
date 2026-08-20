@@ -23,7 +23,7 @@ from aiperf.common.results_markers import (
     write_ready_marker,
 )
 from aiperf.config import BenchmarkRun
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 from tests.unit.api.routers.conftest import make_latency_metric
 
 

@@ -89,7 +89,7 @@ from aiperf.plugin.enums import (
 )
 
 # Default server-metrics export formats for CLIConfig, kept self-contained here
-# because aiperf.config.defaults does not carry the equivalent constant.
+# because no config module carries the equivalent constant.
 _DEFAULT_SERVER_METRICS_FORMATS: list[ServerMetricsFormat] = [
     ServerMetricsFormat.JSON,
     ServerMetricsFormat.CSV,

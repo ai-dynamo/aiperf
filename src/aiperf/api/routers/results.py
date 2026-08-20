@@ -37,7 +37,7 @@ from aiperf.common.results_markers import (
     _is_processing,
     ready_marker_path,
 )
-from aiperf.config.defaults import OutputDefaults
+from aiperf.config.artifacts import OutputDefaults
 
 ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
 
