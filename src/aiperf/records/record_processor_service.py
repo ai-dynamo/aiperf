@@ -95,9 +95,17 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # shutdown before uploading raw records. Without this registration the
         # count is permanently 0 and every Kubernetes run burns the full
         # RAW_RECORD_UPLOAD_TIMEOUT waiting for a shutdown that never arrives.
+        #
+        # Kubernetes only, matching Worker._is_group_managed_mode. A local
+        # multiprocessing run has no WorkerGroupManager -- MultiProcessService
+        # Manager spawns every service directly and never goes through
+        # SubprocessManager's group-manager boundary -- so gating on
+        # runtime.uses_worker_group_manager (True for MULTIPROCESSING) opened a
+        # DEALER onto an unbound ipc:// endpoint and then retried GroupPeerHello
+        # against it for up to GROUP_HELLO_TOTAL_TIMEOUT on every local run.
         self._pod_index: str | None = os.environ.get("AIPERF_POD_INDEX")
         self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
-        if self.run.cfg.runtime.uses_worker_group_manager:
+        if self._is_group_managed_mode():
             self.pod_lifecycle_dealer_client = (
                 self.comms.create_streaming_dealer_client(
                     address=CommAddress.GROUP_LIFECYCLE,
@@ -195,6 +203,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             except Exception as e:
                 self.exception(f"Error creating record observer: {e!r}")
                 raise
+
+    def _is_group_managed_mode(self) -> bool:
+        """Check if a WorkerGroupManager owns this processor's pod lifecycle."""
+        return str(self.run.cfg.runtime.service_run_type).lower() == "kubernetes"
 
     @on_start
     async def _register_with_worker_group_manager(self) -> None:
