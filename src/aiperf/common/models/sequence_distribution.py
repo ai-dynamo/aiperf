@@ -911,6 +911,59 @@ class RangeRatioDistribution:
         )
 
 
+_MT19937_SEED_LIMIT = 2**32
+
+
+class _FoldedSeedWarnings:
+    """Tracks which folded seeds have been reported.
+
+    Keyed by seed rather than a single flag so a sweep re-seeding per variation
+    flags each aliasing seed, instead of only the first one it happens to hit.
+    """
+
+    _seen: ClassVar[set[int]] = set()
+
+    @classmethod
+    def claim(cls, seed: int) -> bool:
+        """Return True the first time ``seed`` is seen, False afterwards."""
+        if seed in cls._seen:
+            return False
+        cls._seen.add(seed)
+        return True
+
+    @classmethod
+    def reset(cls) -> None:
+        """Clear reported seeds. For tests."""
+        cls._seen.clear()
+
+
+def _warn_if_seed_is_folded(seed: int) -> None:
+    """Warn when a seed is too wide for MT19937 and must be folded.
+
+    numpy's legacy seeder caps at ``2**32 - 1``, so wider seeds are XOR-folded
+    (see :func:`~aiperf.common.random_generator.fold_seed_to_uint32`). The fold
+    is deterministic and reproducible, but not injective: for
+    ``seed = hi * 2**32 + lo`` it reduces to ``hi ^ lo``, so ``--random-seed 5``
+    and ``--random-seed 4294967300`` drive the same SGLANG stream. Two seeds the
+    user believes are independent are not.
+
+    Only this style is affected. ``derive()`` hashes the full seed, and the
+    VLLM/PCG64 path takes it verbatim, so those stay distinct for the same pair.
+    Warned rather than rejected because the seed is perfectly valid everywhere
+    else; the aliasing is a property of MT19937's seeding API, not of the value.
+    """
+    if seed < _MT19937_SEED_LIMIT or not _FoldedSeedWarnings.claim(seed):
+        return
+    logger.warning(
+        f"--random-seed {seed} exceeds MT19937's {_MT19937_SEED_LIMIT - 1} limit "
+        f"and was folded to {rng.fold_seed_to_uint32(seed)} for "
+        f"--random-corpus-style sglang. Draws stay reproducible for this seed, "
+        "but other seeds fold to the same value and produce an identical SGLang "
+        "workload. Use a seed below 2**32 if you need seeds to be distinguishable. "
+        "Other RNG streams (including --random-corpus-style vllm) use the full seed."
+    )
+
+
 class _LegacyRNG:
     """Thin wrapper over a legacy ``numpy.random.RandomState`` (MT19937)
     exposing the same ``.integers()`` interface as ``numpy.random.Generator``
@@ -995,6 +1048,8 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
         # 64-bit on the adaptive-sweep and vary_seed_per_trial paths (and
         # --random-seed is only bounded ge=0), so fold before seeding.
         # The PCG64 parent path takes 64-bit seeds directly and needs no fold.
+        if seed is not None:
+            _warn_if_seed_is_folded(seed)
         g = _LegacyRNG(rng.fold_seed_to_uint32(seed) if seed is not None else None)
         self._isl_cache = g.integers(
             self._input_low, self._input_high + 1, size=n

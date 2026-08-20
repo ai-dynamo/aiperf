@@ -1247,3 +1247,76 @@ class TestRatioInputCoercion:
         assert SGLangRatioConfig(
             isl_mean=10, osl_mean=10, range_ratio=1.0
         ).range_ratio == (1.0, 1.0)
+
+
+class TestFoldedSeedWarning:
+    """Seeds wider than MT19937's 32-bit limit are folded, which is lossy.
+
+    `fold_seed_to_uint32` reduces to `hi ^ lo` for `seed = hi * 2**32 + lo`, so
+    distinct seeds collide onto one SGLANG stream. The seed stays valid
+    everywhere else -- `derive()` hashes the full value and the VLLM/PCG64 path
+    takes it verbatim -- so this warns rather than rejects.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_warned(self):
+        from aiperf.common.models.sequence_distribution import _FoldedSeedWarnings
+
+        _FoldedSeedWarnings.reset()
+        yield
+        _FoldedSeedWarnings.reset()
+
+    def _preseed(self, seed):
+        _sglang(128, 16, 0.5).preseed(4, seed)
+
+    def test_seed_below_limit_does_not_warn(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._preseed(42)
+            self._preseed(2**32 - 1)
+        assert not [r for r in caplog.records if "MT19937" in r.getMessage()]
+
+    def test_seed_above_limit_warns_with_folded_value(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._preseed((1 << 32) | 4)  # folds to 1 ^ 4 == 5
+        warned = [r for r in caplog.records if "MT19937" in r.getMessage()]
+        assert len(warned) == 1
+        message = warned[0].getMessage()
+        assert "4294967300" in message, "names the seed the user passed"
+        assert "folded to 5" in message, "names the value actually used"
+        assert "sglang" in message, "names the affected style"
+
+    def test_warns_once_per_seed(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(4):
+                self._preseed((1 << 32) | 4)
+        assert len([r for r in caplog.records if "MT19937" in r.getMessage()]) == 1
+
+    def test_distinct_large_seeds_each_warn(self, caplog):
+        """A sweep re-seeding per variation should flag each aliasing seed."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._preseed((1 << 32) | 4)
+            self._preseed((1 << 33) | 9)
+        assert len([r for r in caplog.records if "MT19937" in r.getMessage()]) == 2
+
+    def test_aliasing_pair_produces_identical_sglang_draws(self):
+        """The warning exists because this is true: hi ^ lo collides."""
+        a, b = _sglang(128, 16, 0.5), _sglang(128, 16, 0.5)
+        a.preseed(6, 5)
+        b.preseed(6, (1 << 32) | 4)
+        assert a._isl_cache == b._isl_cache
+
+    def test_vllm_path_keeps_the_full_seed(self):
+        """Same pair must stay distinct on PCG64, so the warning is correctly
+        scoped to SGLANG rather than being a global seed limitation."""
+        a, b = _vllm(128, 16, 0.5), _vllm(128, 16, 0.5)
+        a.preseed(6, 5)
+        b.preseed(6, (1 << 32) | 4)
+        assert a._isl_cache != b._isl_cache
