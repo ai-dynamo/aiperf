@@ -1263,6 +1263,37 @@ def _determine_needs_text(cli: CLIConfig) -> bool:
 # --- public entrypoint ----------------------------------------------------
 
 
+def _reject_source_override_type_switch(cli: CLIConfig, declared_type: Any) -> None:
+    """Refuse --input-file / --custom-dataset-type unless the YAML says file.
+
+    Both change a value inside a file dataset. Against a synthetic or public
+    config they would switch the dataset type, invalidating whole groups of
+    keys the config file declares -- so the user gets a message naming the
+    declared type instead of a validation error listing fields they never
+    touched.
+    """
+    from aiperf.common.enums import DatasetType
+
+    if declared_type is None or declared_type == DatasetType.FILE:
+        return
+    offenders = [
+        flag
+        for attr, flag in (
+            ("input_file", "--input-file"),
+            ("custom_dataset_type", "--custom-dataset-type"),
+        )
+        if attr in cli.model_fields_set and getattr(cli, attr) is not None
+    ]
+    if not offenders:
+        return
+    raise ValueError(
+        f"{', '.join(offenders)} applies to a file dataset, but the config "
+        f"file declares type: {declared_type}. Change the type in the config "
+        f"file, or drop these flags -- switching the dataset type from the "
+        f"command line would invalidate the rest of the dataset block."
+    )
+
+
 def _run_dataset_rejections(
     cli: CLIConfig,
     *,
@@ -1283,6 +1314,7 @@ def _run_dataset_rejections(
     _reject_file_dataset_incompatible(
         cli, declared_type=declared_type, declared_format=declared_format
     )
+    _reject_source_override_type_switch(cli, declared_type)
     _reject_baseten_only_trace_flags(
         cli, declared_format=declared_format if override_mode else None
     )
@@ -1427,11 +1459,21 @@ def build_dataset(
     if "random_seed" in cli.model_fields_set:
         d["random_seed"] = cli.random_seed
     if override_mode:
-        # The config file owns dataset identity: type, format, and source.
-        # Flags that would change them are rejected up front by
-        # reject_unrouted_cli_flags, so nothing is lost by dropping the keys.
-        for owned in ("type", "format", "path", "dataset"):
+        # The config file owns the dataset TYPE and its public-dataset
+        # identity; --public-dataset / --hf-weka-dataset are rejected up
+        # front, so dropping these keys loses nothing.
+        for owned in ("type", "dataset"):
             d.pop(owned, None)
+        # `path` and `format` are different: --input-file and
+        # --custom-dataset-type legitimately override them within a file
+        # dataset (see _reject_source_override_type_switch). Keep them only
+        # when the user actually asked, so an unset flag cannot clobber the
+        # config file's value with the declared one seeded earlier.
+        fields_set = cli.model_fields_set
+        if "input_file" not in fields_set:
+            d.pop("path", None)
+        if "custom_dataset_type" not in fields_set:
+            d.pop("format", None)
     return d
 
 

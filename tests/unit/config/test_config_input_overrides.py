@@ -242,14 +242,6 @@ benchmark:
     assert dataset(resolve_config(cli(), cfg)).prompt_batch_size == 4
 
 
-def test_input_file_flag_remains_rejected(synthetic_yaml: Path, tmp_path: Path) -> None:
-    """--input-file would swap the dataset source the YAML declared."""
-    other = tmp_path / "other.jsonl"
-    other.write_text('{"text": "hi"}\n')
-    with pytest.raises(ConfigurationError, match=r"--input-file"):
-        resolve_config(CLIConfig(input_file=str(other)), synthetic_yaml)
-
-
 def test_public_dataset_flag_remains_rejected(synthetic_yaml: Path) -> None:
     """--public-dataset would swap the dataset type the YAML declared."""
     with pytest.raises(ConfigurationError, match=r"--public-dataset"):
@@ -542,3 +534,106 @@ def test_trace_idle_gap_cap_still_errors_on_synthetic(synthetic_yaml: Path) -> N
     """On a synthetic dataset it genuinely carries nothing, so it must be loud."""
     with pytest.raises(ConfigurationError, match=r"--trace-idle-gap-cap-seconds"):
         resolve_config(cli(trace_idle_gap_cap_seconds=3.0), synthetic_yaml)
+
+
+# ---------------------------------------------------------------------------
+# Dataset source: override within the declared type, never switch it
+# ---------------------------------------------------------------------------
+
+
+def test_input_file_swaps_the_path_on_a_file_dataset(
+    random_pool_yaml: Path, tmp_path: Path
+) -> None:
+    """Running the same benchmark against a different trace is a normal loop.
+
+    --model already overrides models.items and --url overrides
+    endpoint.urls, so the config file does not own identity in general;
+    there is no reason the dataset path should be the exception.
+    """
+    other = tmp_path / "other.jsonl"
+    other.write_text('{"text": "other"}\n')
+    resolved = dataset(
+        resolve_config(CLIConfig(input_file=str(other)), random_pool_yaml)
+    )
+    assert Path(resolved.path) == other
+
+
+def test_input_file_leaves_the_rest_of_the_dataset_alone(
+    tmp_path: Path,
+) -> None:
+    """Swapping the path must not disturb the rest of the block."""
+    pool = tmp_path / "pool.jsonl"
+    pool.write_text('{"text": "hi"}\n')
+    other = tmp_path / "other.jsonl"
+    other.write_text('{"text": "other"}\n')
+    cfg = tmp_path / "rp.yaml"
+    cfg.write_text(
+        f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: random_pool
+    path: {pool}
+    prompt_batch_size: 4
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    resolved = dataset(resolve_config(CLIConfig(input_file=str(other)), cfg))
+    assert Path(resolved.path) == other
+    assert resolved.format == "random_pool"
+    assert resolved.prompt_batch_size == 4
+
+
+def test_custom_dataset_type_swaps_the_loader(tmp_path: Path) -> None:
+    """--custom-dataset-type changes the loader within type: file."""
+    trace = tmp_path / "t.jsonl"
+    trace.write_text('{"text": "hi"}\n')
+    cfg = tmp_path / "mooncake.yaml"
+    cfg.write_text(
+        f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: mooncake_trace
+    path: {trace}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    resolved = dataset(resolve_config(cli(custom_dataset_type="random_pool"), cfg))
+    assert resolved.format == "random_pool"
+
+
+def test_input_file_against_a_synthetic_config_errors(
+    synthetic_yaml: Path, tmp_path: Path
+) -> None:
+    """Switching the dataset TYPE is a different thing, and stays rejected.
+
+    The variants barely overlap -- FileDataset carries a dozen fields
+    PublicDataset rejects -- so a type switch silently invalidates whole
+    groups of keys the user wrote in the config file.
+    """
+    other = tmp_path / "other.jsonl"
+    other.write_text('{"text": "other"}\n')
+    with pytest.raises(ValueError, match=r"synthetic"):
+        resolve_config(CLIConfig(input_file=str(other)), synthetic_yaml)
+
+
+def test_public_dataset_still_switches_type_and_errors(
+    random_pool_yaml: Path,
+) -> None:
+    with pytest.raises(ConfigurationError, match=r"--public-dataset"):
+        resolve_config(cli(public_dataset="sharegpt"), random_pool_yaml)

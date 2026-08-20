@@ -202,12 +202,22 @@ COMPANION_ROUTED: dict[str, frozenset[str]] = {
 # so the flags must keep erroring instead of appearing to work.
 DATASET_SOURCE_FIELDS: frozenset[str] = frozenset(
     {
-        "input_file",
+        # Switch the dataset TYPE, not just a value inside it. The variants
+        # barely overlap -- FileDataset carries a dozen fields PublicDataset
+        # rejects -- so accepting these would silently invalidate whole groups
+        # of keys the user wrote in the config file.
         "public_dataset",
-        "custom_dataset_type",
         "hf_weka_dataset",
     }
 )
+
+# Source flags that change a value WITHIN the declared type: the trace file
+# and the loader that reads it. Overriding these is the "same benchmark,
+# different trace" loop, and is no more surprising than --model overriding
+# models.items. build_dataset applies them only when the config file declares
+# type: file; against any other type they raise, because that would be a type
+# switch wearing a different hat.
+DATASET_SOURCE_IN_TYPE_FIELDS: frozenset[str] = frozenset({})
 
 # INPUT_FIELDS members that build_dataset does not carry: they land on the
 # slos block or the profiling phase instead. They ARE routed (see
@@ -302,6 +312,7 @@ def _build_routed_under_config() -> frozenset[str]:
     # file declared rather than shape it -- source, type, and format. The YAML
     # owns those, so the flags stay rejected (see DATASET_SOURCE_FIELDS).
     inputs = (INPUT_FIELDS - DATASET_SOURCE_FIELDS) - _INPUT_NOT_ON_DATASET
+    inputs |= DATASET_SOURCE_IN_TYPE_FIELDS
 
     # _apply_phase_loadgen_overrides: the phase field map, the rate-series
     # pair, and the AGENTIC_REPLAY fields shared with BasePhaseConfig.

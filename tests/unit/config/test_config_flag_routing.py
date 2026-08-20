@@ -74,14 +74,15 @@ def cli(**kwargs: object) -> CLIConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_unrouted_input_flag_raises_naming_the_flag(
-    base_yaml: Path, tmp_path: Path
-) -> None:
-    """--input-file would swap the dataset the YAML declared, so it errors."""
-    pool = tmp_path / "pool.jsonl"
-    pool.write_text('{"text": "hi"}\n')
-    with pytest.raises(ConfigurationError, match=r"--input-file"):
-        resolve_config(CLIConfig(input_file=str(pool)), base_yaml)
+def test_unrouted_input_flag_raises_naming_the_flag(base_yaml: Path) -> None:
+    """--public-dataset would switch the dataset TYPE, so it errors.
+
+    (--input-file, which this case used to cover, now overrides the path
+    within a file dataset -- switching the type is the part that stays
+    rejected.)
+    """
+    with pytest.raises(ConfigurationError, match=r"--public-dataset"):
+        resolve_config(cli(public_dataset="sharegpt"), base_yaml)
 
 
 def test_unrouted_sweeping_flag_raises(base_yaml: Path) -> None:
@@ -93,24 +94,19 @@ def test_unrouted_sweeping_flag_raises(base_yaml: Path) -> None:
         resolve_config(cli(concurrency_min=2), base_yaml)
 
 
-def test_dataset_identity_flag_raises(base_yaml: Path) -> None:
-    """--custom-dataset-type would replace the dataset the YAML declares.
-
-    (ENDPOINT_FIELDS, which this case used to cover, is fully routed now.)
-    """
-    with pytest.raises(ConfigurationError, match=r"--custom-dataset-type"):
-        resolve_config(cli(custom_dataset_type="mooncake_trace"), base_yaml)
+def test_dataset_type_switch_flag_raises(base_yaml: Path) -> None:
+    """--hf-weka-dataset implies a public dataset, switching the type."""
+    with pytest.raises(ConfigurationError, match=r"--hf-weka-dataset"):
+        resolve_config(cli(hf_weka_dataset="some/dataset"), base_yaml)
 
 
 def test_error_names_every_offending_flag(base_yaml: Path) -> None:
     """All unrouted flags are reported at once, not one per run."""
     with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(
-            cli(concurrency_min=2, custom_dataset_type="mooncake_trace"), base_yaml
-        )
+        resolve_config(cli(concurrency_min=2, public_dataset="sharegpt"), base_yaml)
     message = str(excinfo.value)
     assert "--concurrency-min" in message
-    assert "--custom-dataset-type" in message
+    assert "--public-dataset" in message
 
 
 def test_error_mentions_config_flag_as_the_cause(base_yaml: Path) -> None:

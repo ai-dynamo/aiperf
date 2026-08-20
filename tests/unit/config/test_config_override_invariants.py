@@ -183,6 +183,10 @@ UNDRIVABLE_FIELDS: frozenset[str] = frozenset(
         "prompt_output_tokens_mean",
         "prompt_output_tokens_stddev",
         "video_audio_depth",
+        # needs a path that exists on disk, which a module-level constant
+        # cannot provide; covered directly by the dataset-source tests in
+        # test_config_input_overrides.py
+        "input_file",
         # free-form / parsed strings with no safe auto-generated value
         "hf_dataset_subset",
         "prompt_sequence_distribution",
