@@ -1,0 +1,384 @@
+{
+  "accepted": {
+    ".cursor/rules/python.mdc": {
+      "lines": 19,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    ".github/copilot-instructions.md": {
+      "lines": 19,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "AGENTS.md": {
+      "lines": 19,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "CLAUDE.md": {
+      "lines": 19,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "README.md": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/dev/kubernetes-flow.md": {
+      "lines": 13,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/index.yml": {
+      "lines": 2,
+      "reason": "doc reorganised on this branch: docs/kubernetes/sweeps.md -> docs/tutorials/sweeps.md"
+    },
+    "docs/kubernetes/adaptive-search.md": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/configuration.md": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/debug-command.md": {
+      "lines": 4,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/direct-mode.md": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/getting-started.md": {
+      "lines": 2,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/gpu-telemetry.md": {
+      "lines": 9,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/logs.md": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/preflight.md": {
+      "lines": 5,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/sweeps.md": {
+      "lines": 325,
+      "reason": "doc reorganised on this branch: docs/kubernetes/sweeps.md -> docs/tutorials/sweeps.md"
+    },
+    "docs/kubernetes/validate.md": {
+      "lines": 3,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "docs/kubernetes/workflow.md": {
+      "lines": 6,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/api/routers/progress.py": {
+      "lines": 13,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "src/aiperf/api/routers/results.py": {
+      "lines": 2,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/cli_runner/_multi_run.py": {
+      "lines": 4,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/cli_runner/_strategy.py": {
+      "lines": 10,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/common/control_structs.py": {
+      "lines": 31,
+      "reason": "dead code removed on this branch after verifying zero callers in any mode"
+    },
+    "src/aiperf/common/memory_tracker.py": {
+      "lines": 253,
+      "reason": "dead code removed on this branch after verifying zero callers in any mode"
+    },
+    "src/aiperf/config/__init__.py": {
+      "lines": 10,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/config/resolution/resolvers.py": {
+      "lines": 5,
+      "reason": "regex resynced with its owning module (reference copy had drifted)"
+    },
+    "src/aiperf/controller/system_controller.py": {
+      "lines": 22,
+      "reason": "dead helper / stale comment removed from the controller"
+    },
+    "src/aiperf/credit/callback_handler.py": {
+      "lines": 11,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "src/aiperf/credit/sticky_router.py": {
+      "lines": 24,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "src/aiperf/gpu_telemetry/manager.py": {
+      "lines": 1,
+      "reason": "dead helper / stale comment removed from the controller"
+    },
+    "src/aiperf/kubernetes/console.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/kubernetes/results_artifacts.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/kubernetes/results_operator.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/kubernetes/results_sidecar.py": {
+      "lines": 195,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/handlers/_completion_fetch.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/handlers/completion.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/handlers/monitor.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/job_union.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/routers/results_files.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/routers/results_files_io.py": {
+      "lines": 2,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/ui/components/token-modal.js": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/orchestrator/subprocess_runner.py": {
+      "lines": 32,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/records/record_processor_service.py": {
+      "lines": 17,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "src/aiperf/records/records_manager.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/server_metrics/discovery/__init__.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/server_metrics/discovery/kubernetes.py": {
+      "lines": 5,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/server_metrics/manager.py": {
+      "lines": 4,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/sweep_controller/main.py": {
+      "lines": 6,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/timing/conversation_source.py": {
+      "lines": 9,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "src/aiperf/ui/utils.py": {
+      "lines": 20,
+      "reason": "dead code removed on this branch after verifying zero callers in any mode"
+    },
+    "src/aiperf/workers/worker.py": {
+      "lines": 5,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "src/aiperf/workers/worker_group_stats_builder.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/workers/worker_pod_helpers.py": {
+      "lines": 6,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/workers/worker_pod_manager.py": {
+      "lines": 1,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/workers/worker_post_processing.py": {
+      "lines": 85,
+      "reason": "dead code removed on this branch after verifying zero callers in any mode"
+    },
+    "src/aiperf/zmq/streaming_router_client.py": {
+      "lines": 2,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "src/aiperf/zmq/zmq_base_client.py": {
+      "lines": 2,
+      "reason": "dead helper / stale comment removed from the controller"
+    },
+    "tests/component_integration/operator/_fake_apiserver.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/component_integration/operator/test_jobset_terminal_chain.py": {
+      "lines": 44,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/component_integration/operator/test_metrics_decorator_integration.py": {
+      "lines": 4,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/integration/operator/test_same_name_resubmit.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/api/routers/test_progress_push.py": {
+      "lines": 10,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "tests/unit/api/routers/test_results.py": {
+      "lines": 5,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/api/test_api_service.py": {
+      "lines": 5,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/cli_commands/kube/test_install_adversarial.py": {
+      "lines": 15,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/common/test_control_structs.py": {
+      "lines": 3,
+      "reason": "dead code removed on this branch after verifying zero callers in any mode"
+    },
+    "tests/unit/config/test_resolvers.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/credit/test_min_worker_floor.py": {
+      "lines": 2,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "tests/unit/credit/test_stale_worker_eviction.py": {
+      "lines": 8,
+      "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
+    },
+    "tests/unit/kubernetes/test_console.py": {
+      "lines": 10,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/kubernetes/test_results_client_adversarial.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/kubernetes/test_results_download_adversarial.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/kubernetes/test_results_sidecar.py": {
+      "lines": 17,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/operator/routers/test_analytics_adversarial.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/routers/test_artifact_listing_adversarial.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/routers/test_compare_adversarial.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/routers/test_leaderboard_adversarial.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/routers/test_zip_bundle_adversarial.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_completion_fetch.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_completion_record_results.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_job_union.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_results_analytics.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_results_db_adversarial.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_results_server.py": {
+      "lines": 2,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/operator/test_results_server_routes.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_runs_index.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_runs_index_edge_cases.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/orchestrator/search_planner/test_backward_compat_integration.py": {
+      "lines": 11,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/orchestrator/search_planner/test_prop_single_tier_behavioral_identity.py": {
+      "lines": 10,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/orchestrator/test_local_executor.py": {
+      "lines": 8,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/server_metrics/test_server_metrics_manager.py": {
+      "lines": 3,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/test_cli_runner_sweep_helpers.py": {
+      "lines": 2,
+      "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/ui/test_operator_regression_static.py": {
+      "lines": 3,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/ui/test_operator_server_metrics_edges.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/workers/test_build_worker_group_stats.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    }
+  }
+}

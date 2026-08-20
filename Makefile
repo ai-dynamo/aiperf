@@ -30,7 +30,7 @@
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
-		generate-crd check-crd check-chart-consistency crd-release \
+		generate-crd check-crd check-chart-consistency check-port-parity crd-release \
 		helm-lint helm-template helm-package \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
@@ -410,6 +410,11 @@ check-crd: #? check if the generated CRD YAML is up-to-date.
 
 check-chart-consistency: #? assert operator code-side defaults match the Helm chart's values.yaml.
 	$(activate_venv) && python tools/check_chart_consistency.py
+
+check-port-parity: #? assert no content was dropped from the Kubernetes port reference (PORT_REF).
+	$(activate_venv) && python tools/check_port_parity.py --ref $(PORT_REF)
+
+PORT_REF ?= ajc/k8s-clean-port
 
 HELM_DIST_DIR ?= dist
 
