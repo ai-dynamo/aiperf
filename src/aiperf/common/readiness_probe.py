@@ -241,7 +241,8 @@ async def _wait_models(
     when they respond at all.
     """
     deadline = time.monotonic() + timeout_s
-    models_url = url.rstrip("/") + "/v1/models"
+    _base = url.rstrip("/")
+    models_url = _base + ("/models" if _base.endswith("/v1") else "/v1/models")
     request_timeout_base = max(interval_s, _MIN_REQUEST_TIMEOUT_S)
     attempt = 0
 
