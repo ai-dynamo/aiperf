@@ -783,7 +783,10 @@ The following records distinguish shipped behavior from future design work.
    local children stop. The controller compiles assignment templates once;
    same-host cells compile from the shared acquired snapshot, while remote HTTP
    cells receive the captured set and compile a private landed materialization
-   rather than receiving Graph-IR or a caller path.
+   rather than receiving Graph-IR or a caller path. The per-run artifact channel
+   uses pinned TLS; controller-authenticated registration receives only the
+   cell's bearer digest, and bounded concurrent handshake admission prevents a
+   stalled TCP client from serializing transfers.
 2. **Claude endpoint compatibility:** provider-native Claude content is
    accepted only by the Messages endpoint. No implicit OpenAI wire translation
    is performed.

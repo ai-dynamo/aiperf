@@ -634,9 +634,10 @@ Inputs, endpoints, and graph:
 - [`docs/specs/2026-08-19-codex-claude-recorded-agent-import.md`](docs/specs/2026-08-19-codex-claude-recorded-agent-import.md) —
   built source-normalization import for Codex CLI and Claude Code session logs
   into canonical `agent_recording` Graph-IR: descriptor-bound exact-once
-  immutable acquisition, linear request history, controller compile-once
-  assignment planning, shared same-host compilation, and remote private
-  materialization.
+  immutable acquisition with explicit-provider EOF validation, linear request
+  history, controller compile-once assignment planning, shared same-host
+  compilation, remote private materialization, and controller-authenticated
+  pinned-TLS artifact transfer.
 - [`docs/specs/2026-08-19-native-graph-inspection-tools.md`](docs/specs/2026-08-19-native-graph-inspection-tools.md) —
   built Python-free `aiperf graph validate`, `explain`, and `visualize` commands
   that inspect resolved, lower-once native Graph-IR through the typed
