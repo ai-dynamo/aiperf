@@ -32,10 +32,8 @@ __all__ = ["MaxConcurrencyUnderSLA"]
 class MaxConcurrencyUnderSLA(SearchRecipe):
     """Find the highest concurrency where all SLA filters pass.
 
-    Default style: ``smooth_isotonic`` — PAVA + PCHIP smooth-isotonic
-    regression-based 1D SLA-saturation search. Drop-in replacement for
-    ``monotonic``; denoises before fitting and supports replicate-based
-    bootstrap CIs.
+    Default style: ``monotonic`` — exponential probe + bisection via the
+    internal ``monotonic_sla`` planner plugin.
 
     Alternative styles (``--search-style {smooth_isotonic|monotonic|bo|optuna|grid}``):
 
@@ -53,7 +51,8 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
     - ``grid``: log-spaced 8-step sweep + ``sla_breach_knee`` post-process,
       emitting ``sla_breach.json`` with the boundary report.
 
-    SLA filters compose from any of ``--ttft-sla-ms``,
+    SLA filters compose from repeatable ``--search-sla`` entries and any of
+    ``--ttft-sla-ms``,
     ``--tpot-sla-ms`` / ``--itl-sla-ms`` (aliases for the same
     inter-token-latency SLA), ``--e2e-sla-ms``, ``--error-rate-sla``. At
     least one must be set.
@@ -72,7 +71,7 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
     name: ClassVar[str] = "max-concurrency-under-sla"
     description: ClassVar[str] = (
         "Find the highest concurrency where all SLA filters pass. Default "
-        "smooth_isotonic search; use --search-style "
+        "monotonic search (internal planner: monotonic_sla); use --search-style "
         "{smooth_isotonic|monotonic|bo|optuna|grid}."
     )
     pareto_axes: ClassVar[ParetoAxesSpec | None] = ParetoAxesSpec(
@@ -116,8 +115,8 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
         if not sla_filters:
             raise ValueError(
                 f"recipe {self.name!r} requires at least one of --ttft-sla-ms / "
-                "--tpot-sla-ms / --itl-sla-ms / --e2e-sla-ms / --error-rate-sla; "
-                "pass at least one on the CLI alongside --search-recipe."
+                "--tpot-sla-ms / --itl-sla-ms / --e2e-sla-ms / --error-rate-sla / "
+                "--search-sla; pass at least one on the CLI alongside --search-recipe."
             )
 
         self._check_streaming_if_required(ctx, sla_filters)
@@ -129,7 +128,7 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
             default_hi=self._CONCURRENCY_HI,
         )
 
-        style = ctx.sweep_overrides.get("search_style") or "smooth_isotonic"
+        style = ctx.sweep_overrides.get("search_style") or "monotonic"
         if style == "smooth_isotonic":
             return self._build_smooth_isotonic_output(sla_filters, lo, hi)
         if style == "monotonic":
@@ -189,6 +188,7 @@ class MaxConcurrencyUnderSLA(SearchRecipe):
                     threshold=float(err) * 100.0,
                 )
             )
+        filters.extend(ctx.sla_filters)
         return filters
 
     def _check_streaming_if_required(

@@ -399,10 +399,10 @@ The plugin registry ships two recipes built on top of the engine:
 
 | Recipe | Algorithm | What it answers | Required flags |
 |---|---|---|---|
-| `max-concurrency-under-sla` | `smooth_isotonic` (default) / `monotonic` / `bo` / `optuna` / `grid` | "Highest concurrency where every SLA filter passes" | One or more of `--ttft-sla-ms` / `--tpot-sla-ms` / `--e2e-sla-ms` / `--error-rate-sla` / `--search-sla` |
+| `max-concurrency-under-sla` | `monotonic` (default) / `smooth_isotonic` / `bo` / `optuna` / `grid` | "Highest concurrency where every SLA filter passes" | One or more of `--ttft-sla-ms` / `--tpot-sla-ms` / `--e2e-sla-ms` / `--error-rate-sla` / `--search-sla` |
 | `max-goodput-under-slo` | BO with goodput as objective | "Concurrency that maximizes goodput at >=X% per-request SLO attainment" (DistServe formulation) | `--ttft-sla-ms`, `--tpot-sla-ms`, `--e2e-sla-ms`; `--slo-attainment-fraction` (default 0.95) |
 
-The generic `--search-sla "metric:stat:op:threshold"` flag (repeatable) attaches arbitrary SLA filters to the explicit `--search-space` path, with no recipe involved. See the [SLA flags table](#sla-flags) below for the format.
+The generic `--search-sla "metric:stat:op:threshold"` flag (repeatable) attaches arbitrary SLA filters to either the explicit `--search-space` path or `max-concurrency-under-sla`. See the [SLA flags table](#sla-flags) below for the format.
 
 ### Quick start
 
@@ -415,7 +415,11 @@ aiperf profile --model my-model --url http://infer.example.com --streaming \
 # Monotonic style: 1D exponential probe + bisection (~10 iterations on
 # [1, 1000] at 5% precision). Cheaper but margin-magnitude-blind.
 aiperf profile --model my-model --url http://infer.example.com --streaming \
-  --search-recipe max-concurrency-under-sla --search-style monotonic --ttft-sla-ms 200
+  --search-recipe max-concurrency-under-sla --search-style monotonic \
+  --search-sla "request_latency:p50:le:1000" \
+  --search-sla "request_latency:p99:le:3000" \
+  --search-sla "time_to_first_token:p50:le:200" \
+  --search-sla "time_to_first_token:p99:le:500"
 
 # BO style: optimize WITHIN the feasibility region (best when you also want
 # to maximize throughput, not only locate the boundary)
@@ -469,8 +473,8 @@ Malformed `--search-sla` values raise `TypeError` naming the offending flag. Unk
 
 | Style | Algorithm | Iterations (typical) | Best for |
 |---|---|---|---|
-| `smooth_isotonic` (default) | PAVA-denoised isotonic regression + PCHIP root-find on per-SLO margin curves | ~13–25 on `[1, 1000]` at 5% precision (more with replicates) | Most-accurate boundary location under noise; reports `boundary_type` (smooth or cliff), `binding_constraint`, optional bootstrap CI |
-| `monotonic` | Exponential probe + bisection on `[lo, hi]` | ~10 on `[1, 1000]` at 5% precision | Cheapest path; margin-magnitude-blind so a single noisy probe at the boundary can pull the verdict |
+| `monotonic` (default; internal planner `monotonic_sla`) | Exponential probe + bisection on `[lo, hi]` | ~10 on `[1, 1000]` at 5% precision | Predictable, low-overhead boundary search; margin-magnitude-blind so a noisy boundary probe can affect the verdict |
+| `smooth_isotonic` | PAVA-denoised isotonic regression + PCHIP root-find on per-SLO margin curves | ~13–25 on `[1, 1000]` at 5% precision (more with replicates) | Noise-resistant boundary location; reports `boundary_type` (smooth or cliff), `binding_constraint`, optional bootstrap CI |
 | `bo` | Penalty-BO with `output_token_throughput` as objective | 30 (`--search-max-iterations` overrides; see [Single-objective BO](#single-objective-bo) for the underlying engine) | Optimizing throughput WITHIN the feasibility region, not just naming the boundary |
 | `optuna` | Optuna-driven BO/TPE backend over the same penalty objective | ~30 (configurable via `--search-max-iterations`) | Same niche as `bo` but uses the Optuna sampler stack for tuning; pick based on which sampler library you prefer |
 | `grid` | 8 log-spaced points + `sla_breach_knee` post-process | 8 fixed | Plotting / visualization with a reproducible artifact |
@@ -503,7 +507,7 @@ flowchart LR
 
 The monotonic planner mirrors Triton perf_analyzer's `--binary-search`: each point's verdict is provisional until 2 trials agree (configurable via `AdaptiveSearchSweep.monotonic_stability_trials`, default `2`).
 
-#### `smooth_isotonic` (default)
+#### `smooth_isotonic`
 
 The smooth-isotonic planner is a drop-in replacement for `monotonic` that fixes its core accuracy gap: bisection uses **sign-only** feedback at every probe, so a single noisy probe at the boundary can flip the verdict and corrupt the next root estimate. `smooth_isotonic` instead fits a smooth, monotone curve to all probe margins and root-finds the boundary on the curve.
 
@@ -515,11 +519,11 @@ The algorithm runs in five phases:
 4. **Cliff guard** — PAVA-residual changepoint detection. If the most-recent probe's residual `|m_observed - m̂|` exceeds `3·σ_local` AND the bracket gap exceeds `precision · x_hi`, the planner declares `boundary_type: "cliff"` and reports `(boundary_low, boundary_high)` instead of pretending the curve is smooth across a discontinuity. Otherwise `boundary_type: "smooth"`. Catches the prefill-prioritizing-server pattern documented in Sarathi-Serve.
 5. **Termination** — bracket precision reached: `(infeasible_min - feasible_max) / infeasible_min < SLA_PRECISION_DEFAULT` (5% by default), OR the Phase-3 bootstrap CI on the binding-constraint margin no longer brackets zero, OR `--search-max-iterations` exhausted. Reasons emitted in `convergence_reason`: `smooth_isotonic_precision_reached`, `smooth_isotonic_cliff_precision_reached`, `smooth_isotonic_no_pass_in_range`, `smooth_isotonic_no_failure_in_range`, `smooth_isotonic_pchip_fallback_bisection`, or `max_iterations`.
 
-Power-user knobs (all optional; the defaults are sized for typical LLM-serving workloads). These are **YAML-only** fields on the `AdaptiveSearchSweep` schema (`src/aiperf/config/sweep/config.py`); they are not exposed as CLI flags and have no `AIPERF_SEARCH_PLANNER_*` env-var binding. Set them under a `sweep:` block in your AIPerf YAML config:
+Power-user knobs (all optional; the defaults are sized for typical LLM-serving workloads). These are fields on the `AdaptiveSearchSweep` schema (`src/aiperf/config/sweep/config.py`). Set them under a `sweep:` block in your AIPerf YAML config:
 
 - `sla_replicates: N` — Phase-3 replicate count override. Default `0` (auto). Set to a fixed integer to override the auto budget.
 - `sla_precision: tight|normal|coarse` — Per-probe sample budget. Maps to `n_requests_per_probe ∈ {10000, 1000, 300}`. Default `normal` → p99 CI ≈ ±10%.
-- `sla_warmup_seconds: N` — Per-probe warmup discard before computing margins. Default `None` → 30s flat floor (`AIPERF_SEARCH_PLANNER_DEFAULT_WARMUP_SECONDS`). First-probe-at-each-x is floored at 60s (`FIRST_PROBE_WARMUP_FLOOR`); replicate probes are floored at 15s (`REPLICATE_WARMUP_FLOOR`).
+- `sla_warmup_seconds: N` — Per-probe warmup discard before computing margins. Default `None` → 30s flat floor (`AIPERF_SEARCH_PLANNER_DEFAULT_WARMUP_SECONDS`). First-probe-at-each-x is floored at 60s (`FIRST_PROBE_WARMUP_FLOOR`); replicate probes are floored at 15s (`REPLICATE_WARMUP_FLOOR`). Direct CLI runs can set the same field with `--search-sla-warmup-seconds N`; use `0` to disable planner-injected warmup.
 
 ```yaml
 # Example: override smooth-isotonic tuning via YAML

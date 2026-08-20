@@ -2591,11 +2591,11 @@ search_recipe:
     class: aiperf.search_recipes.builtins:MaxConcurrencyUnderSLA
     description: |
       Find the highest concurrency where all SLA filters pass. Default
-      smooth-isotonic 1D SLA-saturation search; use
+      monotonic 1D SLA-saturation search (internal planner: monotonic_sla); use
       --search-style {smooth_isotonic|monotonic|bo|optuna|grid}. Closes
       GitHub issue #883.
     metadata:
-      algorithm: smooth_isotonic
+      algorithm: monotonic_sla
       sweep_path: phases.profiling.concurrency
   pareto-sweep:
     class: aiperf.search_recipes.builtins:ParetoSweep

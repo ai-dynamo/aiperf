@@ -1525,6 +1525,11 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 Random seed for reproducible search trajectories. When unset, the planner uses non-deterministic randomness.
 <br/>_Constraints: ≥ 0_
 
+#### `--search-sla-warmup-seconds` `<float>`
+
+Per-probe warmup base duration for SLA search planners. First probes use max(value, 60s); repeat probes use max(value, 15s). When omitted, the planner defaults to 30s (yielding 60s first-probe / 30s repeat-probe floors). Set to 0 to disable planner-injected warmup. Ignored by planners that do not support SLA warmup.
+<br/>_Constraints: ≥ 0.0_
+
 #### `--search-planner` `<str>`
 
 Outer-loop search planner plugin. Default `bayesian` is a curated Optuna preset that uses BoTorch qLogNEI/qLogNEHVI when the optional `botorch` extra is installed and otherwise falls back to Optuna TPE with a warning. `optuna` is the expert-mode alternative exposing `--optuna-sampler` (tpe / gp / botorch) and `--optuna-acquisition`. Explicit unavailable optional samplers raise. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
@@ -1602,7 +1607,7 @@ Minimum fraction of requests that must satisfy ALL configured per-request SLOs (
 
 #### `--search-style` `<str>`
 
-Search strategy for the max-concurrency-under-sla recipe. 'smooth_isotonic' (default) runs PAVA + PCHIP smooth-isotonic regression-based 1D SLA-saturation search. 'monotonic' runs a 1D binary-search via the MonotonicSLASearchPlanner (~10-20 iterations). 'bo' runs penalty Bayesian Optimization (~30 iterations). 'optuna' runs the same penalty-BO formulation via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; BoTorch requires the optional botorch extra). 'grid' runs a log-spaced 8-step sweep + sla_breach_knee post-process. Recipe-only flag; ignored unless --search-recipe max-concurrency-under-sla is set.
+Search strategy for the max-concurrency-under-sla recipe. 'monotonic' (default) runs a 1D exponential probe + bisection via the internal monotonic_sla planner (~10-20 iterations). 'smooth_isotonic' runs PAVA + PCHIP smooth-isotonic regression-based 1D SLA-saturation search. 'bo' runs penalty Bayesian Optimization (~30 iterations). 'optuna' runs the same penalty-BO formulation via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; BoTorch requires the optional botorch extra). 'grid' runs a log-spaced 8-step sweep + sla_breach_knee post-process. Recipe-only flag; ignored unless --search-recipe max-concurrency-under-sla is set.
 
 #### `--degradation-threshold` `<float>`
 
@@ -3100,6 +3105,11 @@ Random Sobol points before fitting the GP. Defaults to 5 when omitted. Must be &
 Random seed for reproducible search trajectories. When unset, the planner uses non-deterministic randomness.
 <br/>_Constraints: ≥ 0_
 
+#### `--search-sla-warmup-seconds` `<float>`
+
+Per-probe warmup base duration for SLA search planners. First probes use max(value, 60s); repeat probes use max(value, 15s). When omitted, the planner defaults to 30s (yielding 60s first-probe / 30s repeat-probe floors). Set to 0 to disable planner-injected warmup. Ignored by planners that do not support SLA warmup.
+<br/>_Constraints: ≥ 0.0_
+
 #### `--search-planner` `<str>`
 
 Outer-loop search planner plugin. Default `bayesian` is a curated Optuna preset that uses BoTorch qLogNEI/qLogNEHVI when the optional `botorch` extra is installed and otherwise falls back to Optuna TPE with a warning. `optuna` is the expert-mode alternative exposing `--optuna-sampler` (tpe / gp / botorch) and `--optuna-acquisition`. Explicit unavailable optional samplers raise. Third-party planners registered under the `search_planner` plugin category are accepted here. Only applies when --search-space is set.
@@ -3177,7 +3187,7 @@ Minimum fraction of requests that must satisfy ALL configured per-request SLOs (
 
 #### `--search-style` `<str>`
 
-Search strategy for the max-concurrency-under-sla recipe. 'smooth_isotonic' (default) runs PAVA + PCHIP smooth-isotonic regression-based 1D SLA-saturation search. 'monotonic' runs a 1D binary-search via the MonotonicSLASearchPlanner (~10-20 iterations). 'bo' runs penalty Bayesian Optimization (~30 iterations). 'optuna' runs the same penalty-BO formulation via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; BoTorch requires the optional botorch extra). 'grid' runs a log-spaced 8-step sweep + sla_breach_knee post-process. Recipe-only flag; ignored unless --search-recipe max-concurrency-under-sla is set.
+Search strategy for the max-concurrency-under-sla recipe. 'monotonic' (default) runs a 1D exponential probe + bisection via the internal monotonic_sla planner (~10-20 iterations). 'smooth_isotonic' runs PAVA + PCHIP smooth-isotonic regression-based 1D SLA-saturation search. 'bo' runs penalty Bayesian Optimization (~30 iterations). 'optuna' runs the same penalty-BO formulation via the OptunaSearchPlanner (TPE/GP/BoTorch samplers; BoTorch requires the optional botorch extra). 'grid' runs a log-spaced 8-step sweep + sla_breach_knee post-process. Recipe-only flag; ignored unless --search-recipe max-concurrency-under-sla is set.
 
 #### `--degradation-threshold` `<float>`
 

@@ -49,6 +49,7 @@ _RECIPE_TUNABLE_FIELDS: tuple[str, ...] = (
     "search_max_iterations",
     "search_initial_points",
     "search_random_seed",
+    "search_sla_warmup_seconds",
 )
 
 # Map sweeping-config field names to ``AdaptiveSearchSweep`` field names for
@@ -57,6 +58,7 @@ _RECIPE_TUNABLE_FIELD_TO_SWEEP_FIELD: tuple[tuple[str, str], ...] = (
     ("search_max_iterations", "max_iterations"),
     ("search_initial_points", "n_initial_points"),
     ("search_random_seed", "random_seed"),
+    ("search_sla_warmup_seconds", "sla_warmup_seconds"),
 )
 
 # Combined view: every --search-* flag the explicit-flag adaptive-search
@@ -125,7 +127,8 @@ def maybe_expand_search_recipe(
             "These flags choose the objective / search space / planner -- "
             "the recipe owns those. Tunable knobs "
             "(--search-max-iterations, --search-initial-points, "
-            "--search-random-seed) are accepted alongside a recipe."
+            "--search-random-seed, --search-sla-warmup-seconds) are accepted "
+            "alongside a recipe."
         )
 
     output = _invoke_recipe(cli, sw, cli_set, benchmark_config=benchmark_config)
@@ -235,11 +238,17 @@ def _invoke_recipe(
     imports at module load (matches the late-import pattern used by
     _build_adaptive_search for OptimizationDirection / parse_search_space).
     """
+    from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
     from aiperf.plugin.enums import PluginType
     from aiperf.plugin.plugins import get_class
     from aiperf.search_recipes._base import SearchRecipeContext
 
     sla_targets = _build_recipe_sla_targets(sw, cli_set)
+    sla_filters = [
+        parse_sla_filter(value)
+        for value in (sw.search_sla or [])
+        if "search_sla" in cli_set
+    ]
     sweep_overrides = _build_recipe_sweep_overrides(cli, sw, cli_set)
 
     recipe_cls = get_class(PluginType.SEARCH_RECIPE, sw.search_recipe)
@@ -247,6 +256,7 @@ def _invoke_recipe(
     ctx = SearchRecipeContext(
         benchmark_config=benchmark_config,
         sla_targets=sla_targets,
+        sla_filters=sla_filters,
         sweep_overrides=sweep_overrides,
     )
     return recipe.expand(ctx)

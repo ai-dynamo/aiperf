@@ -135,8 +135,7 @@ def test_build_search_planner_warns_when_non_isotonic_style_with_tiers(caplog):
 
 
 def test_build_search_planner_no_warning_for_isotonic_style_with_tiers(caplog):
-    """The default smooth_isotonic style + tiers does NOT warn — it's the style
-    multi-tier reuses for precision/warmup."""
+    """The explicit smooth_isotonic style does not warn with tiers."""
     import logging
 
     from aiperf.cli_runner._strategy import _build_search_planner
