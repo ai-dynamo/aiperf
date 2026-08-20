@@ -149,6 +149,37 @@ pub struct RawJsonMessage {
     pub wire: Bytes,
 }
 
+/// One session's canonical request messages and per-call prefix boundaries.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportedRequestHistory {
+    messages: Vec<RawJsonMessage>,
+    call_end_offsets: Vec<usize>,
+}
+
+impl ImportedRequestHistory {
+    pub(crate) fn push(&mut self, message: RawJsonMessage) {
+        self.messages.push(message);
+    }
+
+    pub(crate) fn capture_call(&mut self) {
+        self.call_end_offsets.push(self.messages.len());
+    }
+
+    pub(crate) fn truncate_after_last_call(&mut self) {
+        let retained_len = self.call_end_offsets.last().copied().unwrap_or(0);
+        self.messages.truncate(retained_len);
+    }
+
+    fn messages_for_call(&self, call_index: usize) -> Option<&[RawJsonMessage]> {
+        let end = *self.call_end_offsets.get(call_index)?;
+        self.messages.get(..end)
+    }
+
+    fn is_legacy_fallback(&self) -> bool {
+        self.messages.is_empty() && self.call_end_offsets.is_empty()
+    }
+}
+
 /// The parent main-session identity for a linked imported subagent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportedSubagentParent {
@@ -163,7 +194,7 @@ pub struct ImportedSubagentParent {
 pub struct ImportedModelCall {
     /// Privacy-safe source coordinate for this inferred invocation.
     pub source_id: String,
-    /// Canonical request history sent to the model.
+    /// Legacy/direct-construction request history used when session history is absent.
     pub request_messages: Vec<RawJsonMessage>,
     /// Provider model identifier when the source provided one.
     pub model: Option<String>,
@@ -196,6 +227,10 @@ pub struct ImportedAgentSession {
     pub git_branch_present: bool,
     /// Optional parent link for imported subagent files.
     pub parent: Option<ImportedSubagentParent>,
+    /// Shared canonical request history for parser-produced calls.
+    ///
+    /// `Default::default()` selects each call's legacy `request_messages` vector.
+    pub request_history: ImportedRequestHistory,
     /// Inferred model calls in source order.
     pub calls: Vec<ImportedModelCall>,
     /// Number of observed function-call records.
@@ -208,6 +243,17 @@ pub struct ImportedAgentSession {
     pub omitted_reasoning_count: u64,
     /// Whether every retained tool bundle included all results.
     pub tool_results_complete: bool,
+}
+
+impl ImportedAgentSession {
+    /// Borrow the exact request-message prefix for one inferred model call.
+    pub fn request_messages(&self, call_index: usize) -> Option<&[RawJsonMessage]> {
+        let call = self.calls.get(call_index)?;
+        if self.request_history.is_legacy_fallback() {
+            return Some(call.request_messages.as_slice());
+        }
+        self.request_history.messages_for_call(call_index)
+    }
 }
 
 /// Parse the exact discovered source set into deterministically ordered sessions.
@@ -353,4 +399,46 @@ fn is_valid_identifier(value: &str) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'#' | b'-')
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::{ImportedRequestHistory, RawJsonMessage};
+
+    #[test]
+    fn imported_request_history_retains_one_message_vector_and_call_end_offsets() {
+        let mut history = ImportedRequestHistory::default();
+        history.capture_call();
+        for index in 0..1_024 {
+            history.push(RawJsonMessage {
+                role: "user".to_owned(),
+                wire: Bytes::from(format!(r#"{{"role":"user","content":"{index}"}}"#)),
+            });
+            history.capture_call();
+        }
+
+        assert_eq!(history.messages.len(), 1_024);
+        assert_eq!(history.call_end_offsets.len(), 1_025);
+        assert_eq!(history.call_end_offsets[0], 0);
+        assert_eq!(history.call_end_offsets[1], 1);
+        assert_eq!(history.call_end_offsets[1_024], 1_024);
+        assert_eq!(
+            history.messages_for_call(1_024).expect("last prefix")[0].wire,
+            Bytes::from_static(b"{\"role\":\"user\",\"content\":\"0\"}")
+        );
+        assert_eq!(
+            history.messages_for_call(1_024).expect("last prefix")[1_023].wire,
+            Bytes::from_static(b"{\"role\":\"user\",\"content\":\"1023\"}")
+        );
+
+        let mut incomplete = ImportedRequestHistory::default();
+        incomplete.push(RawJsonMessage {
+            role: "user".to_owned(),
+            wire: Bytes::from_static(b"{\"role\":\"user\",\"content\":\"x\"}"),
+        });
+        assert!(!incomplete.is_legacy_fallback());
+        assert!(incomplete.messages_for_call(0).is_none());
+    }
 }

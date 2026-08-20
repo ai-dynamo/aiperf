@@ -107,11 +107,17 @@ fn lower_session(
     let mut previous_node = None;
     let mut target_output_tokens = Vec::with_capacity(session.calls.len());
     for (index, call) in session.calls.iter().enumerate() {
+        let request_messages = session.request_messages(index).ok_or_else(|| {
+            session_error(
+                session,
+                "imported request history does not match inferred model calls",
+            )
+        })?;
         let node_id = format!("llm_{index}");
         let mut parent = None;
-        let mut items = Vec::with_capacity(call.request_messages.len());
+        let mut items = Vec::with_capacity(request_messages.len());
         let mut input_tokens = 0_u64;
-        for message in &call.request_messages {
+        for message in request_messages {
             if message.role.is_empty() {
                 return Err(session_error(
                     session,

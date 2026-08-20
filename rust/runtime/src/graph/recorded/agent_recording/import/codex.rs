@@ -466,6 +466,7 @@ impl<'a> CodexState<'a> {
             cwd_present: self.cwd_present,
             git_branch_present: self.git_branch_present,
             parent: None,
+            request_history: Default::default(),
             calls: self.calls,
             observed_tool_count: self.observed_tool_count,
             completed_tool_count: self.completed_tool_count,

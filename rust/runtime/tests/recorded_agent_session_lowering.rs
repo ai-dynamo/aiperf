@@ -223,7 +223,7 @@ fn imported_tool_delay_applies_only_to_the_next_llm_edge() {
 }
 
 #[test]
-fn interrupted_imported_tool_bundle_is_not_counted_as_completed() {
+fn imported_request_history_legacy_call_vec_lowers_and_preserves_completed_tool_count() {
     let session = ImportedAgentSession {
         session_id: "interrupted".into(),
         source: ImportedAgentSource::Codex,
@@ -234,6 +234,7 @@ fn interrupted_imported_tool_bundle_is_not_counted_as_completed() {
         cwd_present: false,
         git_branch_present: false,
         parent: None,
+        request_history: Default::default(),
         calls: vec![ImportedModelCall {
             source_id: "call".into(),
             request_messages: vec![RawJsonMessage {
@@ -258,6 +259,11 @@ fn interrupted_imported_tool_bundle_is_not_counted_as_completed() {
         &mut SegmentPool::new(),
     )
     .expect("lower interrupted session");
+    assert_eq!(
+        llm_nodes(&bundle.programs[0])[0].items.len(),
+        1,
+        "legacy ImportedModelCall.request_messages must remain the fallback",
+    );
     assert_eq!(
         bundle.programs[0]
             .replay
@@ -287,6 +293,7 @@ fn imported_lowering_rejects_empty_or_mismatched_message_roles() {
             cwd_present: false,
             git_branch_present: false,
             parent: None,
+            request_history: Default::default(),
             observed_tool_count: 0,
             completed_tool_count: 0,
             ignored_record_count: 0,
