@@ -3,7 +3,7 @@
 """Aggregation helper that rolls up per-worker info into a WorkerGroupStatsMessage.
 
 Lives in its own module to keep ``worker_pod_helpers`` under the ergonomics
-file-size cap. The public symbol is re-exported from ``worker_pod_helpers``.
+file-size cap. Import ``build_worker_group_stats`` from here directly.
 """
 
 from __future__ import annotations

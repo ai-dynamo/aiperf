@@ -70,11 +70,11 @@ from aiperf.workers.worker_group_state import (
     mark_stale_workers,
     update_worker_status,
 )
+from aiperf.workers.worker_group_stats_builder import build_worker_group_stats
 from aiperf.workers.worker_pod_dataset_download import download_dataset
 from aiperf.workers.worker_pod_helpers import (
     build_pod_dataset_snapshot,
     build_pod_summary,
-    build_worker_group_stats,
     command_record_processor_peers_strict,
     configure_local_peers,
     exact_record_processor_peer_ids,

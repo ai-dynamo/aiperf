@@ -8,7 +8,7 @@ from __future__ import annotations
 from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
 from aiperf.workers.worker_group_state import WorkerStatusInfo
-from aiperf.workers.worker_pod_helpers import build_worker_group_stats
+from aiperf.workers.worker_group_stats_builder import build_worker_group_stats
 
 
 def _info(
