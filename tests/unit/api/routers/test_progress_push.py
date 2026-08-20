@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import SystemState
-from aiperf.common.hooks import AIPerfHook, BackgroundTaskParams, HookAttrs
+from aiperf.common.hooks import AIPerfHook, HookAttrs
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
     ResultsExportedMessage,
@@ -42,7 +42,42 @@ def _make_router():
     r._k8s_namespace = "default"
     r._last_patched_jobset_annotations = {}
     r._last_patched_aiperfjob_annotations = {}
+    r._stop_requested_event = asyncio.Event()
     return r
+
+
+@pytest.mark.asyncio
+async def test_non_kubernetes_run_schedules_no_status_push_task():
+    """Outside Kubernetes, bus handlers must not spawn a push task at all.
+
+    The handlers fire on messages published in every run mode -- two of them at
+    per-tick rates -- so a task created only to return on its first line is
+    pure local-run overhead.
+    """
+    from aiperf.api.routers.progress import ProgressRouter
+
+    r = _make_router()
+    r._k8s_patching_enabled = False
+    r._patch_aiperfjob_status = AsyncMock()
+
+    await r._on_system_state_changed(
+        SystemStateChangedMessage(service_id="ctrl", state=SystemState.PROFILING)
+    )
+    await r._on_credit_phase_progress_status_push(MagicMock())
+    await r._on_realtime_metrics_status_push(MagicMock())
+    await r._on_credit_phase_complete_status_push(MagicMock())
+    await r._on_results_exported(MagicMock())
+    await asyncio.sleep(0)
+
+    # State is still tracked; only the k8s round-trip is skipped.
+    assert r._system_state == SystemState.PROFILING
+    assert r._results_exported is True
+    r._patch_aiperfjob_status.assert_not_called()
+
+    # ...and neither CR-patching loop is started.
+    r.start_background_task = MagicMock()
+    await ProgressRouter._start_k8s_patch_loops(r)
+    r.start_background_task.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -297,17 +332,24 @@ async def test_periodic_push_refreshes_heartbeat_when_progress_is_unchanged(
     monkeypatch.setattr(phase, "format_timestamp", lambda: next(timestamps))
 
     router = _make_router()
-    hook_type = getattr(
-        ProgressRouter._patch_aiperfjob_status, HookAttrs.HOOK_TYPE, None
+    # The heartbeat loop is no longer a @background_task: it is registered from
+    # _start_k8s_patch_loops so a non-Kubernetes run never starts it at all.
+    assert (
+        getattr(ProgressRouter._patch_aiperfjob_status, HookAttrs.HOOK_TYPE, None)
+        is not AIPerfHook.BACKGROUND_TASK
     )
-    params = getattr(
-        ProgressRouter._patch_aiperfjob_status, HookAttrs.HOOK_PARAMS, None
+    router.start_background_task = MagicMock()
+    await ProgressRouter._start_k8s_patch_loops(router)
+    intervals = [
+        call.kwargs["interval"] for call in router.start_background_task.call_args_list
+    ]
+    assert len(intervals) == 2
+    assert any(0 < i <= CONTROLLER_HEARTBEAT_INTERVAL_SECONDS for i in intervals)
+    assert all(
+        call.kwargs["immediate"] is False
+        for call in router.start_background_task.call_args_list
     )
-    assert hook_type is AIPerfHook.BACKGROUND_TASK
-    assert isinstance(params, BackgroundTaskParams)
-    assert isinstance(params.interval, int | float)
-    assert 0 < params.interval <= CONTROLLER_HEARTBEAT_INTERVAL_SECONDS
-    assert params.immediate is False
+    del router.start_background_task
 
     await router._patch_aiperfjob_status()
     await router._patch_aiperfjob_status()

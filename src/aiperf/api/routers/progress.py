@@ -38,7 +38,6 @@ from aiperf.controller.system_controller_models import (
     AggregateWorkerStatus,
     build_aggregate_worker_status,
 )
-from aiperf.kubernetes.constants import CONTROLLER_HEARTBEAT_INTERVAL_SECONDS
 
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
 
@@ -217,6 +216,11 @@ class ProgressRouter(
         """
         if not self._k8s_patching_enabled:
             return
+        # Imported here, not at module scope: this is the only use of anything
+        # from aiperf.kubernetes in this module's import graph, and every other
+        # k8s import below is already function-local for the same reason.
+        from aiperf.kubernetes.constants import CONTROLLER_HEARTBEAT_INTERVAL_SECONDS
+
         self.start_background_task(
             self._patch_aiperfjob_status,
             interval=CONTROLLER_HEARTBEAT_INTERVAL_SECONDS,
