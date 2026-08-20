@@ -1395,6 +1395,29 @@ def find_last_non_empty_usage(responses: list[ParsedResponse]) -> Usage | None:
     return None
 
 
+def first_content_chunk_completion_tokens(
+    responses: list[ParsedResponse],
+) -> int | None:
+    """Return the cumulative ``completion_tokens`` reported on the first content
+    chunk (the chunk whose arrival defines TTFT).
+
+    Requires per-chunk (``continuous_usage_stats``) usage: it walks forward to the
+    first response carrying content (``data`` is not None) and reads its usage's
+    ``completion_tokens``. This is deliberately the raw completion count
+    (reasoning included), matching ``OutputSequenceLengthMetric`` -- OSL is
+    ``output + reasoning`` = ``completion_tokens`` -- so inter-token latency
+    subtracts operands in the same unit. Because per-chunk usage is cumulative,
+    that value is the number of tokens delivered through the first content chunk.
+    Returns ``None`` when no content chunk carries usage (e.g. the server only
+    reports the final total), so callers fall back to assuming one token in the
+    first chunk.
+    """
+    for response in responses:
+        if response.data and response.usage:
+            return response.usage.completion_tokens
+    return None
+
+
 @dataclass(slots=True)
 class ParsedResponse:
     """Parsed response from a inference client."""
@@ -1459,6 +1482,16 @@ class TokenCounts:
 
     reasoning: int | None = None
     """The number of reasoning tokens. None if token count could not be calculated or the model does not support reasoning."""
+
+    first_content_chunk_tokens: int | None = None
+    """The number of tokens delivered in the first content chunk -- the chunk whose
+    arrival defines TTFT -- taken from the server's per-chunk usage (cumulative
+    ``completion_tokens`` at that chunk). Inter-token latency subtracts this from the
+    decode-token count rather than assuming exactly one token arrived first, which
+    corrects the TPS/user inflation a server produces when it bundles multiple tokens
+    into the first streamed chunk (e.g. TRT-LLM ``stream-interval``). ``None`` unless
+    ``--per-chunk-usage`` is set and the server reports per-chunk usage; inter-token
+    latency then falls back to assuming one token in the first chunk."""
 
 
 @dataclass(slots=True)
