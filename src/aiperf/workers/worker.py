@@ -2044,11 +2044,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # establishes a reliable estimate. Do NOT rewrite timestamp_ns here: it
         # anchors all exported timestamps and was set pre-request, so correcting
         # it in place would also shift it by the request latency.
-        record.clock_offset_ns = (
-            self.clock_offset_tracker.offset_ns
-            if self.clock_offset_tracker.is_calibrated
-            else None
-        )
+        #
+        # Gated on the same flag that gates sampling in _schedule_credit_drop_task:
+        # with no samples the tracker is never calibrated, so outside Kubernetes
+        # this only ever wrote the field's own default of None. Skipping it keeps
+        # local records byte-identical while dropping a property call and an
+        # attribute store from the per-record egress path.
+        if self._tracks_clock_offset and self.clock_offset_tracker.is_calibrated:
+            record.clock_offset_ns = self.clock_offset_tracker.offset_ns
 
         msg = InferenceResultsMessage(
             service_id=self.service_id,
