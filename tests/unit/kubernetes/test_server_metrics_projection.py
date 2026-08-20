@@ -336,7 +336,10 @@ def test_project_server_metrics_for_cr_drops_everything_over_the_byte_budget(
         )
     )
 
-    assert result is None
+    assert result is not None
+    assert result["metrics"] == {}
+    assert result["projection_dropped"] is True
+    assert "projection_message" in result
 
 
 def test_project_server_metrics_for_cr_stays_within_the_byte_budget_by_default() -> (
