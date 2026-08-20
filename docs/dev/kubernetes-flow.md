@@ -530,9 +530,32 @@ profiling-kind phase's counters to top-level `status.requestsCompleted`,
 assume a phase is literally named `profiling`.
 
 The controller-side `ProgressRouter` mirrors progress annotations to both the
-JobSet and AIPerfJob and merge-patches the AIPerfJob status. It also refreshes
+JobSet and AIPerfJob and patches the AIPerfJob status. It also refreshes
 the UID-fenced `aiperf.nvidia.com/controller-heartbeat` annotation on every
-push. The operator's recurring watchdog inspects only this cached parent body
+push.
+
+`status.currentPhase` is written by that same push
+(`_push_aiperfjob_status` in `src/aiperf/api/routers/progress.py`): it names the
+most recently started phase, mirroring `JobProgress.current_phase`, and prefers
+phases with an explicit identity over legacy aggregate entries. The written
+value is always a key of the `status.phases` map it is pushed with — a phase
+that has started but not yet sent a request is normally omitted from that map,
+so the push emits a zeroed entry for it rather than naming a missing key.
+Consumers such as `_requests_progress_percent` silently fall back to
+alphabetized iteration (which resolves to warmup's 100%) on a miss, so an
+unresolvable pointer is worse than omitting the key entirely.
+
+The status push is fenced against terminal transitions. kopf clears
+`currentPhase` and `subPhase` when it stamps a terminal phase
+(`StatusBuilder.set_phase`), and a push that passed the UID fence just before
+that could otherwise resurrect both keys. When the CR already carries a
+`status.phase`, the push therefore goes out as `application/json-patch+json`
+with a leading `test` op on `/status/phase`, so the apiserver rather than
+wall-clock ordering settles the race; a 409 or 422 is logged at debug and
+dropped. A push observing an already-terminal phase is skipped outright. Only a
+CR with no `status.phase` at all still uses the plain merge patch — there is no
+terminal value to race against yet, and a `test` op on an absent path would
+fail with 422. The operator's recurring watchdog inspects only this cached parent body
 while the heartbeat is fresh; broad JobSet, Pod, sidecar, and results recovery
 runs only after heartbeat expiry or when an explicit `timeoutSeconds` deadline
 is due. A controller service error is pushed as `status.controllerFailure`

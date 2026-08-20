@@ -946,10 +946,19 @@ def _as_phase(value: Phase | str | None) -> Phase:
         return Phase.PENDING
 
 
-def _build_phase_progress(stats: CombinedPhaseStats) -> PhaseProgress | None:
-    """Build PhaseProgress from CombinedPhaseStats."""
+def _build_phase_progress(
+    stats: CombinedPhaseStats, *, allow_empty: bool = False
+) -> PhaseProgress | None:
+    """Build PhaseProgress from CombinedPhaseStats.
+
+    ``allow_empty`` keeps a phase that has started but has not sent a request
+    yet, instead of dropping it. Only the controller's live status push sets
+    it, and only for the phase it is about to name in ``status.currentPhase``,
+    which must always be a key of ``status.phases``. The completion handler's
+    final snapshot keeps the default and still excludes empty phases.
+    """
     total = stats.total_expected_requests or 0
-    if total == 0 and stats.requests_sent == 0:
+    if total == 0 and stats.requests_sent == 0 and not allow_empty:
         return None
 
     elapsed = None

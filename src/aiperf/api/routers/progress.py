@@ -10,6 +10,7 @@ heartbeat to the AIPerfJob, then mirrors progress onto JobSet annotations.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Annotated, Any
 
@@ -40,6 +41,8 @@ from aiperf.controller.system_controller_models import (
 )
 
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
+
+logger = logging.getLogger(__name__)
 
 progress_router = APIRouter()
 
@@ -105,6 +108,41 @@ def _build_progress_annotations(
 def _controller_failure_status_patch(controller_failure: str | None) -> dict[str, str]:
     """Return the controller's fatal failure field when one was reported."""
     return {"controllerFailure": controller_failure} if controller_failure else {}
+
+
+def _current_phase_name(phases: dict[str, CombinedPhaseStats]) -> str | None:
+    """Name the most recently started phase, mirroring JobProgress.current_phase.
+
+    Phases carrying an explicit identity win over legacy aggregate entries, the
+    same preference ``JobProgress._concrete_phases`` applies.
+    """
+    if not phases:
+        return None
+    concrete = {
+        name: stats
+        for name, stats in phases.items()
+        if stats.phase_name is not None or name != str(stats.phase)
+    }
+    return max((concrete or phases).items(), key=lambda item: item[1].start_ns or 0)[0]
+
+
+def _merge_patch_value(existing: Any, patch: Any) -> Any:
+    """Resolve one status key against its live value using RFC 7386 semantics.
+
+    The terminal fence sends the status update as a JSON patch, whose ``add``
+    op replaces an object member outright instead of merging into it.
+    Pre-resolving each value against the CR read moments earlier keeps the
+    fenced write equivalent to the merge-patch it stands in for.
+    """
+    if not isinstance(patch, dict) or not isinstance(existing, dict):
+        return patch
+    merged = dict(existing)
+    for key, value in patch.items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = _merge_patch_value(merged.get(key), value)
+    return merged
 
 
 class ProgressRouter(
@@ -419,7 +457,8 @@ async def _push_aiperfjob_status(
 
     The heartbeat uses a UID-fenced metadata JSON patch. The progress update
     keeps the existing status-subresource merge patch so operator-owned fields
-    (phase, conditions, etc.) remain untouched.
+    (phase, conditions, etc.) remain untouched, except when the CR already
+    carries a phase — then it is sent as a phase-fenced JSON patch instead.
     """
     from kubernetes_asyncio import client
 
@@ -460,15 +499,7 @@ async def _push_aiperfjob_status(
             _content_type="application/json-patch+json",
         )
 
-        # Serialize phase data through PhaseProgress (camelCase, same schema as
-        # completion handler's final snapshot) so merge-patch never accumulates
-        # both snake_case and camelCase versions of the same fields.
-        from aiperf.operator.handlers.monitor import _build_phase_progress
-
-        phases_data: dict[str, Any] = {}
-        for name, stats in phases.items():
-            if phase_progress := _build_phase_progress(stats):
-                phases_data[name] = phase_progress.to_k8s_dict()
+        phases_data, current_phase = _build_phases_payload(phases)
 
         # Find the primary (profiling-kind) phase for top-level request counters,
         # mirroring JobProgress.primary_phase_stats: take the profiling-kind phase
@@ -509,6 +540,8 @@ async def _push_aiperfjob_status(
             "subPhase": str(effective_system_state),
             "phases": phases_data,
         }
+        if current_phase is not None:
+            status_patch["currentPhase"] = current_phase
         if primary_stats is not None:
             status_patch["requestsCompleted"] = primary_stats.requests_completed
             status_patch["requestsTotal"] = primary_stats.total_expected_requests or 0
@@ -534,15 +567,128 @@ async def _push_aiperfjob_status(
             status_patch["resultsExported"] = True
         status_patch.update(_controller_failure_status_patch(controller_failure))
 
-        await custom_api.patch_namespaced_custom_object_status(
-            group=AIPERF_GROUP,
-            version=AIPERF_VERSION,
-            plural=AIPERF_PLURAL,
+        existing_status = resource.get("status")
+        await _write_status_patch(
+            custom_api,
+            job_id=job_id,
             namespace=namespace,
-            name=job_id,
+            existing_status=existing_status
+            if isinstance(existing_status, dict)
+            else {},
+            status_patch=status_patch,
+        )
+
+
+def _build_phases_payload(
+    phases: dict[str, CombinedPhaseStats],
+) -> tuple[dict[str, Any], str | None]:
+    """Serialize per-phase progress and name the phase the job is currently in.
+
+    Phase data goes through ``PhaseProgress`` (camelCase, the same schema as
+    the completion handler's final snapshot) so merge-patch never accumulates
+    both snake_case and camelCase versions of the same fields.
+
+    The returned name is always a key of the returned map, or ``None``.
+    ``_requests_progress_percent`` falls back to alphabetized iteration when
+    ``status.currentPhase`` misses ``status.phases`` -- which resolves to
+    warmup's 100% -- so a dangling pointer is strictly worse than no pointer.
+    A phase that has started but not yet sent a request is the current-phase
+    winner while being dropped from the map, so a zeroed entry is emitted for
+    it here rather than loosening the shared builder.
+    """
+    from aiperf.operator.handlers.monitor import _build_phase_progress
+
+    phases_data: dict[str, Any] = {}
+    for name, stats in phases.items():
+        if phase_progress := _build_phase_progress(stats):
+            phases_data[name] = phase_progress.to_k8s_dict()
+
+    current_phase = _current_phase_name(phases)
+    if current_phase is not None and current_phase not in phases_data:
+        zeroed = _build_phase_progress(phases[current_phase], allow_empty=True)
+        if zeroed is None:
+            return phases_data, None
+        phases_data[current_phase] = zeroed.to_k8s_dict()
+    return phases_data, current_phase
+
+
+async def _write_status_patch(
+    custom_api: Any,
+    *,
+    job_id: str,
+    namespace: str,
+    existing_status: dict[str, Any],
+    status_patch: dict[str, Any],
+) -> None:
+    """Write the controller's status update, fenced against terminal transitions.
+
+    kopf clears ``currentPhase``/``subPhase`` when it stamps a terminal phase
+    (``StatusBuilder.set_phase``); an in-flight push that passed the UID fence
+    just before that patch would resurrect both keys. A merge patch cannot
+    carry a precondition, so once the CR has a phase at all the write goes out
+    as a JSON patch whose leading ``test`` op binds it to the phase just read,
+    and the apiserver -- not wall-clock order -- settles the race. A CR with no
+    phase yet has not reached Pending: there is nothing to race against, and a ``test``
+    op on an absent path would fail with 422.
+    """
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    from aiperf.kubernetes.cr_refs import AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION
+    from aiperf.operator.handlers.monitor import _as_phase
+
+    ref = {
+        "group": AIPERF_GROUP,
+        "version": AIPERF_VERSION,
+        "plural": AIPERF_PLURAL,
+        "namespace": namespace,
+        "name": job_id,
+    }
+    observed_phase = existing_status.get("phase")
+
+    if not isinstance(observed_phase, str) or not observed_phase:
+        await custom_api.patch_namespaced_custom_object_status(
+            **ref,
             body={"status": status_patch},
             _content_type="application/merge-patch+json",
         )
+        return
+
+    if _as_phase(observed_phase).is_terminal:
+        logger.debug(
+            "Skipping status push for %s/%s: CR is already terminal (%s)",
+            namespace,
+            job_id,
+            observed_phase,
+        )
+        return
+
+    patch_ops: list[dict[str, Any]] = [
+        {"op": "test", "path": "/status/phase", "value": observed_phase}
+    ]
+    patch_ops.extend(
+        {
+            "op": "add",
+            "path": f"/status/{key}",
+            "value": _merge_patch_value(existing_status.get(key), value),
+        }
+        for key, value in status_patch.items()
+    )
+    try:
+        await custom_api.patch_namespaced_custom_object_status(
+            **ref,
+            body=patch_ops,
+            _content_type="application/json-patch+json",
+        )
+    except ApiException as exc:
+        if exc.status in (409, 422):
+            logger.debug(
+                "Status push for %s/%s lost the race with a phase transition (%s)",
+                namespace,
+                job_id,
+                exc.status,
+            )
+            return
+        raise
 
 
 def _uid_fenced_annotation_patch(
