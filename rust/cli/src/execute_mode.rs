@@ -149,9 +149,9 @@ fn run_cell() -> ! {
             std::process::exit(2);
         }
     };
-    let envelope_bytes =
+    let envelope =
         match runtime.block_on(aiperf_runtime::engine::cellular_cell::fetch_cell_envelope()) {
-            Ok(bytes) => bytes,
+            Ok(envelope) => envelope,
             Err(error) => {
                 tracing::error!(
                     error = format!("{error:#}"),
@@ -160,34 +160,25 @@ fn run_cell() -> ! {
                 std::process::exit(2);
             }
         };
+    let (envelope_bytes, landing_guard) = envelope.into_execution_parts();
     // Dataset fan-out must complete on the fetch runtime before it is dropped.
     if let Err(error) =
         runtime.block_on(aiperf_runtime::engine::cellular_cell::verify_dataset_fanout())
     {
         tracing::error!(error = format!("{error:#}"), "cell dataset fan-out failed");
+        landing_guard.close();
         std::process::exit(2);
     }
     drop(runtime);
-    // Cross-host file datasets must land before dataset compilation rewrites the
-    // envelope to its cell-local path.
-    let envelope_bytes =
-        match aiperf_runtime::engine::cellular_cell::download_cell_dataset_if_needed(envelope_bytes)
-        {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                tracing::error!(
-                    error = format!("{error:#}"),
-                    "cell failed to download its dataset source"
-                );
-                std::process::exit(2);
-            }
-        };
     // Execution consumes a bare `BenchmarkRun`, while cellular helpers use the
-    // wrapped `{"run": …}` envelope.
+    // wrapped `{"run": …}` envelope. The landing guard stays in scope through
+    // `run_v2`, which owns every read of the rewritten local dataset path.
     let run_bytes = run_object_bytes(&envelope_bytes);
     configure_dynosim_process_defaults(&run_bytes);
     let application = compose_stock_application();
-    run_v2(&run_bytes, OperationV2::Execute, &application);
+    run_v2_with_cleanup(&run_bytes, OperationV2::Execute, &application, move || {
+        landing_guard.close();
+    });
 }
 
 /// Extract the bare `BenchmarkRun`, preserving malformed input for typed errors.
@@ -439,16 +430,32 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
 /// selected by the re-exec mode (`--execute` or `--validate`), not carried on the
 /// wire. A malformed run produces a typed v2 protocol failure.
 fn run_v2(input: &[u8], operation: OperationV2, application: &Application) -> ! {
+    run_v2_with_cleanup(input, operation, application, || {});
+}
+
+fn run_v2_with_cleanup<F>(
+    input: &[u8],
+    operation: OperationV2,
+    application: &Application,
+    cleanup: F,
+) -> !
+where
+    F: FnOnce(),
+{
+    let mut cleanup = Some(cleanup);
     let distribution_id = application.distribution_id().to_owned();
     let run = match aiperf_runtime::engine::protocol_v2::decode_execute_wire(input) {
         Ok(run) => run,
-        Err(error) => write_v2_protocol_failure(
-            Some(operation),
-            distribution_id,
-            benchmark_id_hint(input),
-            "invalid_request",
-            format!("invalid protocol-v2 request: {error}"),
-        ),
+        Err(error) => {
+            run_v2_cleanup(&mut cleanup);
+            write_v2_protocol_failure(
+                Some(operation),
+                distribution_id,
+                benchmark_id_hint(input),
+                "invalid_request",
+                format!("invalid protocol-v2 request: {error}"),
+            )
+        }
     };
     let envelope = EnvelopeV2 {
         protocol_version: PROTOCOL_V2,
@@ -461,14 +468,27 @@ fn run_v2(input: &[u8], operation: OperationV2, application: &Application) -> ! 
         application.handle_v2(envelope)
     })) {
         Ok(result) => result,
-        Err(payload) => write_v2_internal_panic(
-            operation,
-            distribution_id,
-            benchmark_id,
-            panic_payload_message(payload.as_ref()),
-        ),
+        Err(payload) => {
+            run_v2_cleanup(&mut cleanup);
+            write_v2_internal_panic(
+                operation,
+                distribution_id,
+                benchmark_id,
+                panic_payload_message(payload.as_ref()),
+            )
+        }
     };
+    run_v2_cleanup(&mut cleanup);
     write_json_line(&result.response, result.exit_code);
+}
+
+fn run_v2_cleanup<F>(cleanup: &mut Option<F>)
+where
+    F: FnOnce(),
+{
+    if let Some(cleanup) = cleanup.take() {
+        cleanup();
+    }
 }
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -590,4 +610,24 @@ fn write_json_line(value: &impl serde::Serialize, exit_code: i32) -> ! {
         std::process::exit(2);
     }
     std::process::exit(exit_code);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::run_v2_cleanup;
+
+    #[test]
+    fn run_v2_terminal_cleanup_runs_once() {
+        let cleanup_ran = Rc::new(Cell::new(0));
+        let observed = Rc::clone(&cleanup_ran);
+        let mut cleanup = Some(move || observed.set(observed.get() + 1));
+
+        run_v2_cleanup(&mut cleanup);
+        run_v2_cleanup(&mut cleanup);
+
+        assert_eq!(cleanup_ran.get(), 1);
+    }
 }

@@ -15,6 +15,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::rc::Rc;
 
 use crate::cellular::{
@@ -168,14 +171,23 @@ fn write_controller_replay_artifacts(
         .map_err(|error| anyhow!("writing cellular recorded replay artifacts: {error}"))
 }
 
-/// Removes the controller's per-cell scratch tree on any exit path — a normal
-/// return or a bailed run — so a failed cellular run never leaks a `/tmp` tree.
-struct ScratchTreeGuard(PathBuf);
+struct ControllerScratchLease(tempfile::TempDir);
 
-impl Drop for ScratchTreeGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+impl ControllerScratchLease {
+    fn path(&self) -> &Path {
+        self.0.path()
     }
+}
+
+fn private_controller_scratch_lease() -> Result<ControllerScratchLease> {
+    let scratch = tempfile::Builder::new()
+        .prefix("aiperf-cellular-")
+        .tempdir()
+        .context("creating private cellular scratch")?;
+    #[cfg(unix)]
+    std::fs::set_permissions(scratch.path(), std::fs::Permissions::from_mode(0o700))
+        .context("securing private cellular scratch")?;
+    Ok(ControllerScratchLease(scratch))
 }
 
 impl CellularRunKind {
@@ -635,17 +647,14 @@ pub fn run_cellular(
     let local = tokio::task::LocalSet::new();
 
     local.block_on(&runtime, async move {
-        let temp_root =
-            std::env::temp_dir().join(format!("aiperf-cellular-{}", std::process::id()));
+        let scratch = private_controller_scratch_lease()?;
+        let temp_root = scratch.path().to_path_buf();
         // Cleans the scratch tree on every exit path, including a bail. On a bail this
         // guard drops (removing `temp_root`) as the async block returns, a moment
         // BEFORE `runtime` drops and kill_on_drop SIGKILLs the cells; a surviving cell
         // could briefly recreate part of its `cell_dir` in that window. That is benign
         // — a cell's artifacts are discarded, and its records were already shipped if
         // it got far enough to matter. (A crashed run's data is not trusted regardless.)
-        let _scratch = ScratchTreeGuard(temp_root.clone());
-        std::fs::create_dir_all(&temp_root)
-            .with_context(|| format!("creating cellular scratch {}", temp_root.display()))?;
         let imported_read_set = match imported_read_set {
             Some(_) => envelope
                 .pointer("/run/cfg/datasets/0")
@@ -1375,7 +1384,7 @@ pub fn run_cellular(
         // wrote its merged per-record artifacts (records/raw/CSV/parquet/outputs) there.
         // The controller concatenates them into the real artifact dir (the per-cell dirs
         // are the shards), preserving row-set identity with completion
-        // order accepted), before `_scratch` removes `temp_root`. `inputs.json` takes its
+        // order accepted), before `scratch` removes `temp_root`. `inputs.json` takes its
         // own merge (`merge_cell_inputs_json`): it holds per-session rows, and each cell
         // generated it over the slice of the resident dataset THAT cell owns, so the
         // controller unions the slices and re-interleaves them round-robin (the inverse of
@@ -1426,7 +1435,7 @@ pub fn run_cellular(
             server.shutdown().await;
         }
 
-        // `_scratch` removes `temp_root` on drop.
+        // `scratch` removes `temp_root` on drop.
         Ok(CellularRunOutcome {
             report_path: report_path.to_path_buf(),
             cell_count,
@@ -2985,6 +2994,40 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn controller_scratch_lease_is_private_and_cleans_up_on_drop() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = {
+            let lease = private_controller_scratch_lease().unwrap();
+            let path = lease.path().to_path_buf();
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            path
+        };
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cellular_runtime_uses_private_controller_scratch_lease() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = {
+            let lease = private_controller_scratch_lease().unwrap();
+            let path = lease.path().to_path_buf();
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            path
+        };
+        assert!(!path.exists());
+    }
     use crate::cellular::RecordsShardPartition;
     use crate::engine::cellular_kind::{is_graph_dataset, is_graph_dataset_value};
 

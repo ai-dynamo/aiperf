@@ -28,10 +28,13 @@
 
 use std::collections::HashMap;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use crate::cellular::partition::CellPartition;
 use crate::cellular::{CellularAutonomousIssuer, IssuanceAuthority, ModuloCellPartition};
 use crate::metrics_core::Phase;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Env var carrying the controller's bootstrap coordinate (`file:PATH` locally,
 /// `tcp://HOST:PORT` in k8s) — where a cell fetches the controller's `PeerInfo`.
@@ -427,15 +430,72 @@ pub fn cellular_file_dataset_path(envelope: &serde_json::Value) -> Option<std::p
         .map(std::path::PathBuf::from)
 }
 
-/// The cell-local directory shipped dataset sources land in (`aiperf-cell-dataset-{pid}`
-/// under the system temp dir), created on demand. Distinct from the velo scratch so
-/// a shipped dataset never collides with the cell's fetch/ship sockets.
-fn cell_dataset_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "aiperf-cell-dataset-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4().simple()
-    ))
+struct RemoteDatasetLandingLease(tempfile::TempDir);
+
+impl RemoteDatasetLandingLease {
+    fn path(&self) -> &std::path::Path {
+        self.0.path()
+    }
+}
+
+/// A cell envelope whose optional landed dataset remains available until execution exits.
+pub struct DownloadedCellEnvelope {
+    bytes: Vec<u8>,
+    landing_lease: Option<RemoteDatasetLandingLease>,
+}
+
+impl DownloadedCellEnvelope {
+    fn unchanged(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            landing_lease: None,
+        }
+    }
+
+    /// Borrow the rewritten execute envelope.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Split the envelope from its cleanup guard immediately before execution.
+    pub fn into_execution_parts(self) -> (Vec<u8>, CellDatasetLandingGuard) {
+        (
+            self.bytes,
+            CellDatasetLandingGuard {
+                _landing_lease: self.landing_lease,
+            },
+        )
+    }
+
+    #[cfg(test)]
+    fn landing_path(&self) -> Option<&std::path::Path> {
+        self.landing_lease
+            .as_ref()
+            .map(RemoteDatasetLandingLease::path)
+    }
+}
+
+/// Keeps an HTTP-landed cell dataset alive until `run_v2` terminates.
+pub struct CellDatasetLandingGuard {
+    _landing_lease: Option<RemoteDatasetLandingLease>,
+}
+
+impl CellDatasetLandingGuard {
+    /// Remove a landed dataset before a cell exits without unwinding its stack.
+    pub fn close(self) {
+        drop(self);
+    }
+}
+
+fn remote_dataset_landing_lease() -> Result<RemoteDatasetLandingLease> {
+    let landing = tempfile::Builder::new()
+        .prefix("aiperf-cell-dataset-")
+        .tempdir()
+        .context("creating private cell dataset landing")?;
+    #[cfg(unix)]
+    std::fs::set_permissions(landing.path(), std::fs::Permissions::from_mode(0o700))
+        .context("securing private cell dataset landing")?;
+    Ok(RemoteDatasetLandingLease(landing))
 }
 
 fn manifest_has_local_replay_root(
@@ -496,11 +556,11 @@ pub(crate) fn rewrite_cell_dataset_paths(
 /// The download runs on a dedicated thread and runtime, isolated from the caller's
 /// runtime.
 #[cfg(feature = "cellular")]
-pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8>> {
+pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<DownloadedCellEnvelope> {
     use anyhow::Context;
 
     if ModuloCellPartition::from_env().is_none() {
-        return Ok(envelope_bytes); // not a cell (single-process path)
+        return Ok(DownloadedCellEnvelope::unchanged(envelope_bytes)); // not a cell (single-process path)
     }
     let mut envelope: serde_json::Value = serde_json::from_slice(&envelope_bytes)
         .context("parsing cell envelope for dataset download")?;
@@ -509,12 +569,12 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
         // trace (dag_jsonl / weka_trace / dynamo_trace) IS shipped (the predicate is
         // format-blind), whether its path is a single file, a directory of shards, or a
         // segmented-prefix — the controller's manifest carries the whole file set.
-        return Ok(envelope_bytes);
+        return Ok(DownloadedCellEnvelope::unchanged(envelope_bytes));
     };
     let Some(authority) = cell_artifact_authority() else {
         // Same-host cell, or shared-FS with shipping disabled: the controller-local
         // path is directly readable, so leave the envelope pointing at it.
-        return Ok(envelope_bytes);
+        return Ok(DownloadedCellEnvelope::unchanged(envelope_bytes));
     };
     // The controller cannot know this cell's on-disk layout, so it publishes a
     // manifest describing the trace file set (single file, directory of shards, or
@@ -523,7 +583,8 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
     // the (flat) relative names, and rewrites `datasets/0.path` to the local
     // file/dir/prefix stem — so the graph loader reads the reconstructed tree.
     let _ = &source_path; // presence gated the ship; the controller owns the file set
-    let dest_dir = cell_dataset_dir();
+    let landing_lease = remote_dataset_landing_lease()?;
+    let dest_dir = landing_lease.path().to_path_buf();
     let fetch_authority = authority.clone();
     let (local_path, local_replay_root) = std::thread::spawn(move || -> Result<_> {
         use crate::engine::artifact_shipping::{
@@ -549,7 +610,11 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Vec<u8
 
     // Rewrite the cell's envelope to compile from the landed cell-local copy.
     rewrite_cell_dataset_paths(&mut envelope, &local_path, local_replay_root.as_deref())?;
-    serde_json::to_vec(&envelope).context("re-serializing cell envelope after dataset download")
+    Ok(DownloadedCellEnvelope {
+        bytes: serde_json::to_vec(&envelope)
+            .context("re-serializing cell envelope after dataset download")?,
+        landing_lease: Some(landing_lease),
+    })
 }
 
 /// The velo bind for this cell, chosen from the controller coordinate: a `tcp://`
@@ -591,7 +656,7 @@ fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connec
 /// coordinate + cell id from the env the launcher set. Runs on the caller's
 /// runtime; the velo instance is dropped on return.
 #[cfg(feature = "cellular")]
-pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
+pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
     use crate::cellular::transport::connect::{build_velo, connect_controller};
     use crate::cellular::{CellClient, CellMessage, VeloCellClient};
     use anyhow::Context;
@@ -628,7 +693,7 @@ pub async fn fetch_cell_envelope() -> Result<Vec<u8>> {
     client
         .send(&CellMessage::Preflight {
             cell_id,
-            result: preflight_cell_envelope(&envelope).await,
+            result: preflight_cell_envelope(envelope.bytes()).await,
         })
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} preflight report: {error}"))?;
@@ -1210,6 +1275,23 @@ impl CellRecordsShipper {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn remote_dataset_landing_lease_is_private_and_cleans_up_on_drop() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = {
+            let lease = remote_dataset_landing_lease().unwrap();
+            let path = lease.path().to_path_buf();
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            path
+        };
+        assert!(!path.exists());
+    }
+
     static CELL_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
@@ -1427,11 +1509,23 @@ mod tests {
         environment.set(crate::cellular::partition::CELL_COUNT_ENV, "1");
         environment.set(CELL_ARTIFACT_ADDR_ENV, server.local_addr().to_string());
         environment.remove(CELL_CONTROLLER_ADDR_ENV);
-        let landed = tokio::task::spawn_blocking(move || download_cell_dataset_if_needed(encoded))
-            .await
-            .unwrap()
-            .unwrap();
-        let landed: serde_json::Value = serde_json::from_slice(&landed).unwrap();
+        let downloaded =
+            tokio::task::spawn_blocking(move || download_cell_dataset_if_needed(encoded))
+                .await
+                .unwrap()
+                .unwrap();
+        let landing_path = downloaded.landing_path().unwrap().to_path_buf();
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::metadata(&landing_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        let (landed_bytes, landing_guard) = downloaded.into_execution_parts();
+        let landed: serde_json::Value = serde_json::from_slice(&landed_bytes).unwrap();
         let landed_read_set = crate::engine::graph_input::selected_imported_agent_read_set(
             landed.pointer("/run/cfg/datasets/0").unwrap(),
         )
@@ -1445,6 +1539,8 @@ mod tests {
                 .session_id,
             "original"
         );
+        landing_guard.close();
+        assert!(!landing_path.exists());
         server.shutdown().await;
     }
 
@@ -1490,7 +1586,7 @@ mod tests {
         environment.remove(CELL_ARTIFACT_ADDR_ENV);
         let landed =
             download_cell_dataset_if_needed(serde_json::to_vec(&envelope).unwrap()).unwrap();
-        let landed: serde_json::Value = serde_json::from_slice(&landed).unwrap();
+        let landed: serde_json::Value = serde_json::from_slice(landed.bytes()).unwrap();
         let landed_read_set = crate::engine::graph_input::selected_imported_agent_read_set(
             landed.pointer("/run/cfg/datasets/0").unwrap(),
         )
