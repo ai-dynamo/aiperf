@@ -171,9 +171,9 @@ class TestCompletionsEndpoint:
     ) -> None:
         """Auto-adding include_usage must not write back into endpoint.extra.
 
-        The payload merge aliases the shared config dict, and endpoint.extra
-        feeds the mmap dataset cache key, so an in-place edit would rewrite the
-        author's config mid-run.
+        The payload merge aliases the shared config dict, so an in-place edit
+        would rewrite the author's config mid-run and leak into every
+        subsequent request.
         """
         endpoint = CompletionsEndpoint(model_endpoint)
         turns = [sample_conversations["session_1"].turns[0]]
@@ -193,3 +193,38 @@ class TestCompletionsEndpoint:
         assert model_endpoint.endpoint.extra == [
             ("stream_options", {"continuous_updates": True})
         ]
+
+    def test_format_payload_stream_override_suppresses_stream_options(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
+        """extra_body may turn streaming off; stream_options must follow it.
+
+        A server rejects stream_options when stream is false, so the injection
+        decision reads the merged payload rather than the endpoint config.
+        """
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        turns[-1].extra_body = {"stream": False}
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream"] is False
+        assert "stream_options" not in payload
+
+    def test_format_payload_explicit_null_stream_options_still_injects(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
+        """An explicit null parses from the CLI; treat it as absent, not as opt-out."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.extra = [("stream_options", None)]
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream_options"] == {"include_usage": True}

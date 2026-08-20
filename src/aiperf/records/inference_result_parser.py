@@ -340,8 +340,9 @@ class InferenceResultParser(CommunicationMixin):
         ``n > 1`` streaming request, where each sequence's stats ride its own
         finish chunk): the per-request record can't attribute request-level
         ``completion_tokens`` to a single sequence, so a mixed record is worse
-        than none. ``n > 1`` non-streaming is suppressed upstream in
-        ``BaseEndpoint.extract_spec_decode_stats``.
+        than none. ``n > 1`` non-streaming needs no client-side guard: vLLM
+        populates ``metrics.speculative_decoding`` only for single-sequence
+        requests and leaves it null otherwise.
 
         Counts payloads by truthiness (not ``is not None``) to match the
         adapter's ``_find_spec_decode_payload``: an empty ``{}`` is treated as

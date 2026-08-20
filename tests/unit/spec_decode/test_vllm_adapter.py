@@ -299,6 +299,22 @@ class TestVLLMSpecDecodeAdapter:
                 {**SUMMARY_PAYLOAD, "acceptance_histogram": [39, 1, "0", 3]},
                 id="histogram_str_zero_element",
             ),
+            param(
+                # Length must be num_spec_tokens + 1; a longer list puts a
+                # bucket at j > k, which is impossible yet satisfies every
+                # arithmetic invariant the record checks.
+                {
+                    **SUMMARY_PAYLOAD,
+                    "acceptance_histogram": [0, 0, 0, 0, 1],
+                    "num_spec_steps": 1,
+                    "num_accepted_draft_tokens": 4,
+                },
+                id="histogram_longer_than_num_spec_tokens",
+            ),
+            param(
+                {**SUMMARY_PAYLOAD, "acceptance_histogram": [39, 1, 3]},
+                id="histogram_shorter_than_num_spec_tokens",
+            ),
         ],
     )  # fmt: skip
     def test_adapt_malformed_payload_degrades_to_none(

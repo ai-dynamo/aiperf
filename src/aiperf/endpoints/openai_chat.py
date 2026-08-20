@@ -86,7 +86,10 @@ class ChatEndpoint(BaseEndpoint):
         if extra_body:
             payload.update(extra_body)
 
-        if model_endpoint.endpoint.streaming:
+        # Read the merged payload, not endpoint.streaming: the extras above can
+        # override "stream", and a server rejects stream_options when stream is
+        # false ("Stream options can only be defined when stream=True").
+        if payload.get("stream"):
             # Requested for every streaming run, not just server-token-count
             # ones: vLLM rides per-request metrics (including
             # metrics.speculative_decoding) on the trailing usage chunk and
@@ -182,8 +185,8 @@ class ChatEndpoint(BaseEndpoint):
             return
         # Copy rather than mutate: the payload merge aliases endpoint.extra /
         # turn.extra_body, which are long-lived config reused across every
-        # request (and endpoint.extra feeds the mmap cache key), so an in-place
-        # edit would rewrite the author's config.
+        # request, so an in-place edit would rewrite the author's config and
+        # leak into every subsequent request.
         merged = {**stream_options}
         merged.setdefault("include_usage", True)
         if continuous:

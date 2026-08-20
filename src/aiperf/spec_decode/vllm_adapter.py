@@ -94,6 +94,22 @@ class VLLMSpecDecodeAdapter:
                     "acceptance_histogram must be a list of ints, got "
                     f"{raw_histogram!r}"
                 )
+            # Length is num_spec_tokens + 1 (one bucket per accepted count from
+            # 0..k). Enforcing it rejects a payload whose bucket indices exceed
+            # the draft budget -- j > k is physically impossible, yet satisfies
+            # the record's arithmetic validators, so it would otherwise be
+            # reported as a real acceptance length. Doubles as a tripwire if the
+            # still-unmerged upstream PR changes the histogram shape.
+            # Optional on the record, so only enforce when the server sent it.
+            num_spec_tokens = payload.get("num_spec_tokens")
+            if (
+                num_spec_tokens is not None
+                and len(raw_histogram) != num_spec_tokens + 1
+            ):
+                raise ValueError(
+                    f"acceptance_histogram has {len(raw_histogram)} buckets, "
+                    f"expected num_spec_tokens + 1 = {num_spec_tokens + 1}"
+                )
             histogram = {
                 j: count for j, count in enumerate(raw_histogram) if count != 0
             }
