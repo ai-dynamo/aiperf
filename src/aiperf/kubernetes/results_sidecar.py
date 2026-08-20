@@ -11,10 +11,8 @@ controller, preventing consumers from downloading partial exports.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
-import uuid
 from pathlib import Path
 
 import uvicorn
@@ -27,6 +25,23 @@ from aiperf.common.compression import (
     CompressionEncoding,
     select_encoding,
     stream_file_compressed,
+)
+from aiperf.common.results_markers import (
+    _RESERVED_MARKER_NAMES,
+    CHECKPOINTS_DIR_NAME,
+    PROCESSING_MARKER_NAME,
+    READY_MARKER_NAME,
+    _is_checkpoint_path,
+    _is_processing,
+    _is_ready,
+    _safe_resolve,
+    _safe_size,
+    checkpoints_dir,
+    clear_processing_marker,
+    processing_marker_path,
+    ready_marker_path,
+    write_processing_marker,
+    write_ready_marker,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,31 +58,8 @@ _CONTENT_TYPES: dict[str, str] = {
 }
 
 # The marker contract lives in a dependency-free module so processes that only
-# read or write markers (system controller, records manager, results router)
-# do not import uvicorn/FastAPI. Re-exported here for the sidecar's own use and
-# for existing importers.
-from aiperf.common.results_markers import (  # noqa: E402
-    CHECKPOINTS_DIR_NAME,
-    PROCESSING_MARKER_NAME,
-    READY_MARKER_NAME,
-    _RESERVED_MARKER_NAMES,
-    _atomic_write_marker,
-    _best_effort_remove_marker,
-    _fsync_directory,
-    _is_checkpoint_path,
-    _is_processing,
-    _is_ready,
-    _rollback_failed_ready_commit,
-    _safe_resolve,
-    _safe_size,
-    checkpoints_dir,
-    clear_processing_marker,
-    processing_marker_path,
-    ready_marker_path,
-    write_processing_marker,
-    write_ready_marker,
-)
-
+# read or write markers (system controller, records manager, results router) do
+# not import uvicorn/FastAPI. Re-exported here for existing importers.
 __all__ = [
     "CHECKPOINTS_DIR_NAME",
     "PROCESSING_MARKER_NAME",
