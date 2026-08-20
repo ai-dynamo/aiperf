@@ -370,3 +370,282 @@ async def test_periodic_push_refreshes_heartbeat_when_progress_is_unchanged(
         "2026-08-17T12:00:10Z",
     ]
     assert custom.patch_namespaced_custom_object_status.await_count == 2
+
+
+def _install_fake_k8s(
+    monkeypatch: pytest.MonkeyPatch, resource: dict[str, object]
+) -> MagicMock:
+    """Point _push_aiperfjob_status at an in-memory CustomObjectsApi double."""
+    import kubernetes_asyncio
+
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(return_value=resource)
+    custom.patch_namespaced_custom_object = AsyncMock()
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        kubernetes_asyncio,
+        "client",
+        SimpleNamespace(CustomObjectsApi=lambda _api: custom),
+        raising=False,
+    )
+
+    @asynccontextmanager
+    async def fake_k8s_client() -> AsyncIterator[MagicMock]:
+        yield MagicMock(name="ApiClient")
+
+    import aiperf.kubernetes.client as kclient
+
+    monkeypatch.setattr(kclient, "k8s_client", fake_k8s_client)
+    return custom
+
+
+def _cr(status: dict[str, object] | None = None) -> dict[str, object]:
+    """A live AIPerfJob body the UID fence accepts."""
+    body: dict[str, object] = {
+        "apiVersion": "aiperf.nvidia.com/v1alpha1",
+        "kind": "AIPerfJob",
+        "metadata": {
+            "name": "j",
+            "namespace": "ns",
+            "uid": "uid-123",
+            "resourceVersion": "42",
+            "annotations": {},
+        },
+    }
+    if status is not None:
+        body["status"] = status
+    return body
+
+
+def _phases(**overrides: object) -> dict[str, object]:
+    """Two-phase progress: warmup finished, a named profiling phase running."""
+    from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
+
+    phases = {
+        "warmup": CombinedPhaseStats(
+            phase="warmup",
+            phase_kind="warmup",
+            total_expected_requests=10,
+            requests_sent=10,
+            requests_completed=10,
+            start_ns=1_000,
+            last_update_ns=2_000,
+        ),
+        "steady_state": CombinedPhaseStats(
+            phase="profiling",
+            phase_name="steady_state",
+            phase_kind="profiling",
+            total_expected_requests=100,
+            requests_sent=30,
+            requests_completed=25,
+            start_ns=5_000,
+            last_update_ns=6_000,
+        ),
+    }
+    phases.update(overrides)
+    return phases
+
+
+async def _push(**overrides: object) -> None:
+    from aiperf.api.routers.progress import _push_aiperfjob_status
+
+    kwargs: dict[str, object] = {
+        "job_id": "j",
+        "job_uid": "uid-123",
+        "namespace": "ns",
+        "phases": _phases(),
+        "system_state": SystemState.PROFILING,
+        "results_exported": False,
+    }
+    kwargs.update(overrides)
+    await _push_aiperfjob_status(**kwargs)  # type: ignore[arg-type]
+
+
+def _status_body(custom: MagicMock) -> dict[str, object]:
+    """Extract the status payload regardless of which patch shape was used."""
+    body = custom.patch_namespaced_custom_object_status.await_args.kwargs["body"]
+    if isinstance(body, dict):
+        return body["status"]
+    return {
+        op["path"].removeprefix("/status/"): op["value"]
+        for op in body
+        if op["op"] == "add"
+    }
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_emits_current_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The push names the most recently started phase, not the alphabetized one.
+
+    Without this key ``_requests_progress_percent`` falls back to alphabetized
+    iteration over ``status.phases`` and reports warmup's 100% for a job that
+    is 25% into profiling.
+    """
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+
+    await _push()
+
+    status = _status_body(custom)
+    assert status["currentPhase"] == "steady_state"
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_current_phase_is_a_key_of_emitted_phases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """currentPhase must always resolve inside the phases map it ships with.
+
+    A phase that has started but not yet sent a request wins the
+    most-recently-started comparison while ``_build_phase_progress`` drops it,
+    so the push has to emit a zeroed entry rather than a dangling pointer.
+    """
+    from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
+
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+
+    await _push(
+        phases=_phases(
+            ramp=CombinedPhaseStats(
+                phase="profiling",
+                phase_name="ramp",
+                phase_kind="profiling",
+                total_expected_requests=None,
+                requests_sent=0,
+                requests_completed=0,
+                start_ns=9_000,
+            )
+        )
+    )
+
+    status = _status_body(custom)
+    assert status["currentPhase"] == "ramp"
+    assert status["currentPhase"] in status["phases"]
+    assert status["phases"]["ramp"]["requestsTotal"] == 0
+    assert status["phases"]["ramp"]["requestsCompleted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_omits_current_phase_without_phases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no phases at all the key is omitted, never written as null.
+
+    A merge-patch null would clobber a previously good value.
+    """
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+
+    await _push(phases={})
+
+    assert "currentPhase" not in _status_body(custom)
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_on_terminal_cr_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A push observing a terminal CR must not resurrect the cleared keys.
+
+    kopf clears both currentPhase and subPhase when it stamps a terminal
+    phase; an untracked push task fired on SHUTDOWN can land afterwards.
+    """
+    custom = _install_fake_k8s(
+        monkeypatch, _cr({"phase": "Completed", "currentPhase": None, "subPhase": None})
+    )
+
+    await _push(system_state=SystemState.SHUTDOWN)
+
+    custom.patch_namespaced_custom_object_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_fences_json_patch_on_observed_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live CR is patched with a test op so the apiserver settles the race."""
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+
+    await _push()
+
+    call = custom.patch_namespaced_custom_object_status.await_args.kwargs
+    assert call["_content_type"] == "application/json-patch+json"
+    assert call["body"][0] == {
+        "op": "test",
+        "path": "/status/phase",
+        "value": "Running",
+    }
+    assert all(op["op"] == "add" for op in call["body"][1:])
+    assert {op["path"] for op in call["body"][1:]} >= {
+        "/status/subPhase",
+        "/status/phases",
+        "/status/currentPhase",
+    }
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_merges_existing_status_into_json_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JSON-patch add replaces a member outright, so values are pre-merged.
+
+    Without this the fenced write would silently drop sibling keys the merge
+    patch it replaces would have preserved.
+    """
+    custom = _install_fake_k8s(
+        monkeypatch,
+        _cr({"phase": "Running", "phases": {"stale_phase": {"requestsTotal": 7}}}),
+    )
+
+    await _push()
+
+    phases = _status_body(custom)["phases"]
+    assert phases["stale_phase"] == {"requestsTotal": 7}
+    assert "steady_state" in phases
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_swallows_lost_fence_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected test op is the success path: the CR terminalized mid-push."""
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+    custom.patch_namespaced_custom_object_status = AsyncMock(
+        side_effect=ApiException(status=409, reason="Conflict")
+    )
+
+    await _push()
+
+    custom.patch_namespaced_custom_object_status.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_reraises_unrelated_api_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the fence's own rejection codes are swallowed."""
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+    custom.patch_namespaced_custom_object_status = AsyncMock(
+        side_effect=ApiException(status=500, reason="Internal Server Error")
+    )
+
+    with pytest.raises(ApiException):
+        await _push()
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_uses_merge_patch_before_a_phase_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A phaseless CR keeps the merge patch: a test op on an absent path is 422."""
+    custom = _install_fake_k8s(monkeypatch, _cr({}))
+
+    await _push()
+
+    call = custom.patch_namespaced_custom_object_status.await_args.kwargs
+    assert call["_content_type"] == "application/merge-patch+json"
+    assert call["body"]["status"]["currentPhase"] == "steady_state"
