@@ -6,6 +6,7 @@ import time
 
 import orjson
 import pytest
+from aiperf_mock_server.config import MockServerConfig
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
     CompletionRequest,
@@ -140,6 +141,33 @@ class TestStreamChatCompletion:
         assert len(chunks) > 0
         assert chunks[-1] == b"data: [DONE]\n\n"
         assert any(b"data:" in chunk for chunk in chunks)
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_completion_emits_opted_in_empty_content_first(
+        self, monkeypatch
+    ):
+        """Emit an explicit empty content delta before generated tokens when enabled."""
+        monkeypatch.setattr(
+            "aiperf_mock_server.utils.server_config",
+            MockServerConfig(emit_empty_chat_content=True, fast=True),
+        )
+        req = ChatCompletionRequest(
+            model="test", messages=[Message(role="user", content="Hi")]
+        )
+        ctx = make_ctx(req, "/v1/chat/completions", time.perf_counter())
+
+        chunks = [
+            chunk
+            async for chunk in stream_chat_completion(
+                ctx, "/v1/chat/completions", False
+            )
+        ]
+
+        first_payload = orjson.loads(chunks[0].removeprefix(b"data: ").strip())
+        assert first_payload["object"] == "chat.completion.chunk"
+        assert first_payload["choices"] == [
+            {"index": 0, "delta": {"role": "assistant", "content": ""}}
+        ]
 
     @pytest.mark.asyncio
     async def test_stream_chat_completion_with_reasoning(self):

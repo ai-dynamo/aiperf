@@ -59,6 +59,7 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "url_selection_strategy": "url_strategy",
     "endpoint_type": "type",
     "streaming": "streaming",
+    "allow_empty_content": "allow_empty_content",
     "custom_endpoint": "path",
     "api_key": "api_key",
     "timeout_seconds": "timeout",

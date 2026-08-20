@@ -11,6 +11,7 @@ from pytest import param
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
+    ReasoningResponseData,
     RequestRecord,
     SpecDecodeAcceptanceRecord,
     TextResponse,
@@ -19,6 +20,7 @@ from aiperf.common.models import (
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import PluginType
+from aiperf.records.inference_result_parser import InferenceResultParser
 from tests.harness import mock_plugin
 from tests.unit.records.conftest import (
     create_invalid_record,
@@ -159,7 +161,7 @@ class TestInvalidRecords:
 
         assert record.has_error
         assert record.error.type == "InvalidInferenceResultError"
-        assert "No responses with actual content" in record.error.message
+        assert "No parsed content responses" in record.error.message
         assert result.token_counts.input == 8
         assert result.responses == []
 
@@ -297,10 +299,56 @@ class TestAsyncTokenizerEncode:
         assert result.output == 3
         assert spy_tokenizer.encode.called
 
+    async def test_empty_strings_do_not_change_client_output_token_count(
+        self, setup_inference_parser: InferenceResultParser, spy_tokenizer: MagicMock
+    ) -> None:
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        baseline = [ParsedResponse(perf_ns=200, data=TextResponseData(text="hello"))]
+        with_empty = [
+            ParsedResponse(perf_ns=100, data=TextResponseData(text="")),
+            baseline[0],
+            ParsedResponse(
+                perf_ns=300,
+                data=ReasoningResponseData(reasoning="", content=None),
+            ),
+            ParsedResponse(perf_ns=400, data=TextResponseData(text="")),
+        ]
+
+        baseline_counts = (
+            await setup_inference_parser._compute_client_side_token_counts(
+                RequestRecord(model_name="test-model"), baseline
+            )
+        )
+        empty_counts = await setup_inference_parser._compute_client_side_token_counts(
+            RequestRecord(model_name="test-model"), with_empty
+        )
+
+        assert baseline_counts.output == empty_counts.output == 1
+        assert baseline_counts.reasoning is None
+        assert empty_counts.reasoning is None
+
 
 @pytest.mark.asyncio
 class TestServerTokenCount:
     """Tests for --use-server-token-count flag functionality."""
+
+    async def test_empty_responses_do_not_change_server_reported_token_count(
+        self, server_token_parser: InferenceResultParser
+    ) -> None:
+        responses = [
+            ParsedResponse(perf_ns=100, data=TextResponseData(text="")),
+            ParsedResponse(
+                perf_ns=200,
+                data=TextResponseData(text="hello"),
+                usage={"prompt_tokens": 10, "completion_tokens": 7},
+            ),
+            ParsedResponse(perf_ns=300, data=TextResponseData(text="")),
+        ]
+
+        counts = await server_token_parser._compute_server_token_counts(responses)
+
+        assert counts.input == 10
+        assert counts.output == 7
 
     async def test_uses_server_values(
         self, server_token_parser, request_record, spy_tokenizer
@@ -735,7 +783,7 @@ class TestMalformedResponseEndToEnd:
         assert record.has_error
         # Honest cause: "no content from server", NOT a parser-internal ValueError.
         assert record.error.type == "InvalidInferenceResultError"
-        assert "No responses with actual content" in str(record.error)
+        assert "No parsed content responses" in str(record.error)
         assert "Unsupported OpenAI object type" not in str(record.error)
         assert result.responses == []
 

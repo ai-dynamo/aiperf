@@ -45,6 +45,30 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+### Include explicit empty streaming responses
+
+Some OpenAI-compatible servers, including Kimi K3 deployments, can emit explicit
+empty content or reasoning strings as part of a Chat Completions stream. Enable
+their inclusion in the response timeline with:
+
+```bash
+aiperf profile \
+    --model Kimi-K3 \
+    --endpoint-type chat \
+    --endpoint /v1/chat/completions \
+    --streaming \
+    --allow-empty-content \
+    --url localhost:8000 \
+    --request-count 20
+```
+
+The flag is off by default because OpenAI-compatible servers can emit
+handshake or role metadata before generation. It admits only explicit empty
+strings in Chat Completions content or reasoning fields, not missing fields,
+`null`, or metadata. All shared response-timeline metrics change together when
+these strings are included. TTFO still waits for non-empty output, and an empty
+decoded string does not increment output-token totals.
+
 **Sample Output (Successful Run):**
 ```
 INFO     Starting AIPerf System

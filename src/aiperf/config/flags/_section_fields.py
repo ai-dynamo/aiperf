@@ -25,6 +25,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "sagemaker_target_model",
         "sagemaker_inference_component_name",
         "sagemaker_target_variant",
+        "allow_empty_content",
         "connection_reuse_strategy",
         "custom_endpoint",
         "download_video_content",

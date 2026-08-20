@@ -60,6 +60,7 @@ class EndpointDefaults:
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.CHAT
     STREAMING = False
+    ALLOW_EMPTY_CONTENT = False
     URL = "http://localhost:8000"
     URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
     TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
@@ -391,6 +392,16 @@ class EndpointConfig(BaseConfig):
             description="Enable streaming (Server-Sent Events) responses. "
             "Required for accurate TTFT (time to first token) measurement. "
             "Server must support streaming for this to work.",
+        ),
+    ]
+
+    allow_empty_content: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.ALLOW_EMPTY_CONTENT,
+            description="Retain explicitly empty content or reasoning strings as "
+            "timed responses for streaming OpenAI Chat Completions. This changes "
+            "the shared response timeline without adding output tokens.",
         ),
     ]
 
