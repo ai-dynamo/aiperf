@@ -53,15 +53,6 @@ class RuntimeConfig(BaseConfig):
             ServiceRunType.KUBERNETES,
         }
 
-    @property
-    def uses_local_worker_group_manager(self) -> bool:
-        """Whether local multiprocessing should launch a group-manager boundary."""
-        import os
-
-        if os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1":
-            return False
-        return self.service_run_type == ServiceRunType.MULTIPROCESSING
-
     ui: Annotated[
         UIType,
         Field(
