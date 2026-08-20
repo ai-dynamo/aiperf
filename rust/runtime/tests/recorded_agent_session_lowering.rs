@@ -53,6 +53,30 @@ fn llm_nodes(
         .collect()
 }
 
+fn lowered_message_wires(
+    bundle: &aiperf_runtime::graph::input::GraphInputBundle,
+) -> Vec<Vec<Bytes>> {
+    llm_nodes(&bundle.programs[0])
+        .into_iter()
+        .map(|node| {
+            node.items
+                .iter()
+                .map(|item| {
+                    let PromptItem::Seg { seg } = item else {
+                        panic!("imported request must lower to message segments");
+                    };
+                    let Payload::Message { wire, .. } =
+                        bundle.segments.get(*seg).expect("lowered message")
+                    else {
+                        panic!("imported request item must be a message");
+                    };
+                    wire.clone()
+                })
+                .collect()
+        })
+        .collect()
+}
+
 fn builtin_tokenizer() -> TiktokenTokenizer {
     TiktokenTokenizer::builtin()
 }
@@ -271,6 +295,40 @@ fn imported_request_history_legacy_call_vec_lowers_and_preserves_completed_tool_
             .expect("replay")
             .expected_tool_node_count,
         0
+    );
+}
+
+#[test]
+fn imported_request_history_shared_and_legacy_lower_in_exact_wire_order() {
+    let read_set = discover_imported_agent_read_set(
+        &fixture("codex/linear.jsonl"),
+        None,
+        RecordedAgentSourceFormat::Codex,
+        None,
+    )
+    .expect("discover Codex fixture");
+    let shared = parse_imported_agent_sessions(&read_set).expect("parse Codex fixture")[0].clone();
+    let mut legacy = shared.clone();
+    for (call_index, call) in legacy.calls.iter_mut().enumerate() {
+        call.request_messages = shared
+            .request_messages(call_index)
+            .expect("shared request history")
+            .to_vec();
+    }
+    legacy.request_history = Default::default();
+
+    let tokenizer = builtin_tokenizer();
+    let resolver = BuiltinReplayRequestProfileResolver::default();
+    let shared_bundle =
+        lower_imported_agent_sessions(&[shared], &resolver, &tokenizer, &mut SegmentPool::new())
+            .expect("lower shared request history");
+    let legacy_bundle =
+        lower_imported_agent_sessions(&[legacy], &resolver, &tokenizer, &mut SegmentPool::new())
+            .expect("lower legacy request history");
+
+    assert_eq!(
+        lowered_message_wires(&shared_bundle),
+        lowered_message_wires(&legacy_bundle),
     );
 }
 
