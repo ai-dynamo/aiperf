@@ -1,0 +1,221 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Toxiproxy fixture for the unified (AIPerf + Dynamo) chaos suite.
+#
+# Deploys a single-replica toxiproxy into namespace `chaos-toxiproxy` with
+# the admin API on 8474 and a reserved block of proxy listen ports shared
+# across both test stacks. Each port is statically allocated to one fault
+# target so concurrent tests never collide on a slot.
+#
+# Reserved listen ports (D-series spec § 3.1):
+#   port 8474  / admin           - Toxiproxy admin REST API
+#   port 20000 / apiserver       - AIPerf apiserver fault target (existing)
+#   port 20002 / controller-http - AIPerf controller HTTP (existing)
+#   port 20010 / mock-server     - AIPerf mock-server (existing, B3 latency)
+#   port 20011 / frontend        - Dynamo frontend (D-series § 3.1)
+#   port 20020 / nats            - NATS broker (D-series § 3.1, D803 NATS kill)
+#   port 20030 / etcd            - etcd (D-series § 3.1)
+#   port 20040 / nixl-0          - NIXL engine-0 side-channel (D-series § 3.1)
+#   port 20041 / nixl-1          - NIXL engine-1 side-channel
+#   port 20042 / nixl-2          - NIXL engine-2 side-channel
+#   port 20043 / nixl-3          - NIXL engine-3 side-channel
+#   port 20044 / nixl-4          - NIXL engine-4 side-channel
+#   port 20045 / nixl-5          - NIXL engine-5 side-channel
+#   port 20046 / nixl-6          - NIXL engine-6 side-channel
+#   port 20047 / nixl-7          - NIXL engine-7 side-channel
+#   port 20048 / nixl-8          - NIXL engine-8 side-channel
+#   port 20049 / nixl-9          - NIXL engine-9 side-channel
+#
+# The legacy fixture at `tests/kubernetes/chaos/fixtures/toxiproxy.yaml`
+# stays in place for existing AIPerf-only chaos tests (different namespace,
+# different port layout). This file is the sibling for the unified suite.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chaos-toxiproxy
+  labels:
+    aiperf.nvidia.com/purpose: chaos-testing
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toxiproxy
+  namespace: chaos-toxiproxy
+  labels:
+    app: toxiproxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: toxiproxy
+  template:
+    metadata:
+      labels:
+        app: toxiproxy
+    spec:
+      containers:
+      - name: toxiproxy
+        image: ghcr.io/shopify/toxiproxy:2.9.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - "-host"
+        - "0.0.0.0"
+        ports:
+        - name: admin
+          containerPort: 8474
+          protocol: TCP
+        - name: apiserver
+          containerPort: 20000
+          protocol: TCP
+        - name: controller-http
+          containerPort: 20002
+          protocol: TCP
+        - name: mock-server
+          containerPort: 20010
+          protocol: TCP
+        - name: frontend
+          containerPort: 20011
+          protocol: TCP
+        - name: nats
+          containerPort: 20020
+          protocol: TCP
+        - name: etcd
+          containerPort: 20030
+          protocol: TCP
+        - name: nixl-0
+          containerPort: 20040
+          protocol: TCP
+        - name: nixl-1
+          containerPort: 20041
+          protocol: TCP
+        - name: nixl-2
+          containerPort: 20042
+          protocol: TCP
+        - name: nixl-3
+          containerPort: 20043
+          protocol: TCP
+        - name: nixl-4
+          containerPort: 20044
+          protocol: TCP
+        - name: nixl-5
+          containerPort: 20045
+          protocol: TCP
+        - name: nixl-6
+          containerPort: 20046
+          protocol: TCP
+        - name: nixl-7
+          containerPort: 20047
+          protocol: TCP
+        - name: nixl-8
+          containerPort: 20048
+          protocol: TCP
+        - name: nixl-9
+          containerPort: 20049
+          protocol: TCP
+        readinessProbe:
+          tcpSocket:
+            port: 8474
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          timeoutSeconds: 3
+        livenessProbe:
+          tcpSocket:
+            port: 8474
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+              - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: toxiproxy
+  namespace: chaos-toxiproxy
+spec:
+  selector:
+    app: toxiproxy
+  ports:
+  - name: admin
+    port: 8474
+    targetPort: 8474
+    protocol: TCP
+  - name: apiserver
+    port: 20000
+    targetPort: 20000
+    protocol: TCP
+  - name: controller-http
+    port: 20002
+    targetPort: 20002
+    protocol: TCP
+  - name: mock-server
+    port: 20010
+    targetPort: 20010
+    protocol: TCP
+  - name: frontend
+    port: 20011
+    targetPort: 20011
+    protocol: TCP
+  - name: nats
+    port: 20020
+    targetPort: 20020
+    protocol: TCP
+  - name: etcd
+    port: 20030
+    targetPort: 20030
+    protocol: TCP
+  - name: nixl-0
+    port: 20040
+    targetPort: 20040
+    protocol: TCP
+  - name: nixl-1
+    port: 20041
+    targetPort: 20041
+    protocol: TCP
+  - name: nixl-2
+    port: 20042
+    targetPort: 20042
+    protocol: TCP
+  - name: nixl-3
+    port: 20043
+    targetPort: 20043
+    protocol: TCP
+  - name: nixl-4
+    port: 20044
+    targetPort: 20044
+    protocol: TCP
+  - name: nixl-5
+    port: 20045
+    targetPort: 20045
+    protocol: TCP
+  - name: nixl-6
+    port: 20046
+    targetPort: 20046
+    protocol: TCP
+  - name: nixl-7
+    port: 20047
+    targetPort: 20047
+    protocol: TCP
+  - name: nixl-8
+    port: 20048
+    targetPort: 20048
+    protocol: TCP
+  - name: nixl-9
+    port: 20049
+    targetPort: 20049
+    protocol: TCP
