@@ -81,3 +81,106 @@ class TestInterTokenLatencyMetric:
 
         with pytest.raises(NoMetricValue):
             InterTokenLatencyMetric().parse_record(record, empty_metrics)
+
+    def test_inter_token_latency_subtracts_bundled_first_chunk(self):
+        """When the server reports the first content chunk carried N tokens, ITL
+        divides the decode window by (OSL - N), not (OSL - 1), so a server that
+        bundles the first chunk cannot inflate TPS/user."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=3,  # first chunk carried 3 tokens, not 1
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        # ttft=20, latency=100, OSL=6, first chunk=3
+        # ITL = (100 - 20) / (6 - 3) = 26.6667, vs the inflated (100-20)/(6-1)=16
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([80.0 / 3.0])
+
+    def test_inter_token_latency_first_chunk_one_matches_legacy(self):
+        """A one-token first chunk reproduces the legacy (OSL - 1) formula exactly."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=1,
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([16.0])
+
+    def test_inter_token_latency_absent_first_chunk_falls_back_to_one(self):
+        """When per-chunk usage is unavailable (None), ITL falls back to (OSL - 1)."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=None,
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([16.0])
+
+    def test_inter_token_latency_count_mismatch_degrades_to_legacy(self):
+        """When the first-chunk count >= OSL (a count inconsistency, e.g. reasoning
+        unit mismatch or all output in one chunk), ITL degrades to the legacy
+        (OSL - 1) divisor and is still emitted rather than silently dropped."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=6,  # first-chunk count == OSL (inconsistent)
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        # Degrades to (100 - 20) / (6 - 1) = 16.0 instead of dropping the metric.
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([16.0])
+
+    def test_inter_token_latency_zero_first_chunk_falls_back_to_legacy(self):
+        """A non-positive first-chunk count (e.g. per-chunk usage lagging a chunk)
+        is treated as 'not reported' and falls back to (OSL - 1), not OSL - 0."""
+        record = create_record(
+            start_ns=100,
+            responses=[120, 200],
+            output_tokens_per_response=3,
+            first_content_chunk_tokens=0,
+        )
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            RequestLatencyMetric.tag,
+            TTFTMetric.tag,
+            OutputSequenceLengthMetric.tag,
+            InterTokenLatencyMetric.tag,
+        )
+
+        assert metric_results[InterTokenLatencyMetric.tag] == approx([16.0])
