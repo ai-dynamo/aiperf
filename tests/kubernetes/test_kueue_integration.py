@@ -621,11 +621,6 @@ class TestKueueOperatorFlow:
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
             ),
-            mock_patch(
-                "aiperf.operator.handlers.monitor._fetch_progress",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
         ):
             await monitor_progress(
                 body=_kopf_body(),
