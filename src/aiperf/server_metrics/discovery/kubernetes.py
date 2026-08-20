@@ -15,9 +15,6 @@ from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.client import k8s_client
-from aiperf.server_metrics.discovery import (
-    is_running_in_kubernetes as _is_running_in_kubernetes,
-)
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import V1Pod
@@ -51,15 +48,6 @@ INFERENCE_SERVER_IMAGE_MARKERS: tuple[str, ...] = (
     "trtllm",
     "dynamo",
 )
-
-
-def is_running_in_kubernetes() -> bool:
-    """Return whether Kubernetes injected its service environment.
-
-    Re-exported from the package root, which is importable without pulling in
-    ``kubernetes_asyncio``. Prefer importing it from there.
-    """
-    return _is_running_in_kubernetes()
 
 
 def resolve_own_namespace() -> str | None:
