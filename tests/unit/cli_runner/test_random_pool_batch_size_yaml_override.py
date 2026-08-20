@@ -130,6 +130,45 @@ def test_all_four_modalities_distinct_values(tmp_path: Path) -> None:
     assert ds.video_batch_size == 7
 
 
+def test_camel_case_yaml_field_overridden_by_cli_flag_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    """CLI --prompt-batch-size against a YAML that already spells the field in
+    its camelCase alias (promptBatchSize -- the shipped template idiom, see
+    e.g. templates/embeddings.yaml's batchSize) must override cleanly, not
+    crash with extra_forbidden.
+
+    Regression test: the override previously always wrote the snake_case key
+    (dataset["prompt_batch_size"] = ...) without removing a pre-existing
+    camelCase key. FileDataset has alias_generator=to_camel, extra="forbid",
+    so both keys ending up present made Pydantic bind from the alias and
+    reject the snake_case key as extra.
+    """
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_content = f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: random_pool
+    path: {pool}
+    promptBatchSize: 10
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    yaml_path = tmp_path / "camel.yaml"
+    yaml_path.write_text(yaml_content)
+    cli = _cli(prompt_batch_size=3)
+    cfg = resolve_config(cli, yaml_path)
+    assert _dataset(cfg).prompt_batch_size == 3
+
+
 # ---------------------------------------------------------------------------
 # Non-random_pool dataset: friendly error, not raw Pydantic trace
 # ---------------------------------------------------------------------------

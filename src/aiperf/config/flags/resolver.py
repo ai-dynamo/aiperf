@@ -18,6 +18,8 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
+from pydantic.alias_generators import to_camel
+
 from aiperf.common.enums import DatasetType
 from aiperf.common.phase import infer_legacy_phase_kind
 from aiperf.config.flags._resolver_gpu_telemetry import (
@@ -504,6 +506,13 @@ def _apply_random_pool_batch_size_overrides(
 
     for cli_attr, dataset_field, _ in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP:
         if cli_attr in set_fields:
+            # FileDataset uses alias_generator=to_camel with extra="forbid": if the
+            # YAML already supplied this field under its camelCase alias (e.g.
+            # promptBatchSize, the shipped template idiom), writing the snake_case
+            # key here leaves both present and Pydantic rejects the snake_case one
+            # as extra. Drop whichever spelling is already there before writing.
+            dataset.pop(to_camel(dataset_field), None)
+            dataset.pop(dataset_field, None)
             dataset[dataset_field] = getattr(cli, cli_attr)
 
 
