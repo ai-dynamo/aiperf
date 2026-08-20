@@ -133,6 +133,17 @@ service:
       required: true
       auto_start: true
 
+  worker_group_manager:
+    class: aiperf.workers.worker_group_manager:WorkerGroupManager
+    description: |
+      Kubernetes WorkerGroupManager service. Runs as the main process in worker pods,
+      downloads the dataset once, runs the pod-local raw-inference proxy, and
+      coordinates sibling worker and record-processor containers that share the pod.
+    metadata:
+      required: false
+      auto_start: false
+      replicable: true
+
 # =============================================================================
 # API Routers
 # =============================================================================
@@ -144,6 +155,14 @@ api_router:
     class: aiperf.api.routers.core:CoreRouter
     description: Config, health, and readiness endpoints.
 
+  debug:
+    class: aiperf.api.routers.debug:DebugRouter
+    description: Controller-internal state snapshots for diagnosing CR status.workers issues.
+
+  dataset:
+    class: aiperf.api.routers.dataset:DatasetRouter
+    description: Dataset metadata and file streaming with compression support.
+
   metrics:
     class: aiperf.api.routers.metrics:MetricsRouter
     description: Real-time metrics state and Prometheus/JSON endpoints.
@@ -152,9 +171,21 @@ api_router:
     class: aiperf.api.routers.progress:ProgressRouter
     description: Benchmark progress tracking and /api/progress endpoint.
 
+  server_metrics:
+    class: aiperf.api.routers.server_metrics:ServerMetricsRouter
+    description: Real-time server metrics from inference-server Prometheus endpoints.
+
   results:
     class: aiperf.api.routers.results:ResultsRouter
     description: Final benchmark results and artifact file downloads.
+
+  static:
+    class: aiperf.api.routers.static:StaticRouter
+    description: Static HTML file serving for dashboard and index pages.
+
+  websocket:
+    class: aiperf.api.routers.websocket:WebSocketRouter
+    description: WebSocket endpoint for real-time ZMQ message streaming.
 
   workers:
     class: aiperf.api.routers.workers:WorkersRouter
@@ -167,6 +198,13 @@ api_router:
 # One-to-one mapping: exactly one service manager is selected based on run_mode.
 # =============================================================================
 service_manager:
+  kubernetes:
+    class: aiperf.controller.kubernetes_service_manager:KubernetesServiceManager
+    description: |
+      Kubernetes service manager for distributed deployments. Runs control-plane
+      services in separate controller-pod containers while workers and record
+      processors are external Kubernetes pods managed by JobSet.
+
   multiprocessing:
     class: aiperf.controller.multiprocess_service_manager:MultiProcessServiceManager
     description: |

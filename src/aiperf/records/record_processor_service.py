@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import contextlib
+import os
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.base_component_service import BaseComponentService
@@ -13,9 +15,16 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import on_command, on_message, on_pull_message
+from aiperf.common.hooks import (
+    on_command,
+    on_message,
+    on_pull_message,
+    on_start,
+    on_stop,
+)
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
+    FinalizeArtifactsCommand,
     InferenceResultsMessage,
     ProfileCompleteCommand,
     ProfileConfigureCommand,
@@ -31,7 +40,15 @@ from aiperf.common.models import (
 from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData
-from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.pod_lifecycle_structs import (
+    GroupManagerToPeerMessage,
+    GroupPeerCommand,
+    GroupPeerCommandAck,
+    GroupPeerShutdown,
+    GroupTokenizerReady,
+    _send_group_peer_hello_with_retry,
+)
+from aiperf.common.protocols import PushClientProtocol, StreamingDealerClientProtocol
 from aiperf.common.scenario import get_scenario
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
@@ -72,6 +89,30 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
         )
+        # Group-local lifecycle channel to this pod's WorkerGroupManager.
+        # The WGM counts registered record-processor peers to report
+        # ready_record_processors, and waits for each to announce a clean
+        # shutdown before uploading raw records. Without this registration the
+        # count is permanently 0 and every Kubernetes run burns the full
+        # RAW_RECORD_UPLOAD_TIMEOUT waiting for a shutdown that never arrives.
+        self._pod_index: str | None = os.environ.get("AIPERF_POD_INDEX")
+        self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
+        if self.run.cfg.runtime.uses_worker_group_manager:
+            self.pod_lifecycle_dealer_client = (
+                self.comms.create_streaming_dealer_client(
+                    address=CommAddress.GROUP_LIFECYCLE,
+                    identity=self.service_id,
+                    bind=False,
+                    decode_type=GroupManagerToPeerMessage,
+                )
+            )
+            # Without a receiver nothing answers GroupPeerCommand, and the WGM
+            # blocks the full PROFILE_CONFIGURE_TIMEOUT waiting for an ack.
+            self.pod_lifecycle_dealer_client.register_receiver(
+                self._on_pod_lifecycle_message
+            )
+        self._tokenizer_bundles: dict[str, str] = {}
+        self._tokenizer_ready: asyncio.Event = asyncio.Event()
         self.tokenizers: dict[str, Tokenizer] = {}
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(self.run)
@@ -155,6 +196,60 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self.exception(f"Error creating record observer: {e!r}")
                 raise
 
+    @on_start
+    async def _register_with_worker_group_manager(self) -> None:
+        """Announce this record processor to the pod's WorkerGroupManager.
+
+        The WGM derives ``ready_record_processors`` from its registered peers,
+        so without this every pod reports 0 record processors regardless of
+        health.
+        """
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        try:
+            await _send_group_peer_hello_with_retry(
+                self.pod_lifecycle_dealer_client,
+                service_id=self.service_id,
+                service_type=str(self.service_type),
+                pod_index=self._pod_index,
+                logger=self,
+            )
+        except TimeoutError as e:
+            # Pod accounting, not a functional dependency: an unacked hello
+            # only means the WGM undercounts ready record processors. Records
+            # still flow. Startup hooks fail fast now, so letting this
+            # propagate would kill a processor that is otherwise healthy --
+            # and it propagates in exactly the topologies that have no WGM to
+            # ack in the first place.
+            self.warning(
+                f"WorkerGroupManager never acked this record processor's "
+                f"registration ({e}); continuing. The pod will under-report "
+                f"ready_record_processors."
+            )
+
+    @on_stop
+    async def _notify_worker_group_manager_shutdown(self) -> None:
+        """Tell the WorkerGroupManager this processor has finished flushing.
+
+        The WGM blocks its raw-record upload on hearing this from every
+        declared record processor. Without it the upload waits out the full
+        RAW_RECORD_UPLOAD_TIMEOUT and then proceeds anyway, which both delays
+        every run and risks uploading before local records are flushed.
+        """
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        try:
+            await self.pod_lifecycle_dealer_client.send(
+                GroupPeerShutdown(
+                    service_id=self.service_id,
+                    service_type=str(self.service_type),
+                )
+            )
+        except Exception as e:  # noqa: BLE001 - best-effort; the WGM may already have left the channel
+            self.warning(
+                f"Failed to send GroupPeerShutdown (peer already disconnected?): {e!r}"
+            )
+
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
         self, message: DatasetConfiguredNotification
@@ -166,6 +261,78 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             if hasattr(observer, "on_dataset_configured"):
                 observer.on_dataset_configured(message.metadata)
         self._dataset_configured_event.set()
+
+    async def _on_pod_lifecycle_message(
+        self, message: GroupManagerToPeerMessage
+    ) -> None:
+        """Dispatch group-local messages from the WorkerGroupManager."""
+        if isinstance(message, GroupTokenizerReady):
+            await self._on_tokenizer_ready(message)
+        elif isinstance(message, GroupPeerCommand):
+            await self._handle_pod_peer_command(message)
+
+    async def _on_tokenizer_ready(self, message: GroupTokenizerReady) -> None:
+        """Adopt the bundles the WorkerGroupManager downloaded for this pod."""
+        if not message.success:
+            # No tokenizer means this processor can never handle a record;
+            # exit so kubelet restarts the pod alongside the WGM's own retry.
+            self.error(
+                f"Tokenizer download failed in WorkerGroupManager: "
+                f"{message.error_message}; force-exiting {self.service_id}"
+            )
+            os._exit(1)
+        self._tokenizer_bundles.update(message.bundles)
+        self.inference_result_parser._tokenizer_bundles.update(message.bundles)
+        self._tokenizer_ready.set()
+        self.info(
+            f"Tokenizer bundles ready: {sorted(self._tokenizer_bundles)} "
+            f"(advertised by {message.service_id})"
+        )
+
+    async def _handle_pod_peer_command(self, message: GroupPeerCommand) -> None:
+        """Run a group-local lifecycle command and acknowledge it.
+
+        The WGM fans these out and blocks on an ack from every registered peer,
+        bounded by PROFILE_CONFIGURE_TIMEOUT. An unanswered command stalls the
+        whole pod for that timeout, twice per run.
+        """
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        if message.command == str(CommandType.PROFILE_CONFIGURE):
+            await self.inference_result_parser.configure()
+        elif message.command == str(CommandType.FINALIZE_ARTIFACTS):
+            await self._finalize_local_artifacts()
+        elif message.command == str(CommandType.SHUTDOWN):
+            # Ack before stopping: self.stop() tears down the comms children,
+            # which includes this dealer socket, so an ack sent afterwards
+            # never reaches the WGM and it blocks the full timeout.
+            with contextlib.suppress(Exception):
+                await self.pod_lifecycle_dealer_client.send(
+                    GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+                )
+            await self.stop()
+            return
+        elif message.command == str(CommandType.ABORT):
+            # The WGM has failed its own lifecycle. Hard-exit so kubelet
+            # restarts this container alongside it: a clean self.stop() would
+            # exit 0 and leave the pod Ready with no record processors. The ack
+            # is best-effort -- the WGM is already on its way out.
+            self.error(
+                f"Received ABORT from WorkerGroupManager; force-exiting "
+                f"{self.service_id} so kubelet restarts this container"
+            )
+            with contextlib.suppress(Exception):
+                await self.pod_lifecycle_dealer_client.send(
+                    GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+                )
+            os._exit(1)
+        else:
+            # No ack: acknowledging would tell the WGM the command succeeded.
+            self.warning(f"Unknown group-local command: {message.command}")
+            return
+        await self.pod_lifecycle_dealer_client.send(
+            GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+        )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -179,27 +346,54 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self,
         message: ProfileCompleteCommand,  # noqa: ARG002
     ) -> None:
-        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
+        """Finalize child record artifacts before result aggregation.
 
         RecordsManager sends PROFILE_COMPLETE after all records are processed
         but before exporting/aggregating results. Flushing children here ensures
         buffered writers drain to disk before the RawRecordAggregator reads them.
 
-        We flush rather than stop: stop() runs the @on_stop hook chain inside
-        the message-handler task, and when SystemController later broadcasts
-        SHUTDOWN it cancels the in-flight handler task, leaving the writer
-        wedged at STOPPING with the buffer un-flushed. flush_buffer() drains
-        the buffer without tearing down the file handle, and the writer's
-        normal _close_file hook handles teardown during service shutdown.
+        Writers without a dedicated artifact finalizer are flushed in place.
+        RawRecordWriterProcessor additionally closes its staging file so the
+        local RawRecordAggregator can read and remove it on Windows.
         """
+        await self._finalize_local_artifacts()
+
+    @on_command(CommandType.FINALIZE_ARTIFACTS)
+    async def _finalize_artifacts_command(
+        self,
+        message: FinalizeArtifactsCommand,  # noqa: ARG002
+    ) -> None:
+        """Acknowledge only after every local artifact writer is durable."""
+        await self._finalize_local_artifacts()
+
+    async def _finalize_local_artifacts(self) -> None:
+        """Finalize every child writer, propagating any incomplete artifact."""
+        children = []
         for child in self._children:
-            flush = getattr(child, "flush_buffer", None)
-            if flush is None:
-                continue
-            try:
-                await flush()
-            except Exception as e:  # noqa: BLE001
-                self.error(f"Failed to flush child {child}: {e!r}")
+            finalizer = getattr(type(child), "finalize_artifact", None)
+            finalize = (
+                child.finalize_artifact
+                if callable(finalizer)
+                else getattr(child, "flush_buffer", None)
+            )
+            if finalize is not None:
+                children.append((child, finalize))
+        results = await asyncio.gather(
+            *(finalize() for _child, finalize in children), return_exceptions=True
+        )
+        failures: list[Exception] = []
+        for (child, _finalize), result in zip(children, results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                failures.append(
+                    RuntimeError(f"Failed to finalize child {child}: {result!r}")
+                )
+        if failures:
+            raise ExceptionGroup(
+                f"Failed to finalize {len(failures)} record artifact writer(s)",
+                failures,
+            )
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""
@@ -223,7 +417,11 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     ) -> MetricRecordMetadata:
         """Create a metric record metadata based on a parsed response record."""
 
-        start_time_ns = record.timestamp_ns
+        # Controller frame: request_start/ack/end below are all derived from this
+        # anchor and are exported and compared against credit_issued_ns, which the
+        # controller stamped. Correcting once here converts the whole record's
+        # exported timeline; record.timestamp_ns stays raw for provenance.
+        start_time_ns = record.controller_timestamp_ns
         start_perf_ns = record.start_perf_ns
 
         end_perf_ns = (
@@ -459,8 +657,8 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 phase_kind = None
             metadata = MetricRecordMetadata(
                 session_num=session_num,
-                request_start_ns=record.timestamp_ns,
-                request_end_ns=record.timestamp_ns,
+                request_start_ns=record.controller_timestamp_ns,
+                request_end_ns=record.controller_timestamp_ns,
                 worker_id=message.service_id,
                 record_processor_id=self.service_id,
                 benchmark_phase=benchmark_phase,

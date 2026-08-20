@@ -71,9 +71,10 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             **kwargs,
         )
 
-        # Counter of records dropped by the fast-path due to non-JSON
-        # payload_bytes or serialisation failures. Exposed so operators can
-        # see silent-drop volume instead of it hiding behind a log line.
+        # Counter of records rejected by the fast path. The first failure is
+        # also retained in ``_write_error`` so the explicit artifact-finalize
+        # barrier fails closed instead of acknowledging an incomplete RAW
+        # export.
         self.dropped_record_count: int = 0
 
         self.info(
@@ -166,6 +167,8 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         except Exception as e:
             self.error(f"Failed to write raw record: {e!r}")
             self.dropped_record_count += 1
+            if self._write_error is None:
+                self._write_error = e
 
     async def observe(self, ctx: RecordObserverContext) -> None:
         """Write the raw request/response data for a single record."""
@@ -174,6 +177,15 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
 
         # Write using the buffered writer mixin (handles batching and flushing)
         await self.buffered_write(record_export)
+
+    async def finalize_artifact(self) -> None:
+        """Flush and close the staging file before raw-record aggregation.
+
+        Windows keeps an open JSONL handle exclusively locked, so aggregation
+        must run only after this writer has released it.
+        """
+        await self.flush_buffer()
+        await self._close_file()
 
 
 class RawRecordAggregator(AIPerfLoggerMixin):

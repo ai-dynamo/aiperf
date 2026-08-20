@@ -65,11 +65,12 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       concurrency: "{{ total_concurrency }}"
       requests: "{{ total_concurrency }}"
-      excludeFromResults: true
     - name: profiling
+      kind: profiling
       type: concurrency
       concurrency: "{{ total_concurrency }}"
       requests: "{{ total_concurrency * 10 }}"

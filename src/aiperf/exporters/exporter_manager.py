@@ -3,6 +3,7 @@
 
 import asyncio
 import io
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +29,20 @@ from aiperf.plugin.enums import DataExporterType, PluginType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+@dataclass(frozen=True, slots=True)
+class ExporterFailure:
+    """A data-export failure and whether it affects local artifacts."""
+
+    exporter: str
+    """Exporter class or export-stage name."""
+
+    error: BaseException
+    """Exception raised by the exporter."""
+
+    is_deferred: bool
+    """Whether the failure came from an optional remote uploader."""
 
 
 class ExporterManager(AIPerfLoggerMixin):
@@ -59,15 +74,26 @@ class ExporterManager(AIPerfLoggerMixin):
 
     def _task_done_callback(self, task: asyncio.Task) -> None:
         self.debug(lambda: f"Task done: {task}")
-        if task.exception():
-            self.error(f"Error exporting records: {task.exception()}")
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            self.error(f"Error exporting records: {error}")
         else:
             self.debug(f"Exported records: {task.result()}")
-        self._tasks.discard(task)
 
-    async def export_data(self) -> None:
+    async def export_data(self) -> list[ExporterFailure]:
+        """Run every exporter and return structured per-exporter failures.
+
+        Local exporters run before deferred remote uploaders. This distinction
+        lets the controller withhold Kubernetes readiness only when the files
+        it serves may be incomplete.
+        """
         self.info("Exporting all records")
+        local_exporters: list[DataExporterProtocol] = []
         deferred_exporters: list[DataExporterProtocol] = []
+        failures: list[ExporterFailure] = []
 
         for exporter_entry, ExporterClass in plugins.iter_all(PluginType.DATA_EXPORTER):
             if exporter_entry.name == DataExporterType.SERVER_METRICS_PARQUET:
@@ -85,37 +111,91 @@ class ExporterManager(AIPerfLoggerMixin):
                 )
                 continue
             except Exception as e:
-                self.error(f"Error creating data exporter: {e!r}")
+                is_deferred = bool(getattr(ExporterClass, "is_deferred", False))
+                failures.append(
+                    ExporterFailure(
+                        exporter=str(exporter_entry.name),
+                        error=e,
+                        is_deferred=is_deferred,
+                    )
+                )
+                self.error(f"Error creating data exporter {exporter_entry.name}: {e!r}")
                 continue
 
             # Deferred exporters run after all local exporters finish
             # so their artifacts (JSON, CSV, etc.) are available for upload.
             if getattr(exporter, "is_deferred", False):
                 deferred_exporters.append(exporter)
-                continue
+            else:
+                local_exporters.append(exporter)
 
-            self.debug(f"Creating task for exporter: {exporter_entry.name}")
-            task = asyncio.create_task(exporter.export())
-            self._tasks.add(task)
-            task.add_done_callback(self._task_done_callback)
-
-        await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
-
+        failures.extend(
+            await self._run_data_exporters(
+                local_exporters,
+                is_deferred=False,
+            )
+        )
         try:
             await self._export_phase_metric_artifacts()
-        except (OSError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - surfaced as a local export failure
+            failures.append(
+                ExporterFailure(
+                    exporter="PhaseMetricArtifacts",
+                    error=exc,
+                    is_deferred=False,
+                )
+            )
             self.warning(f"Failed to export phase metric artifacts: {exc}")
 
-        for exporter in deferred_exporters:
-            self.debug(f"Running deferred exporter: {exporter.__class__.__name__}")
+        failures.extend(
+            await self._run_data_exporters(
+                deferred_exporters,
+                is_deferred=True,
+            )
+        )
+        if failures:
+            self.error(
+                f"{len(failures)} data exporter(s) failed: "
+                + ", ".join(
+                    f"{failure.exporter} ({failure.error!r})" for failure in failures
+                )
+            )
+        self.debug("Exporting all records completed")
+        return failures
+
+    async def _run_data_exporters(
+        self,
+        exporters: list[DataExporterProtocol],
+        *,
+        is_deferred: bool,
+    ) -> list[ExporterFailure]:
+        """Run an exporter stage and retain each task's identity and failure."""
+        batch: list[tuple[str, asyncio.Task]] = []
+        for exporter in exporters:
+            name = exporter.__class__.__name__
+            self.debug(f"Creating task for exporter: {name}")
             task = asyncio.create_task(exporter.export())
             self._tasks.add(task)
             task.add_done_callback(self._task_done_callback)
+            batch.append((name, task))
 
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*(task for _, task in batch), return_exceptions=True)
         self._tasks.clear()
-        self.debug("Exporting all records completed")
+
+        failures: list[ExporterFailure] = []
+        for name, task in batch:
+            if task.cancelled():
+                continue
+            error = task.exception()
+            if error is not None:
+                failures.append(
+                    ExporterFailure(
+                        exporter=name,
+                        error=error,
+                        is_deferred=is_deferred,
+                    )
+                )
+        return failures
 
     async def _export_phase_metric_artifacts(self) -> None:
         phase_records = getattr(self._results, "phase_records", None) or []
@@ -137,6 +217,7 @@ class ExporterManager(AIPerfLoggerMixin):
                 successful_request_count=phase_result.successful_request_count,
                 error_request_count=phase_result.error_request_count,
                 error_summary=phase_result.error_summary,
+                branch_stats=phase_result.branch_stats,
             )
             entry: dict[str, Any] = {
                 "phase_index": phase_result.phase_index,
@@ -188,10 +269,7 @@ class ExporterManager(AIPerfLoggerMixin):
                 manifest_key="server_metrics_json",
             )
             manifest_entries.append(entry)
-        try:
-            await asyncio.to_thread(self._write_phase_manifest, manifest_entries)
-        except (OSError, ValueError) as exc:
-            self.warning(f"Failed to write phase artifact manifest: {exc}")
+        await asyncio.to_thread(self._write_phase_manifest, manifest_entries)
 
     async def _write_phase_observability_export(
         self,
@@ -235,7 +313,7 @@ class ExporterManager(AIPerfLoggerMixin):
             self.error(
                 f"Failed to write phase observability export {file_path}: {exc!r}"
             )
-            return
+            raise
         manifest_entry[manifest_key] = file_path.relative_to(
             self._run.cfg.artifacts.dir
         ).as_posix()
@@ -265,13 +343,13 @@ class ExporterManager(AIPerfLoggerMixin):
                 f"Error creating phase exporter {exporter_cls.__name__} "
                 f"for {manifest_entry.get('phase_name')}: {exc!r}"
             )
-            return
+            raise
         try:
             content = exporter._generate_content()
             await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
         except Exception as exc:
             self.error(f"Failed to write phase export {file_path}: {exc!r}")
-            return
+            raise
         manifest_entry[manifest_key] = file_path.relative_to(
             self._run.cfg.artifacts.dir
         ).as_posix()

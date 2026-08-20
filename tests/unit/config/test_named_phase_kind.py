@@ -55,7 +55,6 @@ def test_flat_phases_shorthand_gets_profiling_kind() -> None:
     assert len(cfg.phases) == 1
     assert cfg.phases[0].name == "profiling"
     assert cfg.phases[0].kind == "profiling"
-    assert cfg.phases[0].exclude_from_results is False
 
 
 def test_warmup_profiling_shorthand_gets_explicit_kinds() -> None:
@@ -69,9 +68,9 @@ def test_warmup_profiling_shorthand_gets_explicit_kinds() -> None:
         }
     )
 
-    assert [(p.name, p.kind, p.exclude_from_results) for p in cfg.phases] == [
-        ("warmup", "warmup", True),
-        ("profiling", "profiling", False),
+    assert [(p.name, p.kind) for p in cfg.phases] == [
+        ("warmup", "warmup"),
+        ("profiling", "profiling"),
     ]
 
 
@@ -89,9 +88,9 @@ def test_profiling_kind_allows_noncanonical_name_as_only_results_phase() -> None
 def test_legacy_canonical_names_infer_kind() -> None:
     cfg = _cfg([{"name": "warmup", **_PHASE}, {"name": "profiling", **_PHASE}])
 
-    assert [(p.name, p.kind, p.exclude_from_results) for p in cfg.phases] == [
-        ("warmup", "warmup", True),
-        ("profiling", "profiling", False),
+    assert [(p.name, p.kind) for p in cfg.phases] == [
+        ("warmup", "warmup"),
+        ("profiling", "profiling"),
     ]
 
 
@@ -131,16 +130,10 @@ def test_three_plus_phases_can_mix_multiple_warmups_and_profiling_phases() -> No
         "prime_cache",
         "stabilize",
     ]
-    assert [p.exclude_from_results for p in cfg.get_warmup_phases()] == [True, True]
     assert [p.name for p in cfg.get_profiling_phases()] == [
         "low",
         "storm",
         "recover",
-    ]
-    assert [p.exclude_from_results for p in cfg.get_profiling_phases()] == [
-        False,
-        False,
-        False,
     ]
 
 
@@ -188,7 +181,7 @@ def test_staged_cache_warmups_execute_in_order_without_profiling_indexes() -> No
     ]
     assert [p.phase_index for p in timing.phase_configs] == [0, 1, 2]
     assert [p.profiling_index for p in timing.phase_configs] == [None, None, 0]
-    assert [p.exclude_from_results for p in cfg.phases] == [True, True, False]
+    assert [p.kind for p in cfg.phases] == ["warmup", "warmup", "profiling"]
 
 
 def test_multiple_warmup_phases_without_profiling_still_fails() -> None:
@@ -219,9 +212,34 @@ def test_reserved_canonical_names_require_matching_kind(name: str, kind: str) ->
         _cfg([{"name": name, "kind": kind, **_PHASE}])
 
 
-def test_kind_drives_exclude_from_results_validation() -> None:
-    with pytest.raises(ValidationError, match="exclude_from_results must be True"):
-        _cfg(
+def test_exclude_from_results_is_accepted_and_ignored(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The retired key loads with a deprecation warning instead of failing."""
+    with caplog.at_level("WARNING"):
+        cfg = _cfg(
+            [
+                {
+                    "name": "setup",
+                    "kind": "warmup",
+                    "exclude_from_results": True,
+                    **_PHASE,
+                },
+                {"name": "main", "kind": "profiling", **_PHASE},
+            ]
+        )
+
+    assert [p.kind for p in cfg.phases] == ["warmup", "profiling"]
+    assert not hasattr(cfg.phases[0], "exclude_from_results")
+    assert "'exclude_from_results' is deprecated and ignored" in caplog.text
+    assert "contradicts" not in caplog.text
+
+
+def test_exclude_from_results_contradicting_kind_warns_about_contradiction(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        cfg = _cfg(
             [
                 {
                     "name": "setup",
@@ -233,19 +251,29 @@ def test_kind_drives_exclude_from_results_validation() -> None:
             ]
         )
 
+    assert cfg.phases[0].kind == "warmup"
+    assert "contradicts kind='warmup'" in caplog.text
 
-def test_profiling_kind_cannot_be_explicitly_excluded_from_results() -> None:
-    with pytest.raises(ValidationError, match="exclude_from_results must be False"):
-        _cfg(
+
+def test_exclude_from_results_alias_is_accepted_and_ignored(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        cfg = _cfg(
             [
                 {
                     "name": "storm",
                     "kind": "profiling",
-                    "exclude_from_results": True,
+                    "excludeFromResults": True,
                     **_PHASE,
                 },
             ]
         )
+
+    assert cfg.phases[0].kind == "profiling"
+    assert not hasattr(cfg.phases[0], "exclude_from_results")
+    assert "'excludeFromResults' is deprecated and ignored" in caplog.text
+    assert "contradicts kind='profiling'" in caplog.text
 
 
 def test_strict_phase_name_regex_rejects_path_unsafe_names() -> None:

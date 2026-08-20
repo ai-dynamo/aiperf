@@ -258,36 +258,33 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
     )
 
 
-def extract_commands(app: Any) -> list[tuple[str, str]]:
+def extract_commands(app: Any, *, prefix: str = "") -> list[tuple[str, str]]:
     """Extract command names and descriptions.
 
-    Recurses one level into subcommand-only apps (parent App that has no
-    ``@app.default``, only registered subcommands) so that ``aiperf config init``
-    and similar two-token commands are documented as their own sections.
+    Recurses to arbitrary depth through subcommand-only apps (a parent ``App``
+    with no ``@app.default``, only registered subcommands) so that every leaf
+    command is documented as its own section. Two-token commands such as
+    ``aiperf config init`` and three-token commands such as
+    ``aiperf kube results list`` are both reached this way; an intermediate group
+    is never emitted on its own, because it has no argument collection to
+    document.
     """
     skip = {"--help", "-h", "--version"}
     commands: list[tuple[str, str]] = []
     for name, cmd in app._commands.items():
         if name in skip:
             continue
-        # If this is a subcommand-only app (no default), recurse one level.
+        full_name = f"{prefix}{name}"
         if hasattr(cmd, "_commands") and getattr(cmd, "default_command", None) is None:
-            for sub_name, sub_cmd in cmd._commands.items():
-                if sub_name in skip:
-                    continue
-                help_text = sub_cmd.help if hasattr(sub_cmd, "help") else ""
-                if callable(help_text):
-                    help_text = help_text()
-                if help_text:
-                    help_text = _extract_text(help_text).split("\n")[0].strip()
-                commands.append((f"{name} {sub_name}", help_text or ""))
+            _resolve_lazy_commands(cmd)
+            commands.extend(extract_commands(cmd, prefix=f"{full_name} "))
             continue
         help_text = cmd.help if hasattr(cmd, "help") else ""
         if callable(help_text):
             help_text = help_text()
         if help_text:
             help_text = _extract_text(help_text).split("\n")[0].strip()
-        commands.append((name, help_text or ""))
+        commands.append((full_name, help_text or ""))
     return commands
 
 

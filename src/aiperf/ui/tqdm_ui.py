@@ -5,13 +5,11 @@ from collections.abc import Callable
 from tqdm import tqdm
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
-    on_profiling_progress,
+    on_phase_progress,
     on_records_progress,
     on_stop,
-    on_warmup_progress,
 )
 from aiperf.common.mixins import CombinedPhaseStats
 from aiperf.ui.base_ui import BaseAIPerfUI
@@ -158,23 +156,28 @@ class TQDMProgressUI(BaseAIPerfUI):
                 _logger.error(f"Error updating progress bar {key}: {e!r}")
                 _logger.error(stats)
 
-    GRACE_PERIOD_COLORS = {
-        CreditPhase.WARMUP: "cyan",
-        CreditPhase.PROFILING: "magenta",
+    GRACE_PERIOD_COLORS: dict[str, str] = {
+        "warmup": "cyan",
+        "profiling": "magenta",
     }
-    PHASE_COLORS = {
-        CreditPhase.WARMUP: "yellow",
-        CreditPhase.PROFILING: "green",
+    PHASE_COLORS: dict[str, str] = {
+        "warmup": "yellow",
+        "profiling": "green",
     }
+    DEFAULT_PHASE_COLOR = "green"
+    DEFAULT_GRACE_COLOR = "magenta"
     RECORDS_COLOR = "blue"
 
-    def _on_phase_progress(self, stats: CombinedPhaseStats):
+    @on_phase_progress
+    def _on_phase_progress(self, phase_stats: CombinedPhaseStats) -> None:
         """Callback for phase progress updates."""
-        if stats.timeout_triggered:
+        phase_name = phase_stats.phase_name or str(phase_stats.phase)
+        phase_kind = phase_stats.phase_kind or str(phase_stats.phase)
+        if phase_stats.timeout_triggered:
             self._create_or_update_requests_bar(
-                f"{stats.phase.title()} Grace Period",
-                self.GRACE_PERIOD_COLORS[stats.phase],
-                stats,
+                f"{phase_name.title()} Grace Period",
+                self.GRACE_PERIOD_COLORS.get(phase_kind, self.DEFAULT_GRACE_COLOR),
+                phase_stats,
                 lambda stats: (
                     stats.requests_sent,
                     stats.requests_completed + stats.requests_cancelled,
@@ -183,25 +186,15 @@ class TQDMProgressUI(BaseAIPerfUI):
             )
         else:
             self._create_or_update_requests_bar(
-                f"{stats.phase.title()}",
-                self.PHASE_COLORS[stats.phase],
-                stats,
+                phase_name.title(),
+                self.PHASE_COLORS.get(phase_kind, self.DEFAULT_PHASE_COLOR),
+                phase_stats,
                 lambda stats: (
                     stats.total_expected_requests,
                     stats.requests_completed,
                     stats.requests_progress_percent,
                 ),
             )
-
-    @on_warmup_progress
-    def _on_warmup_progress(self, warmup_stats: CombinedPhaseStats):
-        """Callback for warmup progress updates."""
-        self._on_phase_progress(warmup_stats)
-
-    @on_profiling_progress
-    def _on_profiling_progress(self, profiling_stats: CombinedPhaseStats):
-        """Callback for profiling progress updates."""
-        self._on_phase_progress(profiling_stats)
 
     @on_records_progress
     def _on_records_progress(self, records_stats: CombinedPhaseStats):

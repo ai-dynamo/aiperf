@@ -4,18 +4,122 @@
 
 import io
 import multiprocessing
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from multiprocessing import Process
 from unittest.mock import MagicMock, patch
 
 import pytest
 from rich.console import Console
 
 from aiperf.common.base_service import BaseService
+from aiperf.common.subprocess_manager import SubprocessInfo, SubprocessManager
 from aiperf.common.tokenizer_display import TokenizerDisplayEntry
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.timing.manager import TimingManager
 from aiperf.workers.worker import Worker
 from tests.harness import mock_plugin
+
+# =============================================================================
+# Mock Process Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def mock_process_factory() -> Callable[..., MagicMock]:
+    """Factory fixture for creating mock processes with custom state.
+
+    Returns a callable accepting ``is_alive``, ``pid``, and ``exitcode``.
+
+    Example:
+        ```python
+        def test_something(mock_process_factory):
+            alive_proc = mock_process_factory(is_alive=True, pid=1234)
+        ```
+    """
+    _counter = [0]
+
+    def _create(
+        is_alive: bool = True,
+        pid: int | None = None,
+        exitcode: int | None = None,
+    ) -> MagicMock:
+        _counter[0] += 1
+        mock = MagicMock(spec=Process)
+        mock.is_alive.return_value = is_alive
+        mock.pid = pid if pid is not None else 10000 + _counter[0]
+        mock.exitcode = exitcode if exitcode is not None else (None if is_alive else 0)
+        return mock
+
+    return _create
+
+
+@pytest.fixture
+def mock_process_alive(mock_process_factory) -> MagicMock:
+    """Create a mock process that appears alive."""
+    return mock_process_factory(is_alive=True, pid=12345)
+
+
+@pytest.fixture
+def mock_process_dead(mock_process_factory) -> MagicMock:
+    """Create a mock process that appears dead with exit code 0."""
+    return mock_process_factory(is_alive=False, pid=54321, exitcode=0)
+
+
+@pytest.fixture
+def mock_process_crashed(mock_process_factory) -> MagicMock:
+    """Create a mock process that crashed with a non-zero exit code."""
+    return mock_process_factory(is_alive=False, pid=99999, exitcode=1)
+
+
+# =============================================================================
+# SubprocessManager Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def subprocess_manager(benchmark_run) -> SubprocessManager:
+    """Create a SubprocessManager instance with no logger."""
+    return SubprocessManager(run=benchmark_run, log_queue=None, logger=None)
+
+
+@pytest.fixture
+def subprocess_manager_with_logger(
+    benchmark_run,
+) -> tuple[SubprocessManager, MagicMock]:
+    """Create a SubprocessManager with a mock logger.
+
+    Returns:
+        Tuple of ``(manager, mock_logger)`` for assertions.
+    """
+    mock_logger = MagicMock()
+    manager = SubprocessManager(run=benchmark_run, log_queue=None, logger=mock_logger)
+    return manager, mock_logger
+
+
+def make_subprocess_info(
+    service_type=None,
+    service_id: str = "test_service",
+    process: MagicMock | None = None,
+) -> SubprocessInfo:
+    """Helper to create SubprocessInfo for tests.
+
+    Args:
+        service_type: Type of service. Defaults to ``ServiceType.WORKER``.
+        service_id: Service identifier.
+        process: Process object or None.
+
+    Returns:
+        A SubprocessInfo instance.
+    """
+    from aiperf.plugin.enums import ServiceType
+
+    return SubprocessInfo(
+        process=process,
+        service_type=service_type if service_type is not None else ServiceType.WORKER,
+        service_id=service_id,
+    )
+
 
 # =============================================================================
 # Tokenizer Test Helpers

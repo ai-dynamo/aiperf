@@ -53,6 +53,9 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         self.address: str = address
         self.bind: bool = bind
         self.socket_ops: dict = socket_ops or {}
+        # Kept so a recreated socket re-adopts the same identity.
+        self._identity: bytes | None = self.socket_ops.get(zmq.IDENTITY)
+        self._socket_recreate_lock = asyncio.Lock()
         self.client_id: str = (
             client_id
             or f"{self.socket_type.name.lower()}_client_{uuid.uuid4().hex[:8]}"
@@ -113,31 +116,7 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             else:
                 self.socket.connect(self.address)
 
-            # Set default timeouts
-            self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
-            self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
-
-            # Set high water mark
-            self.socket.setsockopt(zmq.SNDHWM, ZMQSocketDefaults.SNDHWM)
-            self.socket.setsockopt(zmq.RCVHWM, ZMQSocketDefaults.RCVHWM)
-
-            # Set performance-oriented socket options
-            self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_IDLE, ZMQSocketDefaults.TCP_KEEPALIVE_IDLE
-            )
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_INTVL, ZMQSocketDefaults.TCP_KEEPALIVE_INTVL
-            )
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
-            )
-            self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
-            self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
-
-            # Set additional socket options requested by the caller
-            for key, val in self.socket_ops.items():
-                self.socket.setsockopt(key, val)
+            self._apply_socket_options()
 
             self.debug(
                 lambda: f"ZMQ {self.socket_type_name} socket {'BOUND' if self.bind else 'CONNECTED'} to {self.address} ({self.client_id})"
@@ -145,6 +124,84 @@ class BaseZMQClient(AIPerfLifecycleMixin):
 
         except Exception as e:
             raise InitializationError(f"Failed to initialize ZMQ socket: {e}") from e
+
+    async def _recreate_socket(self) -> None:
+        """Close and recreate the socket with the same configuration.
+
+        Recovers from a socket whose state machine is broken (EFSM after a
+        partial multipart send) -- there is no way to reset the FSM in place,
+        so the socket has to be rebuilt.
+        """
+        async with self._socket_recreate_lock:
+            old_socket = self.socket
+            if old_socket is not None:
+                try:
+                    old_socket.close(linger=0)
+                except zmq.ZMQError as close_error:
+                    # Bind eagerly: Python clears the except-name at block exit,
+                    # so a deferred lambda would raise NameError instead.
+                    detail = repr(close_error)
+                    self.debug(lambda: f"Ignoring close error on recreate: {detail}")
+
+            self.socket = self.context.socket(self.socket_type)
+            if self._identity is not None:
+                self.socket.setsockopt(zmq.IDENTITY, self._identity)
+
+            if self.bind:
+                self.socket.bind(self.address)
+                if getattr(self, "additional_bind_address", None):
+                    self.socket.bind(self.additional_bind_address)
+            else:
+                self.socket.connect(self.address)
+
+            self._apply_socket_options()
+            self.debug(
+                lambda: f"Recreated {self.socket_type_name} socket, "
+                f"{'bound' if self.bind else 'connected'} to {self.address} "
+                f"({self.client_id})"
+            )
+
+    def _apply_socket_options(self) -> None:
+        """Apply every socket option this client needs, in one place."""
+        self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
+        self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
+
+        self.socket.setsockopt(zmq.SNDHWM, ZMQSocketDefaults.SNDHWM)
+        self.socket.setsockopt(zmq.RCVHWM, ZMQSocketDefaults.RCVHWM)
+
+        self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_IDLE, ZMQSocketDefaults.TCP_KEEPALIVE_IDLE
+        )
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_INTVL, ZMQSocketDefaults.TCP_KEEPALIVE_INTVL
+        )
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
+        )
+        self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
+        self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
+
+        # When a DEALER reconnects with the same identity, replace the stale
+        # routing entry instead of rejecting the connection. Idle TCP
+        # connections dropped by container networking otherwise leave dead
+        # entries in the routing table: sends to a reconnected peer fail with
+        # "stream is closed", or credits keep routing into the dead entry and
+        # the phase stalls with no error at all.
+        if self.socket_type == zmq.ROUTER:
+            self.socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
+
+        # Bound the reconnect backoff on connecting sockets so a restarted pod
+        # rejoins quickly rather than waiting out libzmq's unbounded default.
+        if not self.bind:
+            self.socket.setsockopt(zmq.RECONNECT_IVL, ZMQSocketDefaults.RECONNECT_IVL)
+            self.socket.setsockopt(
+                zmq.RECONNECT_IVL_MAX, ZMQSocketDefaults.RECONNECT_IVL_MAX
+            )
+
+        # Caller-requested options last so they can override the defaults.
+        for key, val in self.socket_ops.items():
+            self.socket.setsockopt(key, val)
 
     @on_init
     async def _bind_additional_address(self) -> None:

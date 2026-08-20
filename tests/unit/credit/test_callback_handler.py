@@ -106,6 +106,7 @@ def make_credit(
     phase: CreditPhase = CreditPhase.PROFILING,
     phase_index: int | None = None,
     agent_depth: int = 0,
+    allow_worker_migration: bool = False,
 ) -> Credit:
     """Create a Credit for testing."""
     return Credit(
@@ -118,6 +119,7 @@ def make_credit(
         num_turns=num_turns,
         issued_at_ns=time.time_ns(),
         agent_depth=agent_depth,
+        allow_worker_migration=allow_worker_migration,
     )
 
 
@@ -211,6 +213,66 @@ class TestPhaseRegistration:
         mock_concurrency.release_session_slot.assert_called_once_with(1)
         mock_concurrency.release_prefill_slot.assert_called_once_with(1)
 
+    async def test_same_kind_phase_orchestrators_route_and_detach_independently(
+        self,
+        callback_handler,
+        mock_concurrency,
+        mock_lifecycle,
+        mock_stop_checker,
+    ):
+        """A later named phase must not replace a seamless phase still draining."""
+        orchestrators = [MagicMock(), MagicMock()]
+        strategies = [MagicMock(), MagicMock()]
+        progresses = [MagicMock(), MagicMock()]
+        for phase_index in range(2):
+            orchestrator = orchestrators[phase_index]
+            orchestrator.intercept = AsyncMock(return_value=True)
+            orchestrator.has_pending_branch_work.return_value = False
+            orchestrator.get_branch_ids.return_value = []
+            strategy = strategies[phase_index]
+            strategy.handle_credit_return = AsyncMock()
+            progress = progresses[phase_index]
+            progress.all_credits_returned_event = asyncio.Event()
+            progress.increment_returned.return_value = False
+            progress.check_all_returned_or_cancelled.return_value = False
+            callback_handler.register_phase(
+                phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+                progress=progress,
+                lifecycle=mock_lifecycle,
+                stop_checker=mock_stop_checker,
+                strategy=strategy,
+            )
+            callback_handler.set_branch_orchestrator(
+                orchestrator,
+                phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+            )
+
+        phase_zero_credit = make_credit(phase_index=0, conversation_id="phase-zero")
+        phase_one_credit = make_credit(phase_index=1, conversation_id="phase-one")
+        await callback_handler.on_credit_return(
+            "worker-0", make_credit_return(phase_zero_credit)
+        )
+        await callback_handler.on_credit_return(
+            "worker-1", make_credit_return(phase_one_credit)
+        )
+
+        orchestrators[0].intercept.assert_awaited_once_with(phase_zero_credit)
+        orchestrators[1].intercept.assert_awaited_once_with(phase_one_credit)
+
+        callback_handler.set_branch_orchestrator(
+            None,
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+        )
+        assert callback_handler._orchestrator_for(0, CreditPhase.PROFILING) is None
+        assert (
+            callback_handler._orchestrator_for(1, CreditPhase.PROFILING)
+            is orchestrators[1]
+        )
+        orchestrators[0].set_drain_observer.assert_called_with(None)
+
 
 # =============================================================================
 # Test: Credit Return - Basic Flow
@@ -232,6 +294,8 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             False,  # cancelled=False
+            session_ended=True,
+            session_cancelled=False,
             errored=False,
             is_child=False,  # agent_depth=0 root credit
             no_request=False,
@@ -263,6 +327,8 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             True,  # cancelled=True
+            session_ended=True,
+            session_cancelled=True,
             errored=False,
             is_child=False,  # agent_depth=0 root credit
             no_request=False,
@@ -293,6 +359,88 @@ class TestCreditReturnBasicFlow:
         await callback_handler.on_credit_return("worker-1", credit_return)
 
         mock_strategy.handle_credit_result.assert_awaited_once_with(credit_return)
+
+    async def test_worker_loss_ends_non_migratable_root_session(
+        self,
+        registered_handler,
+        mock_progress,
+        mock_strategy,
+        mock_concurrency,
+    ) -> None:
+        mock_strategy.handle_session_ended = AsyncMock()
+        credit = make_credit(turn_index=0, num_turns=3)
+        credit_return = make_credit_return(
+            credit,
+            cancelled=True,
+            first_token_sent=False,
+            error="worker_unavailable: worker lost mid-session",
+        )
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.handle_credit_return.assert_not_awaited()
+        mock_strategy.handle_session_ended.assert_awaited_once_with(credit)
+        mock_progress.increment_returned.assert_called_once_with(
+            False,
+            True,
+            session_ended=True,
+            session_cancelled=True,
+            errored=True,
+            is_child=False,
+            no_request=False,
+        )
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+
+    async def test_worker_loss_continues_migratable_root_session(
+        self, registered_handler, mock_strategy, mock_concurrency
+    ) -> None:
+        credit = make_credit(turn_index=0, num_turns=3, allow_worker_migration=True)
+        credit_return = make_credit_return(
+            credit,
+            cancelled=True,
+            first_token_sent=False,
+            error="worker_unavailable: worker lost mid-session",
+        )
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.handle_credit_return.assert_awaited_once_with(
+            credit, error=credit_return.error
+        )
+        mock_concurrency.release_session_slot.assert_not_called()
+
+    async def test_worker_loss_stops_nonfinal_dag_child_without_intercept(
+        self,
+        registered_handler,
+        mock_strategy,
+        mock_branch_orchestrator,
+    ) -> None:
+        mock_branch_orchestrator.on_child_stopped = AsyncMock()
+        mock_branch_orchestrator.intercept = AsyncMock(return_value=False)
+        mock_branch_orchestrator.has_pending_branch_work.return_value = True
+        registered_handler.set_branch_orchestrator(
+            mock_branch_orchestrator,
+            phase=CreditPhase.PROFILING,
+        )
+        credit = make_credit(turn_index=0, num_turns=3, agent_depth=1)
+
+        await registered_handler.on_credit_return(
+            "worker-1",
+            make_credit_return(
+                credit,
+                cancelled=True,
+                first_token_sent=False,
+                error="worker_unavailable: worker lost mid-session",
+            ),
+        )
+
+        mock_branch_orchestrator.intercept.assert_not_awaited()
+        mock_branch_orchestrator.on_child_stopped.assert_awaited_once_with(
+            credit.x_correlation_id
+        )
+        mock_strategy.handle_credit_return.assert_not_awaited()
 
     async def test_result_hook_is_cached_at_phase_registration(
         self: "TestCreditReturnBasicFlow",
@@ -902,6 +1050,8 @@ class TestEdgeCases:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             cancelled,
+            session_ended=True,
+            session_cancelled=cancelled,
             errored=False,
             is_child=False,
             no_request=False,

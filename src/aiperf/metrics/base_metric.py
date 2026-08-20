@@ -41,6 +41,7 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
       the metric from the console output (equivalent to the legacy `NO_CONSOLE` flag); other values
       group the metric into a section of the console output.
     - required_metrics: The metrics that must be available to compute the metric. This is a set of metric tags.
+    - optional_metrics: Ordering-only dependencies that may legitimately be absent.
     """
 
     # User-defined attributes to be overridden by subclasses
@@ -54,6 +55,16 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
     flags: ClassVar[MetricFlags] = MetricFlags.NONE
     console_group: ClassVar[MetricConsoleGroup] = MetricConsoleGroup.DEFAULT
     required_metrics: ClassVar[set[MetricTagT] | None] = None
+    optional_metrics: ClassVar[set[MetricTagT] | None] = None
+    """Dependencies that order this metric but need not be present.
+
+    ``required_metrics`` does double duty -- it orders computation *and* is a
+    hard precondition -- so declaring a legitimately-absent dependency there
+    (an ERROR_ONLY metric on a clean run) silently drops the dependent metric
+    from every export. List those here instead: they participate in dependency
+    ordering and registration validation exactly like required ones, but
+    ``_check_metrics`` does not demand them.
+    """
 
     # Auto-derived attributes
     value_type: ClassVar[MetricValueType]  # Auto set based on generic type parameter
@@ -133,9 +144,9 @@ class BaseMetric(Generic[MetricValueTypeVarT], ABC):
         )
 
     def _require_valid_record(self, record: ParsedResponseRecord) -> None:
-        """Check that the record is valid."""
-        if (not record or not record.valid) and not self.has_flags(
-            MetricFlags.ERROR_ONLY
+        """Allow invalid records only for their explicit metric bucket."""
+        if (not record or not record.valid) and not self.has_any_flags(
+            MetricFlags.ERROR_ONLY | MetricFlags.CANCELLED_ONLY
         ):
             raise NoMetricValue(
                 f"{type(self).__name__}: parsed response record is missing or "

@@ -98,6 +98,7 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         *metric_types: MetricType,
         error_metrics_only: bool = False,
         exclude_error_metrics: bool = False,
+        cancelled_metrics_only: bool = False,
     ) -> list[BaseMetric]:
         """Get an ordered list of metrics that are applicable to the endpoint type and run config.
         The metrics are ordered based on their dependencies, ensuring proper computation order.
@@ -107,8 +108,10 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         required_flags, disallowed_flags = self.get_filters()
         if error_metrics_only:
             required_flags |= MetricFlags.ERROR_ONLY
+        elif cancelled_metrics_only:
+            required_flags |= MetricFlags.CANCELLED_ONLY
         elif exclude_error_metrics:
-            disallowed_flags |= MetricFlags.ERROR_ONLY
+            disallowed_flags |= MetricFlags.ERROR_ONLY | MetricFlags.CANCELLED_ONLY
 
         if not self.run.cfg.slos:
             disallowed_flags |= MetricFlags.GOODPUT

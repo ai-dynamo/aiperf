@@ -10,7 +10,8 @@ making invalid states unrepresentable.
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal, Self
+import logging
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import (
     ConfigDict,
@@ -33,6 +34,17 @@ from aiperf.config.ramp import RampConfig, RampSpec, _normalize_ramp
 from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType, TimingMode
+
+logger = logging.getLogger(__name__)
+
+# Retired phase key kept accepted-but-ignored for one deprecation cycle.
+# ``kind`` is the sole source of truth: kind='warmup' is excluded from results,
+# kind='profiling' is included. The removed field's validator forced exactly
+# that value, so it never carried information ``kind`` lacks.
+_DEPRECATED_EXCLUDE_KEYS: tuple[str, ...] = (
+    "exclude_from_results",
+    "excludeFromResults",
+)
 
 __all__ = [
     "BasePhaseConfig",
@@ -118,17 +130,6 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     # =========================================================================
     # UNIVERSAL FIELDS
     # =========================================================================
-
-    exclude_from_results: Annotated[
-        bool,
-        Field(
-            default=False,
-            description="Exclude this phase's metrics from final results. "
-            "Forced by phase kind: kind='warmup' is always excluded, "
-            "kind='profiling' is always included. Explicitly setting this "
-            "field to a value inconsistent with the phase kind is rejected.",
-        ),
-    ]
 
     # -------------------------------------------------------------------------
     # Stop Conditions (at least one required unless _stop_condition_required=False)
@@ -402,6 +403,55 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     # VALIDATORS
     # =========================================================================
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_deprecated_exclude_from_results(cls, data: Any) -> Any:
+        """Accept and ignore the retired ``exclude_from_results`` phase key.
+
+        ``extra='forbid'`` would otherwise reject YAML copied from
+        pre-``kind`` templates with an opaque ``extra_forbidden`` error. The
+        key is stripped -- never re-introduced as load-bearing state -- and a
+        deprecation warning points at ``kind``. A value that disagrees with the
+        resolved ``kind`` gets a second, louder warning so the contradiction is
+        not resolved silently in either direction.
+        """
+        if not isinstance(data, dict):
+            return data
+        present = [key for key in _DEPRECATED_EXCLUDE_KEYS if key in data]
+        if not present:
+            return data
+
+        data = dict(data)
+        name = data.get("name")
+        kind = infer_legacy_phase_kind(
+            name if isinstance(name, str) else "", data.get("kind")
+        )
+        for key in present:
+            value = data.pop(key)
+            logger.warning(
+                "Phase %r: '%s' is deprecated and ignored. Phase kind is now "
+                "the source of truth: kind='warmup' is excluded from results, "
+                "kind='profiling' is included. Remove the key from your config.",
+                name,
+                key,
+            )
+            if (
+                isinstance(value, bool)
+                and kind is not None
+                and value != (kind == "warmup")
+            ):
+                logger.warning(
+                    "Phase %r: '%s: %s' contradicts kind=%r. The deprecated key "
+                    "is ignored; kind=%r behavior applies. Set kind='warmup' if "
+                    "you meant to exclude this phase from results.",
+                    name,
+                    key,
+                    value,
+                    kind,
+                    kind,
+                )
+        return data
+
     @model_validator(mode="after")
     def _validate_phase_constraints(self) -> Self:
         """Validate stop condition and cross-field constraints."""
@@ -424,18 +474,6 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
                 f"got kind '{self.kind}'."
             )
 
-        required = self.kind == "warmup"
-        if (
-            "exclude_from_results" in self.model_fields_set
-            and self.exclude_from_results != required
-        ):
-            raise ValueError(
-                f"Phase '{self.name}': exclude_from_results must be "
-                f"{required} for kind '{self.kind}' (warmup is always "
-                "excluded; profiling is always included)"
-            )
-        if self.exclude_from_results != required:
-            self.exclude_from_results = required
         if (
             self._stop_condition_required
             and self.requests is None

@@ -18,7 +18,11 @@ Terminology:
 import uuid
 from dataclasses import dataclass
 
-from aiperf.common.enums import CacheBustTarget, ConversationBranchMode
+from aiperf.common.enums import (
+    CacheBustTarget,
+    ConversationBranchMode,
+    ConversationContextMode,
+)
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
@@ -72,6 +76,7 @@ class SampledSession:
     conversation_id: str
     metadata: ConversationMetadata
     x_correlation_id: str
+    allow_worker_migration: bool = False
     agent_depth: int = 0
     parent_correlation_id: str | None = None
     root_correlation_id: str | None = None
@@ -113,6 +118,7 @@ class SampledSession:
             x_correlation_id=self.x_correlation_id,
             turn_index=0,
             num_turns=max_turns or len(self.metadata.turns),
+            allow_worker_migration=self.allow_worker_migration,
             agent_depth=self.agent_depth,
             parent_correlation_id=self.parent_correlation_id,
             root_correlation_id=self.root_correlation_id,
@@ -144,6 +150,7 @@ class SampledSession:
             x_correlation_id=self.x_correlation_id,
             turn_index=turn_index,
             num_turns=len(self.metadata.turns),
+            allow_worker_migration=self.allow_worker_migration,
             agent_depth=self.agent_depth,
             parent_correlation_id=self.parent_correlation_id,
             root_correlation_id=self.root_correlation_id,
@@ -240,6 +247,7 @@ class ConversationSource:
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=correlation_id,
+            allow_worker_migration=self._can_migrate_worker(conversation_id),
             cache_bust_marker=self._marker_for_session(
                 conversation_id, correlation_id, retain=x_correlation_id is not None
             ),
@@ -285,6 +293,7 @@ class ConversationSource:
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=correlation_id,
+            allow_worker_migration=self._can_migrate_worker(conversation_id),
             cache_bust_marker=self._marker_for_session(
                 conversation_id, correlation_id, retain=x_correlation_id is not None
             ),
@@ -294,6 +303,19 @@ class ConversationSource:
     def marker_for_correlation_id(self, correlation_id: str) -> str | None:
         """Return the marker minted for a live ordinary session, if any."""
         return self._cache_bust_markers.get(correlation_id)
+
+    def _can_migrate_worker(self, conversation_id: str) -> bool:
+        """Whether dataset-authored responses can reconstruct this session."""
+        metadata = self.get_metadata(conversation_id)
+        context_mode = (
+            metadata.context_mode
+            or self._dataset_metadata.default_context_mode
+            or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+        )
+        return context_mode in {
+            ConversationContextMode.DELTAS_WITH_RESPONSES,
+            ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+        }
 
     def start_branch_child(
         self,

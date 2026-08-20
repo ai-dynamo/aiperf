@@ -9,6 +9,7 @@ evaluate rather than walking a pre-enumerated variation list.
 """
 
 from aiperf.orchestrator.search_planner.base import SearchIteration, SearchPlanner
+from aiperf.orchestrator.search_planner.factory import build_search_planner
 from aiperf.orchestrator.search_planner.monotonic import MonotonicSLASearchPlanner
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "SearchIteration",
     "SearchPlanner",
     "SmoothIsotonicSLAPlanner",
+    "build_search_planner",
     "evaluate_tiers_on_grid",
 ]
 

@@ -180,6 +180,30 @@ class TestRawRecordWriterProcessorProcessRecord:
             assert record.metadata.conversation_id == f"conv-{i}"
             assert record.metadata.x_request_id == f"req-{i}"
 
+    @pytest.mark.asyncio
+    async def test_finalize_artifact_closes_file_before_aggregation(
+        self,
+        cfg_raw: CLIConfig,
+        run_raw,
+        sample_parsed_record: ParsedResponseRecord,
+    ):
+        """Artifact finalization releases the staging file for Windows aggregation."""
+        async with raw_record_processor("processor-1", run_raw) as processor:
+            await processor.observe(
+                RecordObserverContext(
+                    record=sample_parsed_record,
+                    metadata=create_metric_metadata(),
+                    produced={},
+                )
+            )
+
+            await processor.finalize_artifact()
+
+            assert processor._file_handle is None
+            await RawRecordAggregator(create_exporter_config(cfg_raw)).export()
+
+        assert run_raw.cfg.artifacts.profile_export_raw_jsonl_file.exists()
+
 
 class TestRawRecordWriterProcessorFileFormat:
     """Test RawRecordWriterProcessor file format."""

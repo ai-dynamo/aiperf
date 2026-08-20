@@ -74,14 +74,15 @@ class TestSeamlessNotOnFirstPhase:
                 phases=[
                     {
                         "name": "warmup",
+                        "kind": "warmup",
                         "type": "concurrency",
                         "concurrency": 4,
                         "requests": 50,
                         "seamless": False,
-                        "exclude_from_results": True,
                     },
                     {
                         "name": "profiling",
+                        "kind": "profiling",
                         "type": "concurrency",
                         "concurrency": 8,
                         "requests": 100,
@@ -120,13 +121,14 @@ class TestSeamlessNotOnFirstPhase:
                 phases=[
                     {
                         "name": "warmup",
+                        "kind": "warmup",
                         "type": "concurrency",
                         "concurrency": 4,
                         "requests": 50,
-                        "exclude_from_results": True,
                     },
                     {
                         "name": "profiling",
+                        "kind": "profiling",
                         "type": "concurrency",
                         "concurrency": 8,
                         "requests": 100,
