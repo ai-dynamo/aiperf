@@ -34,7 +34,9 @@ class TestWorkersEndpoint:
     def test_workers_empty(self, workers_client: TestClient) -> None:
         response = workers_client.get("/api/workers")
         assert response.status_code == 200
-        assert response.json() == {"worker_groups": {}}
+        # Both views are always emitted: "workers" is the stable flat contract,
+        # "worker_groups" adds the Kubernetes group topology.
+        assert response.json() == {"workers": {}, "worker_groups": {}}
 
     @pytest.mark.parametrize(
         "statuses,expected_active",

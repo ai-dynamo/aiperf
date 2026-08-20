@@ -28,4 +28,7 @@ class WorkersRouter(WorkerTrackerMixin, BaseRouter):
 @workers_router.get("/api/workers", response_model=WorkersResponse, tags=["API"])
 async def get_workers(component: WorkersDep) -> WorkersResponse:
     """Get worker-group status with full per-group stats and per-child rollup."""
-    return WorkersResponse(worker_groups=component._worker_tracker.worker_groups)
+    return WorkersResponse(
+        workers=component._worker_tracker.workers,
+        worker_groups=component._worker_tracker.worker_groups,
+    )

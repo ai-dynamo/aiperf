@@ -14,7 +14,7 @@ from pydantic import Field
 
 from aiperf.common.enums import CaseInsensitiveStrEnum, SystemState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
-from aiperf.common.models import AIPerfBaseModel, WorkerGroupStats
+from aiperf.common.models import AIPerfBaseModel, WorkerGroupStats, WorkerStats
 from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.controller.system_controller_models import AggregateWorkerStatus
 
@@ -54,8 +54,20 @@ class ProgressResponse(AIPerfBaseModel):
 
 
 class WorkersResponse(AIPerfBaseModel):
-    """Per-worker-group stats payload for /api/workers."""
+    """Per-worker-group stats payload for /api/workers.
 
+    Both views are always populated. ``workers`` is the flat per-worker map
+    this endpoint has always returned; ``worker_groups`` adds the Kubernetes
+    group topology on top. Locally there is one synthetic group, so the two
+    carry the same workers.
+    """
+
+    workers: dict[str, WorkerStats] = Field(
+        description=(
+            "Per-worker stats keyed by worker_id, flattened across all groups. "
+            "Stable contract; prefer worker_groups when group topology matters."
+        )
+    )
     worker_groups: dict[str, WorkerGroupStats] = Field(
         description="Per-worker-group aggregated stats keyed by group_id."
     )
