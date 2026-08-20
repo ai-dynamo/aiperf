@@ -25,7 +25,9 @@ commands. They lower a selected stock built-in graph input exactly once and
 inspect retained resolved Graph-IR without Python, an endpoint, a server, or
 graph execution. The filesystem-free typed inspection seam is
 `rust/runtime/src/graph/inspect.rs`; CLI parsing, reports, rendering, and output
-handling are in `rust/cli/src/graph/`.
+handling are in `rust/cli/src/graph/`. Validation rejects combined static/channel
+readiness deadlocks, while explain and visualize expose all retained static
+timing gates and distinguish scheduler anchors from first-token firing gates.
 
 Source-of-truth locations:
 

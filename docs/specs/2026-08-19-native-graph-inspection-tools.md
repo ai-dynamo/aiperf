@@ -322,10 +322,12 @@ Validation visits every profiling plan and every present warmup plan.
 
 ### Detailed issue API
 
-Keep the existing `validate(&GraphRecord) -> Vec<ValidationError>` compatibility
-API. `graph::inspect::validate_detailed` exposes the detailed typed API, while
-the compatibility API and detailed API both derive from the shared validation
-findings. The detailed issue shape is:
+The existing `validate(&GraphRecord) -> Vec<ValidationError>` tuple-error API
+remains source-compatible. Typed decode and anchored-fan-in classification live
+beside those public compatibility types, rather than changing their public
+layout. `graph::inspect::validate_detailed` exposes the detailed typed API; both
+compatibility and detailed APIs derive from shared validation findings. The
+detailed issue shape is:
 
 ```rust
 pub struct GraphInspectionIssue {
@@ -347,6 +349,7 @@ Initial stable codes are:
 - `channel-read-undeclared`;
 - `node-unreachable`;
 - `node-never-fireable`;
+- `static-channel-readiness-deadlock`;
 - `mixed-anchor-fan-in`;
 - `multi-start-anchor-fan-in`;
 - `start-anchor-non-completion`;
@@ -360,6 +363,10 @@ Initial stable codes are:
 
 Codes are a compatibility contract. Messages can improve without requiring
 machine consumers to parse prose.
+
+`static-channel-readiness-deadlock` is emitted only when the graph is otherwise
+structurally valid, but the scheduler's static triggers and the declared channel
+gates cannot admit another node.
 
 ### Human output
 
@@ -438,7 +445,9 @@ handler write an unstructured error (`rust/cli/src/main.rs:47-53`).
      streaming, model override, and maximum tokens where the Graph-IR carries
      them;
    - channels: name, type, reducer;
-   - edges: source, target, anchor, and nonzero timing fields;
+   - edges: source, target, `schedule_anchor`, `completion_delay_us`,
+     `dispatch_delay_us`, `first_token_delay_us`, and edge
+     `min_start_delay_us`; nodes also expose `min_start_delay_us`;
    - validation issues scoped to that plan;
    - illustrative readiness waves when available.
 
@@ -458,10 +467,10 @@ For a structurally valid static graph, the analyzer:
 
 1. starts with `Scheduler::entry_nodes`;
 2. tracks completed producer counts per channel;
-3. admits a successor only after its incoming-edge and channel-count gates can
-   be satisfied;
-4. treats `delay_after_predecessor_start_us` successors as dispatch-anchored,
-   not completion-anchored;
+3. treats static scheduler edges as OR triggers: any START, predecessor
+   completion, or predecessor dispatch trigger schedules the successor;
+4. applies each node's channel gates as an AND condition in the resulting
+   scheduler-and-channel fixpoint;
 5. preserves deterministic edge order and deduplicates node IDs;
 6. stops after every node has appeared once, or returns a typed analysis issue.
 
@@ -470,6 +479,12 @@ successors at `rust/runtime/src/graph/scheduler.rs:78-120`. Waves are explanator
 dependency levels, not timestamps, barriers, or a prediction of concurrent
 completion order. For a non-static/custom driver, or an invalid graph, the
 report says why waves are unavailable.
+
+`schedule_anchor=dispatch` only when
+`delay_after_predecessor_start_us` is authored. A first-token-only edge remains
+completion-scheduled and uses its first token as a firing-delay gate after
+scheduling. An edge that authors both dispatch and first-token delays exposes
+both fields; inspection does not collapse them.
 
 ### JSON report
 
@@ -510,7 +525,9 @@ The Mermaid graph is deterministic:
 - START and END use dedicated terminal nodes;
 - LLM and tool nodes use separate static class definitions;
 - edges are ordered by source rank, source ID, target rank, and target ID;
-- edge labels show dispatch/completion/first-token anchor and nonzero delay;
+- edge labels show the scheduler event and every authored timing field,
+  including an authored zero: completion, dispatch, first-token, and edge
+  minimum-start delay;
 - terminal nodes with no explicit END edge receive a dashed explanatory edge to
   END only in the rendering, without mutating `GraphRecord`.
 
