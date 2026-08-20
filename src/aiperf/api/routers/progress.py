@@ -126,6 +126,32 @@ def _current_phase_name(phases: dict[str, CombinedPhaseStats]) -> str | None:
     return max((concrete or phases).items(), key=lambda item: item[1].start_ns or 0)[0]
 
 
+def _is_json_patch_test_failure(exc: Any) -> bool:
+    """Tell a rejected ``test`` op apart from a rejected payload.
+
+    Both arrive as 422. Swallowing the status code wholesale would hide a CRD
+    structural-schema violation -- a new ``status`` key of the wrong type, say
+    -- as a lost race, and status updates would stop silently on every CR that
+    has a phase. The apiserver's wording for a failed test op has changed
+    across evanphx/json-patch versions, hence several markers.
+    """
+    if exc.status not in (409, 422):
+        return False
+    body = exc.body
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="replace")
+    haystack = f"{body} {exc.reason}".lower()
+    return any(
+        marker in haystack
+        for marker in (
+            "test operation does not apply",
+            "testing value",
+            "jsonpatch test",
+            "test failed",
+        )
+    )
+
+
 def _merge_patch_value(existing: Any, patch: Any) -> Any:
     """Resolve one status key against its live value using RFC 7386 semantics.
 
@@ -134,9 +160,9 @@ def _merge_patch_value(existing: Any, patch: Any) -> Any:
     Pre-resolving each value against the CR read moments earlier keeps the
     fenced write equivalent to the merge-patch it stands in for.
     """
-    if not isinstance(patch, dict) or not isinstance(existing, dict):
+    if not isinstance(patch, dict):
         return patch
-    merged = dict(existing)
+    merged = dict(existing) if isinstance(existing, dict) else {}
     for key, value in patch.items():
         if value is None:
             merged.pop(key, None)
@@ -630,6 +656,16 @@ async def _write_status_patch(
     and the apiserver -- not wall-clock order -- settles the race. A CR with no
     phase yet has not reached Pending: there is nothing to race against, and a ``test``
     op on an absent path would fail with 422.
+
+    The terminal skip drops the whole payload, not just the racy keys -- most
+    of it (``summary`` above all) would overwrite the completion handler's
+    authoritative final values with live ones. Two dropped keys are worth
+    naming because they are read elsewhere: ``resultsExported`` and
+    ``controllerFailure``. Neither is lost in practice -- a terminal CR has
+    already had its completion or failure adjudicated by the operator, which
+    is what set the terminal phase in the first place -- but a caller that
+    starts relying on a *post*-terminal push to deliver either one will not
+    get it.
     """
     from kubernetes_asyncio.client.exceptions import ApiException
 
@@ -680,7 +716,7 @@ async def _write_status_patch(
             _content_type="application/json-patch+json",
         )
     except ApiException as exc:
-        if exc.status in (409, 422):
+        if _is_json_patch_test_failure(exc):
             logger.debug(
                 "Status push for %s/%s lost the race with a phase transition (%s)",
                 namespace,
@@ -688,6 +724,14 @@ async def _write_status_patch(
                 exc.status,
             )
             return
+        logger.warning(
+            "Status push for %s/%s was rejected (%s: %s): %s",
+            namespace,
+            job_id,
+            exc.status,
+            exc.reason,
+            exc.body,
+        )
         raise
 
 

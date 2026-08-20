@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import SystemState
 from aiperf.common.hooks import AIPerfHook, HookAttrs
@@ -604,16 +605,50 @@ async def test_push_aiperfjob_status_merges_existing_status_into_json_patch(
     assert "steady_state" in phases
 
 
-@pytest.mark.asyncio
-async def test_push_aiperfjob_status_swallows_lost_fence_race(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A rejected test op is the success path: the CR terminalized mid-push."""
+def _api_exception(status: int, reason: str, body: str = ""):
+    """Build an ApiException carrying a response body, as the apiserver would."""
     from kubernetes_asyncio.client.exceptions import ApiException
 
+    exc = ApiException(status=status, reason=reason)
+    exc.body = body
+    return exc
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status, reason, body",
+    [
+        param(
+            409,
+            "Conflict",
+            '{"message": "jsonpatch test operation does not apply"}',
+            id="409-test-op-does-not-apply",
+        ),
+        param(
+            422,
+            "Unprocessable Entity",
+            '{"message": "testing value /status/phase failed"}',
+            id="422-testing-value-failed",
+        ),
+        param(
+            422,
+            "Unprocessable Entity",
+            b'{"message": "jsonpatch test operation does not apply"}',
+            id="422-bytes-body",
+        ),
+    ],
+)  # fmt: skip
+async def test_push_aiperfjob_status_swallows_lost_fence_race(
+    monkeypatch: pytest.MonkeyPatch, status: int, reason: str, body: str | bytes
+) -> None:
+    """A rejected test op is the success path: the CR terminalized mid-push.
+
+    The apiserver's wording has changed across evanphx/json-patch versions, so
+    every form it has used must be recognized.
+    """
     custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
     custom.patch_namespaced_custom_object_status = AsyncMock(
-        side_effect=ApiException(status=409, reason="Conflict")
+        side_effect=_api_exception(status, reason, body)  # type: ignore[arg-type]
     )
 
     await _push()
@@ -622,19 +657,93 @@ async def test_push_aiperfjob_status_swallows_lost_fence_race(
 
 
 @pytest.mark.asyncio
-async def test_push_aiperfjob_status_reraises_unrelated_api_errors(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "status, reason, body",
+    [
+        param(
+            422,
+            "Unprocessable Entity",
+            '{"message": "status.workers: Invalid value: \"string\": '
+            'status.workers in body must be of type integer"}',
+            id="422-crd-schema-violation",
+        ),
+        param(409, "Conflict", '{"message": "the object has been modified"}', id="409-plain-conflict"),
+        param(500, "Internal Server Error", "", id="500-server-error"),
+    ],
+)  # fmt: skip
+async def test_push_aiperfjob_status_reraises_non_fence_rejections(
+    monkeypatch: pytest.MonkeyPatch, status: int, reason: str, body: str
 ) -> None:
-    """Only the fence's own rejection codes are swallowed."""
+    """A rejected payload must never masquerade as a lost race.
+
+    422 also covers CRD structural-schema violations. Swallowing those at debug
+    would stop status updates silently on every CR that has a phase -- the exact
+    failure class the fence exists to prevent -- the moment anyone adds a
+    status key of the wrong type.
+    """
     from kubernetes_asyncio.client.exceptions import ApiException
 
     custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
     custom.patch_namespaced_custom_object_status = AsyncMock(
-        side_effect=ApiException(status=500, reason="Internal Server Error")
+        side_effect=_api_exception(status, reason, body)
     )
 
     with pytest.raises(ApiException):
         await _push()
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_prefers_concrete_phase_over_legacy_aggregate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later-started legacy aggregate entry must not win over a named phase.
+
+    ``JobProgress._concrete_phases`` filters to entries with an explicit
+    identity before comparing start times; a bare max over all phases would
+    name the aggregate here.
+    """
+    from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
+
+    custom = _install_fake_k8s(monkeypatch, _cr({"phase": "Running"}))
+
+    await _push(
+        phases={
+            "steady_state": CombinedPhaseStats(
+                phase="profiling",
+                phase_name="steady_state",
+                phase_kind="profiling",
+                total_expected_requests=100,
+                requests_sent=30,
+                requests_completed=25,
+                start_ns=5_000,
+                last_update_ns=6_000,
+            ),
+            # Legacy aggregate: key equals str(phase) and no phase_name.
+            "profiling": CombinedPhaseStats(
+                phase="profiling",
+                total_expected_requests=100,
+                requests_sent=30,
+                requests_completed=25,
+                start_ns=99_000,
+                last_update_ns=99_500,
+            ),
+        }
+    )
+
+    status = _status_body(custom)
+    assert status["currentPhase"] == "steady_state"
+    assert status["currentPhase"] in status["phases"]
+
+
+def test_merge_patch_value_strips_nulls_when_target_is_not_an_object() -> None:
+    """RFC 7386: a dict patch against a non-object target starts from {}.
+
+    Returning the patch verbatim would leak null members into the CR status.
+    """
+    from aiperf.api.routers.progress import _merge_patch_value
+
+    assert _merge_patch_value(None, {"a": 1, "b": None}) == {"a": 1}
+    assert _merge_patch_value("scalar", {"a": {"b": None, "c": 2}}) == {"a": {"c": 2}}
 
 
 @pytest.mark.asyncio

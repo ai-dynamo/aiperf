@@ -551,12 +551,19 @@ The status push is fenced against terminal transitions. kopf clears
 that could otherwise resurrect both keys. When the CR already carries a
 `status.phase`, the push therefore goes out as `application/json-patch+json`
 with a leading `test` op on `/status/phase`, so the apiserver rather than
-wall-clock ordering settles the race; a 409 or 422 is logged at debug and
-dropped. A push observing an already-terminal phase is skipped outright. Only a
+wall-clock ordering settles the race. A rejection whose body identifies the
+failed `test` op is logged at debug and dropped — that is the fence working;
+any other rejection is logged at warning with the response body and re-raised,
+so a CRD schema violation in the payload cannot masquerade as a lost race and
+silently stop status updates. A push observing an already-terminal phase is
+skipped outright, payload and all, rather than being trimmed to the non-racy
+keys, so it can never overwrite the completion handler's final `summary`. Only a
 CR with no `status.phase` at all still uses the plain merge patch — there is no
 terminal value to race against yet, and a `test` op on an absent path would
-fail with 422. The operator's recurring watchdog inspects only this cached parent body
-while the heartbeat is fresh; broad JobSet, Pod, sidecar, and results recovery
+fail with 422.
+
+The operator's recurring watchdog inspects only this cached parent body while
+the heartbeat is fresh; broad JobSet, Pod, sidecar, and results recovery
 runs only after heartbeat expiry or when an explicit `timeoutSeconds` deadline
 is due. A controller service error is pushed as `status.controllerFailure`
 before that controller exits; the operator fences and terminalizes the exact
