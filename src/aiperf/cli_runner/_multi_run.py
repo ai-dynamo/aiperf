@@ -25,9 +25,7 @@ from aiperf.cli_runner._strategy import (
     validate_convergence_config,
 )
 from aiperf.orchestrator.models import _variation_key
-from aiperf.orchestrator.search_planner import (
-    build_search_planner as _build_search_planner,
-)
+from aiperf.orchestrator.search_planner import build_search_planner
 from aiperf.plugin.enums import UIType
 
 if TYPE_CHECKING:
@@ -146,7 +144,7 @@ def _execute_multi_benchmark(
     )
     orchestrator = MultiRunOrchestrator(base_dir=base_dir, cell_callback=table_logger)
     executor = LocalSubprocessExecutor(base_dir=base_dir)
-    search_planner = _build_search_planner(plan)
+    search_planner = build_search_planner(plan)
     _log_search_planner_active(plan, search_planner, logger)
 
     try:

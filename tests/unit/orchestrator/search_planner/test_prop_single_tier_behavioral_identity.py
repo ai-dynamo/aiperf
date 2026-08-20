@@ -151,15 +151,15 @@ class TestProperty13SingleTierBehavioralIdentity:
         """Single-tier configs (0 or 1 tier entries) never activate MultiTierPlanner.
 
         For any configuration with no --search-sla-tier grouping or a single
-        tier entry, _build_search_planner SHALL return a single-tier planner
+        tier entry, build_search_planner SHALL return a single-tier planner
         instance and never a MultiTierPlanner.
 
         **Validates: Requirements 7.1, 1.2**
         """
-        from aiperf.cli_runner._strategy import _build_search_planner
+        from aiperf.orchestrator.search_planner import build_search_planner
 
         plan = _make_plan(cfg)
-        planner = _build_search_planner(plan)
+        planner = build_search_planner(plan)
 
         assert planner is not None
         assert not isinstance(planner, MultiTierPlanner)
@@ -177,7 +177,7 @@ class TestProperty13SingleTierBehavioralIdentity:
 
         **Validates: Requirements 7.1, 1.2**
         """
-        from aiperf.cli_runner._strategy import _build_search_planner
+        from aiperf.orchestrator.search_planner import build_search_planner
         from aiperf.orchestrator.search_planner.monotonic import (
             MonotonicSLASearchPlanner,
         )
@@ -186,7 +186,7 @@ class TestProperty13SingleTierBehavioralIdentity:
         )
 
         plan = _make_plan(cfg)
-        planner = _build_search_planner(plan)
+        planner = build_search_planner(plan)
 
         if cfg["planner_type"] == SearchPlannerType.SMOOTH_ISOTONIC:
             assert isinstance(planner, SmoothIsotonicSLAPlanner)
@@ -207,12 +207,12 @@ class TestProperty13SingleTierBehavioralIdentity:
 
         **Validates: Requirements 7.1, 1.2**
         """
-        from aiperf.cli_runner._strategy import _build_search_planner
+        from aiperf.orchestrator.search_planner import build_search_planner
 
         plan1 = _make_plan(cfg)
         plan2 = _make_plan(cfg)
-        planner1 = _build_search_planner(plan1)
-        planner2 = _build_search_planner(plan2)
+        planner1 = build_search_planner(plan1)
+        planner2 = build_search_planner(plan2)
 
         result1 = planner1.ask()
         result2 = planner2.ask()
@@ -240,10 +240,10 @@ class TestProperty13SingleTierBehavioralIdentity:
 
         **Validates: Requirements 7.1, 1.2**
         """
-        from aiperf.cli_runner._strategy import _build_search_planner
+        from aiperf.orchestrator.search_planner import build_search_planner
 
         plan = _make_plan(cfg)
-        planner = _build_search_planner(plan)
+        planner = build_search_planner(plan)
 
         result = planner.ask()
         assert result is not None

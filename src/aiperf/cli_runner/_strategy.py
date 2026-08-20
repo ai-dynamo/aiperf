@@ -1,15 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Strategy + convergence + search-planner construction for cli_runner.
+"""Strategy + convergence construction for cli_runner.
 
 The functions here translate a fully-validated :class:`BenchmarkPlan` into
-the three runtime objects that drive multi-run execution:
+the runtime objects that drive multi-run execution:
 
 * :func:`build_strategy` - per-cell execution strategy (fixed-trials or
   adaptive convergence) used by ``MultiRunOrchestrator`` to decide when a
   variation's trial loop has run enough trials.
 * :func:`_build_convergence_criterion` - the criterion the adaptive
   strategy consults each trial (plugin-dispatched).
+
+The outer-loop adaptive search planner is built by
+:func:`aiperf.orchestrator.search_planner.build_search_planner`, which owns
+that dispatch outright; nothing here wraps or re-exports it.
+
 :func:`validate_convergence_config` rejects plan configurations the
 multi-run path can't honor before any setup work begins.
 """
@@ -18,13 +23,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aiperf.orchestrator.search_planner import build_search_planner
-
 if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.config import BenchmarkPlan
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
-    from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.orchestrator.strategies import ExecutionStrategy
 
 
@@ -112,8 +114,3 @@ def _build_convergence_criterion(plan: BenchmarkPlan) -> ConvergenceCriterion:
         PluginType.CONVERGENCE_CRITERION, str(convergence.mode)
     )
     return criterion_cls.from_plan(plan)
-
-
-def _build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
-    """Compatibility wrapper for the planner factory's former location."""
-    return build_search_planner(plan)
