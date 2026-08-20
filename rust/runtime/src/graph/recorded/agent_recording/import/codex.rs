@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     ImportedAgentError, ImportedAgentSession, ImportedAgentSource, ImportedAgentSourceFile,
-    ImportedModelCall, RawJsonMessage,
+    ImportedModelCall, ImportedRequestHistory, RawJsonMessage,
 };
 
 /// Parse one exact-discovery Codex source file into the provider-neutral IR.
@@ -81,7 +81,7 @@ struct CodexState<'a> {
     system_prompt: Option<RawJsonMessage>,
     cwd_present: bool,
     git_branch_present: bool,
-    history: Vec<RawJsonMessage>,
+    history: ImportedRequestHistory,
     calls: Vec<ImportedModelCall>,
     pending: Option<PendingBundle>,
     seen_call_ids: HashSet<String>,
@@ -103,7 +103,7 @@ impl<'a> CodexState<'a> {
             system_prompt: None,
             cwd_present: false,
             git_branch_present: false,
-            history: Vec::new(),
+            history: ImportedRequestHistory::default(),
             calls: Vec::new(),
             pending: None,
             seen_call_ids: HashSet::new(),
@@ -242,8 +242,7 @@ impl<'a> CodexState<'a> {
         let message = raw_message(role, text.unwrap_or_default(), &self.file.path, line)?;
         if role == "assistant" {
             let delay = self.next_model_delay_after_previous_us.take();
-            self.calls
-                .push(self.model_call(format!("codex-line-{line}"), delay));
+            self.push_model_call(format!("codex-line-{line}"), delay);
         }
         self.history.push(message);
         Ok(())
@@ -293,8 +292,7 @@ impl<'a> CodexState<'a> {
         let timestamp = parse_timestamp(record, &self.file.path, line, "function_call")?;
         if self.pending.is_none() {
             let delay = self.next_model_delay_after_previous_us.take();
-            self.calls
-                .push(self.model_call(format!("codex-line-{line}"), delay));
+            self.push_model_call(format!("codex-line-{line}"), delay);
         }
         let bundle = self.pending.get_or_insert_with(|| PendingBundle {
             first_line: line,
@@ -423,19 +421,16 @@ impl<'a> CodexState<'a> {
         Ok(())
     }
 
-    fn model_call(
-        &self,
-        source_id: String,
-        delay_after_previous_us: Option<f64>,
-    ) -> ImportedModelCall {
-        ImportedModelCall {
+    fn push_model_call(&mut self, source_id: String, delay_after_previous_us: Option<f64>) {
+        self.history.capture_call();
+        self.calls.push(ImportedModelCall {
             source_id,
-            request_messages: self.history.clone(),
+            request_messages: Vec::new(),
             model: self.model.clone(),
             delay_after_previous_us,
             tool_schema_available: false,
             output_tokens: None,
-        }
+        });
     }
 
     fn finish(mut self, source_digest: String) -> Result<ImportedAgentSession, ImportedAgentError> {
@@ -456,6 +451,7 @@ impl<'a> CodexState<'a> {
                 "no inferred model calls",
             ));
         }
+        self.history.truncate_after_last_call();
         Ok(ImportedAgentSession {
             session_id,
             source: ImportedAgentSource::Codex,
@@ -466,7 +462,7 @@ impl<'a> CodexState<'a> {
             cwd_present: self.cwd_present,
             git_branch_present: self.git_branch_present,
             parent: None,
-            request_history: Default::default(),
+            request_history: self.history,
             calls: self.calls,
             observed_tool_count: self.observed_tool_count,
             completed_tool_count: self.completed_tool_count,

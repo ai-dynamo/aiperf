@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use aiperf_runtime::graph::recorded::agent_recording::{
-    ImportedAgentSourceFile, ImportedSessionFamily, parse_codex_session,
+    ImportedAgentSession, ImportedAgentSourceFile, ImportedSessionFamily, parse_codex_session,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -26,17 +26,19 @@ fn codex_file(path: PathBuf) -> ImportedAgentSourceFile {
     }
 }
 
-fn roles(call: &aiperf_runtime::graph::recorded::agent_recording::ImportedModelCall) -> Vec<&str> {
-    call.request_messages
+fn roles(session: &ImportedAgentSession, call_index: usize) -> Vec<&str> {
+    session
+        .request_messages(call_index)
+        .expect("Codex request history")
         .iter()
         .map(|message| message.role.as_str())
         .collect()
 }
 
-fn messages(
-    call: &aiperf_runtime::graph::recorded::agent_recording::ImportedModelCall,
-) -> Vec<Value> {
-    call.request_messages
+fn messages(session: &ImportedAgentSession, call_index: usize) -> Vec<Value> {
+    session
+        .request_messages(call_index)
+        .expect("Codex request history")
         .iter()
         .map(|message| serde_json::from_slice(&message.wire).expect("canonical JSON wire"))
         .collect()
@@ -55,19 +57,22 @@ fn codex_linear_history_is_canonical_and_omits_reasoning() {
     assert_eq!(session.session_id, "019d28a5-b4a1-7b33-ba0b-c1a7637337d9");
     assert!(session.cwd_present && session.git_branch_present);
     assert_eq!(session.calls.len(), 2);
-    assert_eq!(roles(&session.calls[0]), ["system", "user"]);
-    assert_eq!(
-        roles(&session.calls[1]),
-        ["system", "user", "assistant", "user"]
-    );
-    assert_eq!(session.omitted_reasoning_count, 1);
     assert!(
-        !session
+        session
             .calls
             .iter()
-            .flat_map(|call| call.request_messages.iter())
-            .any(|message| String::from_utf8_lossy(&message.wire).contains("think briefly"))
+            .all(|call| call.request_messages.is_empty())
     );
+    assert_eq!(roles(&session, 0), ["system", "user"]);
+    assert_eq!(roles(&session, 1), ["system", "user", "assistant", "user"]);
+    assert_eq!(session.omitted_reasoning_count, 1);
+    assert!((0..session.calls.len()).all(|call_index| {
+        session
+            .request_messages(call_index)
+            .expect("Codex request history")
+            .iter()
+            .all(|message| !String::from_utf8_lossy(&message.wire).contains("think briefly"))
+    }));
     assert_eq!(session.calls[0].source_id, "codex-line-5");
     assert_eq!(session.calls[1].source_id, "codex-line-9");
     assert!(session.calls.iter().all(|call| !call.tool_schema_available));
@@ -86,18 +91,15 @@ fn codex_tool_bundle_is_causal_and_preserves_result_order() {
     assert_eq!(session.calls.len(), 3);
     assert_eq!(session.observed_tool_count, 1);
     assert_eq!(session.calls[1].delay_after_previous_us, Some(250_000.0));
-    assert_eq!(
-        roles(&session.calls[1]),
-        ["system", "user", "assistant", "tool"]
-    );
+    assert_eq!(roles(&session, 1), ["system", "user", "assistant", "tool"]);
     assert!(session.tool_results_complete);
-    let history = messages(&session.calls[2]);
+    let history = messages(&session, 2);
     assert_eq!(history[2]["tool_calls"][0]["function"]["name"], "shell");
     assert_eq!(history[2]["tool_calls"][0]["id"], "call_001");
     assert_eq!(history[3]["tool_call_id"], "call_001");
     assert_eq!(session.calls[2].source_id, "codex-line-7");
     assert_eq!(
-        roles(&session.calls[2]),
+        roles(&session, 2),
         ["system", "user", "assistant", "tool", "assistant", "user"]
     );
 }
@@ -117,7 +119,7 @@ fn codex_uses_session_model_then_turn_context_fallback_and_joins_blocks() {
     );
     let session = parse_codex_session(&file).expect("session model wins");
     assert_eq!(session.model.as_deref(), Some("session-model"));
-    let history = messages(&session.calls[0]);
+    let history = messages(&session, 0);
     assert_eq!(history[1]["role"], "developer");
     assert_eq!(history[1]["content"], "first\nsecond");
 
@@ -233,7 +235,7 @@ fn codex_retains_eof_bundle_without_inventing_result_or_delay() {
     );
     let session = parse_codex_session(&file).expect("unfinished bundle");
     assert_eq!(session.calls.len(), 1);
-    assert_eq!(roles(&session.calls[0]), Vec::<&str>::new());
+    assert_eq!(roles(&session, 0), Vec::<&str>::new());
     assert_eq!(session.calls[0].delay_after_previous_us, None);
     assert!(!session.tool_results_complete);
 }
@@ -249,12 +251,12 @@ fn codex_retains_new_assistant_text_after_results_for_the_next_bundle() {
             .join("adversarial/codex/assistant_after_results.jsonl"),
     ))
     .expect("two tool bundles");
-    let second_bundle = session
+    let second_bundle_index = session
         .calls
         .iter()
-        .find(|call| call.source_id == "codex-line-7")
+        .position(|call| call.source_id == "codex-line-7")
         .expect("second bundle call");
-    let history = messages(second_bundle);
+    let history = messages(&session, second_bundle_index);
     assert!(history.iter().any(|message| {
         message["role"] == "assistant" && message["content"] == "first summary"
     }));
@@ -277,7 +279,7 @@ fn codex_preserves_reverse_order_results_and_handles_missing_tool_timestamps() {
     );
     let session = parse_codex_session(&file).expect("parallel tools");
     assert_eq!(session.calls[1].delay_after_previous_us, None);
-    let history = messages(&session.calls[1]);
+    let history = messages(&session, 1);
     assert_eq!(history[1]["tool_call_id"], "call-two");
     assert_eq!(history[2]["tool_call_id"], "call-one");
 }
@@ -386,7 +388,7 @@ fn codex_accepts_empty_tool_results_and_preserves_multi_block_text_order() {
         ),
     );
     let session = parse_codex_session(&file).expect("empty output is valid");
-    let history = messages(&session.calls[2]);
+    let history = messages(&session, 2);
     assert_eq!(history[0]["content"], "one\ntwo");
     assert_eq!(history[1]["content"], "three\nfour");
     assert_eq!(history[3]["content"], "");
