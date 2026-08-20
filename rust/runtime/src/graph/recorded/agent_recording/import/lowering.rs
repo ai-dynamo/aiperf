@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::dataset::SegmentPool;
+use crate::dataset::{SegmentPool, TextTokenizer};
 use crate::graph::driver::{ReplayTraceMetadata, TraceDriverSpec};
 use crate::graph::input::{GraphInputBundle, GraphInputMetadata, GraphInputWarning};
 use crate::graph::model::{
@@ -24,6 +24,7 @@ use crate::graph::recorded::agent_recording::{ReplayRequestProfileResolver, Repl
 pub fn lower_imported_agent_sessions(
     sessions: &[ImportedAgentSession],
     resolver: &dyn ReplayRequestProfileResolver,
+    tokenizer: &dyn TextTokenizer,
     pool: &mut SegmentPool,
 ) -> Result<GraphInputBundle, ImportedAgentError> {
     let mut ordered = sessions.iter().collect::<Vec<_>>();
@@ -39,6 +40,7 @@ pub fn lower_imported_agent_sessions(
             session,
             ordinal,
             resolver,
+            tokenizer,
             pool,
             &mut warnings,
         )?);
@@ -62,6 +64,7 @@ fn lower_session(
     session: &ImportedAgentSession,
     ordinal: usize,
     resolver: &dyn ReplayRequestProfileResolver,
+    tokenizer: &dyn TextTokenizer,
     pool: &mut SegmentPool,
     warnings: &mut BTreeSet<GraphInputWarning>,
 ) -> Result<GraphTraceProgram, ImportedAgentError> {
@@ -107,6 +110,7 @@ fn lower_session(
         let node_id = format!("llm_{index}");
         let mut parent = None;
         let mut items = Vec::with_capacity(call.request_messages.len());
+        let mut input_tokens = 0_u64;
         for message in &call.request_messages {
             if message.role.is_empty() {
                 return Err(session_error(
@@ -123,12 +127,25 @@ fn lower_session(
                     "imported request message role disagrees with serialized wire",
                 ));
             }
+            let message_text = std::str::from_utf8(&message.wire).map_err(|_| {
+                session_error(session, "imported request message is not valid UTF-8")
+            })?;
+            let message_tokens = tokenizer.encode(message_text).map_err(|_| {
+                session_error(session, "could not tokenize imported request message")
+            })?;
+            input_tokens = input_tokens
+                .checked_add(u64::try_from(message_tokens.len()).map_err(|_| {
+                    session_error(session, "imported request message token count exceeds u64")
+                })?)
+                .ok_or_else(|| {
+                    session_error(session, "imported request input token count exceeds u64")
+                })?;
             let handle = pool
                 .intern_message(
                     parent,
                     message.role.as_str(),
                     message.wire.clone(),
-                    Vec::<u32>::new(),
+                    message_tokens.into_boxed_slice(),
                 )
                 .map_err(|_| session_error(session, "could not intern imported request message"))?;
             parent = Some(handle);
@@ -164,7 +181,7 @@ fn lower_session(
                         .flatten(),
                     additional_body: None,
                 }),
-                metadata: BTreeMap::new(),
+                metadata: BTreeMap::from([("input_tokens".into(), Value::from(input_tokens))]),
             }),
         );
         match previous_node.as_deref() {

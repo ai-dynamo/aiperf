@@ -53,6 +53,10 @@ fn llm_nodes(
         .collect()
 }
 
+fn builtin_tokenizer() -> TiktokenTokenizer {
+    TiktokenTokenizer::builtin()
+}
+
 #[test]
 fn imported_codex_sessions_lower_to_linear_recorded_replay_graphs() {
     let read_set = discover_imported_agent_read_set(
@@ -64,10 +68,11 @@ fn imported_codex_sessions_lower_to_linear_recorded_replay_graphs() {
     .expect("discover Codex fixture");
     let sessions = parse_imported_agent_sessions(&read_set).expect("parse Codex fixture");
     let mut pool = SegmentPool::new();
+    let tokenizer = builtin_tokenizer();
     let resolver = BuiltinReplayRequestProfileResolver::new(true, 123, false, false, false, false)
         .expect("valid resolver");
 
-    let bundle = lower_imported_agent_sessions(&sessions, &resolver, &mut pool)
+    let bundle = lower_imported_agent_sessions(&sessions, &resolver, &tokenizer, &mut pool)
         .expect("lower imported Codex session");
     let program = &bundle.programs[0];
     let replay = program.replay.as_ref().expect("replay metadata");
@@ -105,6 +110,23 @@ fn imported_codex_sessions_lower_to_linear_recorded_replay_graphs() {
     let nodes = llm_nodes(program);
     assert_eq!(nodes.len(), 2);
     for node in &nodes {
+        let input_tokens = node
+            .items
+            .iter()
+            .map(|item| match item {
+                PromptItem::Seg { seg } => bundle
+                    .segments
+                    .get(*seg)
+                    .expect("lowered message segment")
+                    .token_count()
+                    .expect("lowered message has token ids")
+                    as u64,
+                PromptItem::RawMessages { .. }
+                | PromptItem::Text { .. }
+                | PromptItem::Splice { .. } => panic!("imported request has only segment items"),
+            })
+            .sum::<u64>();
+        assert_eq!(node.metadata["input_tokens"], input_tokens);
         let request = node.request.as_ref().expect("request policy");
         assert_eq!(node.max_tokens, Some(123));
         assert!(node.streaming);
@@ -164,8 +186,9 @@ fn imported_tool_delay_applies_only_to_the_next_llm_edge() {
     .expect("discover Codex fixture");
     let sessions = parse_imported_agent_sessions(&read_set).expect("parse Codex fixture");
     let mut pool = SegmentPool::new();
+    let tokenizer = builtin_tokenizer();
     let resolver = BuiltinReplayRequestProfileResolver::default();
-    let bundle = lower_imported_agent_sessions(&sessions, &resolver, &mut pool)
+    let bundle = lower_imported_agent_sessions(&sessions, &resolver, &tokenizer, &mut pool)
         .expect("lower imported Codex session");
     let program = &bundle.programs[0];
 
@@ -231,6 +254,7 @@ fn interrupted_imported_tool_bundle_is_not_counted_as_completed() {
     let bundle = lower_imported_agent_sessions(
         &[session],
         &BuiltinReplayRequestProfileResolver::default(),
+        &builtin_tokenizer(),
         &mut SegmentPool::new(),
     )
     .expect("lower interrupted session");
@@ -284,6 +308,7 @@ fn imported_lowering_rejects_empty_or_mismatched_message_roles() {
             lower_imported_agent_sessions(
                 &[session],
                 &BuiltinReplayRequestProfileResolver::default(),
+                &builtin_tokenizer(),
                 &mut SegmentPool::new(),
             )
             .is_err()
@@ -378,10 +403,12 @@ fn imported_lowering_emits_complete_metadata_without_adapter_warning() {
     .expect("discover Codex");
     let sessions = parse_imported_agent_sessions(&read_set).expect("parse Codex");
     let mut pool = SegmentPool::new();
+    let tokenizer = builtin_tokenizer();
     let bundle = lower_imported_agent_sessions(
         &sessions,
         &BuiltinReplayRequestProfileResolver::new(true, 321, false, true, false, false)
             .expect("resolver"),
+        &tokenizer,
         &mut pool,
     )
     .expect("lower Codex");
@@ -682,9 +709,11 @@ fn imported_claude_subagent_metadata_retains_parent_identity() {
     );
     let sessions = parse_imported_agent_sessions(&read_set).expect("parse Claude fixture");
     let mut pool = SegmentPool::new();
+    let tokenizer = builtin_tokenizer();
     let bundle = lower_imported_agent_sessions(
         &sessions,
         &BuiltinReplayRequestProfileResolver::default(),
+        &tokenizer,
         &mut pool,
     )
     .expect("lower imported Claude sessions");

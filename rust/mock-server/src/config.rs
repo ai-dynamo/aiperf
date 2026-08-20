@@ -491,6 +491,13 @@ pub struct MockServerConfig {
     #[arg(short = 'f', long, env = "MOCK_SERVER_FAST", default_value_t = false)]
     pub fast: bool,
 
+    /// Override generated response length for deterministic integration tests.
+    ///
+    /// The request's authored generation cap remains visible on the wire. This
+    /// only fixes the mock response length after request parsing.
+    #[arg(long, env = "MOCK_SERVER_FIXED_OUTPUT_TOKENS")]
+    pub fixed_output_tokens: Option<usize>,
+
     /// Enables test-only WebSocket routes.
     #[arg(
         long,

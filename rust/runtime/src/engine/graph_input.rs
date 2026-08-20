@@ -516,7 +516,7 @@ impl GraphInputAdapter for RecordedAgentRunnerGraphInputAdapter {
     ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedAgentDatasetInput =
             decode_graph_input(raw).context("decoding direct agent_recording graph input")?;
-        input.prepare(self.format(), context.endpoint_id)
+        input.prepare(self.format(), context.endpoint_id, context.tokenizer)
     }
 }
 
@@ -605,7 +605,12 @@ fn default_agent_recording_sampling() -> String {
 }
 
 impl RecordedAgentDatasetInput {
-    fn prepare(self, expected_format: &str, endpoint_id: &str) -> Result<PreparedRunnerGraphInput> {
+    fn prepare(
+        self,
+        expected_format: &str,
+        endpoint_id: &str,
+        tokenizer: &dyn TextTokenizer,
+    ) -> Result<PreparedRunnerGraphInput> {
         ensure!(
             self.input_type == "file",
             "agent_recording graph input requires type=file"
@@ -704,9 +709,10 @@ impl RecordedAgentDatasetInput {
                 (bundle, Some(corpus))
             }
             ResolvedRecordedAgentGraphSource::Imported { sessions, .. } => {
-                let bundle = lower_imported_agent_sessions(&sessions, &resolver, &mut pool)
-                    .map_err(|error| anyhow!(error.to_string()))
-                    .context("lowering imported recorded-agent session input")?;
+                let bundle =
+                    lower_imported_agent_sessions(&sessions, &resolver, tokenizer, &mut pool)
+                        .map_err(|error| anyhow!(error.to_string()))
+                        .context("lowering imported recorded-agent session input")?;
                 (bundle, None)
             }
         };
@@ -928,7 +934,8 @@ pub fn plan_recorded_agent_cell_assignments(
         cell_count > 0 && cell_id < cell_count,
         "invalid cellular graph assignment"
     );
-    let prepared = input.prepare("agent_recording", endpoint_id)?;
+    let tokenizer = crate::dataset::TiktokenTokenizer::builtin();
+    let prepared = input.prepare("agent_recording", endpoint_id, &tokenizer)?;
     let profiling = phases
         .iter()
         .filter(|phase| !phase.common().exclude_from_results)

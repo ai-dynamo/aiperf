@@ -32,7 +32,9 @@ use crate::models::{
     TGIGenerateRequest, Usage, VllmGenerateRequest,
 };
 use crate::state::{AppState, ContentFetchClient};
-use crate::tokens::{GenRequest, TokenizedText, tokenize_request};
+use crate::tokens::{
+    GenRequest, TokenizedText, tokenize_request, tokenize_request_with_fixed_output_tokens,
+};
 
 pub type AppResult<T> = Result<T, AppError>;
 
@@ -170,7 +172,8 @@ impl RequestCtx {
         start: Instant,
         state: &AppState,
     ) -> Self {
-        let mut tokenized = tokenize_request(req_gen);
+        let mut tokenized =
+            tokenize_request_with_fixed_output_tokens(req_gen, state.config.fixed_output_tokens);
         // Apply the accuracy decision here so every endpoint and streaming mode
         // serializes the same deterministic answer.
         let mut null_object_chunk = false;

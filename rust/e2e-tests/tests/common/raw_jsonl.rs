@@ -19,7 +19,8 @@
 //! # Generated-token accounting
 //!
 //! OSL is the count of *generated-token* chunks — a data chunk whose
-//! `choices[0].delta.content` is present (non-null). It EXCLUDES:
+//! `choices[0].delta.content` or Messages `delta.text` is present (non-null).
+//! It EXCLUDES:
 //!   * the terminal `[DONE]` sentinel,
 //!   * the `stream_options.include_usage` usage chunk (empty `choices`), which
 //!     arrives ~0 ms after the last token, and
@@ -172,10 +173,9 @@ fn data_chunks(record: &Value) -> Vec<(i64, Value)> {
     out
 }
 
-/// True when an SSE `chat.completion.chunk` carries a generated *content* token
-/// (`choices[0].delta.content` present and non-null). This is the exact
-/// predicate that defines OSL — it is false for the usage chunk (empty
-/// `choices`) and for `reasoning_content`-only chunks.
+/// True when a Chat `choices[0].delta.content` or Messages `delta.text` frame
+/// carries a generated token. This defines OSL and excludes usage and
+/// `reasoning_content`-only chunks.
 fn is_content_chunk(obj: &Value) -> bool {
     obj.get("choices")
         .and_then(Value::as_array)
@@ -184,6 +184,10 @@ fn is_content_chunk(obj: &Value) -> bool {
         .and_then(|delta| delta.get("content"))
         .map(|content| !content.is_null())
         .unwrap_or(false)
+        || obj
+            .pointer("/delta/text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty())
 }
 
 /// Extract the tuned-relevant timing + data from a single raw record.
@@ -483,6 +487,10 @@ mod tests {
         })
     }
 
+    fn messages_text_chunk(token: &str) -> serde_json::Value {
+        json!({"type": "content_block_delta", "delta": {"text": token}})
+    }
+
     fn usage_chunk(model: &str) -> serde_json::Value {
         json!({
             "id": "chatcmpl-x",
@@ -630,6 +638,7 @@ mod tests {
     #[test]
     fn is_content_chunk_predicate() {
         assert!(is_content_chunk(&content_chunk("m", "x")));
+        assert!(is_content_chunk(&messages_text_chunk("x")));
         assert!(!is_content_chunk(&reasoning_chunk("m", "x")));
         assert!(!is_content_chunk(&usage_chunk("m")));
         assert!(!is_content_chunk(&json!({"choices": [{"index": 0}]})));

@@ -622,6 +622,17 @@ fn ignore_eos_of(req: &GenRequest<'_>) -> bool {
 }
 
 pub fn tokenize_request(req: &GenRequest<'_>) -> TokenizedText {
+    tokenize_request_with_fixed_output_tokens(req, None)
+}
+
+/// Tokenize a request and optionally fix its generated response length.
+///
+/// The override is a mock-server test seam. It does not rewrite the parsed
+/// request cap, which remains available to request-capture assertions.
+pub fn tokenize_request_with_fixed_output_tokens(
+    req: &GenRequest<'_>,
+    fixed_output_tokens: Option<usize>,
+) -> TokenizedText {
     let (text, max_tokens) = extract_content(req);
     let prompt_tokens = tokenize(&text);
     let prompt_token_count = prompt_tokens.len();
@@ -642,6 +653,17 @@ pub fn tokenize_request(req: &GenRequest<'_>) -> TokenizedText {
             reasoning_tokens: 0,
             reasoning_content_tokens: Vec::new(),
             finish_reason: "stop",
+        };
+    }
+
+    if let Some(output_tokens) = fixed_output_tokens {
+        return TokenizedText {
+            text,
+            tokens: cycle_tokens(&prompt_tokens, output_tokens, 0),
+            prompt_token_count,
+            reasoning_tokens: 0,
+            reasoning_content_tokens: Vec::new(),
+            finish_reason: "length",
         };
     }
 
