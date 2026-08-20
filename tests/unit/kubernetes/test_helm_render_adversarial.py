@@ -97,6 +97,14 @@ def _helm_template_failure(*extra: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _assert_schema_failure_field_context(
+    result: subprocess.CompletedProcess[str], expected_path: str
+) -> None:
+    """Accept Helm's JSON-pointer and dotted field-context renderings."""
+    dotted_path = expected_path.removeprefix("/").replace("/", ".")
+    assert expected_path in result.stderr or dotted_path in result.stderr
+
+
 def _find(docs: list[dict], kind: str, name: str) -> dict:
     """Return the rendered Kubernetes object identified by kind and name."""
     for doc in docs:
@@ -185,7 +193,7 @@ class TestResultsServerPortAdversarial:
     ) -> None:
         result = _helm_template_failure("--set", f"resultsServer.port={port}")
         assert result.returncode != 0
-        assert expected_message in result.stderr
+        _assert_schema_failure_field_context(result, expected_message)
 
 
 # ============================================================
@@ -381,7 +389,7 @@ class TestValuesSchemaAdversarial:
     ) -> None:
         result = _helm_template_failure(*set_args)
         assert result.returncode != 0
-        assert expected_message in result.stderr
+        _assert_schema_failure_field_context(result, expected_message)
 
 
 @pytest.mark.skipif(
