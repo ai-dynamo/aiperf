@@ -68,7 +68,7 @@ dependencies = [
   "textual~=5.3.0",
   "tiktoken>=0.7.0,<1",
   "tqdm>=4.67.1",
-  "transformers>=4.56.0", # Lowest compatible version for dynamo backends
+  "transformers>=5.15.0", # DeepSeek-V4-Pro config parsing requires native RoPE param handling (AIP-1140)
   "uvicorn[standard]>=0.34,<1",
   "uvloop>=0.22.1; platform_system != 'Windows'",
   "zstandard>=0.25.0",
