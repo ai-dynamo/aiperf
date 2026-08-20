@@ -1966,15 +1966,17 @@ mod tests {
             ),
         );
 
-        assert!(crate::graph::supplement::merge_graph_cell_supplements(
-            &expected,
-            [crate::graph::supplement::GraphCellSupplement::new(
-                2,
-                vec![terminal],
-                std::collections::BTreeSet::new(),
-            )],
-        )
-        .is_ok());
+        assert!(
+            crate::graph::supplement::merge_graph_cell_supplements(
+                &expected,
+                [crate::graph::supplement::GraphCellSupplement::new(
+                    2,
+                    vec![terminal],
+                    std::collections::BTreeSet::new(),
+                )],
+            )
+            .is_ok()
+        );
     }
 
     #[test]
