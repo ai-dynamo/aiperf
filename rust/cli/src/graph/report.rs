@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fmt;
 
 use aiperf_runtime::graph::inspect::{
-    GraphBundleInspection, GraphChannelInspection, GraphEdgeAnchor, GraphEdgeInspection,
+    GraphBundleInspection, GraphChannelInspection, GraphEdgeInspection, GraphEdgeScheduleAnchor,
     GraphInspectionIssue, GraphInspectionSeverity, GraphNodeInspection, GraphNodeKind,
     GraphPlanInspection, GraphPlanPhase, GraphPlanSummary, GraphProgramInspection,
     GraphTopologyInspection, ReadinessInspection, ReadinessWave,
@@ -238,16 +238,14 @@ pub enum GraphReducerReport {
     AddMessages,
 }
 
-/// Public edge timing anchor.
+/// Public edge scheduler event.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GraphEdgeAnchorReport {
+pub enum GraphEdgeScheduleAnchorReport {
     /// The predecessor completion gates the successor.
     Completion,
     /// The predecessor dispatch gates the successor.
     Dispatch,
-    /// The predecessor first token gates the successor.
-    FirstToken,
 }
 
 /// One input-channel requirement.
@@ -278,6 +276,8 @@ pub struct GraphNodeReport {
     pub model_override: Option<String>,
     /// LLM generation cap, absent for tools.
     pub max_tokens: Option<usize>,
+    /// LLM minimum start delay, absent for tools.
+    pub min_start_delay_us: Option<f64>,
 }
 
 /// One declared state channel.
@@ -299,12 +299,16 @@ pub struct GraphEdgeReport {
     pub source: String,
     /// Target node identity, START, or END.
     pub target: String,
-    /// Runtime timing anchor.
-    pub anchor: GraphEdgeAnchorReport,
-    /// Selected anchor delay, retaining an authored zero.
-    pub delay_us: Option<f64>,
+    /// Runtime scheduler event selected by the edge's dispatch routing.
+    pub schedule_anchor: GraphEdgeScheduleAnchorReport,
+    /// Completion-relative delay, retaining an authored zero.
+    pub completion_delay_us: Option<f64>,
     /// Minimum start delay, when authored.
     pub min_start_delay_us: Option<f64>,
+    /// Dispatch-relative delay, retaining an authored zero.
+    pub dispatch_delay_us: Option<f64>,
+    /// First-token-relative delay, retaining an authored zero.
+    pub first_token_delay_us: Option<f64>,
 }
 
 /// One deterministic illustrative readiness wave.
@@ -545,6 +549,7 @@ impl From<GraphNodeInspection> for GraphNodeReport {
             streaming: node.streaming,
             model_override: node.model_override,
             max_tokens: node.max_tokens,
+            min_start_delay_us: node.min_start_delay_us,
         }
     }
 }
@@ -570,13 +575,14 @@ impl From<GraphEdgeInspection> for GraphEdgeReport {
         Self {
             source: edge.source,
             target: edge.target,
-            anchor: match edge.anchor {
-                GraphEdgeAnchor::Completion => GraphEdgeAnchorReport::Completion,
-                GraphEdgeAnchor::Dispatch => GraphEdgeAnchorReport::Dispatch,
-                GraphEdgeAnchor::FirstToken => GraphEdgeAnchorReport::FirstToken,
+            schedule_anchor: match edge.schedule_anchor {
+                GraphEdgeScheduleAnchor::Completion => GraphEdgeScheduleAnchorReport::Completion,
+                GraphEdgeScheduleAnchor::Dispatch => GraphEdgeScheduleAnchorReport::Dispatch,
             },
-            delay_us: edge.delay_us,
+            completion_delay_us: edge.completion_delay_us,
             min_start_delay_us: edge.min_start_delay_us,
+            dispatch_delay_us: edge.dispatch_delay_us,
+            first_token_delay_us: edge.first_token_delay_us,
         }
     }
 }
@@ -988,7 +994,7 @@ mod tests {
                 output: "reply".into(),
                 streaming: true,
                 inputs: Vec::new(),
-                min_start_delay_us: None,
+                min_start_delay_us: Some(7.0),
                 max_tokens: Some(7),
                 items: vec![PromptItem::Seg { seg: prompt }],
                 request: Some(LlmRequestSpec {
@@ -1020,9 +1026,9 @@ mod tests {
                 source: "llm".into(),
                 target: "tool".into(),
                 delay_after_predecessor_us: None,
-                min_start_delay_us: Some(42.0),
-                delay_after_predecessor_start_us: None,
-                delay_after_predecessor_first_token_us: Some(9.0),
+                min_start_delay_us: Some(0.0),
+                delay_after_predecessor_start_us: Some(20.0),
+                delay_after_predecessor_first_token_us: Some(5.0),
             },
             StaticEdge {
                 source: "tool".into(),
@@ -1135,12 +1141,20 @@ mod tests {
             .find(|edge| edge.source == "llm" && edge.target == "tool")
             .expect("timed edge");
         assert!(matches!(
-            timed_edge.anchor,
-            super::GraphEdgeAnchorReport::FirstToken
+            timed_edge.schedule_anchor,
+            super::GraphEdgeScheduleAnchorReport::Dispatch
         ));
-        assert_eq!(timed_edge.delay_us, Some(9.0));
-        assert_eq!(timed_edge.min_start_delay_us, Some(42.0));
+        assert_eq!(timed_edge.completion_delay_us, None);
+        assert_eq!(timed_edge.min_start_delay_us, Some(0.0));
+        assert_eq!(timed_edge.dispatch_delay_us, Some(20.0));
+        assert_eq!(timed_edge.first_token_delay_us, Some(5.0));
         let json = serde_json::to_string(&report).expect("serialize report");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("report JSON is valid");
+        let edge = &value["programs"][0]["profiling"]["topology"]["edges"][1];
+        assert_eq!(edge["schedule_anchor"], "dispatch");
+        assert_eq!(edge["dispatch_delay_us"], 20.0);
+        assert_eq!(edge["first_token_delay_us"], 5.0);
+        assert_eq!(edge["min_start_delay_us"], 0.0);
         for forbidden in [
             secret_payload,
             secret_tool,

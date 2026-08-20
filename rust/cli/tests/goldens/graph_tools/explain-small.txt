@@ -18,11 +18,11 @@ Trace root
   Profiling plan
     Counts: nodes=5, llm_nodes=5, tool_nodes=0, edges=7, channels=5
     Nodes
-      n00000000 kind=llm output=reply_00000000 inputs=- splices=- streaming=yes model=Qwen3-0.6B max_tokens=10
-      n00000001 kind=llm output=reply_00000001 inputs=- splices=reply_00000000 streaming=yes model=Qwen3-0.6B max_tokens=10
-      n00000003 kind=llm output=reply_00000003 inputs=- splices=reply_00000000 streaming=yes model=Qwen3-0.6B max_tokens=10
-      n00000002 kind=llm output=reply_00000002 inputs=- splices=reply_00000000,reply_00000001 streaming=yes model=Qwen3-0.6B max_tokens=10
-      n00000004 kind=llm output=reply_00000004 inputs=- splices=reply_00000000,reply_00000003 streaming=yes model=Qwen3-0.6B max_tokens=10
+      n00000000 kind=llm output=reply_00000000 inputs=- splices=- streaming=yes model=Qwen3-0.6B max_tokens=10 node_min_start_delay_us=-
+      n00000001 kind=llm output=reply_00000001 inputs=- splices=reply_00000000 streaming=yes model=Qwen3-0.6B max_tokens=10 node_min_start_delay_us=-
+      n00000003 kind=llm output=reply_00000003 inputs=- splices=reply_00000000 streaming=yes model=Qwen3-0.6B max_tokens=10 node_min_start_delay_us=-
+      n00000002 kind=llm output=reply_00000002 inputs=- splices=reply_00000000,reply_00000001 streaming=yes model=Qwen3-0.6B max_tokens=10 node_min_start_delay_us=-
+      n00000004 kind=llm output=reply_00000004 inputs=- splices=reply_00000000,reply_00000003 streaming=yes model=Qwen3-0.6B max_tokens=10 node_min_start_delay_us=-
     Channels
       reply_00000000 type=messages reducer=add_messages
       reply_00000001 type=messages reducer=add_messages
@@ -30,13 +30,13 @@ Trace root
       reply_00000003 type=messages reducer=add_messages
       reply_00000004 type=messages reducer=add_messages
     Edges
-      START -> n00000000 anchor=completion delay_us=- min_start_delay_us=-
-      n00000000 -> n00000001 anchor=completion delay_us=- min_start_delay_us=-
-      n00000000 -> n00000003 anchor=completion delay_us=- min_start_delay_us=-
-      n00000001 -> n00000002 anchor=completion delay_us=- min_start_delay_us=-
-      n00000003 -> n00000004 anchor=completion delay_us=- min_start_delay_us=-
-      n00000002 -> END anchor=completion delay_us=- min_start_delay_us=-
-      n00000004 -> END anchor=completion delay_us=- min_start_delay_us=-
+      START -> n00000000 schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      n00000000 -> n00000001 schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      n00000000 -> n00000003 schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      n00000001 -> n00000002 schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      n00000003 -> n00000004 schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      n00000002 -> END schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      n00000004 -> END schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
     Validation issues
       - none
     Illustrative readiness waves

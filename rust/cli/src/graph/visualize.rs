@@ -9,8 +9,9 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use aiperf_runtime::graph::inspect::{
-    GraphBundleInspection, GraphEdgeAnchor, GraphInspectionOptions, GraphInspectionSeverity,
-    GraphProgramInspection, GraphTopologyInspection, ReadinessInspection, inspect_bundle,
+    GraphBundleInspection, GraphEdgeScheduleAnchor, GraphInspectionOptions,
+    GraphInspectionSeverity, GraphProgramInspection, GraphTopologyInspection, ReadinessInspection,
+    inspect_bundle,
 };
 use aiperf_runtime::graph::model::{END_NODE_ID, START_NODE_ID};
 
@@ -439,11 +440,11 @@ pub(super) fn render_mermaid(topology: &GraphTopologyInspection) -> String {
             aiperf_runtime::graph::inspect::GraphNodeKind::Llm => "llm",
             aiperf_runtime::graph::inspect::GraphNodeKind::Tool => "tool",
         };
-        let _ = writeln!(
-            text,
-            "  {identifier}[\"{}\"]:::{class}",
-            escape_label(&node.id)
-        );
+        let mut label = escape_label(&node.id);
+        if let Some(delay) = node.min_start_delay_us {
+            let _ = write!(label, "<br/>min-start +{delay}us");
+        }
+        let _ = writeln!(text, "  {identifier}[\"{label}\"]:::{class}");
     }
     for (node_id, identifier) in &unknown_ids {
         let _ = writeln!(
@@ -496,18 +497,22 @@ fn endpoint_identifier<'a>(
 }
 
 fn edge_label(edge: &aiperf_runtime::graph::inspect::GraphEdgeInspection) -> String {
-    let delay = edge.delay_us.filter(|value| *value != 0.0);
-    let min_start = edge.min_start_delay_us.filter(|value| *value != 0.0);
-    let anchor = match edge.anchor {
-        GraphEdgeAnchor::Completion => "completion",
-        GraphEdgeAnchor::Dispatch => "dispatch",
-        GraphEdgeAnchor::FirstToken => "first-token",
+    let schedule = match edge.schedule_anchor {
+        GraphEdgeScheduleAnchor::Completion => "completion",
+        GraphEdgeScheduleAnchor::Dispatch => "dispatch",
     };
-    let mut label = delay.map_or_else(|| anchor.to_owned(), |value| format!("{anchor} {value}us"));
-    if let Some(value) = min_start {
-        let _ = write!(label, ", min-start {value}us");
+    let mut fragments = vec![format!("schedule {schedule}")];
+    for (name, value) in [
+        ("completion", edge.completion_delay_us),
+        ("dispatch", edge.dispatch_delay_us),
+        ("first-token", edge.first_token_delay_us),
+        ("min-start", edge.min_start_delay_us),
+    ] {
+        if let Some(value) = value {
+            fragments.push(format!("{name} +{value}us"));
+        }
     }
-    label
+    fragments.join(", ")
 }
 
 fn escape_label(text: &str) -> String {

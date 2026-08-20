@@ -18,19 +18,19 @@ Trace t-mixed
   Profiling plan
     Counts: nodes=3, llm_nodes=3, tool_nodes=0, edges=5, channels=3
     Nodes
-      a kind=llm output=a_out inputs=- splices=- streaming=yes model=- max_tokens=-
-      b kind=llm output=b_out inputs=- splices=- streaming=yes model=- max_tokens=-
-      c kind=llm output=c_out inputs=- splices=- streaming=yes model=- max_tokens=-
+      a kind=llm output=a_out inputs=- splices=- streaming=yes model=- max_tokens=- node_min_start_delay_us=-
+      b kind=llm output=b_out inputs=- splices=- streaming=yes model=- max_tokens=- node_min_start_delay_us=-
+      c kind=llm output=c_out inputs=- splices=- streaming=yes model=- max_tokens=- node_min_start_delay_us=-
     Channels
       a_out type=text reducer=overwrite
       b_out type=text reducer=overwrite
       c_out type=text reducer=overwrite
     Edges
-      START -> a anchor=completion delay_us=- min_start_delay_us=-
-      START -> b anchor=completion delay_us=- min_start_delay_us=-
-      a -> c anchor=completion delay_us=- min_start_delay_us=-
-      b -> c anchor=dispatch delay_us=- min_start_delay_us=-
-      c -> END anchor=completion delay_us=- min_start_delay_us=-
+      START -> a schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      START -> b schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      a -> c schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
+      b -> c schedule=dispatch completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=0 first_token_delay_us=-
+      c -> END schedule=completion completion_delay_us=- edge_min_start_delay_us=- dispatch_delay_us=- first_token_delay_us=-
     Validation issues
       - ERROR [mixed-anchor-fan-in]: node "c": mixed-anchor fan-in is unsupported: start-anchored edge "b" -> "c" (delay_after_predecessor_start_us) and completion edge "a" -> "c" arrive at the same node. A start-anchored in-edge must be its target's ONLY in-edge.
     Illustrative readiness waves unavailable [validation-errors]: readiness waves are unavailable while validation errors remain

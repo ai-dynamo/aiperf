@@ -8,9 +8,9 @@ use std::io::{self, Write};
 use aiperf_runtime::graph::inspect::{GraphInspectionOptions, inspect_bundle};
 
 use super::report::{
-    GraphChannelTypeReport, GraphCommandError, GraphCommandErrorCode, GraphEdgeAnchorReport,
-    GraphExplainReport, GraphIssueReport, GraphIssueSeverityReport, GraphNodeKindReport,
-    GraphPlanReport, GraphReducerReport,
+    GraphChannelTypeReport, GraphCommandError, GraphCommandErrorCode,
+    GraphEdgeScheduleAnchorReport, GraphExplainReport, GraphIssueReport, GraphIssueSeverityReport,
+    GraphNodeKindReport, GraphPlanReport, GraphReducerReport,
 };
 use super::{LoadedGraphInput, TextJsonFormat};
 
@@ -141,8 +141,16 @@ fn render_plan(
             .map_or_else(|| "-".to_owned(), |value| value.to_string());
         let _ = writeln!(
             text,
-            "      {} kind={} output={} inputs={} splices={} streaming={} model={} max_tokens={}",
-            node.id, kind, node.output, inputs, splices, streaming, model, tokens
+            "      {} kind={} output={} inputs={} splices={} streaming={} model={} max_tokens={} node_min_start_delay_us={}",
+            node.id,
+            kind,
+            node.output,
+            inputs,
+            splices,
+            streaming,
+            model,
+            tokens,
+            option_delay(node.min_start_delay_us)
         );
     }
     text.push_str("    Channels\n");
@@ -165,12 +173,14 @@ fn render_plan(
     for edge in &plan.topology.edges {
         let _ = writeln!(
             text,
-            "      {} -> {} anchor={} delay_us={} min_start_delay_us={}",
+            "      {} -> {} schedule={} completion_delay_us={} edge_min_start_delay_us={} dispatch_delay_us={} first_token_delay_us={}",
             edge.source,
             edge.target,
-            anchor_name(edge.anchor),
-            nonzero_delay(edge.delay_us),
-            nonzero_delay(edge.min_start_delay_us)
+            schedule_anchor_name(edge.schedule_anchor),
+            option_delay(edge.completion_delay_us),
+            option_delay(edge.min_start_delay_us),
+            option_delay(edge.dispatch_delay_us),
+            option_delay(edge.first_token_delay_us)
         );
     }
     text.push_str("    Validation issues\n");
@@ -247,18 +257,15 @@ fn reducer_name(reducer: GraphReducerReport) -> &'static str {
     }
 }
 
-fn anchor_name(anchor: GraphEdgeAnchorReport) -> &'static str {
+fn schedule_anchor_name(anchor: GraphEdgeScheduleAnchorReport) -> &'static str {
     match anchor {
-        GraphEdgeAnchorReport::Completion => "completion",
-        GraphEdgeAnchorReport::Dispatch => "dispatch",
-        GraphEdgeAnchorReport::FirstToken => "first_token",
+        GraphEdgeScheduleAnchorReport::Completion => "completion",
+        GraphEdgeScheduleAnchorReport::Dispatch => "dispatch",
     }
 }
 
-fn nonzero_delay(value: Option<f64>) -> String {
-    value
-        .filter(|delay| *delay != 0.0)
-        .map_or_else(|| "-".to_owned(), |delay| delay.to_string())
+fn option_delay(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".to_owned(), |delay| delay.to_string())
 }
 
 #[cfg(test)]

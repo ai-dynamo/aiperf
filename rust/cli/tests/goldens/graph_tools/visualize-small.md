@@ -9,13 +9,13 @@ flowchart LR
   n3["n00000002"]:::llm
   n4["n00000004"]:::llm
   end_node(["END"])
-  start -->|"completion"| n0
-  n0 -->|"completion"| n1
-  n0 -->|"completion"| n2
-  n1 -->|"completion"| n3
-  n2 -->|"completion"| n4
-  n3 -->|"completion"| end_node
-  n4 -->|"completion"| end_node
+  start -->|"schedule completion"| n0
+  n0 -->|"schedule completion"| n1
+  n0 -->|"schedule completion"| n2
+  n1 -->|"schedule completion"| n3
+  n2 -->|"schedule completion"| n4
+  n3 -->|"schedule completion"| end_node
+  n4 -->|"schedule completion"| end_node
   classDef llm fill:#76b900,color:#000,stroke:#333
   classDef tool fill:#5b8def,color:#fff,stroke:#333
   classDef invalid fill:#d9534f,color:#fff,stroke:#333

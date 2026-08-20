@@ -3,8 +3,8 @@ flowchart LR
   n0["first | space &quot; [x] &amp; &lt;tag&gt;<br/>line"]:::llm
   n1["second [x] &quot; &amp; &lt;&gt;<br/>line"]:::llm
   end_node(["END"])
-  start -->|"completion"| n0
-  n0 -->|"completion"| n1
+  start -->|"schedule completion"| n0
+  n0 -->|"schedule completion"| n1
   n1 -. implicit .-> end_node
   classDef llm fill:#76b900,color:#000,stroke:#333
   classDef tool fill:#5b8def,color:#fff,stroke:#333

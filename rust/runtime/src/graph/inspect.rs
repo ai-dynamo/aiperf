@@ -145,15 +145,13 @@ pub enum GraphNodeKind {
     Tool,
 }
 
-/// Edge timing anchor selected by runtime semantics.
+/// Edge scheduler event selected by runtime semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GraphEdgeAnchor {
+pub enum GraphEdgeScheduleAnchor {
     /// The predecessor completion gates the successor.
     Completion,
     /// The predecessor dispatch gates the successor.
     Dispatch,
-    /// The predecessor first token gates the successor.
-    FirstToken,
 }
 
 /// One declared node input gate.
@@ -166,7 +164,7 @@ pub struct GraphNodeInputInspection {
 }
 
 /// Presentation-safe executable node facts.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GraphNodeInspection {
     /// Node identity.
     pub id: String,
@@ -184,6 +182,8 @@ pub struct GraphNodeInspection {
     pub model_override: Option<String>,
     /// LLM generation cap, absent for tools.
     pub max_tokens: Option<usize>,
+    /// LLM minimum start delay, absent for tools.
+    pub min_start_delay_us: Option<f64>,
 }
 
 /// One declared state channel.
@@ -204,12 +204,16 @@ pub struct GraphEdgeInspection {
     pub source: String,
     /// Target node identity, START, or END.
     pub target: String,
-    /// Runtime timing anchor.
-    pub anchor: GraphEdgeAnchor,
-    /// Selected anchor delay, retaining zero when authored.
-    pub delay_us: Option<f64>,
+    /// Runtime scheduler event selected by the edge's dispatch routing.
+    pub schedule_anchor: GraphEdgeScheduleAnchor,
+    /// Completion-relative delay, retaining zero when authored.
+    pub completion_delay_us: Option<f64>,
     /// Minimum start delay, when authored.
     pub min_start_delay_us: Option<f64>,
+    /// Dispatch-relative delay, retaining zero when authored.
+    pub dispatch_delay_us: Option<f64>,
+    /// First-token-relative delay, retaining zero when authored.
+    pub first_token_delay_us: Option<f64>,
 }
 
 /// Static readiness analysis output.
@@ -558,6 +562,7 @@ fn inspect_node(id: String, node: &ExecutableGraphNode) -> GraphNodeInspection {
                 .as_ref()
                 .and_then(|request| request.model.clone()),
             max_tokens: llm.max_tokens,
+            min_start_delay_us: llm.min_start_delay_us,
         },
         ExecutableGraphNode::Tool(tool) => GraphNodeInspection {
             id,
@@ -568,6 +573,7 @@ fn inspect_node(id: String, node: &ExecutableGraphNode) -> GraphNodeInspection {
             streaming: None,
             model_override: None,
             max_tokens: None,
+            min_start_delay_us: None,
         },
     }
 }
@@ -610,19 +616,19 @@ fn edge_sort_key(
 }
 
 fn inspect_edge(edge: &StaticEdge) -> GraphEdgeInspection {
-    let (anchor, delay_us) = if let Some(delay) = edge.delay_after_predecessor_start_us {
-        (GraphEdgeAnchor::Dispatch, Some(delay))
-    } else if let Some(delay) = edge.delay_after_predecessor_first_token_us {
-        (GraphEdgeAnchor::FirstToken, Some(delay))
+    let schedule_anchor = if edge.delay_after_predecessor_start_us.is_some() {
+        GraphEdgeScheduleAnchor::Dispatch
     } else {
-        (GraphEdgeAnchor::Completion, edge.delay_after_predecessor_us)
+        GraphEdgeScheduleAnchor::Completion
     };
     GraphEdgeInspection {
         source: edge.source.clone(),
         target: edge.target.clone(),
-        anchor,
-        delay_us,
+        schedule_anchor,
+        completion_delay_us: edge.delay_after_predecessor_us,
         min_start_delay_us: edge.min_start_delay_us,
+        dispatch_delay_us: edge.delay_after_predecessor_start_us,
+        first_token_delay_us: edge.delay_after_predecessor_first_token_us,
     }
 }
 
@@ -1022,11 +1028,10 @@ mod tests {
                 channel_count: 2,
             }
         );
-        assert!(
-            plan.topology.edges.iter().any(
-                |edge| edge.anchor == GraphEdgeAnchor::FirstToken && edge.delay_us == Some(3.0)
-            )
-        );
+        assert!(plan.topology.edges.iter().any(|edge| {
+            edge.schedule_anchor == GraphEdgeScheduleAnchor::Completion
+                && edge.first_token_delay_us == Some(3.0)
+        }));
         let ReadinessInspection::Available { waves } = &plan.readiness else {
             panic!("valid graph must have waves")
         };
@@ -1034,6 +1039,71 @@ mod tests {
         assert_eq!(waves[0].trigger, "START");
         assert_eq!(waves[1].node_ids, vec!["join"]);
         assert_eq!(waves[1].trigger, "completed: b,a");
+    }
+
+    #[test]
+    fn all_static_timing_gates_are_projected_without_losing_scheduler_facts() {
+        let graph = graph(
+            r#"{
+                "nodes": {
+                    "source": {"output": "a", "min_start_delay_us": 7.0},
+                    "combined": {"output": "b"},
+                    "first_only": {"output": "c"}
+                },
+                "edges": [
+                    {"source": "START", "target": "source"},
+                    {
+                        "source": "source", "target": "combined",
+                        "min_start_delay_us": 0.0,
+                        "delay_after_predecessor_start_us": 20.0,
+                        "delay_after_predecessor_first_token_us": 5.0
+                    },
+                    {
+                        "source": "source", "target": "first_only",
+                        "delay_after_predecessor_first_token_us": 3.0
+                    }
+                ]
+            }"#,
+        );
+        let topology = &inspect_bundle(
+            &bundle(vec![program("static-timing", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling
+            .topology;
+
+        let combined = topology
+            .edges
+            .iter()
+            .find(|edge| edge.source == "source" && edge.target == "combined")
+            .expect("combined edge");
+        assert_eq!(combined.schedule_anchor, GraphEdgeScheduleAnchor::Dispatch);
+        assert_eq!(combined.completion_delay_us, None);
+        assert_eq!(combined.min_start_delay_us, Some(0.0));
+        assert_eq!(combined.dispatch_delay_us, Some(20.0));
+        assert_eq!(combined.first_token_delay_us, Some(5.0));
+
+        let first_only = topology
+            .edges
+            .iter()
+            .find(|edge| edge.source == "source" && edge.target == "first_only")
+            .expect("first-token-only edge");
+        assert_eq!(
+            first_only.schedule_anchor,
+            GraphEdgeScheduleAnchor::Completion
+        );
+        assert_eq!(first_only.completion_delay_us, None);
+        assert_eq!(first_only.min_start_delay_us, None);
+        assert_eq!(first_only.dispatch_delay_us, None);
+        assert_eq!(first_only.first_token_delay_us, Some(3.0));
+
+        let source = topology
+            .nodes
+            .iter()
+            .find(|node| node.id == "source")
+            .expect("source node");
+        assert_eq!(source.min_start_delay_us, Some(7.0));
     }
 
     #[test]
@@ -1277,15 +1347,45 @@ mod tests {
                 .map(|edge| (
                     edge.source.as_str(),
                     edge.target.as_str(),
-                    edge.anchor,
-                    edge.delay_us
+                    edge.schedule_anchor,
+                    edge.completion_delay_us,
+                    edge.dispatch_delay_us,
+                    edge.first_token_delay_us
                 ))
                 .collect::<Vec<_>>(),
             vec![
-                ("START", "z", GraphEdgeAnchor::Completion, None),
-                ("z", "a", GraphEdgeAnchor::Dispatch, Some(0.0)),
-                ("a", "m", GraphEdgeAnchor::FirstToken, Some(3.0)),
-                ("m", "END", GraphEdgeAnchor::Completion, Some(0.0)),
+                (
+                    "START",
+                    "z",
+                    GraphEdgeScheduleAnchor::Completion,
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    "z",
+                    "a",
+                    GraphEdgeScheduleAnchor::Dispatch,
+                    None,
+                    Some(0.0),
+                    None
+                ),
+                (
+                    "a",
+                    "m",
+                    GraphEdgeScheduleAnchor::Completion,
+                    None,
+                    None,
+                    Some(3.0)
+                ),
+                (
+                    "m",
+                    "END",
+                    GraphEdgeScheduleAnchor::Completion,
+                    Some(0.0),
+                    None,
+                    None
+                ),
             ],
         );
     }

@@ -137,6 +137,42 @@ fn explain_output(path: &str, format: &str, extra: &[&str]) -> Output {
     output(&args)
 }
 
+fn static_timing_fixture() -> (tempfile::TempDir, String) {
+    let directory = tempfile::tempdir().expect("create static timing fixture directory");
+    let source = directory.path().join("static-timing.conditional.yaml");
+    fs::write(
+        &source,
+        r#"graph:
+  state:
+    a: {type: text}
+    b: {type: text}
+    c: {type: text}
+  nodes:
+    source:
+      node_type: llm
+      prompt: ["source"]
+      output: a
+      min_start_delay_us: 7.0
+    combined:
+      node_type: llm
+      prompt: ["combined"]
+      output: b
+    first_only:
+      node_type: llm
+      prompt: ["first-only"]
+      output: c
+  edges:
+    - {source: START, target: source}
+    - {source: source, target: combined, min_start_delay_us: 0.0, delay_after_predecessor_start_us: 20.0, delay_after_predecessor_first_token_us: 5.0}
+    - {source: source, target: first_only, delay_after_predecessor_first_token_us: 3.0}
+traces:
+  - id: static-timing
+"#,
+    )
+    .expect("write static timing fixture");
+    (directory, source.display().to_string())
+}
+
 fn visualize_mermaid_output(source: &str, destination: Option<&Path>) -> Output {
     let fixture_bin = tempfile::tempdir().expect("create empty PATH directory");
     let mut command = command_without_python(fixture_bin.path());
@@ -488,10 +524,88 @@ fn visualize_retains_every_explicit_edge_anchor_in_mermaid() {
 
     assert_eq!(output.status.code(), Some(0));
     let mermaid = String::from_utf8(output.stdout).expect("Mermaid is UTF-8");
-    assert!(mermaid.contains("start -->|\"completion\"| n0"));
-    assert!(mermaid.contains("n0 -->|\"completion\"| n2"));
-    assert!(mermaid.contains("n1 -->|\"dispatch\"| n2"));
-    assert!(mermaid.contains("n2 -->|\"completion\"| end_node"));
+    assert!(mermaid.contains("start -->|\"schedule completion\"| n0"));
+    assert!(mermaid.contains("n0 -->|\"schedule completion\"| n2"));
+    assert!(mermaid.contains("n1 -->|\"schedule dispatch, dispatch +0us\"| n2"));
+    assert!(mermaid.contains("n2 -->|\"schedule completion\"| end_node"));
+}
+
+#[test]
+fn all_static_timing_gates_are_exhaustive_in_graph_command_outputs() {
+    let (_directory, source) = static_timing_fixture();
+
+    let json = explain_output(&source, "conditional_graph", &["--output-format=json"]);
+    assert_eq!(json.status.code(), Some(0), "{}", stderr(&json));
+    let json: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("explain JSON is valid");
+    let topology = &json["programs"][0]["profiling"]["topology"];
+    let combined = topology["edges"]
+        .as_array()
+        .expect("edge array")
+        .iter()
+        .find(|edge| edge["source"] == "source" && edge["target"] == "combined")
+        .expect("combined edge");
+    assert_eq!(combined["schedule_anchor"], "dispatch");
+    assert_eq!(combined["completion_delay_us"], serde_json::Value::Null);
+    assert_eq!(combined["min_start_delay_us"], 0.0);
+    assert_eq!(combined["dispatch_delay_us"], 20.0);
+    assert_eq!(combined["first_token_delay_us"], 5.0);
+    let first_only = topology["edges"]
+        .as_array()
+        .expect("edge array")
+        .iter()
+        .find(|edge| edge["source"] == "source" && edge["target"] == "first_only")
+        .expect("first-token-only edge");
+    assert_eq!(first_only["schedule_anchor"], "completion");
+    assert_eq!(first_only["first_token_delay_us"], 3.0);
+    let source_node = topology["nodes"]
+        .as_array()
+        .expect("node array")
+        .iter()
+        .find(|node| node["id"] == "source")
+        .expect("source node");
+    assert_eq!(source_node["min_start_delay_us"], 7.0);
+
+    let text = explain_output(&source, "conditional_graph", &[]);
+    assert_eq!(text.status.code(), Some(0), "{}", stderr(&text));
+    let text = String::from_utf8(text.stdout).expect("explain text is UTF-8");
+    assert!(text.contains("schedule=dispatch"));
+    assert!(text.contains("dispatch_delay_us=20"));
+    assert!(text.contains("first_token_delay_us=5"));
+    assert!(text.contains("edge_min_start_delay_us=0"));
+    assert!(text.contains("node_min_start_delay_us=7"));
+
+    let mermaid = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "conditional_graph",
+        "--output-format",
+        "mermaid",
+    ]);
+    assert_eq!(mermaid.status.code(), Some(0), "{}", stderr(&mermaid));
+    let mermaid = String::from_utf8(mermaid.stdout).expect("Mermaid is UTF-8");
+    assert!(
+        mermaid.contains("schedule dispatch, dispatch +20us, first-token +5us, min-start +0us")
+    );
+    assert!(mermaid.contains("source<br/>min-start +7us"));
+    assert!(mermaid.contains("schedule completion, first-token +3us"));
+
+    let markdown = output(&[
+        "graph",
+        "visualize",
+        &source,
+        "--graph-format",
+        "conditional_graph",
+    ]);
+    assert_eq!(markdown.status.code(), Some(0), "{}", stderr(&markdown));
+    let markdown = String::from_utf8(markdown.stdout).expect("Markdown is UTF-8");
+    assert!(
+        markdown.contains("schedule dispatch, dispatch +20us, first-token +5us, min-start +0us")
+    );
+    assert!(markdown.contains("source<br/>min-start +7us"));
+    assert!(markdown.contains("schedule completion, first-token +3us"));
 }
 
 #[test]
