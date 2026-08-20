@@ -12,7 +12,8 @@ use serde_json::{Map, Value, json};
 
 use super::{
     ImportedAgentError, ImportedAgentSession, ImportedAgentSource, ImportedAgentSourceFile,
-    ImportedModelCall, ImportedSessionFamily, ImportedSubagentParent, RawJsonMessage,
+    ImportedModelCall, ImportedRequestHistory, ImportedSessionFamily, ImportedSubagentParent,
+    RawJsonMessage,
 };
 
 /// Parse one exact-discovery Claude Code source file into the provider-native import IR.
@@ -89,7 +90,7 @@ struct ClaudeState<'a> {
     cwd_present: bool,
     git_branch_present: bool,
     parent_tool_use_id: Option<String>,
-    history: Vec<RawJsonMessage>,
+    history: ImportedRequestHistory,
     calls: Vec<ImportedModelCall>,
     pending: Option<PendingClaudeMessage>,
     finalized_messages: HashMap<String, Vec<Value>>,
@@ -118,7 +119,7 @@ impl<'a> ClaudeState<'a> {
             cwd_present: false,
             git_branch_present: false,
             parent_tool_use_id: None,
-            history: Vec::new(),
+            history: Default::default(),
             calls: Vec::new(),
             pending: None,
             finalized_messages: HashMap::new(),
@@ -404,9 +405,10 @@ impl<'a> ClaudeState<'a> {
         if self.pending.is_none() {
             self.reject_reused_task_tool_ids(blocks, line)?;
             let delay = self.next_model_delay_after_previous_us.take();
+            self.history.capture_call();
             self.calls.push(ImportedModelCall {
                 source_id: source_id.clone(),
-                request_messages: self.history.clone(),
+                request_messages: Vec::new(),
                 model: self.model.clone(),
                 delay_after_previous_us: delay,
                 tool_schema_available: false,
@@ -656,6 +658,7 @@ impl<'a> ClaudeState<'a> {
                 "no inferred model calls",
             ));
         }
+        self.history.truncate_after_last_call();
         let parent = if self.file.family == ImportedSessionFamily::Subagent {
             let tool_use_id = self.parent_tool_use_id.ok_or_else(|| {
                 error(
@@ -682,7 +685,7 @@ impl<'a> ClaudeState<'a> {
             cwd_present: self.cwd_present,
             git_branch_present: self.git_branch_present,
             parent,
-            request_history: Default::default(),
+            request_history: self.history,
             calls: self.calls,
             observed_tool_count: self.observed_tool_count,
             completed_tool_count: self.completed_tool_count,

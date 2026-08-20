@@ -7,8 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use aiperf_runtime::graph::recorded::agent_recording::{
-    ImportedAgentReadSet, ImportedAgentSource, ImportedAgentSourceFile, ImportedSessionFamily,
-    parse_claude_session, parse_imported_agent_sessions,
+    ImportedAgentReadSet, ImportedAgentSession, ImportedAgentSource, ImportedAgentSourceFile,
+    ImportedSessionFamily, parse_claude_session, parse_imported_agent_sessions,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -31,10 +31,10 @@ fn session_file(path: PathBuf) -> ImportedAgentSourceFile {
     claude_file(path, ImportedSessionFamily::Session)
 }
 
-fn messages(
-    call: &aiperf_runtime::graph::recorded::agent_recording::ImportedModelCall,
-) -> Vec<Value> {
-    call.request_messages
+fn messages(session: &ImportedAgentSession, call_index: usize) -> Vec<Value> {
+    session
+        .request_messages(call_index)
+        .expect("Claude request history")
         .iter()
         .map(|message| serde_json::from_slice(&message.wire).expect("canonical JSON wire"))
         .collect()
@@ -113,11 +113,11 @@ fn subagent_sessions_are_linked_as_deterministic_siblings() {
         "toolu_task_01"
     );
     assert_eq!(sessions[0].observed_tool_count, 1);
-    let main_history = messages(&sessions[0].calls[1]);
+    let main_history = messages(&sessions[0], 1);
     assert_eq!(main_history[1]["content"][0]["name"], "Task");
     assert_eq!(sessions[1].calls.len(), 1);
     assert!(
-        messages(&sessions[1].calls[0]).iter().all(
+        messages(&sessions[1], 0).iter().all(
             |message| message["content"].get("type") != Some(&Value::String("tool_use".into()))
         )
     );
@@ -266,17 +266,25 @@ fn main_linear_history_is_systemless_and_uses_first_metadata() {
     assert_eq!(session.model.as_deref(), Some("claude-opus-4-6"));
     assert_eq!(session.calls.len(), 2);
     assert!(session.system_prompt.is_none());
+    assert!(
+        session
+            .calls
+            .iter()
+            .all(|call| call.request_messages.is_empty())
+    );
     assert_eq!(
-        session.calls[0]
-            .request_messages
+        session
+            .request_messages(0)
+            .expect("first Claude request")
             .iter()
             .map(|message| message.role.as_str())
             .collect::<Vec<_>>(),
         ["user"],
     );
     assert_eq!(
-        session.calls[1]
-            .request_messages
+        session
+            .request_messages(1)
+            .expect("second Claude request")
             .iter()
             .map(|message| message.role.as_str())
             .collect::<Vec<_>>(),
@@ -297,7 +305,7 @@ fn main_parallel_tools_retain_provider_blocks_and_delay() {
     let session =
         parse_claude_session(&session_file(fixture("parallel_tools.jsonl"))).expect("session");
     assert_eq!(session.calls.len(), 2);
-    let second = messages(&session.calls[1]);
+    let second = messages(&session, 1);
     assert_eq!(second[1]["content"][0]["type"], "tool_use");
     assert_eq!(second[1]["content"][1]["id"], "toolu_02");
     assert_eq!(second[2]["content"][0]["type"], "tool_result");
@@ -313,7 +321,7 @@ fn main_merges_repeated_assistant_snapshots_without_extra_calls() {
         "snapshots.jsonl",
         concat!(
             "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"u-1\",\"message\":{\"role\":\"user\",\"content\":\"ask\"}}\n",
-            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"a-1\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"model\":\"claude\",\"content\":[{\"type\":\"text\",\"text\":\"hel\"}]}}\n",
+            "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"a-1\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"model\":\"claude\",\"content\":[{\"type\":\"text\",\"text\":\"hel\"}]}}\n", // codespell:ignore
             "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"a-2\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-1\",\"model\":\"other\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Read\",\"input\":{\"path\":\"x\"}}]}}\n",
             "{\"type\":\"user\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"u-2\",\"timestamp\":\"2026-04-02T00:00:01Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool-1\",\"content\":\"done\"}]}}\n",
             "{\"type\":\"assistant\",\"isSidechain\":false,\"sessionId\":\"safe-session\",\"uuid\":\"a-3\",\"message\":{\"role\":\"assistant\",\"id\":\"msg-2\",\"content\":[{\"type\":\"text\",\"text\":\"next\"}]}}\n"
@@ -323,7 +331,7 @@ fn main_merges_repeated_assistant_snapshots_without_extra_calls() {
     assert_eq!(session.model.as_deref(), Some("claude"));
     assert_eq!(session.calls.len(), 2);
     assert_eq!(session.calls[0].source_id, "msg-1");
-    let history = messages(&session.calls[1]);
+    let history = messages(&session, 1);
     assert_eq!(history[1]["content"][0]["text"], "hello");
     assert_eq!(history[1]["content"][1]["id"], "tool-1");
     assert_eq!(history[2]["content"][0]["tool_use_id"], "tool-1");
@@ -387,7 +395,7 @@ fn main_filters_sidechains_and_validates_subagent_parent() {
     assert_eq!(session.calls.len(), 1);
     assert!(session.parent.is_none());
     assert_eq!(session.ignored_record_count, 1);
-    assert_eq!(messages(&session.calls[0])[0]["content"], "keep");
+    assert_eq!(messages(&session, 0)[0]["content"], "keep");
 
     let subagent = parse_claude_session(&claude_file(
         fixture("with_subagent/main/subagents/agent-aaa.jsonl"),
@@ -471,7 +479,7 @@ fn main_accepts_reverse_tool_results_and_rejects_duplicate_results() {
     let session = parse_claude_session(&reverse).expect("reverse results");
     assert!(session.tool_results_complete);
     assert_eq!(session.calls[1].delay_after_previous_us, Some(1_000_000.0));
-    let history = messages(&session.calls[1]);
+    let history = messages(&session, 1);
     assert_eq!(history[2]["content"][0]["tool_use_id"], "two");
     assert_eq!(history[2]["content"][1]["tool_use_id"], "one");
 
@@ -552,7 +560,7 @@ fn main_does_not_reopen_finalized_assistant_or_exact_tool_blocks() {
     assert_eq!(session.calls[2].source_id, "msg-3");
     assert_eq!(session.calls[3].source_id, "msg-4");
     assert_eq!(
-        messages(&session.calls[3])[4]["content"],
+        messages(&session, 3)[4]["content"],
         Value::Array(Vec::new())
     );
 }
@@ -576,7 +584,7 @@ fn main_replays_a_finalized_filtered_global_tool_snapshot_idempotently() {
     assert_eq!(session.calls.len(), 3);
     assert!(session.tool_results_complete);
     assert_eq!(
-        messages(&session.calls[2])[3]["content"],
+        messages(&session, 2)[3]["content"],
         Value::Array(Vec::new())
     );
 }
@@ -602,7 +610,7 @@ fn main_limits_timestamp_validation_to_correlated_tools_and_latches_metadata() {
     assert_eq!(session.omitted_reasoning_count, 1);
     assert_eq!(session.model.as_deref(), Some("first-model"));
     assert!(session.cwd_present && session.git_branch_present);
-    let history = messages(&session.calls[1]);
+    let history = messages(&session, 1);
     assert_eq!(history[1]["content"][0]["text"], "same");
     assert_eq!(history[1]["content"][1]["text"], "appended");
 
