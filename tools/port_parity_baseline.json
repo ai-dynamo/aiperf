@@ -84,6 +84,10 @@
       "lines": 2,
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
+    "src/aiperf/cli_commands/kube/results.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
     "src/aiperf/cli_runner/_multi_run.py": {
       "lines": 4,
       "reason": "re-export shim deleted; importers repointed at the owning module"
@@ -100,12 +104,24 @@
       "lines": 253,
       "reason": "dead code removed on this branch after verifying zero callers in any mode"
     },
+    "src/aiperf/common/models/base_models.py": {
+      "lines": 2,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
     "src/aiperf/config/__init__.py": {
       "lines": 10,
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
+    "src/aiperf/config/defaults.py": {
+      "lines": 9,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/config/flags/cli_config.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
     "src/aiperf/config/resolution/resolvers.py": {
-      "lines": 5,
+      "lines": 9,
       "reason": "regex resynced with its owning module (reference copy had drifted)"
     },
     "src/aiperf/controller/system_controller.py": {
@@ -128,6 +144,10 @@
       "lines": 1,
       "reason": "documentation/test wording evolved past the reference; no code content lost"
     },
+    "src/aiperf/kubernetes/crd_models.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
     "src/aiperf/kubernetes/results_artifacts.py": {
       "lines": 1,
       "reason": "re-export shim deleted; importers repointed at the owning module"
@@ -140,9 +160,17 @@
       "lines": 195,
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
+    "src/aiperf/kubernetes/sweep_models.py": {
+      "lines": 32,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
     "src/aiperf/operator/handlers/_completion_fetch.py": {
       "lines": 1,
       "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/handlers/cleanup.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
     },
     "src/aiperf/operator/handlers/completion.py": {
       "lines": 1,
@@ -156,13 +184,33 @@
       "lines": 1,
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
-    "src/aiperf/operator/routers/results_files.py": {
+    "src/aiperf/operator/results_layout.py": {
+      "lines": 8,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/operator/routers/_sweeps_artifacts.py": {
       "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/operator/routers/jobs.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/operator/routers/results_files.py": {
+      "lines": 2,
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
     "src/aiperf/operator/routers/results_files_io.py": {
       "lines": 2,
       "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "src/aiperf/operator/routers/sweeps.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/operator/runs_index.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
     },
     "src/aiperf/operator/ui/components/token-modal.js": {
       "lines": 1,
@@ -220,12 +268,24 @@
       "lines": 1,
       "reason": "re-export shim deleted; importers repointed at the owning module"
     },
+    "src/aiperf/workers/worker_pod_upload.py": {
+      "lines": 1,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
     "src/aiperf/workers/worker_post_processing.py": {
       "lines": 85,
       "reason": "dead code removed on this branch after verifying zero callers in any mode"
     },
-    "src/aiperf/zmq/streaming_router_client.py": {
+    "src/aiperf/zmq/streaming_dealer_client.py": {
       "lines": 2,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "src/aiperf/zmq/streaming_push_client.py": {
+      "lines": 1,
+      "reason": "enc_hook wired into the encoder; reference line superseded"
+    },
+    "src/aiperf/zmq/streaming_router_client.py": {
+      "lines": 4,
       "reason": "Kubernetes-only cost removed from the local non-Kubernetes path"
     },
     "src/aiperf/zmq/zmq_base_client.py": {
@@ -280,6 +340,14 @@
       "lines": 3,
       "reason": "dead code removed on this branch after verifying zero callers in any mode"
     },
+    "tests/unit/common/test_msgspec_enc_hook.py": {
+      "lines": 5,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/config/test_benchmark_plan.py": {
+      "lines": 8,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
     "tests/unit/config/test_resolvers.py": {
       "lines": 1,
       "reason": "documentation/test wording evolved past the reference; no code content lost"
@@ -307,6 +375,10 @@
     "tests/unit/kubernetes/test_results_sidecar.py": {
       "lines": 17,
       "reason": "re-export shim deleted; importers repointed at the owning module"
+    },
+    "tests/unit/kubernetes/test_sweep_models.py": {
+      "lines": 5,
+      "reason": "documentation/test wording evolved past the reference; no code content lost"
     },
     "tests/unit/operator/routers/test_analytics_adversarial.py": {
       "lines": 1,
@@ -359,6 +431,10 @@
     "tests/unit/operator/test_results_db_adversarial.py": {
       "lines": 1,
       "reason": "documentation/test wording evolved past the reference; no code content lost"
+    },
+    "tests/unit/operator/test_results_layout.py": {
+      "lines": 1,
+      "reason": "EPOCH_RE import repointed at its single owner in common.results_markers"
     },
     "tests/unit/operator/test_results_server.py": {
       "lines": 2,
