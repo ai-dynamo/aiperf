@@ -164,8 +164,12 @@ datasets:
 | `codex` | Require Codex CLI JSONL and Codex directory discovery rules. |
 | `claude_code` | Require Claude Code JSONL and Claude project/subagent discovery rules. |
 
-`include_subagents` defaults to `true`, applies only to `claude_code`, and is
-rejected for the other explicit source formats rather than silently ignored.
+`include_subagents` is `Option<bool>` in Config v2: when omitted it remains
+`None`, rather than serializing a Config-v2 default. It applies only to
+`claude_code` and is rejected for the other explicit source formats rather than
+silently ignored. Claude directory discovery applies `unwrap_or(true)` only at
+execution, so an omitted value includes direct subagents without claiming a
+serialized default.
 
 The equivalent CLI is:
 
@@ -178,10 +182,10 @@ aiperf profile \
 
 The CLI adds:
 
-| CLI | Config v2 | Default |
+| CLI | Config v2 | Absent value |
 |---|---|---|
 | `--graph-recording-source auto|mini-swe-agent|codex|claude-code` | `dataset.graph.source_format` | `auto` |
-| `--graph-include-subagents[=bool]` | `dataset.graph.include_subagents` | `true` |
+| `--graph-include-subagents[=bool]` | `dataset.graph.include_subagents` | `None`; Claude directory discovery uses `true` at execution |
 
 The fields belong in `RecordedAgentGraphConfig`, whose strict extension point
 is `rust/runtime/src/config/model/dataset.rs:343-380`. CLI declarations belong
@@ -190,6 +194,11 @@ beside the existing recorded-agent flags at
 `RecordedAgentGraphConfig` construction at `rust/cli/src/load.rs:212-230`.
 YAML already carries the typed `dataset.graph` block at
 `rust/cli/src/yaml.rs:1037-1041`.
+
+Both CLI options require `--graph-format agent_recording`; authored replay-only
+flags are rejected for every other graph format instead of being discarded.
+The CLI accepts hyphenated provider values while Config v2 serializes the same
+variants as `auto`, `mini_swe_agent`, `codex`, and `claude_code`.
 
 The following validation is mandatory:
 
@@ -206,6 +215,9 @@ The following validation is mandatory:
   manifest and recording digests, not arbitrary session logs.
 - `auto` is supported for a single file. A directory requires an explicit
   source format because Codex and Claude have different recursive read sets.
+- Explicit Codex or Claude selection validates every non-empty JSONL record
+  through EOF from its owned descriptor; only `auto` detection has the
+  twenty-record scan budget.
 
 No Python adapter timing controls enter the first public contract. Python
 offers factor/default/override/clamp, `observed|max|sum` bundle reduction, and

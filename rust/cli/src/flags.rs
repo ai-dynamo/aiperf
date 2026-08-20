@@ -901,13 +901,17 @@ pub struct ProfileFlags {
     #[arg(long = "graph-format")]
     pub graph_format: Option<String>,
 
-    /// Imported recorded-agent source format: auto, mini-swe-agent, codex, or claude-code.
+    /// Imported recorded-agent source format. This requires `--graph-format agent_recording`.
+    /// Accepted spelling: `--graph-recording-source auto|mini-swe-agent|codex|claude-code`.
     #[arg(
         long = "graph-recording-source",
         value_parser = ["auto", "mini-swe-agent", "codex", "claude-code"]
     )]
     pub graph_recording_source: Option<String>,
-    /// Include direct Claude Code subagent sessions; rejected for non-Claude imports.
+    /// Include direct Claude Code subagent sessions. This requires `--graph-format agent_recording`.
+    /// Grammar: `--graph-include-subagents[=bool]` or `--graph-include-subagents bool`.
+    /// Absent remains Config-v2 `None`.
+    /// Claude directory discovery defaults an absent value to true at execution.
     #[arg(long = "graph-include-subagents", num_args = 0..=1, default_missing_value = "true")]
     pub graph_include_subagents: Option<bool>,
 

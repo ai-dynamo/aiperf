@@ -6,7 +6,7 @@
 use std::fs;
 
 use aiperf_cli::flags::ProfileFlags;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use serde_json::Value;
 
 /// Run a test body on a stack large enough for clap's derived `ProfileFlags` parser.
@@ -251,6 +251,62 @@ fn resolve_inputs_rejects_explicit_false_recorded_agent_flags_body() {
         error.to_string().contains("--graph-format agent_recording"),
         "{error}"
     );
+}
+
+#[test]
+fn recorded_agent_help_and_subagent_projection_match_the_public_contract() {
+    on_big_stack(recorded_agent_help_and_subagent_projection_match_the_public_contract_body);
+}
+
+fn recorded_agent_help_and_subagent_projection_match_the_public_contract_body() {
+    let mut command = ProfileFlags::command();
+    let help = command.render_long_help().to_string();
+    for expected in [
+        "--graph-recording-source auto|mini-swe-agent|codex|claude-code",
+        "--graph-include-subagents[=bool]",
+        "--graph-include-subagents bool",
+        "requires `--graph-format agent_recording`",
+    ] {
+        assert!(help.contains(expected), "missing {expected:?} in:\n{help}");
+    }
+
+    for (args, expected) in [
+        (&[][..], None),
+        (&["--graph-include-subagents"][..], Some(Value::Bool(true))),
+        (
+            &["--graph-include-subagents=true"][..],
+            Some(Value::Bool(true)),
+        ),
+        (
+            &["--graph-include-subagents=false"][..],
+            Some(Value::Bool(false)),
+        ),
+        (
+            &["--graph-include-subagents", "false"][..],
+            Some(Value::Bool(false)),
+        ),
+    ] {
+        let mut recorded_agent_args = vec![
+            "--input-file",
+            "/tmp/session.jsonl",
+            "--graph-format",
+            "agent_recording",
+        ];
+        recorded_agent_args.extend_from_slice(args);
+        let flags = profile_flags_with_minimum_endpoint_and(&recorded_agent_args);
+        let projected = serde_json::to_value(
+            aiperf_cli::load::resolve(&flags).expect("recorded-agent flags project"),
+        )
+        .expect("projected run serializes");
+        let graph = projected["cfg"]["datasets"][0]["graph"]
+            .as_object()
+            .expect("recorded-agent graph serializes as an object");
+        assert_eq!(
+            graph.get("include_subagents"),
+            expected.as_ref(),
+            "{args:?}"
+        );
+    }
 }
 
 #[test]
