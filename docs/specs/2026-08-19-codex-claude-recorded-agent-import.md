@@ -230,8 +230,10 @@ For `source_format: auto`:
    Claude marker record. A bounded multi-record scan is necessary because
    resumed logs may begin with non-discriminating records
    (`claude_code.py:38-44,428-474`).
-5. Fail if neither or more than one source matches. Explicit source selection
-   bypasses sniffing but not strict source validation.
+5. Fail if neither or more than one source matches. The twenty-record budget
+   applies only to `auto` detection. Explicit Codex or Claude selection streams
+   every non-empty record through EOF from the owned descriptor, rejecting late
+   malformed, ambiguous, or opposing-provider markers before snapshot copy.
 
 ### Directories
 

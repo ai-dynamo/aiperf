@@ -64,8 +64,11 @@ impl OpenedImportedAgentSource {
                 "cannot read source file",
             )
         })?;
-        if scan_source(&self.source_path, &mut self.file, Some(expected_source))?
-            != Some(expected_source)
+        if scan_source(
+            &self.source_path,
+            &mut self.file,
+            SourceScanMode::Validate(expected_source),
+        )? != Some(expected_source)
         {
             return Err(error(
                 &self.source_path,
@@ -180,16 +183,20 @@ pub(super) fn acquire_selection(
                 )
             })?;
             let mut opened = OpenedImportedAgentSource::open(source_path, relative_path, family)?;
-            let source =
-                scan_source(&opened.source_path, &mut opened.file, None)?.ok_or_else(|| {
-                    error(
-                        &opened.source_path,
-                        0,
-                        "unknown",
-                        "unknown",
-                        "no recognized source marker in scan",
-                    )
-                })?;
+            let source = scan_source(
+                &opened.source_path,
+                &mut opened.file,
+                SourceScanMode::Detect,
+            )?
+            .ok_or_else(|| {
+                error(
+                    &opened.source_path,
+                    0,
+                    "unknown",
+                    "unknown",
+                    "no recognized source marker in scan",
+                )
+            })?;
             if request.include_subagents.is_some() && source != ImportedAgentSource::ClaudeCode {
                 return Err(error(
                     &discovered.selected_path,
@@ -255,6 +262,12 @@ fn acquired_selection(
 
 const SCAN_RECORD_LIMIT: usize = 20;
 
+#[derive(Clone, Copy)]
+enum SourceScanMode {
+    Detect,
+    Validate(ImportedAgentSource),
+}
+
 /// Detect the provider-native source format of one JSONL session file.
 ///
 /// Detection inspects at most twenty non-empty JSON-object records.
@@ -262,7 +275,12 @@ pub fn detect_imported_agent_source(
     path: &Path,
 ) -> Result<ImportedAgentSource, ImportedAgentError> {
     let path = canonical_selected_file(path)?;
-    scan_source(&path, open_source_file(&path, "unknown")?, None)?.ok_or_else(|| {
+    scan_source(
+        &path,
+        open_source_file(&path, "unknown")?,
+        SourceScanMode::Detect,
+    )?
+    .ok_or_else(|| {
         error(
             &path,
             0,
@@ -298,7 +316,7 @@ pub fn discover_imported_agent_read_set(
         if scan_source(
             &path,
             open_source_file(&path, resolved_source_name(source))?,
-            Some(source),
+            SourceScanMode::Validate(source),
         )? != Some(source)
         {
             return Err(error(
@@ -793,16 +811,19 @@ fn open_source_file(path: &Path, source: &'static str) -> Result<fs::File, Impor
 fn scan_source<R: std::io::Read>(
     path: &Path,
     source_bytes: R,
-    expected: Option<ImportedAgentSource>,
+    mode: SourceScanMode,
 ) -> Result<Option<ImportedAgentSource>, ImportedAgentError> {
-    let source = expected.map_or("unknown", resolved_source_name);
+    let source = match mode {
+        SourceScanMode::Detect => "unknown",
+        SourceScanMode::Validate(expected) => resolved_source_name(expected),
+    };
     let mut reader = BufReader::new(source_bytes);
     let mut bytes = Vec::new();
     let mut line = 0;
     let mut records = 0;
     let mut detected = None;
     loop {
-        if records == SCAN_RECORD_LIMIT {
+        if matches!(mode, SourceScanMode::Detect) && records == SCAN_RECORD_LIMIT {
             break;
         }
         bytes.clear();
@@ -863,16 +884,16 @@ fn scan_source<R: std::io::Read>(
             None
         };
         if let Some(marker) = marker {
-            if let Some(expected) = expected
-                && marker != expected
-            {
-                return Err(error(
-                    path,
-                    line,
-                    resolved_source_name(expected),
-                    "unknown",
-                    "source marker does not match selected source",
-                ));
+            if let SourceScanMode::Validate(expected) = mode {
+                if marker != expected {
+                    return Err(error(
+                        path,
+                        line,
+                        resolved_source_name(expected),
+                        "unknown",
+                        "source marker does not match selected source",
+                    ));
+                }
             }
             if let Some(previous) = detected
                 && previous != marker
@@ -1055,6 +1076,29 @@ mod tests {
         let sessions = super::super::parse_imported_agent_sessions(selection.read_set()).unwrap();
         assert_eq!(selection.read_set().source, ImportedAgentSource::Codex);
         assert_eq!(sessions[0].session_id, "original");
+    }
+
+    #[test]
+    fn imported_acquisition_validates_late_explicit_records() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        std::fs::write(
+            &source,
+            format!(
+                "{}{{not-json}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{}}\n".repeat(SCAN_RECORD_LIMIT)
+            ),
+        )
+        .unwrap();
+
+        let request = ImportedAgentSelectionRequest::new(
+            source,
+            None,
+            RecordedAgentSourceFormat::Codex,
+            None,
+        )
+        .unwrap();
+        assert!(request.acquire().is_err());
     }
 
     #[test]

@@ -24,6 +24,47 @@ fn write(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write test source");
 }
 
+fn codex_marker_records(count: usize) -> String {
+    "{\"type\":\"session_meta\",\"payload\":{}}\n".repeat(count)
+}
+
+fn claude_marker_records(count: usize) -> String {
+    "{\"type\":\"user\",\"sessionId\":\"session\",\"parentUuid\":null}\n".repeat(count)
+}
+
+#[test]
+fn explicit_codex_validation_reaches_late_opposing_or_malformed_records() {
+    let root = tempdir().expect("temporary root");
+    for (name, tail) in [
+        (
+            "late-claude.jsonl",
+            "{\"type\":\"user\",\"sessionId\":\"session\",\"parentUuid\":null}\n",
+        ),
+        ("late-malformed.jsonl", "{not-json}\n"),
+    ] {
+        let path = root.path().join(name);
+        write(&path, &(codex_marker_records(20) + tail));
+        assert!(
+            discover_imported_agent_read_set(&path, None, Codex, None).is_err(),
+            "explicit Codex must validate the record after its detection budget"
+        );
+    }
+}
+
+#[test]
+fn explicit_claude_validation_reaches_late_codex_record() {
+    let root = tempdir().expect("temporary root");
+    let path = root.path().join("late-codex.jsonl");
+    write(
+        &path,
+        &(claude_marker_records(20) + "{\"type\":\"session_meta\",\"payload\":{}}\n"),
+    );
+    assert!(
+        discover_imported_agent_read_set(&path, None, ClaudeCode, None).is_err(),
+        "explicit Claude must validate the record after its detection budget"
+    );
+}
+
 #[test]
 fn codex_directory_is_recursive_and_sorted_with_root_relative_names() {
     let root = tempdir().expect("temporary root");
