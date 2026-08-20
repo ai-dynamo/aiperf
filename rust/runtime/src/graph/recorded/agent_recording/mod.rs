@@ -23,7 +23,7 @@ pub use import::{
     ImportedAgentSourceFile, ImportedModelCall, ImportedSessionFamily, ImportedSubagentParent,
     RawJsonMessage, detect_imported_agent_source, discover_imported_agent_read_set,
     lower_imported_agent_sessions, parse_claude_session, parse_codex_session,
-    parse_imported_agent_sessions,
+    parse_imported_agent_sessions, snapshot_imported_agent_read_set,
 };
 pub use lowering::{
     BuiltinReplayRequestProfileResolver, RecordedAgentLoweringError, ReplayRequestProfile,

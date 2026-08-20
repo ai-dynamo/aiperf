@@ -22,10 +22,7 @@ use crate::cellular::{
     merge_records_by_concatenation, merge_records_in_global_order, merge_store_partitions,
 };
 use crate::clock::{Clock, RealClock, RealClockAnchor};
-use crate::config::model::dataset::{RecordedAgentGraphConfig, RecordedAgentSourceFormat};
-use crate::graph::recorded::agent_recording::{
-    ImportedAgentReadSet, discover_imported_agent_read_set,
-};
+use crate::graph::recorded::agent_recording::ImportedAgentReadSet;
 use crate::metrics_core::report::NativeReport;
 use crate::metrics_core::{ExportContext, MetricsAccumulator, MetricsConfig, PERCENTILES};
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -70,6 +67,13 @@ pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 /// phaser for the initial START wait (`Started` at generation 1). Default off (the
 /// event-based START).
 pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
+
+#[cfg(feature = "cellular")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImportedSessionDelivery {
+    Http,
+    LocalMaterialized,
+}
 
 /// Env toggle standing up ONE per-run velo [hub](crate::hub) as the cellular anchor
 /// instead of the separate standalone planes. When enabled, the controller mounts the
@@ -531,23 +535,53 @@ pub fn run_cellular(
     // dataset and HTTP shipping enabled needs the serve; same-host cells read the
     // controller-local path directly, and synthetic/inline-records/public need no serve.
     let dataset_source = crate::engine::cellular_cell::cellular_file_dataset_path(envelope);
-    let dataset_ship = cross_host_over_http
+    let dataset_format = envelope
+        .pointer("/run/cfg/datasets/0/format")
+        .and_then(serde_json::Value::as_str);
+    let imported_read_set = if dataset_format == Some("agent_recording") {
+        envelope
+            .pointer("/run/cfg/datasets/0")
+            .map(crate::engine::graph_input::selected_imported_agent_read_set)
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
+    let imported_delivery = imported_read_set
+        .as_ref()
+        .map(|_| {
+            if crate::engine::cellular_cell::http_artifact_shipping_enabled()
+                && (force_http || (cross_host && !controller_coordinate_is_loopback()))
+            {
+                Ok(ImportedSessionDelivery::Http)
+            } else if cross_host && !controller_coordinate_is_loopback() {
+                bail!(
+                    "cross-host imported recorded-agent sessions require HTTP artifact shipping; \\
+                 enable {} or use a shared local launcher",
+                    crate::engine::cellular_cell::CELL_HTTP_ARTIFACT_SHIPPING_ENV
+                )
+            } else {
+                Ok(ImportedSessionDelivery::LocalMaterialized)
+            }
+        })
+        .transpose()?;
+    let dataset_ship = (cross_host_over_http
         && crate::engine::cellular_cell::http_artifact_shipping_enabled()
-        && dataset_source.is_some();
-    // Compute the serve plan before binding so an
-    // unreadable/missing/unsupported source fails the run closed here rather than
-    // half-shipping. A single-file trace (or scheduled `file`/`path` dataset) ships as
-    // one file; a graph trace whose `path` is a DIRECTORY or SEGMENTED-PREFIX ships
-    // every shard the loader would read (`enumerate_recorded_trace_files`), reconstructed
-    // per cell from the manifest. dag_jsonl reads a single file only, so a dag_jsonl
-    // directory/prefix still fails closed.
-    let dataset_plan = if dataset_ship {
+        && dataset_source.is_some())
+        || imported_delivery == Some(ImportedSessionDelivery::Http);
+    // Non-imported sources can build their serve plan before binding. Imported sources
+    // defer this until the controller has copied the selected files into private scratch:
+    // registering the caller path would leave remote cells vulnerable to a later source
+    // swap. A single-file trace (or scheduled `file`/`path` dataset) ships as one file;
+    // a graph trace whose `path` is a DIRECTORY or SEGMENTED-PREFIX ships every shard the
+    // loader would read (`enumerate_recorded_trace_files`), reconstructed per cell from
+    // the manifest. dag_jsonl reads a single file only, so a dag_jsonl directory/prefix
+    // still fails closed.
+    let dataset_plan = if dataset_ship && imported_read_set.is_none() {
         let source = dataset_source
             .as_ref()
             .expect("dataset_ship implies a source");
-        let format = envelope
-            .pointer("/run/cfg/datasets/0/format")
-            .and_then(serde_json::Value::as_str);
+        let format = dataset_format;
         let replay_root = envelope
             .pointer("/run/cfg/datasets/0/graph/replay_root")
             .and_then(serde_json::Value::as_str)
@@ -557,6 +591,7 @@ pub fn run_cellular(
             format,
             source,
             replay_root,
+            imported_read_set.as_ref(),
         )?)
     } else {
         None
@@ -611,6 +646,23 @@ pub fn run_cellular(
         let _scratch = ScratchTreeGuard(temp_root.clone());
         std::fs::create_dir_all(&temp_root)
             .with_context(|| format!("creating cellular scratch {}", temp_root.display()))?;
+        let imported_read_set = match imported_read_set {
+            Some(_) => envelope
+                .pointer("/run/cfg/datasets/0")
+                .map(|dataset| {
+                    crate::engine::graph_input::snapshot_selected_imported_agent_read_set(
+                        dataset,
+                        &temp_root.join("imported-session"),
+                    )
+                })
+                .transpose()?
+                .flatten(),
+            None => None,
+        };
+        let dataset_plan = match imported_read_set.as_ref() {
+            Some(read_set) => Some(build_imported_agent_serve_plan(read_set.clone())?),
+            None => dataset_plan,
+        };
         let mut endpoint_control_hooks =
             prepare_controller_control_hooks(envelope).context("preparing controller control hooks")?;
 
@@ -831,7 +883,15 @@ pub fn run_cellular(
             std::fs::create_dir_all(&cell_dir)
                 .with_context(|| format!("creating cell {cell_id} artifact dir"))?;
             let cell_envelope =
-                build_cell_envelope(envelope, kind, cell_id, cell_count, &cell_dir, injected_seed)?;
+                build_cell_envelope(
+                    envelope,
+                    kind,
+                    cell_id,
+                    cell_count,
+                    &cell_dir,
+                    injected_seed,
+                    imported_read_set.as_ref(),
+                )?;
             let planned: BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance> =
                 cell_envelope
                     .pointer("/run/planned_replay_traces")
@@ -1631,8 +1691,16 @@ fn build_cell_envelope(
     cell_count: u32,
     cell_dir: &Path,
     injected_seed: Option<u64>,
+    imported_read_set: Option<&ImportedAgentReadSet>,
 ) -> Result<serde_json::Value> {
     let mut cell = envelope.clone();
+    if let Some(read_set) = imported_read_set {
+        crate::engine::cellular_cell::rewrite_cell_dataset_paths(
+            &mut cell,
+            &read_set.selected_path,
+            Some(&read_set.root),
+        )?;
+    }
     let expected_replay_traces = if kind == CellularRunKind::Graph
         && cell
             .pointer("/run/cfg/datasets/0/format")
@@ -1658,6 +1726,7 @@ fn build_cell_envelope(
             cell_id,
             cell_count,
             endpoint_id,
+            imported_read_set,
         )?
     } else {
         BTreeSet::new()
@@ -2190,73 +2259,38 @@ fn build_dataset_serve_plan_from_envelope(
     format: Option<&str>,
     source: &Path,
     replay_root: Option<&Path>,
+    imported_read_set: Option<&ImportedAgentReadSet>,
 ) -> Result<(
-    std::collections::HashMap<String, PathBuf>,
+    std::collections::HashMap<String, crate::engine::artifact_shipping::DatasetSource>,
     crate::engine::artifact_shipping::DatasetManifest,
 )> {
+    let imported_read_set = match imported_read_set {
+        Some(read_set) => Some(read_set.clone()),
+        None => envelope
+            .pointer("/run/cfg/datasets/0")
+            .map(crate::engine::graph_input::selected_imported_agent_read_set)
+            .transpose()?
+            .flatten(),
+    };
     if format == Some("agent_recording")
-        && let Some(read_set) = discover_imported_agent_read_set_from_envelope(envelope, source)?
+        && let Some(read_set) = imported_read_set
     {
-        return build_imported_agent_serve_plan(read_set);
+        return build_imported_agent_serve_plan(read_set.clone());
     }
-    build_dataset_serve_plan(format, source, replay_root)
-}
-
-/// Decode the recorded-agent graph configuration once and return the exact imported
-/// source read set when the envelope selects an imported format or a single JSONL
-/// auto source. Auto dispatch matches the graph loader before artifact binding.
-fn discover_imported_agent_read_set_from_envelope(
-    envelope: &serde_json::Value,
-    source: &Path,
-) -> Result<Option<ImportedAgentReadSet>> {
-    let graph = envelope
-        .pointer("/run/cfg/datasets/0/graph")
-        .filter(|value| !value.is_null())
-        .map(|value| {
-            serde_json::from_value::<RecordedAgentGraphConfig>(value.clone())
-                .context("decoding recorded-agent graph configuration for cellular shipping")
-        })
-        .transpose()?;
-    let source_format = graph
-        .as_ref()
-        .map_or(RecordedAgentSourceFormat::Auto, |config| {
-            config.source_format
-        });
-    let replay_root = graph
-        .as_ref()
-        .and_then(|config| config.replay_root.as_deref());
-    let source_candidate = if source.is_absolute() {
-        source.to_path_buf()
-    } else {
-        replay_root.map_or_else(|| source.to_path_buf(), |root| root.join(source))
-    };
-    let is_imported = match source_format {
-        RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::ClaudeCode => true,
-        RecordedAgentSourceFormat::Auto => {
-            let metadata = std::fs::metadata(&source_candidate).with_context(|| {
-                format!(
-                    "reading recorded-agent input {}",
-                    source_candidate.display()
-                )
-            })?;
-            ensure!(
-                !metadata.is_dir(),
-                "directory imports require an explicit source_format"
-            );
-            source_candidate
-                .extension()
-                .is_some_and(|extension| extension == "jsonl")
-        }
-        RecordedAgentSourceFormat::MiniSweAgent => false,
-    };
-    if !is_imported {
-        return Ok(None);
-    }
-    let include_subagents = graph.as_ref().and_then(|config| config.include_subagents);
-    discover_imported_agent_read_set(source, replay_root, source_format, include_subagents)
-        .map(Some)
-        .map_err(|error| anyhow!(error.to_string()))
-        .context("discovering imported recorded-agent session files for cellular shipping")
+    build_dataset_serve_plan(format, source, replay_root).map(|(files, manifest)| {
+        (
+            files
+                .into_iter()
+                .map(|(name, path)| {
+                    (
+                        name,
+                        crate::engine::artifact_shipping::DatasetSource::Path(path),
+                    )
+                })
+                .collect(),
+            manifest,
+        )
+    })
 }
 
 /// Build a controller dataset allowlist directly from imported-session discovery.
@@ -2267,7 +2301,7 @@ fn discover_imported_agent_read_set_from_envelope(
 fn build_imported_agent_serve_plan(
     read_set: ImportedAgentReadSet,
 ) -> Result<(
-    std::collections::HashMap<String, PathBuf>,
+    std::collections::HashMap<String, crate::engine::artifact_shipping::DatasetSource>,
     crate::engine::artifact_shipping::DatasetManifest,
 )> {
     use crate::engine::artifact_shipping::DatasetManifest;
@@ -2297,7 +2331,12 @@ fn build_imported_agent_serve_plan(
             "imported recorded-agent source path {relative_path:?} is not a safe relative path"
         );
         ensure!(
-            served.insert(relative_path.clone(), source.path).is_none(),
+            served
+                .insert(
+                    relative_path.clone(),
+                    crate::engine::artifact_shipping::DatasetSource::Path(source.path),
+                )
+                .is_none(),
             "imported recorded-agent source set has duplicate path {relative_path:?}"
         );
         files.push(relative_path);
@@ -3393,6 +3432,109 @@ mod tests {
         assert!(!served.contains_key("nested/impostor.jsonl"));
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn agent_session_exact_set_materializes_discovery_snapshot_after_source_swap() {
+        use crate::engine::artifact_shipping::{ArtifactUploadServer, fetch_dataset_to_file};
+        use crate::graph::recorded::agent_recording::parse_imported_agent_sessions;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        let original = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"original\"}]}}\n";
+        let replacement = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"replacement\"}]}}\n";
+        std::fs::write(&source, original).unwrap();
+
+        let dataset = serde_json::json!({
+            "type": "file",
+            "format": "agent_recording",
+            "path": source,
+            "graph": {"source_format": "codex"}
+        });
+        let read_set = crate::engine::graph_input::snapshot_selected_imported_agent_read_set(
+            &dataset,
+            &temporary.path().join("controller-snapshot"),
+        )
+        .unwrap()
+        .unwrap();
+        let replacement_path = temporary.path().join("replacement.jsonl");
+        std::fs::write(&replacement_path, replacement).unwrap();
+        std::fs::rename(&replacement_path, &source).unwrap();
+
+        let envelope = serde_json::json!({"run": {"cfg": {
+            "datasets": [dataset],
+            "phases": [{"type": "concurrency", "name": "profiling", "sessions": 1, "concurrency": 1, "exclude_from_results": false}],
+            "endpoint": {"type": "chat"}
+        }}});
+        let cell_dir = temporary.path().join("cell");
+        let cell = build_cell_envelope(
+            &envelope,
+            CellularRunKind::Graph,
+            0,
+            1,
+            &cell_dir,
+            None,
+            Some(&read_set),
+        )
+        .unwrap();
+        let cell_source = crate::engine::cellular_cell::cellular_file_dataset_path(&cell)
+            .expect("the same-host cell receives a materialized snapshot path");
+        assert_ne!(
+            cell_source, source,
+            "a no-HTTP same-host cell must not retain the mutable caller path"
+        );
+        assert_eq!(
+            std::fs::read(&cell_source).unwrap(),
+            original,
+            "the cell must compile the controller's immutable discovery snapshot"
+        );
+        assert_eq!(
+            cell.pointer("/run/planned_replay_traces/0/template_trace_id")
+                .and_then(serde_json::Value::as_str),
+            Some("original"),
+        );
+        assert_eq!(
+            parse_imported_agent_sessions(&read_set).unwrap()[0].session_id,
+            "original"
+        );
+
+        let (served, manifest) = build_imported_agent_serve_plan(read_set).unwrap();
+        let server = ArtifactUploadServer::start_with_dataset_plan(
+            "127.0.0.1:0".parse().unwrap(),
+            temporary.path().join("controller-temp"),
+            std::collections::HashSet::new(),
+            served,
+            Some(manifest),
+        )
+        .await
+        .unwrap();
+        let landed = temporary.path().join("landed.jsonl");
+        fetch_dataset_to_file(&server.local_addr().to_string(), "session.jsonl", &landed)
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(landed).unwrap(), original);
+        server.shutdown().await;
+    }
+
+    #[test]
+    fn non_agent_jsonl_cellular_source_skips_import_discovery() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("trace.jsonl");
+        std::fs::write(&source, b"not imported JSONL\n").unwrap();
+        let envelope = serde_json::json!({"run": {"cfg": {
+            "datasets": [{"type": "file", "format": "dag_jsonl", "path": source}]
+        }}});
+        let format = envelope
+            .pointer("/run/cfg/datasets/0/format")
+            .and_then(serde_json::Value::as_str);
+        assert_ne!(format, Some("agent_recording"));
+        assert!(
+            crate::engine::graph_input::selected_imported_agent_read_set(
+                envelope.pointer("/run/cfg/datasets/0").unwrap(),
+            )
+            .is_ok()
+        );
+    }
+
     #[test]
     fn agent_session_exact_set_rejects_auto_directories_for_every_replay_root_relation() {
         let temporary = tempfile::tempdir().unwrap();
@@ -3420,6 +3562,7 @@ mod tests {
                 Some("agent_recording"),
                 &selected,
                 replay_root,
+                None,
             )
             .expect_err(name)
             .to_string();
@@ -3457,6 +3600,7 @@ mod tests {
                 Some("agent_recording"),
                 &source,
                 None,
+                None,
             )
             .expect_err(name);
             let error = format!("{error:#}");
@@ -3488,6 +3632,7 @@ mod tests {
             Some("agent_recording"),
             &source,
             None,
+            None,
         )
         .expect_err("symlinked imported sessions must reject while planning the serve set");
         let error = format!("{error:#}");
@@ -3512,12 +3657,18 @@ mod tests {
             Some("agent_recording"),
             &source,
             None,
+            None,
         )
         .expect("null graph must retain Auto JSONL imported-session dispatch");
 
         assert_eq!(manifest.kind, "agent_session_set");
         assert_eq!(manifest.files, ["session.jsonl"]);
-        assert_eq!(served.get("session.jsonl"), Some(&source));
+        assert_eq!(
+            served.get("session.jsonl"),
+            Some(&crate::engine::artifact_shipping::DatasetSource::Path(
+                source
+            )),
+        );
     }
 
     #[test]
@@ -3579,6 +3730,7 @@ mod tests {
             Some("agent_recording"),
             Path::new("exports/main.jsonl"),
             Some(root.path()),
+            None,
         )
         .unwrap();
 
@@ -3586,7 +3738,9 @@ mod tests {
         assert_eq!(manifest.files, vec!["exports/main.jsonl".to_owned()]);
         assert_eq!(
             served.get("exports/main.jsonl"),
-            Some(&source.canonicalize().unwrap())
+            Some(&crate::engine::artifact_shipping::DatasetSource::Path(
+                source
+            )),
         );
     }
 
@@ -3655,6 +3809,7 @@ mod tests {
                         count,
                         dir,
                         None,
+                        None,
                     )
                     .unwrap();
                     let owned = cell
@@ -3686,6 +3841,7 @@ mod tests {
                 cell_id,
                 4,
                 dir,
+                None,
                 None,
             )
             .unwrap();
@@ -3886,6 +4042,7 @@ mod tests {
                         count,
                         dir,
                         None,
+                        None,
                     )
                     .unwrap();
                     let phases = cell
@@ -3936,6 +4093,7 @@ mod tests {
                 cell_id,
                 cell_count,
                 dir,
+                None,
                 None,
             )
             .unwrap();

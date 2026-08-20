@@ -4,7 +4,6 @@
 //! Provider-native Claude Code session normalization.
 
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 use bytes::Bytes;
@@ -27,9 +26,9 @@ pub fn parse_claude_session(
 pub(crate) fn parse_claude_session_details(
     file: &ImportedAgentSourceFile,
 ) -> Result<ParsedClaudeSession, ImportedAgentError> {
-    let handle = File::open(&file.path)
+    let source = std::fs::File::open(&file.path)
         .map_err(|_| error(&file.path, 0, "unknown", "cannot read source file"))?;
-    let mut reader = BufReader::new(handle);
+    let mut reader = BufReader::new(source);
     let mut state = ClaudeState::new(file);
     let mut hasher = blake3::Hasher::new();
     let mut line_bytes = Vec::new();

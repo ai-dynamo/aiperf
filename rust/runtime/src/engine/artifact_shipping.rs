@@ -71,6 +71,15 @@ pub struct DatasetManifest {
     pub files: Vec<String>,
 }
 
+/// A controller-owned source served to a cross-host cell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DatasetSource {
+    /// A regular dataset source that remains on the controller filesystem.
+    Path(PathBuf),
+    /// Bytes frozen during imported-session discovery.
+    Snapshot(Bytes),
+}
+
 /// A bounded streaming compressor over one artifact file: each
 /// [`next_chunk`](Self::next_chunk) yields at most [`CHUNK_SIZE`] bytes of the
 /// zstd frame, reading the source incrementally so the whole file is never
@@ -277,7 +286,7 @@ struct UploadState {
     /// per-record artifact uploads use; the cell then recompiles it locally. Empty
     /// for a synthetic run (each cell regenerates the dataset from the shared seed)
     /// and for a same-host run (cells read the controller-local path directly).
-    datasets: HashMap<String, PathBuf>,
+    datasets: HashMap<String, DatasetSource>,
     /// The multi-file dataset manifest served at `GET /dataset-manifest`.
     /// `None` for a synthetic / same-host /
     /// no-dataset run (the route then `404`s); `Some` even for a single file, so a
@@ -327,7 +336,7 @@ impl ArtifactUploadServer {
         bind: SocketAddr,
         temp_root: PathBuf,
         allowed: HashSet<String>,
-        datasets: HashMap<String, PathBuf>,
+        datasets: HashMap<String, DatasetSource>,
     ) -> Result<Self> {
         Self::start_with_dataset_plan(bind, temp_root, allowed, datasets, None).await
     }
@@ -342,7 +351,7 @@ impl ArtifactUploadServer {
         bind: SocketAddr,
         temp_root: PathBuf,
         allowed: HashSet<String>,
-        datasets: HashMap<String, PathBuf>,
+        datasets: HashMap<String, DatasetSource>,
         manifest: Option<DatasetManifest>,
     ) -> Result<Self> {
         let state = Arc::new(UploadState {
@@ -549,7 +558,7 @@ async fn serve_dataset(
     State(state): State<Arc<UploadState>>,
     AxumPath(name): AxumPath<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let path = state
+    let source = state
         .datasets
         .get(&name)
         .cloned()
@@ -560,22 +569,22 @@ async fn serve_dataset(
     // error mid-stream is forwarded as a stream error, truncating the body so the
     // cell's decoder fails rather than landing a partial file.
     let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(4);
-    tokio::task::spawn_blocking(move || match FileCompressor::open(&path) {
-        Ok(mut compressor) => loop {
-            match compressor.next_chunk() {
-                Ok(Some(chunk)) => {
+    tokio::task::spawn_blocking(move || {
+        let result = match source {
+            DatasetSource::Path(path) => FileCompressor::open(&path).and_then(|mut compressor| {
+                while let Some(chunk) = compressor.next_chunk()? {
                     if tx.blocking_send(Ok(Bytes::from(chunk))).is_err() {
-                        break; // receiver dropped (client disconnected)
+                        break;
                     }
                 }
-                Ok(None) => break,
-                Err(error) => {
-                    let _ = tx.blocking_send(Err(error));
-                    break;
-                }
+                Ok(())
+            }),
+            DatasetSource::Snapshot(bytes) => {
+                zstd::stream::read::Encoder::new(std::io::Cursor::new(bytes), ZSTD_LEVEL)
+                    .and_then(|encoder| stream_dataset_compressor(encoder, &tx))
             }
-        },
-        Err(error) => {
+        };
+        if let Err(error) = result {
             let _ = tx.blocking_send(Err(error));
         }
     });
@@ -593,6 +602,23 @@ async fn serve_dataset(
         .header(axum::http::header::CONTENT_ENCODING, ZSTD_CONTENT_ENCODING)
         .body(body)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+}
+
+fn stream_dataset_compressor<R: Read>(
+    mut compressor: R,
+    tx: &mpsc::Sender<Result<Bytes, io::Error>>,
+) -> io::Result<()> {
+    loop {
+        let mut chunk = vec![0_u8; CHUNK_SIZE];
+        let count = compressor.read(&mut chunk)?;
+        if count == 0 {
+            return Ok(());
+        }
+        chunk.truncate(count);
+        if tx.blocking_send(Ok(Bytes::from(chunk))).is_err() {
+            return Ok(());
+        }
+    }
 }
 
 /// `GET /dataset-manifest` returns the registered multi-file [`DatasetManifest`]
@@ -1347,7 +1373,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            datasets.insert(shard.to_owned(), path);
+            datasets.insert(shard.to_owned(), DatasetSource::Path(path));
             names.push(shard.to_owned());
         }
         let manifest = DatasetManifest {
@@ -1405,7 +1431,7 @@ mod tests {
         for shard in shard_names {
             let path = src_dir.join(shard);
             std::fs::write(&path, format!("{shard}\n")).unwrap();
-            datasets.insert(shard.to_owned(), path);
+            datasets.insert(shard.to_owned(), DatasetSource::Path(path));
         }
         let manifest = DatasetManifest {
             kind: "prefix".to_owned(),
@@ -1448,8 +1474,14 @@ mod tests {
         std::fs::write(&recording, b"recording").unwrap();
         std::fs::write(&asset, b"workspace asset").unwrap();
         let datasets = HashMap::from([
-            ("recordings/trace.json".to_owned(), recording),
-            ("benchmark/pinchbench/assets/input.txt".to_owned(), asset),
+            (
+                "recordings/trace.json".to_owned(),
+                DatasetSource::Path(recording),
+            ),
+            (
+                "benchmark/pinchbench/assets/input.txt".to_owned(),
+                DatasetSource::Path(asset),
+            ),
         ]);
         let manifest = DatasetManifest {
             kind: "replay_root".to_owned(),
@@ -1515,10 +1547,13 @@ mod tests {
             dir.path().join("controller-temp"),
             HashSet::new(),
             HashMap::from([
-                ("selected/main.jsonl".to_owned(), main.clone()),
+                (
+                    "selected/main.jsonl".to_owned(),
+                    DatasetSource::Path(main.clone()),
+                ),
                 (
                     "selected/main/subagents/agent-aaa.jsonl".to_owned(),
-                    subagent.clone(),
+                    DatasetSource::Path(subagent.clone()),
                 ),
             ]),
             Some(manifest.clone()),
@@ -1631,7 +1666,10 @@ mod tests {
         assert!(source_bytes.len() > CHUNK_SIZE, "source spans many chunks");
 
         let mut datasets = HashMap::new();
-        datasets.insert("prompts.jsonl".to_owned(), src.clone());
+        datasets.insert(
+            "prompts.jsonl".to_owned(),
+            super::DatasetSource::Path(src.clone()),
+        );
         let server = ArtifactUploadServer::start_with_datasets(
             "127.0.0.1:0".parse().unwrap(),
             dir.path().join("controller-temp"),
@@ -1685,7 +1723,10 @@ mod tests {
         .unwrap();
 
         let mut datasets = HashMap::new();
-        datasets.insert("prompts.jsonl".to_owned(), src.clone());
+        datasets.insert(
+            "prompts.jsonl".to_owned(),
+            super::DatasetSource::Path(src.clone()),
+        );
         let server = ArtifactUploadServer::start_with_datasets(
             "127.0.0.1:0".parse().unwrap(),
             dir.path().join("controller-temp"),

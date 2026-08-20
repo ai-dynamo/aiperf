@@ -23,11 +23,24 @@ fn write_codex_session_set(root: &Path) -> PathBuf {
     fs::create_dir_all(&sessions).expect("create imported-session directory");
     for session in 0..SESSIONS {
         let session_id = format!("cellular-import-{session}");
-        let body = format!(concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"{session_id}\"}}\n",
-            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"imported cellular prompt {session}\"}]}}\n",
-            "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"recorded reply {session}\"}]}}\n"
-        ),);
+        let body = [
+            json!({"type": "session_meta", "payload": {"id": session_id}}),
+            json!({"type": "response_item", "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": format!("imported cellular prompt {session}")}],
+            }}),
+            json!({"type": "response_item", "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": format!("recorded reply {session}")}],
+            }}),
+        ]
+        .into_iter()
+        .map(|record| record.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+            + "\n";
         fs::write(sessions.join(format!("session-{session}.jsonl")), body)
             .expect("write imported Codex session");
     }
@@ -45,11 +58,11 @@ fn config(url: &str, source: &Path, replay_root: &Path, cells: u32) -> String {
         \x20   streaming: true\n\
         \x20 dataset:\n\
         \x20   type: file\n\
-        \x20   path: {source}\n\
+        \x20   path: {}\n\
         \x20   format: agent_recording\n\
         \x20   graph:\n\
         \x20     source_format: codex\n\
-        \x20     replay_root: {replay_root}\n\
+        \x20     replay_root: {}\n\
         \x20 profiling:\n\
         \x20   type: concurrency\n\
         \x20   sessions: {SESSIONS}\n\
@@ -59,7 +72,9 @@ fn config(url: &str, source: &Path, replay_root: &Path, cells: u32) -> String {
         \x20     - jsonl\n\
         \x20   raw: true\n\
          runtime:\n\
-        \x20 cells: {cells}\n"
+        \x20 cells: {cells}\n",
+        source.display(),
+        replay_root.display(),
     )
 }
 
@@ -110,6 +125,7 @@ fn raw_response_text(record: &Value) -> String {
             chunk
                 .pointer("/choices/0/delta/content")
                 .and_then(Value::as_str)
+                .map(str::to_owned)
         })
         .collect()
 }

@@ -40,17 +40,37 @@ This design is grounded in:
 
 ## Built
 
-The native `agent_recording` input currently accepts only its strict canonical
-recording and manifest forms. Codex CLI and Claude Code session-log imports are
-not built.
+The native `agent_recording` input accepts strict Mini-SWE recordings as before
+and native Codex CLI and Claude Code JSONL session imports. `source_format`
+selects `auto`, `mini_swe_agent`, `codex`, or `claude_code`; `auto` recognizes
+one JSONL file while directory imports require an explicit provider format.
 
-## Future requirements
+Codex directories recurse over sorted session JSONL files. Claude directories
+select sorted main sessions and their direct `subagents/agent-*.jsonl` files
+when `include_subagents` is enabled. Discovery canonicalizes every selected
+path and rejects symlinks and root escapes. Cellular controllers revalidate and
+stream-copy the exact selected files through no-follow descriptors into private
+scratch before parsing or serving them. Cross-host cells rebuild only that
+scratch-backed manifest; co-located cells receive the same scratch paths. A
+caller source replacement after snapshotting therefore cannot alter a cell's
+input, and session histories are never retained wholesale in controller memory.
+
+The importers normalize provider histories into non-executable session IR,
+lower it to canonical recorded-agent Graph-IR, and preserve observed tool
+relationships without creating executable tool nodes. Codex imports replay
+through chat-compatible endpoints; Claude imports retain Messages content and
+require a Messages-compatible endpoint. Imported request bodies receive the
+prepared context tokenizer for exact local input-token accounting. Deterministic
+mock-server E2E covers Codex and Claude request history, ISL/OSL, streaming
+TTFT/ITL, and privacy-safe diagnostics.
+
+## Historical design context
 
 ## Problem
 
-AIPerf can replay strict Mini-SWE-Agent recordings through the native
-`agent_recording` graph input, but it cannot directly consume native Codex CLI
-or Claude Code session JSONL. The Python adapters prove useful discovery and
+AIPerf replays strict Mini-SWE-Agent recordings and imports native Codex CLI
+and Claude Code session JSONL through the same `agent_recording` graph input.
+The Python adapters provided discovery and
 parsing rules, including Codex recursive session discovery, Claude Code
 sidechain filtering, parallel tool correlation, and subagent discovery. Their
 output model is not the correct native target:
@@ -228,13 +248,8 @@ and symlinks are rejected. These rules extend the existing root containment
 and symlink protections at
 `rust/runtime/src/graph/recorded/agent_recording/discovery.rs:140-180,183-227,615-669`.
 
-The current cellular replay-root serve plan recursively serves every file under
-the root (`rust/runtime/src/engine/cellular_controller.rs:2167-2254`). It must
-not be reused for a user's `~/.codex` or `~/.claude` tree. Until source-specific
-shipping consumes the exact discovered read set, directory session import is
-rejected when cross-host cells are selected. A single explicitly selected file
-may use the existing single-file shipping path at
-`rust/runtime/src/engine/cellular_controller.rs:2091-2108`.
+Cellular import shipping consumes only the exact discovered read set; it never
+reuses replay-root traversal for a user's `~/.codex` or `~/.claude` tree.
 
 ## Normalization data flow
 
@@ -645,9 +660,9 @@ symlink.
    `rust/runtime/src/engine/graph_input.rs:1882-1904`; test strict config decode,
    CLI/YAML projection, invalid source/options, recorded model behavior, and
    canonical prepared-input policy.
-7. **Cellular:** prove that the served file set equals the locally discovered
-   set and excludes unrelated JSONL under the same parent. Until that exists,
-   prove directory import is refused for cross-host execution.
+7. **Cellular:** prove the controller-owned discovered snapshot is the only
+   source for cell planning and downloads, excludes unrelated JSONL, and rejects
+   symlink replacement.
 8. **Privacy:** assert errors, warnings, debug output, trace identity, and
    annotations do not contain fixture prompt text, cwd, branch, arguments,
    results, or reasoning.
@@ -674,80 +689,86 @@ assert the graph contains no executable tool node and that the deterministic
 clock-level test—not a wall-clock tolerance—owns observed bundle-delay
 verification.
 
-## Incremental delivery
+## Delivered milestones
 
-### Milestone 1: source contract and safe discovery
+### Delivered: source contract and safe discovery
 
 Add the typed source enum/config, validation, common import IR, error type,
 deterministic file enumeration, single-file detection, source digests, and
-adversarial discovery tests. Cross-host directory imports remain rejected.
+adversarial discovery tests.
 
-### Milestone 2: Codex local import
+### Delivered: Codex local import
 
 Add the Codex state machine, causal function-call normalization, dedicated
 session lowering, config/CLI projection, golden fixtures, lowering tests, and a
 single-file chat E2E. The deliverable is a complete local Codex session replay
 with explicit fidelity annotations.
 
-### Milestone 3: Claude main sessions
+### Delivered: Claude main sessions
 
 Add Claude main-chain parsing, message-ID consolidation, provider-native
 content preservation, parallel tool correlation, messages-endpoint preflight,
 golden fixtures, and a messages-endpoint E2E.
 
-### Milestone 4: Claude subagents
+### Delivered: Claude subagents
 
 Add exact subagent discovery, parent `Task` correlation, stable sibling
 identity, privacy-safe parent annotations, unmatched/duplicate-parent errors,
 and directory fixture coverage.
 
-### Milestone 5: cellular exact-set shipping and documentation
+### Delivered: cellular exact-set shipping and documentation
 
-Make local discovery's selected file set the sole source for cross-host
-shipping and cell-side reconstruction. Add cellular parity/security tests, then
-update architecture indexes and user documentation in the same implementation
-change. Index updates are outside this record's creation change.
+Make local discovery's selected file set the sole source for every cellular
+delivery. Remote cells fetch the captured bytes from their routable controller
+authority; co-located cells compile a controller-owned scratch materialization
+when HTTP delivery is unavailable. Source replacement after discovery cannot
+change planning or execution.
 
 Each milestone is independently reviewable and keeps `agent_recording` as the
 only public graph-input format.
 
-## Unresolved decisions
+## Recorded decisions
 
-The following decisions must be resolved before or within the named milestone;
-they are not permission to silently choose a lossy behavior:
+The following records distinguish shipped behavior from future design work.
+
+### Shipped decisions
+
+1. **Cross-host directory support:** implemented as exact-set shipping, never
+   replay-root traversal. The controller snapshots discovered bytes before it
+   binds the artifact server; the server and every remote cell consume those
+   bytes. Co-located no-HTTP cells receive a controller scratch materialization
+   of the same bytes rather than the caller path.
+2. **Claude endpoint compatibility:** provider-native Claude content is
+   accepted only by the Messages endpoint. No implicit OpenAI wire translation
+   is performed.
+3. **System prompt representation:** Codex `base_instructions.text` becomes a
+   system history message; Claude imports remain system-less because their
+   recording has no equivalent authored request field.
+4. **Observed tool authority:** imported tool calls and results are replay
+   evidence only. The imported graph never executes a tool, shell command,
+   MCP call, or subagent.
+
+### Open questions
 
 1. **Codex function-call grouping:** confirm against representative current
    Codex logs whether consecutive calls before the first output always form one
    model completion. If no stable boundary exists, require an annotation and a
    documented deterministic heuristic rather than claiming exact call count.
-   Resolve before Milestone 2 E2E.
+   The shipped behavior is fixture-backed by Codex E2E.
 2. **Claude repeated message records:** determine whether current Claude Code
    writes streaming chunks, cumulative snapshots, or both for one `message.id`.
-   The conflict/deduplication rule must be fixture-backed before Milestone 3.
-3. **Claude endpoint compatibility:** decide whether provider-native content is
-   accepted only with `endpoint.type: messages`, or whether a separately named
-   explicit dialect translation will be designed. Silent translation is
-   forbidden.
-4. **System prompt representation:** Codex `base_instructions.text` naturally
-   forms a system message for chat. Anthropic uses a top-level system field,
-   while `LlmRequestSpec` currently retains tools, model, and additional body
-   but no dedicated raw system handle
-   (`rust/runtime/src/graph/model.rs:127-139`). Decide whether imported Claude
-   sessions remain system-less or require a future request-spec extension.
-5. **Interrupted-session policy:** this record allows a missing terminal tool
+   The conflict/deduplication rule is fixture-backed.
+3. **Interrupted-session policy:** this record allows a missing terminal tool
    result with an annotation. Confirm whether benchmark consumers prefer
    dropping such sessions by default; do not substitute placeholder tool
    content.
-6. **Observed tool delay:** confirm whether the product wants raw observed
+4. **Observed tool delay:** confirm whether the product wants raw observed
    first-use-to-last-result duration only or a later configurable scalar
    reduction. Empirical/lognormal distributions remain out of scope.
-7. **Source-version gating:** neither Python adapter validates CLI version
+5. **Source-version gating:** neither Python adapter validates CLI version
    beyond structural fields. Decide whether provenance records a non-secret
    version and whether known incompatible major versions fail closed.
-8. **Cross-host directory support:** choose exact-set artifact shipping or an
-   explicit refusal as the permanent policy. Recursively serving an entire
-   CLI history root is prohibited.
-9. **Comprehensive redaction:** if users require a privacy transform, design a
+6. **Comprehensive redaction:** if users require a privacy transform, design a
    separate explicit policy covering system/developer/user/assistant content,
    tool arguments/results, paths, metadata, and derived segments. The Python
    partial `anonymize` behavior is not an acceptable contract.

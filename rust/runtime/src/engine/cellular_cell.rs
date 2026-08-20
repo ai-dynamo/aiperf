@@ -140,15 +140,32 @@ pub fn http_artifact_shipping_enabled() -> bool {
 /// 4. otherwise (a `tcp://` **loopback** or `uds://` local coordinate) → `None`
 ///    (a co-located run concatenates the cell's own local writes; no HTTP).
 pub fn cell_artifact_authority() -> Option<String> {
-    if !http_artifact_shipping_enabled() {
+    let explicit = std::env::var(CELL_ARTIFACT_ADDR_ENV).ok();
+    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok();
+    let port = std::env::var(CELL_ARTIFACT_PORT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok());
+    artifact_authority_for(
+        http_artifact_shipping_enabled(),
+        explicit.as_deref(),
+        coordinate.as_deref(),
+        port,
+    )
+}
+
+fn artifact_authority_for(
+    is_http_shipping_enabled: bool,
+    explicit: Option<&str>,
+    coordinate: Option<&str>,
+    port: Option<u16>,
+) -> Option<String> {
+    if !is_http_shipping_enabled {
         return None;
     }
-    if let Ok(addr) = std::env::var(CELL_ARTIFACT_ADDR_ENV)
-        && !addr.is_empty()
-    {
-        return Some(addr);
+    if let Some(addr) = explicit.filter(|addr| !addr.is_empty()) {
+        return Some(addr.to_owned());
     }
-    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
+    let coordinate = coordinate?;
     let host_port = coordinate.strip_prefix("tcp://")?;
     // The velo coordinate host, with the artifact-server port (the velo port is a
     // different service).
@@ -165,10 +182,7 @@ pub fn cell_artifact_authority() -> Option<String> {
     {
         return None;
     }
-    let port = std::env::var(CELL_ARTIFACT_PORT_ENV)
-        .ok()
-        .and_then(|value| value.parse::<u16>().ok())
-        .unwrap_or(DEFAULT_ARTIFACT_PORT);
+    let port = port.unwrap_or(DEFAULT_ARTIFACT_PORT);
     Some(format!("{host}:{port}"))
 }
 
@@ -430,7 +444,7 @@ fn manifest_has_local_replay_root(
     matches!(manifest.kind.as_str(), "replay_root" | "agent_session_set")
 }
 
-fn rewrite_cell_dataset_paths(
+pub(crate) fn rewrite_cell_dataset_paths(
     envelope: &mut serde_json::Value,
     local_path: &std::path::Path,
     local_replay_root: Option<&std::path::Path>,
@@ -1196,6 +1210,42 @@ impl CellRecordsShipper {
 mod tests {
     use super::*;
 
+    static CELL_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    struct ScopedCellEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+    impl ScopedCellEnv {
+        fn capture(keys: &[&'static str]) -> Self {
+            Self(
+                keys.iter()
+                    .map(|key| (*key, std::env::var_os(key)))
+                    .collect(),
+            )
+        }
+
+        fn set(&self, key: &'static str, value: impl AsRef<std::ffi::OsStr>) {
+            unsafe { std::env::set_var(key, value) };
+        }
+
+        fn remove(&self, key: &'static str) {
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+
+    impl Drop for ScopedCellEnv {
+        fn drop(&mut self) {
+            for (key, value) in &self.0 {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn k8s_ship_coordinate_round_robins_cells_to_aggregators() {
         let template = "tcp://js-aggregators-{agg_id}-0.js.ns.svc.cluster.local:9700";
@@ -1307,6 +1357,155 @@ mod tests {
         assert!(manifest_has_local_replay_root(&manifest));
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cell_downloads_and_compiles_the_controller_session_snapshot_after_source_swap() {
+        let _environment = CELL_ENV_LOCK.lock().await;
+        let environment = ScopedCellEnv::capture(&[
+            crate::cellular::partition::CELL_ID_ENV,
+            crate::cellular::partition::CELL_COUNT_ENV,
+            CELL_ARTIFACT_ADDR_ENV,
+            CELL_CONTROLLER_ADDR_ENV,
+        ]);
+        let temporary = tempfile::tempdir().unwrap();
+        let caller_source = temporary.path().join("session.jsonl");
+        let original = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"original\"}]}}\n";
+        std::fs::write(&caller_source, original).unwrap();
+        let dataset = serde_json::json!({
+            "type": "file",
+            "format": "agent_recording",
+            "path": caller_source,
+            "graph": {"source_format": "codex"}
+        });
+        let read_set = crate::engine::graph_input::snapshot_selected_imported_agent_read_set(
+            &dataset,
+            &temporary.path().join("controller-snapshot"),
+        )
+        .unwrap()
+        .unwrap();
+        let name = read_set.files[0]
+            .relative_path
+            .to_string_lossy()
+            .into_owned();
+        let manifest = crate::engine::artifact_shipping::DatasetManifest {
+            kind: "agent_session_set".to_owned(),
+            base_name: read_set
+                .selected_path
+                .strip_prefix(&read_set.root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            files: vec![name.clone()],
+        };
+        let server =
+            crate::engine::artifact_shipping::ArtifactUploadServer::start_with_dataset_plan(
+                "127.0.0.1:0".parse().unwrap(),
+                temporary.path().join("landed"),
+                std::collections::HashSet::new(),
+                std::collections::HashMap::from([(
+                    name,
+                    crate::engine::artifact_shipping::DatasetSource::Path(
+                        read_set.files[0].path.clone(),
+                    ),
+                )]),
+                Some(manifest),
+            )
+            .await
+            .unwrap();
+        std::fs::write(
+            &caller_source,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"replacement\"}]}}\n",
+        )
+        .unwrap();
+
+        let mut envelope = serde_json::json!({"run": {"cfg": {
+            "datasets": [dataset]
+        }}});
+        rewrite_cell_dataset_paths(&mut envelope, &read_set.selected_path, Some(&read_set.root))
+            .unwrap();
+        let encoded = serde_json::to_vec(&envelope).unwrap();
+        environment.set(crate::cellular::partition::CELL_ID_ENV, "0");
+        environment.set(crate::cellular::partition::CELL_COUNT_ENV, "1");
+        environment.set(CELL_ARTIFACT_ADDR_ENV, server.local_addr().to_string());
+        environment.remove(CELL_CONTROLLER_ADDR_ENV);
+        let landed = tokio::task::spawn_blocking(move || download_cell_dataset_if_needed(encoded))
+            .await
+            .unwrap()
+            .unwrap();
+        let landed: serde_json::Value = serde_json::from_slice(&landed).unwrap();
+        let landed_read_set = crate::engine::graph_input::selected_imported_agent_read_set(
+            landed.pointer("/run/cfg/datasets/0").unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            crate::graph::recorded::agent_recording::parse_imported_agent_sessions(
+                &landed_read_set
+            )
+            .unwrap()[0]
+                .session_id,
+            "original"
+        );
+        server.shutdown().await;
+    }
+
+    #[test]
+    fn no_http_cell_compiles_the_controller_scratch_snapshot_after_source_swap() {
+        let _environment = CELL_ENV_LOCK.blocking_lock();
+        let environment = ScopedCellEnv::capture(&[
+            crate::cellular::partition::CELL_ID_ENV,
+            crate::cellular::partition::CELL_COUNT_ENV,
+            CELL_ARTIFACT_ADDR_ENV,
+            CELL_CONTROLLER_ADDR_ENV,
+        ]);
+        let temporary = tempfile::tempdir().unwrap();
+        let caller_source = temporary.path().join("session.jsonl");
+        std::fs::write(
+            &caller_source,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"original\"}]}}\n",
+        )
+        .unwrap();
+        let dataset = serde_json::json!({
+            "type": "file",
+            "format": "agent_recording",
+            "path": caller_source,
+            "graph": {"source_format": "codex"}
+        });
+        let read_set = crate::engine::graph_input::snapshot_selected_imported_agent_read_set(
+            &dataset,
+            &temporary.path().join("controller-snapshot"),
+        )
+        .unwrap()
+        .unwrap();
+        std::fs::write(
+            &caller_source,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"replacement\"}]}}\n",
+        )
+        .unwrap();
+        let mut envelope = serde_json::json!({"run": {"cfg": {"datasets": [dataset]}}});
+        rewrite_cell_dataset_paths(&mut envelope, &read_set.selected_path, Some(&read_set.root))
+            .unwrap();
+        environment.set(crate::cellular::partition::CELL_ID_ENV, "0");
+        environment.set(crate::cellular::partition::CELL_COUNT_ENV, "1");
+        environment.set(CELL_CONTROLLER_ADDR_ENV, "tcp://127.0.0.1:9500");
+        environment.remove(CELL_ARTIFACT_ADDR_ENV);
+        let landed =
+            download_cell_dataset_if_needed(serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let landed: serde_json::Value = serde_json::from_slice(&landed).unwrap();
+        let landed_read_set = crate::engine::graph_input::selected_imported_agent_read_set(
+            landed.pointer("/run/cfg/datasets/0").unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            crate::graph::recorded::agent_recording::parse_imported_agent_sessions(
+                &landed_read_set
+            )
+            .unwrap()[0]
+                .session_id,
+            "original"
+        );
+    }
+
     #[test]
     fn agent_session_exact_set_creates_missing_graph_for_replay_root_rewrite() {
         let mut envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
@@ -1347,6 +1546,38 @@ mod tests {
         assert_eq!(
             envelope.pointer("/run/cfg/datasets/0/graph/replay_root"),
             Some(&serde_json::json!("/cell"))
+        );
+    }
+
+    #[test]
+    fn remote_cells_derive_routable_artifact_authority_from_their_controller_coordinate() {
+        for (coordinate, expected) in [
+            (
+                "tcp://aiperf-controller.default.svc.cluster.local:9500",
+                "aiperf-controller.default.svc.cluster.local:9600",
+            ),
+            (
+                "tcp://slurm-rank0.cluster.example:9510",
+                "slurm-rank0.cluster.example:9600",
+            ),
+        ] {
+            assert_eq!(
+                artifact_authority_for(true, None, Some(coordinate), None),
+                Some(expected.to_owned()),
+            );
+        }
+    }
+
+    #[test]
+    fn k8s_injected_artifact_authority_overrides_the_controller_coordinate() {
+        assert_eq!(
+            artifact_authority_for(
+                true,
+                Some("artifact-upload.benchmark.svc.cluster.local:9600"),
+                Some("tcp://controller.benchmark.svc.cluster.local:9500"),
+                Some(9611),
+            ),
+            Some("artifact-upload.benchmark.svc.cluster.local:9600".to_owned())
         );
     }
 }

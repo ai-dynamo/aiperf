@@ -20,7 +20,10 @@ use bytes::Bytes;
 
 pub use claude_code::parse_claude_session;
 pub use codex::parse_codex_session;
-pub use discovery::{detect_imported_agent_source, discover_imported_agent_read_set};
+pub use discovery::{
+    detect_imported_agent_source, discover_imported_agent_read_set,
+    snapshot_imported_agent_read_set,
+};
 pub use lowering::lower_imported_agent_sessions;
 
 /// The provider-native session format selected for an imported recording.
@@ -61,7 +64,10 @@ pub struct ImportedAgentSourceFile {
     pub family: ImportedSessionFamily,
 }
 
-/// The complete immutable source authority for an imported session request.
+/// The complete exact source authority for an imported session request.
+///
+/// Cellular controllers materialize selected files in a private scratch root, so a
+/// run can retain stable source paths without retaining full session histories in RAM.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportedAgentReadSet {
     /// Canonical root used to form each selected relative path.

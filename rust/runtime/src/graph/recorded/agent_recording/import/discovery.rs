@@ -4,8 +4,8 @@
 //! Deterministic, root-contained discovery for imported session JSONL files.
 
 use std::collections::HashSet;
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::fs;
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -26,7 +26,7 @@ pub fn detect_imported_agent_source(
     path: &Path,
 ) -> Result<ImportedAgentSource, ImportedAgentError> {
     let path = canonical_selected_file(path)?;
-    scan_source(&path, None)?.ok_or_else(|| {
+    scan_source(&path, open_source_file(&path, "unknown")?, None)?.ok_or_else(|| {
         error(
             &path,
             0,
@@ -95,7 +95,20 @@ pub fn discover_imported_agent_read_set(
 
     let root = resolve_root(&selected_path, is_directory, replay_root)?;
     let resolved_source = match source {
-        RecordedAgentSourceFormat::Auto => detect_imported_agent_source(&selected_path)?,
+        RecordedAgentSourceFormat::Auto => scan_source(
+            &selected_path,
+            open_source_file(&selected_path, "unknown")?,
+            None,
+        )?
+        .ok_or_else(|| {
+            error(
+                &selected_path,
+                0,
+                "unknown",
+                "unknown",
+                "no recognized source marker in scan",
+            )
+        })?,
         RecordedAgentSourceFormat::Codex => ImportedAgentSource::Codex,
         RecordedAgentSourceFormat::ClaudeCode => ImportedAgentSource::ClaudeCode,
         RecordedAgentSourceFormat::MiniSweAgent => {
@@ -143,7 +156,12 @@ pub fn discover_imported_agent_read_set(
                 "duplicate canonical source path",
             ));
         }
-        if scan_source(&canonical, Some(resolved_source))? != Some(resolved_source) {
+        if scan_source(
+            &canonical,
+            open_source_file(&canonical, resolved_source_name(resolved_source))?,
+            Some(resolved_source),
+        )? != Some(resolved_source)
+        {
             return Err(error(
                 &canonical,
                 0,
@@ -186,6 +204,89 @@ pub fn discover_imported_agent_read_set(
         source: resolved_source,
         files,
     })
+}
+
+/// Copy the exact discovered source set into a private immutable scratch root.
+///
+/// The read set stores paths, not source bytes: session parsers and cellular HTTP
+/// serving therefore stream files from this controller-owned snapshot.
+pub fn snapshot_imported_agent_read_set(
+    path: &Path,
+    replay_root: Option<&Path>,
+    source: RecordedAgentSourceFormat,
+    include_subagents: Option<bool>,
+    snapshot_root: &Path,
+) -> Result<ImportedAgentReadSet, ImportedAgentError> {
+    let mut read_set =
+        discover_imported_agent_read_set(path, replay_root, source, include_subagents)?;
+    let selected_relative = read_set
+        .selected_path
+        .strip_prefix(&read_set.root)
+        .map_err(|_| {
+            error(
+                &read_set.selected_path,
+                0,
+                "unknown",
+                "unknown",
+                "selected source escapes discovery root",
+            )
+        })?
+        .to_path_buf();
+    for file in &mut read_set.files {
+        let mut source = open_source_file(&file.path, resolved_source_name(read_set.source))?;
+        if scan_source(&file.path, &mut source, Some(read_set.source))? != Some(read_set.source) {
+            return Err(error(
+                &file.path,
+                0,
+                resolved_source_name(read_set.source),
+                "unknown",
+                "source marker does not match selected source",
+            ));
+        }
+        let target = snapshot_root.join(&file.relative_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|_| {
+                error(
+                    &target,
+                    0,
+                    "unknown",
+                    "unknown",
+                    "cannot create snapshot directory",
+                )
+            })?;
+        }
+        source.seek(SeekFrom::Start(0)).map_err(|_| {
+            error(
+                &file.path,
+                0,
+                "unknown",
+                "unknown",
+                "cannot read source file",
+            )
+        })?;
+        let mut target_file = fs::File::create(&target).map_err(|_| {
+            error(
+                &target,
+                0,
+                "unknown",
+                "unknown",
+                "cannot create snapshot source",
+            )
+        })?;
+        std::io::copy(&mut source, &mut target_file).map_err(|_| {
+            error(
+                &file.path,
+                0,
+                "unknown",
+                "unknown",
+                "cannot snapshot source file",
+            )
+        })?;
+        file.path = target;
+    }
+    read_set.root = snapshot_root.to_path_buf();
+    read_set.selected_path = snapshot_root.join(selected_relative);
+    Ok(read_set)
 }
 
 fn resolve_root(
@@ -523,14 +624,41 @@ fn enumerate_claude(
     Ok(files)
 }
 
-fn scan_source(
+fn open_source_file(path: &Path, source: &'static str) -> Result<fs::File, ImportedAgentError> {
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+    }
+    .map_err(|_| error(path, 0, source, "unknown", "cannot read source file"))?;
+    #[cfg(not(unix))]
+    let file = std::fs::File::open(path)
+        .map_err(|_| error(path, 0, source, "unknown", "cannot read source file"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| error(path, 0, source, "unknown", "cannot inspect source file"))?;
+    if !metadata.is_file() {
+        return Err(error(
+            path,
+            0,
+            source,
+            "unknown",
+            "source must be a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+fn scan_source<R: std::io::Read>(
     path: &Path,
+    source_bytes: R,
     expected: Option<ImportedAgentSource>,
 ) -> Result<Option<ImportedAgentSource>, ImportedAgentError> {
     let source = expected.map_or("unknown", resolved_source_name);
-    let file = File::open(path)
-        .map_err(|_| error(path, 0, source, "unknown", "cannot read source file"))?;
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::new(source_bytes);
     let mut bytes = Vec::new();
     let mut line = 0;
     let mut records = 0;
@@ -676,4 +804,48 @@ fn error(
     detail: &'static str,
 ) -> ImportedAgentError {
     ImportedAgentError::new(path, line, source, record_label, detail)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn snapshot_discovery_keeps_the_opened_source_after_a_caller_swap() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        let snapshot = temporary.path().join("snapshot");
+        let original = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n";
+        std::fs::write(&source, original).unwrap();
+
+        let read_set = snapshot_imported_agent_read_set(
+            &source,
+            None,
+            RecordedAgentSourceFormat::Codex,
+            None,
+            &snapshot,
+        )
+        .unwrap();
+        std::fs::write(
+            &source,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"swapped\"}}\n",
+        )
+        .unwrap();
+
+        assert_eq!(read_set.root, snapshot);
+        assert_eq!(std::fs::read(&read_set.files[0].path).unwrap(), original);
+    }
+
+    #[test]
+    fn snapshot_read_rejects_symlink_replacement() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        let outside = temporary.path().join("outside.jsonl");
+        std::fs::write(&outside, b"outside").unwrap();
+        symlink(&outside, &source).unwrap();
+
+        let error = open_source_file(&source, "codex").unwrap_err().to_string();
+        assert!(error.contains("cannot read source file"), "{error}");
+    }
 }

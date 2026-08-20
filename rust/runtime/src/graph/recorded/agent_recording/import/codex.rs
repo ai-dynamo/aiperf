@@ -4,7 +4,6 @@
 //! Causal normalization of Codex CLI JSONL sessions.
 
 use std::collections::HashSet;
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 use bytes::Bytes;
@@ -20,9 +19,9 @@ use super::{
 pub fn parse_codex_session(
     file: &ImportedAgentSourceFile,
 ) -> Result<ImportedAgentSession, ImportedAgentError> {
-    let handle = File::open(&file.path)
+    let source = std::fs::File::open(&file.path)
         .map_err(|_| error(&file.path, 0, "unknown", "cannot read source file"))?;
-    let mut reader = BufReader::new(handle);
+    let mut reader = BufReader::new(source);
     let mut hasher = blake3::Hasher::new();
     let mut state = CodexState::new(file);
     let mut line_bytes = Vec::new();
