@@ -55,7 +55,7 @@ fn write_single_turn_file(dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Run the single-turn file dataset against `h`'s mock at `cells` cells. When
-/// `force_http`, additionally set the HTTP-force seam + the `info`-level artifact
+/// `force_http`, additionally set the HTTP-force seam + the explicitly raised `debug`-level artifact
 /// filter so a multi-cell run ships the dataset over loopback HTTP+zstd and logs the
 /// serve observable.
 fn run_file_dataset(
@@ -67,10 +67,10 @@ fn run_file_dataset(
     // The serve event fires in the `--execute` child; the parent re-emits every forwarded
     // child line under target `aiperf` (`cli/src/execute.rs`), and only the parent owns
     // `logs/aiperf.log`. So `aiperf=info` is required for the observable to reach the file
-    // at all — raising `aiperf_cellular_artifact` alone filters the forwarded line out.
+    // at all — the artifact target is explicitly raised to `debug` for this observable.
     let mut env: Vec<(&str, &str)> = vec![(
         "AIPERF_LOG",
-        "warn,aiperf=info,aiperf_cellular_artifact=info",
+        "warn,aiperf=info,aiperf_cellular_artifact=debug",
     )];
     if force_http {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));

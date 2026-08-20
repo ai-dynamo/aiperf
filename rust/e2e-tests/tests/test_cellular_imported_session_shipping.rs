@@ -91,7 +91,7 @@ fn run_imported_sessions(
         .expect("write imported-session config");
     let mut env = vec![(
         "AIPERF_LOG",
-        "warn,aiperf=info,aiperf_cellular_artifact=info",
+        "warn,aiperf=info,aiperf_cellular_artifact=debug",
     )];
     if force_http {
         env.push(("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"));

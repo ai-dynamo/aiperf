@@ -46,6 +46,8 @@ pub const ZSTD_LEVEL: i32 = 3;
 /// artifact body; the controller streaming-decompresses only when it matches.
 pub const ZSTD_CONTENT_ENCODING: &str = "zstd";
 
+const DATASET_SERVE_EVENT_LEVEL: tracing::Level = tracing::Level::DEBUG;
+
 /// The wire manifest a cross-host cell fetches (`GET /dataset-manifest`) to learn
 /// the exact file set that makes up a directory or segmented-prefix graph trace,
 /// before streaming each one over the same HTTP+zstd plane a single file uses.
@@ -76,8 +78,6 @@ pub struct DatasetManifest {
 pub enum DatasetSource {
     /// A regular dataset source that remains on the controller filesystem.
     Path(PathBuf),
-    /// Bytes frozen during imported-session discovery.
-    Snapshot(Bytes),
 }
 
 /// A bounded streaming compressor over one artifact file: each
@@ -570,28 +570,24 @@ async fn serve_dataset(
     // cell's decoder fails rather than landing a partial file.
     let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(4);
     tokio::task::spawn_blocking(move || {
-        let result = match source {
-            DatasetSource::Path(path) => FileCompressor::open(&path).and_then(|mut compressor| {
-                while let Some(chunk) = compressor.next_chunk()? {
-                    if tx.blocking_send(Ok(Bytes::from(chunk))).is_err() {
-                        break;
-                    }
+        let DatasetSource::Path(path) = source;
+        let result = FileCompressor::open(&path).and_then(|mut compressor| {
+            while let Some(chunk) = compressor.next_chunk()? {
+                if tx.blocking_send(Ok(Bytes::from(chunk))).is_err() {
+                    break;
                 }
-                Ok(())
-            }),
-            DatasetSource::Snapshot(bytes) => {
-                zstd::stream::read::Encoder::new(std::io::Cursor::new(bytes), ZSTD_LEVEL)
-                    .and_then(|encoder| stream_dataset_compressor(encoder, &tx))
             }
-        };
+            Ok(())
+        });
         if let Err(error) = result {
             let _ = tx.blocking_send(Err(error));
         }
     });
 
     // Use the shared artifact target so this event can be enabled independently.
-    tracing::info!(
+    tracing::event!(
         target: "aiperf_cellular_artifact",
+        DATASET_SERVE_EVENT_LEVEL,
         dataset = %name,
         content_encoding = ZSTD_CONTENT_ENCODING,
         "served dataset source over HTTP"
@@ -602,23 +598,6 @@ async fn serve_dataset(
         .header(axum::http::header::CONTENT_ENCODING, ZSTD_CONTENT_ENCODING)
         .body(body)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
-}
-
-fn stream_dataset_compressor<R: Read>(
-    mut compressor: R,
-    tx: &mpsc::Sender<Result<Bytes, io::Error>>,
-) -> io::Result<()> {
-    loop {
-        let mut chunk = vec![0_u8; CHUNK_SIZE];
-        let count = compressor.read(&mut chunk)?;
-        if count == 0 {
-            return Ok(());
-        }
-        chunk.truncate(count);
-        if tx.blocking_send(Ok(Bytes::from(chunk))).is_err() {
-            return Ok(());
-        }
-    }
 }
 
 /// `GET /dataset-manifest` returns the registered multi-file [`DatasetManifest`]
@@ -1054,6 +1033,11 @@ pub fn shippable_relatives(artifacts: &crate::engine::protocol::ArtifactSpec) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dataset_serve_event_is_debug_level() {
+        assert_eq!(DATASET_SERVE_EVENT_LEVEL, tracing::Level::DEBUG);
+    }
 
     fn sample_bytes(len: usize) -> Vec<u8> {
         let mut out = Vec::with_capacity(len);

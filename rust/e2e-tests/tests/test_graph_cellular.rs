@@ -108,7 +108,7 @@ async fn test_graph_cellular() {
 /// seam (true multi-host k8s cannot run in-sandbox): the controller binds its artifact
 /// server on loopback, registers the single-file trace source, injects the authority into
 /// each locally-launched cell, and the cells `GET /dataset/{name}` it back over real TCP +
-/// zstd. The controller logs `served dataset source over HTTP …
+/// zstd. The test explicitly raises the artifact target to `debug` and the controller logs `served dataset source over HTTP …
 /// content_encoding=zstd` for each transfer.
 #[tokio::test]
 async fn test_graph_cellular_single_file_dataset_shipping() {
@@ -150,10 +150,11 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
         ),
         &[
             // `aiperf=info` is required: the serve event fires in the `--execute` child and the
-            // parent re-emits forwarded child lines under target `aiperf` into `logs/aiperf.log`.
+            // parent re-emits forwarded child lines under target `aiperf` into `logs/aiperf.log`;
+            // the artifact target is explicitly raised to `debug` for this observable.
             (
                 "AIPERF_LOG",
-                "warn,aiperf=info,aiperf_cellular_artifact=info",
+                "warn,aiperf=info,aiperf_cellular_artifact=debug",
             ),
             ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
         ],
@@ -1088,8 +1089,9 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
         ),
         &[
             // `aiperf=info` is required: the serve event fires in the `--execute` child and the
-            // parent re-emits forwarded child lines under target `aiperf` into `logs/aiperf.log`.
-            ("AIPERF_LOG", "warn,aiperf=info,aiperf_cellular_artifact=info"),
+            // parent re-emits forwarded child lines under target `aiperf` into `logs/aiperf.log`;
+            // the artifact target is explicitly raised to `debug` for this observable.
+            ("AIPERF_LOG", "warn,aiperf=info,aiperf_cellular_artifact=debug"),
             ("AIPERF_CELL_ARTIFACT_HTTP_FORCE", "1"),
         ],
     );
