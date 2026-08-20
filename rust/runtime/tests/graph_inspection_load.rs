@@ -73,10 +73,6 @@ impl CountingResolver {
 
 #[async_trait(?Send)]
 impl GraphInputAdapterResolver for CountingResolver {
-    fn supported_formats(&self) -> Vec<&str> {
-        self.stock.supported_formats()
-    }
-
     fn validate_identity(&self, raw: &RawValue) -> Result<()> {
         self.stock.validate_identity(raw)
     }
@@ -105,7 +101,7 @@ async fn built_in_formats_lower_their_real_inspection_sources_once() {
             .iter()
             .map(|source| source.format)
             .collect::<Vec<_>>(),
-        GRAPH_FORMATS
+        GRAPH_FORMATS.to_vec()
     );
     let tokenizer = TiktokenTokenizer::builtin();
 

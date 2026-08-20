@@ -190,8 +190,6 @@ pub struct GraphInputContext<'a> {
     pub tokenizer: &'a dyn TextTokenizer,
     /// Run-root seed used by recorded content reconstruction.
     pub run_random_seed: Option<u64>,
-    /// Selected default endpoint factory identifier for format compatibility checks.
-    pub endpoint_id: &'a str,
 }
 
 /// One direct authored graph-source adapter.
@@ -206,13 +204,25 @@ pub trait GraphInputAdapter: fmt::Debug + Send + Sync {
         raw: &RawValue,
         context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput>;
+
+    /// Strictly decode and load one authored source for a selected endpoint.
+    async fn load_for_endpoint(
+        &self,
+        raw: &RawValue,
+        context: &GraphInputContext<'_>,
+        _endpoint_id: &str,
+    ) -> Result<PreparedRunnerGraphInput> {
+        self.load(raw, context).await
+    }
 }
 
 /// Injected open resolver for direct graph-input adapters.
 #[async_trait(?Send)]
 pub trait GraphInputAdapterResolver: fmt::Debug + Send + Sync {
     /// Registered graph-input format identifiers in their shared authored order.
-    fn supported_formats(&self) -> Vec<&str>;
+    fn supported_formats(&self) -> Vec<&str> {
+        Vec::new()
+    }
 
     /// Validate only that the open format identity selects a linked adapter.
     ///
@@ -226,6 +236,17 @@ pub trait GraphInputAdapterResolver: fmt::Debug + Send + Sync {
         raw: &RawValue,
         context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput>;
+
+    /// Select the format adapter and retain its canonical Graph-IR output for
+    /// a selected endpoint.
+    async fn load_for_endpoint(
+        &self,
+        raw: &RawValue,
+        context: &GraphInputContext<'_>,
+        _endpoint_id: &str,
+    ) -> Result<PreparedRunnerGraphInput> {
+        self.load(raw, context).await
+    }
 }
 
 /// Deterministic built-in graph-input adapter composition.
@@ -328,12 +349,23 @@ impl GraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver {
     ) -> Result<PreparedRunnerGraphInput> {
         self.selected(raw)?.load(raw, context).await
     }
+
+    async fn load_for_endpoint(
+        &self,
+        raw: &RawValue,
+        context: &GraphInputContext<'_>,
+        endpoint_id: &str,
+    ) -> Result<PreparedRunnerGraphInput> {
+        self.selected(raw)?
+            .load_for_endpoint(raw, context, endpoint_id)
+            .await
+    }
 }
 
 /// Load one local graph-inspection input through the selected resolver once.
 ///
 /// This helper only constructs the canonical file dataset wire shape. It leaves
-/// strict decoding and all source reads to the resolver's single `load` call.
+/// strict decoding and all source reads to the resolver's single load call.
 pub async fn prepare_local_graph_inspection_input(
     resolver: &dyn GraphInputAdapterResolver,
     source: &Path,
@@ -354,13 +386,13 @@ pub async fn prepare_local_graph_inspection_input(
     }
     let raw = serde_json::value::to_raw_value(&input)?;
     resolver
-        .load(
+        .load_for_endpoint(
             &raw,
             &GraphInputContext {
                 tokenizer,
                 run_random_seed: Some(seed),
-                endpoint_id,
             },
+            endpoint_id,
         )
         .await
 }
@@ -516,9 +548,18 @@ impl GraphInputAdapter for RecordedAgentRunnerGraphInputAdapter {
         raw: &RawValue,
         context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
+        self.load_for_endpoint(raw, context, "chat").await
+    }
+
+    async fn load_for_endpoint(
+        &self,
+        raw: &RawValue,
+        _context: &GraphInputContext<'_>,
+        endpoint_id: &str,
+    ) -> Result<PreparedRunnerGraphInput> {
         let input: RecordedAgentDatasetInput =
             decode_graph_input(raw).context("decoding direct agent_recording graph input")?;
-        input.prepare(self.format(), context.endpoint_id, context.tokenizer, None)
+        input.prepare(self.format(), endpoint_id, context.tokenizer, None)
     }
 }
 
@@ -1869,6 +1910,7 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use std::io::Write;
@@ -1912,14 +1954,11 @@ mod tests {
     #[derive(Debug)]
     struct CountingResolver {
         load_calls: AtomicUsize,
+        endpoint_id: Mutex<Option<String>>,
     }
 
     #[async_trait(?Send)]
     impl GraphInputAdapterResolver for CountingResolver {
-        fn supported_formats(&self) -> Vec<&str> {
-            vec!["dag_jsonl"]
-        }
-
         fn validate_identity(&self, _raw: &RawValue) -> Result<()> {
             panic!("inspection preparation must load without a separate validation pass")
         }
@@ -1955,12 +1994,23 @@ mod tests {
                 cache_bust_target: CacheBustTarget::None,
             })
         }
+
+        async fn load_for_endpoint(
+            &self,
+            raw: &RawValue,
+            context: &GraphInputContext<'_>,
+            endpoint_id: &str,
+        ) -> Result<PreparedRunnerGraphInput> {
+            *self.endpoint_id.lock().unwrap() = Some(endpoint_id.to_owned());
+            self.load(raw, context).await
+        }
     }
 
     #[tokio::test]
     async fn prepare_local_graph_inspection_input_loads_once_with_sequential_file_wire_shape() {
         let resolver = CountingResolver {
             load_calls: AtomicUsize::new(0),
+            endpoint_id: Mutex::new(None),
         };
         let tokenizer = TiktokenTokenizer::builtin();
 
@@ -1969,7 +2019,7 @@ mod tests {
             std::path::Path::new("/tmp/input.dag.jsonl"),
             "dag_jsonl",
             &tokenizer,
-            "chat",
+            "messages",
             None,
             73,
         )
@@ -1977,6 +2027,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(resolver.load_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            resolver.endpoint_id.lock().unwrap().as_deref(),
+            Some("messages")
+        );
         assert_eq!(prepared.bundle.programs.len(), 1);
     }
 
@@ -2071,7 +2125,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2132,7 +2185,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: None,
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2193,7 +2245,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: None,
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2263,7 +2314,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2346,7 +2396,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2394,7 +2443,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2421,7 +2469,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2472,7 +2519,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2533,7 +2579,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2582,7 +2627,6 @@ mod tests {
             &GraphInputContext {
                 tokenizer: &TiktokenTokenizer::builtin(),
                 run_random_seed: Some(42),
-                endpoint_id: "chat",
             },
         )
         .expect("public recorded input with prompt corpus");
@@ -2615,7 +2659,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2676,7 +2719,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await
@@ -2731,7 +2773,6 @@ mod tests {
                 &GraphInputContext {
                     tokenizer: &TiktokenTokenizer::builtin(),
                     run_random_seed: Some(42),
-                    endpoint_id: "chat",
                 },
             )
             .await

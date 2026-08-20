@@ -16,7 +16,7 @@ use super::dataset::Dataset;
 ///
 /// Any dataset whose native format token is one of these routes the run through
 /// the `graph` workload; every other dataset uses the `scheduled` workload.
-pub const GRAPH_FORMATS: [&str; 7] = [
+pub const GRAPH_FORMATS: &[&str] = &[
     "dag_jsonl",
     "conditional_graph",
     "weka_trace",

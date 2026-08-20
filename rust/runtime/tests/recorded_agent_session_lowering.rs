@@ -461,7 +461,6 @@ fn imported_adapter_rejects_tools_sampling_and_standard_scenario() {
                     &GraphInputContext {
                         tokenizer: &tokenizer,
                         run_random_seed: Some(7),
-                        endpoint_id: "chat"
                     },
                 ))
                 .is_err()
@@ -496,7 +495,6 @@ fn imported_adapter_rejects_tool_and_pinch_images_without_tool_execution() {
                 &GraphInputContext {
                     tokenizer: &tokenizer,
                     run_random_seed: Some(7),
-                    endpoint_id: "chat",
                 },
             ))
             .expect_err("imported source must reject image authority");
@@ -586,7 +584,6 @@ fn recorded_agent_adapter_auto_directory_requires_explicit_source() {
             &GraphInputContext {
                 tokenizer: &tokenizer,
                 run_random_seed: Some(7),
-                endpoint_id: "chat",
             },
         ))
         .expect_err("auto directory must fail before strict discovery");
@@ -612,7 +609,6 @@ fn recorded_agent_adapter_mini_swe_rejects_jsonl() {
             &GraphInputContext {
                 tokenizer: &tokenizer,
                 run_random_seed: Some(7),
-                endpoint_id: "chat",
             },
         ))
         .expect_err("Mini-SWE must reject JSONL before strict discovery");
@@ -638,7 +634,6 @@ fn recorded_agent_adapter_auto_sniffs_codex_jsonl() {
             &GraphInputContext {
                 tokenizer: &tokenizer,
                 run_random_seed: Some(7),
-                endpoint_id: "chat",
             },
         ))
         .expect("bounded auto Codex import");
@@ -680,7 +675,6 @@ fn recorded_agent_adapter_auto_rejects_ambiguous_jsonl() {
             &GraphInputContext {
                 tokenizer: &tokenizer,
                 run_random_seed: Some(7),
-                endpoint_id: "chat",
             },
         ))
         .expect_err("ambiguous Auto source must fail");
@@ -719,7 +713,6 @@ fn recorded_agent_adapter_auto_uses_bounded_import_sniff_before_parser_tail_erro
             &GraphInputContext {
                 tokenizer: &tokenizer,
                 run_random_seed: Some(7),
-                endpoint_id: "chat",
             },
         ))
         .expect_err("parser must report the tail after bounded Auto sniffing");
@@ -742,13 +735,13 @@ fn recorded_agent_adapter_auto_sniffs_claude_before_endpoint_preflight() {
         .enable_all()
         .build()
         .expect("runtime");
-    let chat = runtime.block_on(adapter.load(
+    let chat = runtime.block_on(adapter.load_for_endpoint(
         &raw,
         &GraphInputContext {
             tokenizer: &tokenizer,
             run_random_seed: Some(7),
-            endpoint_id: "chat",
         },
+        "chat",
     ));
     assert!(
         chat.expect_err("Auto Claude rejects chat")
@@ -757,13 +750,13 @@ fn recorded_agent_adapter_auto_sniffs_claude_before_endpoint_preflight() {
     );
     assert!(
         runtime
-            .block_on(adapter.load(
+            .block_on(adapter.load_for_endpoint(
                 &raw,
                 &GraphInputContext {
                     tokenizer: &tokenizer,
                     run_random_seed: Some(7),
-                    endpoint_id: "messages",
                 },
+                "messages",
             ))
             .is_ok()
     );
@@ -859,13 +852,13 @@ fn imported_adapter_selects_sources_once_and_enforces_claude_messages_endpoint()
         .enable_all()
         .build()
         .expect("runtime");
-    let chat = runtime.block_on(adapter.load(
+    let chat = runtime.block_on(adapter.load_for_endpoint(
         &raw,
         &GraphInputContext {
             tokenizer: &tokenizer,
             run_random_seed: Some(77),
-            endpoint_id: "chat",
         },
+        "chat",
     ));
     assert!(
         chat.expect_err("Claude requires messages endpoint")
@@ -873,13 +866,13 @@ fn imported_adapter_selects_sources_once_and_enforces_claude_messages_endpoint()
             .contains("messages")
     );
     let prepared = runtime
-        .block_on(adapter.load(
+        .block_on(adapter.load_for_endpoint(
             &raw,
             &GraphInputContext {
                 tokenizer: &tokenizer,
                 run_random_seed: Some(77),
-                endpoint_id: "messages",
             },
+            "messages",
         ))
         .expect("Claude messages import");
     assert_eq!(prepared.random_seed, None);

@@ -1237,13 +1237,13 @@ fn lower_graph(
     let prepared = local
         .block_on(
             &runtime,
-            context.graph_inputs().load(
+            context.graph_inputs().load_for_endpoint(
                 &workload.dataset,
                 &GraphInputContext {
                     tokenizer: tokenizer_impl.as_ref(),
                     run_random_seed: run.identity.random_seed,
-                    endpoint_id: &endpoint_id,
                 },
+                &endpoint_id,
             ),
         )
         .context("loading direct authored Graph-IR input")?;

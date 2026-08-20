@@ -175,7 +175,7 @@ fn parse_graph_cli(argv: &[String]) -> Result<GraphCli, clap::Error> {
 fn graph_format_help() -> String {
     format!(
         "Supported built-in graph formats: {}",
-        GRAPH_FORMATS.join(", ")
+        GRAPH_FORMATS.iter().copied().collect::<Vec<_>>().join(", ")
     )
 }
 
@@ -376,7 +376,7 @@ fn validate_local_source(path: &Path) -> Result<PathBuf, GraphCommandError> {
 }
 
 fn graph_format_parser() -> PossibleValuesParser {
-    PossibleValuesParser::new(GRAPH_FORMATS)
+    PossibleValuesParser::new(GRAPH_FORMATS.iter().copied())
 }
 
 fn requested_json(argv: &[String]) -> bool {

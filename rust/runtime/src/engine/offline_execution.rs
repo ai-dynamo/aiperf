@@ -1510,13 +1510,13 @@ pub(crate) fn prepare_dynosim_graph(
         .build()
         .context("creating direct graph preparation runtime")?;
     let prepared = runtime
-        .block_on(context.graph_inputs().load(
+        .block_on(context.graph_inputs().load_for_endpoint(
             &workload.dataset,
             &GraphInputContext {
                 tokenizer: tokenizer.as_ref(),
                 run_random_seed: run.identity.random_seed,
-                endpoint_id: &endpoint_id,
             },
+            &endpoint_id,
         ))
         .context("loading direct authored Graph-IR input")?;
     let metrics = offline_metrics_config(&run.metrics)?;
