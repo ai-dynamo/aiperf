@@ -161,6 +161,44 @@ def _build_summary(
     return summary
 
 
+def _dropped_projection(
+    summary: dict[str, Any], size: int, max_bytes: int
+) -> dict[str, Any]:
+    """Build the visibly-degraded stand-in written when the budget is blown.
+
+    Returning ``None`` here would omit the status key, which leaves whatever
+    snapshot last fit sitting in the CR indefinitely -- stale values
+    indistinguishable from live ones, the exact failure the snapshot semantic
+    exists to prevent. So the overflow writes a payload that REPLACES the stale
+    one and announces itself: empty ``metrics`` (never a truncated subset, which
+    would decode as a valid-but-wrong aggregate) plus an explicit
+    ``projection_dropped`` flag the dashboard renders as a warning rather than
+    as an absence of metrics.
+
+    ``summary`` carries unbounded endpoint URLs, so it is kept only if the
+    stand-in itself fits; otherwise the flag alone goes out.
+    """
+    message = (
+        f"Server metrics exceeded the {max_bytes}-byte AIPerfJob status budget "
+        f"({size} bytes) and were not written to the custom resource. Use the live "
+        f"view or the final server_metrics_export.json, or raise "
+        f"AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_BYTES."
+    )
+    dropped: dict[str, Any] = {
+        "summary": summary,
+        "metrics": {},
+        "projection_dropped": True,
+        "projection_message": message,
+    }
+    if len(orjson.dumps(dropped)) <= max_bytes:
+        return dropped
+    return {
+        "metrics": {},
+        "projection_dropped": True,
+        "projection_message": message,
+    }
+
+
 def project_server_metrics_for_cr(
     server_metrics: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -238,13 +276,17 @@ def project_server_metrics_for_cr(
 
     max_bytes = Environment.SERVER_METRICS.CR_PROJECTION_MAX_BYTES
     size = len(orjson.dumps(projected))
-    if size > max_bytes:
-        logger.debug(
-            "Dropping the AIPerfJob status.serverMetrics projection: %d bytes exceeds "
-            "the %d-byte budget. The cardinality caps bound label counts, not label "
-            "string lengths, so an over-budget payload is possible at any cardinality.",
-            size,
-            max_bytes,
-        )
-        return None
-    return projected
+    if size <= max_bytes:
+        return projected
+
+    logger.warning(
+        "AIPerfJob status.serverMetrics projection dropped: %d bytes exceeds the "
+        "%d-byte budget (AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_BYTES). The "
+        "cardinality caps bound label counts, not label string lengths, so this is "
+        "reachable at any cardinality. The dashboard's non-WebSocket fallback panel "
+        "will report itself unavailable for this run; the live WebSocket feed and "
+        "server_metrics_export.json are unaffected.",
+        size,
+        max_bytes,
+    )
+    return _dropped_projection(projected["summary"], size, max_bytes)

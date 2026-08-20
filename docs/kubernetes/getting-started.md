@@ -15,37 +15,6 @@ The same workflow applies to any OpenAI-compatible endpoint (vLLM, TRT-LLM, SGLa
 ---
 
 
-## Preparing a cluster
-
-`aiperf kube setup` installs everything a cluster needs before its first
-benchmark. It is idempotent -- each step checks first, so re-running against a
-prepared cluster reports what is already there instead of failing.
-
-```bash
-# See what is missing without touching the cluster
-aiperf kube setup --dry-run
-
-# Install JobSet, the namespaces, and the AIPerf operator
-aiperf kube setup
-
-# Prerequisites only, with JobSet pinned
-aiperf kube setup --jobset-version v0.5.2 --skip-operator
-```
-
-It installs, in order: the **JobSet CRD** (AIPerf runs every benchmark as a
-JobSet), the **operator and benchmark namespaces**, and the **AIPerf
-operator** Helm chart that owns the AIPerfJob and AIPerfSweep CRDs. Point
-`--chart` at an alternate chart directory only when testing a customized
-operator chart; normal package installs use the chart bundled in the AIPerf
-wheel. A missing chart is fatal, so `setup` cannot report a ready cluster after
-skipping the operator. Follow it with `aiperf kube preflight` to confirm the
-cluster is ready. The CLI creates the resolved benchmark namespace first, then
-installs the chart with `benchmarkNamespace.create=false` and
-`benchmarkNamespace.name` set to that namespace. This lets Helm own the
-namespace-local benchmark RBAC without trying to adopt a namespace it did not
-create; `aiperf kube setup --namespace team-benchmarks` therefore prepares and
-authorizes `team-benchmarks`, not the chart's default namespace.
-
 ## Cluster Setup
 
 If you already have a Kubernetes cluster with GPU nodes and `kubectl` configured, skip to [Prerequisites](#prerequisites).

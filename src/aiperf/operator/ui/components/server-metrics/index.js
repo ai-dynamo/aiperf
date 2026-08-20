@@ -110,6 +110,25 @@ export function ServerMetricsSection({ serverMetrics, source = 'final', sparklin
   const curated = curateServerMetrics(normalizeServerMetrics(serverMetrics), sparklines);
   const sourceLabel = source === 'live' ? 'LIVE' : 'FINAL';
 
+  // The CR fallback writes this flag instead of silently omitting the key when
+  // its projection blows the AIPerfJob status byte budget. Distinguish it from
+  // the empty case below: metrics WERE collected, we just could not carry them
+  // through the custom resource, and an operator seeing "none collected" would
+  // go debug the wrong thing.
+  if (serverMetrics.projection_dropped) {
+    return html`
+      <div style="margin-top: var(--space-4)">
+        <div class="card" data-testid="job-detail-server-metrics-dropped">
+          <div class="card-title">Server Metrics <span class="metric-source-chip">${sourceLabel}</span></div>
+          <div class="text-dim" style="font-size: var(--font-size-sm); padding: var(--space-2) 0">
+            ${serverMetrics.projection_message
+              || 'Server metrics were collected but exceeded the size budget for this job\'s custom resource.'}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   if (!curated) {
     return html`
       <div style="margin-top: var(--space-4)">

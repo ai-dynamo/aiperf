@@ -66,12 +66,6 @@ Generate Kubernetes YAML manifests
 
 [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Cache Bust](#cache-bust) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Load Generator](#load-generator) • [Scenario](#scenario) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [ZMQ Communication](#zmq-communication) • [Kubernetes](#kubernetes) • [Kubernetes Node Placement](#kubernetes-node-placement) • [Kubernetes Scheduling](#kubernetes-scheduling) • [Kubernetes Metadata](#kubernetes-metadata) • [Kubernetes Secrets](#kubernetes-secrets) • [Parameters](#parameters)
 
-### [`kube setup`](#aiperf-kube-setup)
-
-Install cluster prerequisites (JobSet CRD, namespaces, AIPerf operator)
-
-[Kubernetes](#kubernetes) • [Parameters](#parameters)
-
 ### [`kube delete`](#aiperf-kube-delete)
 
 Delete a benchmark and its backing Kubernetes resources
@@ -5154,48 +5148,6 @@ Output an AIPerfJob or AIPerfSweep CR (requires the operator).
 #### `--no-operator`
 
 Output raw K8s manifests (Namespace, RBAC, ConfigMap, JobSet).
-
-<hr/>
-
-## `aiperf kube setup`
-
-Install cluster prerequisites (JobSet CRD, namespaces, AIPerf operator)
-
-### Kubernetes
-
-#### `--kubeconfig` `<str>`
-
-Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
-
-#### `--kube-context` `<str>`
-
-Kubernetes context to use (defaults to current context in kubeconfig).
-
-#### `-n`, `--namespace` `<str>`
-
-Kubernetes namespace (default: aiperf-benchmarks).
-
-### Parameters
-
-#### `--jobset-version` `<str>`
-
-JobSet release tag to install (default: latest release, falling back to a known-good pin).
-
-#### `--operator-namespace` `<str>`
-
-Namespace for the AIPerf operator (default: aiperf-system).
-
-#### `--chart` `<str>`
-
-Path to an alternate aiperf-operator Helm chart (default: chart bundled with AIPerf).
-
-#### `--skip-operator`, `--no-skip-operator`
-
-Install only the JobSet CRD and namespaces; leave the operator alone.
-
-#### `--dry-run`, `--no-dry-run`
-
-Report what would be installed and exit without changing the cluster.
 
 <hr/>
 

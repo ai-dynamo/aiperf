@@ -955,7 +955,7 @@ def _status_schema() -> dict[str, Any]:
             "serverMetrics": {
                 "type": "object",
                 "x-kubernetes-preserve-unknown-fields": True,
-                "description": "Curated subset of server-side metrics from the inference server, written live by the controller as the dashboard's non-WebSocket fallback. Carries only the ~20 metric names the dashboard's server-metrics panel renders, and per series only its labels and the avg/max/rate/p99_estimate/count stats. Metrics over the AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_SERIES / _MAX_LABELS caps are dropped whole, and the whole projection is dropped if it exceeds _MAX_BYTES. This field is a snapshot of the latest scrape, not an accumulation. Use the live WebSocket feed or server_metrics_export.json for the full payload.",
+                "description": "Curated subset of server-side metrics from the inference server, written live by the controller as the dashboard's non-WebSocket fallback. Carries only the ~20 metric names the dashboard's server-metrics panel renders, and per series only its labels and the avg/max/rate/p99_estimate/count stats. Metrics over the AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_SERIES / _MAX_LABELS caps are dropped whole, and if the whole projection exceeds _MAX_BYTES it is replaced by a {projection_dropped: true, projection_message: ...} marker rather than omitted, so a stale snapshot is never left behind. This field is a snapshot of the latest scrape, not an accumulation. Use the live WebSocket feed or server_metrics_export.json for the full payload.",
             },
             "results": {
                 "type": "object",

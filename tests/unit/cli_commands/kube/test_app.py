@@ -27,7 +27,6 @@ EXPECTED_SUBCOMMANDS: tuple[str, ...] = (
     "sweep",
     "generate",
     "cancel",
-    "setup",
     "delete",
     "cleanup",
     "shutdown",

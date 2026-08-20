@@ -368,8 +368,7 @@ benchmarkNamespace:
 `benchmarkNamespace.create` controls only whether the chart creates the
 namespace. The chart always installs its benchmark `Role` and `RoleBinding` in
 `benchmarkNamespace.name`, including when the namespace already exists and
-`create` is `false`. `aiperf kube setup` uses that mode because it creates the
-resolved `--namespace` before invoking Helm.
+`create` is `false`.
 
 ### Default Image
 

@@ -34,11 +34,6 @@ app.command(
     help="Generate Kubernetes YAML manifests",
 )
 app.command(
-    "aiperf.cli_commands.kube.setup:app",
-    name="setup",
-    help="Install cluster prerequisites (JobSet CRD, namespaces, AIPerf operator)",
-)
-app.command(
     "aiperf.cli_commands.kube.delete:app",
     name="delete",
     help="Delete a benchmark and its backing Kubernetes resources",
