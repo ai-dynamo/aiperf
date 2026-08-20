@@ -6,6 +6,8 @@ Input
   segments: 5
   Adapter warnings
     - none
+  Bundle findings
+    - none
 Traces
 Trace root
   driver: static_graph

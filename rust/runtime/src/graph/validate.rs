@@ -27,10 +27,16 @@ impl std::error::Error for ValidationError {}
 
 /// Validate `graph`, returning every structural problem found (empty = valid).
 pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
-    collect_findings(graph)
+    let mut errors = collect_findings(graph)
         .into_iter()
         .map(|finding| ValidationError(finding.message()))
-        .collect()
+        .collect::<Vec<_>>();
+    errors.extend(
+        non_completion_start_errors(graph)
+            .into_iter()
+            .map(|(_, error)| error),
+    );
+    errors
 }
 
 /// Validate `graph`, returning structural problems with stable inspection data.
@@ -47,7 +53,26 @@ pub fn validate_detailed(graph: &GraphRecord) -> Vec<GraphInspectionIssue> {
             }
         }
     }
+    issues.extend(
+        non_completion_start_errors(graph)
+            .into_iter()
+            .map(|(edge_index, error)| {
+                issue(
+                    "start-anchor-non-completion",
+                    Some(format!("graph.edges[{edge_index}]")),
+                    error.0,
+                    [("edge_index", &edge_index.to_string())],
+                )
+            }),
+    );
     issues
+}
+
+fn non_completion_start_errors(graph: &GraphRecord) -> Vec<(usize, ValidationError)> {
+    graph.edges.iter().enumerate().filter(|(_, edge)| edge.source == START_NODE_ID
+        && (edge.delay_after_predecessor_start_us.is_some() || edge.delay_after_predecessor_first_token_us.is_some()))
+        .map(|(index, _)| (index, ValidationError("START edges must use completion anchoring because START has no dispatch or first-token event".to_owned())))
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -625,6 +650,20 @@ mod tests {
                 {"edge_type":"static","source":"n1","target":"END"}]
         }));
         assert!(validate(&g).is_empty());
+    }
+
+    #[test]
+    fn rejects_non_completion_start_anchors() {
+        for timing in [
+            "\"delay_after_predecessor_start_us\":5.0",
+            "\"delay_after_predecessor_first_token_us\":5.0",
+        ] {
+            let graph: GraphRecord = serde_json::from_str(&format!(
+                r#"{{"nodes":{{"n":{{"node_type":"llm","prompt":[],"output":"out"}}}},"edges":[{{"edge_type":"static","source":"START","target":"n",{timing}}}]}}"#
+            ))
+            .expect("valid graph");
+            assert!(!validate(&graph).is_empty(), "{timing}");
+        }
     }
 
     #[test]

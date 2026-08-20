@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 /// unsupported topology the runtime rejects up front.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnchorFanInKind {
+    /// START cannot provide a dispatch or first-token event.
+    NonCompletionStart,
     /// A target has both start-anchored and completion-anchored inputs.
     Mixed,
     /// A target has more than one start-anchored input.
@@ -60,6 +62,19 @@ impl Scheduler {
         let mut static_pred_edges: BTreeMap<String, Vec<StaticEdge>> = BTreeMap::new();
 
         for edge in &graph.edges {
+            if edge.source == START_NODE_ID
+                && (edge.delay_after_predecessor_start_us.is_some()
+                    || edge.delay_after_predecessor_first_token_us.is_some())
+            {
+                return Err(MixedAnchorFanInError {
+                    kind: AnchorFanInKind::NonCompletionStart,
+                    target: edge.target.clone(),
+                    message: format!(
+                        "START edge to {:?} must use completion anchoring because START has no dispatch or first-token event",
+                        edge.target
+                    ),
+                });
+            }
             if edge.delay_after_predecessor_start_us.is_some() {
                 start_anchored_succ
                     .entry(edge.source.clone())
@@ -268,6 +283,19 @@ mod tests {
             sched.start_anchored_successors("a").collect::<Vec<_>>(),
             vec!["b"]
         );
+    }
+
+    #[test]
+    fn start_edges_reject_dispatch_and_first_token_anchors() {
+        for timing in [
+            "\"delay_after_predecessor_start_us\":5.0",
+            "\"delay_after_predecessor_first_token_us\":5.0",
+        ] {
+            let g = graph(&format!(
+                r#"{{"nodes":{{"a":{{"node_type":"llm","prompt":[],"output":"oa"}}}},"edges":[{{"edge_type":"static","source":"START","target":"a",{timing}}}]}}"#
+            ));
+            assert!(Scheduler::new(&g).is_err(), "{timing}");
+        }
     }
 
     #[test]

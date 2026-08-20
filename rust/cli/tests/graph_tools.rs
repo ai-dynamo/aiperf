@@ -713,6 +713,13 @@ fn validate_clean_dag_reports_success() {
 }
 
 #[test]
+fn source_format_does_not_change_non_agent_graph_lowering() {
+    let source = fixture("../../tests/fixtures/dag/small.dag.jsonl");
+    let output = validate_output(&source, "dag_jsonl", &["--source-format", "codex"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+}
+
+#[test]
 fn validate_mixed_anchor_input_matches_the_human_golden() {
     let source = fixture("tests/fixtures/graph_tools/mixed-anchor.conditional.yaml");
     let output = validate_output(&source, "conditional_graph", &[]);

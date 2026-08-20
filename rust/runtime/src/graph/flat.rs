@@ -22,7 +22,9 @@ use tokio::sync::Notify;
 
 use crate::graph::errors::TraceError;
 use crate::graph::materialize::PromptMaterializer;
-use crate::graph::model::{ExecutableGraphNode, GraphRecord, GraphTracePlan, PromptItem};
+use crate::graph::model::{
+    ExecutableGraphNode, GraphRecord, GraphTracePlan, PromptItem, START_NODE_ID,
+};
 use crate::graph::policy::{
     NodeDispatchInfo, NodeDispatchPolicy, NodeFailure, NodeFailureDisposition, NodeFailureKind,
     NodeFailurePolicy,
@@ -42,6 +44,13 @@ use crate::graph::wire::WireMessage;
 /// has no execution semantics yet and must reach the typed refusal in the full
 /// executor instead of being mistaken for an inference request.
 pub fn is_flat_graph(graph: &GraphRecord) -> bool {
+    if graph.edges.iter().any(|edge| {
+        edge.source == START_NODE_ID
+            && (edge.delay_after_predecessor_start_us.is_some()
+                || edge.delay_after_predecessor_first_token_us.is_some())
+    }) {
+        return false;
+    }
     let mut nodes = graph.nodes.values();
     match (nodes.next(), nodes.next()) {
         (Some(ExecutableGraphNode::Llm(only)), None) => {
@@ -295,6 +304,15 @@ mod tests {
     #[test]
     fn single_node_no_inputs_is_flat() {
         assert!(is_flat_graph(&graph(vec![("a", llm_node(vec![]))])));
+    }
+
+    #[test]
+    fn non_completion_start_anchor_is_not_flat() {
+        let graph: GraphRecord = serde_json::from_str(
+            r#"{"nodes":{"a":{"node_type":"llm","prompt":[],"output":"out"}},"edges":[{"edge_type":"static","source":"START","target":"a","delay_after_predecessor_start_us":1.0}]}"#,
+        )
+        .expect("valid graph");
+        assert!(!is_flat_graph(&graph));
     }
 
     #[test]

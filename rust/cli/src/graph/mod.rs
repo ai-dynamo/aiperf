@@ -296,7 +296,9 @@ fn load(args: CommonArgs) -> Result<LoadedGraphInput, GraphCommandError> {
             &args.graph_format,
             tokenizer.as_ref(),
             &args.endpoint_type,
-            args.source_format,
+            (args.graph_format == "agent_recording")
+                .then_some(args.source_format)
+                .flatten(),
             args.seed,
         ),
     );

@@ -72,6 +72,8 @@ fn render_text(report: &GraphExplainReport) -> String {
     );
     text.push_str("  Adapter warnings\n");
     render_issues(&mut text, 4, &report.input.adapter_warnings);
+    text.push_str("  Bundle findings\n");
+    render_issues(&mut text, 4, &report.input.bundle_findings);
     text.push_str("Traces\n");
     let mut wrote_wave_note = false;
     for program in &report.programs {
@@ -291,6 +293,7 @@ mod tests {
                 node_count: 0,
                 segment_count: 0,
                 adapter_warnings: Vec::new(),
+                bundle_findings: Vec::new(),
             },
             programs: Vec::new(),
         }

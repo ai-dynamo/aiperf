@@ -142,6 +142,8 @@ pub struct GraphExplainInputReport {
     pub segment_count: usize,
     /// Bundle-level warning findings only.
     pub adapter_warnings: Vec<GraphIssueReport>,
+    /// Bundle-level findings retained without severity filtering.
+    pub bundle_findings: Vec<GraphIssueReport>,
 }
 
 /// One resolved trace program safe for public explanation.
@@ -436,10 +438,12 @@ impl GraphExplainReport {
                 node_count,
                 segment_count,
                 adapter_warnings: issues
-                    .into_iter()
+                    .iter()
                     .filter(|issue| issue.severity == GraphInspectionSeverity::Warning)
+                    .cloned()
                     .map(GraphIssueReport::from)
                     .collect(),
+                bundle_findings: issues.into_iter().map(GraphIssueReport::from).collect(),
             },
             programs: programs.into_iter().map(GraphProgramReport::from).collect(),
         }
@@ -900,6 +904,58 @@ mod tests {
         assert!(json["issues"][0]["trace_id"].is_null());
         assert!(json["issues"][0]["phase"].is_null());
         assert!(json["issues"][0]["location"].is_null());
+    }
+
+    #[test]
+    fn explanation_retains_bundle_errors_in_authored_order() {
+        let inspection = GraphBundleInspection {
+            format: "dag_jsonl".to_owned(),
+            root_count: 0,
+            node_count: 0,
+            segment_count: 0,
+            issues: vec![
+                issue(
+                    "trace-id-empty",
+                    GraphInspectionSeverity::Error,
+                    None,
+                    None,
+                    None,
+                    BTreeMap::new(),
+                ),
+                issue(
+                    "trace-id-duplicate",
+                    GraphInspectionSeverity::Error,
+                    None,
+                    None,
+                    None,
+                    BTreeMap::new(),
+                ),
+                issue(
+                    "metadata-root-count-mismatch",
+                    GraphInspectionSeverity::Error,
+                    None,
+                    None,
+                    None,
+                    BTreeMap::new(),
+                ),
+            ],
+            programs: Vec::new(),
+        };
+        let report = GraphExplainReport::from_inspection("/tmp/source".to_owned(), inspection);
+        assert_eq!(
+            report
+                .input
+                .bundle_findings
+                .iter()
+                .map(|issue| issue.code.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "trace-id-empty",
+                "trace-id-duplicate",
+                "metadata-root-count-mismatch"
+            ]
+        );
+        assert!(report.input.adapter_warnings.is_empty());
     }
 
     #[test]

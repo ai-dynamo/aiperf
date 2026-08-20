@@ -6,6 +6,8 @@ Input
   segments: 3
   Adapter warnings
     - none
+  Bundle findings
+    - none
 Traces
 Trace t-mixed
   driver: static_graph

@@ -412,18 +412,21 @@ fn inspect_plan(
         .collect::<Vec<_>>();
     let scheduler = Scheduler::new(&plan.graph);
     if let Err(error) = &scheduler {
-        let code = match error.kind() {
-            AnchorFanInKind::Mixed => "mixed-anchor-fan-in",
-            AnchorFanInKind::MultipleStartAnchored => "multi-start-anchor-fan-in",
-        };
-        issues.push(error_issue(
-            code,
-            Some(trace_id.to_string()),
-            Some(phase),
-            Some(format!("graph.nodes.{}", error.target())),
-            error.to_string(),
-            BTreeMap::from([("target".into(), error.target().to_string())]),
-        ));
+        if !matches!(error.kind(), AnchorFanInKind::NonCompletionStart) {
+            let code = match error.kind() {
+                AnchorFanInKind::Mixed => "mixed-anchor-fan-in",
+                AnchorFanInKind::MultipleStartAnchored => "multi-start-anchor-fan-in",
+                AnchorFanInKind::NonCompletionStart => unreachable!(),
+            };
+            issues.push(error_issue(
+                code,
+                Some(trace_id.to_string()),
+                Some(phase),
+                Some(format!("graph.nodes.{}", error.target())),
+                error.to_string(),
+                BTreeMap::from([("target".into(), error.target().to_string())]),
+            ));
+        }
     }
     let topology = inspect_topology(&plan.graph);
     let summary = GraphPlanSummary {

@@ -427,7 +427,7 @@ handler write an unstructured error (`rust/cli/src/main.rs:47-53`).
 `explain` prints resolved execution facts in deterministic program order:
 
 1. **Input:** canonical source path, lowered format, root count, aggregate node
-   count, segment count, and adapter warnings.
+   count, segment count, adapter warnings, and bundle findings.
 2. **Traces:** trace ID, driver kind, arrival offset, warmup presence,
    environment/replay presence, and profiling counts for all nodes, LLM nodes,
    tool nodes, edges, and channels.
