@@ -63,12 +63,13 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       requests: 50
       concurrency: 4
-      exclude_from_results: true
 
     - name: profiling
+      kind: profiling
       type: gamma
       duration: 300
       rate: 50.0
@@ -122,12 +123,13 @@ benchmark:
 
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       requests: 50
       concurrency: 4
-      excludeFromResults: true
 
     - name: profiling
+      kind: profiling
       type: gamma
       duration: 300
       rate: 50.0
@@ -174,10 +176,10 @@ benchmark:
 
   phases:
     - name: profiling
+      kind: profiling
       type: concurrency
       requests: 10
       concurrency: 1
-      exclude_from_results: false
 
   gpu_telemetry:
     enabled: false
@@ -226,7 +228,7 @@ def _assert_configs_equivalent(a: AIPerfConfig, b: AIPerfConfig) -> None:
     # Phases
     warmup_a = next(p for p in a.benchmark.phases if p.name == "warmup")
     warmup_b = next(p for p in b.benchmark.phases if p.name == "warmup")
-    assert warmup_a.exclude_from_results == warmup_b.exclude_from_results
+    assert warmup_a.kind == warmup_b.kind == "warmup"
 
     prof_a = next(p for p in a.benchmark.phases if p.name == "profiling")
     prof_b = next(p for p in b.benchmark.phases if p.name == "profiling")
@@ -306,7 +308,7 @@ class TestCamelCaseRoundTrip:
         assert "randomSeed:" in yaml_output
         assert "gpuTelemetry:" in yaml_output
         assert "serverMetrics:" in yaml_output
-        assert "excludeFromResults:" in yaml_output
+        assert "excludeFromResults:" not in yaml_output
         assert "sliceDuration:" in yaml_output
         assert "showTraceTiming:" in yaml_output
         assert "urlStrategy:" in yaml_output
@@ -331,6 +333,7 @@ class TestCamelCaseRoundTrip:
         assert "gpu_telemetry:" not in yaml_output
         assert "server_metrics:" not in yaml_output
         assert "exclude_from_results:" not in yaml_output
+        assert "excludeFromResults:" not in yaml_output
         assert "slice_duration:" not in yaml_output
         assert "show_trace_timing:" not in yaml_output
         assert "url_strategy:" not in yaml_output
@@ -493,13 +496,14 @@ benchmark:
     - {name: d, type: synthetic}
   phases:
     - name: warmup
+      kind: warmup
       type: concurrency
       requests: 10
       concurrency: 2
-      excludeFromResults: true
       concurrencyRamp: 10
       prefillConcurrency: 1
     - name: profiling
+      kind: profiling
       type: poisson
       duration: 60
       rate: 10.0
@@ -509,7 +513,7 @@ benchmark:
 """)
         config = load_config_from_string(yaml_str)
         warm = next(p for p in config.benchmark.phases if p.name == "warmup")
-        assert warm.exclude_from_results is True
+        assert warm.kind == "warmup"
         assert warm.concurrency_ramp.duration == 10.0
         assert warm.prefill_concurrency == 1
 

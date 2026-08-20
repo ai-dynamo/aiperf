@@ -29,12 +29,18 @@ _MINIMAL_CONFIG_KWARGS: dict = {
     "phases": [
         {
             "name": "warmup",
+            "kind": "warmup",
             "type": "concurrency",
             "requests": 10,
             "concurrency": 1,
-            "exclude_from_results": True,
         },
-        {"name": "profiling", "type": "concurrency", "requests": 100, "concurrency": 1},
+        {
+            "name": "profiling",
+            "kind": "profiling",
+            "type": "concurrency",
+            "requests": 100,
+            "concurrency": 1,
+        },
     ],
 }
 
@@ -102,18 +108,19 @@ class TestFixedTrialsStrategyEdgeCases:
         run = strategy.get_next_config(config, [RunResult(label="r0", success=True)])
         assert any(p.name == "warmup" for p in run.phases)
 
-    def test_warmup_removal_only_removes_excluded_phases(self) -> None:
+    def test_warmup_removal_only_removes_warmup_kind_phases(self) -> None:
         config = _make_config(
             phases=[
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "requests": 5,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "concurrency",
                     "requests": 50,
                     "concurrency": 4,

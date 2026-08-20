@@ -15,6 +15,7 @@ from rich.console import Console
 
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.models import (
+    BranchStats,
     ErrorDetails,
     ErrorDetailsCount,
     MetricResult,
@@ -179,6 +180,10 @@ class TestExporterManager:
                         count=2,
                     )
                 ],
+                branch_stats=BranchStats(
+                    children_spawned=4,
+                    children_completed=3,
+                ),
                 telemetry_results=TelemetryExportData(
                     summary=TelemetrySummary(
                         endpoints_configured=["dcgm"],
@@ -240,6 +245,7 @@ class TestExporterManager:
             ).read_text(encoding="utf-8")
         )
         assert storm_json["error_summary"][0]["count"] == 2
+        assert storm_json["branch_stats"]["children_spawned"] == 4
         assert (
             output_config / "phases" / "storm" / "profile_export_aiperf.csv"
         ).exists()
@@ -303,18 +309,62 @@ class TestExporterManager:
             manifest_entry=manifest_entry,
             manifest_key="disabled",
         )
-        await manager._write_phase_export(
-            exporter_cls=FailingPhaseExporter,
-            phase_profile=phase_profile,
-            file_path=output_config / "failing.json",
-            manifest_entry=manifest_entry,
-            manifest_key="failing",
-        )
+        with pytest.raises(ValueError, match="content boom"):
+            await manager._write_phase_export(
+                exporter_cls=FailingPhaseExporter,
+                phase_profile=phase_profile,
+                file_path=output_config / "failing.json",
+                manifest_entry=manifest_entry,
+                manifest_key="failing",
+            )
 
         assert "disabled" not in manifest_entry
         assert "failing" not in manifest_entry
         manager.error.assert_called_once()
         assert "Failed to write phase export" in manager.error.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_phase_manifest_write_failure_is_structured_export_failure(
+        self, output_config, mock_cfg
+    ) -> None:
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=1,
+                end_ns=2,
+                completed=0,
+                phase_records=[
+                    PhaseProfileResults(
+                        phase_index=0,
+                        profiling_index=0,
+                        phase_name="profile",
+                        phase_kind="profiling",
+                    )
+                ],
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+        manager._write_phase_export = AsyncMock()
+        manager._write_phase_observability_export = AsyncMock()
+
+        with (
+            patch(
+                "aiperf.exporters.exporter_manager.plugins.iter_all",
+                return_value=[],
+            ),
+            patch.object(
+                manager,
+                "_write_phase_manifest",
+                side_effect=OSError("manifest disk full"),
+            ),
+        ):
+            failures = await manager.export_data()
+
+        assert len(failures) == 1
+        assert failures[0].exporter == "PhaseMetricArtifacts"
+        assert isinstance(failures[0].error, OSError)
+        assert failures[0].is_deferred is False
 
     @pytest.mark.asyncio
     async def test_write_phase_observability_export_skips_no_data_without_warnings(
@@ -533,7 +583,12 @@ class TestExportConsoleArtifactAndStyling:
         self, sample_records, mock_cfg
     ):
         buffer = io.StringIO()
-        console = Console(file=buffer, force_terminal=True)
+        console = Console(
+            file=buffer,
+            force_terminal=True,
+            no_color=False,
+            color_system="standard",
+        )
         assert console.is_terminal
 
         with patch(

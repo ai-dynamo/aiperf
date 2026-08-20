@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aiperf.common.enums import (
     GPUTelemetryMode,
@@ -450,10 +450,29 @@ class BenchmarkRun(BaseModel):
         "artifacts.user_files). Empty dict when no envelope-level variables "
         "were set.",
     )
+    plot: Any = Field(
+        default=None,
+        description="Resolved envelope-level plot configuration propagated to "
+        "the runtime process. Runtime type: "
+        "aiperf.config.plot.PlotEnvelopeConfig | None. Typed ``Any`` to avoid "
+        "the same plot-module import cycle as BenchmarkPlan.plot.",
+    )
     resolved: ResolvedConfig = Field(
         default_factory=ResolvedConfig,
         description="Runtime-computed state populated after construction.",
     )
+
+    @field_validator("plot", mode="before")
+    @classmethod
+    def _validate_plot_envelope(cls, value: Any) -> Any:
+        """Restore the typed plot envelope after BenchmarkRun JSON transport."""
+        if value is None:
+            return None
+        from aiperf.config.plot import PlotEnvelopeConfig
+
+        if isinstance(value, PlotEnvelopeConfig):
+            return value
+        return PlotEnvelopeConfig.model_validate(value)
 
     @property
     def comm_config(self) -> BaseZMQCommunicationConfig:

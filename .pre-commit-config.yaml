@@ -28,6 +28,8 @@ repos:
         exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-toml
       - id: check-yaml
+        args: ['--allow-multiple-documents']
+        exclude: ^deploy/helm/.*/templates/.*\.yaml$
       - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]
@@ -61,7 +63,7 @@ repos:
         name: generate-env-vars-docs
         entry: make generate-env-vars-docs
         language: python
-        files: ^(src/aiperf/common/environment\.py|tools/generate_env_vars_docs\.py)$
+        files: ^(src/aiperf/(common|kubernetes|operator)/environment\.py|tools/generate_env_vars_docs\.py)$
         pass_filenames: false
         args: []
       - id: generate-plugin-artifacts

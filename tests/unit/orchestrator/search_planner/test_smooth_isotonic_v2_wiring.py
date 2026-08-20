@@ -273,12 +273,12 @@ def test_distinct_x_values_each_get_first_probe_floor() -> None:
     assert _warmup_phase(m2).duration == 60.0  # type: ignore[union-attr]
 
 
-def test_warmup_phase_has_exclude_from_results_true() -> None:
+def test_warmup_phase_has_warmup_kind() -> None:
     planner = _make_planner(sla_warmup_seconds=30.0)
     mutated = planner._mutate_base(75)
     warmup = _warmup_phase(mutated)
     assert warmup is not None
-    assert warmup.exclude_from_results is True  # type: ignore[attr-defined]
+    assert warmup.kind == "warmup"  # type: ignore[attr-defined]
 
 
 def test_warmup_phase_concurrency_matches_swept_value() -> None:

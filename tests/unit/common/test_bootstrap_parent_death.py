@@ -17,6 +17,21 @@ from aiperf.common.constants import IS_LINUX, IS_WINDOWS
 PR_SET_PDEATHSIG = 1
 
 
+@pytest.fixture(autouse=True)
+def _never_exit_the_test_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hard backstop against ``os._exit`` escaping into the pytest process.
+
+    ``_install_parent_death_signal`` calls ``os._exit(1)`` when the controller
+    PID is not alive. A test that forgets to stub either ``_pid_is_alive`` or
+    ``os._exit`` therefore terminates the pytest worker instantly, with no
+    traceback and no summary output. Raising ``SystemExit`` instead turns that
+    silent runner kill into an ordinary test failure.
+    """
+    monkeypatch.setattr(
+        os, "_exit", mock.Mock(side_effect=SystemExit(1)), raising=False
+    )
+
+
 @pytest.mark.skipif(IS_WINDOWS, reason="signal.SIGKILL is unavailable on Windows")
 def test_install_parent_death_signal_arms_sigkill_on_linux():
     """On Linux it must call prctl(PR_SET_PDEATHSIG, SIGKILL)."""
@@ -27,6 +42,9 @@ def test_install_parent_death_signal_arms_sigkill_on_linux():
     with (
         mock.patch("aiperf.common.bootstrap.IS_LINUX", True),
         mock.patch("ctypes.CDLL", return_value=fake_libc),
+        # Without this the real liveness probe runs against PID 4242, which is
+        # almost never a live process, and the function reaches os._exit(1).
+        mock.patch("aiperf.common.bootstrap._pid_is_alive", return_value=True),
         mock.patch.object(os, "getppid", return_value=4242),
     ):
         _install_parent_death_signal(controller_pid=4242)
@@ -47,13 +65,19 @@ def test_install_parent_death_signal_noop_on_non_linux():
 
 @pytest.mark.skipif(IS_WINDOWS, reason="signal.SIGKILL is unavailable on Windows")
 def test_install_parent_death_signal_exits_if_controller_already_died():
-    """If our parent is no longer the controller, the controller died before the guard armed, so the child must exit itself."""
+    """A controller that is gone means the death signal was missed forever.
+
+    The check is the controller PID's liveness, not parentage: under a
+    forkserver/spawn start method the direct parent is the multiprocessing
+    helper, so a getppid() mismatch is the normal healthy case and using it as
+    the exit trigger would kill every child at startup.
+    """
     fake_libc = mock.Mock()
     fake_libc.prctl.return_value = 0
     with (
         mock.patch("aiperf.common.bootstrap.IS_LINUX", True),
         mock.patch("ctypes.CDLL", return_value=fake_libc),
-        # Controller was 4242, but we have reparented to a subreaper (1).
+        mock.patch("aiperf.common.bootstrap._pid_is_alive", return_value=False),
         mock.patch.object(os, "getppid", return_value=1),
         mock.patch.object(os, "_exit", side_effect=SystemExit) as exit_mock,
         pytest.raises(SystemExit),
@@ -63,6 +87,25 @@ def test_install_parent_death_signal_exits_if_controller_already_died():
     exit_mock.assert_called_once()
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="signal.SIGKILL is unavailable on Windows")
+def test_reparented_child_with_live_controller_watches_instead_of_exiting():
+    """The forkserver case: parent is the helper, controller is still alive."""
+    fake_libc = mock.Mock()
+    fake_libc.prctl.return_value = 0
+    with (
+        mock.patch("aiperf.common.bootstrap.IS_LINUX", True),
+        mock.patch("ctypes.CDLL", return_value=fake_libc),
+        mock.patch("aiperf.common.bootstrap._pid_is_alive", return_value=True),
+        mock.patch("aiperf.common.bootstrap._watch_controller_liveness") as watch_mock,
+        mock.patch.object(os, "getppid", return_value=1),
+        mock.patch.object(os, "_exit", side_effect=SystemExit) as exit_mock,
+    ):
+        _install_parent_death_signal(controller_pid=4242)
+
+    exit_mock.assert_not_called()
+    watch_mock.assert_called_once_with(4242)
+
+
 def test_install_parent_death_signal_no_exit_when_controller_alive():
     """When our parent is still the controller, it must not exit."""
     fake_libc = mock.Mock()
@@ -70,6 +113,7 @@ def test_install_parent_death_signal_no_exit_when_controller_alive():
     with (
         mock.patch("aiperf.common.bootstrap.IS_LINUX", True),
         mock.patch("ctypes.CDLL", return_value=fake_libc),
+        mock.patch("aiperf.common.bootstrap._pid_is_alive", return_value=True),
         mock.patch.object(os, "getppid", return_value=4242),
         mock.patch.object(os, "_exit", side_effect=SystemExit) as exit_mock,
     ):
@@ -86,6 +130,7 @@ def test_install_parent_death_signal_falls_back_to_getppid_snapshot():
         mock.patch("aiperf.common.bootstrap.IS_LINUX", True),
         mock.patch("ctypes.CDLL", return_value=fake_libc),
         mock.patch.object(os, "getppid", return_value=999),
+        mock.patch("aiperf.common.bootstrap._pid_is_alive", return_value=True),
         mock.patch.object(os, "_exit", side_effect=SystemExit) as exit_mock,
     ):
         _install_parent_death_signal()

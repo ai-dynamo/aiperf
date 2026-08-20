@@ -8,11 +8,24 @@ from aiperf.common.exceptions import AIPerfMultiError, HookError, UnsupportedHoo
 from aiperf.common.hooks import (
     AIPerfHook,
     on_init,
+    on_phase_progress,
     on_start,
     on_stop,
     provides_hooks,
 )
 from aiperf.common.mixins import HooksMixin
+
+
+def test_phase_progress_is_the_only_public_phase_progress_hook() -> None:
+    """Named phases share one callback API regardless of semantic kind."""
+
+    @on_phase_progress
+    def callback(phase_stats: object) -> None:
+        del phase_stats
+
+    assert callback.__aiperf_hook_type__ == AIPerfHook.ON_PHASE_PROGRESS
+    assert not hasattr(AIPerfHook, "ON_WARMUP_PROGRESS")
+    assert not hasattr(AIPerfHook, "ON_PROFILING_PROGRESS")
 
 
 @provides_hooks(AIPerfHook.ON_INIT, AIPerfHook.ON_STOP)

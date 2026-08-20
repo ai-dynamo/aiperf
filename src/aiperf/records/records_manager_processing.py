@@ -75,6 +75,8 @@ class _LoaderHost(Protocol):
 
 def load_accumulators(
     host: _LoaderHost,
+    *,
+    excluded_record_types: set[str] | None = None,
 ) -> dict[AccumulatorType, AccumulatorProtocol]:
     """Instantiate all enabled ``ACCUMULATOR`` plugins for ``host``.
 
@@ -92,6 +94,9 @@ def load_accumulators(
     """
     accumulators: dict[AccumulatorType, AccumulatorProtocol] = {}
     for entry in plugins.iter_entries(PluginType.ACCUMULATOR):
+        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
+        if excluded_record_types and excluded_record_types.intersection(record_types):
+            continue
         try:
             AccumulatorClass = plugins.get_class(PluginType.ACCUMULATOR, entry.name)
             accumulator = AccumulatorClass(
@@ -118,6 +123,8 @@ def load_accumulators(
 
 def load_stream_exporters(
     host: _LoaderHost,
+    *,
+    excluded_record_types: set[str] | None = None,
 ) -> dict[StreamExporterType, StreamExporterProtocol]:
     """Instantiate all enabled ``STREAM_EXPORTER`` plugins for ``host``.
 
@@ -128,6 +135,9 @@ def load_stream_exporters(
     """
     exporters: dict[StreamExporterType, StreamExporterProtocol] = {}
     for entry in plugins.iter_entries(PluginType.STREAM_EXPORTER):
+        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
+        if excluded_record_types and excluded_record_types.intersection(record_types):
+            continue
         try:
             ExporterClass = plugins.get_class(PluginType.STREAM_EXPORTER, entry.name)
             exporter = ExporterClass(

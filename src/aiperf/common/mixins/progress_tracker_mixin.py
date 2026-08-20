@@ -6,7 +6,7 @@ from pydantic import ConfigDict, Field
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase, MessageType
+from aiperf.common.enums import MessageType
 from aiperf.common.hooks import AIPerfHook, on_message, provides_hooks
 from aiperf.common.messages import (
     ProfileResultsMessage,
@@ -57,14 +57,28 @@ class ProgressTracker:
     """Progress tracker for the benchmark suite."""
 
     def __init__(self):
-        self._phases: dict[CreditPhase, CombinedPhaseStats] = {}
+        self._phases: dict[str, CombinedPhaseStats] = {}
         self._last_update_ns: int | None = None
 
-    def _get_phase_progress(self, phase: CreditPhase) -> CombinedPhaseStats:
+    @staticmethod
+    def _phase_name(stats: CreditPhaseStats | PhaseRecordsStats) -> str:
+        """Return the phase's stable user-facing identity."""
+        return stats.phase_name or str(stats.phase)
+
+    def _get_phase_progress(
+        self, stats: CreditPhaseStats | PhaseRecordsStats
+    ) -> CombinedPhaseStats:
         """Get or create the combined phase stats for a phase."""
-        if phase not in self._phases:
-            self._phases[phase] = CombinedPhaseStats(phase=phase)
-        return self._phases[phase]
+        phase_name = self._phase_name(stats)
+        if phase_name not in self._phases:
+            self._phases[phase_name] = CombinedPhaseStats(
+                phase=stats.phase,
+                phase_index=stats.phase_index,
+                profiling_index=stats.profiling_index,
+                phase_name=phase_name,
+                phase_kind=stats.phase_kind,
+            )
+        return self._phases[phase_name]
 
     def _update_phase_progress(
         self,
@@ -99,9 +113,10 @@ class ProgressTracker:
         updates[f"{prefix}_per_second"] = per_second
         updates[f"{prefix}_eta_sec"] = eta_sec
 
-        current = self._get_phase_progress(stats.phase)
-        self._phases[stats.phase] = current.model_copy(update=updates)
-        return self._phases[stats.phase]
+        phase_name = self._phase_name(stats)
+        current = self._get_phase_progress(stats)
+        self._phases[phase_name] = current.model_copy(update=updates)
+        return self._phases[phase_name]
 
     def update_requests_stats(self, stats: CreditPhaseStats) -> CombinedPhaseStats:
         """Update the requests stats for a phase."""
@@ -129,8 +144,7 @@ class ProgressTracker:
 
 @provides_hooks(
     AIPerfHook.ON_RECORDS_PROGRESS,
-    AIPerfHook.ON_PROFILING_PROGRESS,
-    AIPerfHook.ON_WARMUP_PROGRESS,
+    AIPerfHook.ON_PHASE_PROGRESS,
 )
 class ProgressTrackerMixin(MessageBusClientMixin):
     """A progress tracker that tracks the progress of the entire benchmark suite."""
@@ -143,18 +157,14 @@ class ProgressTrackerMixin(MessageBusClientMixin):
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage):
         """Update the progress from a credit phase start message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
         await self._update_records_stats(progress, message.request_ns)
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
     async def _on_credit_phase_progress(self, message: CreditPhaseProgressMessage):
         """Update the progress from a credit phase progress message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -162,17 +172,13 @@ class ProgressTrackerMixin(MessageBusClientMixin):
     ):
         """Update the progress from a credit phase sending complete message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(self, message: CreditPhaseCompleteMessage):
         """Update the progress from a credit phase complete message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
         await self._update_records_stats(progress, message.request_ns)
 
     @on_message(MessageType.PROCESSING_STATS)
@@ -188,27 +194,18 @@ class ProgressTrackerMixin(MessageBusClientMixin):
 
     async def _update_requests_stats(
         self,
-        phase: CreditPhase,
         phase_progress: CombinedPhaseStats,
         request_ns: int | None,
-    ):
+    ) -> None:
         """Update the requests stats based on the TimingManager stats."""
-        if phase == CreditPhase.WARMUP:
-            await self.run_hooks(
-                AIPerfHook.ON_WARMUP_PROGRESS,
-                warmup_stats=phase_progress,
-            )
-        elif phase == CreditPhase.PROFILING:
-            await self.run_hooks(
-                AIPerfHook.ON_PROFILING_PROGRESS,
-                profiling_stats=phase_progress,
-            )
-        else:
-            self.warning(f"Unsupported phase: {phase}")
+        await self.run_hooks(
+            AIPerfHook.ON_PHASE_PROGRESS,
+            phase_stats=phase_progress,
+        )
 
     async def _update_records_stats(
         self, phase_progress: CombinedPhaseStats, request_ns: int | None
-    ):
+    ) -> None:
         """Update the records stats based on the RecordsManager stats."""
         if self.is_debug_enabled:
             self.debug(

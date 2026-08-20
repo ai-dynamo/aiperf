@@ -16,6 +16,7 @@ from aiperf.common.redact import (
     REDACTED_VALUE,
     extract_sensitive_headers,
     redact_cli_command,
+    redact_endpoint_spec,
     redact_headers,
     redact_string,
     redact_url,
@@ -1672,7 +1673,7 @@ class TestAioHttpTraceRedaction:
 
 
 class TestRedactUrl:
-    """Tests for redact_url() — strip userinfo from URLs without false positives."""
+    """Tests for redact_url() credential removal without false positives."""
 
     @pytest.mark.parametrize(
         "url,expected",
@@ -1761,6 +1762,71 @@ class TestRedactUrl:
         regardless of scheme.
         """
         assert redact_url(uri) == expected
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            param(
+                "https://host/v1?api_key=sk-secret&model=llama",
+                f"https://host/v1?api_key={REDACTED_VALUE}&model=llama",
+                id="api-key",
+            ),
+            param(
+                "https://host/v1?region=us&X-Amz-Signature=deadbeef",
+                f"https://host/v1?region=us&X-Amz-Signature={REDACTED_VALUE}",
+                id="signed-url",
+            ),
+            param(
+                "https://user:pass@host/v1?token=secret#fragment",
+                f"https://{REDACTED_VALUE}@host/v1?token={REDACTED_VALUE}#fragment",
+                id="userinfo-and-token",
+            ),
+        ],
+    )  # fmt: skip
+    def test_sensitive_query_parameters_are_redacted(
+        self, url: str, expected: str
+    ) -> None:
+        assert redact_url(url) == expected
+
+    def test_similarly_named_noncredential_query_parameters_are_unchanged(self) -> None:
+        url = "https://host/v1?token_count=128&monkey=capuchin&email=a@b.com"
+        assert redact_url(url) == url
+
+
+class TestRedactEndpointSpec:
+    """Tests for credential-safe CR and Python benchmark configuration copies."""
+
+    def test_redacts_public_and_python_endpoint_shapes_without_mutation(self) -> None:
+        spec = {
+            "benchmark": {
+                "endpoint": {
+                    "apiKey": "public-secret",
+                    "api_key": "python-secret",
+                    "urls": ["https://user:pass@host/v1?api_key=query-secret&model=m"],
+                    "headers": {
+                        "Authorization": "Bearer header-secret",
+                        "X-Trace-ID": "trace-1",
+                    },
+                }
+            }
+        }
+
+        safe = redact_endpoint_spec(spec)
+        endpoint = safe["benchmark"]["endpoint"]
+
+        assert endpoint["apiKey"] == REDACTED_VALUE
+        assert endpoint["api_key"] == REDACTED_VALUE
+        assert endpoint["headers"] == {
+            "Authorization": REDACTED_VALUE,
+            "X-Trace-ID": "trace-1",
+        }
+        assert endpoint["urls"] == [
+            f"https://{REDACTED_VALUE}@host/v1?api_key={REDACTED_VALUE}&model=m"
+        ]
+        assert spec["benchmark"]["endpoint"]["apiKey"] == "public-secret"
+        assert spec["benchmark"]["endpoint"]["headers"]["Authorization"] == (
+            "Bearer header-secret"
+        )
 
 
 # =============================================================================

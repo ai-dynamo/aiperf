@@ -56,6 +56,8 @@ class Credit(
     issued_at_ns: int
     cancel_after_ns: int | None = None
     url_index: int | None = None
+    allow_worker_migration: bool = False
+    """Whether another worker can safely continue this session after worker loss."""
     agent_depth: int = 0
     parent_correlation_id: str | None = None
     root_correlation_id: str | None = None
@@ -191,6 +193,8 @@ class TurnToSend(Struct, frozen=True):
     """When True, this credit is a virtual orchestrator firing -- the worker sends
     no HTTP request and returns it immediately."""
     branch_mode: ConversationBranchMode = ConversationBranchMode.FORK
+    allow_worker_migration: bool = False
+    """Whether another worker can safely continue this session after worker loss."""
 
     cache_bust_marker: str | None = None
     """Pre-rendered cache-bust marker text (already includes whitespace boundaries).
@@ -228,6 +232,7 @@ class TurnToSend(Struct, frozen=True):
             x_correlation_id=credit.x_correlation_id,
             turn_index=credit.turn_index + 1,
             num_turns=credit.num_turns,
+            allow_worker_migration=credit.allow_worker_migration,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
             root_correlation_id=credit.root_correlation_id,

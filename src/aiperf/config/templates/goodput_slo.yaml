@@ -44,14 +44,15 @@ benchmark:
   phases:
   # Warmup
     - name: warmup
+      kind: warmup
       type: concurrency
-      excludeFromResults: true
       requests: 100
       concurrency: 16
 
   # Goodput measurement at the target load. Adjust rate/concurrency to find
   # the maximum sustainable throughput while still meeting the SLOs below.
     - name: profiling
+      kind: profiling
       type: poisson
       duration: 120
       rate: 30.0

@@ -21,7 +21,6 @@ from textual.visual import VisualType
 from textual.widgets import Static
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import CombinedPhaseStats
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget
@@ -75,8 +74,7 @@ class ProgressDashboard(Container, MaximizableWidget):
         self.progress_widget: Static | None = None
         self.stats_widget: Static | None = None
         self.records_stats: CombinedPhaseStats | None = None
-        self.profiling_stats: CombinedPhaseStats | None = None
-        self.warmup_stats: CombinedPhaseStats | None = None
+        self._phase_stats: dict[str, CombinedPhaseStats] = {}
         self.refresh_timer: Timer | None = None
 
     def on_mount(self) -> None:
@@ -144,54 +142,25 @@ class ProgressDashboard(Container, MaximizableWidget):
             )
         return 0
 
-    def on_warmup_progress(self, warmup_stats: CombinedPhaseStats) -> None:
-        """Callback for warmup progress updates."""
-        if not self.warmup_stats:
-            self.query_one("#stats-display").remove_class("no-stats")
-        self.warmup_stats = warmup_stats
-        # During grace period, show progress based on duration or request completion
-        if warmup_stats.timeout_triggered:
-            # Mark the regular warmup bar as 100% complete first
-            self.create_or_update_progress(
-                "Warmup",
-                warmup_stats,
-                lambda stats: (100, True),
-            )
-            self.create_or_update_progress(
-                "Warmup Grace",
-                warmup_stats,
-                lambda stats: (
-                    self._get_grace_period_progress(stats),
-                    stats.is_requests_complete,
-                ),
-            )
-        else:
-            self.create_or_update_progress(
-                "Warmup",
-                warmup_stats,
-                lambda stats: (
-                    stats.requests_progress_percent,
-                    stats.is_requests_complete,
-                ),
-            )
-        self.update_display(CreditPhase.WARMUP, self.warmup_stats)
+    def on_phase_progress(self, phase_stats: CombinedPhaseStats) -> None:
+        """Callback for named-phase progress updates."""
+        phase_name = phase_stats.phase_name or str(phase_stats.phase)
+        is_new = phase_name not in self._phase_stats
+        self._phase_stats[phase_name] = phase_stats
 
-    def on_profiling_progress(self, profiling_stats: CombinedPhaseStats) -> None:
-        """Callback for profiling progress updates."""
-        if not self.profiling_stats:
+        if is_new:
             self.query_one("#stats-display").remove_class("no-stats")
-        self.profiling_stats = profiling_stats
-        # During grace period, show progress based on duration or request completion
-        if profiling_stats.timeout_triggered:
-            # Mark the regular profiling bar as 100% complete first
+
+        label = phase_name.title()
+        if phase_stats.timeout_triggered:
             self.create_or_update_progress(
-                "Profiling",
-                profiling_stats,
+                label,
+                phase_stats,
                 lambda stats: (100, True),
             )
             self.create_or_update_progress(
-                "Grace Period",
-                profiling_stats,
+                f"{label} Grace",
+                phase_stats,
                 lambda stats: (
                     self._get_grace_period_progress(stats),
                     stats.is_requests_complete,
@@ -199,14 +168,14 @@ class ProgressDashboard(Container, MaximizableWidget):
             )
         else:
             self.create_or_update_progress(
-                "Profiling",
-                profiling_stats,
+                label,
+                phase_stats,
                 lambda stats: (
                     stats.requests_progress_percent,
                     stats.is_requests_complete,
                 ),
             )
-        self.update_display(CreditPhase.PROFILING, self.profiling_stats)
+        self.update_display(phase_name, phase_stats)
 
     def on_records_progress(self, records_stats: CombinedPhaseStats) -> None:
         """Callback for records progress updates."""
@@ -224,11 +193,13 @@ class ProgressDashboard(Container, MaximizableWidget):
                     stats.is_records_complete,
                 ),
             )
-        # NOTE: Send the profiling stats to the display, not the records stats
-        self.update_display(CreditPhase.PROFILING, self.profiling_stats)
+        display_stats = self._get_latest_profiling_stats()
+        if display_stats:
+            phase_name = display_stats.phase_name or str(display_stats.phase)
+            self.update_display(phase_name, display_stats)
 
     def update_display(
-        self, phase: CreditPhase, stats: CombinedPhaseStats | None = None
+        self, phase: str, stats: CombinedPhaseStats | None = None
     ) -> None:
         """Update the progress display."""
         if self.progress_widget:
@@ -240,21 +211,35 @@ class ProgressDashboard(Container, MaximizableWidget):
         """Get the status of the profile."""
         if self.records_stats and self.records_stats.is_records_complete:
             return Text("Complete", style="bold green")
-        elif self.profiling_stats and self.profiling_stats.is_requests_complete:
+
+        profiling_stats = self._get_latest_profiling_stats()
+        if profiling_stats and profiling_stats.is_requests_complete:
             return Text("Processing", style="bold green")
-        elif self.profiling_stats and self.profiling_stats.timeout_triggered:
+        if profiling_stats and profiling_stats.timeout_triggered:
             return Text("Grace Period", style="bold yellow")
-        elif self.profiling_stats:
-            return Text("Profiling", style="bold yellow")
-        elif self.warmup_stats and self.warmup_stats.timeout_triggered:
-            return Text("Warmup Grace", style="bold yellow")
-        elif self.warmup_stats:
-            return Text("Warmup", style="bold yellow")
-        else:
+        if profiling_stats:
+            phase_name = profiling_stats.phase_name or str(profiling_stats.phase)
+            return Text(phase_name.title(), style="bold yellow")
+
+        for stats in reversed(self._phase_stats.values()):
+            if stats.is_warmup:
+                phase_name = stats.phase_name or str(stats.phase)
+                suffix = " Grace" if stats.timeout_triggered else ""
+                return Text(f"{phase_name.title()}{suffix}", style="bold yellow")
+
+        if not self._phase_stats:
             return Text("Waiting for profile data...", style="dim")
+        return Text("Running", style="bold yellow")
+
+    def _get_latest_profiling_stats(self) -> CombinedPhaseStats | None:
+        """Return the most recently updated profiling-kind phase."""
+        for stats in reversed(self._phase_stats.values()):
+            if stats.is_profiling:
+                return stats
+        return None
 
     def create_stats_table(
-        self, phase: CreditPhase, stats: CombinedPhaseStats | None = None
+        self, phase: str, stats: CombinedPhaseStats | None = None
     ) -> VisualType:
         """Create a table with the profile status and progress."""
         stats_table = Table.grid(padding=(0, 1, 0, 0))

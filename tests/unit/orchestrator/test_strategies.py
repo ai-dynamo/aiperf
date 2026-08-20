@@ -32,12 +32,18 @@ _MINIMAL_CONFIG_KWARGS = {
     "phases": [
         {
             "name": "warmup",
+            "kind": "warmup",
             "type": "concurrency",
             "requests": 10,
             "concurrency": 1,
-            "exclude_from_results": True,
         },
-        {"name": "profiling", "type": "concurrency", "requests": 100, "concurrency": 1},
+        {
+            "name": "profiling",
+            "kind": "profiling",
+            "type": "concurrency",
+            "requests": 100,
+            "concurrency": 1,
+        },
     ],
 }
 
@@ -50,8 +56,8 @@ def _make_config(**overrides) -> BenchmarkConfig:
 
 
 def _has_warmup_phase(config: BenchmarkConfig) -> bool:
-    """Return True if config has any phase with exclude_from_results=True."""
-    return any(p.exclude_from_results for p in config.phases)
+    """Return True if config has any warmup-kind phase."""
+    return any(p.kind == "warmup" for p in config.phases)
 
 
 class TestFixedTrialsStrategy:
@@ -270,29 +276,38 @@ class TestFixedTrialsStrategy:
             "warmup stripped, not just trial 2."
         )
 
-    def test_warmup_filter_uses_exclude_from_results_flag(self):
-        """The strip predicate is `exclude_from_results`, not a name match.
-
-        Pin the contract that the filter reads the bool flag. If the framework
-        ever expands the allowed phase-name enum (currently `Literal["warmup",
-        "profiling"]`) to include additional excluded phases like
-        `calibration`, a name-string filter would silently leave them in
-        the measurement. This test asserts the predicate at the call site.
-        """
-        import inspect
-
-        from aiperf.orchestrator.strategies import FixedTrialsStrategy as _FTS
-
-        src = inspect.getsource(_FTS._disable_warmup)
-        assert "exclude_from_results" in src, (
-            "FixedTrialsStrategy._disable_warmup must filter on "
-            "`exclude_from_results`, not a hardcoded name string."
+    def test_warmup_filter_uses_kind_not_name(self):
+        """A custom-named warmup is removed according to its semantic kind."""
+        strategy = FixedTrialsStrategy(num_trials=2, disable_warmup_after_first=True)
+        config = _make_config(
+            phases=[
+                {
+                    "name": "prime_cache",
+                    "kind": "warmup",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                },
+                {
+                    "name": "load",
+                    "kind": "profiling",
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 1,
+                },
+            ]
         )
+
+        next_config = strategy.get_next_config(
+            config, [RunResult(label="run_0001", success=True)]
+        )
+
+        assert [phase.name for phase in next_config.phases] == ["load"]
 
     def test_disable_warmup_clears_agentic_cache_warmup_duration(self):
         """Trials 2+ must suppress the synthesized agentic cache-pressure warmup.
 
-        AGENTIC_REPLAY warmup is not a stored ``exclude_from_results`` phase; it
+        AGENTIC_REPLAY warmup is not a stored warmup-kind phase; it
         is derived from the surviving profiling phase by
         ``TimingConfig.from_run`` -> ``_build_agentic_warmup_config``, keyed off
         the profiling phase's ``agentic_cache_warmup_duration``. Stripping the

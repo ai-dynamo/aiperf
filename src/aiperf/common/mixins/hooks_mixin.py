@@ -163,7 +163,11 @@ class HooksMixin(AIPerfLoggerMixin):
                 lambda_func(hook, param)
 
     async def run_hooks(
-        self, *hook_types: HookType, reverse: bool = False, **kwargs
+        self,
+        *hook_types: HookType,
+        reverse: bool = False,
+        fail_fast: bool = False,
+        **kwargs,
     ) -> None:
         """Run the hooks for the given hook type, waiting for each hook to complete before running the next one.
         Hooks are run in the order they are defined by the class, starting with hooks defined in the lowest level
@@ -172,6 +176,14 @@ class HooksMixin(AIPerfLoggerMixin):
 
         If reverse is True, the hooks will be run in reverse order. This is useful for stop/cleanup hooks, where you
         want to start with the children and ending with the parent.
+
+        If ``fail_fast`` is True, abort on the first failing hook instead of
+        running every hook and collecting the exceptions. Startup transitions
+        must fail-fast: continuing after an early failure runs later hooks
+        against an inconsistent state (background tasks spawned after a PUB/SUB
+        probe already failed), producing a half-started service that survives
+        as a silent zombie container. Stop transitions stay best-effort so
+        cleanup errors never mask each other.
 
         The kwargs are passed through as keyword arguments to each hook.
         """
@@ -182,10 +194,13 @@ class HooksMixin(AIPerfLoggerMixin):
             try:
                 await hook(**kwargs)
             except Exception as e:
-                exceptions.append(HookError(self.__class__.__name__, hook.func_name, e))
+                wrapped = HookError(self.__class__.__name__, hook.func_name, e)
                 self.error(
                     f"Error running {hook!r} hook for {self.__class__.__name__}: {e}"
                 )
+                if fail_fast:
+                    raise wrapped from e
+                exceptions.append(wrapped)
         if exceptions:
             raise AIPerfMultiError(None, exceptions)
 

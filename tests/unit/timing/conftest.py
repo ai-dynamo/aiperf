@@ -75,6 +75,12 @@ class MockCreditRouter:
     async def cancel_all_credits(self) -> None:
         pass
 
+    def begin_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
+        pass
+
+    def end_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
+        pass
+
     def mark_credits_complete(self) -> None:
         pass
 
@@ -243,9 +249,12 @@ def make_credit(
     num_turns: int | None = None,
     is_final: bool | None = None,
     phase: CreditPhase = CreditPhase.PROFILING,
+    phase_index: int | None = None,
     corr_id: str | None = None,
     parent_correlation_id: str | None = None,
     has_forks: bool = False,
+    allow_worker_migration: bool = False,
+    agent_depth: int = 0,
 ) -> Credit:
     if num_turns is not None:
         n = num_turns
@@ -256,11 +265,14 @@ def make_credit(
     return Credit(
         id=id,
         phase=phase,
+        phase_index=phase_index,
         conversation_id=conv_id,
         x_correlation_id=corr_id or f"corr-{conv_id}",
         turn_index=turn,
         num_turns=n,
         issued_at_ns=time.time_ns(),
+        allow_worker_migration=allow_worker_migration,
+        agent_depth=agent_depth,
         parent_correlation_id=parent_correlation_id,
         has_forks=has_forks,
     )

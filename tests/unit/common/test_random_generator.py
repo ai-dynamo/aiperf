@@ -368,22 +368,32 @@ class TestDeriveVariationSeedFormula:
     """Byte-pin the `derive_variation_seed` SHA-256 formula.
 
     The formula is `sha256(f"{root}:variation:{label}").digest()[:8]` as a
-    big-endian uint64. These exact integers are the seeds AIPerf produces
-    today for adaptive-overflow variations and `vary_seed_per_trial` runs.
-    Changing the prefix `:variation:` to `:var:`, swapping endianness, or
-    bumping the digest slice would silently change every reproducible
-    workload that relies on this path — every existing config's adaptive
-    runs would shift to a different RNG sequence with no test failure.
+    big-endian uint64, masked into the signed-64-bit range. These exact
+    integers are the seeds AIPerf produces today for adaptive-overflow
+    variations and `vary_seed_per_trial` runs. Changing the prefix
+    `:variation:` to `:var:`, swapping endianness, bumping the digest slice,
+    or altering the mask would silently change every reproducible workload
+    that relies on this path — every existing config's adaptive runs would
+    shift to a different RNG sequence with no test failure.
 
     Update these values only as part of an intentional, documented
     seed-rotation event (which would also require a CHANGELOG entry and
     a re-baseline of every benchmark-finding repo that anchors to seeds).
+
+    SEED ROTATION 2026-08-04: the `& _INT64_MAX` mask was added because the
+    unmasked uint64 overflowed `AIPerfJob.spec.randomSeed` (CRD `type:
+    integer` == int64). The apiserver decoded out-of-range seeds as floats
+    and rejected the child with HTTP 422, crash-looping the sweep-controller
+    and killing cluster-side adaptive search on the first unlucky variation
+    (~50% of labels). Labels whose top bit was clear are unchanged; the rest
+    rotated. See CHANGELOG.
     """
 
     def test_formula_pinned_for_grid_style_label(self):
+        """Top bit was set pre-mask (16006226885058497949) -> rotated."""
         from aiperf.common.random_generator import derive_variation_seed
 
-        assert derive_variation_seed(42, "concurrency_10") == 16006226885058497949
+        assert derive_variation_seed(42, "concurrency_10") == 6782854848203722141
 
     def test_formula_pinned_for_adaptive_style_label(self):
         from aiperf.common.random_generator import derive_variation_seed
@@ -399,7 +409,7 @@ class TestDeriveVariationSeedFormula:
         from aiperf.common.random_generator import derive_variation_seed
 
         assert (
-            derive_variation_seed(99, "concurrency_10:trial:3") == 16416812867456934616
+            derive_variation_seed(99, "concurrency_10:trial:3") == 7193440830602158808
         )
 
     def test_none_root_returns_none(self):
@@ -407,12 +417,31 @@ class TestDeriveVariationSeedFormula:
 
         assert derive_variation_seed(None, "concurrency_10") is None
 
-    def test_output_fits_in_uint64(self):
-        """SHA-truncation slice is `[:8]` => max value 2**64 - 1."""
+    def test_output_fits_in_int64_for_every_label(self):
+        """Every derived seed must fit a signed 64-bit integer.
+
+        This is a hard interop bound, not a style preference: the Kubernetes
+        executor writes this value to `AIPerfJob.spec.randomSeed`, which the
+        CRD declares `type: integer` (int64). An out-of-range literal is
+        decoded by the apiserver as a float and rejected with HTTP 422
+        ("must be of type integer: \\"number\\""), which crash-loops the
+        sweep-controller and kills the entire adaptive sweep.
+
+        The unmasked `[:8]` slice produced a uint64, so ~50% of labels
+        overflowed. Sweeping many labels here rather than asserting on one
+        keeps that from regressing on a lucky example — `"x"` alone happens
+        to fall below the bound even unmasked.
+        """
         from aiperf.common.random_generator import derive_variation_seed
 
-        seed = derive_variation_seed(42, "x")
-        assert 0 <= seed < 2**64
+        int64_max = (1 << 63) - 1
+        labels = [f"phases.profiling.concurrency-{c}" for c in range(1, 200)]
+        labels += [f"search_iter_{i:04d}" for i in range(100)]
+        labels += [f"concurrency_10:trial:{t}" for t in range(50)]
+
+        for label in labels:
+            seed = derive_variation_seed(42, label)
+            assert 0 <= seed <= int64_max, f"{label} -> {seed} exceeds int64"
 
 
 if __name__ == "__main__":

@@ -702,10 +702,10 @@ class MultiRunOrchestrator:
         if failure_policy is None:
             return False
         if getattr(failure_policy, "on_child_failure", "continue") == "abort":
-            return any(not r.success for r in results)
+            return any(not r.success and not r.was_cancelled for r in results)
         max_fail = getattr(failure_policy, "max_failures", 0)
         if max_fail > 0:
-            failed = sum(1 for r in results if not r.success)
+            failed = sum(1 for r in results if not r.success and not r.was_cancelled)
             return failed >= max_fail
         return False
 

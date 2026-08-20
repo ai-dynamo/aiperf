@@ -17,6 +17,7 @@ from aiperf.common.messages.command_messages import (
     CommandErrorResponse,
     CommandMessage,
     CommandSuccessResponse,
+    GetPodStatesCommand,
     ProcessRecordsCommand,
     ProcessRecordsResponse,
     SpawnWorkersCommand,
@@ -71,6 +72,16 @@ class TestAutoRoutedModel:
                 },
                 ProcessRecordsCommand,
                 {"command": CommandType.PROCESS_RECORDS, "cancelled": True},
+            ),
+            (
+                {
+                    "message_type": "command",
+                    "command": "get_pod_states",
+                    "service_id": "api-service",
+                    "target_service_type": "system_controller",
+                },
+                GetPodStatesCommand,
+                {"command": CommandType.GET_POD_STATES},
             ),
             # Fallback to base class
             (

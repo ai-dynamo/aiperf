@@ -584,19 +584,20 @@ class TestTimingResolverEdgeCases:
 
         assert run.resolved.total_expected_duration == 0.0
 
-    def test_excluded_phases_included_in_total(self, tmp_path) -> None:
-        """Phases with exclude_from_results=True still contribute to total duration."""
+    def test_warmup_phases_included_in_total(self, tmp_path) -> None:
+        """Warmup-kind phases still contribute to total duration."""
         config = _make_config(
             phases=[
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "duration": 30,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "concurrency",
                     "duration": 60,
                     "concurrency": 2,
@@ -615,13 +616,14 @@ class TestTimingResolverEdgeCases:
             phases=[
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "duration": 0.001,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "concurrency",
                     "duration": 60,
                     "concurrency": 1,
@@ -640,14 +642,15 @@ class TestTimingResolverEdgeCases:
             phases=[
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "duration": 30,
                     "grace_period": 5,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "concurrency",
                     "duration": 60,
                     "grace_period": 10,
@@ -668,13 +671,14 @@ class TestTimingResolverEdgeCases:
             phases=[
                 {
                     "name": "warmup",
+                    "kind": "warmup",
                     "type": "concurrency",
                     "duration": 60,
                     "concurrency": 1,
-                    "exclude_from_results": True,
                 },
                 {
                     "name": "profiling",
+                    "kind": "profiling",
                     "type": "concurrency",
                     "requests": 100,
                     "concurrency": 2,

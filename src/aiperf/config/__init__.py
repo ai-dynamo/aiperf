@@ -86,6 +86,11 @@ from aiperf.config.dataset.defaults import (
     InputDefaults,
     InputTokensDefaults,
 )
+from aiperf.config.deployment import (
+    DeploymentConfig,
+    PodTemplateConfig,
+    SchedulingConfig,
+)
 from aiperf.config.endpoint import (
     EndpointConfig,
     EndpointDefaults,
@@ -93,6 +98,11 @@ from aiperf.config.endpoint import (
 )
 from aiperf.config.gpu_telemetry import (
     GpuTelemetryConfig,
+)
+from aiperf.config.kube import (
+    KubeManageOptions,
+    KubeOptions,
+    SecretMountConfig,
 )
 from aiperf.config.loader import (
     ENV_VAR_PATTERN,
@@ -102,6 +112,7 @@ from aiperf.config.loader import (
     dump_config,
     load_benchmark_plan,
     load_config,
+    load_config_from_mapping,
     load_config_from_string,
     merge_configs,
     save_config,
@@ -225,6 +236,7 @@ __all__ = [
     "ConstantPhase",
     "ConvergenceConfig",
     "DatasetConfig",
+    "DeploymentConfig",
     "Distribution",
     "DualBindCommunicationConfig",
     "ENV_VAR_PATTERN",
@@ -242,6 +254,8 @@ __all__ = [
     "InputDefaults",
     "InputTokensDefaults",
     "IpcCommunicationConfig",
+    "KubeManageOptions",
+    "KubeOptions",
     "LatinHypercubeSweep",
     "LogNormalDistribution",
     "LoggingConfig",
@@ -261,6 +275,7 @@ __all__ = [
     "PhaseType",
     "PhaseTypeStr",
     "PoissonPhase",
+    "PodTemplateConfig",
     "PrefixPromptConfig",
     "PromptConfig",
     "PromptSelectionConfig",
@@ -274,6 +289,8 @@ __all__ = [
     "SamplingDimension",
     "SamplingDistribution",
     "ScenarioSweep",
+    "SchedulingConfig",
+    "SecretMountConfig",
     "SequenceDistributionEntry",
     "ServerMetricsConfig",
     "ServerMetricsDiscoveryConfig",
@@ -306,6 +323,7 @@ __all__ = [
     "dump_config",
     "load_benchmark_plan",
     "load_config",
+    "load_config_from_mapping",
     "load_config_from_string",
     "merge_configs",
     "parse_file",

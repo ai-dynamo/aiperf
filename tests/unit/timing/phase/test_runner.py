@@ -783,6 +783,32 @@ class TestProgressReporting:
 
 
 class TestSeamlessMode:
+    async def test_router_phase_state_waits_for_detached_return_drain(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(seamless=True), conv_src, pub, router, conc, cancel, cb)
+        r._router_phase_started = True
+        pending_wait = MagicMock()
+        pending_wait.done.return_value = False
+        r._return_wait_task = pending_wait
+
+        r._detach_orchestrator_and_cleanup()
+
+        router.end_phase.assert_not_called()
+
+        completed_wait = MagicMock()
+        completed_wait.cancelled.return_value = False
+        completed_wait.exception.return_value = None
+        r._on_return_wait_complete(completed_wait)
+
+        router.end_phase.assert_called_once_with(CreditPhase.PROFILING, None)
+
     async def test_returns_early_for_non_final_phase(
         self,
         conv_src: MagicMock,

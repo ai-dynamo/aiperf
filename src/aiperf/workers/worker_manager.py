@@ -6,34 +6,21 @@ import multiprocessing
 import time
 from typing import TYPE_CHECKING
 
-from pydantic import Field
-
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MessageType, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_message, on_start
 from aiperf.common.messages import SpawnWorkersCommand, WorkerHealthMessage
-from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
-from aiperf.common.models.progress_models import WorkerStats
 from aiperf.plugin.enums import ServiceType
+from aiperf.workers.worker_group_state import (
+    WorkerStatusInfo,
+    build_worker_status_summary,
+    mark_stale_workers,
+    update_worker_status,
+)
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
-
-
-class WorkerStatusInfo(WorkerStats):
-    """Information about a worker's status."""
-
-    worker_id: str = Field(..., description="The ID of the worker")
-    last_error_ns: int | None = Field(
-        default=None,
-        description="The last time the worker had an error",
-    )
-    last_high_load_ns: int | None = Field(
-        default=None,
-        description="The last time the worker was in high load",
-    )
 
 
 class WorkerManager(BaseComponentService):
@@ -142,56 +129,24 @@ class WorkerManager(BaseComponentService):
         self, info: WorkerStatusInfo, message: WorkerHealthMessage
     ) -> None:
         """Check the status of a worker."""
-        info.last_update_ns = time.time_ns()
-        # Error Status
-        if message.task_stats.failed > info.task_stats.failed:
-            info.last_error_ns = time.time_ns()
-            info.status = WorkerStatus.ERROR
-        elif (time.time_ns() - (info.last_error_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER.ERROR_RECOVERY_TIME:  # fmt: skip
-            info.status = WorkerStatus.ERROR
-
-        # High Load Status
-        elif message.health.cpu_usage > Environment.WORKER.HIGH_LOAD_CPU_USAGE:
-            info.last_high_load_ns = time.time_ns()
-            self.warning(
-                f"CPU usage for {message.service_id} is {round(message.health.cpu_usage)}%. AIPerf results may be inaccurate."
-            )
-            info.status = WorkerStatus.HIGH_LOAD
-        elif (time.time_ns() - (info.last_high_load_ns or 0)) / NANOS_PER_SECOND < Environment.WORKER.HIGH_LOAD_RECOVERY_TIME:  # fmt: skip
-            info.status = WorkerStatus.HIGH_LOAD
-
-        # Idle Status
-        elif message.task_stats.total == 0 or message.task_stats.in_progress == 0:
-            info.status = WorkerStatus.IDLE
-
-        # Healthy Status
-        else:
-            info.status = WorkerStatus.HEALTHY
-
-        info.health = message.health
-        info.task_stats = message.task_stats
+        update_worker_status(info, message, warning=self.warning)
 
     @background_task(immediate=False, interval=Environment.WORKER.CHECK_INTERVAL)
     async def _worker_status_loop(self) -> None:
         """Check the status of all workers."""
         self.debug("Checking worker status")
-
-        for _, info in self.worker_infos.items():
-            if (time.time_ns() - (info.last_update_ns or 0)) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
-                info.status = WorkerStatus.STALE
+        mark_stale_workers(self.worker_infos)
 
     @background_task(
         immediate=False, interval=Environment.WORKER.STATUS_SUMMARY_INTERVAL
     )
     async def _worker_summary_loop(self) -> None:
         """Generate a summary of the worker status."""
-        summary = WorkerStatusSummaryMessage(
-            service_id=self.service_id,
-            worker_statuses={
-                worker_id: info.status for worker_id, info in self.worker_infos.items()
-            },
+        await self.publish(
+            build_worker_status_summary(
+                service_id=self.service_id, worker_infos=self.worker_infos
+            )
         )
-        await self.publish(summary)
 
 
 def main() -> None:
