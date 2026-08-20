@@ -5,17 +5,22 @@
 
 #![cfg(feature = "engine")]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use aiperf_runtime::config::model::workload_kind::GRAPH_FORMATS;
-use aiperf_runtime::dataset::TextTokenizer;
+use aiperf_runtime::dataset::{TextTokenizer, TiktokenTokenizer};
 use aiperf_runtime::engine::graph_input::{
-    GraphInputAdapterResolver, GraphInputContext, PreparedRunnerGraphInput,
+    BuiltinRunnerGraphInputAdapterResolver, GraphInputAdapterResolver, GraphInputContext,
+    PreparedRunnerGraphInput,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde_json::value::RawValue;
 
-#[derive(Debug)]
-struct ExternalResolver;
+#[derive(Debug, Default)]
+struct ExternalResolver {
+    loads: AtomicUsize,
+}
 
 #[async_trait(?Send)]
 impl GraphInputAdapterResolver for ExternalResolver {
@@ -28,7 +33,8 @@ impl GraphInputAdapterResolver for ExternalResolver {
         _raw: &RawValue,
         _context: &GraphInputContext<'_>,
     ) -> Result<PreparedRunnerGraphInput> {
-        unreachable!("compile-only compatibility fixture")
+        self.loads.fetch_add(1, Ordering::Relaxed);
+        Err(anyhow!("compile-only compatibility fixture"))
     }
 }
 
@@ -39,14 +45,30 @@ fn old_context_literal(tokenizer: &dyn TextTokenizer) -> GraphInputContext<'_> {
     }
 }
 
-#[test]
-fn pre_extension_context_and_resolver_source_still_compile() {
-    let _resolver: &dyn GraphInputAdapterResolver = &ExternalResolver;
-    let _constructor = old_context_literal;
+#[tokio::test]
+async fn legacy_public_graph_input_extensions_still_compile_and_forward() {
+    let tokenizer = TiktokenTokenizer::builtin();
+    let context = old_context_literal(&tokenizer);
+    let raw = serde_json::value::to_raw_value(&serde_json::json!({"format": "dag_jsonl"}))
+        .expect("raw graph input");
+    let resolver = ExternalResolver::default();
+    let legacy: &[&str; 6] = &GRAPH_FORMATS;
+
+    assert!(!legacy.contains(&"aiperf_trace"));
+    assert!(
+        resolver
+            .load_for_endpoint(&raw, &context, "chat")
+            .await
+            .is_err()
+    );
+    assert_eq!(resolver.loads.load(Ordering::Relaxed), 1);
 }
 
 #[test]
-fn graph_format_inventory_has_a_length_independent_type() {
-    let formats: &'static [&'static str] = GRAPH_FORMATS;
-    assert!(formats.contains(&"aiperf_trace"));
+fn aiperf_trace_remains_a_built_in_graph_input() {
+    assert!(
+        BuiltinRunnerGraphInputAdapterResolver::new()
+            .supported_formats()
+            .contains(&"aiperf_trace")
+    );
 }

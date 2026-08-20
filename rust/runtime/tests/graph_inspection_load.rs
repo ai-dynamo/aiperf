@@ -6,7 +6,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use aiperf_runtime::config::model::workload_kind::GRAPH_FORMATS;
 use aiperf_runtime::dataset::{TextTokenizer, TiktokenTokenizer};
 use aiperf_runtime::engine::graph_input::{
     BuiltinRunnerGraphInputAdapterResolver, GraphInputAdapterResolver, GraphInputContext,
@@ -101,7 +100,7 @@ async fn built_in_formats_lower_their_real_inspection_sources_once() {
             .iter()
             .map(|source| source.format)
             .collect::<Vec<_>>(),
-        GRAPH_FORMATS.to_vec()
+        BuiltinRunnerGraphInputAdapterResolver::new().supported_formats()
     );
     let tokenizer = TiktokenTokenizer::builtin();
 

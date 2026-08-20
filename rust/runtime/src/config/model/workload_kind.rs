@@ -12,11 +12,20 @@
 use super::config::BenchmarkConfig;
 use super::dataset::Dataset;
 
-/// Dataset formats that select the direct Graph-IR workload.
+/// Legacy public graph-input format inventory.
 ///
-/// Any dataset whose native format token is one of these routes the run through
-/// the `graph` workload; every other dataset uses the `scheduled` workload.
-pub const GRAPH_FORMATS: &[&str] = &[
+/// This six-element array remains source-compatible for downstream extensions.
+/// The built-in resolver additionally supports `aiperf_trace`.
+pub const GRAPH_FORMATS: [&str; 6] = [
+    "dag_jsonl",
+    "conditional_graph",
+    "weka_trace",
+    "dynamo_trace",
+    "agent_recording",
+    "otlp_genai",
+];
+
+const BUILTIN_GRAPH_FORMATS: [&str; 7] = [
     "dag_jsonl",
     "conditional_graph",
     "weka_trace",
@@ -56,10 +65,20 @@ impl WorkloadKind {
 /// Return whether a dataset format/type token selects the graph workload.
 ///
 /// The token is a dataset's native format (`dag_jsonl`, `weka_trace`, …) or, for
-/// the loose wire shortcut, its `type` discriminant. Shared with the protocol-v2
-/// wire projection so both consult one graph-format list.
+/// the loose wire shortcut, its `type` discriminant. Classification consults
+/// the complete private built-in inventory.
 pub fn is_graph_format(token: Option<&str>) -> bool {
-    token.is_some_and(|token| GRAPH_FORMATS.contains(&token))
+    token.is_some_and(is_builtin_graph_format)
+}
+
+/// Return whether a format is linked into the built-in graph-input resolver.
+pub(crate) fn is_builtin_graph_format(format: &str) -> bool {
+    BUILTIN_GRAPH_FORMATS.contains(&format)
+}
+
+/// Return the built-in graph-input format identifiers in authored order.
+pub(crate) fn builtin_graph_formats() -> &'static [&'static str] {
+    &BUILTIN_GRAPH_FORMATS
 }
 
 /// The native format token of a typed dataset, if it carries one.
@@ -101,7 +120,7 @@ mod tests {
     #[test]
     fn aiperf_trace_selects_the_graph_workload() {
         assert!(is_graph_format(Some("aiperf_trace")));
-        assert_eq!(GRAPH_FORMATS.len(), 7);
+        assert_eq!(GRAPH_FORMATS.len(), 6);
     }
 
     fn synthetic_dataset() -> Dataset {

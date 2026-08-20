@@ -16,7 +16,6 @@ use aiperf_cli::graph::report::{
     GraphIssueSeverityReport, GraphIssueSummary, GraphOperation, GraphPlanPhaseReport,
     GraphValidateReport,
 };
-use aiperf_runtime::config::model::workload_kind::GRAPH_FORMATS;
 use serde_json::json;
 
 fn command_without_python(fixture_bin: &Path) -> Command {
@@ -1078,7 +1077,18 @@ fn graph_help_lists_the_stock_built_in_formats_without_python() {
     let output = output(&["graph", "--help"]);
     assert_eq!(output.status.code(), Some(0));
     let help = String::from_utf8(output.stdout).expect("help is UTF-8");
-    assert_eq!(graph_help_formats(&help), GRAPH_FORMATS.to_vec());
+    assert_eq!(
+        graph_help_formats(&help),
+        vec![
+            "dag_jsonl",
+            "conditional_graph",
+            "weka_trace",
+            "dynamo_trace",
+            "aiperf_trace",
+            "agent_recording",
+            "otlp_genai",
+        ]
+    );
 }
 
 #[test]

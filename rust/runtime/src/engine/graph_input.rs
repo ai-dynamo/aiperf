@@ -39,7 +39,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, value::RawValue};
 
-use crate::config::model::workload_kind::GRAPH_FORMATS;
+use crate::config::model::workload_kind::builtin_graph_formats;
 use crate::engine::dataset_input::DatasetCacheBustSpec;
 use crate::engine::execute::distribution;
 use crate::engine::protocol::{
@@ -286,7 +286,10 @@ impl BuiltinRunnerGraphInputAdapterResolver {
                 .iter()
                 .map(|adapter| adapter.format())
                 .collect::<BTreeSet<_>>(),
-            GRAPH_FORMATS.iter().copied().collect::<BTreeSet<_>>(),
+            builtin_graph_formats()
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>(),
             "built-in graph adapters must match the shared graph-format inventory"
         );
         Self {
@@ -326,7 +329,7 @@ where
 #[async_trait(?Send)]
 impl GraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver {
     fn supported_formats(&self) -> Vec<&str> {
-        GRAPH_FORMATS
+        builtin_graph_formats()
             .iter()
             .filter_map(|format| {
                 debug_assert!(
@@ -1984,7 +1987,7 @@ mod tests {
         let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
         assert_eq!(
             resolver.supported_formats(),
-            crate::config::model::workload_kind::GRAPH_FORMATS.to_vec()
+            crate::config::model::workload_kind::builtin_graph_formats().to_vec()
         );
     }
 

@@ -11,9 +11,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use aiperf_runtime::config::model::dataset::RecordedAgentSourceFormat;
-use aiperf_runtime::config::model::workload_kind::GRAPH_FORMATS;
 use aiperf_runtime::engine::graph_input::{
-    BuiltinRunnerGraphInputAdapterResolver, PreparedRunnerGraphInput,
+    BuiltinRunnerGraphInputAdapterResolver, GraphInputAdapterResolver, PreparedRunnerGraphInput,
     prepare_local_graph_inspection_input,
 };
 use aiperf_runtime::engine::preparation::{LocalTokenizerError, load_local_tokenizer};
@@ -175,7 +174,9 @@ fn parse_graph_cli(argv: &[String]) -> Result<GraphCli, clap::Error> {
 fn graph_format_help() -> String {
     format!(
         "Supported built-in graph formats: {}",
-        GRAPH_FORMATS.iter().copied().collect::<Vec<_>>().join(", ")
+        BuiltinRunnerGraphInputAdapterResolver::new()
+            .supported_formats()
+            .join(", ")
     )
 }
 
@@ -376,7 +377,13 @@ fn validate_local_source(path: &Path) -> Result<PathBuf, GraphCommandError> {
 }
 
 fn graph_format_parser() -> PossibleValuesParser {
-    PossibleValuesParser::new(GRAPH_FORMATS.iter().copied())
+    PossibleValuesParser::new(
+        BuiltinRunnerGraphInputAdapterResolver::new()
+            .supported_formats()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn requested_json(argv: &[String]) -> bool {
