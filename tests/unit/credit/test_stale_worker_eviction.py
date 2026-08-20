@@ -68,7 +68,6 @@ def _router(*, workers: dict[str, float], in_flight: int = 1, heartbeat: bool = 
     router.debug = MagicMock()
     for wid, age_s in workers.items():
         load = WorkerLoad(worker_id=wid)
-        load.last_seen_ns = now - int(age_s * NS)
         if heartbeat:
             load.last_heartbeat_ns = now - int(age_s * NS)
         load.in_flight_credits = in_flight
@@ -94,9 +93,9 @@ class TestStaleWorkerEviction:
         busy worker in turn until ``send_credit`` raised "No workers available".
         """
         router = _router(workers={"w-busy": 0.0})
-        # Not one router message in 10x the staleness window...
-        router._workers["w-busy"].last_seen_ns = time.time_ns() - 600 * NS
-        # ...but heartbeats kept arriving.
+        # Not one credit-channel message in 10x the staleness window (the
+        # router does not track that at all -- that is the point), but
+        # heartbeats kept arriving.
         router.note_worker_heartbeat("w-busy")
         assert router.evict_stale_workers(stale_after_s=60.0) == []
         assert "w-busy" in router._workers

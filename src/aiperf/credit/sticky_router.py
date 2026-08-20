@@ -136,12 +136,6 @@ class WorkerLoad:
     total_cancelled_credits: int = 0
     total_errors_reported: int = 0
     in_flight_credits: int = 0
-    last_seen_ns: int = 0
-    """Wall-clock of the last message from this worker; 0 until one arrives.
-
-    Diagnostic only. A busy worker is silent on the router channel for the
-    whole duration of a request, so this can NOT distinguish slow from dead --
-    see ``last_heartbeat_ns``."""
     last_heartbeat_ns: int = 0
     """Wall-clock of the last service heartbeat observed for this worker; 0
     until one arrives. Published on its own timer by the worker service
@@ -511,7 +505,14 @@ class StickyCreditRouter(CommunicationMixin):
         is_dag_child = credit.parent_correlation_id is not None
         sticky_entry = self._sticky_sessions.get(routing_key)
         sticky_worker_id = sticky_entry.worker_id if sticky_entry is not None else None
-        unavailable_session = self._unavailable_sessions.get(routing_key)
+        # Empty until a worker is actually lost, which never happens in a
+        # healthy run. Test the dict for emptiness before hashing the routing
+        # key: this is the per-credit dispatch path.
+        unavailable_session = (
+            self._unavailable_sessions.get(routing_key)
+            if self._unavailable_sessions
+            else None
+        )
 
         if unavailable_session is not None and not credit.allow_worker_migration:
             if not is_dag_child:
@@ -540,7 +541,7 @@ class StickyCreditRouter(CommunicationMixin):
         if sticky_worker_id and sticky_worker_id in self._workers:
             worker_id = sticky_worker_id
         else:
-            if not is_dag_child:
+            if self._unavailable_sessions and not is_dag_child:
                 self._pop_unavailable(routing_key)
             # Least-loaded selection with O(k) tie-breaking where k = workers at min load.
             # Min load lookup is O(1) due to caching.
@@ -857,17 +858,23 @@ class StickyCreditRouter(CommunicationMixin):
         worker_id = getattr(message, "worker_id", None) or ""
         await self._handle_router_message(worker_id, message)
 
-    def _note_liveness_and_readmit(
+    def _readmit_on_traffic(
         self, worker_id: str, message: WorkerToRouterMessage
     ) -> None:
-        """Record proof of life and undo a staleness eviction before dispatch.
+        """Undo a staleness eviction before the message is dispatched.
 
         Traffic from a worker the staleness sweep dropped disproves the eviction
         outright, so the load record is restored before the message is processed
         and its credit accounting lands on the restored record. Departure
         messages are excluded: a worker that is leaving must stay evicted.
+
+        This runs on every CreditReturn and every FirstToken, i.e. twice per
+        request, so the empty-dict test comes first: with nothing evicted (the
+        overwhelmingly common case, and the only case in a healthy single-node
+        run) it costs one truth test instead of hashing the worker id.
         """
-        self.note_worker_activity(worker_id)
+        if not self._evicted_workers:
+            return
         if worker_id in self._evicted_workers and not isinstance(
             message, WorkerShutdown | WorkerUndispatchable
         ):
@@ -877,7 +884,7 @@ class StickyCreditRouter(CommunicationMixin):
         self, worker_id: str, message: WorkerToRouterMessage
     ) -> None:
         """Handle CreditReturn, FirstToken, WorkerDispatchable, WorkerShutdown from workers."""
-        self._note_liveness_and_readmit(worker_id, message)
+        self._readmit_on_traffic(worker_id, message)
         match message:
             case CreditReturn():
                 self._track_credit_returned(
@@ -1023,17 +1030,6 @@ class StickyCreditRouter(CommunicationMixin):
             f"({alive / peak:.0%} < {min_fraction:.0%} floor)"
         )
 
-    def note_worker_activity(self, worker_id: str) -> None:
-        """Record that this worker just spoke to us on the credit channel.
-
-        Diagnostic freshness only -- deliberately NOT the eviction signal. A
-        worker mid-request sends nothing between its FirstToken and its
-        CreditReturn, so router-channel silence means "still working" just as
-        often as it means "dead". Liveness is ``note_worker_heartbeat``.
-        """
-        if load := self._workers.get(worker_id):
-            load.last_seen_ns = time.time_ns()
-
     def note_worker_heartbeat(self, worker_id: str) -> None:
         """Record a service heartbeat from this worker, readmitting if evicted.
 
@@ -1066,7 +1062,6 @@ class StickyCreditRouter(CommunicationMixin):
             return
         now_ns = time.time_ns()
         load.last_heartbeat_ns = now_ns
-        load.last_seen_ns = now_ns
         load.active_sessions = 0
         load.active_session_ids = set()
         self._workers[worker_id] = load

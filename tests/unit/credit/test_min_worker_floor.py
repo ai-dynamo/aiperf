@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Dispatchable-worker floor and membership-notification tests."""
 
-import time
 from collections import defaultdict
 from unittest.mock import MagicMock, patch
 
@@ -37,7 +36,6 @@ def _router(alive: int, peak: int):
     r.error = MagicMock()
     for i in range(alive):
         load = WorkerLoad(worker_id=f"w-{i}")
-        load.last_seen_ns = time.time_ns()
         r._workers[f"w-{i}"] = load
         r._workers_by_load[0].add(f"w-{i}")
     r._workers_cache = list(r._workers.values())
