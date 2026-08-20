@@ -361,16 +361,19 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         rebuilds them as ``X(name="", contents=...)`` -- discarding any authored
         ``name`` and, for images, any authored ``uuids`` (vLLM cache-reuse IDs).
 
-        1. Directory mode (multiple files in ``data``): each file forms a separately
-           named pool (e.g. ``queries.jsonl`` -> ``query``, ``passages.jsonl`` ->
-           ``passage``) that name-sensitive endpoints (e.g. rankings, which routes
-           on the ``query``/``queries`` and ``passages`` field names) depend on.
-           Flattening across files merges them into one anonymous pool per modality.
+        1. Multiple named pools in ``data`` -- one per key. Directory input (multiple
+           files, e.g. ``queries.jsonl`` -> ``query``, ``passages.jsonl`` -> ``passage``)
+           and inline YAML ``records:`` with multiple top-level keys (e.g.
+           ``records: {queries: [...], passages: [...]}``) both land here; either
+           way, each key is a separately named pool that name-sensitive endpoints
+           (e.g. rankings, which routes on the ``query``/``queries`` and ``passages``
+           field names) depend on. Flattening across pools merges them into one
+           anonymous pool per modality.
 
         2. A single pool whose entries embed named ``Text``/``Image``/``Audio``/
            ``Video`` objects, or ``Image`` objects carrying ``uuids``. This is
-           reachable from a single file (or inline YAML ``records``) and is not
-           caught by file count alone.
+           reachable from a single file (or single-key inline YAML ``records``)
+           and is not caught by pool count alone.
 
         Raises:
             ValueError: If either condition applies.
@@ -378,13 +381,15 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         if len(data) > 1:
             names = ", ".join(sorted(data))
             raise ValueError(
-                f"random_pool batch sizes other than 1 are not supported for named pools: "
-                f"the input is a directory of {len(data)} files, so each file forms a "
-                f"separately named pool ({names}). Batching flattens every pool into one "
+                f"random_pool batch sizes other than 1 are not supported for named "
+                f"pools: the input has {len(data)} separately named pools ({names}) "
+                "-- either multiple files in a directory, or multiple top-level keys "
+                "under inline YAML records:. Batching flattens every pool into one "
                 "anonymous pool per modality, which discards those names and breaks "
-                "name-sensitive endpoints (e.g. rankings, which routes on 'query'/'queries' "
-                "and 'passages'). Either drop the batch-size flags to keep one sample per "
-                "named pool, or use a single unnamed pool file to batch."
+                "name-sensitive endpoints (e.g. rankings, which routes on 'query'/"
+                "'queries' and 'passages'). Either drop the batch-size flags to keep "
+                "one sample per named pool, or use a single unnamed pool (one file, "
+                "or a flat inline records: list) to batch."
             )
         if RandomPoolDatasetLoader._pool_entries_carry_metadata(data):
             raise ValueError(

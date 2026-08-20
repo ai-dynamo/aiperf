@@ -1128,6 +1128,25 @@ class TestRandomPoolNamedPoolBatchingGuard:
         with pytest.raises(ValueError, match="named"):
             loader.convert_to_conversations(data)
 
+    def test_multi_pool_rejection_message_does_not_claim_files(self, default_cfg):
+        """The rejection message must not call inline-records pool keys 'files' --
+        the same guard fires for inline YAML `records: {queries: [...], passages:
+        [...]}`, which has no directory and no files on disk at all.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_image=0)
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_inline", run=make_run_from_cli(config), num_conversations=2
+        )
+        data = {
+            "queries": [RandomPool(text="What is your refund policy?")],
+            "passages": [RandomPool(text="Refunds take 5 business days.")],
+        }
+        with pytest.raises(ValueError, match="named pools") as exc_info:
+            loader.convert_to_conversations(data)
+        message = str(exc_info.value)
+        assert "directory of" not in message
+        assert "unnamed pool file" not in message
+
     def test_batching_with_single_file_plain_strings_does_not_raise(self, default_cfg):
         """A single file with plain-string (unnamed) entries must still batch
         normally -- the metadata guard must not over-reject content with no
