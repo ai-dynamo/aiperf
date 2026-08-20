@@ -9,19 +9,34 @@
  * one card per ``(endpoint, gpu_index)`` parsed from the metric header
  * (format: ``"<Name> | <endpoint> | GPU <index> | <model>"``).
  *
- * Each card shows the four canonical DCGM metrics as tiles, plus a compact
- * table of any other telemetry values reported for that GPU.
+ * Each card shows four canonical hero tiles, plus a compact table of any
+ * other telemetry values reported for that GPU.
  */
 
 import { html } from 'htm/preact';
 import { telemetryMetrics } from '../lib/state.js';
 import { fmtNumber, fmtInt } from '../lib/format.js';
 
-const PRIMARY_TAGS = [
-  { match: 'gpu_power_usage',  label: 'Power' },
-  { match: 'gpu_utilization',  label: 'Utilization' },
-  { match: 'gpu_temperature',  label: 'Temp' },
-  { match: 'gpu_memory_used',  label: 'Memory' },
+/**
+ * Hero tiles, keyed by the field names emitted in ``MetricResult.tag``.
+ *
+ * The wire tag is ``"<field>_dcgm_<source>_gpu<idx>_<uuid>"`` (see
+ * ``GPUTelemetryAccumulator.generate_metric_results``), so ``baseName`` below
+ * recovers ``<field>`` exactly as it appears in ``GPU_TELEMETRY_METRICS_CONFIG``
+ * (``src/aiperf/gpu_telemetry/constants.py``). Each tile therefore lists its
+ * per-vendor field names rather than one hardcoded prefix; NVIDIA and AMD name
+ * the same physical signal differently (``nvidia_power_usage`` vs ``amd_power``),
+ * so a single suffix cannot cover both.
+ *
+ * ``tests/unit/api/test_gpu_telemetry_tiles.py`` asserts every alias here still
+ * exists in ``GPU_TELEMETRY_METRICS_CONFIG``, so the next backend rename fails
+ * loudly in CI instead of silently blanking these tiles.
+ */
+export const PRIMARY_TAGS = [
+  { label: 'Power',       aliases: ['nvidia_power_usage', 'amd_power'] },
+  { label: 'Utilization', aliases: ['nvidia_gpu_utilization', 'amd_gfx_activity'] },
+  { label: 'Temp',        aliases: ['nvidia_temperature', 'amd_temperature'] },
+  { label: 'Memory',      aliases: ['nvidia_memory_used', 'amd_memory_used'] },
 ];
 
 /** Extract (endpoint, gpuIndex, model) from a MetricResult header like
@@ -39,10 +54,45 @@ function parseHeader(header) {
 }
 
 /** The canonical short metric name — strip the DCGM-URL/GPU suffix off the tag. */
-function baseName(tag) {
+export function baseName(tag) {
   if (!tag) return '';
   const cut = tag.indexOf('_dcgm_');
   return cut > 0 ? tag.slice(0, cut) : tag;
+}
+
+/** Drop the leading vendor segment so a re-prefixed field still lands on its
+ *  tile (``nvidia_temperature`` / ``amd_temperature`` / a future
+ *  ``intel_temperature`` all reduce to ``temperature``). */
+function vendorlessName(name) {
+  const cut = name.indexOf('_');
+  return cut > 0 ? name.slice(cut + 1) : name;
+}
+
+/** Single source of truth for "does this metric belong to this tile?".
+ *  Both the tile lookup and the "other metrics" table go through
+ *  ``partitionGpuMetrics`` so the two can never drift apart. */
+export function metricMatchesTile(metric, tile, exactOnly = false) {
+  const base = metric?.baseName ?? baseName(metric?.tag);
+  if (!base) return false;
+  if (tile.aliases.includes(base)) return true;
+  if (exactOnly) return false;
+  const suffix = vendorlessName(base);
+  return tile.aliases.some(alias => vendorlessName(alias) === suffix);
+}
+
+/** Split a GPU's metrics into hero tiles and the leftover "other" rows.
+ *  A metric claimed by a tile is removed from ``others``, so nothing can
+ *  render twice; duplicates beyond the first claim stay in the table. */
+export function partitionGpuMetrics(metrics) {
+  const claimed = new Set();
+  const tiles = PRIMARY_TAGS.map((tile) => {
+    const metric =
+      metrics.find(m => !claimed.has(m) && metricMatchesTile(m, tile, true)) ??
+      metrics.find(m => !claimed.has(m) && metricMatchesTile(m, tile));
+    if (metric) claimed.add(metric);
+    return { label: tile.label, metric: metric ?? null };
+  });
+  return { tiles, others: metrics.filter(m => !claimed.has(m)) };
 }
 
 function groupByGpu(metrics) {
@@ -67,10 +117,6 @@ function groupByGpu(metrics) {
   );
 }
 
-function findPrimary(gpu, match) {
-  return gpu.metrics.find(m => m.baseName === match || m.tag?.startsWith(match + '_'));
-}
-
 function formatValueUnit(metric) {
   const v = metric?.current ?? metric?.avg ?? null;
   if (v == null || typeof v !== 'number' || !isFinite(v)) return ['---', ''];
@@ -90,28 +136,25 @@ export function GpuTelemetryCard() {
       <div class="gpu-grid">
         ${gpus.map((gpu) => {
           const headerText = `${gpu.endpoint} | GPU ${gpu.gpuIndex}${gpu.model ? ' | ' + gpu.model : ''}`;
-          const otherMetrics = gpu.metrics.filter(
-            m => !PRIMARY_TAGS.some(p => m.baseName === p.match || m.tag?.startsWith(p.match + '_')),
-          );
+          const { tiles, others } = partitionGpuMetrics(gpu.metrics);
           return html`
             <div class="gpu-card" key=${gpu.endpoint + '::' + gpu.gpuIndex}>
               <div class="gpu-header">${headerText}</div>
               <div class="gpu-primary">
-                ${PRIMARY_TAGS.map((p) => {
-                  const m = findPrimary(gpu, p.match);
-                  const [body, unit] = formatValueUnit(m);
+                ${tiles.map((tile) => {
+                  const [body, unit] = formatValueUnit(tile.metric);
                   return html`
-                    <div class="gpu-tile" key=${p.match}>
-                      <div class="gpu-tile-label">${p.label}</div>
+                    <div class="gpu-tile" key=${tile.label}>
+                      <div class="gpu-tile-label">${tile.label}</div>
                       <div class="gpu-tile-val">${body}${unit && html`<span class="gpu-tile-unit"> ${unit}</span>`}</div>
                     </div>
                   `;
                 })}
               </div>
-              ${otherMetrics.length > 0 && html`
+              ${others.length > 0 && html`
                 <table class="gpu-extra">
                   <tbody>
-                    ${otherMetrics.map((m) => {
+                    ${others.map((m) => {
                       const [body, unit] = formatValueUnit(m);
                       return html`
                         <tr key=${m.tag}>
