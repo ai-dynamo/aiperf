@@ -423,14 +423,12 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
                 | Finding::NodeNeverFireable { .. }
         )
     });
-    if prerequisites_hold {
-        if let Ok(scheduler) = Scheduler::new(graph) {
-            let analysis = analyze_static_readiness(graph, &scheduler);
-            if !analysis.blocked_node_ids.is_empty() {
-                findings.push(Finding::StaticChannelReadinessDeadlock {
-                    blocked_node_ids: analysis.blocked_node_ids,
-                });
-            }
+    if prerequisites_hold && let Ok(scheduler) = Scheduler::new(graph) {
+        let analysis = analyze_static_readiness(graph, &scheduler);
+        if !analysis.blocked_node_ids.is_empty() {
+            findings.push(Finding::StaticChannelReadinessDeadlock {
+                blocked_node_ids: analysis.blocked_node_ids,
+            });
         }
     }
 
