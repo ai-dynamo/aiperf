@@ -5,6 +5,7 @@
 from unittest.mock import patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 from aiperf.common.tokenizer import (
@@ -363,3 +364,72 @@ class TestTiktokenUrlsMatchTiktokenSource:
                 f"tiktoken_ext.openai_public.{target} — tiktoken changed the URL; "
                 f"update _TIKTOKEN_ENCODING_URLS in src/aiperf/common/tokenizer.py"
             )
+
+
+class TestTiktokenInternalAttributeGuard:
+    """tiktoken privates must fail loudly, not as AttributeError/KeyError.
+
+    `valid_token_ids` / `all_token_ids` / `all_special_ids` read
+    `_mergeable_ranks` and `_special_token_values` off `tiktoken.Encoding`.
+    tiktoken exposes no public equivalent, and its sparse ID space means
+    `range(n_vocab)` is not a usable substitute -- gap IDs are not decodable.
+    A rename in tiktoken previously broke `--prompt-corpus random` at runtime,
+    with a traceback pointing nowhere useful.
+    """
+
+    @pytest.fixture
+    def tiktoken_tokenizer(self):
+        return Tokenizer.from_pretrained("o200k_base")
+
+    @pytest.mark.parametrize(
+        "missing",
+        [
+            param("_mergeable_ranks", id="mergeable-ranks"),
+            param("_special_token_values", id="special-token-values"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize(
+        "accessor",
+        [
+            param("valid_token_ids", id="valid-token-ids"),
+            param("all_token_ids", id="all-token-ids"),
+        ],
+    )  # fmt: skip
+    def test_missing_internal_raises_tokenizer_error(
+        self, tiktoken_tokenizer, accessor, missing
+    ):
+        encoding = tiktoken_tokenizer._tokenizer._encoding
+
+        class _Stripped:
+            """Encoding proxy with one attribute removed, mimicking a rename."""
+
+            def __getattr__(self, name):
+                if name == missing:
+                    raise AttributeError(name)
+                return getattr(encoding, name)
+
+        tiktoken_tokenizer._tokenizer._encoding = _Stripped()
+        with pytest.raises(TokenizerError, match=missing):
+            getattr(tiktoken_tokenizer, accessor)
+
+    def test_error_names_the_affected_flag(self, tiktoken_tokenizer):
+        """The message has to be actionable from a benchmark run, so it names
+        the flag that breaks rather than only the attribute."""
+        encoding = tiktoken_tokenizer._tokenizer._encoding
+
+        class _Stripped:
+            def __getattr__(self, name):
+                if name == "_mergeable_ranks":
+                    raise AttributeError(name)
+                return getattr(encoding, name)
+
+        tiktoken_tokenizer._tokenizer._encoding = _Stripped()
+        with pytest.raises(TokenizerError) as exc:
+            _ = tiktoken_tokenizer.valid_token_ids
+        assert "--prompt-corpus random" in str(exc.value)
+
+    def test_intact_encoding_is_unaffected(self, tiktoken_tokenizer):
+        """Guard must be transparent when the attributes are present."""
+        assert len(tiktoken_tokenizer.valid_token_ids) == 199998
+        assert len(tiktoken_tokenizer.all_token_ids) == 200000
+        assert len(tiktoken_tokenizer.all_special_ids) == 2

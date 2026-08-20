@@ -38,6 +38,32 @@ TIKTOKEN_ENCODING_NAMES = frozenset(
 )
 
 
+def _tiktoken_internal(encoding: "tiktoken.Encoding", attr: str) -> object:
+    """Read a private ``tiktoken.Encoding`` attribute, or fail with a clear error.
+
+    tiktoken exposes no public API for enumerating its token IDs, and its ID
+    space is sparse -- gaps between mergeable ranks and special tokens are not
+    decodable -- so ``range(n_vocab)`` is not a usable substitute. These
+    privates are the only source of a correct token pool.
+
+    Deliberately raises instead of degrading. Unlike
+    :meth:`Tokenizer.num_prompt_special_tokens`, where falling back to 0 is
+    conservative in a known direction, there is no safe default here: a wrong
+    token pool silently produces prompts drawn from invalid IDs, which either
+    raise ``KeyError`` deep inside a decode or corrupt the benchmark's ISL
+    accounting. Failing at setup with the attribute name beats either.
+    """
+    value = getattr(encoding, attr, None)
+    if value is None:
+        raise TokenizerError(
+            f"tiktoken.Encoding has no {attr!r}, which AIPerf needs to enumerate "
+            "token IDs for --prompt-corpus random. This usually means the "
+            "installed tiktoken renamed or removed the attribute. Pin a "
+            "compatible tiktoken, or use a HuggingFace tokenizer instead."
+        )
+    return value
+
+
 class _TiktokenAdapter:
     """Adapts tiktoken.Encoding to the interface expected by Tokenizer._tokenizer."""
 
@@ -813,7 +839,9 @@ class Tokenizer:
         """Set of special token IDs that should be excluded from random sampling."""
         self._require_init()
         if isinstance(self._tokenizer, _TiktokenAdapter):
-            return set(self._tokenizer._encoding._special_token_values)
+            return set(
+                _tiktoken_internal(self._tokenizer._encoding, "_special_token_values")
+            )
         return set(self._tokenizer.all_special_ids)
 
     @property
@@ -827,12 +855,10 @@ class Tokenizer:
         """
         self._require_init()
         if isinstance(self._tokenizer, _TiktokenAdapter):
-            special = self._tokenizer._encoding._special_token_values
-            return sorted(
-                id_
-                for id_ in self._tokenizer._encoding._mergeable_ranks.values()
-                if id_ not in special
-            )
+            enc = self._tokenizer._encoding
+            special = _tiktoken_internal(enc, "_special_token_values")
+            ranks = _tiktoken_internal(enc, "_mergeable_ranks")
+            return sorted(id_ for id_ in ranks.values() if id_ not in special)
         special = self.all_special_ids
         return [i for i in range(self._tokenizer.vocab_size) if i not in special]
 
@@ -846,9 +872,9 @@ class Tokenizer:
         self._require_init()
         if isinstance(self._tokenizer, _TiktokenAdapter):
             enc = self._tokenizer._encoding
-            return sorted(
-                set(enc._mergeable_ranks.values()) | set(enc._special_token_values)
-            )
+            ranks = _tiktoken_internal(enc, "_mergeable_ranks")
+            special = _tiktoken_internal(enc, "_special_token_values")
+            return sorted(set(ranks.values()) | set(special))
         return list(range(self._tokenizer.vocab_size))
 
     def num_prompt_special_tokens(self) -> int:
