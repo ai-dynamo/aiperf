@@ -308,12 +308,61 @@ fn imported_request_history_shared_and_legacy_lower_in_exact_wire_order() {
     )
     .expect("discover Codex fixture");
     let shared = parse_imported_agent_sessions(&read_set).expect("parse Codex fixture")[0].clone();
+    let expected_calls = vec![
+        vec![
+            RawJsonMessage {
+                role: "system".into(),
+                wire: Bytes::from_static(
+                    "{\"role\":\"system\",\"content\":\"You are Codex…\"}".as_bytes(),
+                ),
+            },
+            RawJsonMessage {
+                role: "user".into(),
+                wire: Bytes::from_static(
+                    "{\"role\":\"user\",\"content\":\"Write fizzbuzz.\"}".as_bytes(),
+                ),
+            },
+        ],
+        vec![
+            RawJsonMessage {
+                role: "system".into(),
+                wire: Bytes::from_static(
+                    "{\"role\":\"system\",\"content\":\"You are Codex…\"}".as_bytes(),
+                ),
+            },
+            RawJsonMessage {
+                role: "user".into(),
+                wire: Bytes::from_static(
+                    "{\"role\":\"user\",\"content\":\"Write fizzbuzz.\"}".as_bytes(),
+                ),
+            },
+            RawJsonMessage {
+                role: "assistant".into(),
+                wire: Bytes::from_static(
+                    "{\"role\":\"assistant\",\"content\":\"Sure, here it is.\"}".as_bytes(),
+                ),
+            },
+            RawJsonMessage {
+                role: "user".into(),
+                wire: Bytes::from_static(
+                    "{\"role\":\"user\",\"content\":\"Now in Go.\"}".as_bytes(),
+                ),
+            },
+        ],
+    ];
+    let expected_wires = expected_calls
+        .iter()
+        .map(|messages| {
+            messages
+                .iter()
+                .map(|message| message.wire.clone())
+                .collect()
+        })
+        .collect::<Vec<Vec<Bytes>>>();
     let mut legacy = shared.clone();
-    for (call_index, call) in legacy.calls.iter_mut().enumerate() {
-        call.request_messages = shared
-            .request_messages(call_index)
-            .expect("shared request history")
-            .to_vec();
+    assert_eq!(legacy.calls.len(), expected_calls.len());
+    for (call, messages) in legacy.calls.iter_mut().zip(expected_calls) {
+        call.request_messages = messages;
     }
     legacy.request_history = Default::default();
 
@@ -326,10 +375,8 @@ fn imported_request_history_shared_and_legacy_lower_in_exact_wire_order() {
         lower_imported_agent_sessions(&[legacy], &resolver, &tokenizer, &mut SegmentPool::new())
             .expect("lower legacy request history");
 
-    assert_eq!(
-        lowered_message_wires(&shared_bundle),
-        lowered_message_wires(&legacy_bundle),
-    );
+    assert_eq!(lowered_message_wires(&shared_bundle), expected_wires);
+    assert_eq!(lowered_message_wires(&legacy_bundle), expected_wires);
 }
 
 #[test]
