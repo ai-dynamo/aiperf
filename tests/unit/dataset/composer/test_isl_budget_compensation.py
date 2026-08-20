@@ -46,10 +46,17 @@ def _make_config(
 
 
 def _make_tokenizer_no_chat_template():
-    """A tokenizer mock with no apply_chat_template — overheads collapse to 0."""
+    """A tokenizer mock with no apply_chat_template — overheads collapse to 0.
+
+    ``num_prompt_special_tokens`` is stubbed to 0 (the gpt2 case) because the
+    composer now subtracts it from the ISL target; an unstubbed MagicMock would
+    reach real arithmetic. 0 keeps these budget assertions about chat-template
+    and cache-bust costs alone, with no special-token contribution.
+    """
     tokenizer = MagicMock()
     tokenizer.encode = MagicMock(return_value=list(range(10)))
     tokenizer._tokenizer = MagicMock(spec=[])  # spec=[] -> no attributes
+    tokenizer.num_prompt_special_tokens = MagicMock(return_value=0)
     return tokenizer
 
 
@@ -524,3 +531,54 @@ def test_marker_estimator_is_invoked_when_compensation_is_needed(
         SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
 
     assert mock_estimate.call_count == expected_marker_estimator_calls
+
+
+class TestSpecialTokenBudgetOnNonRangeRatioPath:
+    """Server-added special tokens must be budgeted on every path.
+
+    `_estimate_chat_template_overheads` deliberately excludes BOS from
+    `per_request_fixed`, documenting that the mean is adjusted elsewhere -- but
+    only `VLLMRatioConfig.compute_input_bounds` was doing that adjustment. The
+    non-range-ratio path used `--isl` raw, so `--isl 128` on a BOS tokenizer put
+    129 tokens on the wire (measured on TinyLlama, before and after this fix).
+    """
+
+    def _composer(self, *, num_special: int, isl_mean: int = 128):
+        run = _make_config(isl_mean=isl_mean, apply_chat_template=False)
+        tokenizer = _make_tokenizer_no_chat_template()
+        tokenizer.num_prompt_special_tokens = MagicMock(return_value=num_special)
+        with (
+            patch(_MARKER_COST_PATCH, return_value=0),
+            patch(
+                "aiperf.dataset.composer.base._estimate_chat_template_overheads",
+                return_value=(0, 0),
+            ),
+            patch("aiperf.dataset.composer.base.resolve_prompt_generator"),
+        ):
+            return SyntheticDatasetComposer(run=run, tokenizer=tokenizer)
+
+    def test_special_tokens_subtracted_from_isl_target(self):
+        composer = self._composer(num_special=1)
+        isl, _ = composer._get_turn_sequence_lengths(turn_id=1)
+        assert isl == 127, (
+            "BOS must come out of the body budget so wire ISL lands on 128"
+        )
+
+    def test_no_special_tokens_leaves_target_untouched(self):
+        """gpt2-style tokenizers (no auto-BOS) must see no change."""
+        composer = self._composer(num_special=0)
+        isl, _ = composer._get_turn_sequence_lengths(turn_id=1)
+        assert isl == 128
+
+    def test_multi_special_token_tokenizer(self):
+        """BERT-style (CLS+SEP) subtracts both."""
+        composer = self._composer(num_special=2)
+        isl, _ = composer._get_turn_sequence_lengths(turn_id=1)
+        assert isl == 126
+
+    def test_target_floors_at_zero_not_negative(self):
+        """Mirrors vLLM's max(0, input_len - num_special); the downstream
+        sample_positive_normal_integer floors the actual draw at 1."""
+        composer = self._composer(num_special=5, isl_mean=2)
+        isl, _ = composer._get_turn_sequence_lengths(turn_id=1)
+        assert isl == 0

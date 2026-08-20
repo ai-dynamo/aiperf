@@ -174,11 +174,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         self.turn_count = 0
 
-        num_special_tokens = (
+        self._num_special_tokens = (
             tokenizer.num_prompt_special_tokens() if tokenizer is not None else 0
         )
         self._seq_distribution: SequenceLengthSampler | None = (
-            self._build_sequence_distribution(num_special_tokens)
+            self._build_sequence_distribution(self._num_special_tokens)
         )
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
@@ -452,6 +452,17 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 and self._synthetic_prompts.isl is not None
                 else 0
             )
+            # Subtract the tokens the server prepends (BOS et al.), mirroring
+            # what VLLMRatioConfig.compute_input_bounds does for the
+            # range-ratio path. Without it this path was the only one not
+            # accounting for them, so --isl 128 on a BOS tokenizer put 129 on
+            # the wire. _estimate_chat_template_overheads deliberately excludes
+            # BOS from per_request_fixed on the assumption the mean was already
+            # adjusted -- an assumption only the range-ratio path was meeting.
+            # max(0, ...) matches vLLM's real_input_len; the downstream
+            # sample_positive_normal_integer floors the draw at 1.
+            if isl_mean > 0:
+                isl_mean = max(0, isl_mean - self._num_special_tokens)
             osl_mean = (
                 int(self._synthetic_prompts.osl.expected_value)
                 if self._synthetic_prompts is not None
