@@ -324,6 +324,80 @@ traces: []
     }
 
     #[tokio::test]
+    async fn static_channel_readiness_preserves_authored_inputs_through_lowering() {
+        let bundle = compile_conditional_graph_input(
+            config(
+                br#"
+graph:
+  state:
+    produced: {type: messages, reducer: add_messages}
+    done: {type: messages, reducer: add_messages}
+  nodes:
+    producer:
+      node_type: llm
+      prompt: ["producer"]
+      output: produced
+    reader:
+      node_type: llm
+      prompt: ["reader"]
+      output: done
+      inputs: [{channel: produced, count: 1}]
+  edges:
+    - {source: START, target: producer}
+    - {source: producer, target: reader}
+traces:
+  - id: authored-inputs
+"#,
+            ),
+            &TiktokenTokenizer::builtin(),
+            0,
+        )
+        .await
+        .expect("authored channel inputs lower successfully");
+
+        let node = bundle.programs[0]
+            .profiling
+            .graph
+            .nodes
+            .get("reader")
+            .expect("reader node");
+        assert_eq!(node.input_requirements().len(), 1);
+        assert_eq!(node.input_requirements()[0].channel, "produced");
+        assert_eq!(node.input_requirements()[0].count.as_int(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn replay_inputs_are_rejected_before_folding() {
+        let result = compile_conditional_graph_input(
+            config(
+                br#"
+graph:
+  state:
+    produced: {type: messages, reducer: add_messages}
+  nodes:
+    replay:
+      node_type: replay
+      outputs: [produced]
+      inputs: [{channel: produced, count: 1}]
+  edges:
+    - {source: START, target: replay}
+traces:
+  - id: replay-inputs
+    replay_outputs: {replay: {produced: []}}
+"#,
+            ),
+            &TiktokenTokenizer::builtin(),
+            0,
+        )
+        .await;
+        let Err(error) = result else {
+            panic!("replay inputs must not be silently dropped by folding")
+        };
+
+        assert!(error.to_string().contains("replay") && error.to_string().contains("inputs"));
+    }
+
+    #[tokio::test]
     async fn compiles_each_branch_to_its_pruned_flat_graph() {
         let bundle = compile().await;
         assert_eq!(bundle.metadata.format, "conditional_graph");

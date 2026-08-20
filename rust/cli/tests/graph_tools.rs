@@ -173,6 +173,71 @@ traces:
     (directory, source.display().to_string())
 }
 
+fn static_channel_readiness_fixture() -> (tempfile::TempDir, String) {
+    let directory = tempfile::tempdir().expect("create readiness fixture directory");
+    let source = directory
+        .path()
+        .join("static-channel-readiness.conditional.yaml");
+    fs::write(
+        &source,
+        r#"graph:
+  state:
+    produced: {type: messages, reducer: add_messages}
+    done: {type: messages, reducer: add_messages}
+  nodes:
+    reader:
+      node_type: llm
+      prompt: ["reader"]
+      output: done
+      inputs: [{channel: produced, count: 1}]
+    producer:
+      node_type: llm
+      prompt: ["producer"]
+      output: produced
+  edges:
+    - {source: START, target: reader}
+    - {source: reader, target: producer}
+traces:
+  - id: static-channel-readiness
+"#,
+    )
+    .expect("write readiness fixture");
+    (directory, source.display().to_string())
+}
+
+fn static_channel_readiness_anchor_fixture(edge: &str) -> (tempfile::TempDir, String) {
+    let directory = tempfile::tempdir().expect("create readiness anchor fixture directory");
+    let source = directory
+        .path()
+        .join("static-channel-readiness-anchor.conditional.yaml");
+    fs::write(
+        &source,
+        format!(
+            r#"graph:
+  state:
+    produced: {{type: messages, reducer: add_messages}}
+    done: {{type: messages, reducer: add_messages}}
+  nodes:
+    producer:
+      node_type: llm
+      prompt: ["producer"]
+      output: produced
+    reader:
+      node_type: llm
+      prompt: ["reader"]
+      output: done
+  edges:
+    - {{source: START, target: producer}}
+    - {{source: producer, target: reader{edge}}}
+traces:
+  - id: static-channel-readiness-anchor
+"#
+        ),
+    )
+    .expect("write readiness anchor fixture");
+    (directory, source.display().to_string())
+}
+
 fn visualize_mermaid_output(source: &str, destination: Option<&Path>) -> Output {
     let fixture_bin = tempfile::tempdir().expect("create empty PATH directory");
     let mut command = command_without_python(fixture_bin.path());
@@ -606,6 +671,70 @@ fn all_static_timing_gates_are_exhaustive_in_graph_command_outputs() {
     );
     assert!(markdown.contains("source<br/>min-start +7us"));
     assert!(markdown.contains("schedule completion, first-token +3us"));
+}
+
+#[test]
+fn static_channel_readiness_rejects_deadlocks_and_marks_explain_unavailable() {
+    let (_directory, source) = static_channel_readiness_fixture();
+    let validate = validate_output(&source, "conditional_graph", &["--output-format", "json"]);
+
+    assert_eq!(
+        validate.status.code(),
+        Some(1),
+        "stderr: {}\nstdout: {}",
+        stderr(&validate),
+        String::from_utf8_lossy(&validate.stdout)
+    );
+    let validate: GraphValidateReport =
+        serde_json::from_slice(&validate.stdout).expect("validation JSON");
+    assert_eq!(validate.summary.errors, 1);
+    assert_eq!(validate.issues.len(), 1);
+    assert_eq!(validate.issues[0].code, "static-channel-readiness-deadlock");
+    assert_eq!(
+        validate.issues[0].context.get("blocked_nodes"),
+        Some(&"[\"reader\",\"producer\"]".to_owned())
+    );
+
+    let explain = explain_output(&source, "conditional_graph", &["--output-format=json"]);
+    assert_eq!(explain.status.code(), Some(0), "{}", stderr(&explain));
+    let explain: GraphExplainReport =
+        serde_json::from_slice(&explain.stdout).expect("explain JSON");
+    assert_eq!(explain.programs[0].profiling.readiness_waves, None);
+    assert_eq!(
+        explain.programs[0]
+            .profiling
+            .readiness_unavailable
+            .as_ref()
+            .map(|unavailable| unavailable.code.as_str()),
+        Some("validation-errors")
+    );
+}
+
+#[test]
+fn static_channel_readiness_reports_scheduler_dispatch_and_completion_routes() {
+    for (edge, trigger) in [
+        (
+            ", delay_after_predecessor_first_token_us: 3.0",
+            "completed: producer",
+        ),
+        (
+            ", delay_after_predecessor_start_us: 20.0, delay_after_predecessor_first_token_us: 5.0",
+            "dispatched: producer",
+        ),
+    ] {
+        let (_directory, source) = static_channel_readiness_anchor_fixture(edge);
+        let explain = explain_output(&source, "conditional_graph", &["--output-format=json"]);
+
+        assert_eq!(explain.status.code(), Some(0), "{}", stderr(&explain));
+        let explain: GraphExplainReport =
+            serde_json::from_slice(&explain.stdout).expect("explain JSON");
+        let waves = explain.programs[0]
+            .profiling
+            .readiness_waves
+            .as_ref()
+            .expect("static readiness waves");
+        assert_eq!(waves[1].trigger, trigger);
+    }
 }
 
 #[test]

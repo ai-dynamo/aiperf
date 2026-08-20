@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Shared graph-inspection compatibility vocabulary.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::graph::driver::TraceDriverSpec;
 use crate::graph::input::GraphInputBundle;
@@ -11,6 +11,7 @@ use crate::graph::model::{
     ReducerName, START_NODE_ID, StaticEdge,
 };
 use crate::graph::scheduler::{AnchorFanInKind, Scheduler, anchor_fan_in_finding};
+use crate::graph::static_readiness::{analyze_static_readiness, normalized_node_order};
 
 /// Validates graph structure and returns detailed inspection findings.
 pub use crate::graph::validate::validate_detailed;
@@ -503,37 +504,6 @@ fn inspect_topology(graph: &GraphRecord) -> GraphTopologyInspection {
     }
 }
 
-fn normalized_node_order(graph: &GraphRecord) -> Vec<String> {
-    let mut successors: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for edge in &graph.edges {
-        successors
-            .entry(edge.source.as_str())
-            .or_default()
-            .push(edge.target.as_str());
-    }
-    let mut queue = VecDeque::new();
-    if let Some(entries) = successors.get(START_NODE_ID) {
-        queue.extend(entries.iter().copied());
-    }
-    let mut seen = BTreeSet::new();
-    let mut nodes = Vec::new();
-    while let Some(node) = queue.pop_front() {
-        if !graph.nodes.contains_key(node) || !seen.insert(node) {
-            continue;
-        }
-        nodes.push(node.to_string());
-        if let Some(next) = successors.get(node) {
-            queue.extend(next.iter().copied());
-        }
-    }
-    for node in graph.nodes.keys() {
-        if seen.insert(node.as_str()) {
-            nodes.push(node.clone());
-        }
-    }
-    nodes
-}
-
 fn inspect_node(id: String, node: &ExecutableGraphNode) -> GraphNodeInspection {
     match node {
         ExecutableGraphNode::Llm(llm) => GraphNodeInspection {
@@ -659,12 +629,25 @@ fn inspect_readiness(
             "readiness waves are unavailable while scheduler validation errors remain",
         );
     };
-    match readiness_waves(graph, &scheduler) {
-        Some(waves) => ReadinessInspection::Available { waves },
-        None => unavailable(
+    let analysis = analyze_static_readiness(graph, &scheduler);
+    if analysis.blocked_node_ids.is_empty() {
+        ReadinessInspection::Available {
+            waves: analysis
+                .waves
+                .into_iter()
+                .enumerate()
+                .map(|(wave, readiness)| ReadinessWave {
+                    wave,
+                    node_ids: readiness.node_ids,
+                    trigger: readiness.trigger,
+                })
+                .collect(),
+        }
+    } else {
+        unavailable(
             "analysis-incomplete",
             "static readiness analysis did not admit every graph node",
-        ),
+        )
     }
 }
 
@@ -673,189 +656,6 @@ fn unavailable(code: &str, message: &str) -> ReadinessInspection {
         code: code.into(),
         message: message.into(),
     }
-}
-
-fn readiness_waves(graph: &GraphRecord, scheduler: &Scheduler) -> Option<Vec<ReadinessWave>> {
-    let order = normalized_node_order(graph);
-    let writers = channel_writer_counts(graph);
-    let mut emitted = BTreeSet::new();
-    let mut completed_channels = BTreeMap::<String, usize>::new();
-    let mut waves = Vec::new();
-    let mut prior_wave = Vec::<String>::new();
-
-    for wave in 0..=graph.nodes.len() {
-        let candidates = if wave == 0 {
-            scheduler
-                .entry_nodes()
-                .filter(|node| graph.nodes.contains_key(*node))
-                .filter(|node| {
-                    graph.nodes.get(*node).is_some_and(|graph_node| {
-                        channels_ready(graph_node, &completed_channels, &writers)
-                    })
-                })
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        } else {
-            order
-                .iter()
-                .filter(|node| !emitted.contains(node.as_str()))
-                .filter(|node| {
-                    let Some(graph_node) = graph.nodes.get(node.as_str()) else {
-                        return false;
-                    };
-                    predecessors_ready(scheduler, node, &emitted)
-                        && channels_ready(graph_node, &completed_channels, &writers)
-                })
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let node_ids = deduplicate(candidates);
-        if node_ids.is_empty() {
-            break;
-        }
-        let trigger = if wave == 0 {
-            "START".to_string()
-        } else {
-            readiness_trigger(graph, &node_ids, &prior_wave, &completed_channels, &writers)
-        };
-        for node_id in &node_ids {
-            emitted.insert(node_id.clone());
-            if let Some(node) = graph.nodes.get(node_id) {
-                *completed_channels
-                    .entry(node.output().to_string())
-                    .or_default() += 1;
-            }
-        }
-        prior_wave = node_ids.clone();
-        waves.push(ReadinessWave {
-            wave,
-            node_ids,
-            trigger,
-        });
-    }
-    (emitted.len() == graph.nodes.len()).then_some(waves)
-}
-
-fn channel_writer_counts(graph: &GraphRecord) -> BTreeMap<String, usize> {
-    let mut writers = BTreeMap::new();
-    for node in graph.nodes.values() {
-        *writers.entry(node.output().to_string()).or_default() += 1;
-    }
-    writers
-}
-
-fn predecessors_ready(scheduler: &Scheduler, node: &str, emitted: &BTreeSet<String>) -> bool {
-    scheduler.incoming_static_edges(node).iter().all(|edge| {
-        edge.source == START_NODE_ID
-            || (edge.delay_after_predecessor_start_us.is_some() && emitted.contains(&edge.source))
-            || (edge.delay_after_predecessor_start_us.is_none() && emitted.contains(&edge.source))
-    })
-}
-
-fn channels_ready(
-    node: &ExecutableGraphNode,
-    completed_channels: &BTreeMap<String, usize>,
-    writers: &BTreeMap<String, usize>,
-) -> bool {
-    node.input_requirements().iter().all(|requirement| {
-        let Some(needed) = required_count(requirement, writers) else {
-            return false;
-        };
-        completed_channels
-            .get(&requirement.channel)
-            .copied()
-            .unwrap_or(0)
-            >= needed
-    })
-}
-
-fn required_count(
-    requirement: &crate::graph::model::ChannelRequirement,
-    writers: &BTreeMap<String, usize>,
-) -> Option<usize> {
-    match &requirement.count {
-        Count::N(count) => usize::try_from(*count).ok(),
-        Count::Word(word) if word == "all" => {
-            Some(writers.get(&requirement.channel).copied().unwrap_or(0))
-        }
-        Count::Word(_) => None,
-    }
-}
-
-fn readiness_trigger(
-    graph: &GraphRecord,
-    node_ids: &[String],
-    prior_wave: &[String],
-    completed_channels: &BTreeMap<String, usize>,
-    writers: &BTreeMap<String, usize>,
-) -> String {
-    let current = node_ids.iter().map(String::as_str).collect::<BTreeSet<_>>();
-    let prior = prior_wave
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let dispatch_sources = graph
-        .edges
-        .iter()
-        .filter(|edge| {
-            current.contains(edge.target.as_str())
-                && prior.contains(edge.source.as_str())
-                && edge.delay_after_predecessor_start_us.is_some()
-        })
-        .map(|edge| edge.source.as_str())
-        .collect::<Vec<_>>();
-    let completion_edge_unlocks = graph.edges.iter().any(|edge| {
-        current.contains(edge.target.as_str())
-            && prior.contains(edge.source.as_str())
-            && edge.delay_after_predecessor_start_us.is_none()
-    });
-    let channel_unlocks = node_ids.iter().any(|node_id| {
-        let Some(node) = graph.nodes.get(node_id) else {
-            return false;
-        };
-        node.input_requirements().iter().any(|requirement| {
-            let Some(needed) = required_count(requirement, writers) else {
-                return false;
-            };
-            let completed = completed_channels
-                .get(&requirement.channel)
-                .copied()
-                .unwrap_or(0);
-            let prior_completed = prior_wave
-                .iter()
-                .filter_map(|prior_node| graph.nodes.get(prior_node))
-                .filter(|prior_node| prior_node.output() == requirement.channel)
-                .count();
-            completed >= needed && completed.saturating_sub(prior_completed) < needed
-        })
-    });
-    if completion_edge_unlocks || channel_unlocks || dispatch_sources.is_empty() {
-        return format!("completed: {}", prior_wave.join(","));
-    }
-    if !dispatch_sources.is_empty() {
-        return format!(
-            "dispatched: {}",
-            deduplicate_refs(dispatch_sources).join(",")
-        );
-    }
-    format!("completed: {}", prior_wave.join(","))
-}
-
-fn deduplicate(nodes: Vec<String>) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    nodes
-        .into_iter()
-        .filter(|node| seen.insert(node.clone()))
-        .collect()
-}
-
-fn deduplicate_refs(nodes: Vec<&str>) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    nodes
-        .into_iter()
-        .filter(|node| seen.insert((*node).to_string()))
-        .map(str::to_string)
-        .collect()
 }
 
 #[cfg(test)]
@@ -1142,6 +942,100 @@ mod tests {
         assert!(
             matches!(unavailable, ReadinessInspection::Unavailable { code, .. } if code == "validation-errors")
         );
+    }
+
+    #[test]
+    fn static_channel_readiness_keeps_completion_successors_as_or_triggers() {
+        let graph = graph(
+            r#"{
+                "state":{"a":{},"b":{},"done":{}},
+                "nodes":{
+                    "a":{"output":"a"},
+                    "b":{"output":"b","inputs":[{"channel":"a","count":1}]},
+                    "target":{"output":"done"}
+                },
+                "edges":[
+                    {"source":"START","target":"a"},
+                    {"source":"START","target":"b"},
+                    {"source":"a","target":"target"},
+                    {"source":"b","target":"target"}
+                ]
+            }"#,
+        );
+        let plan = &inspect_bundle(
+            &bundle(vec![program("static-channel-readiness", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling;
+
+        let ReadinessInspection::Available { waves } = &plan.readiness else {
+            panic!("valid graph must have readiness waves")
+        };
+        assert_eq!(waves[0].node_ids, vec!["a"]);
+        assert_eq!(waves[1].node_ids, vec!["b", "target"]);
+    }
+
+    #[test]
+    fn static_channel_readiness_attributes_channel_release_to_the_prior_wave() {
+        let graph = graph(
+            r#"{
+                "state":{"a":{},"b":{},"done":{}},
+                "nodes":{
+                    "a":{"output":"a"},
+                    "b":{"output":"b","inputs":[{"channel":"a","count":1}]},
+                    "target":{"output":"done","inputs":[{"channel":"b","count":1}]}
+                },
+                "edges":[
+                    {"source":"START","target":"a"},
+                    {"source":"START","target":"b"},
+                    {"source":"a","target":"target"}
+                ]
+            }"#,
+        );
+        let readiness = &inspect_bundle(
+            &bundle(vec![program("static-channel-readiness", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling
+            .readiness;
+
+        let ReadinessInspection::Available { waves } = readiness else {
+            panic!("valid graph must have readiness waves")
+        };
+        assert_eq!(waves[2].node_ids, vec!["target"]);
+        assert_eq!(waves[2].trigger, "completed: b");
+    }
+
+    #[test]
+    fn static_channel_readiness_reports_mixed_dependency_deadlock_as_validation_error() {
+        let graph = graph(
+            r#"{
+                "state":{"produced":{},"done":{}},
+                "nodes":{
+                    "reader":{"output":"done","inputs":[{"channel":"produced","count":1}]},
+                    "producer":{"output":"produced"}
+                },
+                "edges":[
+                    {"source":"START","target":"reader"},
+                    {"source":"reader","target":"producer"}
+                ]
+            }"#,
+        );
+        let plan = &inspect_bundle(
+            &bundle(vec![program("static-channel-readiness", graph)]),
+            GraphInspectionOptions::default(),
+        )
+        .programs[0]
+            .profiling;
+
+        assert_eq!(plan.issues.len(), 1);
+        assert_eq!(plan.issues[0].code, "static-channel-readiness-deadlock");
+        assert!(matches!(
+            plan.readiness,
+            ReadinessInspection::Unavailable { ref code, .. } if code == "validation-errors"
+        ));
     }
 
     #[test]
@@ -1435,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn readiness_rejects_every_non_static_driver_shape_and_reports_incomplete_analysis() {
+    fn readiness_rejects_every_non_static_driver_shape_and_reports_validation_errors() {
         use crate::graph::driver::AgentContinuationSpec;
 
         let empty_graph = graph(r#"{"nodes":{}}"#);
@@ -1468,7 +1362,7 @@ mod tests {
         );
         assert!(matches!(
             inspect_bundle(&bundle(vec![program("t", incomplete)]), GraphInspectionOptions::default()).programs[0].profiling.readiness,
-            ReadinessInspection::Unavailable { ref code, .. } if code == "analysis-incomplete"
+            ReadinessInspection::Unavailable { ref code, .. } if code == "validation-errors"
         ));
     }
 }

@@ -19,7 +19,7 @@ use std::fmt::{self, Display};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::graph::model::{ChannelType, ReducerName};
+use crate::graph::model::{ChannelRequirement, ChannelType, Count, ReducerName};
 
 /// Focused authored-graph parse or lowering failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +90,7 @@ pub enum AuthoredNode {
 pub struct AuthoredLlmNode {
     pub prompt: Vec<PromptGrammarItem>,
     pub output: String,
+    pub inputs: Vec<ChannelRequirement>,
     pub streaming: bool,
     pub endpoint: Option<String>,
     pub max_tokens: Option<usize>,
@@ -237,6 +238,8 @@ struct RawNode {
     #[serde(default)]
     output: Option<String>,
     #[serde(default)]
+    inputs: RawInputs,
+    #[serde(default)]
     outputs: Option<Vec<String>>,
     #[serde(default)]
     streaming: Option<bool>,
@@ -261,6 +264,54 @@ struct RawNode {
 
 fn default_node_type() -> String {
     "llm".to_string()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawChannelRequirement {
+    channel: String,
+    #[serde(default = "default_raw_channel_count")]
+    count: RawChannelCount,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawChannelCount {
+    N(i64),
+    Word(String),
+}
+
+fn default_raw_channel_count() -> RawChannelCount {
+    RawChannelCount::N(1)
+}
+
+#[derive(Default)]
+enum RawInputs {
+    #[default]
+    Absent,
+    Present(Vec<RawChannelRequirement>),
+}
+
+impl<'de> Deserialize<'de> for RawInputs {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Vec::<RawChannelRequirement>::deserialize(deserializer).map(Self::Present)
+    }
+}
+
+impl RawInputs {
+    fn into_llm_requirements(self) -> Vec<RawChannelRequirement> {
+        match self {
+            Self::Absent => Vec::new(),
+            Self::Present(inputs) => inputs,
+        }
+    }
+
+    fn is_present(&self) -> bool {
+        matches!(self, Self::Present(_))
+    }
 }
 
 #[derive(Deserialize)]
@@ -445,6 +496,7 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
             Ok(AuthoredNode::Llm(AuthoredLlmNode {
                 prompt,
                 output,
+                inputs: convert_input_requirements(id, node.inputs.into_llm_requirements())?,
                 streaming: node.streaming.unwrap_or(true),
                 endpoint: node.endpoint,
                 max_tokens: node.max_tokens,
@@ -454,6 +506,11 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
             }))
         }
         "replay" => {
+            if node.inputs.is_present() {
+                return Err(ConditionalError::message(format!(
+                    "replay node {id:?} cannot set `inputs`"
+                )));
+            }
             if node.prompt.is_some() {
                 return Err(ConditionalError::message(format!(
                     "replay node {id:?} cannot set `prompt`"
@@ -483,6 +540,31 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
             "node {id:?} has unknown node_type {other:?} (llm|replay)"
         ))),
     }
+}
+
+fn convert_input_requirements(
+    node_id: &str,
+    inputs: Vec<RawChannelRequirement>,
+) -> Result<Vec<ChannelRequirement>, ConditionalError> {
+    inputs
+        .into_iter()
+        .enumerate()
+        .map(|(index, input)| {
+            let count = match input.count {
+                RawChannelCount::N(count) => Count::N(count),
+                RawChannelCount::Word(word) if word == "all" => Count::Word(word),
+                RawChannelCount::Word(word) => {
+                    return Err(ConditionalError::message(format!(
+                        "llm node {node_id:?} inputs[{index}].count must be an integer or \"all\", got {word:?}"
+                    )));
+                }
+            };
+            Ok(ChannelRequirement {
+                channel: input.channel,
+                count,
+            })
+        })
+        .collect()
 }
 
 fn convert_edge(edge: RawEdge) -> Result<AuthoredEdge, ConditionalError> {
@@ -624,6 +706,68 @@ traces:
         let bad = DOC.replace("streaming: false", "streaming: false\n      bogus_field: 1");
         let err = parse_authored_graph(bad.as_bytes()).unwrap_err();
         assert!(err.to_string().contains("bogus_field") || err.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn rejects_unknown_llm_input_field() {
+        let bad = DOC.replace(
+            "output: intent",
+            "output: intent\n      inputs: [{channel: messages, count: 1, typo: true}]",
+        );
+        let err = parse_authored_graph(bad.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("typo") || err.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn rejects_non_all_llm_input_count_words() {
+        let bad = DOC.replace(
+            "output: intent",
+            "output: intent\n      inputs: [{channel: messages, count: any}]",
+        );
+        let err = parse_authored_graph(bad.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("all"));
+    }
+
+    #[test]
+    fn rejects_explicit_null_llm_input_count() {
+        let bad = DOC.replace(
+            "output: intent",
+            "output: intent\n      inputs: [{channel: messages, count: null}]",
+        );
+        assert!(parse_authored_graph(bad.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn defaults_an_absent_llm_input_count_to_one() {
+        let source = DOC.replace(
+            "output: intent",
+            "output: intent\n      inputs: [{channel: messages}]",
+        );
+        let doc = parse_authored_graph(source.as_bytes()).expect("absent count is valid");
+        let AuthoredNode::Llm(route) = &doc.graph.nodes["route"] else {
+            panic!("route must be an llm node")
+        };
+        assert_eq!(route.inputs[0].count.as_int(), Some(1));
+    }
+
+    #[test]
+    fn rejects_replay_inputs_instead_of_dropping_them() {
+        let bad = DOC.replace(
+            "outputs: [raw_results, brand_cands]",
+            "outputs: [raw_results, brand_cands]\n      inputs: [{channel: messages, count: 1}]",
+        );
+        let err = parse_authored_graph(bad.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("replay") && err.to_string().contains("inputs"));
+    }
+
+    #[test]
+    fn rejects_empty_replay_inputs_instead_of_treating_them_as_absent() {
+        let bad = DOC.replace(
+            "outputs: [raw_results, brand_cands]",
+            "outputs: [raw_results, brand_cands]\n      inputs: []",
+        );
+        let err = parse_authored_graph(bad.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("replay") && err.to_string().contains("inputs"));
     }
 
     #[test]

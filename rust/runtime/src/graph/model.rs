@@ -78,7 +78,7 @@ impl Default for Count {
 }
 
 /// AND-fan-in input requirement on a node (`ChannelRequirement`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelRequirement {
     pub channel: String,
     #[serde(default)]

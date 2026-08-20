@@ -21,7 +21,7 @@ use crate::graph::model::{
     ChannelSpec, ExecutableGraphNode, GraphRecord, LlmNode, PromptItem, StaticEdge,
 };
 use crate::graph::segment::intern_message;
-use crate::graph::validate::validate;
+use crate::graph::validate::{validate, validate_detailed};
 use crate::graph::wire::OpenAiChatMessage;
 
 use super::model::{
@@ -170,7 +170,7 @@ pub fn fold_replay_and_emit(
                     ExecutableGraphNode::Llm(LlmNode {
                         output: llm.output.clone(),
                         streaming: llm.streaming,
-                        inputs: Vec::new(),
+                        inputs: llm.inputs.clone(),
                         min_start_delay_us: llm.min_start_delay_us,
                         max_tokens: llm.max_tokens,
                         items,
@@ -206,7 +206,14 @@ pub fn fold_replay_and_emit(
     };
 
     let validation = validate(&graph);
-    if !validation.is_empty() {
+    // Keep this tooling diagnostic in the retained Graph-IR so `graph validate`
+    // can return its structured finding; `run_trace` validates again before any
+    // executor state is created.
+    let has_static_readiness_deadlock = validation.len() == 1
+        && validate_detailed(&graph)
+            .iter()
+            .any(|issue| issue.code == "static-channel-readiness-deadlock");
+    if !validation.is_empty() && !has_static_readiness_deadlock {
         let detail = validation
             .iter()
             .map(ToString::to_string)

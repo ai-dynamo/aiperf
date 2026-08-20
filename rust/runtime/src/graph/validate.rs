@@ -13,6 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::graph::inspect::{GraphInspectionIssue, GraphInspectionSeverity};
 use crate::graph::model::{Count, END_NODE_ID, GraphRecord, PromptItem, START_NODE_ID};
+use crate::graph::scheduler::Scheduler;
+use crate::graph::static_readiness::analyze_static_readiness;
 
 /// One structural problem found in a graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +45,7 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
 pub fn validate_detailed(graph: &GraphRecord) -> Vec<GraphInspectionIssue> {
     let findings = collect_findings(graph);
     let mut issues = Vec::new();
-    for rank in 0..5 {
+    for rank in 0..=5 {
         for finding in &findings {
             if finding.detailed_rank() != rank {
                 continue;
@@ -108,6 +110,9 @@ enum Finding {
         reason: String,
         has_undeclared_gate_input: bool,
     },
+    StaticChannelReadinessDeadlock {
+        blocked_node_ids: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -144,6 +149,14 @@ impl Finding {
                 "node {node_id:?} can never fire: input channel {channel:?} needs {needed} \
 producer(s) but {reason}"
             ),
+            Finding::StaticChannelReadinessDeadlock { blocked_node_ids } => format!(
+                "graph cannot make static readiness progress; blocked nodes: {}",
+                blocked_node_ids
+                    .iter()
+                    .map(|node_id| format!("{node_id:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
 
@@ -154,6 +167,7 @@ producer(s) but {reason}"
             Finding::ChannelReadUndeclared { .. } => 2,
             Finding::NodeUnreachable { .. } => 3,
             Finding::NodeNeverFireable { .. } => 4,
+            Finding::StaticChannelReadinessDeadlock { .. } => 5,
         }
     }
 
@@ -242,6 +256,18 @@ producer(s) but {reason}"
                         ("fireable_producers", &fireable_producers.to_string()),
                         ("all_producers", &all_producers.to_string()),
                     ],
+                ))
+            }
+            Finding::StaticChannelReadinessDeadlock { blocked_node_ids } => {
+                let blocked_nodes = match serde_json::to_string(blocked_node_ids) {
+                    Ok(blocked_nodes) => blocked_nodes,
+                    Err(_) => "[]".to_string(),
+                };
+                Some(issue(
+                    "static-channel-readiness-deadlock",
+                    Some("graph".to_string()),
+                    self.message(),
+                    [("blocked_nodes", blocked_nodes.as_str())],
                 ))
             }
         }
@@ -383,6 +409,28 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
                     .any(|input| !graph.state.contains_key(&input.channel)),
             });
             break;
+        }
+    }
+
+    let prerequisites_hold = findings.iter().all(|finding| {
+        !matches!(
+            finding,
+            Finding::EdgeSourceUnknown { .. }
+                | Finding::EdgeTargetUnknown { .. }
+                | Finding::ChannelWriteUndeclared { .. }
+                | Finding::ChannelReadUndeclared { .. }
+                | Finding::NodeUnreachable { .. }
+                | Finding::NodeNeverFireable { .. }
+        )
+    });
+    if prerequisites_hold {
+        if let Ok(scheduler) = Scheduler::new(graph) {
+            let analysis = analyze_static_readiness(graph, &scheduler);
+            if !analysis.blocked_node_ids.is_empty() {
+                findings.push(Finding::StaticChannelReadinessDeadlock {
+                    blocked_node_ids: analysis.blocked_node_ids,
+                });
+            }
         }
     }
 
@@ -650,6 +698,85 @@ mod tests {
                 {"edge_type":"static","source":"n1","target":"END"}]
         }));
         assert!(validate(&g).is_empty());
+    }
+
+    #[test]
+    fn static_channel_readiness_rejects_mixed_dependency_deadlock() {
+        let g = graph(json!({
+            "state": {
+                "produced": {"type":"messages","reducer":"add_messages"},
+                "done": {"type":"messages","reducer":"add_messages"}
+            },
+            "nodes": {
+                "reader": {
+                    "node_type":"llm", "prompt":[], "output":"done",
+                    "inputs":[{"channel":"produced","count":1}]
+                },
+                "producer": {"node_type":"llm", "prompt":[], "output":"produced"}
+            },
+            "edges": [
+                {"source":"START","target":"reader"},
+                {"source":"reader","target":"producer"}
+            ]
+        }));
+
+        assert!(
+            validate(&g)
+                .iter()
+                .all(|error| !error.0.contains("can never fire")),
+            "each channel has enough declared producers"
+        );
+        let issues = validate_detailed(&g);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, "static-channel-readiness-deadlock");
+        assert_eq!(issues[0].location.as_deref(), Some("graph"));
+        assert_eq!(
+            issues[0].context.get("blocked_nodes"),
+            Some(&"[\"reader\",\"producer\"]".to_owned())
+        );
+    }
+
+    #[test]
+    fn static_channel_readiness_treats_completion_predecessors_as_or_triggers() {
+        let g = graph(json!({
+            "state": {"a": {}, "b": {}, "done": {}},
+            "nodes": {
+                "a": {"output":"a"},
+                "b": {"output":"b", "inputs":[{"channel":"a","count":1}]},
+                "target": {"output":"done"}
+            },
+            "edges": [
+                {"source":"START","target":"a"},
+                {"source":"START","target":"b"},
+                {"source":"a","target":"target"},
+                {"source":"b","target":"target"}
+            ]
+        }));
+
+        assert!(validate_detailed(&g).is_empty());
+    }
+
+    #[test]
+    fn static_channel_readiness_admits_dispatch_successor_after_output_completion() {
+        let g = graph(json!({
+            "state": {"produced": {}, "done": {}},
+            "nodes": {
+                "producer": {"output":"produced"},
+                "reader": {
+                    "output":"done",
+                    "inputs":[{"channel":"produced","count":1}]
+                }
+            },
+            "edges": [
+                {"source":"START","target":"producer"},
+                {
+                    "source":"producer","target":"reader",
+                    "delay_after_predecessor_start_us":0.0
+                }
+            ]
+        }));
+
+        assert!(validate_detailed(&g).is_empty());
     }
 
     #[test]

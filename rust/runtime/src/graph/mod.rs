@@ -44,6 +44,7 @@ pub mod scheduler;
 pub mod segment;
 pub mod sink;
 pub mod snapshot;
+mod static_readiness;
 pub mod supplement;
 mod syslimits;
 pub mod tools;
