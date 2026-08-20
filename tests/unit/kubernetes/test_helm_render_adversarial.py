@@ -307,7 +307,7 @@ class TestNamespaceAndShareProcessValues:
             "podTemplate.shareProcessNamespace=true",
         )
         assert result.returncode != 0
-        assert "/podTemplate/shareProcessNamespace" in result.stderr
+        _assert_schema_failure_field_context(result, "/podTemplate/shareProcessNamespace")
 
 
 # ============================================================
