@@ -25,6 +25,7 @@ from aiperf.common.models.record_models import (
     TokenCounts,
     ToolCallResponseData,
     find_last_non_empty_usage,
+    first_content_chunk_completion_tokens,
 )
 from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
@@ -544,10 +545,21 @@ class InferenceResultParser(CommunicationMixin):
                 usage.completion_tokens, reasoning_token_count
             )
 
+        # Only read the first content chunk's count when the user opted into
+        # per-chunk usage. Otherwise a server that volunteers usage on a
+        # content-bearing chunk would change (or delete) inter-token latency with
+        # no flag set -- the opt-in contract the docs describe must be enforced
+        # here, not just at payload-injection time.
+        first_chunk_tokens = (
+            first_content_chunk_completion_tokens(responses)
+            if self.run.cfg.endpoint.per_chunk_usage
+            else None
+        )
         token_counts = TokenCounts(
             input=input_token_count,
             reasoning=reasoning_token_count,
             output=output_token_count,
+            first_content_chunk_tokens=first_chunk_tokens,
         )
 
         # Warn if server provided no usage information
