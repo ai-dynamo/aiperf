@@ -157,10 +157,6 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         # In Kubernetes mode, workers are external pods that connect via TCP.
         # We must wait for at least one worker to register before starting profiling.
         # In Multi-Process mode, workers are spawned locally and register automatically.
-        # KUBERNETES is registered in plugins.yaml only when the operator/k8s
-        # service-manager is present; in this build it is intentionally
-        # absent, so probe via getattr rather than referencing the enum
-        # member directly.
         if self._is_kubernetes():
             self.required_services[ServiceType.WORKER] = 1
             # Nothing runs a WorkerManager container in Kubernetes: worker pods
@@ -168,9 +164,9 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
             # process, so requiring WORKER_MANAGER here guarantees a
             # registration timeout and a dead control plane.
             del self.required_services[ServiceType.WORKER_MANAGER]
-            # One WorkerGroupManager per worker pod. Hardcoding 1 here makes
-            # expected_pods == ready_pods == 1, so profiling starts against
-            # whichever pod registers first.
+            # One WorkerGroupManager per worker pod. Requiring fewer than the
+            # full expanded topology lets profiling start against whichever pod
+            # registers first, silently running a fraction of the load.
             self._k8s_topology = self._build_k8s_service_topology()
             self.required_services[ServiceType.WORKER_GROUP_MANAGER] = (
                 self._k8s_topology.num_worker_pods
@@ -274,19 +270,9 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
             if pod.dispatchable_workers >= 1
         )
 
-    def _has_sufficient_ready_worker_pods(self) -> bool:
-        """Check whether enough worker pods are dispatchable to start profiling."""
-        if not self._is_kubernetes():
-            return True
-        return self._ready_worker_pod_count() >= 1
-
     def _is_kubernetes(self) -> bool:
         """Whether this controller runs under the Kubernetes operator."""
-        kubernetes_run_type = getattr(ServiceRunType, "KUBERNETES", None)
-        return (
-            kubernetes_run_type is not None
-            and self.run.cfg.runtime.service_run_type == kubernetes_run_type
-        )
+        return self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
 
     def _event_bus_proxy_is_external(self) -> bool:
         """Report whether something outside this process already binds the event bus.
