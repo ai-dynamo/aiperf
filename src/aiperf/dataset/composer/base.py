@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
 from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
-from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
+from aiperf.common.enums import (
+    ConversationContextMode,
+    ModelSelectionStrategy,
+    RandomCorpusStyle,
+)
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.sequence_distribution import SequenceLengthSampler
@@ -337,8 +341,59 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         if self._synthetic_prompts is None:
             return None
+        self._reject_degenerate_range_ratio(num_special_tokens)
         return self._synthetic_prompts.get_sequence_distribution(
             num_special_tokens=num_special_tokens,
+        )
+
+    def _reject_degenerate_range_ratio(self, num_special_tokens: int) -> None:
+        """Fail when the ratio window cannot yield a usable prompt.
+
+        Mirrors vLLM's ``RandomDataset.sample`` guard::
+
+            min_total_input = prefix_len + floor(max(0, isl - num_special) * (1 - r))
+            if min_total_input < 1: raise ValueError(...)
+
+        Without it, ``--isl 2 --random-range-ratio 0.9`` yields bounds ``(0, 4)``
+        and ``calculate_num_tokens`` silently clamps draws of 0 up to 1, so the
+        run completes and reports numbers for one-token prompts the user never
+        asked for. vLLM refuses the config instead.
+
+        Lives here rather than in ``PromptConfig`` because the predicate needs
+        ``num_special_tokens`` (tokenizer-dependent, unknown at config-parse
+        time) and the prefix length (a sibling config the prompt validator
+        cannot reach).
+
+        Only VLLM-style windows can bottom out: the SGLANG window is
+        ``[max(1, int(mean*r)), mean]``, whose lower bound is >= 1 by
+        construction.
+        """
+        prompts = self._synthetic_prompts
+        if prompts is None or prompts.random_range_ratio is None:
+            return
+        if prompts.random_corpus_style != RandomCorpusStyle.VLLM:
+            return
+
+        distribution = prompts.get_sequence_distribution(
+            num_special_tokens=num_special_tokens
+        )
+        low = getattr(distribution, "input_bounds", (1, 1))[0]
+        prefix_len = (
+            getattr(self._synthetic_prefix_prompts, "length", None) or 0
+            if self._synthetic_prefix_prompts is not None
+            else 0
+        )
+        if prefix_len + low >= 1:
+            return
+
+        isl_mean = int(prompts.isl.expected_value) if prompts.isl is not None else 0
+        raise ValueError(
+            f"--random-range-ratio {prompts.random_range_ratio} with --isl "
+            f"{isl_mean} produces a minimum input of {prefix_len + low} tokens "
+            f"(tokenizer adds {num_special_tokens} special token(s), prefix "
+            f"contributes {prefix_len}). Increase --isl, add "
+            "--prompt-prefix-length, or lower --random-range-ratio so the "
+            "minimum is at least 1 token."
         )
 
     def _osl_distribution(self) -> SamplingDistribution | None:

@@ -277,6 +277,26 @@ class PromptConfig(BaseConfig):
                 "There is no safe default when a ratio window is requested."
             )
 
+        # Checked here rather than left to the ratio config's `ge=1` bound: both
+        # means are declared `ge=0`, so `--isl 0` is a legal value that only
+        # fails once the sampler is constructed, surfacing a nested pydantic
+        # error about `isl_mean` that names neither flag. The tokenizer-aware
+        # half of this check (vLLM's min_total_input guard, which needs
+        # num_special_tokens and the prefix length) lives in
+        # BaseDatasetComposer._build_sequence_distribution.
+        if int(self.isl.expected_value) < 1:
+            raise ValueError(
+                "--random-range-ratio requires --isl >= 1, got "
+                f"{int(self.isl.expected_value)}. A zero-token input window has "
+                "no prompt to scale."
+            )
+        if int(self.osl.expected_value) < 1:
+            raise ValueError(
+                "--random-range-ratio requires --osl >= 1, got "
+                f"{int(self.osl.expected_value)}. A zero-token output window "
+                "would request no generation."
+            )
+
         try:
             _CLASS_FOR_MODE[self.random_corpus_style].get_config_class()(
                 isl_mean=int(self.isl.expected_value),
