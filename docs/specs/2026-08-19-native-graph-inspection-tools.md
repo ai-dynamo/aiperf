@@ -53,8 +53,8 @@ channels, executable `Llm`/`Tool` nodes, and static edges
 content, and emits one flat graph per trace before execution
 (`rust/runtime/src/graph/conditional/mod.rs:55-66` and `:89-120`).
 
-The native tools therefore need an explicit, truthful contract: they inspect
-the resolved Graph-IR that will run for each trace. They are not an authored
+The native tools therefore have an explicit, truthful contract: they inspect
+the lowered, retained execution-shaped Graph-IR for each trace. They are not an authored
 source editor or a complete replacement for every DAG-v3 graph command.
 
 ## Goals
@@ -133,8 +133,9 @@ Common defaults are:
 - stdout when `--output` is absent;
 - the first program in authored bundle order when `visualize --trace` is absent.
 
-`--pace` accepts only `arrival`. When present, every profiling plan must have an
-`arrival_offset_ns`. This is the native equivalent of Python's opt-in
+`--pace` accepts only `arrival`. When present, it requires every profiling plan
+to have an `arrival_offset_ns`; a retained plan without one receives an
+`arrival-offset-missing` validation issue. This is the native equivalent of Python's opt-in
 arrival-time rule (`ajc/dag-v3:src/aiperf/cli_commands/graph_validate.py:33-39`
 and `ajc/dag-v3:src/aiperf/dataset/loader/graph/validator.py:158-177`).
 
@@ -234,8 +235,9 @@ threads `run_random_seed` into its compiler
 This flow preserves the execution boundary: `GraphTraceProgram` is the complete
 placement-owned trace command, with profiling, optional warmup, environment,
 replay context, and driver identity (`rust/runtime/src/graph/model.rs:378-415`).
-Inspection must not discard those facts merely because its topology view borrows
-`program.profiling.graph`.
+Inspection retains projected plan facts, arrival timing, driver kind, and
+environment/replay presence; it intentionally excludes environment recipes,
+replay payload/context, and other execution payloads from its reports.
 
 ## Module boundaries
 
@@ -298,29 +300,32 @@ Validation visits every profiling plan and every present warmup plan.
 1. **Preparation failures.** Source acquisition, strict adapter decoding,
    normalization, interning, or lowering failures are fatal command errors and
    exit 2. They are not graph issues because no trustworthy bundle exists.
-2. **Adapter warnings.** `GraphInputMetadata.warning_facts` already provides a
-   stable code and deterministic context map
-   (`rust/runtime/src/graph/input.rs:34-63`). Each becomes a warning-severity
-   issue. Do not reduce it to a tracing-only warning as the current recorded
-   agent path does (`rust/runtime/src/engine/graph_input.rs:677-683`).
-3. **Structural validation.** Run the existing checks for unknown edge
-   endpoints, undeclared read/write channels, unreachable nodes, and
+2. **Adapter warnings.** Inspection retains every
+   `GraphInputMetadata.warning_facts` entry as a bundle-level warning-severity
+   issue. Its stable code is exposed as `adapter-warning.<adapter-code>` and
+   its deterministic context map is retained in the report
+   (`rust/runtime/src/graph/input.rs:34-63`,
+   `rust/runtime/src/graph/inspect.rs:315-328`). Warnings remain observable in
+   `validate` and `explain` without making validation fail.
+3. **Structural validation.** Inspection uses the existing checks for unknown
+   edge endpoints, undeclared read/write channels, unreachable nodes, and
    unsatisfiable firing gates (`rust/runtime/src/graph/validate.rs:27-149`).
-4. **Scheduler construction.** Run `Scheduler::new` to expose mixed or multiple
-   start-anchored fan-in, which is currently a separate executor invariant
+4. **Scheduler construction.** Inspection constructs `Scheduler::new` to expose
+   mixed or multiple start-anchored fan-in, a separate executor invariant
    (`rust/runtime/src/graph/scheduler.rs:31-75` and `:123-163`).
 5. **Bundle invariants.** Check a nonempty program list, unique profiling trace
    IDs, and agreement between bundle metadata and the retained programs. Validate
    that a warmup plan, when present, has a nonempty trace ID.
-6. **Arrival policy.** With `--pace arrival`, require
+6. **Arrival policy.** With `--pace arrival`, inspection requires
    `program.profiling.arrival_offset_ns` for every program. Arrival offset is the
    native plan field (`rust/runtime/src/graph/model.rs:367-376`).
 
 ### Detailed issue API
 
 Keep the existing `validate(&GraphRecord) -> Vec<ValidationError>` compatibility
-API. Add a detailed typed API and implement the legacy function as a projection,
-or share private typed checks between both. The detailed issue shape is:
+API. `graph::inspect::validate_detailed` exposes the detailed typed API, while
+the compatibility API and detailed API both derive from the shared validation
+findings. The detailed issue shape is:
 
 ```rust
 pub struct GraphInspectionIssue {
@@ -411,8 +416,8 @@ Fatal errors in JSON mode still produce parseable stdout, with exit 2:
 }
 ```
 
-Logging remains on stderr. A command handler must catch expected failures and
-serialize this envelope rather than letting the process-level `aiperf: {error}`
+Logging remains on stderr. The command handler catches expected failures and
+serializes this envelope rather than letting the process-level `aiperf: {error}`
 handler write an unstructured error (`rust/cli/src/main.rs:47-53`).
 
 ## Explain contract
@@ -538,7 +543,7 @@ Markdown output contains:
 ~~~~
 
 The document says that the topology is the selected trace's **resolved Graph-IR**.
-It must not copy Python's “full possible topology” claim
+It does not copy Python's “full possible topology” claim
 (`ajc/dag-v3:src/aiperf/cli_commands/graph_visualize.py:239-243`).
 
 `--output-format mermaid` emits only the Mermaid source plus one trailing
@@ -584,7 +589,7 @@ Fatal error codes used by `aiperf.graph.error.v1` are stable kebab-case strings:
 - `output-write-failed`.
 
 Errors retain their `anyhow` source chain internally, but the JSON `message` is
-one bounded human-readable string. It must not include payload/content values or
+one bounded human-readable string. It does not include payload/content values or
 arbitrary debug output. Human mode may include the source chain, subject to the
 same redaction rule.
 
@@ -603,7 +608,7 @@ same redaction rule.
 - Tool environments are described only by presence and backend/driver identity;
   the inspection command never provisions or runs them.
 
-## Testing
+## Verification evidence
 
 ### Runtime unit tests
 
@@ -622,31 +627,31 @@ Runtime unit coverage beside `graph::inspect` covers:
 - deterministic readiness waves and normalized topology order;
 - non-static drivers omitting readiness waves without losing summary facts.
 
-The existing structural validator already has small behavioral tests for a valid
-chain and exotic deadlocks (`rust/runtime/src/graph/validate.rs:172-230`); new
-tests should extend behavior rather than duplicate exhaustive inputs.
+The structural validator also has focused behavioral tests for a valid chain and
+exotic deadlocks (`rust/runtime/src/graph/validate.rs:614-675`).
 
 ### Adapter/load tests
 
-Exercise the real built-in resolver and local tokenizer against representative
-existing fixtures:
+`rust/runtime/tests/graph_inspection_load.rs` exercises the real built-in
+resolver and local tokenizer once for each supported format using these fixtures:
 
 - `tests/fixtures/dag/small.dag.jsonl`;
 - `tests/fixtures/weka_traces/simple.json`;
+- `tests/fixtures/graph_inspection/dynamo-trace.jsonl`;
+- `tests/fixtures/graph_inspection/aiperf-trace.json`;
 - `rust/e2e-tests/tests/fixtures/conditional/conditional_shopping.yaml`, already
   used by the real conditional Graph-IR E2E
   (`rust/e2e-tests/tests/test_conditional_graph.rs:15-18`);
 - existing `rust/runtime/tests/fixtures/recorded_agent_replay/` inputs;
 - existing OTLP GenAI adapter fixtures.
 
-At least one test per built-in format asserts that help inventory, resolver
-selection, and `bundle.metadata.format` agree. A dedicated regression test
-covers `aiperf_trace` so the current inventory mismatch cannot return.
+The integration test asserts that the seven-format inventory, resolver
+selection, and `bundle.metadata.format` agree, including `aiperf_trace`.
 
 ### CLI process tests
 
-`rust/cli/tests/graph_tools.rs` invokes
-`env!("CARGO_BIN_EXE_aiperf")` like the existing native CLI tests. Cover:
+`rust/cli/tests/graph_tools.rs` invokes `env!("CARGO_BIN_EXE_aiperf")` in a
+Python-free environment and verifies:
 
 - namespace help and exit 2;
 - valid, invalid, and fatal exit codes;
@@ -659,27 +664,31 @@ covers `aiperf_trace` so the current inventory mismatch cannot return.
 - validation blocking and `--no-validate` rendering;
 - output-file success, overwrite, directory rejection, and stdout silence.
 
-Reuse or extend `rust/runtime/tests/fixtures/graph_builders_kit.mmd` for Mermaid
-expectations. Do not import Python renderer goldens wholesale because the native
-output represents post-lowering Graph-IR and intentionally has a narrower node
+The CLI suite uses native graph-tool fixtures and deterministic Mermaid/Markdown
+goldens. It does not import Python renderer goldens because the native output
+represents post-lowering Graph-IR and intentionally has a narrower node
 vocabulary.
 
 ### Verification commands
 
-Implementation verification is proportional to the touched crates:
+Run the following focused runtime and CLI suites plus formatting/static checks
+when validating this implementation:
 
 ```bash
 source .venv/bin/activate
 cd rust
 cargo test -p aiperf-runtime --features engine graph::inspect
+cargo test -p aiperf-runtime --features engine graph::validate
+cargo test -p aiperf-runtime --features engine graph::scheduler
+cargo test -p aiperf-runtime --features engine --test graph_inspection_load
 cargo test -p aiperf-cli --test graph_tools
 cargo fmt --check
 cargo clippy -p aiperf-runtime -p aiperf-cli --all-targets
 ```
 
-The implementation updates the synchronized agent files, `llms.txt`, and the
-spec index with the native CLI behavior, and runs the repository documentation
-checks with the focused runtime/CLI suite.
+The implementation also updates the synchronized agent files, `llms.txt`, and
+the spec index with the native CLI behavior. Repository documentation checks
+cover those synchronized artifacts.
 
 ## Delivery
 
@@ -717,8 +726,8 @@ Python graph namespace continues to delegate unchanged.
    Extension-provided adapters are not part of this command's advertised surface.
 3. **Advanced configuration.** The public input is the narrowly typed local-path
    shorthand; it does not accept Config-v2 extraction or arbitrary adapter options.
-4. **Explain volume.** Explain reports every retained program. Future filtering,
-   if added, must retain all-program behavior when absent.
+4. **Explain volume.** Explain reports every retained program; no filtering
+   capability changes that all-program behavior.
 5. **Output portability.** Unix replaces a regular output file atomically. Other
    platforms reject an existing output instead of deleting it first.
 6. **Schema publication.** The report schemas are documented in this record;
