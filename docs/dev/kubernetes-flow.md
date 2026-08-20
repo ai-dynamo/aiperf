@@ -35,7 +35,7 @@ flowchart TB
     end
 ```
 
-`WorkerGroupManager` is the universal readiness and capacity authority for worker groups across local and Kubernetes mode. This document focuses on the Kubernetes deployment, where each worker group maps to one worker pod, but the group-local startup and dataset contract is intentionally the same one used by local worker groups.
+`WorkerGroupManager` is the readiness and capacity authority for each Kubernetes worker pod. Local multiprocessing is managed directly by `MultiProcessServiceManager` and `WorkerManager`.
 
 ## 1. CLI Entry Point
 
@@ -271,7 +271,7 @@ access.
 |-----------|----------------|
 | **DatasetManager** | Streams to `.zst`, broadcasts `DatasetConfiguredNotification` with `MemoryMapClientMetadata` |
 | **API Service** | Waits for notification via `asyncio.Event`, serves files using paths from metadata |
-| **WorkerGroupManager** | Downloads via HTTP, decompresses locally, then exposes group-local dataset readiness and current-state snapshots to sibling workers using the same readiness contract local mode uses |
+| **WorkerGroupManager** | Downloads via HTTP, decompresses within its Kubernetes worker pod, then exposes dataset readiness and current-state snapshots to sibling workers |
 
 ### Benefits
 
@@ -312,7 +312,7 @@ flowchart LR
 
 1. **Pods Start** - Control-plane services register with `SystemController`, and each worker pod brings up one `WorkerGroupManager` as the controller-facing authority for that group
 2. **DatasetManager** - Generates prompts, serves via HTTP at `/api/dataset`
-3. **WorkerGroupManager** - Downloads dataset files once per group, publishes group-local current state, and makes sibling workers dispatchable only after group readiness converges
+3. **WorkerGroupManager** - Downloads dataset files once per Kubernetes worker pod, publishes current state, and makes sibling workers dispatchable only after readiness converges
 4. **TimingManager** - Schedules requests, issues credits to workers
 5. **Workers** - Make LLM API calls once their `WorkerGroupManager` reports group-local readiness, then generate raw records
 6. **RecordProcessor** - Computes metrics (latency, TTFT, throughput)
@@ -590,13 +590,34 @@ takes its dashboard tile with it.
 
 `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_BYTES` is the authoritative backstop,
 because the cardinality caps bound how *many* labels a series carries but not
-how long each label string is. An over-budget projection is dropped entirely.
+how long each label string is. An over-budget projection carries no metrics.
 This matters more than it looks: exceeding the apiserver's 1.5 MB object ceiling
 rejects the whole status patch, `_write_status_patch` re-raises, and
 `_patch_aiperfjob_status` swallows it at debug — so every other status update
 (`phases`, `liveMetrics`, `resultsExported`, `controllerFailure`) stops silently
 too. The projected value is also `scrub_non_finite`-cleaned, because a single NaN
 gauge is an invalid JSON number that would reject the same patch the same way.
+
+Note how the two limits interact before raising either. `MAX_SERIES` is only the
+per-metric bound; the *total* is what `MAX_BYTES` sees. With all 20 allow-listed
+metrics present, the byte budget binds at roughly 85 series per metric — well
+below the 256 default — so on an all-20-metric or many-endpoint deployment
+`MAX_BYTES` is the limit that actually fires. Raising `MAX_SERIES` past that
+point does not buy more data; it hands control to `MAX_BYTES`, whose overflow
+costs the **whole** panel rather than one metric. Raise `MAX_BYTES` alongside it,
+or accept the per-metric drop.
+
+Overflow does **not** omit the key. Omitting it would leave whatever snapshot
+last fit sitting in the CR indefinitely — stale values indistinguishable from
+live ones, which is the failure the snapshot semantic exists to prevent, and one
+the panel cannot self-diagnose (`SummaryStrip` renders only a duration, never an
+absolute `end_time`, so a frozen scrape window looks live). Instead the overflow
+writes `{summary, metrics: {}, projection_dropped: true, projection_message}`,
+which replaces the stale value, and `ServerMetricsSection` renders that flag as
+an explicit "collected but too large to carry" card rather than the "no server
+metrics collected" empty state — an operator who loses the panel should not go
+debug their exporter. It is logged at warning, not debug. `summary` is kept only
+if the marker itself fits, since endpoint URLs are unbounded too.
 
 `status.serverMetrics` is a **snapshot** of the latest scrape, not an
 accumulation. The push's JSON-patch path normally pre-resolves each key through
