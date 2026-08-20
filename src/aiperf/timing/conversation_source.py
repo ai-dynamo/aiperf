@@ -28,6 +28,19 @@ from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
 
+_MIGRATABLE_CONTEXT_MODES = frozenset(
+    {
+        ConversationContextMode.DELTAS_WITH_RESPONSES,
+        ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+    }
+)
+"""Context modes whose dataset-authored responses can rebuild a session elsewhere.
+
+Hoisted out of ``_can_migrate_worker``: a set display of enum members is not a
+constant CPython can fold, so the inline literal rebuilt the set on every
+sampled session.
+"""
+
 
 @dataclass(slots=True)
 class SampledSession:
@@ -247,7 +260,7 @@ class ConversationSource:
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=correlation_id,
-            allow_worker_migration=self._can_migrate_worker(conversation_id),
+            allow_worker_migration=self._can_migrate_worker(metadata),
             cache_bust_marker=self._marker_for_session(
                 conversation_id, correlation_id, retain=x_correlation_id is not None
             ),
@@ -293,7 +306,7 @@ class ConversationSource:
             conversation_id=conversation_id,
             metadata=metadata,
             x_correlation_id=correlation_id,
-            allow_worker_migration=self._can_migrate_worker(conversation_id),
+            allow_worker_migration=self._can_migrate_worker(metadata),
             cache_bust_marker=self._marker_for_session(
                 conversation_id, correlation_id, retain=x_correlation_id is not None
             ),
@@ -304,18 +317,19 @@ class ConversationSource:
         """Return the marker minted for a live ordinary session, if any."""
         return self._cache_bust_markers.get(correlation_id)
 
-    def _can_migrate_worker(self, conversation_id: str) -> bool:
-        """Whether dataset-authored responses can reconstruct this session."""
-        metadata = self.get_metadata(conversation_id)
+    def _can_migrate_worker(self, metadata: ConversationMetadata) -> bool:
+        """Whether dataset-authored responses can reconstruct this session.
+
+        Takes the already-resolved metadata rather than a conversation id: both
+        callers hold it, and re-deriving it here cost a membership test plus an
+        index on the metadata map for every sampled session.
+        """
         context_mode = (
             metadata.context_mode
             or self._dataset_metadata.default_context_mode
             or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
-        return context_mode in {
-            ConversationContextMode.DELTAS_WITH_RESPONSES,
-            ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
-        }
+        return context_mode in _MIGRATABLE_CONTEXT_MODES
 
     def start_branch_child(
         self,
