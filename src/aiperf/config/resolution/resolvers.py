@@ -23,11 +23,14 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.config.user_files import RunMeta
 
-# 9-11 digits covers epoch-seconds from 1973 (10^9) through 5138 (10^11),
-# which comfortably brackets any realistic AIPerfJob creation timestamp.
-# Inlined from aiperf.operator.results_layout to keep the config package
-# free of operator/kubernetes imports.
-_EPOCH_RE = re.compile(r"^\d{9,11}$")
+# Must stay identical to ``aiperf.operator.results_layout.EPOCH_RE``, which owns
+# the run-key format; it is duplicated rather than imported so the config package
+# stays free of operator/kubernetes imports. 9-20 digits covers legacy
+# epoch-seconds directories (10 digits), fractional-second run keys, and the
+# 16-digit whole-second keys the operator emits with a uid-derived suffix. The
+# earlier 9-11 bound predated the suffix and silently misread every current
+# operator run dir as a local layout.
+_EPOCH_RE = re.compile(r"^\d{9,20}$")
 
 __all__ = [
     "ArtifactDirResolver",
