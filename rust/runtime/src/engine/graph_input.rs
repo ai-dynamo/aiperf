@@ -634,6 +634,14 @@ impl RecordedAgentDatasetInput {
             return Ok(None);
         }
         let candidate = replay_root.map_or_else(|| self.path.clone(), |root| root.join(&self.path));
+        if source_format == RecordedAgentSourceFormat::Auto
+            && include_subagents.is_some()
+            && candidate
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+        {
+            bail!("include_subagents applies only to Claude Code sources");
+        }
         let metadata = fs::metadata(&candidate)
             .with_context(|| format!("reading recorded-agent input {}", candidate.display()))?;
         if self.graph.is_none() && self.replay_root.is_none() && metadata.is_dir() {
