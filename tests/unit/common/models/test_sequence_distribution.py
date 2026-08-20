@@ -17,6 +17,7 @@ import math
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import RandomCorpusStyle
@@ -1188,3 +1189,61 @@ class TestParseRandomRangeRatio:
     def test_registry_returns_correct_class_for_mode(self):
         assert _CLASS_FOR_MODE[RandomCorpusStyle.VLLM] is RangeRatioDistribution
         assert _CLASS_FOR_MODE[RandomCorpusStyle.SGLANG] is SGLangRangeRatioDistribution
+
+
+class TestRatioInputCoercion:
+    """`_coerce_ratio_input` must reject unhandled types, not pass them through.
+
+    Both callers destructure the result immediately, so a pass-through never
+    reached Pydantic's type check: `range_ratio=None` surfaced as a bare
+    `TypeError: cannot unpack non-iterable NoneType object` naming neither the
+    field nor the accepted forms.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param(None, id="none"),
+            param({"input": 0.3}, id="dict"),
+            param(["a", "b"], id="list-of-str"),
+            param({0.3}, id="set"),
+            param(object(), id="arbitrary-object"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize(
+        "config_cls",
+        [param(VLLMRatioConfig, id="vllm"), param(SGLangRatioConfig, id="sglang")],
+    )  # fmt: skip
+    def test_unhandled_types_raise_validation_error(self, config_cls, value):
+        with pytest.raises(ValidationError):
+            config_cls(isl_mean=10, osl_mean=10, range_ratio=value)
+
+    @pytest.mark.parametrize(
+        "config_cls",
+        [param(VLLMRatioConfig, id="vllm"), param(SGLangRatioConfig, id="sglang")],
+    )  # fmt: skip
+    def test_bool_is_rejected(self, config_cls):
+        """bool is an int subclass, so `range_ratio: true` would coerce to 1.0 --
+        silently accepted by SGLang (range [0, 1]) as "pin at the mean". A YAML
+        bool here is a typo, not a ratio.
+        """
+        with pytest.raises(ValidationError, match="bool"):
+            config_cls(isl_mean=10, osl_mean=10, range_ratio=True)
+
+    def test_accepted_forms_still_work(self):
+        """Guard against over-rejecting: the documented forms must still parse."""
+        assert VLLMRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio=0.3
+        ).range_ratio == (0.3, 0.3)
+        assert VLLMRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio="0.3"
+        ).range_ratio == (0.3, 0.3)
+        assert VLLMRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio=(0.2, 0.4)
+        ).range_ratio == (0.2, 0.4)
+        assert VLLMRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio='{"input": 0.2, "output": 0.4}'
+        ).range_ratio == (0.2, 0.4)
+        assert SGLangRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio=1.0
+        ).range_ratio == (1.0, 1.0)

@@ -607,20 +607,34 @@ def _parse_sglang_ratio_string(value: str) -> tuple[float, float]:
     )
 
 
-def _coerce_ratio_input(v: Any, parser: Any) -> tuple[float, float] | Any:
+def _coerce_ratio_input(v: Any, parser: Any) -> tuple[float, float]:
     """Coerce ``range_ratio`` field input to a ``(isl_ratio, osl_ratio)`` tuple.
 
     Handles float/int (symmetric), string (via ``parser``), and 2-element
-    list/tuple.  Returns ``v`` unchanged for other types so Pydantic's own type
-    error fires.
+    list/tuple.
+
+    Raises ``ValueError`` on anything else rather than returning the input
+    unchanged. Both callers destructure the result immediately
+    (``ir, or_ = _coerce_ratio_input(...)``), so a pass-through never reached
+    Pydantic's type check -- it surfaced as a bare
+    ``TypeError: cannot unpack non-iterable NoneType object``, which names
+    neither the field nor the accepted forms.
     """
+    # bool is an int subclass, so `range_ratio: true` would otherwise coerce to
+    # 1.0 -- accepted by SGLang (whose range is [0, 1]) as "pin at the mean".
+    # Rejected explicitly: a YAML bool here is a typo, not a ratio.
+    if isinstance(v, bool):
+        raise ValueError(f"range_ratio must be a number, got bool: {v!r}")
     if isinstance(v, (int, float)):
         return float(v), float(v)
     if isinstance(v, str):
         return parser(v)
     if isinstance(v, (list, tuple)) and len(v) == 2:
         return float(v[0]), float(v[1])
-    return v
+    raise ValueError(
+        f"range_ratio must be a float, a string, or a 2-element sequence, "
+        f"got {type(v).__name__}: {v!r}"
+    )
 
 
 class VLLMRatioConfig(BaseConfig):
