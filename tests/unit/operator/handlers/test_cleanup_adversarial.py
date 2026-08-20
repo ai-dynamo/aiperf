@@ -30,7 +30,6 @@ from unittest.mock import patch as mock_patch
 
 import kopf
 import pytest
-from aiperf.operator.handlers.sweep import lifecycle as sweep_lifecycle
 from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
@@ -40,6 +39,7 @@ from aiperf.operator.client_cache import (
     is_cancellation_requested,
 )
 from aiperf.operator.handlers import lifecycle
+from aiperf.operator.handlers.sweep import lifecycle as sweep_lifecycle
 
 # =============================================================================
 # Helpers
