@@ -16,6 +16,10 @@
       "lines": 19,
       "reason": "documentation/test wording evolved past the reference; no code content lost"
     },
+    "Makefile": {
+      "lines": 1,
+      "reason": "the .PHONY line gained check-port-parity, so the reference's shorter variant reads as removed"
+    },
     "README.md": {
       "lines": 1,
       "reason": "documentation/test wording evolved past the reference; no code content lost"
