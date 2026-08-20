@@ -833,6 +833,10 @@ class _HTTPSettings(BaseSettings):
         "affinity. It is ADDITIVE (both headers are sent); --session-header only "
         "RENAMES the single correlation header.",
     )
+    X_SESSION_AFFINITY_FROM_CORRELATION_ID: bool = Field(
+        default=True,
+        description="Also send X-Session-Affinity with the stable X-Correlation-ID value.",
+    )
     X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "

@@ -515,13 +515,14 @@ class TestSessionHeader:
         )
 
     def test_default_sends_x_correlation_id(self):
-        """Without --session-header, X-Correlation-ID is used as before."""
+        """Default requests send correlation and additive affinity headers."""
         transport = self._make_transport()
         request_info = self._make_request_info(transport)
 
         headers = transport.build_headers(request_info)
 
         assert headers["X-Correlation-ID"] == "conv-uuid-123"
+        assert headers["X-Session-Affinity"] == "conv-uuid-123"
         assert "X-Session-ID" not in headers
 
     def test_turn_headers_preserve_external_session_identity(self):
