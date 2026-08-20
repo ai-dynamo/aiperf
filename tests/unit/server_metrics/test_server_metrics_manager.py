@@ -1330,7 +1330,7 @@ class TestKubernetesDiscoveryIntegration:
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
                 new=AsyncMock(return_value=["http://discovered:9090/vllm/stats"]),
             ) as discover,
         ):
@@ -1357,7 +1357,7 @@ class TestKubernetesDiscoveryIntegration:
                 return_value=False,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
                 new_callable=AsyncMock,
             ) as discover,
         ):
@@ -1383,7 +1383,7 @@ class TestKubernetesDiscoveryIntegration:
                 return_value=True,
             ),
             patch(
-                "aiperf.server_metrics.manager.discover_kubernetes_endpoints",
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
                 new=never_returns,
             ),
         ):

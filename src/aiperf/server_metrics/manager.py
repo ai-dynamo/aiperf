@@ -49,10 +49,7 @@ from aiperf.credit.messages import (
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import AccumulatorType, PluginType
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
-from aiperf.server_metrics.discovery.kubernetes import (
-    discover_kubernetes_endpoints,
-    is_running_in_kubernetes,
-)
+from aiperf.server_metrics.discovery import is_running_in_kubernetes
 from aiperf.server_metrics.protocols import ServerMetricsAccumulatorProtocol
 
 if TYPE_CHECKING:
@@ -362,6 +359,14 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             return []
 
         self.info("Server Metrics: Running Kubernetes endpoint discovery...")
+        # Imported here, past the in-cluster gate: this module pulls in
+        # kubernetes_asyncio (~130 ms, 700+ modules), and every non-Kubernetes
+        # run would otherwise pay that in the ServerMetricsManager process for
+        # code it can never reach.
+        from aiperf.server_metrics.discovery.kubernetes import (
+            discover_kubernetes_endpoints,
+        )
+
         try:
             return await asyncio.wait_for(
                 discover_kubernetes_endpoints(
