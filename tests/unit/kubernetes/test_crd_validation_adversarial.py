@@ -22,9 +22,9 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 from pytest import param
-from tools.generate_crd import _build_crd, build_aiperfsweep_crd
 
 from aiperf.kubernetes.crd_models import AIPerfJobSpec, AIPerfSweepSpec
+from tools.generate_crd import _build_crd, build_aiperfsweep_crd
 
 # =============================================================================
 # Helpers

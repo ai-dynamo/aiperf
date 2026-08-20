@@ -587,14 +587,13 @@ def test_array_item_internal_rules_are_intentionally_absent():
 
 
 def test_crd_document_builder_matches_legacy_job_builder() -> None:
+    from aiperf.config.config import AIPerfConfig
     from tools.generate_crd import (
         CRDDocumentBuilder,
         CRDSchemaSource,
         _build_crd,
         convert_aiperf_config_fields,
     )
-
-    from aiperf.config.config import AIPerfConfig
 
     source = CRDSchemaSource()
     legacy = _build_crd(convert_aiperf_config_fields(AIPerfConfig.model_json_schema()))
