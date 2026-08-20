@@ -310,6 +310,7 @@ Measures the average time between consecutive tokens during generation, excludin
 
 **Formula:**
 ```python
+# Default (all runs): assume one token in the first chunk.
 # Calculate in nanoseconds, then convert to seconds
 inter_token_latency_ns = (request_latency_ns - time_to_first_token_ns) / (output_sequence_length - 1)
 
@@ -321,7 +322,9 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 ```
 
 **Notes:**
-- Requires an output sequence length of at least 2 tokens and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
+- By default the divisor is `output_sequence_length - 1`, which is exact for servers that stream one token per chunk. This is the formula every run uses unless `--per-chunk-usage` is enabled.
+- **Opt-in first-chunk correction (`--per-chunk-usage`).** The decode window (`request_latency - time_to_first_token`) covers only the tokens that arrive *after* the first content chunk. When a server bundles several tokens into the first streamed chunk (for example TRT-LLM's `stream-interval`), assuming a single token over-counts the decode tokens and inflates Output Token Throughput Per User (`1 / ITL`). Passing `--per-chunk-usage` (which also requires `--use-server-token-count`, a `chat` endpoint, and `--streaming`) makes the server report cumulative per-chunk usage via `stream_options.continuous_usage_stats`; the divisor then becomes `output_sequence_length - tokens_in_first_content_chunk`, where that count is the server-reported cumulative `completion_tokens` (reasoning included, matching OSL which is `output + reasoning = completion`) through the first content chunk. Requires a server that honors `continuous_usage_stats` (e.g. vLLM, TRT-LLM); otherwise the divisor stays `output_sequence_length - 1`.
+- Requires an output sequence length of at least 2, plus valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics. If the first-chunk count is inconsistent with OSL (>= OSL), the divisor degrades to `output_sequence_length - 1` and a one-time warning is logged rather than dropping the metric.
 - ITL is generated-token-normalized decode duration. It is not the total wall-clock decode duration.
 - Compare runs at equivalent output lengths, or inspect Decode Duration and Output Sequence Length alongside ITL.
 - Streaming chunks can contain multiple tokens. ITL uses token count, while ICL uses chunk arrival timestamps.
