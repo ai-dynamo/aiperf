@@ -63,6 +63,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, watch};
 use velo::{Context, Handler, PeerInfo, StreamAnchorHandle, StreamFrame, Velo};
 
+use crate::engine::cellular_registration::{
+    CellPeerAdmissionProof, CellPeerAdmissionPurpose, CellRegistrationAuthority,
+    CellRegistrationCredential,
+};
+
 use super::artifact_shipping::{
     DecompressToFile, FileCompressor, shippable_relatives, validate_artifact_relpath,
 };
@@ -82,6 +87,8 @@ struct OpenRequest {
     cell_id: u32,
     /// The shipping instance's `PeerInfo` (`rmp`), so the controller can address it.
     cell_peer: Vec<u8>,
+    /// Controller-verifiable proof for this fresh streaming peer.
+    admission_proof: CellPeerAdmissionProof,
     /// The relative artifact path (validated against the run allowlist).
     rel: String,
 }
@@ -178,7 +185,12 @@ impl ArtifactVeloReceiver {
     /// Register the artifact handlers on `velo`. `temp_root` is the controller's
     /// cellular scratch root (files land at `temp_root/cell-{id}/{rel}`); `allowed`
     /// is the exact set of relative artifact paths the run may ship.
-    pub fn register(velo: Arc<Velo>, temp_root: PathBuf, allowed: HashSet<String>) -> Result<Self> {
+    pub(crate) fn register(
+        velo: Arc<Velo>,
+        temp_root: PathBuf,
+        allowed: HashSet<String>,
+        registration_authority: Arc<CellRegistrationAuthority>,
+    ) -> Result<Self> {
         let state = Arc::new(ReceiverState {
             temp_root,
             allowed,
@@ -192,17 +204,19 @@ impl ArtifactVeloReceiver {
         // `create_anchor` lives on `Velo`, not the messenger `ctx.msg`.
         let open_state = state.clone();
         let open_velo = Arc::downgrade(&velo);
+        let open_authority = registration_authority.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_ARTIFACT_OPEN, move |ctx: Context| {
                 let state = open_state.clone();
                 let velo = open_velo.clone();
+                let registration_authority = open_authority.clone();
                 async move {
                     let Some(velo) = velo.upgrade() else {
                         return Err(anyhow::anyhow!(
                             "velo instance dropped before artifact open"
                         ));
                     };
-                    handle_open(&state, &velo, ctx).await
+                    handle_open(&state, &velo, registration_authority, ctx).await
                 }
             })
             .build(),
@@ -274,10 +288,17 @@ impl ArtifactVeloReceiver {
 async fn handle_open(
     state: &Arc<ReceiverState>,
     velo: &Arc<Velo>,
+    registration_authority: Arc<CellRegistrationAuthority>,
     ctx: Context,
 ) -> anyhow::Result<Option<Bytes>> {
     let request: OpenRequest = rmp_serde::from_slice(&ctx.payload)
         .map_err(|error| anyhow::anyhow!("decode OpenRequest: {error}"))?;
+    registration_authority.verify_peer_admission(
+        request.cell_id,
+        CellPeerAdmissionPurpose::ArtifactOpen,
+        &request.cell_peer,
+        &request.admission_proof,
+    )?;
     // Validate the relative path against the run allowlist (fail closed on traversal
     // or unknown artifacts) before creating any anchor or file.
     let rel = match validate_artifact_relpath(&request.rel, &state.allowed) {
@@ -406,15 +427,16 @@ async fn handle_close(state: &Arc<ReceiverState>, ctx: Context) -> anyhow::Resul
 /// Ship one cell's per-record artifact files (+ `inputs.json`) to the controller
 /// over the velo streaming plane, then signal DONE.
 ///
-/// `velo` is a connected instance (built + `connect_controller`ed by the caller);
+/// `velo` has the trusted controller peer locally registered by the caller;
 /// `controller` is the resolved controller `PeerInfo`; `cell_dir` is this cell's own
 /// artifact dir; `relatives` is the set of relative artifact paths to ship (only
 /// those present on disk are sent). Bounded memory: each file streams through a
 /// [`FileCompressor`] over a bounded channel into a backpressured [`velo::StreamSender`].
-pub async fn ship_cell_artifacts_velo(
+pub(crate) async fn ship_cell_artifacts_velo(
     velo: &Arc<Velo>,
     controller: &PeerInfo,
     cell_id: u32,
+    credential: &CellRegistrationCredential,
     cell_dir: &Path,
     relatives: &[String],
 ) -> Result<()> {
@@ -428,7 +450,7 @@ pub async fn ship_cell_artifacts_velo(
         if !src.exists() {
             continue;
         }
-        ship_one_velo(velo, controller, cell_id, rel, &src)
+        ship_one_velo(velo, controller, cell_id, credential, rel, &src)
             .await
             .with_context(|| format!("cell {cell_id} shipping artifact {rel:?} over velo"))?;
     }
@@ -454,13 +476,20 @@ async fn ship_one_velo(
     velo: &Arc<Velo>,
     controller: &PeerInfo,
     cell_id: u32,
+    credential: &CellRegistrationCredential,
     rel: &str,
     src: &Path,
 ) -> Result<()> {
     // OPEN: hand the controller our peer + path, receive the anchor handle.
     let cell_peer = rmp_serde::to_vec(&velo.peer_info()).context("encode cell peer")?;
+    ensure!(
+        credential.cell_id() == cell_id,
+        "artifact credential does not match the cell identity"
+    );
     let open = OpenRequest {
         cell_id,
+        admission_proof: credential
+            .sign_peer_admission(CellPeerAdmissionPurpose::ArtifactOpen, &cell_peer)?,
         cell_peer,
         rel: rel.to_owned(),
     };
@@ -556,7 +585,8 @@ pub fn shippable_relatives_velo(artifacts: &crate::engine::protocol::ArtifactSpe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+    use crate::cellular::transport::connect::{BindSpec, build_velo};
+    use crate::engine::cellular_registration::CellRegistrationAuthority;
     use std::io::Write;
     use std::process::Command;
 
@@ -654,9 +684,14 @@ mod tests {
             controller_addr.clone()
         };
         let _ = controller_endpoint;
-        let receiver =
-            ArtifactVeloReceiver::register(controller_velo.clone(), landing.clone(), allowed)
-                .expect("register receiver");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let receiver = ArtifactVeloReceiver::register(
+            controller_velo.clone(),
+            landing.clone(),
+            allowed,
+            Arc::new(authority),
+        )
+        .expect("register receiver");
 
         // Cell velo connects to the controller by its PeerInfo (loopback).
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
@@ -667,9 +702,16 @@ mod tests {
 
         let baseline = resident_bytes();
 
-        ship_cell_artifacts_velo(&cell_velo, &controller_addr, 0, &src_dir, &[rel.to_owned()])
-            .await
-            .expect("ship over velo");
+        ship_cell_artifacts_velo(
+            &cell_velo,
+            &controller_addr,
+            0,
+            &credentials[0],
+            &src_dir,
+            &[rel.to_owned()],
+        )
+        .await
+        .expect("ship over velo");
 
         receiver
             .wait_for_cells(1, Duration::from_secs(30))
@@ -711,10 +753,12 @@ mod tests {
             .await
             .expect("controller velo");
         let controller_peer = controller_velo.peer_info();
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
         let _receiver = ArtifactVeloReceiver::register(
             controller_velo.clone(),
             dir.path().join("landing"),
             allowed,
+            Arc::new(authority),
         )
         .expect("register");
 
@@ -725,6 +769,7 @@ mod tests {
             &cell_velo,
             &controller_peer,
             0,
+            &credentials[0],
             &src_dir,
             &["secret.parquet".to_owned()],
         )
@@ -732,9 +777,8 @@ mod tests {
         assert!(result.is_err(), "unallowed artifact must be rejected");
     }
 
-    // The `connect_controller` bootstrap path (endpoint-first) also carries the
-    // streaming attach: build a controller on a bound listener, dial it by
-    // `tcp://addr`, and stream a small file end-to-end.
+    // A trusted controller peer plus a controller-minted credential carries the
+    // streaming attach without Velo's endpoint-first `_hello` bootstrap.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn velo_stream_over_connect_by_endpoint() {
         let dir = tempfile::tempdir().unwrap();
@@ -745,24 +789,36 @@ mod tests {
         let source_bytes = std::fs::read(src_dir.join(rel)).unwrap();
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
         let controller_velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("controller velo");
         let allowed: HashSet<String> = [rel.to_owned()].into_iter().collect();
         let landing = dir.path().join("landing");
-        let receiver =
-            ArtifactVeloReceiver::register(controller_velo.clone(), landing.clone(), allowed)
-                .expect("register");
+        let (authority, credentials) = CellRegistrationAuthority::mint(3).expect("authority");
+        let receiver = ArtifactVeloReceiver::register(
+            controller_velo.clone(),
+            landing.clone(),
+            allowed,
+            Arc::new(authority),
+        )
+        .expect("register");
 
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let controller_peer = connect_controller(&cell_velo, &format!("tcp://{addr}"))
-            .await
-            .expect("connect");
+        let controller_peer = controller_velo.peer_info();
+        cell_velo
+            .register_peer(controller_peer.clone())
+            .expect("register controller");
 
-        ship_cell_artifacts_velo(&cell_velo, &controller_peer, 2, &src_dir, &[rel.to_owned()])
-            .await
-            .expect("ship");
+        ship_cell_artifacts_velo(
+            &cell_velo,
+            &controller_peer,
+            2,
+            &credentials[2],
+            &src_dir,
+            &[rel.to_owned()],
+        )
+        .await
+        .expect("ship");
         receiver
             .wait_for_cells(1, Duration::from_secs(30))
             .await

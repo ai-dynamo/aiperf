@@ -24,8 +24,8 @@
 //! docs on `super`) so t-digest `+inf` and NaN metric values survive the wire.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
+use anyhow::ensure;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -35,15 +35,27 @@ use velo::{Context, EventHandle, Handler, PeerInfo, Velo};
 #[cfg(test)]
 use super::CellPhaseSignal;
 use super::{
-    CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellStorePartitionShip,
-    CellTransportError, ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION,
-    HANDLER_PHASE_SIGNAL, HANDLER_PREFLIGHT, HANDLER_REGISTER, HANDLER_STORE_PARTITION,
+    ArtifactChannelServerConfig, CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister,
+    CellStorePartitionShip, CellTransportError, ControllerTransport, HANDLER_HEARTBEAT,
+    HANDLER_PARTITION, HANDLER_PHASE_SIGNAL, HANDLER_PREFLIGHT, HANDLER_REGISTER,
+    HANDLER_STORE_PARTITION,
+};
+use crate::engine::cellular_registration::{
+    CellPeerAdmissionPurpose, CellRegistrationAuthority, CellRegistrationCredential,
 };
 
-/// Supplies each cell's serialized (`rmp`) `CellLaunchSpec` by `cell_id`, or
-/// `None` if the `cell_id` is out of range. The controller precomputes every
-/// cell's spec before binding, so the register handler is a pure lookup.
-pub type SpecFor = Arc<dyn Fn(u32) -> Option<Vec<u8>> + Send + Sync>;
+/// Per-cell material returned only after the controller accepts registration.
+#[derive(Clone)]
+pub struct CellRegistrationSpec {
+    /// The cell's sliced execute envelope.
+    pub envelope: Vec<u8>,
+    /// The public certificate for the authenticated TLS artifact channel.
+    pub artifact_channel: Option<ArtifactChannelServerConfig>,
+}
+
+/// Validates a complete registration request and returns its per-cell material.
+pub type SpecFor =
+    Arc<dyn Fn(&CellRegister) -> anyhow::Result<Option<CellRegistrationSpec>> + Send + Sync>;
 
 /// The controller's reply to a cell's registration: the cell's sliced execute
 /// envelope plus the handle of the run-wide **START** event. The cell awaits that
@@ -55,6 +67,8 @@ pub struct RegisterReply {
     pub envelope: Vec<u8>,
     /// The controller-owned START event handle the cell awaits before dispatching.
     pub start_event: EventHandle,
+    /// The public artifact TLS certificate, when cross-host transfer is enabled.
+    pub artifact_channel: Option<ArtifactChannelServerConfig>,
 }
 
 fn encode(error: impl std::fmt::Display) -> CellTransportError {
@@ -85,8 +99,9 @@ impl VeloControllerTransport {
     /// controller transport. `spec_for` supplies each registering cell's
     /// `CellLaunchSpec` bytes; `start_event` is the run-wide START handle returned
     /// to each cell; the barrier fires once all `cell_count` cells have registered.
-    pub fn bind_controller(
+    pub(crate) fn bind_controller(
         velo: Arc<Velo>,
+        registration_authority: Arc<CellRegistrationAuthority>,
         spec_for: SpecFor,
         cell_count: u32,
         start_event: EventHandle,
@@ -96,7 +111,9 @@ impl VeloControllerTransport {
         let preflight = Arc::new(crate::graph::supplement::GraphCellPreflightBarrier::new(
             cell_count,
         ));
-        let registered = Arc::new(AtomicU32::new(0));
+        let registered = Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new()));
+        let partition_authority = registration_authority.clone();
+        let store_partition_authority = registration_authority.clone();
 
         // register (unary): learn the cell, count it toward the start barrier, and
         // return its spec + the START handle it must await before dispatching.
@@ -104,30 +121,62 @@ impl VeloControllerTransport {
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_REGISTER, move |ctx: Context| {
                 let spec_for = spec_for.clone();
+                let registration_authority = registration_authority.clone();
                 let registered = registered.clone();
                 let reg_notify = reg_notify.clone();
                 async move {
                     let register: CellRegister = rmp_serde::from_slice(&ctx.payload)
                         .map_err(|error| anyhow::anyhow!("decode CellRegister: {error}"))?;
+                    let verified = registration_authority.verify(&register)?;
+                    ensure!(
+                        verified.cell_id() == register.cell_id,
+                        "cell registration proof identity does not match its request"
+                    );
                     let peer: PeerInfo = rmp_serde::from_slice(&register.cell_peer)
                         .map_err(|error| anyhow::anyhow!("decode cell PeerInfo: {error}"))?;
-                    ctx.msg
-                        .register_peer(peer)
-                        .map_err(|error| anyhow::anyhow!("register_peer cell: {error}"))?;
-                    let Some(envelope) = spec_for(register.cell_id) else {
+                    let registration_fingerprint = blake3::hash(&ctx.payload);
+                    if let Some(existing) = registered.lock().get(&register.cell_id) {
+                        ensure!(
+                            *existing == registration_fingerprint,
+                            "cell registration retry changed its authenticated identity"
+                        );
+                    }
+                    let Some(spec) = spec_for(&register)? else {
                         return Err(anyhow::anyhow!(
                             "no launch spec for cell {}",
                             register.cell_id
                         ));
                     };
-                    // Each cell registers exactly once; the Nth registration releases
-                    // the start barrier so the controller triggers START.
-                    if registered.fetch_add(1, Ordering::SeqCst) + 1 == cell_count {
+                    let is_new_registration = {
+                        let mut registered = registered.lock();
+                        match registered.get(&register.cell_id) {
+                            Some(existing) => {
+                                ensure!(
+                                    *existing == registration_fingerprint,
+                                    "cell registration retry changed its authenticated identity"
+                                );
+                                false
+                            }
+                            None => {
+                                registered.insert(register.cell_id, registration_fingerprint);
+                                true
+                            }
+                        }
+                    };
+                    ctx.msg
+                        .register_peer(peer)
+                        .map_err(|error| anyhow::anyhow!("register_peer cell: {error}"))?;
+                    // A successful exact retry returns the same material without
+                    // counting one cell twice toward the synchronized start barrier.
+                    let is_last_registration =
+                        is_new_registration && registered.lock().len() == cell_count as usize;
+                    if is_last_registration {
                         reg_notify.notify_one();
                     }
                     let reply = RegisterReply {
-                        envelope,
+                        envelope: spec.envelope,
                         start_event,
+                        artifact_channel: spec.artifact_channel,
                     };
                     let bytes = rmp_serde::to_vec(&reply)
                         .map_err(|error| anyhow::anyhow!("encode RegisterReply: {error}"))?;
@@ -214,11 +263,22 @@ impl VeloControllerTransport {
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_PARTITION, move |ctx: Context| {
                 let sender = partition_sender.clone();
+                let registration_authority = partition_authority.clone();
                 async move {
                     let ship: CellPartitionShip = rmp_serde::from_slice(&ctx.payload)
                         .map_err(|error| anyhow::anyhow!("decode partition ship: {error}"))?;
+                    ensure!(
+                        ship.partition.cell_id() == ship.cell_id,
+                        "partition ship identity does not match its partition"
+                    );
+                    registration_authority.verify_peer_admission(
+                        ship.cell_id,
+                        CellPeerAdmissionPurpose::Partition,
+                        &ship.cell_peer,
+                        &ship.admission_proof,
+                    )?;
                     // The cell ships from a fresh velo instance the controller has
-                    // not seen; register it so the ack routes back.
+                    // not seen. Its exact peer proof is checked before admission.
                     let peer: PeerInfo = rmp_serde::from_slice(&ship.cell_peer)
                         .map_err(|error| anyhow::anyhow!("decode ship peer: {error}"))?;
                     ctx.msg
@@ -242,11 +302,22 @@ impl VeloControllerTransport {
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_STORE_PARTITION, move |ctx: Context| {
                 let sender = store_partition_sender.clone();
+                let registration_authority = store_partition_authority.clone();
                 async move {
                     let ship: CellStorePartitionShip = rmp_serde::from_slice(&ctx.payload)
                         .map_err(|error| anyhow::anyhow!("decode store partition ship: {error}"))?;
+                    ensure!(
+                        ship.partition.cell_id() == ship.cell_id,
+                        "store partition ship identity does not match its partition"
+                    );
+                    registration_authority.verify_peer_admission(
+                        ship.cell_id,
+                        CellPeerAdmissionPurpose::StorePartition,
+                        &ship.cell_peer,
+                        &ship.admission_proof,
+                    )?;
                     // The cell ships from a fresh velo instance the controller has
-                    // not seen; register it so the ack routes back.
+                    // not seen. Its exact peer proof is checked before admission.
                     let peer: PeerInfo = rmp_serde::from_slice(&ship.cell_peer)
                         .map_err(|error| anyhow::anyhow!("decode store ship peer: {error}"))?;
                     ctx.msg
@@ -305,20 +376,80 @@ impl ControllerTransport for VeloControllerTransport {
 pub struct VeloCellClient {
     velo: Arc<Velo>,
     controller: PeerInfo,
+    registration_peer: Vec<u8>,
+    credential: Option<Arc<CellRegistrationCredential>>,
 }
 
 impl VeloCellClient {
     /// Register the controller peer so the cell can address it, and return the client.
     pub fn connect(velo: Arc<Velo>, controller: PeerInfo) -> Result<Self, CellTransportError> {
         velo.register_peer(controller.clone()).map_err(io)?;
-        Ok(Self { velo, controller })
+        let registration_peer = rmp_serde::to_vec(&velo.peer_info()).map_err(encode)?;
+        Ok(Self {
+            velo,
+            controller,
+            registration_peer,
+            credential: None,
+        })
+    }
+
+    /// Build a client with the per-cell credential needed for fresh peer tickets.
+    pub(crate) fn connect_authenticated(
+        velo: Arc<Velo>,
+        controller: PeerInfo,
+        credential: Arc<CellRegistrationCredential>,
+    ) -> Result<Self, CellTransportError> {
+        let mut client = Self::connect(velo, controller)?;
+        client.credential = Some(credential);
+        Ok(client)
     }
 
     /// Send the registration request and return the controller's [`RegisterReply`]
     /// (the cell's sliced execute envelope + the START event handle to await).
     pub async fn register(&self, cell_id: u32) -> Result<RegisterReply, CellTransportError> {
-        let cell_peer = rmp_serde::to_vec(&self.velo.peer_info()).map_err(encode)?;
-        let body = rmp_serde::to_vec(&CellRegister { cell_id, cell_peer }).map_err(encode)?;
+        self.register_with_artifact_capability(cell_id, None).await
+    }
+
+    /// Register with the digest of the cell-local artifact bearer.
+    pub async fn register_with_artifact_capability(
+        &self,
+        cell_id: u32,
+        artifact_capability_digest: Option<[u8; 32]>,
+    ) -> Result<RegisterReply, CellTransportError> {
+        self.register_with_registration_proof(cell_id, artifact_capability_digest, None)
+            .await
+    }
+
+    /// Register with controller-verified launch proof material.
+    pub(crate) async fn register_with_registration_proof(
+        &self,
+        cell_id: u32,
+        artifact_capability_digest: Option<[u8; 32]>,
+        registration_proof: Option<super::CellRegistrationProof>,
+    ) -> Result<RegisterReply, CellTransportError> {
+        self.send_registration(
+            cell_id,
+            self.registration_peer.clone(),
+            artifact_capability_digest,
+            registration_proof,
+        )
+        .await
+    }
+
+    async fn send_registration(
+        &self,
+        cell_id: u32,
+        cell_peer: Vec<u8>,
+        artifact_capability_digest: Option<[u8; 32]>,
+        registration_proof: Option<super::CellRegistrationProof>,
+    ) -> Result<RegisterReply, CellTransportError> {
+        let body = rmp_serde::to_vec(&CellRegister {
+            cell_id,
+            cell_peer,
+            artifact_capability_digest,
+            registration_proof,
+        })
+        .map_err(encode)?;
         let reply: Bytes = self
             .velo
             .unary(HANDLER_REGISTER)
@@ -329,6 +460,21 @@ impl VeloCellClient {
             .await
             .map_err(io)?;
         rmp_serde::from_slice(&reply).map_err(decode)
+    }
+
+    /// Sign the exact peer bytes and capability digest before registration.
+    pub(crate) async fn register_with_credential(
+        &self,
+        cell_id: u32,
+        artifact_capability_digest: Option<[u8; 32]>,
+        credential: &CellRegistrationCredential,
+    ) -> Result<RegisterReply, CellTransportError> {
+        let peer = self.registration_peer.clone();
+        let proof = credential
+            .sign_register(&peer, artifact_capability_digest)
+            .map_err(|error| CellTransportError::Encode(error.to_string()))?;
+        self.send_registration(cell_id, peer, artifact_capability_digest, Some(proof))
+            .await
     }
 
     /// Block until the controller triggers the run-wide START event (a synchronized
@@ -384,8 +530,23 @@ impl CellClient for VeloCellClient {
             }
             CellMessage::Partition(partition) => {
                 // Ship carries this instance's PeerInfo so the controller can ack back.
+                let credential = self.credential.as_ref().ok_or_else(|| {
+                    CellTransportError::Io(
+                        "partition shipping requires an authenticated cell credential".to_owned(),
+                    )
+                })?;
+                if credential.cell_id() != partition.cell_id() {
+                    return Err(CellTransportError::Io(
+                        "partition credential does not match the cell identity".to_owned(),
+                    ));
+                }
+                let cell_peer = self.registration_peer.clone();
                 let ship = CellPartitionShip {
-                    cell_peer: rmp_serde::to_vec(&self.velo.peer_info()).map_err(encode)?,
+                    cell_id: partition.cell_id(),
+                    admission_proof: credential
+                        .sign_peer_admission(CellPeerAdmissionPurpose::Partition, &cell_peer)
+                        .map_err(encode)?,
+                    cell_peer,
                     partition: partition.clone(),
                 };
                 let body = rmp_serde::to_vec(&ship).map_err(encode)?;
@@ -407,8 +568,24 @@ impl CellClient for VeloCellClient {
             }
             CellMessage::StorePartition(partition) => {
                 // Same unary+ack+peer path as `Partition`, over the store handler.
+                let credential = self.credential.as_ref().ok_or_else(|| {
+                    CellTransportError::Io(
+                        "store partition shipping requires an authenticated cell credential"
+                            .to_owned(),
+                    )
+                })?;
+                if credential.cell_id() != partition.cell_id() {
+                    return Err(CellTransportError::Io(
+                        "store partition credential does not match the cell identity".to_owned(),
+                    ));
+                }
+                let cell_peer = self.registration_peer.clone();
                 let ship = CellStorePartitionShip {
-                    cell_peer: rmp_serde::to_vec(&self.velo.peer_info()).map_err(encode)?,
+                    cell_id: partition.cell_id(),
+                    admission_proof: credential
+                        .sign_peer_admission(CellPeerAdmissionPurpose::StorePartition, &cell_peer)
+                        .map_err(encode)?,
+                    cell_peer,
                     partition: (**partition).clone(),
                 };
                 let body = rmp_serde::to_vec(&ship).map_err(encode)?;
@@ -435,7 +612,20 @@ impl CellClient for VeloCellClient {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+    use crate::engine::cellular_registration::CellRegistrationAuthority;
+
+    #[test]
+    fn artifact_channel_registration_keeps_envelope_separate() {
+        let public_config = ArtifactChannelServerConfig::new(vec![1, 2, 3]);
+        let spec = CellRegistrationSpec {
+            envelope: b"{\"run\":{}}".to_vec(),
+            artifact_channel: Some(public_config),
+        };
+        assert_eq!(spec.envelope, b"{\"run\":{}}".to_vec());
+    }
     use crate::cellular::heartbeat::HeartbeatAccumulator;
     use crate::cellular::shard::RecordsShardPartition;
     use crate::cellular::transport::connect::{BindSpec, build_velo};
@@ -465,15 +655,34 @@ mod tests {
             .new_event()
             .expect("start event");
         let start_handle = start.handle();
-        let spec_for: SpecFor = Arc::new(|cell_id: u32| Some(vec![cell_id as u8, 0xAB]));
-        let mut controller =
-            VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
-                .expect("bind");
+        let (authority, credentials) = CellRegistrationAuthority::mint(4).expect("authority");
+        let spec_for: SpecFor = Arc::new(|register| {
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![register.cell_id as u8, 0xAB],
+                artifact_channel: None,
+            }))
+        });
+        let mut controller = VeloControllerTransport::bind_controller(
+            controller_velo,
+            Arc::new(authority),
+            spec_for,
+            1,
+            start_handle,
+        )
+        .expect("bind");
 
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
+        let mut cell = VeloCellClient::connect_authenticated(
+            cell_velo,
+            controller_peer,
+            Arc::new(credentials[3].clone()),
+        )
+        .expect("connect");
 
-        let reply = cell.register(3).await.expect("register");
+        let reply = cell
+            .register_with_credential(3, None, &credentials[3])
+            .await
+            .expect("register");
         assert_eq!(reply.envelope, vec![3_u8, 0xAB]);
         assert_eq!(reply.start_event, start_handle);
 
@@ -516,6 +725,62 @@ mod tests {
         assert_eq!((heartbeats, partitions), (1, 1));
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn artifact_registration_requires_controller_minted_proof_before_spec() {
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
+        let controller_peer = controller_velo.peer_info();
+        let start = controller_velo
+            .event_manager()
+            .new_event()
+            .expect("start event");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let spec_calls = Arc::new(AtomicUsize::new(0));
+        let seen = spec_calls.clone();
+        let spec_for: SpecFor = Arc::new(move |_| {
+            seen.fetch_add(1, Ordering::Relaxed);
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![0xA5],
+                artifact_channel: None,
+            }))
+        });
+        let _controller = VeloControllerTransport::bind_controller(
+            controller_velo,
+            Arc::new(authority),
+            spec_for,
+            1,
+            start.handle(),
+        )
+        .expect("bind");
+
+        let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        let cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
+        assert!(
+            cell.register_with_artifact_capability(0, Some([0x11; 32]))
+                .await
+                .is_err()
+        );
+        assert_eq!(spec_calls.load(Ordering::Relaxed), 0);
+
+        let reply = cell
+            .register_with_credential(0, Some([0x11; 32]), &credentials[0])
+            .await
+            .expect("controller-minted proof registers");
+        assert_eq!(reply.envelope, vec![0xA5]);
+        assert_eq!(spec_calls.load(Ordering::Relaxed), 1);
+        cell.register_with_credential(0, Some([0x11; 32]), &credentials[0])
+            .await
+            .expect("exact authenticated retry registers");
+        assert_eq!(spec_calls.load(Ordering::Relaxed), 2);
+        assert!(
+            cell.register_with_credential(0, Some([0x22; 32]), &credentials[0])
+                .await
+                .is_err()
+        );
+        assert_eq!(spec_calls.load(Ordering::Relaxed), 2);
+    }
+
     // A cell ships its partition from a DIFFERENT velo instance than the one it
     // registered with (as in a real cell, the spec-fetch instance is gone by
     // ship time). The partition ship carries its peer, so the controller can ack
@@ -531,17 +796,36 @@ mod tests {
             .new_event()
             .expect("start event");
         let start_handle = start.handle();
-        let spec_for: SpecFor = Arc::new(|_| Some(vec![1_u8]));
-        let mut controller =
-            VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
-                .expect("bind");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let spec_for: SpecFor = Arc::new(|_| {
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![1_u8],
+                artifact_channel: None,
+            }))
+        });
+        let mut controller = VeloControllerTransport::bind_controller(
+            controller_velo,
+            Arc::new(authority),
+            spec_for,
+            1,
+            start_handle,
+        )
+        .expect("bind");
 
         let cell_a = build_velo(BindSpec::TcpLoopback).await.expect("cell A");
         let client_a = VeloCellClient::connect(cell_a, controller_peer.clone()).expect("connect A");
-        client_a.register(0).await.expect("register");
+        client_a
+            .register_with_credential(0, None, &credentials[0])
+            .await
+            .expect("register");
 
         let cell_b = build_velo(BindSpec::TcpLoopback).await.expect("cell B");
-        let mut client_b = VeloCellClient::connect(cell_b, controller_peer).expect("connect B");
+        let mut client_b = VeloCellClient::connect_authenticated(
+            cell_b,
+            controller_peer,
+            Arc::new(credentials[0].clone()),
+        )
+        .expect("connect B");
         client_b
             .send(&CellMessage::Partition(sample_partition(0)))
             .await
@@ -551,6 +835,60 @@ mod tests {
             CellMessage::Partition(partition) => assert_eq!(partition.len(), 1),
             other => panic!("expected partition, got {other:?}"),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn forged_partition_ship_is_rejected_before_delivery() {
+        #[derive(Serialize)]
+        struct UnprovenPartitionShip {
+            cell_id: u32,
+            cell_peer: Vec<u8>,
+            partition: RecordsShardPartition,
+        }
+
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
+        let controller_peer = controller_velo.peer_info();
+        let start = controller_velo.event_manager().new_event().expect("start");
+        let (authority, _) = CellRegistrationAuthority::mint(1).expect("authority");
+        let spec_for: SpecFor = Arc::new(|_| Ok(None));
+        let mut controller = VeloControllerTransport::bind_controller(
+            controller_velo,
+            Arc::new(authority),
+            spec_for,
+            1,
+            start.handle(),
+        )
+        .expect("bind");
+
+        let attacker = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("attacker velo");
+        attacker
+            .register_peer(controller_peer.clone())
+            .expect("trusted controller route");
+        let body = rmp_serde::to_vec(&UnprovenPartitionShip {
+            cell_id: 0,
+            cell_peer: rmp_serde::to_vec(&attacker.peer_info()).expect("peer"),
+            partition: sample_partition(0),
+        })
+        .expect("encode forged ship");
+        assert!(
+            attacker
+                .unary(HANDLER_PARTITION)
+                .expect("unary")
+                .raw_payload(Bytes::from(body))
+                .instance(controller_peer.instance_id())
+                .send()
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), controller.recv())
+                .await
+                .is_err()
+        );
     }
 
     // A metrics-only cell ships a folded `StorePartition` through
@@ -570,10 +908,21 @@ mod tests {
             .new_event()
             .expect("start event");
         let start_handle = start.handle();
-        let spec_for: SpecFor = Arc::new(|_| Some(vec![7_u8]));
-        let mut controller =
-            VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
-                .expect("bind");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let spec_for: SpecFor = Arc::new(|_| {
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![7_u8],
+                artifact_channel: None,
+            }))
+        });
+        let mut controller = VeloControllerTransport::bind_controller(
+            controller_velo,
+            Arc::new(authority),
+            spec_for,
+            1,
+            start_handle,
+        )
+        .expect("bind");
 
         // A folded store: a handful of completed records processed into an accumulator.
         let mut accumulator = MetricsAccumulator::new();
@@ -583,18 +932,25 @@ mod tests {
             record.request_index = None;
             accumulator.process_record(&record);
         }
-        let partition = ColumnStorePartition::from_accumulator(4, &accumulator);
+        let partition = ColumnStorePartition::from_accumulator(0, &accumulator);
 
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
-        cell.register(0).await.expect("register");
+        let mut cell = VeloCellClient::connect_authenticated(
+            cell_velo,
+            controller_peer,
+            Arc::new(credentials[0].clone()),
+        )
+        .expect("connect");
+        cell.register_with_credential(0, None, &credentials[0])
+            .await
+            .expect("register");
         cell.send(&CellMessage::StorePartition(Box::new(partition)))
             .await
             .expect("ship folded store");
 
         match controller.recv().await.expect("recv").expect("some") {
             CellMessage::StorePartition(partition) => {
-                assert_eq!(partition.cell_id(), 4);
+                assert_eq!(partition.cell_id(), 0);
                 assert_eq!(partition.record_count(), 5);
             }
             other => panic!("expected store partition, got {other:?}"),
@@ -615,18 +971,35 @@ mod tests {
             .new_event()
             .expect("start event");
         let start_handle = start.handle();
-        let spec_for: SpecFor = Arc::new(|_| Some(vec![9_u8]));
-        let controller =
-            VeloControllerTransport::bind_controller(controller_velo, spec_for, 2, start_handle)
-                .expect("bind");
+        let (authority, credentials) = CellRegistrationAuthority::mint(2).expect("authority");
+        let spec_for: SpecFor = Arc::new(|_| {
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![9_u8],
+                artifact_channel: None,
+            }))
+        });
+        let controller = VeloControllerTransport::bind_controller(
+            controller_velo,
+            Arc::new(authority),
+            spec_for,
+            2,
+            start_handle,
+        )
+        .expect("bind");
 
         let cell_a_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell A");
         let cell_a = VeloCellClient::connect(cell_a_velo, controller_peer.clone()).expect("A");
         let cell_b_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell B");
         let cell_b = VeloCellClient::connect(cell_b_velo, controller_peer).expect("B");
 
-        let reply_a = cell_a.register(0).await.expect("register A");
-        let reply_b = cell_b.register(1).await.expect("register B");
+        let reply_a = cell_a
+            .register_with_credential(0, None, &credentials[0])
+            .await
+            .expect("register A");
+        let reply_b = cell_b
+            .register_with_credential(1, None, &credentials[1])
+            .await
+            .expect("register B");
         assert_eq!(reply_a.start_event, start_handle);
 
         // Both cells registered, so the barrier is released immediately; trigger START.
@@ -654,10 +1027,21 @@ mod tests {
             .new_event()
             .expect("start event");
         let start_handle = start.handle();
-        let spec_for: SpecFor = Arc::new(|_| Some(vec![0xCD]));
-        let mut controller =
-            VeloControllerTransport::bind_controller(controller_velo, spec_for, 1, start_handle)
-                .expect("bind");
+        let (authority, _) = CellRegistrationAuthority::mint(1).expect("authority");
+        let spec_for: SpecFor = Arc::new(|_| {
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![0xCD],
+                artifact_channel: None,
+            }))
+        });
+        let mut controller = VeloControllerTransport::bind_controller(
+            controller_velo,
+            Arc::new(authority),
+            spec_for,
+            1,
+            start_handle,
+        )
+        .expect("bind");
 
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
         let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");

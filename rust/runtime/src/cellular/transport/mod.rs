@@ -21,6 +21,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::cellular::heartbeat::MetricsHeartbeat;
 use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
+use crate::engine::cellular_registration::CellPeerAdmissionProof;
+
+/// Public, secret-free identity of a controller's per-run artifact TLS channel.
+///
+/// The certificate is delivered beside the cell envelope over Velo. The matching
+/// private key never leaves the controller process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactChannelServerConfig {
+    server_certificate_der: Vec<u8>,
+}
+
+impl ArtifactChannelServerConfig {
+    pub(crate) fn new(server_certificate_der: Vec<u8>) -> Self {
+        Self {
+            server_certificate_der,
+        }
+    }
+
+    pub(crate) fn server_certificate_der(&self) -> &[u8] {
+        &self.server_certificate_der
+    }
+}
 
 /// Discovery-free Velo construction and endpoint-based controller connection.
 #[cfg(feature = "cellular")]
@@ -121,6 +143,23 @@ pub struct CellRegister {
     pub cell_id: u32,
     /// `rmp_serde`-encoded `velo::PeerInfo` of the registering cell.
     pub cell_peer: Vec<u8>,
+    /// BLAKE3 digest of the cell-local artifact bearer, when the controller
+    /// enabled the per-run artifact channel. The raw bearer never crosses Velo.
+    pub artifact_capability_digest: Option<[u8; 32]>,
+    /// Controller-verifiable proof that this registration came from the launched cell.
+    #[serde(default)]
+    pub registration_proof: Option<CellRegistrationProof>,
+}
+
+/// Wire-visible Ed25519 proof for a single cellular registration transcript.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CellRegistrationProof {
+    /// Fixed protocol version for the signed registration transcript.
+    pub version: u8,
+    /// Per-run nonce selected by the controller.
+    pub run_nonce: [u8; 32],
+    /// Ed25519 signature over the canonical registration transcript.
+    pub signature: Vec<u8>,
 }
 
 /// A cell's records-shard partition ship. Carries the shipping velo instance's
@@ -130,8 +169,12 @@ pub struct CellRegister {
 /// not yet seen, so the register-time peer does not suffice.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellPartitionShip {
+    /// Identity whose credential minted this ticket and partition.
+    pub cell_id: u32,
     /// `rmp_serde`-encoded `velo::PeerInfo` of the shipping cell instance.
     pub cell_peer: Vec<u8>,
+    /// Controller-verifiable authorization for this fresh peer instance.
+    pub admission_proof: CellPeerAdmissionProof,
     /// The cell's records-shard partition.
     pub partition: RecordsShardPartition,
 }
@@ -143,8 +186,12 @@ pub struct CellPartitionShip {
 /// instance the controller has not yet seen).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellStorePartitionShip {
+    /// Identity whose credential minted this ticket and partition.
+    pub cell_id: u32,
     /// `rmp_serde`-encoded `velo::PeerInfo` of the shipping cell instance.
     pub cell_peer: Vec<u8>,
+    /// Controller-verifiable authorization for this fresh peer instance.
+    pub admission_proof: CellPeerAdmissionProof,
     /// The cell's folded column-store partition.
     pub partition: ColumnStorePartition,
 }

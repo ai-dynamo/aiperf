@@ -33,6 +33,7 @@ use crate::cellular::phaser::Phaser;
 use crate::cellular::transport::phaser_velo::{
     HANDLER_PHASER_EVENT, HANDLER_PHASER_SUBSCRIBE, PhaserServer,
 };
+use crate::engine::cellular_registration::CellRegistrationAuthority;
 
 /// The default HTTP mount point / diagnostic identity for the phaser plugin.
 pub const PHASER_PREFIX: &str = "/phaser";
@@ -42,6 +43,7 @@ pub const PHASER_PREFIX: &str = "/phaser";
 pub struct PhaserHubPlugin {
     prefix: String,
     phaser: Phaser,
+    registration_authority: Arc<CellRegistrationAuthority>,
     /// The bound server, retained so its (redundant) velo clone lives with the plugin.
     /// The handlers themselves ride the hub velo and outlive this.
     server: Mutex<Option<PhaserServer>>,
@@ -50,10 +52,14 @@ pub struct PhaserHubPlugin {
 impl PhaserHubPlugin {
     /// Build the plugin over the controller's [`Phaser`] (the same instance the bootstrap
     /// `advance`s). Uses the default [`PHASER_PREFIX`].
-    pub fn new(phaser: Phaser) -> Self {
+    pub(crate) fn new(
+        phaser: Phaser,
+        registration_authority: Arc<CellRegistrationAuthority>,
+    ) -> Self {
         Self {
             prefix: PHASER_PREFIX.to_owned(),
             phaser,
+            registration_authority,
             server: Mutex::new(None),
         }
     }
@@ -97,11 +103,14 @@ impl HubPlugin for PhaserHubPlugin {
     }
 
     fn register_velo_handlers(&self, velo: &Arc<Velo>) -> Result<(), HubError> {
-        let server = PhaserServer::bind(velo.clone(), self.phaser.clone()).map_err(|error| {
-            HubError::VeloHandler {
-                prefix: self.prefix.clone(),
-                message: error.to_string(),
-            }
+        let server = PhaserServer::bind(
+            velo.clone(),
+            self.phaser.clone(),
+            self.registration_authority.clone(),
+        )
+        .map_err(|error| HubError::VeloHandler {
+            prefix: self.prefix.clone(),
+            message: error.to_string(),
         })?;
         *self.server.lock().expect("phaser server slot poisoned") = Some(server);
         Ok(())
@@ -112,7 +121,7 @@ impl HubPlugin for PhaserHubPlugin {
 mod tests {
     use super::*;
     use crate::cellular::phaser::PhaseTransition;
-    use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+    use crate::cellular::transport::connect::{BindSpec, build_velo};
     use crate::cellular::transport::phaser_velo::PhaserClient;
     use crate::hub::Hub;
 
@@ -122,18 +131,18 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn plugin_mounts_and_serves_phaser_over_the_hub() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let coordinate = format!("tcp://{addr}");
         let velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("hub velo");
+        let controller_peer = velo.peer_info();
 
         let phaser = Phaser::new();
         // Advance twice BEFORE the cell subscribes — these must arrive as replay.
         phaser.advance(PhaseTransition::Started);
         phaser.advance(PhaseTransition::ShardsAvailable(4));
 
-        let plugin = PhaserHubPlugin::new(phaser.clone());
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let plugin = PhaserHubPlugin::new(phaser.clone(), Arc::new(authority));
         let mut hub = Hub::new(velo);
         hub.register(Box::new(plugin))
             .expect("register phaser plugin");
@@ -146,10 +155,7 @@ mod tests {
 
         // A real cell subscribes over the hub's velo anchor and observes replay + live.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let controller = connect_controller(&cell_velo, &coordinate)
-            .await
-            .expect("connect");
-        let mut sub = PhaserClient::subscribe(cell_velo, &controller)
+        let mut sub = PhaserClient::subscribe(cell_velo, &controller_peer, 0, &credentials[0])
             .await
             .expect("subscribe");
         sub.await_generation(2).await.expect("replayed to gen 2");

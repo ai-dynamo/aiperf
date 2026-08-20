@@ -26,6 +26,10 @@ use velo::{Context, Handler, PeerInfo, Velo};
 
 use crate::cellular::broadcast::{BroadcastEvent, Subscription};
 use crate::cellular::dataset_session::{DatasetChunk, DatasetIndex, DatasetPublisher};
+use crate::engine::cellular_registration::{
+    CellPeerAdmissionProof, CellPeerAdmissionPurpose, CellRegistrationAuthority,
+    CellRegistrationCredential,
+};
 
 /// The opaque dataset payload on the wire (the cell decodes its own request shape).
 pub type WirePayload = Vec<u8>;
@@ -59,7 +63,9 @@ pub const HANDLER_DATASET_CHUNK: &str = "aiperf.dataset.chunk";
 
 #[derive(Serialize, Deserialize)]
 struct DatasetSubscribeRequest {
+    cell_id: u32,
     cell_peer: Vec<u8>,
+    admission_proof: CellPeerAdmissionProof,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -76,20 +82,28 @@ pub struct DatasetServer {
 impl DatasetServer {
     /// Register the `subscribe` handler on `velo`, serving the given `publisher`. Each
     /// subscribing cell gets the current replay and a pump forwarding the live tail.
-    pub fn bind(
+    pub(crate) fn bind(
         velo: std::sync::Arc<Velo>,
         publisher: DatasetPublisher<WirePayload>,
+        registration_authority: std::sync::Arc<CellRegistrationAuthority>,
     ) -> anyhow::Result<Self> {
         let push_velo = velo.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_DATASET_SUBSCRIBE, move |ctx: Context| {
                 let publisher = publisher.clone();
                 let push_velo = push_velo.clone();
+                let registration_authority = registration_authority.clone();
                 async move {
                     let request: DatasetSubscribeRequest = rmp_serde::from_slice(&ctx.payload)
                         .map_err(|error| {
                             anyhow::anyhow!("decode DatasetSubscribeRequest: {error}")
                         })?;
+                    registration_authority.verify_peer_admission(
+                        request.cell_id,
+                        CellPeerAdmissionPurpose::DatasetSubscribe,
+                        &request.cell_peer,
+                        &request.admission_proof,
+                    )?;
                     let peer: PeerInfo = rmp_serde::from_slice(&request.cell_peer)
                         .map_err(|error| anyhow::anyhow!("decode cell PeerInfo: {error}"))?;
                     let cell = peer.instance_id();
@@ -141,9 +155,11 @@ impl DatasetClient {
     /// Subscribe to the controller's dataset broadcast and build this cell's owned index
     /// (the requests where `owns(request_id)`), draining to `finalize`. RAM is O(owned)
     /// even though every chunk is observed.
-    pub async fn build_owned_index(
+    pub(crate) async fn build_owned_index(
         velo: std::sync::Arc<Velo>,
         controller: &PeerInfo,
+        cell_id: u32,
+        credential: &CellRegistrationCredential,
         owns: impl Fn(u64) -> bool,
     ) -> anyhow::Result<DatasetIndex<WirePayload>> {
         let (tx, live) = mpsc::unbounded_channel::<BroadcastEvent<DatasetChunk<WirePayload>>>();
@@ -163,9 +179,16 @@ impl DatasetClient {
         velo.register_peer(controller.clone())
             .map_err(|error| anyhow::anyhow!("register_peer controller: {error}"))?;
 
+        if credential.cell_id() != cell_id {
+            anyhow::bail!("dataset credential does not match the cell identity");
+        }
+        let cell_peer = rmp_serde::to_vec(&velo.peer_info())
+            .map_err(|error| anyhow::anyhow!("encode cell PeerInfo: {error}"))?;
         let request = DatasetSubscribeRequest {
-            cell_peer: rmp_serde::to_vec(&velo.peer_info())
-                .map_err(|error| anyhow::anyhow!("encode cell PeerInfo: {error}"))?,
+            cell_id,
+            admission_proof: credential
+                .sign_peer_admission(CellPeerAdmissionPurpose::DatasetSubscribe, &cell_peer)?,
+            cell_peer,
         };
         let body = rmp_serde::to_vec(&request)
             .map_err(|error| anyhow::anyhow!("encode DatasetSubscribeRequest: {error}"))?;
@@ -191,18 +214,23 @@ impl DatasetClient {
 mod tests {
     use super::*;
     use crate::cellular::dataset_session::DatasetRequest;
-    use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+    use crate::cellular::transport::connect::{BindSpec, build_velo};
+    use crate::engine::cellular_registration::CellRegistrationAuthority;
 
     #[tokio::test]
     async fn cells_build_disjoint_owned_indexes_over_velo() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let coordinate = format!("tcp://{}", listener.local_addr().expect("addr"));
         let controller_velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("controller velo");
         let publisher = DatasetPublisher::<WirePayload>::new();
-        let _server =
-            DatasetServer::bind(controller_velo.clone(), publisher.clone()).expect("bind");
+        let (authority, credentials) = CellRegistrationAuthority::mint(3).expect("authority");
+        let _server = DatasetServer::bind(
+            controller_velo.clone(),
+            publisher.clone(),
+            std::sync::Arc::new(authority),
+        )
+        .expect("bind");
 
         // Publish 12 requests in two chunks, then finalize.
         let chunk = |ids: std::ops::Range<u64>| {
@@ -220,12 +248,14 @@ mod tests {
         let mut owned_all = Vec::new();
         for cell_id in [0u64, 1] {
             let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-            let controller = connect_controller(&cell_velo, &coordinate)
-                .await
-                .expect("connect");
-            let index = DatasetClient::build_owned_index(cell_velo, &controller, move |id| {
-                id % 3 == cell_id
-            })
+            let controller = controller_velo.peer_info();
+            let index = DatasetClient::build_owned_index(
+                cell_velo,
+                &controller,
+                cell_id as u32,
+                &credentials[cell_id as usize],
+                move |id| id % 3 == cell_id,
+            )
             .await
             .expect("build index");
             let expected: Vec<u64> = (0..12).filter(|id| id % 3 == cell_id).collect();

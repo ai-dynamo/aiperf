@@ -46,7 +46,7 @@ dynosim = ["dep:dynamo-mocker"]
 dynamo-router-runtime = ["dynosim"]
 dynamo-zmq-events = ["dynosim"]
 dynamo-kvbm-offload = ["dynosim", "dynamo-mocker/kvbm-offload"]
-dynamo-aic-forward-pass = ["dynosim", "dep:aiconfigurator-core", "dep:pyo3", "dep:dynamo-kv-router", "dep:parking_lot"]
+dynamo-aic-forward-pass = ["dynosim", "dep:aiconfigurator-core", "dep:pyo3", "dep:dynamo-kv-router"]
 dynamo-profile = ["dynosim", "dynamo-mocker/profile"]
 dynamo-full = [
     "dynamo-router-runtime",
@@ -94,6 +94,8 @@ percent-encoding.workspace = true
 petgraph.workspace = true
 prost.workspace = true
 rand.workspace = true
+ed25519-dalek.workspace = true
+rcgen.workspace = true
 rand_distr.workspace = true
 rand_pcg.workspace = true
 rayon.workspace = true
@@ -159,7 +161,7 @@ dynamo-mocker = { git = "https://github.com/ai-dynamo/dynamo.git", rev = "14e2cf
 dynamo-kv-router = { git = "https://github.com/ai-dynamo/dynamo.git", rev = "14e2cf76b04736e9b99412dfbe76cf1af45ae67a", package = "dynamo-kv-router", default-features = false, optional = true }
 aiconfigurator-core = { git = "https://github.com/ai-dynamo/aiconfigurator.git", rev = "ffbab15797d3a3f14c382e937c0ab0c1c5cbc530", package = "aiconfigurator-core", features = ["embed-python"], optional = true }
 pyo3 = { version = "0.23.4", features = ["auto-initialize"], optional = true }
-parking_lot = { version = "0.12", optional = true }
+parking_lot = "0.12"
 
 # Dev-only deps carried over from the 16 absorbed crates' test suites. The
 # monocrate's normal deps already cover most needs; these add the extra feature

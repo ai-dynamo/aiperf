@@ -318,6 +318,7 @@ pub fn aggregator_nodes(cell_count: u32, fanout: u32, base_port: u16) -> Vec<Agg
 /// controller piped on stdin (used only for the merge `MetricsConfig`).
 #[cfg(feature = "cellular")]
 pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
+    require_controller_trusted_aggregator_credentials()?;
     let agg_id: u32 = std::env::var(AGG_ID_ENV)
         .context("AIPERF_AGG_ID not set")?
         .parse()
@@ -410,9 +411,12 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
         .event_manager()
         .new_event()
         .context("aggregator start event")?;
-    let noop_spec: SpecFor = std::sync::Arc::new(|_| None);
+    let (registration_authority, _) =
+        crate::engine::cellular_registration::CellRegistrationAuthority::mint(child_count)?;
+    let noop_spec: SpecFor = std::sync::Arc::new(|_| Ok(None));
     let mut transport = VeloControllerTransport::bind_controller(
         velo,
+        std::sync::Arc::new(registration_authority),
         noop_spec,
         child_count,
         throwaway_event.handle(),
@@ -506,6 +510,17 @@ pub async fn run_aggregator(envelope: &serde_json::Value) -> Result<()> {
             crate::graph::supplement::GraphCellSupplement::from_phase(agg_id, replay_phase)
                 .with_expected_traces(expected)
         }),
+    )
+}
+
+fn require_controller_trusted_aggregator_credentials() -> Result<()> {
+    // An aggregator both admits fresh child peers and becomes a fresh upstream
+    // peer itself. The current bootstrap provider provisions only indexed cells;
+    // minting an authority here would be self-authentication, not controller
+    // admission. Refuse before parsing or binding its listener until a deployment
+    // provider supplies a distinct controller-trusted aggregator role credential.
+    bail!(
+        "hierarchical cellular aggregation requires controller-trusted aggregator role credentials"
     )
 }
 

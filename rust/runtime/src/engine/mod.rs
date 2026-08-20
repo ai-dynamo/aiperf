@@ -15,7 +15,9 @@ pub mod artifact_stream_velo;
 pub mod cell_launcher;
 #[cfg(feature = "cellular")]
 pub mod cellular_aggregator;
+pub(crate) mod cellular_bootstrap;
 pub mod cellular_cell;
+pub(crate) mod cellular_registration;
 // Barrier-synchronized cross-cell timing origin (opt-in, feature-agnostic): a
 // cell zeroes its record timeline at the velo START barrier instead of its
 // post-setup local run start.

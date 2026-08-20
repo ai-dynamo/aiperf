@@ -29,6 +29,10 @@ use velo::{Context, Handler, PeerInfo, Velo};
 
 use crate::cellular::broadcast::{BroadcastEvent, Subscription};
 use crate::cellular::phaser::{PhaseEvent, Phaser, PhaserSubscription};
+use crate::engine::cellular_registration::{
+    CellPeerAdmissionProof, CellPeerAdmissionPurpose, CellRegistrationAuthority,
+    CellRegistrationCredential,
+};
 
 /// Handler: a cell subscribes to the phaser and gets the replay snapshot.
 pub const HANDLER_PHASER_SUBSCRIBE: &str = "aiperf.phaser.subscribe";
@@ -39,7 +43,9 @@ pub const HANDLER_PHASER_EVENT: &str = "aiperf.phaser.event";
 /// live events back to it.
 #[derive(Serialize, Deserialize)]
 struct PhaserSubscribeRequest {
+    cell_id: u32,
     cell_peer: Vec<u8>,
+    admission_proof: CellPeerAdmissionProof,
 }
 
 /// The controller's reply: the replay snapshot (everything advanced before this
@@ -58,17 +64,28 @@ pub struct PhaserServer {
 impl PhaserServer {
     /// Register the `subscribe` handler on `velo`, serving the given `phaser`. Each
     /// subscribing cell gets the current replay and a pump that forwards the live tail.
-    pub fn bind(velo: std::sync::Arc<Velo>, phaser: Phaser) -> anyhow::Result<Self> {
+    pub(crate) fn bind(
+        velo: std::sync::Arc<Velo>,
+        phaser: Phaser,
+        registration_authority: std::sync::Arc<CellRegistrationAuthority>,
+    ) -> anyhow::Result<Self> {
         let push_velo = velo.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_PHASER_SUBSCRIBE, move |ctx: Context| {
                 let phaser = phaser.clone();
                 let push_velo = push_velo.clone();
+                let registration_authority = registration_authority.clone();
                 async move {
                     let request: PhaserSubscribeRequest = rmp_serde::from_slice(&ctx.payload)
                         .map_err(|error| {
                             anyhow::anyhow!("decode PhaserSubscribeRequest: {error}")
                         })?;
+                    registration_authority.verify_peer_admission(
+                        request.cell_id,
+                        CellPeerAdmissionPurpose::PhaserSubscribe,
+                        &request.cell_peer,
+                        &request.admission_proof,
+                    )?;
                     let peer: PeerInfo = rmp_serde::from_slice(&request.cell_peer)
                         .map_err(|error| anyhow::anyhow!("decode cell PeerInfo: {error}"))?;
                     let cell = peer.instance_id();
@@ -130,9 +147,11 @@ impl PhaserClient {
     /// a [`PhaserSubscription`] whose replay is the controller's snapshot and whose live
     /// tail is the pushed events — the same shape an in-process `Phaser::subscribe`
     /// yields.
-    pub async fn subscribe(
+    pub(crate) async fn subscribe(
         velo: std::sync::Arc<Velo>,
         controller: &PeerInfo,
+        cell_id: u32,
+        credential: &CellRegistrationCredential,
     ) -> anyhow::Result<PhaserSubscription> {
         // Register the push handler BEFORE subscribing, so no live event pushed between
         // the subscribe reply and handler registration is lost (the controller only
@@ -155,9 +174,16 @@ impl PhaserClient {
         velo.register_peer(controller.clone())
             .map_err(|error| anyhow::anyhow!("register_peer controller: {error}"))?;
 
+        if credential.cell_id() != cell_id {
+            anyhow::bail!("phaser credential does not match the cell identity");
+        }
+        let cell_peer = rmp_serde::to_vec(&velo.peer_info())
+            .map_err(|error| anyhow::anyhow!("encode cell PeerInfo: {error}"))?;
         let request = PhaserSubscribeRequest {
-            cell_peer: rmp_serde::to_vec(&velo.peer_info())
-                .map_err(|error| anyhow::anyhow!("encode cell PeerInfo: {error}"))?,
+            cell_id,
+            admission_proof: credential
+                .sign_peer_admission(CellPeerAdmissionPurpose::PhaserSubscribe, &cell_peer)?,
+            cell_peer,
         };
         let body = rmp_serde::to_vec(&request)
             .map_err(|error| anyhow::anyhow!("encode PhaserSubscribeRequest: {error}"))?;
@@ -185,7 +211,8 @@ impl PhaserClient {
 mod tests {
     use super::*;
     use crate::cellular::phaser::PhaseTransition;
-    use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+    use crate::cellular::transport::connect::{BindSpec, build_velo};
+    use crate::engine::cellular_registration::CellRegistrationAuthority;
 
     // End-to-end over two in-process velo instances: the controller advances the phaser
     // and a cell subscribing over velo observes the full generation sequence — replay
@@ -193,22 +220,25 @@ mod tests {
     #[tokio::test]
     async fn cell_observes_replay_then_live_generations_over_velo() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let coordinate = format!("tcp://{}", listener.local_addr().expect("addr"));
         let controller_velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("controller velo");
         let phaser = Phaser::new();
-        let _server = PhaserServer::bind(controller_velo.clone(), phaser.clone()).expect("bind");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let _server = PhaserServer::bind(
+            controller_velo.clone(),
+            phaser.clone(),
+            std::sync::Arc::new(authority),
+        )
+        .expect("bind");
 
         // Advance twice BEFORE the cell subscribes — these must arrive as replay.
         phaser.advance(PhaseTransition::Started);
         phaser.advance(PhaseTransition::ShardsAvailable(4));
 
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let controller_peer = connect_controller(&cell_velo, &coordinate)
-            .await
-            .expect("connect controller");
-        let mut sub = PhaserClient::subscribe(cell_velo, &controller_peer)
+        let controller_peer = controller_velo.peer_info();
+        let mut sub = PhaserClient::subscribe(cell_velo, &controller_peer, 0, &credentials[0])
             .await
             .expect("subscribe");
 
@@ -224,21 +254,24 @@ mod tests {
     #[tokio::test]
     async fn cell_awaits_named_phase_advances_from_replay_and_live_over_velo() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let coordinate = format!("tcp://{}", listener.local_addr().expect("addr"));
         let controller_velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("controller velo");
         let phaser = Phaser::new();
-        let _server = PhaserServer::bind(controller_velo.clone(), phaser.clone()).expect("bind");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let _server = PhaserServer::bind(
+            controller_velo.clone(),
+            phaser.clone(),
+            std::sync::Arc::new(authority),
+        )
+        .expect("bind");
 
         phaser.advance(PhaseTransition::Started);
         phaser.advance(PhaseTransition::PhaseAdvance("warmup".into()));
 
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let controller_peer = connect_controller(&cell_velo, &coordinate)
-            .await
-            .expect("connect controller");
-        let mut sub = PhaserClient::subscribe(cell_velo, &controller_peer)
+        let controller_peer = controller_velo.peer_info();
+        let mut sub = PhaserClient::subscribe(cell_velo, &controller_peer, 0, &credentials[0])
             .await
             .expect("subscribe");
 

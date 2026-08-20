@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Imported Codex session sets ship over the cellular HTTP artifact plane.
+//! Imported Codex session sets ship over the authenticated cellular TLS artifact plane.
 //!
 //! The multi-cell run uses the real `aiperf` controller and cells, while the
 //! in-process mock server receives every reconstructed imported request. The raw
@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 const SESSIONS: u32 = 3;
 const CELLS: u32 = 3;
 const CONCURRENCY: u32 = 3;
+const PRIVATE_SOURCE_SENTINEL: &str = "PRIVATE_SOURCE_SENTINEL";
 
 fn write_codex_session_set(root: &Path) -> PathBuf {
     let sessions = root.join("sessions");
@@ -44,6 +45,13 @@ fn write_codex_session_set(root: &Path) -> PathBuf {
         fs::write(sessions.join(format!("session-{session}.jsonl")), body)
             .expect("write imported Codex session");
     }
+    fs::write(root.join("credentials.txt"), PRIVATE_SOURCE_SENTINEL)
+        .expect("write ignored credentials decoy");
+    fs::write(
+        root.join("ignored-source.jsonl"),
+        format!("{{\"private\":\"{PRIVATE_SOURCE_SENTINEL}\"}}\n"),
+    )
+    .expect("write ignored JSONL decoy");
     sessions
 }
 
@@ -149,9 +157,30 @@ fn dataset_serve_observables(result: &RunResult) -> Vec<String> {
     fs::read_to_string(log)
         .unwrap_or_default()
         .lines()
-        .filter(|line| line.contains("served dataset source over HTTP"))
+        .filter(|line| line.contains("served dataset source over TLS/authenticated transfer"))
         .map(str::to_owned)
         .collect()
+}
+
+fn regular_artifact_texts(root: &Path) -> Vec<String> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut texts = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory).expect("read artifact directory") {
+            let entry = entry.expect("read artifact entry");
+            let path = entry.path();
+            let kind = entry.file_type().expect("inspect artifact entry");
+            if kind.is_dir() {
+                pending.push(path);
+            } else if kind.is_file() {
+                texts.push(
+                    String::from_utf8_lossy(&fs::read(&path).expect("read regular artifact"))
+                        .into_owned(),
+                );
+            }
+        }
+    }
+    texts
 }
 
 #[tokio::test]
@@ -198,9 +227,36 @@ async fn test_cellular_imported_session_exact_set_shipping_matches_single_cell_r
     );
     assert!(
         observables.iter().all(|line| {
-            line.contains("content_encoding=\"zstd\"") || line.contains("content_encoding=zstd")
+            (line.contains("content_encoding=\"zstd\"") || line.contains("content_encoding=zstd"))
+                && line.contains("TLS/authenticated")
         }),
-        "imported-session sources must be served over zstd: {observables:?}"
+        "imported-session sources must be served over authenticated TLS + zstd: {observables:?}"
+    );
+    assert!(
+        observables.iter().all(|line| {
+            line.contains("session-0.jsonl")
+                || line.contains("session-1.jsonl")
+                || line.contains("session-2.jsonl")
+        }),
+        "only selected session sources may cross the channel: {observables:?}"
+    );
+    assert!(
+        !observables
+            .iter()
+            .any(|line| line.contains("credentials.txt") || line.contains("ignored-source.jsonl")),
+        "decoy sources must never be served: {observables:?}"
+    );
+    for text in [cellular.stdout.as_str(), cellular.stderr.as_str()] {
+        assert!(
+            !text.contains(PRIVATE_SOURCE_SENTINEL),
+            "private ignored source content leaked into a cellular artifact"
+        );
+    }
+    assert!(
+        regular_artifact_texts(&cellular.artifacts.dir)
+            .iter()
+            .all(|text| !text.contains(PRIVATE_SOURCE_SENTINEL)),
+        "private ignored source content leaked into a cellular artifact"
     );
     assert!(
         dataset_serve_observables(&baseline).is_empty(),

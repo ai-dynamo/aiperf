@@ -24,14 +24,20 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path as AxumPath, Request, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bytes::Bytes;
-use tokio::sync::{mpsc, oneshot, watch};
-use tokio::task::JoinHandle;
+use rand::TryRngCore;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
+use tokio::task::{JoinHandle, JoinSet};
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tokio_stream::StreamExt;
+
+use crate::cellular::transport::ArtifactChannelServerConfig;
 
 /// The read/compress/write chunk size. Both the compressor's read buffer and the decoder's
 /// per-frame write are bounded by this, so peak per-transfer memory is O(chunk),
@@ -47,6 +53,313 @@ pub const ZSTD_LEVEL: i32 = 3;
 pub const ZSTD_CONTENT_ENCODING: &str = "zstd";
 
 const DATASET_SERVE_EVENT_LEVEL: tracing::Level = tracing::Level::DEBUG;
+const ARTIFACT_TLS_SERVER_NAME: &str = "aiperf-cellular-artifact.invalid";
+const TLS_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const TLS_HANDSHAKE_MAX_CONCURRENT: usize = 32;
+
+/// One cell-local bearer capability for the per-run artifact channel.
+///
+/// It deliberately does not implement serialization, display, or string
+/// conversion. The controller receives only [`Self::digest_bytes`].
+pub(crate) struct ArtifactBearer([u8; 32]);
+
+impl ArtifactBearer {
+    pub(crate) fn generate() -> Result<Self> {
+        let mut bytes = [0_u8; 32];
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut bytes)
+            .map_err(|_| anyhow::anyhow!("OS RNG could not mint artifact capability"))?;
+        Ok(Self(bytes))
+    }
+
+    pub(crate) fn digest_bytes(&self) -> [u8; 32] {
+        *blake3::hash(&self.hex_bytes()).as_bytes()
+    }
+
+    fn hex_bytes(&self) -> [u8; 64] {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut hex = [0_u8; 64];
+        for (index, byte) in self.0.iter().copied().enumerate() {
+            hex[index * 2] = HEX[(byte >> 4) as usize];
+            hex[index * 2 + 1] = HEX[(byte & 0x0F) as usize];
+        }
+        hex
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_test_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl std::fmt::Debug for ArtifactBearer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ArtifactBearer([REDACTED])")
+    }
+}
+
+/// A pinned-TLS, bearer-authenticated client for one controller artifact channel.
+pub(crate) struct ArtifactChannelClient {
+    authority: String,
+    authorization: axum::http::HeaderValue,
+    tls: Arc<rustls::ClientConfig>,
+}
+
+impl ArtifactChannelClient {
+    pub(crate) fn new(
+        authority: String,
+        server_config: ArtifactChannelServerConfig,
+        bearer: ArtifactBearer,
+    ) -> Result<Self> {
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(CertificateDer::from(
+                server_config.server_certificate_der().to_vec(),
+            ))
+            .context("installing pinned artifact TLS certificate")?;
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let tls = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|_| anyhow::anyhow!("aws-lc cannot provide artifact TLS protocols"))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let mut raw = b"Bearer ".to_vec();
+        raw.extend_from_slice(&bearer.hex_bytes());
+        let authorization = axum::http::HeaderValue::from_bytes(&raw)
+            .context("constructing artifact authorization header")?;
+        Ok(Self {
+            authority,
+            authorization,
+            tls: Arc::new(tls),
+        })
+    }
+
+    fn request<B>(&self, method: &str, path: &str, body: B) -> Result<hyper::Request<B>> {
+        hyper::Request::builder()
+            .method(method)
+            .uri(path)
+            .header(hyper::header::HOST, &self.authority)
+            .header(hyper::header::AUTHORIZATION, &self.authorization)
+            .body(body)
+            .context("building authenticated artifact request")
+    }
+
+    async fn connect_and_send<B>(
+        &self,
+        request: hyper::Request<B>,
+        label: &str,
+    ) -> Result<hyper::Response<hyper::body::Incoming>>
+    where
+        B: hyper::body::Body + Send + 'static,
+        B::Data: Send,
+        B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        let stream = tokio::net::TcpStream::connect(&self.authority)
+            .await
+            .with_context(|| format!("connecting to {label} server"))?;
+        let server_name = ServerName::try_from(ARTIFACT_TLS_SERVER_NAME.to_owned())
+            .map_err(|_| anyhow::anyhow!("invalid fixed artifact TLS server name"))?;
+        let stream = TlsConnector::from(self.tls.clone())
+            .connect(server_name, stream)
+            .await
+            .with_context(|| format!("artifact TLS handshake for {label}"))?;
+        let io = hyper_util::rt::TokioIo::new(stream);
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
+            .await
+            .with_context(|| format!("{label} HTTP handshake"))?;
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        sender
+            .send_request(request)
+            .await
+            .with_context(|| format!("sending {label} request"))
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ArtifactChannelRegistrar {
+    expected_cell_count: u32,
+    authorized_cells: Arc<parking_lot::RwLock<AuthorizedCells>>,
+    server_config: ArtifactChannelServerConfig,
+}
+
+struct AuthorizedCells {
+    by_digest: HashMap<blake3::Hash, u32>,
+    by_cell: HashMap<u32, blake3::Hash>,
+}
+
+impl ArtifactChannelRegistrar {
+    pub(crate) fn register(&self, cell_id: u32, digest: [u8; 32]) -> Result<()> {
+        ensure!(
+            cell_id < self.expected_cell_count,
+            "artifact registration cell is out of range"
+        );
+        let digest = blake3::Hash::from_bytes(digest);
+        let mut authorized = self.authorized_cells.write();
+        if let Some(existing) = authorized.by_cell.get(&cell_id) {
+            ensure!(
+                *existing == digest,
+                "cell registered a different artifact capability"
+            );
+            return Ok(());
+        }
+        ensure!(
+            !authorized.by_digest.contains_key(&digest),
+            "artifact capability is already bound to another cell"
+        );
+        authorized.by_digest.insert(digest, cell_id);
+        authorized.by_cell.insert(cell_id, digest);
+        Ok(())
+    }
+
+    pub(crate) fn server_config(&self) -> ArtifactChannelServerConfig {
+        self.server_config.clone()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AuthenticatedCellId(u32);
+
+struct TlsListener {
+    completed: mpsc::Receiver<(
+        tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+        SocketAddr,
+    )>,
+    local_addr: SocketAddr,
+}
+
+struct TlsHandshakeAdmission {
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    task: Option<JoinHandle<()>>,
+}
+
+impl TlsListener {
+    fn admit(
+        listener: tokio::net::TcpListener,
+        acceptor: TlsAcceptor,
+        local_addr: SocketAddr,
+    ) -> (Self, TlsHandshakeAdmission) {
+        let (completed_tx, completed) = mpsc::channel(TLS_HANDSHAKE_MAX_CONCURRENT);
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let permits = Arc::new(Semaphore::new(TLS_HANDSHAKE_MAX_CONCURRENT));
+            let mut handshakes = JoinSet::new();
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    joined = handshakes.join_next(), if !handshakes.is_empty() => {
+                        if let Some(Err(error)) = joined {
+                            tracing::debug!(
+                                target: "aiperf_cellular_artifact",
+                                error = %error,
+                                route_class = "tls",
+                                outcome = "task_failed",
+                                "artifact TLS handshake task failed"
+                            );
+                        }
+                    }
+                    accepted = listener.accept() => match accepted {
+                        Ok((stream, address)) => {
+                            let Ok(permit) = permits.clone().try_acquire_owned() else {
+                                tracing::debug!(
+                                    target: "aiperf_cellular_artifact",
+                                    route_class = "tls",
+                                    outcome = "admission_full",
+                                    "artifact TLS connection rejected"
+                                );
+                                continue;
+                            };
+                            let acceptor = acceptor.clone();
+                            let completed_tx = completed_tx.clone();
+                            handshakes.spawn(async move {
+                                let _permit = permit;
+                                match tokio::time::timeout(TLS_HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
+                                    Ok(Ok(stream)) => {
+                                        if completed_tx.send((stream, address)).await.is_err() {
+                                            tracing::debug!(
+                                                target: "aiperf_cellular_artifact",
+                                                route_class = "tls",
+                                                outcome = "server_stopped",
+                                                "artifact TLS handshake completed after server shutdown"
+                                            );
+                                        }
+                                    }
+                                    Ok(Err(_)) => tracing::debug!(
+                                        target: "aiperf_cellular_artifact",
+                                        route_class = "tls",
+                                        outcome = "rejected",
+                                        "artifact TLS connection rejected"
+                                    ),
+                                    Err(_) => tracing::debug!(
+                                        target: "aiperf_cellular_artifact",
+                                        route_class = "tls",
+                                        outcome = "timeout",
+                                        "artifact TLS handshake timed out"
+                                    ),
+                                }
+                            });
+                        }
+                        Err(error) => tracing::debug!(
+                            target: "aiperf_cellular_artifact",
+                            error = %error,
+                            route_class = "accept",
+                            "artifact listener accept failed"
+                        ),
+                    },
+                }
+            }
+            handshakes.abort_all();
+            while handshakes.join_next().await.is_some() {}
+        });
+        (
+            Self {
+                completed,
+                local_addr,
+            },
+            TlsHandshakeAdmission {
+                shutdown_tx: Some(shutdown_tx),
+                task: Some(task),
+            },
+        )
+    }
+}
+
+impl axum::serve::Listener for TlsListener {
+    type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        match self.completed.recv().await {
+            Some(connection) => connection,
+            None => std::future::pending().await,
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<Self::Addr> {
+        Ok(self.local_addr)
+    }
+}
+
+impl TlsHandshakeAdmission {
+    async fn shutdown(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+    }
+
+    fn abort(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
 
 /// The wire manifest a cross-host cell fetches (`GET /dataset-manifest`) to learn
 /// the exact file set that makes up a directory or segmented-prefix graph trace,
@@ -308,8 +621,10 @@ struct UploadState {
 pub struct ArtifactUploadServer {
     local_addr: SocketAddr,
     state: Arc<UploadState>,
+    registrar: ArtifactChannelRegistrar,
     shutdown_tx: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
+    tls_admission: Option<TlsHandshakeAdmission>,
 }
 
 impl ArtifactUploadServer {
@@ -321,8 +636,9 @@ impl ArtifactUploadServer {
         bind: SocketAddr,
         temp_root: PathBuf,
         allowed: HashSet<String>,
+        cell_count: u32,
     ) -> Result<Self> {
-        Self::start_with_datasets(bind, temp_root, allowed, HashMap::new()).await
+        Self::start_with_datasets(bind, temp_root, allowed, HashMap::new(), cell_count).await
     }
 
     /// Like [`start`](Self::start), plus a map of dataset SOURCE files the server
@@ -337,8 +653,9 @@ impl ArtifactUploadServer {
         temp_root: PathBuf,
         allowed: HashSet<String>,
         datasets: HashMap<String, DatasetSource>,
+        cell_count: u32,
     ) -> Result<Self> {
-        Self::start_with_dataset_plan(bind, temp_root, allowed, datasets, None).await
+        Self::start_with_dataset_plan(bind, temp_root, allowed, datasets, None, cell_count).await
     }
 
     /// Like [`start_with_datasets`](Self::start_with_datasets), plus the multi-file
@@ -353,6 +670,7 @@ impl ArtifactUploadServer {
         allowed: HashSet<String>,
         datasets: HashMap<String, DatasetSource>,
         manifest: Option<DatasetManifest>,
+        cell_count: u32,
     ) -> Result<Self> {
         let state = Arc::new(UploadState {
             temp_root,
@@ -361,6 +679,27 @@ impl ArtifactUploadServer {
             manifest,
             done: watch::Sender::new(HashSet::new()),
         });
+        let rcgen::CertifiedKey { cert, key_pair } =
+            rcgen::generate_simple_self_signed(vec![ARTIFACT_TLS_SERVER_NAME.to_owned()])
+                .context("generating per-run artifact TLS certificate")?;
+        let certificate = CertificateDer::from(cert.der().to_vec());
+        let private_key = PrivateKeyDer::try_from(key_pair.serialize_der())
+            .map_err(|_| anyhow::anyhow!("constructing per-run artifact TLS private key"))?;
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let server_config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|_| anyhow::anyhow!("aws-lc cannot provide artifact TLS protocols"))?
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate.clone()], private_key)
+            .context("installing per-run artifact TLS identity")?;
+        let registrar = ArtifactChannelRegistrar {
+            expected_cell_count: cell_count,
+            authorized_cells: Arc::new(parking_lot::RwLock::new(AuthorizedCells {
+                by_digest: HashMap::new(),
+                by_cell: HashMap::new(),
+            })),
+            server_config: ArtifactChannelServerConfig::new(certificate.to_vec()),
+        };
         let app = Router::new()
             .route("/cell/{cell_id}/artifact/{*file}", post(upload_artifact))
             .route("/cell/{cell_id}/done", post(cell_done))
@@ -369,6 +708,10 @@ impl ArtifactUploadServer {
             // The body is streamed frame by frame (bounded); lift the default 2 MB
             // request-body cap so a large records.jsonl upload is not truncated.
             .layer(DefaultBodyLimit::disable())
+            .layer(axum::middleware::from_fn_with_state(
+                registrar.authorized_cells.clone(),
+                authenticate_artifact_request,
+            ))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind(bind)
             .await
@@ -377,8 +720,13 @@ impl ArtifactUploadServer {
             .local_addr()
             .context("reading artifact upload server address")?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (tls_listener, tls_admission) = TlsListener::admit(
+            listener,
+            TlsAcceptor::from(Arc::new(server_config)),
+            local_addr,
+        );
         let task = tokio::spawn(async move {
-            let _ = axum::serve(listener, app)
+            let _ = axum::serve(tls_listener, app)
                 .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.await;
                 })
@@ -387,14 +735,21 @@ impl ArtifactUploadServer {
         Ok(Self {
             local_addr,
             state,
+            registrar,
             shutdown_tx: Some(shutdown_tx),
             task: Some(task),
+            tls_admission: Some(tls_admission),
         })
     }
 
     /// The bound address (host + OS-assigned port when bound to `:0`).
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
+    }
+
+    /// A cheap clone that binds one registered bearer digest to each expected cell.
+    pub(crate) fn registrar(&self) -> ArtifactChannelRegistrar {
+        self.registrar.clone()
     }
 
     /// Wait until `cell_count` distinct cells have signaled `/done`, or `timeout`
@@ -443,6 +798,9 @@ impl ArtifactUploadServer {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
+        if let Some(admission) = self.tls_admission.as_mut() {
+            admission.shutdown().await;
+        }
         if let Some(task) = self.task.take() {
             let _ = task.await;
         }
@@ -454,7 +812,56 @@ impl Drop for ArtifactUploadServer {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
+        if let Some(admission) = self.tls_admission.as_mut() {
+            admission.abort();
+        }
     }
+}
+
+fn unauthorized_artifact_response() -> Response {
+    StatusCode::UNAUTHORIZED.into_response()
+}
+
+async fn authenticate_artifact_request(
+    State(authorized_cells): State<Arc<parking_lot::RwLock<AuthorizedCells>>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let Some(value) = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| {
+            token.len() == 64
+                && token.bytes().all(|byte| {
+                    byte.is_ascii_digit() || (byte.is_ascii_lowercase() && byte.is_ascii_hexdigit())
+                })
+        })
+    else {
+        tracing::debug!(
+            target: "aiperf_cellular_artifact",
+            route_class = "artifact",
+            outcome = "unauthorized",
+            "artifact authorization rejected"
+        );
+        return unauthorized_artifact_response();
+    };
+    let digest = blake3::hash(value.as_bytes());
+    let cell_id = authorized_cells.read().by_digest.get(&digest).copied();
+    let Some(cell_id) = cell_id else {
+        tracing::debug!(
+            target: "aiperf_cellular_artifact",
+            route_class = "artifact",
+            outcome = "unauthorized",
+            "artifact authorization rejected"
+        );
+        return unauthorized_artifact_response();
+    };
+    request
+        .extensions_mut()
+        .insert(AuthenticatedCellId(cell_id));
+    next.run(request).await
 }
 
 /// `POST /cell/{cell_id}/artifact/{*file}` — stream the (zstd) request body into
@@ -462,10 +869,14 @@ impl Drop for ArtifactUploadServer {
 /// against the run allowlist; bounded memory throughout.
 async fn upload_artifact(
     State(state): State<Arc<UploadState>>,
+    Extension(AuthenticatedCellId(authenticated_cell_id)): Extension<AuthenticatedCellId>,
     AxumPath((cell_id, file)): AxumPath<(u32, String)>,
     headers: HeaderMap,
     body: Body,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    if authenticated_cell_id != cell_id {
+        return Err((StatusCode::UNAUTHORIZED, String::new()));
+    }
     let rel = validate_artifact_relpath(&file, &state.allowed)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     let dest = state.temp_root.join(format!("cell-{cell_id}")).join(&rel);
@@ -538,8 +949,12 @@ async fn upload_artifact(
 /// barrier.
 async fn cell_done(
     State(state): State<Arc<UploadState>>,
+    Extension(AuthenticatedCellId(authenticated_cell_id)): Extension<AuthenticatedCellId>,
     AxumPath(cell_id): AxumPath<u32>,
 ) -> StatusCode {
+    if authenticated_cell_id != cell_id {
+        return StatusCode::UNAUTHORIZED;
+    }
     // `send_modify` mutates the set and bumps the watch version even when no
     // receiver is currently parked, so a barrier that has not yet registered still
     // observes this cell on its next `borrow_and_update` — the wakeup cannot be lost.
@@ -590,7 +1005,7 @@ async fn serve_dataset(
         DATASET_SERVE_EVENT_LEVEL,
         dataset = %name,
         content_encoding = ZSTD_CONTENT_ENCODING,
-        "served dataset source over HTTP"
+        "served dataset source over TLS/authenticated transfer"
     );
 
     let body = Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
@@ -623,8 +1038,8 @@ async fn serve_dataset_manifest(
 /// is the set of relative artifact paths to ship (only those that exist on disk
 /// are sent — a metrics-only or lazy-CSV run legitimately omits some). Bounded
 /// memory: each file streams through a [`FileCompressor`] over a bounded channel.
-pub async fn ship_cell_artifacts(
-    authority: &str,
+pub(crate) async fn ship_cell_artifacts(
+    client: &ArtifactChannelClient,
     cell_id: u32,
     cell_dir: &Path,
     relatives: &[String],
@@ -634,11 +1049,11 @@ pub async fn ship_cell_artifacts(
         if !src.exists() {
             continue;
         }
-        upload_one(authority, cell_id, rel, &src)
+        upload_one(client, cell_id, rel, &src)
             .await
             .with_context(|| format!("cell {cell_id} shipping artifact {rel:?}"))?;
     }
-    post_done(authority, cell_id)
+    post_done(client, cell_id)
         .await
         .with_context(|| format!("cell {cell_id} posting artifact done"))?;
     Ok(())
@@ -647,7 +1062,12 @@ pub async fn ship_cell_artifacts(
 /// Stream one file to `POST /cell/{cell_id}/artifact/{rel}` with
 /// `Content-Encoding: zstd`. Compression runs on a blocking task feeding a bounded
 /// channel; the request body streams from that channel (whole-file never resident).
-async fn upload_one(authority: &str, cell_id: u32, rel: &str, src: &Path) -> Result<()> {
+async fn upload_one(
+    client: &ArtifactChannelClient,
+    cell_id: u32,
+    rel: &str,
+    src: &Path,
+) -> Result<()> {
     use http_body_util::StreamBody;
     use hyper::body::Frame;
     use tokio_stream::wrappers::ReceiverStream;
@@ -669,15 +1089,13 @@ async fn upload_one(authority: &str, cell_id: u32, rel: &str, src: &Path) -> Res
         ReceiverStream::new(rx).map(|bytes| Ok::<_, std::convert::Infallible>(Frame::data(bytes)));
     let body = StreamBody::new(body_stream);
 
-    let request = hyper::Request::builder()
-        .method("POST")
-        .uri(format!("/cell/{cell_id}/artifact/{rel}"))
-        .header(hyper::header::HOST, authority)
-        .header(hyper::header::CONTENT_ENCODING, ZSTD_CONTENT_ENCODING)
-        .body(body)
-        .context("building artifact upload request")?;
+    let mut request = client.request("POST", &format!("/cell/{cell_id}/artifact/{rel}"), body)?;
+    request.headers_mut().insert(
+        hyper::header::CONTENT_ENCODING,
+        hyper::header::HeaderValue::from_static(ZSTD_CONTENT_ENCODING),
+    );
 
-    let status = send_request(authority, request).await?;
+    let status = send_request(client, request).await?;
     // Join the producer so a compression/IO error is not silently swallowed.
     match producer.await {
         Ok(Ok(())) => {}
@@ -692,16 +1110,15 @@ async fn upload_one(authority: &str, cell_id: u32, rel: &str, src: &Path) -> Res
 }
 
 /// POST the empty-bodied `/cell/{cell_id}/done` completion marker.
-async fn post_done(authority: &str, cell_id: u32) -> Result<()> {
+async fn post_done(client: &ArtifactChannelClient, cell_id: u32) -> Result<()> {
     use http_body_util::Empty;
 
-    let request = hyper::Request::builder()
-        .method("POST")
-        .uri(format!("/cell/{cell_id}/done"))
-        .header(hyper::header::HOST, authority)
-        .body(Empty::<Bytes>::new())
-        .context("building done request")?;
-    let status = send_request(authority, request).await?;
+    let request = client.request(
+        "POST",
+        &format!("/cell/{cell_id}/done"),
+        Empty::<Bytes>::new(),
+    )?;
+    let status = send_request(client, request).await?;
     ensure!(status.is_success(), "done marker returned HTTP {status}");
     Ok(())
 }
@@ -709,7 +1126,10 @@ async fn post_done(authority: &str, cell_id: u32) -> Result<()> {
 /// Open an HTTP/1.1 connection to `authority` (DNS-resolved), send `request`, and
 /// return its status after draining the response. Uses a raw hyper client
 /// connection.
-async fn send_request<B>(authority: &str, request: hyper::Request<B>) -> Result<StatusCode>
+async fn send_request<B>(
+    client: &ArtifactChannelClient,
+    request: hyper::Request<B>,
+) -> Result<StatusCode>
 where
     B: hyper::body::Body + Send + 'static,
     B::Data: Send,
@@ -717,42 +1137,11 @@ where
 {
     use http_body_util::BodyExt;
 
-    let response = connect_and_send(authority, request, "artifact").await?;
+    let response = client.connect_and_send(request, "artifact").await?;
     let status = response.status();
     // Drain the (small) response body so the connection closes cleanly.
     let _ = response.into_body().collect().await;
     Ok(status)
-}
-
-/// Open an HTTP/1.1 connection to `authority` (DNS-resolved), send `request`, and
-/// return the raw response (the connection driver is spawned; the caller consumes
-/// the body). `label` names the server role in connection/handshake errors
-/// (`"artifact"` vs `"dataset"`). Shared by the status-only [`send_request`] upload
-/// leg and the body-streaming [`fetch_dataset_to_file`] download leg.
-async fn connect_and_send<B>(
-    authority: &str,
-    request: hyper::Request<B>,
-    label: &str,
-) -> Result<hyper::Response<hyper::body::Incoming>>
-where
-    B: hyper::body::Body + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    let stream = tokio::net::TcpStream::connect(authority)
-        .await
-        .with_context(|| format!("connecting to {label} server {authority}"))?;
-    let io = hyper_util::rt::TokioIo::new(stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
-        .await
-        .with_context(|| format!("{label} HTTP handshake"))?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    sender
-        .send_request(request)
-        .await
-        .with_context(|| format!("sending {label} request"))
 }
 
 /// Fetch a controller dataset source over `GET /dataset/{name}` and
@@ -763,17 +1152,16 @@ where
 ///
 /// `authority` is the controller's artifact `host:port`; a same-host cell never
 /// calls this (it reads the controller-local path directly).
-pub async fn fetch_dataset_to_file(authority: &str, name: &str, dest: &Path) -> Result<()> {
+pub(crate) async fn fetch_dataset_to_file(
+    client: &ArtifactChannelClient,
+    name: &str,
+    dest: &Path,
+) -> Result<()> {
     use http_body_util::{BodyExt, Empty};
 
-    let request = hyper::Request::builder()
-        .method("GET")
-        .uri(dataset_request_path(name))
-        .header(hyper::header::HOST, authority)
-        .body(Empty::<Bytes>::new())
-        .context("building dataset fetch request")?;
+    let request = client.request("GET", &dataset_request_path(name), Empty::<Bytes>::new())?;
 
-    let response = connect_and_send(authority, request, "dataset").await?;
+    let response = client.connect_and_send(request, "dataset").await?;
     ensure!(
         response.status().is_success(),
         "dataset fetch for {name:?} returned HTTP {}",
@@ -824,30 +1212,13 @@ fn dataset_request_path(name: &str) -> String {
 /// The response is a small JSON body containing file names, not file bytes,
 /// so it is collected whole; each named file is then streamed by
 /// [`reconstruct_shipped_dataset`] with the bounded-memory [`fetch_dataset_to_file`].
-pub async fn fetch_dataset_manifest(authority: &str) -> Result<DatasetManifest> {
+pub(crate) async fn fetch_dataset_manifest(
+    client: &ArtifactChannelClient,
+) -> Result<DatasetManifest> {
     use http_body_util::{BodyExt, Empty};
 
-    let request = hyper::Request::builder()
-        .method("GET")
-        .uri("/dataset-manifest")
-        .header(hyper::header::HOST, authority)
-        .body(Empty::<Bytes>::new())
-        .context("building dataset manifest request")?;
-
-    let stream = tokio::net::TcpStream::connect(authority)
-        .await
-        .with_context(|| format!("connecting to dataset server {authority}"))?;
-    let io = hyper_util::rt::TokioIo::new(stream);
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
-        .await
-        .context("dataset manifest HTTP handshake")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-    let response = sender
-        .send_request(request)
-        .await
-        .context("sending dataset manifest request")?;
+    let request = client.request("GET", "/dataset-manifest", Empty::<Bytes>::new())?;
+    let response = client.connect_and_send(request, "dataset manifest").await?;
     ensure!(
         response.status().is_success(),
         "dataset manifest returned HTTP {}",
@@ -973,15 +1344,15 @@ fn validate_dataset_manifest(manifest: &DatasetManifest) -> Result<()> {
 /// - `"file"` / `"prefix"` / `"replay_root"` / `"agent_session_set"` →
 ///   `dest_dir/base_name` (a single file, segmented-prefix stem, recording beneath
 ///   its replay root, or an imported session selected from its discovery root).
-pub async fn reconstruct_shipped_dataset(
-    authority: &str,
+pub(crate) async fn reconstruct_shipped_dataset(
+    client: &ArtifactChannelClient,
     manifest: &DatasetManifest,
     dest_dir: &Path,
 ) -> Result<PathBuf> {
     validate_dataset_manifest(manifest)?;
     for name in &manifest.files {
         let dest = prepare_dataset_destination(dest_dir, Path::new(name))?;
-        fetch_dataset_to_file(authority, name, &dest)
+        fetch_dataset_to_file(client, name, &dest)
             .await
             .with_context(|| format!("fetching shipped dataset file {name:?}"))?;
     }
@@ -1033,10 +1404,245 @@ pub fn shippable_relatives(artifacts: &crate::engine::protocol::ArtifactSpec) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cellular::transport::CellRegister;
+
+    struct SecureServerFixture {
+        _temporary: tempfile::TempDir,
+        server: ArtifactUploadServer,
+        clients: Vec<ArtifactChannelClient>,
+    }
+
+    impl SecureServerFixture {
+        fn client(&self, cell_id: usize) -> &ArtifactChannelClient {
+            &self.clients[cell_id]
+        }
+    }
+
+    struct UnregisteredSecureServerFixture {
+        _temporary: tempfile::TempDir,
+        server: ArtifactUploadServer,
+        registrar: ArtifactChannelRegistrar,
+    }
+
+    async fn unregistered_secure_server_fixture(
+        cell_count: u32,
+    ) -> UnregisteredSecureServerFixture {
+        let temporary = tempfile::tempdir().unwrap();
+        let server = ArtifactUploadServer::start(
+            "127.0.0.1:0".parse().unwrap(),
+            temporary.path().join("landed"),
+            HashSet::new(),
+            cell_count,
+        )
+        .await
+        .unwrap();
+        let registrar = server.registrar();
+        UnregisteredSecureServerFixture {
+            _temporary: temporary,
+            server,
+            registrar,
+        }
+    }
+
+    async fn secure_server_fixture(cell_count: u32) -> SecureServerFixture {
+        let fixture = unregistered_secure_server_fixture(cell_count).await;
+        let authority = fixture.server.local_addr().to_string();
+        let mut clients = Vec::with_capacity(cell_count as usize);
+        for cell_id in 0..cell_count {
+            let bearer = ArtifactBearer::from_test_bytes([cell_id as u8 + 1; 32]);
+            fixture
+                .registrar
+                .register(cell_id, bearer.digest_bytes())
+                .unwrap();
+            clients.push(
+                ArtifactChannelClient::new(
+                    authority.clone(),
+                    fixture.registrar.server_config(),
+                    bearer,
+                )
+                .unwrap(),
+            );
+        }
+        SecureServerFixture {
+            _temporary: fixture._temporary,
+            server: fixture.server,
+            clients,
+        }
+    }
+
+    fn test_client(server: &ArtifactUploadServer, cell_id: u32) -> ArtifactChannelClient {
+        let bearer = ArtifactBearer::from_test_bytes([cell_id as u8 + 1; 32]);
+        let registrar = server.registrar();
+        registrar.register(cell_id, bearer.digest_bytes()).unwrap();
+        ArtifactChannelClient::new(
+            server.local_addr().to_string(),
+            registrar.server_config(),
+            bearer,
+        )
+        .unwrap()
+    }
+
+    fn unreachable_test_client() -> ArtifactChannelClient {
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let tls = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth();
+        ArtifactChannelClient {
+            authority: "127.0.0.1:1".to_owned(),
+            authorization: axum::http::HeaderValue::from_static(
+                "Bearer 0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            tls: Arc::new(tls),
+        }
+    }
+
+    async fn fetch_status(client: &ArtifactChannelClient, path: &str) -> StatusCode {
+        use http_body_util::{BodyExt, Empty};
+
+        let request = client.request("GET", path, Empty::<Bytes>::new()).unwrap();
+        let response = client.connect_and_send(request, "test").await.unwrap();
+        let status = response.status();
+        let _ = response.into_body().collect().await;
+        status
+    }
+
+    async fn fetch_status_without_authorization(
+        client: &ArtifactChannelClient,
+        path: &str,
+    ) -> StatusCode {
+        use http_body_util::{BodyExt, Empty};
+
+        let request = hyper::Request::builder()
+            .method("GET")
+            .uri(path)
+            .header(hyper::header::HOST, &client.authority)
+            .body(Empty::<Bytes>::new())
+            .unwrap();
+        let response = client.connect_and_send(request, "test").await.unwrap();
+        let status = response.status();
+        let _ = response.into_body().collect().await;
+        status
+    }
+
+    async fn post_done_status(client: &ArtifactChannelClient, cell_id: u32) -> Result<StatusCode> {
+        use http_body_util::{BodyExt, Empty};
+
+        let request = client.request(
+            "POST",
+            &format!("/cell/{cell_id}/done"),
+            Empty::<Bytes>::new(),
+        )?;
+        let response = client.connect_and_send(request, "test").await?;
+        let status = response.status();
+        let _ = response.into_body().collect().await;
+        Ok(status)
+    }
+
+    async fn assert_plain_http_cannot_read_manifest(address: SocketAddr) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream
+            .write_all(b"GET /dataset-manifest HTTP/1.1\r\nHost: test\r\n\r\n")
+            .await
+            .unwrap();
+        let mut bytes = Vec::new();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            stream.read_to_end(&mut bytes),
+        )
+        .await;
+        assert!(!bytes.windows(12).any(|window| window == b"HTTP/1.1 200"));
+        assert!(!bytes.windows(8).any(|window| window == b"manifest"));
+    }
 
     #[test]
     fn dataset_serve_event_is_debug_level() {
         assert_eq!(DATASET_SERVE_EVENT_LEVEL, tracing::Level::DEBUG);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn artifact_channel_rejects_plaintext_and_missing_credentials() {
+        let fixture = secure_server_fixture(2).await;
+        assert_plain_http_cannot_read_manifest(fixture.server.local_addr()).await;
+        assert_eq!(
+            fetch_status_without_authorization(fixture.client(0), "/dataset/does-not-exist").await,
+            StatusCode::UNAUTHORIZED,
+        );
+        assert_eq!(
+            fetch_status(&fixture.client(0), "/dataset/does-not-exist").await,
+            StatusCode::NOT_FOUND,
+        );
+        fixture.server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stalled_tls_handshake_does_not_serialize_authenticated_transfers() {
+        let fixture = secure_server_fixture(1).await;
+        let stalled = tokio::net::TcpStream::connect(fixture.server.local_addr())
+            .await
+            .expect("connect stalled TCP client");
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+        let status = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            fetch_status(fixture.client(0), "/dataset/does-not-exist"),
+        )
+        .await
+        .expect("stalled TLS handshake must not block an authenticated transfer");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        tokio::time::sleep(TLS_HANDSHAKE_TIMEOUT + std::time::Duration::from_millis(25)).await;
+        drop(stalled);
+        assert_eq!(
+            fetch_status(fixture.client(0), "/dataset/does-not-exist").await,
+            StatusCode::NOT_FOUND
+        );
+        fixture.server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn artifact_channel_binds_credentials_to_cell_routes() {
+        let fixture = secure_server_fixture(2).await;
+        let cell_zero = fixture.client(0);
+        assert_eq!(
+            post_done_status(&cell_zero, 1).await.unwrap(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            post_done_status(&cell_zero, 0).await.unwrap(),
+            StatusCode::OK
+        );
+        fixture.server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn artifact_channel_registrar_binds_each_digest_once() {
+        let fixture = unregistered_secure_server_fixture(2).await;
+        let digest_zero = ArtifactBearer::from_test_bytes([0x11; 32]).digest_bytes();
+        let digest_one = ArtifactBearer::from_test_bytes([0x22; 32]).digest_bytes();
+        fixture.registrar.register(0, digest_zero).unwrap();
+        fixture.registrar.register(0, digest_zero).unwrap();
+        assert!(fixture.registrar.register(0, digest_one).is_err());
+        assert!(fixture.registrar.register(1, digest_zero).is_err());
+        assert!(fixture.registrar.register(2, digest_one).is_err());
+        fixture.server.shutdown().await;
+    }
+
+    #[test]
+    fn artifact_channel_secrets_are_redacted() {
+        let bearer = ArtifactBearer::from_test_bytes([0xA5; 32]);
+        assert_eq!(format!("{bearer:?}"), "ArtifactBearer([REDACTED])");
+        let register = CellRegister {
+            cell_id: 0,
+            cell_peer: Vec::new(),
+            artifact_capability_digest: Some(bearer.digest_bytes()),
+            registration_proof: None,
+        };
+        let encoded = rmp_serde::to_vec(&register).unwrap();
+        assert!(!encoded.windows(32).any(|window| window == [0xA5; 32]));
     }
 
     fn sample_bytes(len: usize) -> Vec<u8> {
@@ -1155,6 +1761,7 @@ mod tests {
             "127.0.0.1:0".parse().unwrap(),
             root.path().to_path_buf(),
             HashSet::new(),
+            3,
         )
         .await
         .unwrap();
@@ -1189,6 +1796,7 @@ mod tests {
             "127.0.0.1:0".parse().unwrap(),
             root.path().to_path_buf(),
             HashSet::new(),
+            3,
         )
         .await
         .unwrap();
@@ -1262,13 +1870,13 @@ mod tests {
             "127.0.0.1:0".parse().unwrap(),
             controller_root.clone(),
             allowed,
+            cell_count,
         )
         .await
         .unwrap();
-        let authority = server.local_addr().to_string();
-
         for (id, dir) in source_dirs.iter().enumerate() {
-            ship_cell_artifacts(&authority, id as u32, dir, &relatives)
+            let client = test_client(&server, id as u32);
+            ship_cell_artifacts(&client, id as u32, dir, &relatives)
                 .await
                 .unwrap();
         }
@@ -1371,16 +1979,17 @@ mod tests {
             HashSet::new(),
             datasets,
             Some(manifest.clone()),
+            1,
         )
         .await
         .unwrap();
-        let authority = server.local_addr().to_string();
+        let client = test_client(&server, 0);
 
-        let fetched = fetch_dataset_manifest(&authority).await.unwrap();
+        let fetched = fetch_dataset_manifest(&client).await.unwrap();
         assert_eq!(fetched, manifest, "manifest round-trips over HTTP");
 
         let cell_dir = dir.path().join("cell").join("dataset");
-        let rewritten = reconstruct_shipped_dataset(&authority, &fetched, &cell_dir)
+        let rewritten = reconstruct_shipped_dataset(&client, &fetched, &cell_dir)
             .await
             .unwrap();
         assert_eq!(
@@ -1428,12 +2037,13 @@ mod tests {
             HashSet::new(),
             datasets,
             Some(manifest.clone()),
+            1,
         )
         .await
         .unwrap();
-        let authority = server.local_addr().to_string();
+        let client = test_client(&server, 0);
         let cell_dir = dir.path().join("cell").join("dataset");
-        let rewritten = reconstruct_shipped_dataset(&authority, &manifest, &cell_dir)
+        let rewritten = reconstruct_shipped_dataset(&client, &manifest, &cell_dir)
             .await
             .unwrap();
         assert_eq!(
@@ -1481,14 +2091,15 @@ mod tests {
             HashSet::new(),
             datasets,
             Some(manifest.clone()),
+            1,
         )
         .await
         .unwrap();
         let landed = dir.path().join("landed");
-        let rewritten =
-            reconstruct_shipped_dataset(&server.local_addr().to_string(), &manifest, &landed)
-                .await
-                .unwrap();
+        let client = test_client(&server, 0);
+        let rewritten = reconstruct_shipped_dataset(&client, &manifest, &landed)
+            .await
+            .unwrap();
 
         assert_eq!(rewritten, landed.join("recordings/trace.json"));
         assert_eq!(
@@ -1541,14 +2152,15 @@ mod tests {
                 ),
             ]),
             Some(manifest.clone()),
+            1,
         )
         .await
         .unwrap();
         let landed = dir.path().join("landed");
-        let rewritten =
-            reconstruct_shipped_dataset(&server.local_addr().to_string(), &manifest, &landed)
-                .await
-                .unwrap();
+        let client = test_client(&server, 0);
+        let rewritten = reconstruct_shipped_dataset(&client, &manifest, &landed)
+            .await
+            .unwrap();
 
         assert_eq!(rewritten, landed.join("selected"));
         assert!(!landed.join("secret.jsonl").exists());
@@ -1592,7 +2204,8 @@ mod tests {
             base_name: "main.jsonl".to_owned(),
             files: vec!["main.jsonl".to_owned(), "main.jsonl".to_owned()],
         };
-        let error = reconstruct_shipped_dataset("127.0.0.1:1", &manifest, dest.path())
+        let client = unreachable_test_client();
+        let error = reconstruct_shipped_dataset(&client, &manifest, dest.path())
             .await
             .expect_err("a duplicate must reject before attempting the unreachable server");
         assert!(
@@ -1610,7 +2223,7 @@ mod tests {
             files: vec!["../secret.jsonl".to_owned()],
         };
         assert!(
-            reconstruct_shipped_dataset("127.0.0.1:1", &manifest, dest.path())
+            reconstruct_shipped_dataset(&unreachable_test_client(), &manifest, dest.path(),)
                 .await
                 .is_err()
         );
@@ -1625,14 +2238,15 @@ mod tests {
             "127.0.0.1:0".parse().unwrap(),
             root.path().to_path_buf(),
             allowed,
+            1,
         )
         .await
         .unwrap();
-        let authority = server.local_addr().to_string();
+        let client = test_client(&server, 0);
         let src = root.path().join("payload.bin");
         std::fs::write(&src, b"hello").unwrap();
 
-        let unknown = upload_one(&authority, 0, "secret.parquet", &src).await;
+        let unknown = upload_one(&client, 0, "secret.parquet", &src).await;
         assert!(unknown.is_err(), "unallowed artifact must be rejected");
         server.shutdown().await;
     }
@@ -1659,13 +2273,14 @@ mod tests {
             dir.path().join("controller-temp"),
             HashSet::new(),
             datasets,
+            1,
         )
         .await
         .unwrap();
-        let authority = server.local_addr().to_string();
+        let client = test_client(&server, 0);
 
         let dest = dir.path().join("cell").join("prompts.jsonl");
-        fetch_dataset_to_file(&authority, "prompts.jsonl", &dest)
+        fetch_dataset_to_file(&client, "prompts.jsonl", &dest)
             .await
             .unwrap();
         assert_eq!(
@@ -1680,7 +2295,7 @@ mod tests {
 
         let missing = dir.path().join("cell").join("unknown.jsonl");
         assert!(
-            fetch_dataset_to_file(&authority, "unknown.jsonl", &missing)
+            fetch_dataset_to_file(&client, "unknown.jsonl", &missing)
                 .await
                 .is_err(),
             "an unregistered dataset name must be rejected"
@@ -1716,12 +2331,13 @@ mod tests {
             dir.path().join("controller-temp"),
             HashSet::new(),
             datasets,
+            1,
         )
         .await
         .unwrap();
-        let authority = server.local_addr().to_string();
+        let client = test_client(&server, 0);
         let shipped = dir.path().join("cell").join("prompts.jsonl");
-        fetch_dataset_to_file(&authority, "prompts.jsonl", &shipped)
+        fetch_dataset_to_file(&client, "prompts.jsonl", &shipped)
             .await
             .unwrap();
         server.shutdown().await;

@@ -46,9 +46,13 @@ use crate::cellular::transport::CellPhaseSignal;
 #[cfg(feature = "cellular")]
 use crate::cellular::transport::connect::{BindSpec, build_velo};
 #[cfg(feature = "cellular")]
-use crate::cellular::{CellMessage, ControllerTransport, SpecFor, VeloControllerTransport};
+use crate::cellular::{
+    CellMessage, CellRegistrationSpec, ControllerTransport, SpecFor, VeloControllerTransport,
+};
 #[cfg(feature = "cellular")]
 use crate::engine::cell_launcher::{CellHandle, CellLaunchContext, select_launcher};
+#[cfg(feature = "cellular")]
+use crate::engine::cellular_bootstrap::prepare_cell_bootstrap;
 #[cfg(feature = "cellular")]
 use crate::engine::control_hooks::{
     PreparedEndpointControlHooks, PreparedServerProfilerHook,
@@ -694,6 +698,8 @@ pub fn run_cellular(
     };
     // One HTTP server handles per-record uploads (HTTP transport only) and dataset serving.
     let need_artifact_server = http_upload || dataset_ship;
+    let bootstrap_provider = prepare_cell_bootstrap(cross_host, cell_count)?;
+    let registration_authority = bootstrap_provider.authority();
     // The force seam only applies to the same-host launcher (k8s already ships): when
     // true, cells write to their own controller-local `temp_root/cell-{id}` scratch AND
     // ship those files to a SEPARATE loopback landing dir, from which the concat reads —
@@ -800,6 +806,7 @@ pub fn run_cellular(
                     allowed,
                     datasets,
                     manifest,
+                    cell_count,
                 )
                 .await
                 .context("starting cellular artifact server")?,
@@ -813,6 +820,9 @@ pub fn run_cellular(
         // `is_k8s` is resolved once above and moved in here.
         let (bind, cell_coordinate) = controller_bind_and_endpoint(cross_host, &temp_root)?;
         let velo = build_velo(bind).await.context("building controller velo")?;
+        bootstrap_provider
+            .publish_controller_peer(&velo.peer_info())
+            .context("publishing authenticated controller bootstrap")?;
         // When artifacts ride velo, hang the artifact receive handlers off THIS same
         // control-plane velo instance (no second port): cells stream their zstd chunks
         // here and the receiver lands them at `landing_root/cell-{id}/{rel}`, exactly
@@ -830,6 +840,7 @@ pub fn run_cellular(
                     velo.clone(),
                     landing_root.clone(),
                     allowed,
+                    registration_authority.clone(),
                 )
                 .context("registering velo artifact receiver")?,
             )
@@ -862,6 +873,7 @@ pub fn run_cellular(
                 crate::cellular::transport::phaser_velo::PhaserServer::bind(
                     velo.clone(),
                     phaser.clone(),
+                    registration_authority.clone(),
                 )
             })
             .transpose()
@@ -889,6 +901,7 @@ pub fn run_cellular(
                     crate::cellular::transport::dataset_velo::DatasetServer::bind(
                         velo.clone(),
                         publisher.clone(),
+                        registration_authority.clone(),
                     )
                     .context("binding dataset fan-out plane")?,
                 )
@@ -1028,7 +1041,32 @@ pub fn run_cellular(
         let specs = std::sync::Arc::new(specs);
         let spec_for: SpecFor = {
             let specs = specs.clone();
-            std::sync::Arc::new(move |cell_id: u32| specs.get(cell_id as usize).cloned())
+            let registrar = artifact_server.as_ref().map(|server| server.registrar());
+            std::sync::Arc::new(move |register| {
+                let Some(envelope) = specs.get(register.cell_id as usize).cloned() else {
+                    return Ok(None);
+                };
+                let artifact_channel = match &registrar {
+                    Some(registrar) => {
+                        let digest = register.artifact_capability_digest.context(
+                            "cell omitted artifact capability while controller enabled artifact transfer",
+                        )?;
+                        registrar.register(register.cell_id, digest)?;
+                        Some(registrar.server_config())
+                    }
+                    None => {
+                        ensure!(
+                            register.artifact_capability_digest.is_none(),
+                            "cell supplied artifact capability without an artifact server"
+                        );
+                        None
+                    }
+                };
+                Ok(Some(CellRegistrationSpec {
+                    envelope,
+                    artifact_channel,
+                }))
+            })
         };
         // Bind the controller's velo control plane. In hub mode this is done through a
         // single per-run velo hub (cell↔controller plugin + `/artifact` plugin +
@@ -1047,6 +1085,7 @@ pub fn run_cellular(
             });
             let (transport, receiver, server) = build_cellular_hub(
                 velo,
+                registration_authority.clone(),
                 spec_for,
                 cell_count,
                 start_handle,
@@ -1061,8 +1100,14 @@ pub fn run_cellular(
             _hub_server = Some(server);
             transport
         } else {
-            VeloControllerTransport::bind_controller(velo, spec_for, cell_count, start_handle)
-                .context("binding controller transport")?
+            VeloControllerTransport::bind_controller(
+                velo,
+                registration_authority.clone(),
+                spec_for,
+                cell_count,
+                start_handle,
+            )
+            .context("binding controller transport")?
         };
 
         // Insert a reduction TREE of aggregators between the cells and the controller.
@@ -1162,6 +1207,9 @@ pub fn run_cellular(
             } else {
                 None
             },
+            bootstrap_bundles: (0..cell_count)
+                .map(|cell_id| bootstrap_provider.bundle_for_cell(cell_id))
+                .collect::<Result<Vec<_>>>()?,
         };
         let handles = select_launcher()
             .launch(&launch_ctx)
@@ -1661,6 +1709,9 @@ fn hub_http_bind() -> std::net::SocketAddr {
 #[allow(clippy::too_many_arguments)]
 async fn build_cellular_hub(
     velo: std::sync::Arc<velo::Velo>,
+    registration_authority: std::sync::Arc<
+        crate::engine::cellular_registration::CellRegistrationAuthority,
+    >,
     spec_for: SpecFor,
     cell_count: u32,
     start_handle: velo::EventHandle,
@@ -1682,14 +1733,19 @@ async fn build_cellular_hub(
     let mut hub = Hub::new(velo);
 
     // Cell↔controller plugin: capture its transport for the collect loop to own.
-    let cell_plugin = CellControllerHubPlugin::new(spec_for, cell_count, start_handle);
+    let cell_plugin = CellControllerHubPlugin::new(
+        spec_for,
+        cell_count,
+        start_handle,
+        registration_authority.clone(),
+    );
     let transport_slot = cell_plugin.transport_slot();
     hub.register(Box::new(cell_plugin))
         .context("mounting cell↔controller hub plugin")?;
 
     // `/artifact` plugin (optional): capture its receiver for the completion barrier.
     let receiver_slot = if let Some((temp_root, allowed)) = artifact_mount {
-        let plugin = ArtifactHubPlugin::new(temp_root, allowed);
+        let plugin = ArtifactHubPlugin::new(temp_root, allowed, registration_authority.clone());
         let slot = plugin.receiver_slot();
         hub.register(Box::new(plugin))
             .context("mounting /artifact hub plugin")?;
@@ -1702,15 +1758,21 @@ async fn build_cellular_hub(
     // The bootstrap advances it independently for START, dataset fan-out, and later
     // controller-owned phase gates.
     if let Some(phaser) = phaser {
-        hub.register(Box::new(PhaserHubPlugin::new(phaser)))
-            .context("mounting /phaser hub plugin")?;
+        hub.register(Box::new(PhaserHubPlugin::new(
+            phaser,
+            registration_authority.clone(),
+        )))
+        .context("mounting /phaser hub plugin")?;
     }
 
     // `/dataset` plugin (optional): mounts the dataset fan-out data plane on the hub velo
     // when dataset fan-out is selected. The publisher is already filled and finalized.
     if let Some(publisher) = dataset_publisher {
-        hub.register(Box::new(DatasetHubPlugin::new(publisher)))
-            .context("mounting /dataset hub plugin")?;
+        hub.register(Box::new(DatasetHubPlugin::new(
+            publisher,
+            registration_authority.clone(),
+        )))
+        .context("mounting /dataset hub plugin")?;
     }
 
     // Discovery plugin: the connect-by-endpoint anchor, advertising the mounted set.
@@ -3255,7 +3317,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn hub_mode_bootstrap_serves_register_and_artifact() {
         use crate::cellular::transport::CellClient;
-        use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+        use crate::cellular::transport::connect::{BindSpec, build_velo};
         use crate::cellular::transport::velo_transport::VeloCellClient;
         use crate::cellular::{CellMessage, ControllerTransport};
         use crate::engine::artifact_stream_velo::ship_cell_artifacts_velo;
@@ -3273,13 +3335,23 @@ mod tests {
         let velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("hub velo");
+        let controller_peer = velo.peer_info();
         let start = velo.event_manager().new_event().expect("start event");
         let start_handle = start.handle();
-        let spec_for: SpecFor = std::sync::Arc::new(|cell_id: u32| Some(vec![cell_id as u8, 0x5A]));
+        let (authority, credentials) =
+            crate::engine::cellular_registration::CellRegistrationAuthority::mint(1)
+                .expect("registration authority");
+        let spec_for: SpecFor = std::sync::Arc::new(|register| {
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![register.cell_id as u8, 0x5A],
+                artifact_channel: None,
+            }))
+        });
         let allowed: std::collections::HashSet<String> = [rel.to_owned()].into_iter().collect();
 
         let (mut transport, receiver, _server) = build_cellular_hub(
             velo,
+            std::sync::Arc::new(authority),
             spec_for,
             1,
             start_handle,
@@ -3295,12 +3367,12 @@ mod tests {
         // A cell dials the hub by its tcp:// coordinate (the same anchor), registers,
         // and ships a heartbeat surfaced by the hub-mounted cell↔controller handlers.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let controller_peer = connect_controller(&cell_velo, &endpoint)
-            .await
-            .expect("connect to hub");
         let mut cell =
             VeloCellClient::connect(cell_velo, controller_peer.clone()).expect("connect");
-        let reply = cell.register(0).await.expect("register");
+        let reply = cell
+            .register_with_credential(0, None, &credentials[0])
+            .await
+            .expect("register");
         assert_eq!(reply.envelope, vec![0_u8, 0x5A]);
 
         use crate::cellular::heartbeat::HeartbeatAccumulator;
@@ -3320,12 +3392,19 @@ mod tests {
 
         // And the `/artifact` plugin streams a file over the same anchor.
         let ship_velo = build_velo(BindSpec::TcpLoopback).await.expect("ship velo");
-        let ship_peer = connect_controller(&ship_velo, &endpoint)
-            .await
-            .expect("connect ship");
-        ship_cell_artifacts_velo(&ship_velo, &ship_peer, 0, &src_dir, &[rel.to_owned()])
-            .await
-            .expect("ship artifact over hub");
+        ship_velo
+            .register_peer(controller_peer.clone())
+            .expect("register trusted controller");
+        ship_cell_artifacts_velo(
+            &ship_velo,
+            &controller_peer,
+            0,
+            &credentials[0],
+            &src_dir,
+            &[rel.to_owned()],
+        )
+        .await
+        .expect("ship artifact over hub");
         receiver
             .wait_for_cells(1, std::time::Duration::from_secs(30))
             .await
@@ -3702,11 +3781,21 @@ mod tests {
             std::collections::HashSet::new(),
             served,
             Some(manifest),
+            1,
         )
         .await
         .unwrap();
         let landed = temporary.path().join("landed.jsonl");
-        fetch_dataset_to_file(&server.local_addr().to_string(), "session.jsonl", &landed)
+        let bearer = crate::engine::artifact_shipping::ArtifactBearer::from_test_bytes([0xD1; 32]);
+        let registrar = server.registrar();
+        registrar.register(0, bearer.digest_bytes()).unwrap();
+        let client = crate::engine::artifact_shipping::ArtifactChannelClient::new(
+            server.local_addr().to_string(),
+            registrar.server_config(),
+            bearer,
+        )
+        .unwrap();
+        fetch_dataset_to_file(&client, "session.jsonl", &landed)
             .await
             .unwrap();
 

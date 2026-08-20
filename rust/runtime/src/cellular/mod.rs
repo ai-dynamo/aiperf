@@ -32,7 +32,9 @@ pub use shard::{
 };
 pub use sketch::TDigest;
 #[cfg(feature = "cellular")]
-pub use transport::velo_transport::{SpecFor, VeloCellClient, VeloControllerTransport};
+pub use transport::velo_transport::{
+    CellRegistrationSpec, SpecFor, VeloCellClient, VeloControllerTransport,
+};
 pub use transport::{
     CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellStorePartitionShip,
     CellTransportError, ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION,

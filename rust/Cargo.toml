@@ -67,6 +67,8 @@ petgraph = "0.6"
 arrow = { version = "58.3", default-features = false }
 parquet = { version = "58.3", default-features = false, features = ["arrow", "json", "snap", "zstd"] }
 rand = "0.9"
+ed25519-dalek = "2.2"
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "aws_lc_rs"] }
 rand_distr = "0.5"
 rand_pcg = "0.9"
 rayon = "1"

@@ -34,6 +34,7 @@ use crate::cellular::dataset_session::DatasetPublisher;
 use crate::cellular::transport::dataset_velo::{
     DatasetServer, HANDLER_DATASET_CHUNK, HANDLER_DATASET_SUBSCRIBE, WirePayload,
 };
+use crate::engine::cellular_registration::CellRegistrationAuthority;
 
 /// The default HTTP mount point / diagnostic identity for the dataset fan-out plugin.
 pub const DATASET_PREFIX: &str = "/dataset";
@@ -43,6 +44,7 @@ pub const DATASET_PREFIX: &str = "/dataset";
 pub struct DatasetHubPlugin {
     prefix: String,
     publisher: DatasetPublisher<WirePayload>,
+    registration_authority: Arc<CellRegistrationAuthority>,
     /// The bound server, retained so its (redundant) velo clone lives with the plugin.
     /// The handlers themselves ride the hub velo and outlive this.
     server: Mutex<Option<DatasetServer>>,
@@ -52,10 +54,14 @@ impl DatasetHubPlugin {
     /// Build the plugin over the controller's dataset [`DatasetPublisher`] (the same
     /// instance the bootstrap `add`s chunks to and `finalize`s). Uses the default
     /// [`DATASET_PREFIX`].
-    pub fn new(publisher: DatasetPublisher<WirePayload>) -> Self {
+    pub(crate) fn new(
+        publisher: DatasetPublisher<WirePayload>,
+        registration_authority: Arc<CellRegistrationAuthority>,
+    ) -> Self {
         Self {
             prefix: DATASET_PREFIX.to_owned(),
             publisher,
+            registration_authority,
             server: Mutex::new(None),
         }
     }
@@ -99,13 +105,15 @@ impl HubPlugin for DatasetHubPlugin {
     }
 
     fn register_velo_handlers(&self, velo: &Arc<Velo>) -> Result<(), HubError> {
-        let server =
-            DatasetServer::bind(velo.clone(), self.publisher.clone()).map_err(|error| {
-                HubError::VeloHandler {
-                    prefix: self.prefix.clone(),
-                    message: error.to_string(),
-                }
-            })?;
+        let server = DatasetServer::bind(
+            velo.clone(),
+            self.publisher.clone(),
+            self.registration_authority.clone(),
+        )
+        .map_err(|error| HubError::VeloHandler {
+            prefix: self.prefix.clone(),
+            message: error.to_string(),
+        })?;
         *self.server.lock().expect("dataset server slot poisoned") = Some(server);
         Ok(())
     }
@@ -115,7 +123,7 @@ impl HubPlugin for DatasetHubPlugin {
 mod tests {
     use super::*;
     use crate::cellular::dataset_session::DatasetRequest;
-    use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+    use crate::cellular::transport::connect::{BindSpec, build_velo};
     use crate::cellular::transport::dataset_velo::DatasetClient;
     use crate::hub::Hub;
 
@@ -125,11 +133,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn plugin_mounts_and_serves_fanout_over_the_hub() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let coordinate = format!("tcp://{addr}");
         let velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("hub velo");
+        let controller_peer = velo.peer_info();
 
         let publisher = DatasetPublisher::<WirePayload>::new();
         let chunk = |ids: std::ops::Range<u64>| {
@@ -143,7 +150,8 @@ mod tests {
         publisher.add(chunk(6..12));
         publisher.finalize();
 
-        let plugin = DatasetHubPlugin::new(publisher.clone());
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let plugin = DatasetHubPlugin::new(publisher.clone(), Arc::new(authority));
         let mut hub = Hub::new(velo);
         hub.register(Box::new(plugin))
             .expect("register dataset plugin");
@@ -157,12 +165,15 @@ mod tests {
 
         // A real cell subscribes over the hub's velo anchor and builds its owned index.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let controller = connect_controller(&cell_velo, &coordinate)
-            .await
-            .expect("connect");
-        let index = DatasetClient::build_owned_index(cell_velo, &controller, |id| id % 3 == 0)
-            .await
-            .expect("build index");
+        let index = DatasetClient::build_owned_index(
+            cell_velo,
+            &controller_peer,
+            0,
+            &credentials[0],
+            |id| id % 3 == 0,
+        )
+        .await
+        .expect("build index");
         let expected: Vec<u64> = (0..12).filter(|id| id % 3 == 0).collect();
         assert_eq!(
             index.owned_ids(),

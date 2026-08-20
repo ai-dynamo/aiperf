@@ -25,6 +25,7 @@ use tokio::process::Child;
 
 use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
 
+use crate::engine::cellular_bootstrap::{CELL_BOOTSTRAP_ENV, CellBootstrapBundle};
 use crate::engine::cellular_cell::{
     CELL_ARTIFACT_ADDR_ENV, CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
 };
@@ -51,6 +52,8 @@ pub struct CellLaunchContext {
     /// artifact files there. `None` when HTTP artifact shipping is off or on the
     /// same-host path, which concatenates local writes instead of shipping.
     pub artifact_authority: Option<String>,
+    /// One opaque controller bootstrap bundle per locally launched cell.
+    pub(crate) bootstrap_bundles: Vec<CellBootstrapBundle>,
     /// The number of aggregators, or `None` for the flat
     /// star topology. When `Some(M)`, each cell is injected an
     /// [`AIPERF_CELL_SHIP_ADDR`](crate::engine::cellular_cell::CELL_SHIP_ADDR_ENV)
@@ -133,6 +136,9 @@ impl LocalLauncher {
         }
         if let Some(authority) = &ctx.artifact_authority {
             command.env(CELL_ARTIFACT_ADDR_ENV, authority);
+        }
+        if let Some(bundle) = ctx.bootstrap_bundles.get(cell_id as usize) {
+            command.env(CELL_BOOTSTRAP_ENV, bundle.encode_launch_value());
         }
         // Aggregation changes only the terminal ship target; controller startup and
         // partition ownership remain unchanged.
@@ -322,6 +328,7 @@ mod tests {
             controller_coordinate: "file:/tmp/controller-peer.rmp".to_owned(),
             phase_ordinal_bases: bases,
             artifact_authority: Some("controller.local:9600".to_owned()),
+            bootstrap_bundles: Vec::new(),
             aggregator_count: None,
             aggregator_base_port: 9700,
         }

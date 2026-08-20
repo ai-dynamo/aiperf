@@ -31,6 +31,7 @@ use velo::{EventHandle, Velo};
 
 use super::plugin::{HubAbiRequirement, HubError, HubPlugin};
 use crate::cellular::transport::velo_transport::{SpecFor, VeloControllerTransport};
+use crate::engine::cellular_registration::CellRegistrationAuthority;
 
 /// The default HTTP mount point / diagnostic identity for the cell↔controller plugin.
 pub const CELL_CONTROLLER_PREFIX: &str = "/cell";
@@ -55,6 +56,7 @@ pub struct CellControllerHubPlugin {
     spec_for: SpecFor,
     cell_count: u32,
     start_event: EventHandle,
+    registration_authority: Arc<CellRegistrationAuthority>,
     transport: TransportSlot,
 }
 
@@ -62,12 +64,18 @@ impl CellControllerHubPlugin {
     /// Build the plugin over the controller's precomputed per-cell spec lookup, the
     /// run's `cell_count`, and the run-wide START event handle each cell awaits. Uses
     /// the default [`CELL_CONTROLLER_PREFIX`].
-    pub fn new(spec_for: SpecFor, cell_count: u32, start_event: EventHandle) -> Self {
+    pub(crate) fn new(
+        spec_for: SpecFor,
+        cell_count: u32,
+        start_event: EventHandle,
+        registration_authority: Arc<CellRegistrationAuthority>,
+    ) -> Self {
         Self {
             prefix: CELL_CONTROLLER_PREFIX.to_owned(),
             spec_for,
             cell_count,
             start_event,
+            registration_authority,
             transport: Arc::new(Mutex::new(None)),
         }
     }
@@ -114,6 +122,7 @@ impl HubPlugin for CellControllerHubPlugin {
         // capture the transport so the bootstrap can own its `recv` stream.
         let transport = VeloControllerTransport::bind_controller(
             velo.clone(),
+            self.registration_authority.clone(),
             self.spec_for.clone(),
             self.cell_count,
             self.start_event,
@@ -136,11 +145,17 @@ mod tests {
     use crate::cellular::transport::CellClient;
     use crate::cellular::transport::connect::{BindSpec, build_velo};
     use crate::cellular::transport::velo_transport::VeloCellClient;
-    use crate::cellular::{CellMessage, ControllerTransport};
+    use crate::cellular::{CellMessage, CellRegistrationSpec, ControllerTransport};
+    use crate::engine::cellular_registration::CellRegistrationAuthority;
     use crate::hub::Hub;
 
     fn spec_for() -> SpecFor {
-        Arc::new(|cell_id: u32| Some(vec![cell_id as u8, 0xCC]))
+        Arc::new(|register| {
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![register.cell_id as u8, 0xCC],
+                artifact_channel: None,
+            }))
+        })
     }
 
     /// The plugin mounts on a hub, registers the control-plane velo handlers, and the
@@ -156,8 +171,10 @@ mod tests {
         let controller_peer = velo.peer_info();
         let start = velo.event_manager().new_event().expect("start event");
         let start_handle = start.handle();
+        let (authority, credentials) =
+            CellRegistrationAuthority::mint(1).expect("registration authority");
 
-        let plugin = CellControllerHubPlugin::new(spec_for(), 1, start_handle);
+        let plugin = CellControllerHubPlugin::new(spec_for(), 1, start_handle, Arc::new(authority));
         let slot = plugin.transport_slot();
 
         let mut hub = Hub::new(velo);
@@ -176,7 +193,10 @@ mod tests {
         // heartbeat that the hub-mounted handler surfaces on the captured transport.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
         let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
-        let reply = cell.register(0).await.expect("register");
+        let reply = cell
+            .register_with_credential(0, None, &credentials[0])
+            .await
+            .expect("register");
         assert_eq!(reply.envelope, vec![0_u8, 0xCC]);
 
         use crate::cellular::heartbeat::HeartbeatAccumulator;

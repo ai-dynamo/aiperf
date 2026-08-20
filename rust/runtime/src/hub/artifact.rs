@@ -32,6 +32,7 @@ use velo::Velo;
 
 use super::plugin::{HubAbiRequirement, HubError, HubPlugin};
 use crate::engine::artifact_stream_velo::ArtifactVeloReceiver;
+use crate::engine::cellular_registration::CellRegistrationAuthority;
 
 /// The default HTTP mount point / diagnostic identity for the artifact plugin.
 pub const ARTIFACT_PREFIX: &str = "/artifact";
@@ -47,6 +48,7 @@ pub struct ArtifactHubPlugin {
     prefix: String,
     temp_root: PathBuf,
     allowed: HashSet<String>,
+    registration_authority: Arc<CellRegistrationAuthority>,
     receiver: ReceiverSlot,
 }
 
@@ -54,11 +56,16 @@ impl ArtifactHubPlugin {
     /// Build the plugin over the controller's cellular scratch root (files land at
     /// `temp_root/cell-{id}/{rel}`) and the exact set of relative artifact paths the
     /// run may ship (fail-closed). Uses the default [`ARTIFACT_PREFIX`].
-    pub fn new(temp_root: PathBuf, allowed: HashSet<String>) -> Self {
+    pub(crate) fn new(
+        temp_root: PathBuf,
+        allowed: HashSet<String>,
+        registration_authority: Arc<CellRegistrationAuthority>,
+    ) -> Self {
         Self {
             prefix: ARTIFACT_PREFIX.to_owned(),
             temp_root,
             allowed,
+            registration_authority,
             receiver: Arc::new(Mutex::new(None)),
         }
     }
@@ -100,6 +107,7 @@ impl HubPlugin for ArtifactHubPlugin {
             velo.clone(),
             self.temp_root.clone(),
             self.allowed.clone(),
+            self.registration_authority.clone(),
         )
         .map_err(|error| HubError::VeloHandler {
             prefix: self.prefix.clone(),
@@ -116,7 +124,7 @@ impl HubPlugin for ArtifactHubPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cellular::transport::connect::{BindSpec, build_velo, connect_controller};
+    use crate::cellular::transport::connect::{BindSpec, build_velo};
     use crate::engine::artifact_stream_velo::ship_cell_artifacts_velo;
     use crate::hub::Hub;
     use std::time::Duration;
@@ -134,14 +142,15 @@ mod tests {
         let source_bytes = std::fs::read(src_dir.join(rel)).unwrap();
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
         let velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("hub velo");
+        let controller_peer = velo.peer_info();
         let landing = dir.path().join("landing");
         let allowed: HashSet<String> = [rel.to_owned()].into_iter().collect();
 
-        let plugin = ArtifactHubPlugin::new(landing.clone(), allowed);
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let plugin = ArtifactHubPlugin::new(landing.clone(), allowed, Arc::new(authority));
         let slot = plugin.receiver_slot();
         let mut hub = Hub::new(velo);
         hub.register(Box::new(plugin))
@@ -153,15 +162,21 @@ mod tests {
             .take()
             .expect("receiver captured by registration");
 
-        // A real cell connects to the hub by endpoint and streams the file over the
-        // hub-mounted artifact handlers.
+        // A real cell uses the trusted hub peer and its provisioned credential.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let controller_peer = connect_controller(&cell_velo, &format!("tcp://{addr}"))
-            .await
-            .expect("connect");
-        ship_cell_artifacts_velo(&cell_velo, &controller_peer, 0, &src_dir, &[rel.to_owned()])
-            .await
-            .expect("ship over hub");
+        cell_velo
+            .register_peer(controller_peer.clone())
+            .expect("register controller");
+        ship_cell_artifacts_velo(
+            &cell_velo,
+            &controller_peer,
+            0,
+            &credentials[0],
+            &src_dir,
+            &[rel.to_owned()],
+        )
+        .await
+        .expect("ship over hub");
         receiver
             .wait_for_cells(1, Duration::from_secs(30))
             .await

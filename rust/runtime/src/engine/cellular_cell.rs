@@ -27,6 +27,7 @@
 //! that instance's `PeerInfo` (see `crate::cellular::CellPartitionShip`).
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -34,7 +35,33 @@ use std::os::unix::fs::PermissionsExt;
 use crate::cellular::partition::CellPartition;
 use crate::cellular::{CellularAutonomousIssuer, IssuanceAuthority, ModuloCellPartition};
 use crate::metrics_core::Phase;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
+
+use crate::cellular::transport::ArtifactChannelServerConfig;
+use crate::engine::artifact_shipping::{ArtifactBearer, ArtifactChannelClient};
+
+static ARTIFACT_CHANNEL: OnceLock<ArtifactChannelClient> = OnceLock::new();
+
+/// Install this cell's pinned-TLS artifact client once the controller returns its
+/// public identity beside the Velo envelope.
+pub(crate) fn install_artifact_channel(
+    authority: String,
+    server_config: ArtifactChannelServerConfig,
+    bearer: ArtifactBearer,
+) -> Result<()> {
+    ARTIFACT_CHANNEL
+        .set(ArtifactChannelClient::new(
+            authority,
+            server_config,
+            bearer,
+        )?)
+        .map_err(|_| anyhow::anyhow!("artifact channel is already installed"))
+}
+
+/// The process-local channel installed during authenticated registration.
+pub(crate) fn installed_artifact_channel() -> Option<&'static ArtifactChannelClient> {
+    ARTIFACT_CHANNEL.get()
+}
 
 /// Env var carrying the controller's bootstrap coordinate (`file:PATH` locally,
 /// `tcp://HOST:PORT` in k8s) — where a cell fetches the controller's `PeerInfo`.
@@ -62,7 +89,6 @@ pub const CELL_PHASE_ORDINAL_BASES_ENV: &str = "AIPERF_CELL_PHASE_ORDINAL_BASES"
 /// files. When absent, a cell on a `tcp://` (k8s) controller coordinate derives the
 /// host from that coordinate and the port from [`CELL_ARTIFACT_PORT_ENV`].
 pub const CELL_ARTIFACT_ADDR_ENV: &str = "AIPERF_CELL_ARTIFACT_ADDR";
-
 /// Env var overriding the controller's artifact-server port when a cell derives the
 /// artifact `host:port` from its `tcp://HOST:PORT` velo coordinate (default `9600`,
 /// matching the controller's `AIPERF_CONTROLLER_ARTIFACT_BIND` default).
@@ -259,9 +285,11 @@ pub fn ship_http_artifacts_if_enabled(
     let Some(partition) = ModuloCellPartition::from_env() else {
         return Ok(()); // not a cell (single-process path)
     };
-    let Some(authority) = cell_artifact_authority() else {
+    let Some(_authority) = cell_artifact_authority() else {
         return Ok(()); // same-host or shipping disabled
     };
+    let client = installed_artifact_channel()
+        .context("cell has artifact authority but no authenticated artifact channel")?;
     let relatives = crate::engine::artifact_shipping::shippable_relatives(artifacts);
     if relatives.is_empty() {
         return Ok(()); // metrics-only run with no files to ship
@@ -274,7 +302,7 @@ pub fn ship_http_artifacts_if_enabled(
             .enable_all()
             .build()?;
         runtime.block_on(crate::engine::artifact_shipping::ship_cell_artifacts(
-            &authority, cell_id, &cell_dir, &relatives,
+            client, cell_id, &cell_dir, &relatives,
         ))
     })
     .join()
@@ -299,7 +327,7 @@ pub fn ship_velo_artifacts_if_enabled(
 ) -> Result<()> {
     use anyhow::Context as _;
 
-    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::transport::connect::build_velo;
 
     let Some(partition) = ModuloCellPartition::from_env() else {
         return Ok(()); // not a cell (single-process path)
@@ -355,19 +383,19 @@ pub fn ship_velo_artifacts_if_enabled(
             .enable_all()
             .build()?;
         let result = runtime.block_on(async move {
-            // A fresh, short-lived shipping velo instance (the same lifecycle the
-            // partition ship uses): bind, dial the controller by endpoint, stream.
+            // A fresh, short-lived shipping Velo instance receives the controller
+            // peer and its signing credential from the authenticated bootstrap.
             let bind = cell_bind(&coordinate, "artifact");
             let velo = build_velo(bind)
                 .await
                 .context("building cell artifact velo")?;
-            let controller = connect_controller(&velo, &coordinate)
-                .await
-                .context("connecting to controller for velo artifact shipping")?;
+            let (controller, credential) =
+                crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
             crate::engine::artifact_stream_velo::ship_cell_artifacts_velo(
                 &velo,
                 &controller,
                 cell_id,
+                &credential,
                 &cell_dir,
                 &relatives,
             )
@@ -579,11 +607,13 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Downlo
         // segmented-prefix — the controller's manifest carries the whole file set.
         return Ok(DownloadedCellEnvelope::unchanged(envelope_bytes));
     };
-    let Some(authority) = cell_artifact_authority() else {
+    let Some(_authority) = cell_artifact_authority() else {
         // Same-host cell, or shared-FS with shipping disabled: the controller-local
         // path is directly readable, so leave the envelope pointing at it.
         return Ok(DownloadedCellEnvelope::unchanged(envelope_bytes));
     };
+    let client = installed_artifact_channel()
+        .context("cell has artifact authority but no authenticated artifact channel")?;
     // The controller cannot know this cell's on-disk layout, so it publishes a
     // manifest describing the trace file set (single file, directory of shards, or
     // segmented-prefix). The cell fetches the manifest, streams every file over the
@@ -593,7 +623,7 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Downlo
     let _ = &source_path; // presence gated the ship; the controller owns the file set
     let landing_lease = remote_dataset_landing_lease()?;
     let dest_dir = landing_lease.path().to_path_buf();
-    let fetch_authority = authority.clone();
+    let client = client;
     let (local_path, local_replay_root) = std::thread::spawn(move || -> Result<_> {
         use crate::engine::artifact_shipping::{
             fetch_dataset_manifest, reconstruct_shipped_dataset,
@@ -603,11 +633,11 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Downlo
             .enable_all()
             .build()?;
         runtime.block_on(async move {
-            let manifest = fetch_dataset_manifest(&fetch_authority)
+            let manifest = fetch_dataset_manifest(client)
                 .await
                 .context("cell fetching dataset manifest from controller")?;
             let has_local_replay_root = manifest_has_local_replay_root(&manifest);
-            let path = reconstruct_shipped_dataset(&fetch_authority, &manifest, &dest_dir)
+            let path = reconstruct_shipped_dataset(client, &manifest, &dest_dir)
                 .await
                 .context("cell reconstructing shipped dataset from controller")?;
             Ok((path, has_local_replay_root.then_some(dest_dir)))
@@ -665,7 +695,7 @@ fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connec
 /// runtime; the velo instance is dropped on return.
 #[cfg(feature = "cellular")]
 pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
-    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::transport::connect::build_velo;
     use crate::cellular::{CellClient, CellMessage, VeloCellClient};
     use anyhow::Context;
 
@@ -674,12 +704,9 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
     let cell_id = ModuloCellPartition::from_env()
         .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
         .cell_id();
+    let (controller, credential) =
+        crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
     let velo = build_velo(cell_bind(&coordinate, "fetch")).await?;
-    // Discovery-free: dial the controller's known endpoint; velo's `_hello`
-    // handshake learns its identity and mutually registers us.
-    let controller = connect_controller(&velo, &coordinate)
-        .await
-        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
     // Keep handles before constructing the client so the phaser can subscribe over
     // the same fetch instance.
     let phaser_start = matches!(
@@ -692,10 +719,26 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
     let phaser_handles = phaser_start.then(|| (velo.clone(), controller.clone()));
     let mut client = VeloCellClient::connect(velo, controller)
         .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
+    let bearer = cell_artifact_authority()
+        .map(|_| ArtifactBearer::generate())
+        .transpose()?;
+    let artifact_digest = bearer.as_ref().map(ArtifactBearer::digest_bytes);
     let reply = client
-        .register(cell_id)
+        .register_with_credential(cell_id, artifact_digest, &credential)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))?;
+    let has_artifact_channel = reply.artifact_channel.is_some();
+    ensure!(
+        bearer.is_some() == has_artifact_channel,
+        "cell artifact registration protocol did not agree on channel identity"
+    );
+    if let Some(server_config) = reply.artifact_channel {
+        let authority = cell_artifact_authority()
+            .context("cell received artifact channel identity without an artifact authority")?;
+        let bearer =
+            bearer.context("controller enabled artifact transfer without cell authentication")?;
+        install_artifact_channel(authority, server_config, bearer)?;
+    }
     let envelope = download_cell_dataset_if_needed(reply.envelope)
         .context("landing a replay dataset before cellular preflight")?;
     client
@@ -713,6 +756,8 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
         let mut sub = crate::cellular::transport::phaser_velo::PhaserClient::subscribe(
             phaser_velo,
             &phaser_controller,
+            cell_id,
+            &credential,
         )
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser subscribe: {error}"))?;
@@ -815,7 +860,7 @@ async fn preflight_cell_envelope(envelope: &[u8]) -> Result<(), String> {
 /// instance across the cell's execute runtime.
 #[cfg(feature = "cellular")]
 pub async fn await_controller_phase_advance(phase: &str) -> Result<()> {
-    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::transport::connect::build_velo;
     use crate::cellular::transport::phaser_velo::PhaserClient;
     use anyhow::Context;
 
@@ -825,10 +870,9 @@ pub async fn await_controller_phase_advance(phase: &str) -> Result<()> {
         .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
         .cell_id();
     let velo = build_velo(cell_bind(&coordinate, "phase-await")).await?;
-    let controller = connect_controller(&velo, &coordinate)
-        .await
-        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
-    let mut sub = PhaserClient::subscribe(velo, &controller)
+    let (controller, credential) =
+        crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
+    let mut sub = PhaserClient::subscribe(velo, &controller, cell_id, &credential)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser subscribe: {error}"))?;
     sub.await_phase_advance(phase)
@@ -844,7 +888,7 @@ pub async fn send_controller_phase_signal(
     phase: &str,
     signal: crate::cellular::transport::CellPhaseSignal,
 ) -> Result<()> {
-    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::transport::connect::build_velo;
     use crate::cellular::{CellClient, CellMessage, VeloCellClient};
     use anyhow::Context;
 
@@ -854,11 +898,11 @@ pub async fn send_controller_phase_signal(
         .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
         .cell_id();
     let velo = build_velo(cell_bind(&coordinate, "phase-signal")).await?;
-    let controller = connect_controller(&velo, &coordinate)
-        .await
-        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect controller: {error}"))?;
-    let mut client = VeloCellClient::connect(velo, controller)
-        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
+    let (controller, credential) =
+        crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
+    let mut client =
+        VeloCellClient::connect_authenticated(velo, controller, std::sync::Arc::new(credential))
+            .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
     client
         .send(&CellMessage::PhaseSignal {
             cell_id,
@@ -878,7 +922,7 @@ pub async fn send_controller_phase_signal(
 #[cfg(feature = "cellular")]
 pub async fn verify_dataset_fanout() -> Result<()> {
     use crate::cellular::dispatch_state::{DispatchDecision, DispatchTracker};
-    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::transport::connect::build_velo;
     use crate::cellular::transport::dataset_velo::DatasetClient;
     use anyhow::Context;
 
@@ -900,13 +944,17 @@ pub async fn verify_dataset_fanout() -> Result<()> {
     let cell_count = partition.cell_count() as u64;
 
     let velo = build_velo(cell_bind(&coordinate, "dataset")).await?;
-    let controller = connect_controller(&velo, &coordinate)
-        .await
-        .map_err(|error| anyhow::anyhow!("dataset fan-out connect controller: {error}"))?;
-    let index =
-        DatasetClient::build_owned_index(velo, &controller, move |id| id % cell_count == cell_id)
-            .await
-            .map_err(|error| anyhow::anyhow!("dataset fan-out build index: {error}"))?;
+    let (controller, credential) =
+        crate::engine::cellular_bootstrap::load_authenticated_controller_peer(partition.cell_id())?;
+    let index = DatasetClient::build_owned_index(
+        velo,
+        &controller,
+        partition.cell_id(),
+        &credential,
+        move |id| id % cell_count == cell_id,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("dataset fan-out build index: {error}"))?;
 
     // `DispatchTracker` enforces exactly-once issue and counts missing payloads.
     let mut tracker = DispatchTracker::new();
@@ -1238,7 +1286,7 @@ impl CellRecordsShipper {
         heartbeat: crate::cellular::MetricsHeartbeat,
         terminal: crate::cellular::CellMessage,
     ) -> Result<()> {
-        use crate::cellular::transport::connect::{build_velo, connect_controller};
+        use crate::cellular::transport::connect::build_velo;
         use crate::cellular::{CellClient, CellMessage, VeloCellClient};
 
         let coordinate = self.coordinate.clone();
@@ -1253,13 +1301,14 @@ impl CellRecordsShipper {
                 .build()?;
             runtime.block_on(async move {
                 let velo = build_velo(cell_bind(&coordinate, "ship")).await?;
-                let controller = connect_controller(&velo, &coordinate)
-                    .await
-                    .map_err(|error| {
-                        anyhow::anyhow!("cell {cell_id} ship connect controller: {error}")
-                    })?;
-                let mut client = VeloCellClient::connect(velo, controller)
-                    .map_err(|error| anyhow::anyhow!("cell {cell_id} ship connect: {error}"))?;
+                let (controller, credential) =
+                    crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
+                let mut client = VeloCellClient::connect_authenticated(
+                    velo,
+                    controller,
+                    std::sync::Arc::new(credential),
+                )
+                .map_err(|error| anyhow::anyhow!("cell {cell_id} ship connect: {error}"))?;
                 client
                     .send(&CellMessage::Heartbeat {
                         cell_id,
@@ -1498,6 +1547,7 @@ mod tests {
                     ),
                 )]),
                 Some(manifest),
+                1,
             )
             .await
             .unwrap();
