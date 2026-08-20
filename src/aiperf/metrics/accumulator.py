@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -616,7 +617,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 phase=ctx.phase,
                 phase_index=ctx.phase_index,
             )
-        return self._summarize_for_export_context(export_ctx)
+        # _summarize_for_export_context is CPU-bound numpy work on potentially
+        # hundreds of thousands of records. Run in a thread so the event loop
+        # stays responsive (heartbeat tasks can fire between accumulators).
+        return await asyncio.to_thread(self._summarize_for_export_context, export_ctx)
 
     def _summarize_for_export_context(
         self, ctx: ExportContext | None = None
@@ -696,7 +700,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
         """Export final metrics results for the requested phase/window."""
-        return self._summarize_for_export_context(ctx)
+        # _summarize_for_export_context is CPU-bound numpy work; run in a thread
+        # so the event loop stays responsive while computing over large record sets.
+        return await asyncio.to_thread(self._summarize_for_export_context, ctx)
 
     def _inject_sweep_metrics(
         self,

@@ -15,6 +15,15 @@ on:
       - 'deploy/helm/**'
       - 'Makefile'
       - '.github/workflows/helm-chart.yml'
+      # The CRDs and the chart's values.yaml are generated from these sources,
+      # so a change here can silently desync them from the committed YAML.
+      - 'src/aiperf/config/**'
+      - 'src/aiperf/kubernetes/**'
+      - 'src/aiperf/operator/environment.py'
+      - 'src/aiperf/operator/models.py'
+      - 'tools/generate_crd.py'
+      - 'tools/check_chart_consistency.py'
+      - 'pyproject.toml'
   workflow_dispatch:
 
 concurrency:
@@ -34,6 +43,23 @@ jobs:
 
       - name: Install Helm
         uses: azure/setup-helm@v4
+
+      - name: Set up uv with cache
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install project
+        run: uv sync --locked --all-extras
+
+      # Both CRDs and the chart's values.yaml are generated. Without these the
+      # only thing stopping a hand-edit or a stale regeneration is convention.
+      - name: Check generated CRDs are current
+        run: make check-crd
+
+      - name: Check chart values match operator defaults
+        run: make check-chart-consistency
 
       - name: Lint and render chart
         run: |
