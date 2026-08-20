@@ -278,7 +278,6 @@ class TestTrackingHelpers:
         assert subprocess_manager.check_alive() == []
 
         mock_process_alive.is_alive.return_value = False
-        # Both the worker and its group-manager boundary share the mock process.
         assert info in subprocess_manager.check_alive()
 
     def test_check_alive_ignores_entries_without_process(
