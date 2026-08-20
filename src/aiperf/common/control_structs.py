@@ -9,7 +9,6 @@ Service -> Controller (ControllerBoundMessage):
     Registration ("reg")       - service registration / connection probe, expects RegistrationAck back
     Heartbeat ("hb")           - periodic heartbeat, fire-and-forget
     StatusUpdate ("su")        - state change notification, fire-and-forget
-    MemoryReport ("mr")        - self-reported memory snapshot, fire-and-forget
     TelemetryStatus ("ts")     - telemetry availability from TelemetryManager, fire-and-forget
     ServerMetricsStatus ("sm") - server metrics availability from ServerMetricsManager, fire-and-forget
 
@@ -100,34 +99,6 @@ class StatusUpdate(Struct, frozen=True, kw_only=True, tag_field="t", tag="su"):
 
     state: str
     """New lifecycle state being reported."""
-
-
-class MemoryReport(Struct, frozen=True, kw_only=True, tag_field="t", tag="mr"):
-    """Self-reported memory snapshot (fire-and-forget)."""
-
-    sid: str
-    """Unique service identifier for the reporting service."""
-
-    stype: str
-    """Service type of the reporting service."""
-
-    pid: int
-    """Operating system process ID of the reporting service."""
-
-    phase: str
-    """Benchmark phase during which this memory snapshot was captured."""
-
-    pss_bytes: int
-    """Proportional set size memory in bytes."""
-
-    rss_bytes: int | None = None
-    """Resident set size memory in bytes, when available."""
-
-    uss_bytes: int | None = None
-    """Unique set size memory in bytes, when available."""
-
-    shared_bytes: int | None = None
-    """Shared memory in bytes, when available."""
 
 
 class TelemetryStatus(Struct, frozen=True, kw_only=True, tag_field="t", tag="ts"):
@@ -248,7 +219,6 @@ ControllerBoundMessage: TypeAlias = (
     Registration
     | Heartbeat
     | StatusUpdate
-    | MemoryReport
     | TelemetryStatus
     | ServerMetricsStatus
     | Command
@@ -268,7 +238,6 @@ ControlMessage: TypeAlias = (
     | RegistrationAck
     | Heartbeat
     | StatusUpdate
-    | MemoryReport
     | TelemetryStatus
     | ServerMetricsStatus
     | Command
