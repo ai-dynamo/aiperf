@@ -377,6 +377,8 @@ def _companions_for(field: str) -> dict[str, Any]:
     for companion in COMPANION_ROUTED.get(field, ()):  # type: ignore[call-overload]
         if companion == "model_names":
             companions["model_names"] = ["companion-model"]
+        elif companion in ("use_server_token_count", "streaming"):
+            companions[companion] = True
     if field.endswith("_stddev"):
         mean_field = field[: -len("_stddev")] + "_mean"
         if mean_field in CLIConfig.model_fields:

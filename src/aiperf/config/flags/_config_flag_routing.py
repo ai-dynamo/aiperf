@@ -193,6 +193,10 @@ COMPANION_ROUTED: dict[str, frozenset[str]] = {
     # _apply_phase_loadgen_overrides consults arrival_pattern only when
     # rewriting a phase for --request-rate-series.
     "arrival_pattern": frozenset({"request_rate_series"}),
+    # EndpointConfig._validate_per_chunk_usage requires server token counts,
+    # streaming, and a chat endpoint; on its own the flag can only be set to
+    # its default.
+    "per_chunk_usage": frozenset({"use_server_token_count", "streaming"}),
 }
 
 
