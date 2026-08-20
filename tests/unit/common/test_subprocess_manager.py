@@ -69,13 +69,8 @@ class TestSpawnService:
         assert info.service_id == "worker-0"
         assert info.service_type == ServiceType.WORKER
         assert subprocess_manager.get_by_type(ServiceType.WORKER) == [info]
-        # The local group-manager boundary is started first and tracked too, so
-        # the worker is the second (and last) tracked child, not the only one.
-        assert subprocess_manager.subprocesses[-1] is info
-        assert [p.service_type for p in subprocess_manager.subprocesses] == [
-            ServiceType.WORKER_GROUP_MANAGER,
-            ServiceType.WORKER,
-        ]
+        assert subprocess_manager.subprocesses == [info]
+        assert subprocess_manager.get_by_type(ServiceType.WORKER_GROUP_MANAGER) == []
 
     @pytest.mark.asyncio
     async def test_spawn_service_generates_id_when_replicable(
@@ -154,47 +149,6 @@ class TestSpawnService:
             )
 
         assert process_ctor.call_args.kwargs["daemon"] is False
-
-    @pytest.mark.asyncio
-    async def test_group_manager_boundary_is_started_before_first_child(
-        self, subprocess_manager: SubprocessManager, mock_process_alive: MagicMock
-    ) -> None:
-        with mock_mp_process(mock_process_alive):
-            info = await subprocess_manager.spawn_service(ServiceType.WORKER)
-
-        adapter = subprocess_manager.local_worker_group_runtime_adapter
-        assert adapter is not None
-        assert info.launch_adapter is adapter
-        assert info.parent_service_id == adapter.service_id
-        assert len(subprocess_manager.subprocesses) == 2
-
-    @pytest.mark.asyncio
-    async def test_sibling_children_share_one_group_manager_adapter(
-        self, subprocess_manager: SubprocessManager, mock_process_alive: MagicMock
-    ) -> None:
-        """Every child must carry the *running* boundary's adapter instance.
-
-        Regression guard: rebuilding a candidate adapter per spawn and returning
-        it handed each sibling its own copy, so they could diverge from the live
-        boundary's identity and declared capacity.
-        """
-        with mock_mp_process(mock_process_alive):
-            first = await subprocess_manager.spawn_service(
-                ServiceType.WORKER, service_id="worker-0"
-            )
-            second = await subprocess_manager.spawn_service(
-                ServiceType.RECORD_PROCESSOR, service_id="rp-0"
-            )
-
-        assert first.launch_adapter is second.launch_adapter
-        assert (
-            first.launch_adapter
-            is subprocess_manager.local_worker_group_runtime_adapter
-        )
-        # Exactly one boundary, despite two children.
-        assert (
-            len(subprocess_manager.get_by_type(ServiceType.WORKER_GROUP_MANAGER)) == 1
-        )
 
     @pytest.mark.asyncio
     async def test_spawn_services_creates_requested_replica_count(
@@ -285,8 +239,7 @@ class TestStopAndKill:
 
         results = await subprocess_manager.stop_all()
 
-        # Two workers plus the one local group-manager boundary they share.
-        assert len(results) == 3
+        assert len(results) == 2
         assert subprocess_manager.subprocesses == []
 
     @pytest.mark.asyncio
