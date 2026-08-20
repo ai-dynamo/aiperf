@@ -148,8 +148,43 @@ fn graph_recording_source_and_subagent_flags_accept_the_documented_spellings_bod
         assert_eq!(flags.graph_include_subagents, expected, "{args:?}");
     }
 
-    ProfileFlags::try_parse_from(["aiperf", "--graph-recording-source", "mini-swe-agent"])
-        .expect("mini-swe-agent parses");
+    for (cli, wire) in [
+        ("auto", "auto"),
+        ("mini-swe-agent", "mini_swe_agent"),
+        ("codex", "codex"),
+        ("claude-code", "claude_code"),
+    ] {
+        let flags = ProfileFlags::try_parse_from([
+            "aiperf",
+            "--model",
+            "model",
+            "--url",
+            "http://127.0.0.1:8000",
+            "--endpoint-type",
+            "chat",
+            "--input-file",
+            "/tmp/session.jsonl",
+            "--graph-format",
+            "agent_recording",
+            "--graph-recording-source",
+            cli,
+            "--concurrency",
+            "1",
+            "--request-count",
+            "1",
+            "--hardware-description",
+            "unknown",
+            "--endpoint-placement",
+            "remote",
+        ])
+        .expect("documented source spelling parses");
+        let run = aiperf_cli::load::resolve(&flags).expect("documented source projects");
+        let projected = serde_json::to_value(run).expect("projected run serializes");
+        assert_eq!(
+            projected["cfg"]["datasets"][0]["graph"]["source_format"],
+            wire,
+        );
+    }
 
     for args in [
         vec!["--graph-recording-source", "claude"],

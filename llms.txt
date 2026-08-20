@@ -632,9 +632,11 @@ Inputs, endpoints, and graph:
   environments and sandboxes, controller-folded metrics/artifacts, safe resume,
   cellular preflight, and pinned-reference parity coverage.
 - [`docs/specs/2026-08-19-codex-claude-recorded-agent-import.md`](docs/specs/2026-08-19-codex-claude-recorded-agent-import.md) —
-  proposed source-normalization import for Codex CLI and Claude Code session logs
-  into canonical `agent_recording` Graph-IR, with explicit replay-fidelity and
-  sandbox boundaries.
+  built source-normalization import for Codex CLI and Claude Code session logs
+  into canonical `agent_recording` Graph-IR: descriptor-bound exact-once
+  immutable acquisition, linear request history, controller compile-once
+  assignment planning, shared same-host compilation, and remote private
+  materialization.
 - [`docs/specs/2026-08-19-native-graph-inspection-tools.md`](docs/specs/2026-08-19-native-graph-inspection-tools.md) —
   built Python-free `aiperf graph validate`, `explain`, and `visualize` commands
   that inspect resolved, lower-once native Graph-IR through the typed

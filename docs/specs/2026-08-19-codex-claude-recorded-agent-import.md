@@ -47,13 +47,14 @@ one JSONL file while directory imports require an explicit provider format.
 
 Codex directories recurse over sorted session JSONL files. Claude directories
 select sorted main sessions and their direct `subagents/agent-*.jsonl` files
-when `include_subagents` is enabled. Discovery canonicalizes every selected
-path and rejects symlinks and root escapes. Cellular controllers revalidate and
-stream-copy the exact selected files through no-follow descriptors into private
-scratch before parsing or serving them. Cross-host cells rebuild only that
-scratch-backed manifest; co-located cells receive the same scratch paths. A
-caller source replacement after snapshotting therefore cannot alter a cell's
-input, and session histories are never retained wholesale in controller memory.
+when `include_subagents` is enabled. Selection configuration performs no
+source-content read. Acquisition canonicalizes every selected path, rejects
+symlinks and root escapes, and opens each selected authored file once with
+no-follow semantics. Detection or validation and the private-scratch copy use
+that same descriptor. The acquired snapshot owns all later local and
+controller parsing and cellular serving, so a caller source replacement cannot
+alter the run. Session histories are retained as one linear request-history
+vector plus call offsets, not wholesale controller copies.
 
 The importers normalize provider histories into non-executable session IR,
 lower it to canonical recorded-agent Graph-IR, and preserve observed tool
@@ -196,12 +197,13 @@ The following validation is mandatory:
   restricted to that format at `rust/runtime/src/config/validate.rs:301-312`.
 - Sampling remains `sequential`, options remain empty, and dataset wrap remains
   disabled, matching `rust/runtime/src/engine/graph_input.rs:544-567,684-690`.
-- `execute_tools=true` is rejected for `codex` and `claude_code`. Existing tool
-  images and tool lifecycle settings are consequently rejected as inapplicable
-  for these source formats.
-- `scenario: recorded-agent-default` rejects imported sessions before source
-  loading. That scenario is bound to the canonical manifest and recording
-  digests, not arbitrary session logs.
+- `execute_tools=true`, `tool_image`, and `pinch_image` are rejected for
+  `codex` and `claude_code`. Positive tool lifecycle timeout values remain
+  permitted and are validated normally for these source formats.
+- `scenario: recorded-agent-default` rejects explicit imported source formats
+  before source loading. With `auto`, an imported JSONL can be acquired and
+  parsed before lowering rejects it. That scenario is bound to the canonical
+  manifest and recording digests, not arbitrary session logs.
 - `auto` is supported for a single file. A directory requires an explicit
   source format because Codex and Claude have different recursive read sets.
 
@@ -241,15 +243,17 @@ sorted `<session>/subagents/agent-*.jsonl` files
 (`claude_code.py:107-115,154-161`). Nested subagent files are never rediscovered
 as main sessions.
 
-The native implementation must make the discovered read set a first-class
-value shared with cellular shipping. Every path is resolved beneath the
-canonical selected root, every component is checked with `symlink_metadata`,
-and symlinks are rejected. These rules extend the existing root containment
-and symlink protections at
+Selection configuration is a first-class, content-free request. Acquisition
+resolves every path beneath the canonical selected root, checks every component
+with `symlink_metadata`, rejects symlinks, and opens each selected authored
+file once with no-follow semantics. Its descriptor is the authority for source
+detection or validation and the copy into the private immutable snapshot;
+discovery alone is not immutable authority. These rules extend the existing
+root containment and symlink protections at
 `rust/runtime/src/graph/recorded/agent_recording/discovery.rs:140-180,183-227,615-669`.
 
-Cellular import shipping consumes only the exact discovered read set; it never
-reuses replay-root traversal for a user's `~/.codex` or `~/.claude` tree.
+Cellular import shipping consumes only the acquired snapshot's exact set; it
+never reuses replay-root traversal for a user's `~/.codex` or `~/.claude` tree.
 
 ## Normalization data flow
 
@@ -258,9 +262,9 @@ The load path is:
 ```text
 RecordedAgentRunnerGraphInputAdapter
   -> decode strict dataset.graph configuration
-  -> resolve and validate source_format
-  -> discover an exact root-contained file set
-  -> stream and parse source JSONL
+  -> construct a content-free source selection request
+  -> acquire an exact root-contained private snapshot through no-follow descriptors
+  -> parse only snapshot-backed JSONL
   -> normalize each file into ImportedAgentSession
   -> lower ImportedAgentSession values into GraphInputBundle
   -> attach canonical recorded-agent preparation policy
@@ -536,8 +540,11 @@ shall:
 - Never include raw prompt, reasoning, tool argument, tool result, cwd, branch,
   or ignored record contents in errors, tracing, warning facts, trace IDs, or
   comparability annotations.
-- Retain raw content only in the immutable segment store where it is required
-  to construct benchmark requests.
+- Keep non-cellular local acquired JSONL only through parsing and lowering;
+  retain controller snapshots through watcher shutdown and remote landing guards
+  through cell execution. Source JSONL snapshots are never emitted. Normalized
+  content remains in the segment store where it constructs benchmark requests,
+  is sent to the endpoint, and can appear in raw-record artifacts when enabled.
 - Keep cwd and git branch as booleans indicating presence; do not recreate the
   Python tags that embed their values (`_agent_session.py:406-415`).
 - Omit Codex reasoning summaries entirely. Errors may identify only their
@@ -598,7 +605,7 @@ The implementation adds focused modules without weakening the Mini-SWE types:
 rust/runtime/src/graph/recorded/agent_recording/
   import/
     mod.rs          source enum, shared IR, public dispatcher, common error
-    discovery.rs    exact deterministic file sets and format detection
+    discovery.rs    content-free selection plus descriptor-bound acquisition and format detection
     codex.rs        Codex DTOs and state machine
     claude_code.rs  Claude DTOs, sidechain parsing, subagent linking
     lowering.rs     ImportedAgentSession -> GraphInputBundle
@@ -616,11 +623,15 @@ Other ownership:
 - `rust/cli/src/flags.rs`, `rust/cli/src/load.rs`, and `rust/cli/src/yaml.rs`:
   native CLI and YAML projection.
 - `rust/runtime/src/engine/graph_input.rs`: select Mini-SWE or session import,
-  then retain one canonical prepared-input policy. It must not contain source
-  parsing state machines.
+  construct the content-free acquisition request, and retain one canonical
+  prepared-input policy. It does not contain source parsing state machines.
 - `rust/runtime/src/engine/cellular_controller.rs` and
-  `rust/runtime/src/engine/cellular_cell.rs`: ship and preflight the exact
-  discovered set; they must not reimplement discovery patterns.
+  `rust/runtime/src/engine/cellular_cell.rs`: retain controller scratch and
+  acquired-source ownership until local children and watchers drain; prepare
+  assignment template IDs once on the controller; let same-host cells compile
+  from that shared acquired snapshot; and let remote HTTP cells compile their
+  private landed materialization. Compiled Graph-IR never crosses the cellular
+  wire.
 
 The package root documentation in
 `rust/runtime/src/graph/recorded/agent_recording/mod.rs:4` must be widened from
@@ -648,9 +659,11 @@ symlink.
 
 ### Unit and integration tests
 
-1. **Detection/discovery:** explicit and automatic single-file detection;
+1. **Detection/acquisition:** explicit and automatic single-file detection;
    Codex recursive sorting; Claude shallow main discovery; optional exact
-   subagent pattern; empty/mixed/ambiguous input errors; root/symlink checks.
+   subagent pattern; empty/mixed/ambiguous input errors; root/symlink checks;
+   and proof that each caller-authored selected file is opened once while
+   detection/validation and snapshot copy share its descriptor.
 2. **Codex normalization:** metadata fallback, system/developer/user history,
    function-call boundary before results, parallel correlation, missing-result
    annotation, and omission of reasoning content.
@@ -669,9 +682,12 @@ symlink.
    `rust/runtime/src/engine/graph_input.rs:1882-1904`; test strict config decode,
    CLI/YAML projection, invalid source/options, recorded model behavior, and
    canonical prepared-input policy.
-7. **Cellular:** prove the controller-owned discovered snapshot is the only
-   source for cell planning and downloads, excludes unrelated JSONL, and rejects
-   symlink replacement.
+7. **Cellular:** prove the controller-owned acquired snapshot is the only
+   source for one controller assignment-template compilation; same-host cells
+   compile from that shared snapshot, while remote HTTP cells compile a private
+   landed materialization; compiled Graph-IR is not transported; unrelated
+   JSONL and symlink replacement are excluded; and teardown drains local child
+   ownership before scratch deletion.
 8. **Privacy:** assert errors, warnings, debug output, trace identity, and
    annotations do not contain fixture prompt text, cwd, branch, arguments,
    results, or reasoning.
@@ -700,11 +716,12 @@ verification.
 
 ## Delivered milestones
 
-### Delivered: source contract and safe discovery
+### Delivered: source contract and descriptor-bound acquisition
 
-Add the typed source enum/config, validation, common import IR, error type,
-deterministic file enumeration, single-file detection, source digests, and
-adversarial discovery tests.
+Add the typed source enum/config, validation, content-free selection request,
+common import IR, error type, deterministic file enumeration, exact-once
+no-follow descriptor acquisition, single-file detection, source digests, and
+adversarial acquisition tests.
 
 ### Delivered: Codex local import
 
@@ -725,13 +742,16 @@ Add exact subagent discovery, parent `Task` correlation, stable sibling
 identity, privacy-safe parent annotations, unmatched/duplicate-parent errors,
 and directory fixture coverage.
 
-### Delivered: cellular exact-set shipping and documentation
+### Delivered: cellular exact-set delivery and documentation
 
-Make local discovery's selected file set the sole source for every cellular
-delivery. Remote cells fetch the captured bytes from their routable controller
-authority; co-located cells compile a controller-owned scratch materialization
-when HTTP delivery is unavailable. Source replacement after discovery cannot
-change planning or execution.
+Make the controller-owned acquired snapshot the sole source for every cellular
+delivery. The controller compiles replay assignment template IDs once before
+the cell loop. Same-host cells compile from the controller's shared acquired
+snapshot. Remote cells fetch captured bytes from the routable controller and
+compile their private landed materialization. The controller retains the
+acquisition and scratch owners until servers and local process watchers stop,
+then drains child ownership before deleting scratch. Source replacement after
+acquisition cannot change planning or execution.
 
 Each milestone is independently reviewable and keeps `agent_recording` as the
 only public graph-input format.
@@ -742,11 +762,14 @@ The following records distinguish shipped behavior from future design work.
 
 ### Shipped decisions
 
-1. **Cross-host directory support:** implemented as exact-set shipping, never
-   replay-root traversal. The controller snapshots discovered bytes before it
-   binds the artifact server; the server and every remote cell consume those
-   bytes. Co-located no-HTTP cells receive a controller scratch materialization
-   of the same bytes rather than the caller path.
+1. **Cross-host directory support:** implemented as descriptor-bound exact-set
+   acquisition and delivery, never replay-root traversal. The controller opens
+   every selected caller file once, detects or validates and copies from that
+   descriptor, then retains the acquired bytes until the artifact server and
+   local children stop. The controller compiles assignment templates once;
+   same-host cells compile from the shared acquired snapshot, while remote HTTP
+   cells receive the captured set and compile a private landed materialization
+   rather than receiving Graph-IR or a caller path.
 2. **Claude endpoint compatibility:** provider-native Claude content is
    accepted only by the Messages endpoint. No implicit OpenAI wire translation
    is performed.
