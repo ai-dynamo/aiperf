@@ -110,11 +110,12 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
     def _norm_value(self: Self) -> str:
         # Lazily cached: members can be created dynamically via register(),
         # so there is no single construction point to precompute this.
-        norm = self.__dict__.get("_norm_value_cache")
-        if norm is None:
+        try:
+            return self._norm_value_cache
+        except AttributeError:
             norm = _normalize_name(self.value)
             self._norm_value_cache = norm
-        return norm
+            return norm
 
     def __eq__(self: Self, other: object) -> bool:
         if self is other:
@@ -127,12 +128,26 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
             return self._norm_value() == _normalize_name(other.value)
         return super().__eq__(other)
 
+    def __ne__(self: Self, other: object) -> bool:
+        """Negate __eq__, forwarding NotImplemented to the other operand.
+
+        Required explicitly: Python only derives __ne__ from __eq__ via
+        object.__ne__, and str.__ne__ sits between this class and object in the
+        MRO. Without this, != compares raw values and disagrees with the
+        normalizing __eq__ above, making `a == b` and `a != b` both true.
+        """
+        result = self.__eq__(other)
+        if result is NotImplemented:
+            return result
+        return not result
+
     def __hash__(self: Self) -> int:
-        norm_hash = self.__dict__.get("_norm_hash_cache")
-        if norm_hash is None:
+        try:
+            return self._norm_hash_cache
+        except AttributeError:
             norm_hash = hash(self._norm_value())
             self._norm_hash_cache = norm_hash
-        return norm_hash
+            return norm_hash
 
     @property
     def name(self) -> str:
