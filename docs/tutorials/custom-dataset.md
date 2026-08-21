@@ -450,9 +450,13 @@ For multimodal workloads, `random_pool` supports per-modality batch-size flags t
 | `--audio-batch-size N` | `audio_batch_size` | 1 | Audio items per request. Set to `0` to disable audio inputs. |
 | `--video-batch-size N` | `video_batch_size` | 1 | Video items per request. Set to `0` to disable video inputs. |
 
+Setting a batch size to `0` for a modality that is absent from the pool is a no-op: it neither suppresses anything nor counts as batching, so `--image-batch-size 0` against a text-only pool leaves that pool sampled normally. A configuration where *every* modality is either absent from the pool or set to `0` produces empty requests and is rejected, since there is nothing left to send.
+
 These flags are only valid with `format: random_pool` (set via `--custom-dataset-type random_pool` on the CLI, or `format: random_pool` directly in a YAML dataset config -- either selects the same format). Using them with other file dataset formats (e.g. `mooncake_trace`) is an error.
 
 Batch sizes other than 1 are also rejected outright whenever batching would discard pool identity: (1) multiple separately named pools -- directory input (multiple files, e.g. `queries.jsonl` / `passages.jsonl`) or inline YAML `records:` with multiple top-level keys (e.g. `records: {queries: [...], passages: [...]}`) both flatten into one anonymous pool per modality, discarding the names that name-sensitive endpoints (e.g. rankings) depend on; (2) a single pool whose entries embed named `Text`/`Image`/`Audio`/`Video` objects, or `Image` objects carrying `uuids` (vLLM cache-reuse IDs) -- reachable from a single file or a single-key inline `records:` list, not just directory input. Batch sizes only apply to a single unnamed pool with unnamed entries.
+
+The directory case is caught up front, before the benchmark starts. The remaining shapes are only visible once the pool has been parsed, so they surface when the dataset is built.
 
 Batching does not preserve per-entry associations across modalities. If a pool entry pairs a specific text with a specific image, a batch size > 1 flattens each modality into an independent pool and samples from them separately, so the original text-image pairing is not preserved in the resulting request. Use `single_turn` instead of `random_pool` if exact pairing must be preserved.
 
