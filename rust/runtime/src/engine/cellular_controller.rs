@@ -44,7 +44,10 @@ use crate::graph::supplement::GraphCellSupplement;
 #[cfg(feature = "cellular")]
 use crate::cellular::transport::CellPhaseSignal;
 #[cfg(feature = "cellular")]
-use crate::cellular::transport::connect::{BindSpec, build_velo};
+use crate::cellular::transport::connect::{
+    BindSpec, build_velo, take_inherited_pipe_reader, take_inherited_tcp_listener,
+    wait_for_pipe_eof,
+};
 #[cfg(feature = "cellular")]
 use crate::cellular::transport::velo_transport::{CellRegistrationPlan, PlanRegistration};
 #[cfg(feature = "cellular")]
@@ -81,6 +84,9 @@ pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 /// phaser for the initial START wait (`Started` at generation 1). Default off (the
 /// event-based START).
 pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
+
+#[cfg(feature = "cellular")]
+const CONTROLLER_START_MARKER_ENV: &str = "AIPERF_E2E_CONTROLLER_START_MARKER";
 
 #[cfg(feature = "cellular")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,6 +144,83 @@ struct NoopStartupProbe;
 
 #[cfg(feature = "cellular")]
 impl StartupProbe for NoopStartupProbe {}
+
+#[cfg(feature = "cellular")]
+struct InheritedControllerDescriptors {
+    artifact_listener: Option<std::net::TcpListener>,
+    controller_listener: Option<std::net::TcpListener>,
+    scratch_hold: Option<std::fs::File>,
+    start_marker: Option<PathBuf>,
+}
+
+#[cfg(feature = "cellular")]
+fn take_controller_inherited_descriptors(
+    cross_host: bool,
+) -> Result<InheritedControllerDescriptors> {
+    let start_marker = std::env::var_os(CONTROLLER_START_MARKER_ENV)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    // SAFETY: this bootstrap function is called before the controller creates its
+    // Tokio runtime; the inherited test marker is one-shot process input.
+    unsafe { std::env::remove_var(CONTROLLER_START_MARKER_ENV) };
+    Ok(InheritedControllerDescriptors {
+        artifact_listener: if cross_host {
+            take_inherited_tcp_listener("AIPERF_CONTROLLER_ARTIFACT_LISTENER_FD")?
+        } else {
+            None
+        },
+        controller_listener: if cross_host {
+            take_inherited_tcp_listener("AIPERF_CONTROLLER_LISTENER_FD")?
+        } else {
+            None
+        },
+        scratch_hold: take_inherited_pipe_reader("AIPERF_CONTROLLER_SCRATCH_HOLD_FD")?,
+        start_marker,
+    })
+}
+
+#[cfg(feature = "cellular")]
+fn prepare_controller_runtime<T>(
+    cross_host: bool,
+    build_runtime: impl FnOnce() -> Result<T>,
+) -> Result<(InheritedControllerDescriptors, T)> {
+    let descriptors = take_controller_inherited_descriptors(cross_host)?;
+    let runtime = build_runtime()?;
+    Ok((descriptors, runtime))
+}
+
+#[cfg(feature = "cellular")]
+async fn record_controller_start_marker(path: &Path) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        let mut marker = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await
+            .context("creating cellular controller START test marker")?;
+        ensure!(
+            marker
+                .metadata()
+                .await
+                .context("inspecting cellular controller START test marker")?
+                .is_file(),
+            "cellular controller START test marker is not a regular file"
+        );
+        marker
+            .write_all(b"START\n")
+            .await
+            .context("writing cellular controller START test marker")?;
+        marker
+            .flush()
+            .await
+            .context("flushing cellular controller START test marker")?;
+        Ok(())
+    })
+    .await
+    .context("cellular controller START test marker deadline elapsed")?
+}
 
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).
@@ -777,16 +860,20 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
     // Derive the metrics policy from the envelope so the merge reproduces the
     // authored SLOs / timeslices, exactly as the single-process path does.
     let metrics_config = cellular_metrics_config(envelope)?;
-
-    // The controller is off the per-request hot path; a small multi-thread runtime
-    // drives the transport accept/read tasks and the child processes concurrently.
-    // Control-plane HTTP (reset_kv_cache / server_profiler) still needs a LocalSet
-    // because the Hyper client connection pool uses spawn_local.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .context("building controller runtime")?;
+    // Consume every inherited descriptor before creating Tokio threads. Environment
+    // mutation is process-global, so delaying any of these reads until the runtime is
+    // live would race launcher/worker activity and make descriptor ownership unclear.
+    let (inherited_descriptors, runtime) = prepare_controller_runtime(cross_host, || {
+        // The controller is off the per-request hot path; a small multi-thread runtime
+        // drives the transport accept/read tasks and the child processes concurrently.
+        // Control-plane HTTP (reset_kv_cache / server_profiler) still needs a LocalSet
+        // because the Hyper client connection pool uses spawn_local.
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .context("building controller runtime")
+    })?;
     let local = tokio::task::LocalSet::new();
 
     local.block_on(&runtime, async move {
@@ -855,18 +942,11 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                 Some((map, manifest)) => (map, Some(manifest)),
                 None => (std::collections::HashMap::new(), None),
             };
-            Some(
-                crate::engine::artifact_shipping::ArtifactUploadServer::start_with_dataset_plan(
-                    artifact_bind,
-                    landing_root.clone(),
-                    allowed,
-                    datasets,
-                    manifest,
-                    cell_count,
-                )
-                .await
-                .context("starting cellular artifact server")?,
-            )
+            let server = match inherited_descriptors.artifact_listener {
+                Some(listener) => crate::engine::artifact_shipping::ArtifactUploadServer::start_with_dataset_plan_on_listener(listener, landing_root.clone(), allowed, datasets, manifest, cell_count).await,
+                None => crate::engine::artifact_shipping::ArtifactUploadServer::start_with_dataset_plan(artifact_bind, landing_root.clone(), allowed, datasets, manifest, cell_count).await,
+            };
+            Some(server.context("starting cellular artifact server")?)
         } else {
             None
         };
@@ -875,7 +955,11 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         // to (zero discovery — velo's `_hello` handshake resolves identity on dial).
         // `is_k8s` is resolved once above and moved in here.
         startup_probe.before_velo_bind();
-        let (bind, cell_coordinate) = controller_bind_and_endpoint(cross_host, &temp_root)?;
+        let (bind, cell_coordinate) = controller_bind_and_endpoint(
+            cross_host,
+            &temp_root,
+            inherited_descriptors.controller_listener,
+        )?;
         let velo = build_velo(bind).await.context("building controller velo")?;
         // When artifacts ride velo, hang the artifact receive handlers off THIS same
         // control-plane velo instance (no second port): cells stream their zstd chunks
@@ -1247,6 +1331,9 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         start_event
             .trigger()
             .context("triggering cellular benchmark start")?;
+        if let Some(path) = inherited_descriptors.start_marker.as_ref() {
+            record_controller_start_marker(path).await?;
+        }
         // Record run-wide START on the monotonic phaser. Cells that subscribed with
         // `PhaserClient` for start-gating wake here; a cell subscribing later sees the
         // completed transition via replay.
@@ -1548,17 +1635,27 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         })
         }
         .await;
+        let scratch_hold_result = match inherited_descriptors.scratch_hold {
+            Some(reader) => wait_for_pipe_eof(reader)
+                .await
+                .context("waiting for controller scratch hold release"),
+            None => Ok(()),
+        };
         let shutdown = watchers.shutdown().await;
         // A timeout reports failed cleanup, but dropping JoinSet still aborts every
         // remaining watcher and releases its kill_on_drop child before imported
         // session snapshots or controller scratch are released.
         drop(watchers);
-        match shutdown {
-            Ok(()) => {
+        match (shutdown, scratch_hold_result) {
+            (Ok(()), Ok(())) => {
                 drop(acquired_imported);
                 result
             }
-            Err(shutdown_error) => {
+            (Ok(()), Err(hold_error)) => match result {
+                Err(run_error) => Err(run_error),
+                Ok(_) => Err(hold_error),
+            },
+            (Err(shutdown_error), _) => {
                 let scratch_path =
                     retain_controller_sources_after_watcher_timeout(scratch, acquired_imported);
                 tracing::error!(
@@ -1630,9 +1727,18 @@ fn controller_coordinate_is_loopback() -> bool {
 }
 
 #[cfg(feature = "cellular")]
-fn controller_bind_and_endpoint(cross_host: bool, temp_root: &Path) -> Result<(BindSpec, String)> {
+fn controller_bind_and_endpoint(
+    cross_host: bool,
+    temp_root: &Path,
+    inherited_listener: Option<std::net::TcpListener>,
+) -> Result<(BindSpec, String)> {
     let _ = temp_root;
     if cross_host {
+        if let Some(listener) = inherited_listener {
+            let coordinate = std::env::var(crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV)
+                .unwrap_or_default();
+            return Ok((BindSpec::TcpListener(listener), coordinate));
+        }
         let port: u16 = std::env::var("AIPERF_CONTROLLER_PORT")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -3037,6 +3143,8 @@ fn write_heartbeat_sidecar(report_path: &Path, heartbeat: &MetricsHeartbeat) -> 
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::fd::{AsRawFd, FromRawFd};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -3191,6 +3299,72 @@ mod tests {
         fn before_launcher_execution(&self) {
             self.0.fetch_or(16, Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn inherited_descriptors_are_consumed_before_runtime_creation() {
+        let _environment = CELLULAR_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock cellular environment");
+        let mut descriptors = [0; 2];
+        assert_eq!(
+            unsafe { libc::pipe(descriptors.as_mut_ptr()) },
+            0,
+            "create inherited scratch fixture"
+        );
+        let reader = unsafe { std::fs::File::from_raw_fd(descriptors[0]) };
+        let writer = unsafe { std::fs::File::from_raw_fd(descriptors[1]) };
+        let reader_fd = reader.as_raw_fd();
+        std::mem::forget(reader);
+        let _scratch =
+            EnvVarRestore::set("AIPERF_CONTROLLER_SCRATCH_HOLD_FD", &reader_fd.to_string());
+
+        let (inherited, ()) = prepare_controller_runtime(false, || {
+            ensure!(
+                std::env::var_os("AIPERF_CONTROLLER_SCRATCH_HOLD_FD").is_none(),
+                "runtime creation observed an unconsumed inherited descriptor"
+            );
+            Ok(())
+        })
+        .expect("consume inherited descriptors before runtime creation");
+        assert!(inherited.scratch_hold.is_some());
+        drop(writer);
+    }
+
+    #[tokio::test]
+    async fn start_marker_refuses_to_replace_an_existing_path() {
+        let temporary = tempfile::tempdir().expect("temporary marker directory");
+        let marker = temporary.path().join("controller-start.events");
+        std::fs::write(&marker, b"caller-owned\n").expect("seed caller-owned marker");
+
+        record_controller_start_marker(&marker)
+            .await
+            .expect_err("existing marker path must be refused");
+
+        assert_eq!(
+            std::fs::read(&marker).expect("read caller-owned marker"),
+            b"caller-owned\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn start_marker_refuses_fifo_without_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let temporary = tempfile::tempdir().expect("temporary marker directory");
+        let marker = temporary.path().join("controller-start.fifo");
+        let marker_bytes = std::ffi::CString::new(marker.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(marker_bytes.as_ptr(), 0o600) }, 0);
+
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            record_controller_start_marker(&marker),
+        )
+        .await
+        .expect("FIFO marker refusal must not block")
+        .expect_err("FIFO marker path must be refused");
     }
 
     #[test]

@@ -43,6 +43,8 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 sha2.workspace = true
 blake3.workspace = true
+ed25519-dalek.workspace = true
+libc.workspace = true
 
 # POSIX-signal delivery to the spawned `aiperf` child (SIGINT graceful-cancel
 # tests). Unix-only: `nix` does not build on windows-msvc, so gate it and stub

@@ -18,6 +18,8 @@
 //! authority by swapping the port on the same coordinate) keeps working.
 
 use std::net::SocketAddr;
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +29,227 @@ use velo::transports::tcp::TcpTransportBuilder;
 use velo::{Endpoint, PeerInfo, Transport, Velo};
 
 use super::CellTransportError;
+
+/// Consume a launcher-inherited TCP listener named by `env_name`.
+///
+/// The environment value carries only a decimal descriptor. It is removed before
+/// acquisition, making descriptor ownership one-shot; the returned listener is
+/// marked close-on-exec before the controller can launch any other process.
+pub(crate) fn take_inherited_tcp_listener(
+    env_name: &'static str,
+) -> Result<Option<std::net::TcpListener>> {
+    let value = take_inherited_descriptor_value(env_name);
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    #[cfg(unix)]
+    {
+        let fd = value
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("{env_name} must be a decimal file descriptor"))?
+            .parse::<i32>()
+            .map_err(|_| anyhow::anyhow!("{env_name} must be a decimal file descriptor"))?;
+        if fd < 0 {
+            anyhow::bail!("{env_name} must be a non-negative file descriptor");
+        }
+        validate_tcp_listener(env_name, fd)?;
+        let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+        set_close_on_exec(env_name, &owned)?;
+        let listener = std::net::TcpListener::from(owned);
+        listener
+            .local_addr()
+            .with_context(|| format!("reading inherited {env_name} local address"))?;
+        Ok(Some(listener))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = value;
+        anyhow::bail!("{env_name} inherited listeners are unsupported on this platform")
+    }
+}
+
+/// Consume a launcher-inherited pipe reader named by `env_name`.
+///
+/// The descriptor is a test/deployment lifetime gate, not a channel carrying
+/// sensitive material. It must be a pipe endpoint and is made close-on-exec
+/// before it becomes controller-owned.
+pub(crate) fn take_inherited_pipe_reader(env_name: &'static str) -> Result<Option<std::fs::File>> {
+    let value = take_inherited_descriptor_value(env_name);
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    #[cfg(unix)]
+    {
+        let fd = parse_inherited_fd(env_name, value)?;
+        validate_pipe_reader(env_name, fd)?;
+        let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+        set_close_on_exec(env_name, &owned)?;
+        set_nonblocking(env_name, &owned)?;
+        Ok(Some(std::fs::File::from(owned)))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = value;
+        anyhow::bail!("{env_name} inherited pipe readers are unsupported on this platform")
+    }
+}
+
+/// Wait for the inherited scratch-lifetime gate to reach EOF.
+///
+/// Reading is readiness-driven and never occupies a Tokio worker thread.
+#[cfg(unix)]
+pub async fn wait_for_pipe_eof(reader: std::fs::File) -> Result<()> {
+    let reader = tokio::io::unix::AsyncFd::new(reader)
+        .context("registering inherited scratch hold pipe with Tokio")?;
+    let mut byte = [0_u8; 1];
+    loop {
+        let mut readiness = reader
+            .readable()
+            .await
+            .context("waiting for inherited scratch hold pipe")?;
+        match readiness.try_io(|inner| {
+            // SAFETY: the owned pipe descriptor and one-byte output buffer remain valid.
+            let count = unsafe {
+                libc::read(
+                    inner.get_ref().as_raw_fd(),
+                    byte.as_mut_ptr().cast(),
+                    byte.len(),
+                )
+            };
+            if count < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(count)
+            }
+        }) {
+            Ok(Ok(0)) => return Ok(()),
+            Ok(Ok(_)) => anyhow::bail!("inherited scratch hold pipe unexpectedly carried data"),
+            Ok(Err(error)) => return Err(error).context("reading inherited scratch hold pipe"),
+            Err(_) => continue,
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub async fn wait_for_pipe_eof(_reader: std::fs::File) -> Result<()> {
+    anyhow::bail!("inherited scratch hold pipes are unsupported on this platform")
+}
+
+fn take_inherited_descriptor_value(env_name: &'static str) -> Option<std::ffi::OsString> {
+    let value = std::env::var_os(env_name);
+    // SAFETY: controller bootstrap runs before the Tokio runtime or worker threads.
+    unsafe { std::env::remove_var(env_name) };
+    value
+}
+
+#[cfg(unix)]
+fn parse_inherited_fd(env_name: &'static str, value: std::ffi::OsString) -> Result<i32> {
+    let fd = value
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("{env_name} must be a decimal file descriptor"))?
+        .parse::<i32>()
+        .map_err(|_| anyhow::anyhow!("{env_name} must be a decimal file descriptor"))?;
+    if fd < 0 {
+        anyhow::bail!("{env_name} must be a non-negative file descriptor");
+    }
+    Ok(fd)
+}
+
+#[cfg(unix)]
+fn validate_tcp_listener(env_name: &'static str, fd: i32) -> Result<()> {
+    if unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("opening inherited {env_name}"));
+    }
+    let mut kind: libc::c_int = 0;
+    let mut kind_len = std::mem::size_of_val(&kind) as libc::socklen_t;
+    // SAFETY: fd is a validated borrowed descriptor; output is initialized local storage.
+    let result = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            &mut kind as *mut _ as *mut _,
+            &mut kind_len,
+        )
+    };
+    if result != 0 || kind != libc::SOCK_STREAM {
+        anyhow::bail!("{env_name} is not a TCP stream listener");
+    }
+    let mut accepting: libc::c_int = 0;
+    let mut accepting_len = std::mem::size_of_val(&accepting) as libc::socklen_t;
+    // SAFETY: fd is a validated borrowed descriptor; SO_ACCEPTCONN distinguishes a listener.
+    let result = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_ACCEPTCONN,
+            &mut accepting as *mut _ as *mut _,
+            &mut accepting_len,
+        )
+    };
+    if result != 0 || accepting != 1 {
+        anyhow::bail!("{env_name} is not a TCP stream listener");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_pipe_reader(env_name: &'static str, fd: i32) -> Result<()> {
+    let mut status = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `status` is initialized by fstat on success.
+    if unsafe { libc::fstat(fd, status.as_mut_ptr()) } != 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("inspecting inherited {env_name}"));
+    }
+    // SAFETY: fstat succeeded above.
+    let status = unsafe { status.assume_init() };
+    if status.st_mode & libc::S_IFMT != libc::S_IFIFO {
+        anyhow::bail!("{env_name} is not a pipe reader");
+    }
+    // SAFETY: fcntl only reads flags on the validated borrowed descriptor.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("reading inherited {env_name} status flags"));
+    }
+    if flags & libc::O_ACCMODE != libc::O_RDONLY {
+        anyhow::bail!("{env_name} is not a pipe reader");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_close_on_exec(env_name: &'static str, fd: &OwnedFd) -> Result<()> {
+    // SAFETY: fcntl only reads/updates flags on the owned descriptor.
+    let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("reading inherited {env_name} descriptor flags"));
+    }
+    // SAFETY: as above, update only FD_CLOEXEC.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("setting close-on-exec on inherited {env_name}"));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_nonblocking(env_name: &'static str, fd: &OwnedFd) -> Result<()> {
+    // SAFETY: fcntl only reads/updates flags on the owned descriptor.
+    let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("reading inherited {env_name} status flags"));
+    }
+    // SAFETY: as above, update only O_NONBLOCK.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("setting nonblocking on inherited {env_name}"));
+    }
+    Ok(())
+}
 
 /// How long a cell keeps retrying `connect` before giving up (the controller may
 /// not have bound its listener yet when a k8s cell pod starts first).
@@ -352,6 +575,129 @@ pub(crate) async fn await_handler_until(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::fd::{AsRawFd, FromRawFd};
+    #[cfg(unix)]
+    use std::sync::{Mutex, OnceLock};
+
+    #[cfg(unix)]
+    static INHERITED_DESCRIPTOR_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[cfg(unix)]
+    fn inherited_descriptor_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        INHERITED_DESCRIPTOR_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("inherited descriptor environment lock")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_listener_is_one_shot_stream_listener_with_close_on_exec() {
+        let _guard = inherited_descriptor_env_lock();
+        let source = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        // SAFETY: the duplicate is transferred to the one-shot test environment.
+        let duplicate = unsafe { libc::dup(source.as_raw_fd()) };
+        assert!(duplicate >= 0, "duplicate listener");
+        unsafe { std::env::set_var("AIPERF_TEST_INHERITED_LISTENER", duplicate.to_string()) };
+        let listener = take_inherited_tcp_listener("AIPERF_TEST_INHERITED_LISTENER")
+            .expect("consume listener")
+            .expect("listener supplied");
+        assert!(std::env::var_os("AIPERF_TEST_INHERITED_LISTENER").is_none());
+        assert!(
+            take_inherited_tcp_listener("AIPERF_TEST_INHERITED_LISTENER")
+                .expect("second consumption")
+                .is_none()
+        );
+        // SAFETY: fcntl only reads the returned listener's descriptor flags.
+        let flags = unsafe { libc::fcntl(listener.as_raw_fd(), libc::F_GETFD) };
+        assert_ne!(flags & libc::FD_CLOEXEC, 0);
+        assert!(listener.local_addr().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_listener_rejects_non_socket_descriptor_and_clears_env() {
+        let _guard = inherited_descriptor_env_lock();
+        let mut fds = [0; 2];
+        // SAFETY: pipe2 initializes the locally owned descriptor slots.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+        unsafe { std::env::set_var("AIPERF_TEST_INHERITED_LISTENER", fds[0].to_string()) };
+        let error = take_inherited_tcp_listener("AIPERF_TEST_INHERITED_LISTENER")
+            .expect_err("pipe must not be accepted as listener");
+        assert!(error.to_string().contains("TCP stream listener"));
+        assert!(std::env::var_os("AIPERF_TEST_INHERITED_LISTENER").is_none());
+        // Prevalidation borrows rejected descriptors; the launcher retains ownership.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejected_reused_fd_does_not_close_the_replacement() {
+        let _guard = inherited_descriptor_env_lock();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let replacement_source = std::fs::File::open("/dev/null").unwrap();
+        let minimum_target = replacement_source.as_raw_fd().saturating_add(1).max(64);
+        let stale =
+            unsafe { libc::fcntl(listener.as_raw_fd(), libc::F_DUPFD_CLOEXEC, minimum_target) };
+        assert!(stale >= 64, "create deterministic stale descriptor slot");
+        assert_ne!(stale, replacement_source.as_raw_fd());
+        assert!(
+            unsafe { libc::fcntl(stale, libc::F_GETFD) } >= 0,
+            "the target slot must remain owned until atomic replacement"
+        );
+        assert_eq!(
+            unsafe { libc::dup2(replacement_source.as_raw_fd(), stale) },
+            stale,
+            "install deterministic replacement descriptor"
+        );
+        let replacement = unsafe { OwnedFd::from_raw_fd(stale) };
+        unsafe { std::env::set_var("AIPERF_TEST_INHERITED_LISTENER", stale.to_string()) };
+        assert!(take_inherited_tcp_listener("AIPERF_TEST_INHERITED_LISTENER").is_err());
+        assert!(
+            unsafe { libc::fcntl(replacement.as_raw_fd(), libc::F_GETFD) } >= 0,
+            "rejected stale fd must not close replacement"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn inherited_pipe_requires_reader_and_waits_for_eof_without_blocking() {
+        let guard = inherited_descriptor_env_lock();
+        let mut fds = [0; 2];
+        // SAFETY: pipe2 initializes the locally owned descriptor slots.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+        unsafe { std::env::set_var("AIPERF_TEST_INHERITED_PIPE", fds[1].to_string()) };
+        assert!(take_inherited_pipe_reader("AIPERF_TEST_INHERITED_PIPE").is_err());
+        assert!(std::env::var_os("AIPERF_TEST_INHERITED_PIPE").is_none());
+        // Prevalidation borrows the rejected writer; both endpoints remain caller-owned.
+        let reader = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+        let rejected_writer = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+        drop(rejected_writer);
+        let mut fds = [0; 2];
+        // SAFETY: create a distinct pipe for the valid reader/EOF path.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+        unsafe { std::env::set_var("AIPERF_TEST_INHERITED_PIPE", fds[0].to_string()) };
+        let gate = take_inherited_pipe_reader("AIPERF_TEST_INHERITED_PIPE")
+            .expect("consume pipe")
+            .expect("pipe supplied");
+        drop(guard);
+        // SAFETY: fcntl only reads the returned descriptor flags.
+        let descriptor_flags = unsafe { libc::fcntl(gate.as_raw_fd(), libc::F_GETFD) };
+        let status_flags = unsafe { libc::fcntl(gate.as_raw_fd(), libc::F_GETFL) };
+        assert_ne!(descriptor_flags & libc::FD_CLOEXEC, 0);
+        assert_ne!(status_flags & libc::O_NONBLOCK, 0);
+        let writer = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+        drop(writer);
+        tokio::time::timeout(Duration::from_millis(200), wait_for_pipe_eof(gate))
+            .await
+            .expect("EOF wait must be readiness-driven")
+            .expect("EOF wait");
+        drop(reader);
+    }
 
     // Catches omission of the fixed-width dial-address length from the signature transcript.
     #[test]

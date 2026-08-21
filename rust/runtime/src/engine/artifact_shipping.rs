@@ -61,6 +61,14 @@ const TLS_HANDSHAKE_MAX_CONCURRENT: usize = 32;
 const SERVER_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const SERVER_FORCE_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
+async fn bind_artifact_listener(bind: SocketAddr) -> Result<std::net::TcpListener> {
+    tokio::net::TcpListener::bind(bind)
+        .await
+        .with_context(|| format!("binding artifact upload server to {bind}"))?
+        .into_std()
+        .context("converting artifact upload listener to standard listener")
+}
+
 /// One cell-local bearer capability for the per-run artifact channel.
 ///
 /// It deliberately does not implement serialization, display, or string
@@ -1376,6 +1384,27 @@ impl ArtifactUploadServer {
         manifest: Option<DatasetManifest>,
         cell_count: u32,
     ) -> Result<Self> {
+        let listener = bind_artifact_listener(bind).await?;
+        Self::start_with_dataset_plan_on_listener(
+            listener, temp_root, allowed, datasets, manifest, cell_count,
+        )
+        .await
+    }
+
+    /// Start from a caller-reserved listener, preserving its public address.
+    pub async fn start_with_dataset_plan_on_listener(
+        listener: std::net::TcpListener,
+        temp_root: PathBuf,
+        allowed: HashSet<String>,
+        datasets: HashMap<String, DatasetSource>,
+        manifest: Option<DatasetManifest>,
+        cell_count: u32,
+    ) -> Result<Self> {
+        listener
+            .set_nonblocking(true)
+            .context("setting artifact upload listener nonblocking")?;
+        let listener = tokio::net::TcpListener::from_std(listener)
+            .context("adopting artifact upload listener")?;
         #[cfg(test)]
         let task_monitor = TestTaskMonitor::new();
         let rcgen::CertifiedKey { cert, key_pair } =
@@ -1400,9 +1429,6 @@ impl ArtifactUploadServer {
             })),
             server_config: ArtifactChannelServerConfig::new(certificate.to_vec()),
         };
-        let listener = tokio::net::TcpListener::bind(bind)
-            .await
-            .with_context(|| format!("binding artifact upload server to {bind}"))?;
         let local_addr = listener
             .local_addr()
             .context("reading artifact upload server address")?;
@@ -2193,6 +2219,35 @@ pub fn shippable_relatives(artifacts: &crate::engine::protocol::ArtifactSpec) ->
 mod tests {
     use super::*;
     use crate::cellular::transport::CellRegister;
+
+    #[tokio::test]
+    async fn address_bind_keeps_the_existing_large_pending_queue() {
+        const PENDING_CONNECTIONS: usize = 192;
+        let listener = bind_artifact_listener("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut connections = JoinSet::new();
+        for _ in 0..PENDING_CONNECTIONS {
+            connections.spawn(async move {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    tokio::net::TcpStream::connect(address),
+                )
+                .await
+            });
+        }
+        let mut connected = 0;
+        while let Some(result) = connections.join_next().await {
+            if matches!(result, Ok(Ok(Ok(_)))) {
+                connected += 1;
+            }
+        }
+        assert_eq!(
+            connected, PENDING_CONNECTIONS,
+            "address binding reduced the existing pending connection queue"
+        );
+    }
 
     struct SecureServerFixture {
         _temporary: tempfile::TempDir,
