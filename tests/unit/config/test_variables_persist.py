@@ -6,6 +6,8 @@
 from pathlib import Path
 
 from aiperf.config import AIPerfConfig
+from aiperf.config.flags import CLIConfig
+from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader import (
     build_benchmark_plan,
     load_config_dict_with_raw_envelope,
@@ -223,3 +225,40 @@ def test_load_config_dict_with_raw_envelope_returns_both_jinja_stages(
 
     assert rendered["benchmark"]["phases"][0]["concurrency"] == 100
     assert raw_envelope["benchmark"]["phases"][0]["concurrency"] == "{{ load }}"
+
+
+def test_swept_variable_propagates_via_resolve_config(tmp_path: Path) -> None:
+    """The file+CLI path must reach the same variations as the string loader.
+
+    Regression: resolve_config loaded only the rendered dict, so _raw_envelope
+    stayed None and build_benchmark_plan had no live templates left to
+    re-render. Every variation collapsed onto the base variables block --
+    `aiperf profile -f sweep.yaml` silently ran three identical benchmarks.
+    """
+    config_file = tmp_path / "sweep.yaml"
+    config_file.write_text(_SWEEP_JINJA_YAML, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(), config_file)
+
+    assert config._raw_envelope is not None
+    plan = build_benchmark_plan(config)
+    assert [c.phases[0].concurrency for c in plan.configs] == [10, 50, 100]
+    assert [c.phases[0].requests for c in plan.configs] == [50, 250, 500]
+
+
+def test_cli_override_reaches_both_envelopes(tmp_path: Path) -> None:
+    """An override applied to only one envelope would vanish on re-render."""
+    config_file = tmp_path / "sweep.yaml"
+    config_file.write_text(_SWEEP_JINJA_YAML, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(request_count=7), config_file)
+
+    assert config._raw_envelope is not None
+    raw_phase = config._raw_envelope["benchmark"]["phases"][0]
+    assert raw_phase["requests"] == 7
+    # The un-overridden sibling must stay a live template in the raw envelope.
+    assert raw_phase["concurrency"] == "{{ load }}"
+
+    plan = build_benchmark_plan(config)
+    assert all(c.phases[0].requests == 7 for c in plan.configs)
+    assert [c.phases[0].concurrency for c in plan.configs] == [10, 50, 100]
