@@ -1458,8 +1458,8 @@ class ParsedResponse:
     """Additional metadata from the response useful for analysis (rate limits, content filters, etc.)."""
 
     spec_decode_stats: dict[str, Any] | None = None
-    """Raw per-choice speculative-decoding payload captured from the wire (e.g.
-    vLLM's ``choices[].speculative_decoding_stats``), or None when absent. Left
+    """Raw speculative-decoding payload captured from the response root (e.g.
+    vLLM's ``metrics.speculative_decoding``), or None when absent. Left
     uninterpreted here; a ``SpecDecodeAdapterProtocol`` converts it into the
     engine-neutral ``SpecDecodeAcceptanceRecord`` at record-assembly time."""
 
