@@ -308,7 +308,7 @@ class TestLoadConfigFromMapping:
         data: dict = {"benchmark": {}}
         data["benchmark"]["self"] = data
 
-        with pytest.raises(ConfigurationError, match="[Cc]yclic"):
+        with pytest.raises(ConfigurationError, match=r"[Cc]yclic"):
             load_config_from_mapping(data)
 
     def test_recursive_yaml_anchor_raises_configuration_error(self) -> None:
@@ -319,7 +319,7 @@ class TestLoadConfigFromMapping:
               self: *anchor
             """)
 
-        with pytest.raises(ConfigurationError, match="[Cc]yclic"):
+        with pytest.raises(ConfigurationError, match=r"[Cc]yclic"):
             load_config_from_string(recursive, substitute_env=False)
 
     def test_non_string_key_raises_with_file_path_context(self) -> None:
