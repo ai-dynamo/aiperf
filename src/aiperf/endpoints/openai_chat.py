@@ -86,12 +86,19 @@ class ChatEndpoint(BaseEndpoint):
         if extra_body:
             payload.update(extra_body)
 
-        # per_chunk_usage implies use_server_token_count (enforced by the endpoint
-        # config validator), so gating on use_server_token_count alone is sufficient.
-        if (
-            model_endpoint.endpoint.streaming
-            and model_endpoint.endpoint.use_server_token_count
-        ):
+        # Read the merged payload, not endpoint.streaming: the extras above can
+        # override "stream", and a server rejects stream_options when stream is
+        # false ("Stream options can only be defined when stream=True").
+        if payload.get("stream"):
+            # Requested for every streaming run, not just server-token-count
+            # ones: vLLM rides per-request metrics (including
+            # metrics.speculative_decoding) on the trailing usage chunk and
+            # only emits that chunk when include_usage is set, so gating it on
+            # an unrelated flag would silently drop those metrics. Authors who
+            # want it off can set stream_options.include_usage explicitly.
+            # continuous_usage_stats stays opt-in regardless: per_chunk_usage
+            # implies use_server_token_count (enforced by the endpoint config
+            # validator), so widening this gate cannot turn it on by itself.
             self._ensure_include_usage(
                 payload, continuous=model_endpoint.endpoint.per_chunk_usage
             )
@@ -171,12 +178,20 @@ class ChatEndpoint(BaseEndpoint):
         extension (strict OpenAI rejects it), so it is only injected when the
         caller opts in via ``--per-chunk-usage``.
         """
-        stream_options = payload.setdefault("stream_options", {})
-        if not isinstance(stream_options, dict):
+        stream_options = payload.get("stream_options")
+        if stream_options is None:
+            stream_options = {}
+        elif not isinstance(stream_options, dict):
             return
-        stream_options.setdefault("include_usage", True)
+        # Copy rather than mutate: the payload merge aliases endpoint.extra /
+        # turn.extra_body, which are long-lived config reused across every
+        # request, so an in-place edit would rewrite the author's config and
+        # leak into every subsequent request.
+        merged = {**stream_options}
+        merged.setdefault("include_usage", True)
         if continuous:
-            stream_options.setdefault("continuous_usage_stats", True)
+            merged.setdefault("continuous_usage_stats", True)
+        payload["stream_options"] = merged
 
     def parse_response(
         self, response: InferenceServerResponse
