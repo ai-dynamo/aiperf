@@ -297,6 +297,31 @@ class TestLoadConfigFromMapping:
         with pytest.raises(ConfigurationError, match="mapping"):
             load_config_from_mapping(bad)  # type: ignore[arg-type]
 
+    def test_self_referential_mapping_raises_configuration_error(self) -> None:
+        """A cycle must not escape as a bare RecursionError.
+
+        _assert_string_keys recurses with no cycle guard and runs before
+        expansion, so without the up-front _detect_cycles_or_depth call an
+        in-memory cycle surfaced as RecursionError. Only reachable through this
+        entrypoint: a recursive YAML anchor is caught during expansion instead.
+        """
+        data: dict = {"benchmark": {}}
+        data["benchmark"]["self"] = data
+
+        with pytest.raises(ConfigurationError, match="[Cc]yclic"):
+            load_config_from_mapping(data)
+
+    def test_recursive_yaml_anchor_raises_configuration_error(self) -> None:
+        """Companion: the string path already rejects cyclic aliases."""
+        recursive = textwrap.dedent("""\
+            benchmark: &anchor
+              models: [m]
+              self: *anchor
+            """)
+
+        with pytest.raises(ConfigurationError, match="[Cc]yclic"):
+            load_config_from_string(recursive, substitute_env=False)
+
     def test_non_string_key_raises_with_file_path_context(self) -> None:
         with pytest.raises(ConfigurationError) as exc_info:
             load_config_from_mapping(
