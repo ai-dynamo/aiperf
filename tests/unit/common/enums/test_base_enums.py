@@ -385,7 +385,7 @@ class TestNotEqualMirrorsEqual:
             SampleEnum.BETA,
         ],
     )  # fmt: skip
-    def test_ne_is_negation_of_eq(self, other):
+    def test_ne_is_negation_of_eq(self: Self, other: object) -> None:
         """`member != other` equals `not (member == other)` for any operand."""
         assert (SampleEnum.ALPHA != other) is not (SampleEnum.ALPHA == other)  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
 
@@ -393,7 +393,7 @@ class TestNotEqualMirrorsEqual:
         "other",
         ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar", "baz"],
     )  # fmt: skip
-    def test_ne_is_negation_of_eq_across_dash_forms(self, other):
+    def test_ne_is_negation_of_eq_across_dash_forms(self: Self, other: object) -> None:
         """Dash/underscore/case variants negate consistently."""
         assert (SampleEnum.FOO_BAR != other) is not (SampleEnum.FOO_BAR == other)  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
 
@@ -401,7 +401,7 @@ class TestNotEqualMirrorsEqual:
         "other",
         ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
     )  # fmt: skip
-    def test_ne_false_for_normalized_match(self, other):
+    def test_ne_false_for_normalized_match(self: Self, other: str) -> None:
         """A normalized match is never `!=`."""
         assert (SampleEnum.FOO_BAR != other) is False  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
 
@@ -409,7 +409,7 @@ class TestNotEqualMirrorsEqual:
         "other",
         ["my_value", "my-value", "MY_VALUE", "MY-VALUE"],
     )  # fmt: skip
-    def test_ne_false_for_dash_valued_enum(self, other):
+    def test_ne_false_for_dash_valued_enum(self: Self, other: str) -> None:
         """Dash-valued members are not `!=` their underscore spellings."""
         assert (DashValueEnum.MY_VALUE != other) is False  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
 
@@ -417,15 +417,15 @@ class TestNotEqualMirrorsEqual:
         "other",
         ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
     )  # fmt: skip
-    def test_ne_false_with_string_on_the_left(self, other):
+    def test_ne_false_with_string_on_the_left(self: Self, other: str) -> None:
         """Reflected `!=` also routes through the normalizing comparison."""
         assert (other != SampleEnum.FOO_BAR) is False
 
-    def test_ne_true_for_different_member(self):
+    def test_ne_true_for_different_member(self: Self) -> None:
         """Genuinely different members stay `!=`."""
         assert (SampleEnum.ALPHA != SampleEnum.BETA) is True
 
-    def test_ne_false_across_enums_with_same_normalized_value(self):
+    def test_ne_false_across_enums_with_same_normalized_value(self: Self) -> None:
         """Cross-enum members sharing a normalized value are not `!=`."""
 
         class EnumA(CaseInsensitiveStrEnum):
@@ -436,8 +436,21 @@ class TestNotEqualMirrorsEqual:
 
         assert (EnumA.ITEM != EnumB.ITEM) is False
 
-    def test_ne_true_for_non_string_types(self):
+    def test_ne_true_for_non_string_types(self: Self) -> None:
         """Non-string, non-enum operands remain `!=`."""
         assert (SampleEnum.ALPHA != 123) is True
         assert (SampleEnum.ALPHA != None) is True  # noqa: E711 - testing __ne__ with None
         assert (SampleEnum.ALPHA != []) is True
+
+    @pytest.mark.parametrize("other", [123, None, [], 4.5])  # fmt: skip
+    def test_ne_forwards_notimplemented_for_unsupported_operands(
+        self: Self, other: object
+    ) -> None:
+        """__ne__ defers to the other operand instead of asserting inequality.
+
+        The operator-level check above cannot see this: `!= 123` is True either
+        way, whether __ne__ forwards NotImplemented or wrongly hardcodes True.
+        Only the direct call distinguishes them, and the difference matters for
+        any third-party type whose reflected __eq__ should decide the result.
+        """
+        assert SampleEnum.ALPHA.__ne__(other) is NotImplemented

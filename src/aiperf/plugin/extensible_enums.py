@@ -129,9 +129,13 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
         return super().__eq__(other)
 
     def __ne__(self: Self, other: object) -> bool:
-        # str.__ne__ sits between this class and object in the MRO, so an
-        # inherited __ne__ would compare raw values and disagree with the
-        # normalizing __eq__ above.
+        """Negate __eq__, forwarding NotImplemented to the other operand.
+
+        Required explicitly: Python only derives __ne__ from __eq__ via
+        object.__ne__, and str.__ne__ sits between this class and object in the
+        MRO. Without this, != compares raw values and disagrees with the
+        normalizing __eq__ above, making `a == b` and `a != b` both true.
+        """
         result = self.__eq__(other)
         if result is NotImplemented:
             return result
