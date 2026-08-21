@@ -1320,3 +1320,56 @@ class TestFoldedSeedWarning:
         a.preseed(6, 5)
         b.preseed(6, (1 << 32) | 4)
         assert a._isl_cache != b._isl_cache
+
+
+class TestSGLangSpecialTokenAdjustment:
+    """SGLANG subtracts special tokens per-request AFTER sampling.
+
+    Mirrors upstream `sample_random_requests`, which shifts drawn lengths::
+
+        input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+
+    Subtracting from `isl_mean` instead would rescale the window's lower bound
+    (`int((mean-c)*r)` vs `int(mean*r)`), changing the distribution's shape
+    rather than shifting it. Before this, the field was ignored entirely and
+    wire ISL landed at `--isl + num_special` on BOS tokenizers.
+    """
+
+    def test_window_bounds_keep_the_raw_mean(self):
+        """The adjustment must not leak into the bounds."""
+        assert _sglang(128, 16, 0.5, num_special_tokens=1).input_bounds == (64, 128)
+        assert _sglang(128, 16, 0.5).input_bounds == (64, 128)
+
+    def test_sampled_isl_is_shifted_down(self):
+        with_special = _sglang(128, 16, 1.0, num_special_tokens=1)
+        without = _sglang(128, 16, 1.0)
+        # ratio 1.0 pins the window to [128, 128], so this is exact, not noise.
+        assert without.sample()[0] == 128
+        assert with_special.sample()[0] == 127
+
+    def test_preseeded_values_are_adjusted_exactly_once(self):
+        """The cache stores adjusted values and `sample` returns them verbatim;
+        applying the hook in both places would subtract twice."""
+        dist = _sglang(128, 16, 1.0, num_special_tokens=1)
+        dist.preseed(4, 42)
+        assert dist._isl_cache == [127, 127, 127, 127]
+        assert [dist.sample()[0] for _ in range(4)] == [127, 127, 127, 127]
+
+    def test_multi_special_token_tokenizer(self):
+        assert _sglang(128, 16, 1.0, num_special_tokens=2).sample()[0] == 126
+
+    def test_floors_at_one(self):
+        """Mirrors upstream's `max(1, ...)`: a tiny mean cannot go to zero."""
+        assert _sglang(1, 16, 1.0, num_special_tokens=5).sample()[0] == 1
+
+    def test_osl_is_not_adjusted(self):
+        """Upstream shifts `input_lens` only, never `output_lens`."""
+        dist = _sglang(128, 64, 1.0, num_special_tokens=1)
+        assert dist.sample()[1] == 64
+
+    def test_vllm_style_is_unaffected(self):
+        """VLLM folds specials into the bounds, so the post-sample hook is a
+        no-op there -- otherwise it would double-subtract."""
+        dist = _vllm(128, 16, 0.0, num_special_tokens=1)
+        assert dist.input_bounds == (127, 127)
+        assert dist.sample()[0] == 127

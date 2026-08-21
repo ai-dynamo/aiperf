@@ -758,7 +758,9 @@ class SGLangRatioConfig(BaseConfig):
         Field(
             default=0,
             ge=0,
-            description="Ignored; present for API symmetry with VLLMRatioConfig.",
+            description="Server-added special tokens, subtracted per-request "
+            "AFTER sampling (not from isl_mean, which would rescale the window's "
+            "lower bound). Mirrors SGLang's post-sampling input_lens[i] shift.",
         ),
     ] = 0
     range_ratio: Annotated[
@@ -886,9 +888,25 @@ class RangeRatioDistribution:
                 "Falling back to live sampling; prompts past this point no "
                 f"longer match {type(self)._style} for the same seed."
             )
-        isl = int(self._rng.integers(self._input_low, self._input_high + 1))
+        isl = self.adjust_sampled_isl(
+            int(self._rng.integers(self._input_low, self._input_high + 1))
+        )
         osl = int(self._rng.integers(self._output_low, self._output_high + 1))
         return isl, osl
+
+    def adjust_sampled_isl(self, isl: int) -> int:
+        """Per-request ISL adjustment applied AFTER a length is drawn.
+
+        No-op for VLLM style, which folds ``num_special_tokens`` into the window
+        bounds instead (see :meth:`VLLMRatioConfig.compute_input_bounds`).
+        Overridden by :class:`SGLangRangeRatioDistribution`, whose upstream
+        shifts drawn lengths rather than rescaling the window.
+
+        Preseeded values are stored already-adjusted, so :meth:`sample` applies
+        this only on the live-draw path -- applying it to both would subtract
+        twice.
+        """
+        return isl
 
     @property
     def input_bounds(self) -> tuple[int, int]:
@@ -1007,14 +1025,18 @@ class _LegacyRNG:
 class SGLangRangeRatioDistribution(RangeRatioDistribution):
     """RangeRatioDistribution with SGLang-compatible MT19937 preseed.
 
-    The sampling window derives from the raw configured ``isl_mean``. Overhead
-    for chat templates and special tokens is subtracted per-request *after*
-    sampling, via the composer's ``first_turn_isl_adjustment`` — matching
-    SGLang, which shifts drawn lengths rather than rescaling the window::
+    The sampling window derives from the raw configured ``isl_mean``. Both
+    overheads are then subtracted per-request *after* sampling, matching
+    SGLang, which shifts drawn lengths rather than rescaling the window:
 
-        input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+    - **Special tokens** — :meth:`adjust_sampled_isl` on this class, mirroring
+      ``input_lens[i] = max(1, input_lens[i] - num_special_tokens)``.
+    - **Chat-template wrapping** — the composer's
+      ``first_turn_isl_adjustment`` / ``subsequent_turn_isl_adjustment``,
+      which carry the template and cache-bust terms only.
 
-    Subtracting from the mean beforehand would rescale the lower bound too
+    Those are two separate mechanisms; neither covers the other. Subtracting
+    from the mean beforehand would rescale the lower bound too
     (``int((mean-c)*r)`` instead of ``int(mean*r)``), producing a different
     distribution rather than a shifted one.
 
@@ -1043,6 +1065,23 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
     def __init__(self, config: SGLangRatioConfig) -> None:
         super().__init__(config)
 
+    def adjust_sampled_isl(self, isl: int) -> int:
+        """Subtract server-added special tokens from a drawn length.
+
+        Mirrors ``sample_random_requests`` (``benchmark/datasets/random.py``),
+        which shifts each drawn length after sampling::
+
+            if return_text:   # default, and what aiperf sends
+                num_special_tokens = int(tokenizer.num_special_tokens_to_add())
+                input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+
+        Applied here rather than to ``isl_mean`` because subtracting before
+        :meth:`SGLangRatioConfig.compute_input_bounds` would rescale the lower
+        bound too -- ``int((mean-c)*r)`` instead of ``int(mean*r)`` -- producing
+        a different distribution rather than a shifted one.
+        """
+        return max(1, isl - self._config.num_special_tokens)
+
     def preseed(self, n: int, seed: int | None) -> None:
         # numpy's legacy MT19937 seeder caps at 2**32-1, but run seeds are
         # 64-bit on the adaptive-sweep and vary_seed_per_trial paths (and
@@ -1051,9 +1090,12 @@ class SGLangRangeRatioDistribution(RangeRatioDistribution):
         if seed is not None:
             _warn_if_seed_is_folded(seed)
         g = _LegacyRNG(rng.fold_seed_to_uint32(seed) if seed is not None else None)
-        self._isl_cache = g.integers(
-            self._input_low, self._input_high + 1, size=n
-        ).tolist()
+        self._isl_cache = [
+            self.adjust_sampled_isl(isl)
+            for isl in g.integers(
+                self._input_low, self._input_high + 1, size=n
+            ).tolist()
+        ]
         self._osl_cache = g.integers(
             self._output_low, self._output_high + 1, size=n
         ).tolist()

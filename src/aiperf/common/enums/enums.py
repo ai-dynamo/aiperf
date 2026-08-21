@@ -800,7 +800,8 @@ class RandomCorpusStyle(CaseInsensitiveStrEnum):
        * - BOS / special-token adjustment
          - ``max(0, mean - num_special_tokens)``, applied to the mean before
            the window bounds are computed
-         - No adjustment (raw configured mean used directly)
+         - ``max(1, drawn - num_special_tokens)``, applied per-request after
+           sampling so the window keeps its raw-mean shape
        * - ISL/OSL range formula
          - Symmetric: ``[floor(mean*(1-r)), ceil(mean*(1+r))]``
          - Lower-bounded: ``[max(1, int(mean*r)), mean]``
@@ -822,11 +823,15 @@ class RandomCorpusStyle(CaseInsensitiveStrEnum):
     difference.
 
     .. note::
-       The SGLANG BOS row is a deliberate divergence from upstream, not a
-       transcription of it. ``sample_random_requests`` does subtract, but
-       per-request *after* sampling and only when ``return_text`` is set
-       (``input_lens[i] = max(1, input_lens[i] - num_special_tokens)``), which
-       shifts the whole distribution rather than rescaling its bounds.
+       The two styles subtract special tokens at different points on purpose,
+       each following its own upstream. VLLM folds the count into the bounds;
+       SGLANG shifts each drawn length, mirroring ``sample_random_requests``
+       under ``return_text`` (the default, and what aiperf sends)::
+
+           input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+
+       Both land the same wire ISL on the configured value; only the resulting
+       window shape differs.
     """
 
     VLLM = "vllm"

@@ -182,7 +182,12 @@ prefix pools useful for KV-cache benchmarking.
 
 Note this differs from the special-token and chat-template compensation, which
 *are* subtracted from the ISL target so the wire length lands on the configured
-value. Only the prefix is additive. See
+value. Only the prefix is additive.
+
+The two compensations are applied by different mechanisms, and every corpus
+style applies both. Special tokens come off the window bounds under `vllm`
+style and off each drawn length under `sglang` style; chat-template wrapping
+always comes off per-request in the composer. See
 [ISL budget compensation](./isl-budget-compensation.md).
 
 To keep a fixed total instead, subtract the prefix length yourself:
@@ -203,7 +208,7 @@ in YAML) to select which benchmarking tool's behavior to replicate:
 | Style | `--random-corpus-style` | Token pool | BOS adjustment | Range formula |
 |-------|------------------------|-----------|---------------|---------------|
 | vLLM (default) | `vllm` | Non-special tokens only | Subtract BOS from ISL mean | Symmetric: `[floor(mean*(1-r)), ceil(mean*(1+r))]` |
-| SGLang | `sglang` | Full `vocab_size` range | None | Lower-bounded: `[max(1, int(mean*r)), mean]` |
+| SGLang | `sglang` | Full `vocab_size` range | Subtract per-request after sampling | Lower-bounded: `[max(1, int(mean*r)), mean]` |
 
 ### RNG alignment (vLLM style)
 

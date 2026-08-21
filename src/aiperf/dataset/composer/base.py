@@ -54,12 +54,17 @@ def _estimate_chat_template_overheads(
         wire_tokens =  per_request_fixed
                      + Σ_{m in messages} (per_msg_wrap + content_tokens(m))
 
-    where ``per_request_fixed`` ≈ generation-prompt suffix (BOS is excluded
-    because ``RangeRatioDistribution`` already subtracts it via
-    ``num_special_tokens``) and ``per_msg_wrap`` ≈ role header + end-of-turn
-    marker (averaged over user/assistant). Measuring the two separately lets
-    callers apply the fixed cost only to the first user turn and the
-    per-message wrap to every turn.
+    where ``per_request_fixed`` ≈ generation-prompt suffix and
+    ``per_msg_wrap`` ≈ role header + end-of-turn marker (averaged over
+    user/assistant). Measuring the two separately lets callers apply the fixed
+    cost only to the first user turn and the per-message wrap to every turn.
+
+    BOS is deliberately excluded from ``per_request_fixed`` because every ISL
+    path already subtracts special tokens on its own, and double-counting would
+    shorten prompts: VLLM style folds them into the window bounds
+    (``VLLMRatioConfig.compute_input_bounds``), SGLANG style shifts each drawn
+    length (``SGLangRangeRatioDistribution.adjust_sampled_isl``), and the
+    non-range-ratio path subtracts in ``_get_turn_sequence_lengths``.
 
     Returns ``(0, 0)`` when the tokenizer is ``None``/has no underlying HF
     tokenizer, has no ``apply_chat_template`` (e.g. tiktoken), the model has
