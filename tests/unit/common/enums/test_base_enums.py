@@ -387,7 +387,7 @@ class TestNotEqualMirrorsEqual:
     )  # fmt: skip
     def test_ne_is_negation_of_eq(self, other):
         """`member != other` equals `not (member == other)` for any operand."""
-        assert (SampleEnum.ALPHA != other) is not (SampleEnum.ALPHA == other)
+        assert (SampleEnum.ALPHA != other) is not (SampleEnum.ALPHA == other)  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
 
     @pytest.mark.parametrize(
         "other",
@@ -395,7 +395,7 @@ class TestNotEqualMirrorsEqual:
     )  # fmt: skip
     def test_ne_is_negation_of_eq_across_dash_forms(self, other):
         """Dash/underscore/case variants negate consistently."""
-        assert (SampleEnum.FOO_BAR != other) is not (SampleEnum.FOO_BAR == other)
+        assert (SampleEnum.FOO_BAR != other) is not (SampleEnum.FOO_BAR == other)  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
 
     @pytest.mark.parametrize(
         "other",
@@ -403,7 +403,7 @@ class TestNotEqualMirrorsEqual:
     )  # fmt: skip
     def test_ne_false_for_normalized_match(self, other):
         """A normalized match is never `!=`."""
-        assert (SampleEnum.FOO_BAR != other) is False
+        assert (SampleEnum.FOO_BAR != other) is False  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
 
     @pytest.mark.parametrize(
         "other",
@@ -411,7 +411,7 @@ class TestNotEqualMirrorsEqual:
     )  # fmt: skip
     def test_ne_false_for_dash_valued_enum(self, other):
         """Dash-valued members are not `!=` their underscore spellings."""
-        assert (DashValueEnum.MY_VALUE != other) is False
+        assert (DashValueEnum.MY_VALUE != other) is False  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
 
     @pytest.mark.parametrize(
         "other",
