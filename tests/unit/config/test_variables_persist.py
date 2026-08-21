@@ -262,3 +262,73 @@ def test_cli_override_reaches_both_envelopes(tmp_path: Path) -> None:
     plan = build_benchmark_plan(config)
     assert all(c.phases[0].requests == 7 for c in plan.configs)
     assert [c.phases[0].concurrency for c in plan.configs] == [10, 50, 100]
+
+
+_JINJA_TELEMETRY_YAML = """
+variables:
+  gpu_mode: summary
+  load: 10
+sweep:
+  type: grid
+  parameters:
+    variables.load: [10, 50]
+benchmark:
+  models: [llama]
+  endpoint:
+    type: chat
+    urls: ["http://x:8000/v1/chat/completions"]
+  datasets:
+    - name: main
+      type: synthetic
+  gpu_telemetry:
+    enabled: true
+    urls: ["http://dcgm:9400/metrics"]
+    mode: "{{ gpu_mode }}"
+  phases:
+    - name: steady_state
+      kind: profiling
+      type: concurrency
+      requests: 20
+      concurrency: "{{ load }}"
+"""
+
+
+def test_resolve_config_templated_telemetry_with_matching_override_succeeds(
+    tmp_path: Path,
+) -> None:
+    """A Jinja-valued telemetry block must survive its own CLI override.
+
+    Regression: the raw envelope was handed to
+    normalize_gpu_telemetry_base_for_override, which round-trips the block
+    through model_validate -- and "{{ gpu_mode }}" is not a GPUTelemetryMode.
+    Only reachable when a gpu_telemetry CLI override is present.
+    """
+    config_file = tmp_path / "telemetry.yaml"
+    config_file.write_text(_JINJA_TELEMETRY_YAML, encoding="utf-8")
+
+    config = resolve_config(
+        CLIConfig(gpu_telemetry=["http://other:9400/metrics"]), config_file
+    )
+
+    assert config.benchmark.gpu_telemetry.urls == ["http://other:9400/metrics"]
+    assert config.benchmark.gpu_telemetry.mode == "summary"
+    # build_gpu_telemetry_override emits the whole block, defaults included, so
+    # the override legitimately replaces `mode` in BOTH envelopes. What matters
+    # here is that they agree and that unrelated templates are untouched.
+    raw = config._raw_envelope["benchmark"]
+    assert raw["gpu_telemetry"]["urls"] == ["http://other:9400/metrics"]
+    assert raw["phases"][0]["concurrency"] == "{{ load }}"
+
+
+def test_resolve_config_templated_telemetry_still_sweeps(tmp_path: Path) -> None:
+    """Skipping normalization must not cost the variations their re-render."""
+    config_file = tmp_path / "telemetry.yaml"
+    config_file.write_text(_JINJA_TELEMETRY_YAML, encoding="utf-8")
+
+    config = resolve_config(
+        CLIConfig(gpu_telemetry=["http://other:9400/metrics"]), config_file
+    )
+    plan = build_benchmark_plan(config)
+
+    assert [c.phases[0].concurrency for c in plan.configs] == [10, 50]
+    assert all(c.gpu_telemetry.mode == "summary" for c in plan.configs)

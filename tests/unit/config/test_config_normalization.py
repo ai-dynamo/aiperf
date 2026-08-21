@@ -572,7 +572,9 @@ class TestIslOslHoisting:
             param("osl", id="osl"),
         ],
     )  # fmt: skip
-    def test_shorthand_sub_fields_survive_same_key_in_prompts(self, key: str) -> None:
+    def test_hoist_synthetic_prompt_fields_same_key_both_spellings_merges_sub_fields(
+        self, key: str
+    ) -> None:
         """Both spellings of one field: prompts wins per sub-field, not wholesale.
 
         The shorthand used to be popped and dropped entirely whenever
@@ -599,7 +601,9 @@ class TestIslOslHoisting:
         assert dist.mean == 256  # explicit prompts value wins
         assert dist.stddev == 7  # inherited from the shorthand
 
-    def test_shorthand_scalar_does_not_override_explicit_prompts_key(self) -> None:
+    def test_hoist_synthetic_prompt_fields_scalar_shorthand_keeps_explicit_prompts(
+        self,
+    ) -> None:
         """A scalar shorthand has no sub-fields to contribute, so prompts wins."""
         data = {
             "models": ["m"],

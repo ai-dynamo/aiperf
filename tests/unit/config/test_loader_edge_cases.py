@@ -194,11 +194,6 @@ class TestLoadConfigFromString:
         assert "/tmp/fake.yaml" in str(exc_info.value)
 
 
-# ============================================================
-# TestLoadConfigFromMapping - in-memory mapping loading
-# ============================================================
-
-
 class TestLoadConfigFromMapping:
     """Verify load_config_from_mapping matches the string loader's contract."""
 
