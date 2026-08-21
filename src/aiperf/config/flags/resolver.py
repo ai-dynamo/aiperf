@@ -460,9 +460,11 @@ def _apply_random_pool_batch_size_overrides(
     path currently routes batch-size flags onto ``SyntheticDataset.prompts/
     images/audio/video.batch_size`` (``_apply_input_overrides`` only handles
     ``headers``/``extra_inputs``), so a batch-size flag against a synthetic YAML
-    dataset is silently ignored -- a pre-existing gap this function does not
-    close and is out of scope to fix here. The CLI-only path (no ``--config``)
-    applies these flags correctly; only the YAML+CLI overlay drops them.
+    dataset has no effect -- a pre-existing gap this function does not close and
+    is out of scope to fix here. It logs a warning rather than dropping the flag
+    silently, since the neighbouring wrong-format case raises loudly. The CLI-only
+    path (no ``--config``) applies these flags correctly; only the YAML+CLI overlay
+    drops them.
 
     For a ``type: file`` dataset that isn't ``format: random_pool``, a ``ValueError``
     is raised with a message that names the flag and the format, matching the
@@ -484,7 +486,22 @@ def _apply_random_pool_batch_size_overrides(
         return
 
     dataset = _first_yaml_dataset(benchmark, warn_context="Batch-size flags")
-    if dataset is None or dataset.get("type") != DatasetType.FILE:
+    if dataset is None:
+        return
+    if dataset.get("type") != DatasetType.FILE:
+        # Adjacent to a loud ValueError for a file dataset of the wrong format, so
+        # do not drop this one in silence: the flag genuinely has no effect here.
+        logger.warning(
+            "%s ignored: batch-size flags are only applied to a YAML dataset with "
+            "type: file and format: random_pool (got type: %s). The CLI-only path "
+            "(no --config) applies them normally.",
+            ", ".join(
+                flag
+                for cli_attr, _, flag in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
+                if cli_attr in set_fields
+            ),
+            dataset.get("type"),
+        )
         return
 
     # dataset.get("format") reads the raw pre-validation YAML dict, so an omitted
