@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.dataset import FileDataset, SyntheticDataset
@@ -563,3 +564,58 @@ class TestIslOslHoisting:
         assert ds.prompts.isl is not None  # hoisted from top-level
         assert ds.prompts.osl is not None  # kept from existing prompts
         assert ds.prompts.batch_size == 4  # kept from existing prompts
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            param("isl", id="isl"),
+            param("osl", id="osl"),
+        ],
+    )  # fmt: skip
+    def test_shorthand_sub_fields_survive_same_key_in_prompts(self, key: str) -> None:
+        """Both spellings of one field: prompts wins per sub-field, not wholesale.
+
+        The shorthand used to be popped and dropped entirely whenever
+        ``prompts.<key>`` already existed, so a caller that set only ``mean``
+        silently reset the shorthand's ``stddev`` to the distribution default.
+        """
+        data = {
+            "models": ["m"],
+            "endpoint": _ENDPOINT,
+            "dataset": {
+                "type": "synthetic",
+                "entries": 100,
+                key: {"mean": 128, "stddev": 7},
+                "prompts": {key: {"mean": 256}},
+            },
+            "phases": [{"name": "profiling", **_CONCURRENCY_PHASE}],
+        }
+        cfg = BenchmarkConfig.model_validate(data)
+
+        ds = cfg.datasets[0]
+        assert isinstance(ds, SyntheticDataset)
+        assert ds.prompts is not None
+        dist = getattr(ds.prompts, key)
+        assert dist.mean == 256  # explicit prompts value wins
+        assert dist.stddev == 7  # inherited from the shorthand
+
+    def test_shorthand_scalar_does_not_override_explicit_prompts_key(self) -> None:
+        """A scalar shorthand has no sub-fields to contribute, so prompts wins."""
+        data = {
+            "models": ["m"],
+            "endpoint": _ENDPOINT,
+            "dataset": {
+                "type": "synthetic",
+                "entries": 100,
+                "isl": 128,
+                "prompts": {"isl": {"mean": 256, "stddev": 7}},
+            },
+            "phases": [{"name": "profiling", **_CONCURRENCY_PHASE}],
+        }
+        cfg = BenchmarkConfig.model_validate(data)
+
+        ds = cfg.datasets[0]
+        assert isinstance(ds, SyntheticDataset)
+        assert ds.prompts is not None
+        assert ds.prompts.isl.mean == 256
+        assert ds.prompts.isl.stddev == 7

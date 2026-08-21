@@ -12,6 +12,7 @@ Focuses on:
 
 from __future__ import annotations
 
+import copy
 import stat
 import sys
 import textwrap
@@ -27,6 +28,7 @@ from aiperf.config.loader import (
     build_benchmark_plan,
     load_benchmark_plan,
     load_config,
+    load_config_from_mapping,
     load_config_from_string,
     substitute_env_vars,
 )
@@ -189,6 +191,122 @@ class TestLoadConfigFromString:
     def test_file_path_included_in_error_context(self) -> None:
         with pytest.raises(ConfigurationError) as exc_info:
             load_config_from_string("null", file_path="/tmp/fake.yaml")
+        assert "/tmp/fake.yaml" in str(exc_info.value)
+
+
+# ============================================================
+# TestLoadConfigFromMapping - in-memory mapping loading
+# ============================================================
+
+
+class TestLoadConfigFromMapping:
+    """Verify load_config_from_mapping matches the string loader's contract."""
+
+    def test_valid_mapping(self) -> None:
+        config = load_config_from_mapping({"benchmark": _MINIMAL_CONFIG_KWARGS})
+
+        assert isinstance(config, AIPerfConfig)
+        assert config.benchmark.get_model_names() == ["test-model"]
+
+    def test_caller_mapping_is_not_mutated(self) -> None:
+        """The caller keeps its dict: normalizers rewrite shape aggressively.
+
+        ``_auto_migrate_flat_shape`` and the dataset hoists mutate in place, so
+        without the internal deepcopy a caller reusing its own dict would see a
+        differently-shaped config on the second read.
+        """
+        data = {
+            "benchmark": {
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": [{"name": "default", "type": "synthetic", "isl": 128}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 1,
+                    }
+                ],
+            }
+        }
+        before = copy.deepcopy(data)
+
+        load_config_from_mapping(data)
+
+        assert data == before
+
+    def test_flat_shape_mapping_auto_migrates(self) -> None:
+        config = load_config_from_mapping(dict(_MINIMAL_CONFIG_KWARGS))
+
+        assert config.benchmark.get_model_names() == ["test-model"]
+
+    def test_raw_envelope_retains_pre_jinja_form(self) -> None:
+        data = {
+            "variables": {"load": 100},
+            "benchmark": {
+                **_MINIMAL_CONFIG_KWARGS,
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": "{{ load }}",
+                    }
+                ],
+            },
+        }
+        config = load_config_from_mapping(data)
+
+        assert config.benchmark.phases[0].concurrency == 100
+        assert config._raw_envelope is not None
+        raw_phase = config._raw_envelope["benchmark"]["phases"][0]
+        assert raw_phase["concurrency"] == "{{ load }}"
+
+    def test_env_substitution_applies(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AIPERF_TEST_MODEL", "env-model")
+        config = load_config_from_mapping(
+            {
+                "benchmark": {
+                    **_MINIMAL_CONFIG_KWARGS,
+                    "models": ["${AIPERF_TEST_MODEL}"],
+                }
+            }
+        )
+
+        assert config.benchmark.get_model_names() == ["env-model"]
+
+    def test_env_substitution_can_be_disabled(self) -> None:
+        config = load_config_from_mapping(
+            {
+                "benchmark": {
+                    **_MINIMAL_CONFIG_KWARGS,
+                    "models": ["${NOT_SET_ANYWHERE}"],
+                }
+            },
+            substitute_env=False,
+        )
+
+        assert config.benchmark.get_model_names() == ["${NOT_SET_ANYWHERE}"]
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            param([1, 2], id="list"),
+            param("a string", id="str"),
+            param(42, id="int"),
+            param(None, id="none"),
+        ],
+    )  # fmt: skip
+    def test_non_mapping_raises(self, bad: object) -> None:
+        with pytest.raises(ConfigurationError, match="mapping"):
+            load_config_from_mapping(bad)  # type: ignore[arg-type]
+
+    def test_non_string_key_raises_with_file_path_context(self) -> None:
+        with pytest.raises(ConfigurationError) as exc_info:
+            load_config_from_mapping(
+                {"benchmark": {1: "oops"}}, file_path="/tmp/fake.yaml"
+            )
         assert "/tmp/fake.yaml" in str(exc_info.value)
 
 
