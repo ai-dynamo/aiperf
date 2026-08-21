@@ -1091,6 +1091,39 @@ class TestPromptGeneratorRandomCorpus:
         ]
         assert indexed == raw
 
+    def test_generate_with_exact_length_bypasses_the_floor(self, random_generator):
+        """`exact_length` uses the value verbatim instead of resampling.
+
+        Without it, an already-decided 0 is floored to 1 by
+        `sample_positive_normal_integer`, emitting one more token than vLLM.
+        """
+        import numpy as np
+
+        random_generator.preseed(4, np.random.default_rng(42))
+        random_generator._prefix_prompt_tokens = [[7]]
+        random_generator._prefix_prompts = ["x"]
+        # body 0 + a 1-token prefix -> prefix-only, which is what vLLM emits
+        text = random_generator.generate(
+            mean=0, stddev=0, with_prefix=True, exact_length=True
+        )
+        assert isinstance(text, str)
+
+    def test_generate_prompt_rejects_zero_without_a_prefix(self, random_generator):
+        """The relaxation is scoped: with no prefix there is nothing to carry
+        the request, and the degenerate-config guard already rejects that
+        combination upstream."""
+        with pytest.raises(ValueError, match="without a prefix"):
+            random_generator.generate_prompt(0)
+
+    def test_generate_prompt_still_rejects_negative(self, random_generator):
+        with pytest.raises(ValueError):
+            random_generator.generate_prompt(-1)
+
+    def test_exact_length_off_still_floors(self, random_generator):
+        """Default path is untouched: a mean of 0 without `exact_length`
+        continues to floor at 1, which is correct for a sampled length."""
+        assert random_generator.calculate_num_tokens(0, 0) == 1
+
 
 class _SeamTokenizer(Tokenizer):
     """Deterministic BPE-like tokenizer that charges a token for a joined space.

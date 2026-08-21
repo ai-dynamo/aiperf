@@ -1373,3 +1373,42 @@ class TestSGLangSpecialTokenAdjustment:
         dist = _vllm(128, 16, 0.0, num_special_tokens=1)
         assert dist.input_bounds == (127, 127)
         assert dist.sample()[0] == 127
+
+
+class TestZeroLengthBodyIsEmittedVerbatim:
+    """A range-ratio window that bottoms out at 0 must not be floored to 1.
+
+    `calculate_num_tokens` routes through `sample_positive_normal_integer`,
+    whose `max(1, round(mean))` is correct for its original callers (a normal
+    draw around a positive mean cannot be 0) but wrong for an already-decided
+    length. The degenerate-config guard deliberately accepts `isl=1, r=0.0`
+    when a prefix covers the request -- vLLM does too, emitting prefix-only --
+    so flooring produced one token more than the reference.
+    """
+
+    def test_window_can_legitimately_bottom_out_at_zero(self):
+        cfg = VLLMRatioConfig(
+            isl_mean=1, osl_mean=16, num_special_tokens=1, range_ratio=0.0
+        )
+        assert cfg.compute_input_bounds() == (0, 0)
+
+    @pytest.mark.parametrize(
+        "isl_mean,ratio",
+        [
+            param(2, 0.5, id="isl2-r0.5"),
+            param(10, 0.9, id="isl10-r0.9"),
+            param(100, 0.99, id="isl100-r0.99"),
+        ],
+    )  # fmt: skip
+    def test_other_configs_reaching_a_zero_lower_bound(self, isl_mean, ratio):
+        """Not unique to --isl 1: any sufficiently high ratio gets there."""
+        low, _ = VLLMRatioConfig(
+            isl_mean=isl_mean, osl_mean=16, num_special_tokens=1, range_ratio=ratio
+        ).compute_input_bounds()
+        assert low == 0
+
+    def test_sampler_returns_zero_rather_than_flooring(self):
+        """The distribution itself must report the zero; the floor lived
+        downstream in the generator, not here."""
+        dist = _vllm(1, 16, 0.0, num_special_tokens=1)
+        assert dist.sample()[0] == 0

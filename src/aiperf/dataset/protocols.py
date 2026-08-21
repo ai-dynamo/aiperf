@@ -31,11 +31,23 @@ class CorpusGeneratorProtocol(Protocol):
     the cache; others silently do nothing.
     """
 
-    def generate(self, mean: int, stddev: int = 0, *, with_prefix: bool = False) -> str:
+    def generate(
+        self,
+        mean: int,
+        stddev: int = 0,
+        *,
+        with_prefix: bool = False,
+        exact_length: bool = False,
+    ) -> str:
         """Generate a single prompt of approximately ``mean`` tokens.
 
         When ``with_prefix`` is set the prefix is prepended at the token level so
         the result tokenizes to exactly ``prefix_len + mean``.
+
+        When ``exact_length`` is set, ``mean`` is an already-decided length and
+        is used verbatim rather than resampled. Callers driving a sequence
+        distribution set this: that distribution has already produced an exact
+        value, and resampling floors a legitimately-sampled 0 up to 1.
         """
         ...
 

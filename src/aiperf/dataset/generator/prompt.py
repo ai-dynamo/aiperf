@@ -432,6 +432,7 @@ class PromptGenerator(BaseGenerator):
         hash_ids: list[int] | None = None,
         *,
         with_prefix: bool = False,
+        exact_length: bool = False,
     ) -> str:
         """Generate a synthetic prompt with the configuration parameters.
         Serves as a wrapper around other internal methods to provide a unified interface.
@@ -442,6 +443,12 @@ class PromptGenerator(BaseGenerator):
             hash_ids: A list of hash indices used for token reuse.
             with_prefix: Prepend a pooled prefix prompt at the token level. Ignored
                 when hash_ids is set, since that path composes its own blocks.
+            exact_length: Treat ``mean`` as an already-decided length and use it
+                verbatim instead of resampling. Set by callers driving a
+                sequence distribution, which has already produced an exact
+                value; routing that through ``calculate_num_tokens`` would floor
+                a legitimately-sampled 0 up to 1 and emit one more token than
+                the reference implementation.
 
         Returns:
             A synthetic prompt as a string.
@@ -454,7 +461,9 @@ class PromptGenerator(BaseGenerator):
             ) or InputTokensDefaults.BLOCK_SIZE
             return self._generate_cached_prompt(mean, hash_ids, block_size)
 
-        num_tokens = self.calculate_num_tokens(mean, stddev)
+        num_tokens = (
+            int(mean or 0) if exact_length else self.calculate_num_tokens(mean, stddev)
+        )
         prefix_tokens = self.get_random_prefix_prompt_tokens() if with_prefix else None
         return self.generate_prompt(num_tokens, prefix_tokens=prefix_tokens)
 
@@ -527,8 +536,10 @@ class PromptGenerator(BaseGenerator):
         Returns:
             A synthetic prompt as a string.
         """
-        if num_tokens <= 0:
-            raise ValueError(f"num_tokens must be > 0, got {num_tokens}")
+        if num_tokens < 0 or (num_tokens == 0 and not prefix_tokens):
+            raise ValueError(
+                f"num_tokens must be > 0 without a prefix, got {num_tokens}"
+            )
         tokens = self._sample_tokens(num_tokens)
         target = num_tokens
         if prefix_tokens:

@@ -767,13 +767,18 @@ class CodingContentGenerator(BaseGenerator):
         block_size: int | None = None,
         *,
         with_prefix: bool = False,
+        exact_length: bool = False,
     ) -> str:
         if hash_ids:
             if mean is None:
                 raise ValueError("mean must be provided when hash_ids is set.")
             bs = block_size or self.config.block_size
             return self._generate_cached_prompt(mean, hash_ids, bs)
-        num_tokens = self.calculate_num_tokens(mean, stddev)
+        # An active sequence distribution already produced an exact length;
+        # resampling would floor a legitimately-sampled 0 up to 1.
+        num_tokens = (
+            int(mean or 0) if exact_length else self.calculate_num_tokens(mean, stddev)
+        )
         prefix_tokens = self.get_random_prefix_prompt_tokens() if with_prefix else None
         return self.generate_prompt(num_tokens, prefix_tokens=prefix_tokens)
 
@@ -805,7 +810,9 @@ class CodingContentGenerator(BaseGenerator):
             self.tokenizer.decode(tokens) for tokens in self._prefix_prompt_tokens
         ]
         self.debug(
-            lambda: f"Initialized coding prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            lambda: (
+                f"Initialized coding prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            )
         )
 
     def _random_prefix_index(self) -> int:
@@ -867,8 +874,10 @@ class CodingContentGenerator(BaseGenerator):
         while session_index >= len(self._user_context_prompts):
             self._user_context_prompts.append(self.generate_prompt(length))
             self.debug(
-                lambda: f"Generated coding user context prompt "
-                f"#{len(self._user_context_prompts) - 1}"
+                lambda: (
+                    f"Generated coding user context prompt "
+                    f"#{len(self._user_context_prompts) - 1}"
+                )
             )
         return self._user_context_prompts[session_index]
 
@@ -899,8 +908,10 @@ class CodingContentGenerator(BaseGenerator):
         text = "\n\n".join(blocks)
         self._tool_pool = self.tokenizer.encode(text)
         self.debug(
-            lambda: f"Built tool pool with {len(self._tool_pool)} tokens "
-            f"from {len(blocks)} blocks"
+            lambda: (
+                f"Built tool pool with {len(self._tool_pool)} tokens "
+                f"from {len(blocks)} blocks"
+            )
         )
 
     def _sample_tokens(self, num_tokens: int, pool: list[int]) -> list[int]:

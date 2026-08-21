@@ -220,30 +220,42 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn_id = id(turn)
         isl, _ = self._get_turn_sequence_lengths(turn_id)
 
+        # The prefix is prepended inside the generator at the token level so that
+        # prefix + body tokenizes to exactly prefix_len + isl (AIP-1118).
+        with_prefix = is_first and self.prefix_prompt_enabled
+
         # ISL budget compensation. See ``base.first_turn_isl_adjustment`` and
-        # ``base.subsequent_turn_isl_adjustment`` for the model. Floored at 1 so
-        # prompt generation stays valid for very small ISLs (a one-token prompt
-        # rather than a crash or empty content).
+        # ``base.subsequent_turn_isl_adjustment`` for the model.
         adjustment = (
             self.first_turn_isl_adjustment
             if is_first
             else self.subsequent_turn_isl_adjustment
         )
+        # A range-ratio window can legitimately bottom out at 0 (bounds (0, N)),
+        # and the degenerate-config guard deliberately accepts that when a
+        # prefix covers the request -- vLLM does too, emitting prefix-only. So
+        # only floor at 1 when there is no prefix to carry it; flooring
+        # unconditionally emitted one more token than the reference.
+        floor = 0 if with_prefix else 1
         if adjustment > 0:
-            isl = max(1, isl - adjustment)
+            isl = max(floor, isl - adjustment)
+        isl = max(floor, isl)
+
+        # An active sequence distribution has already produced an exact length;
+        # resampling it through calculate_num_tokens would floor a sampled 0 to 1.
+        exact_length = self._seq_distribution is not None
 
         # Preserve original variance unless sequence distribution is active
         stddev = 0 if self._seq_distribution is not None else self._isl_stddev
-
-        # The prefix is prepended inside the generator at the token level so that
-        # prefix + body tokenizes to exactly prefix_len + isl (AIP-1118).
-        with_prefix = is_first and self.prefix_prompt_enabled
 
         for _ in range(self._prompt_batch_size):
             # Generate prompt content using the sampled input sequence length
             text.contents.append(
                 self.prompt_generator.generate(
-                    mean=isl, stddev=stddev, with_prefix=with_prefix
+                    mean=isl,
+                    stddev=stddev,
+                    with_prefix=with_prefix,
+                    exact_length=exact_length,
                 )
             )
 
