@@ -1565,7 +1565,10 @@ pub fn run_cellular(
 
         // Stop the upload server (also dropped on any bail path).
         if let Some(server) = artifact_server {
-            server.shutdown().await;
+            server
+                .shutdown()
+                .await
+                .context("stopping cellular artifact server")?;
         }
 
         Ok(CellularRunOutcome {
@@ -3800,7 +3803,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(std::fs::read(landed).unwrap(), original);
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[test]

@@ -1602,7 +1602,7 @@ mod tests {
         );
         assert!(landing_guard.close().is_ok());
         assert!(!landing_path.exists());
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[test]

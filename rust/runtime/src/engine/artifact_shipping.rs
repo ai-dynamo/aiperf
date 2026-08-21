@@ -30,6 +30,8 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bytes::Bytes;
+use hyper_util::rt::TokioIo;
+use hyper_util::service::TowerToHyperService;
 use rand::TryRngCore;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
@@ -56,6 +58,8 @@ const DATASET_SERVE_EVENT_LEVEL: tracing::Level = tracing::Level::DEBUG;
 const ARTIFACT_TLS_SERVER_NAME: &str = "aiperf-cellular-artifact.invalid";
 const TLS_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const TLS_HANDSHAKE_MAX_CONCURRENT: usize = 32;
+const SERVER_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+const SERVER_FORCE_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// One cell-local bearer capability for the per-run artifact channel.
 ///
@@ -229,9 +233,386 @@ struct TlsListener {
     local_addr: SocketAddr,
 }
 
-struct TlsHandshakeAdmission {
-    shutdown_tx: Option<oneshot::Sender<()>>,
+struct ArtifactUploadLifecycle {
+    runtime: tokio::runtime::Handle,
+    /// A lifecycle moved into the origin-runtime reaper must never schedule a
+    /// second reaper if that runtime has already stopped accepting work.
+    can_spawn_reaper: bool,
+    application_shutdown_tx: Option<oneshot::Sender<()>>,
+    application_force_tx: Option<oneshot::Sender<()>>,
+    admission_shutdown_tx: Option<oneshot::Sender<()>>,
+    application_task: Option<JoinHandle<()>>,
+    admission_task: Option<JoinHandle<()>>,
+    application_error: Option<String>,
+    admission_error: Option<String>,
+    blocking_tasks: Option<ArtifactBlockingTasks>,
+    #[cfg(test)]
+    task_monitor: TestTaskMonitor,
+}
+
+#[derive(Clone)]
+struct ArtifactBlockingTaskSender {
+    requests: mpsc::Sender<ArtifactBlockingTask>,
+}
+
+enum ArtifactBlockingTask {
+    Upload {
+        rx: mpsc::Receiver<UploadChunk>,
+        dest: PathBuf,
+        zstd: bool,
+        completed: oneshot::Sender<std::result::Result<(), String>>,
+        #[cfg(test)]
+        task_monitor: TestTaskMonitor,
+    },
+    Dataset {
+        source: DatasetSource,
+        chunks: mpsc::Sender<std::result::Result<Bytes, io::Error>>,
+        #[cfg(test)]
+        task_monitor: TestTaskMonitor,
+    },
+}
+
+struct ArtifactBlockingTasks {
+    sender: ArtifactBlockingTaskSender,
+    shutdown: watch::Sender<()>,
     task: Option<JoinHandle<()>>,
+}
+
+/// A blocking operation whose handle remains owned if its caller is cancelled.
+///
+/// Tokio cannot abort a running `spawn_blocking` closure. Dropping its handle
+/// would detach that closure, so cancellation moves the handle to the runtime
+/// that created it and keeps joining there.
+struct OwnedBlockingIoTask {
+    runtime: tokio::runtime::Handle,
+    task: Option<JoinHandle<io::Result<()>>>,
+    route_class: &'static str,
+    operation: &'static str,
+}
+
+impl OwnedBlockingIoTask {
+    fn new(
+        task: JoinHandle<io::Result<()>>,
+        route_class: &'static str,
+        operation: &'static str,
+    ) -> Self {
+        Self {
+            runtime: tokio::runtime::Handle::current(),
+            task: Some(task),
+            route_class,
+            operation,
+        }
+    }
+
+    async fn join(&mut self) -> Result<()> {
+        let result = match self.task.as_mut() {
+            Some(task) => task.await,
+            None => return Ok(()),
+        };
+        self.task = None;
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(error).context(self.operation),
+            Err(error) => Err(anyhow::anyhow!("{} task panicked: {error}", self.operation)),
+        }
+    }
+}
+
+impl Drop for OwnedBlockingIoTask {
+    fn drop(&mut self) {
+        let Some(task) = self.task.take() else {
+            return;
+        };
+        let runtime = self.runtime.clone();
+        let route_class = self.route_class;
+        let operation = self.operation;
+        runtime.spawn(async move {
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => tracing::debug!(
+                    target: "aiperf_cellular_artifact",
+                    error = %error,
+                    route_class,
+                    outcome = "reaper_task_failed",
+                    operation,
+                    "reaped artifact blocking task failed"
+                ),
+                Err(error) => tracing::error!(
+                    target: "aiperf_cellular_artifact",
+                    error = %error,
+                    route_class,
+                    outcome = "reaper_task_panicked",
+                    operation,
+                    "reaped artifact blocking task panicked"
+                ),
+            }
+        });
+    }
+}
+
+impl ArtifactBlockingTaskSender {
+    async fn start_upload(
+        &self,
+        rx: mpsc::Receiver<UploadChunk>,
+        dest: PathBuf,
+        zstd: bool,
+        #[cfg(test)] task_monitor: TestTaskMonitor,
+    ) -> Result<oneshot::Receiver<std::result::Result<(), String>>> {
+        let (completed, receiver) = oneshot::channel();
+        self.requests
+            .send(ArtifactBlockingTask::Upload {
+                rx,
+                dest,
+                zstd,
+                completed,
+                #[cfg(test)]
+                task_monitor,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("artifact blocking task supervisor stopped"))?;
+        Ok(receiver)
+    }
+
+    async fn start_dataset(
+        &self,
+        source: DatasetSource,
+        chunks: mpsc::Sender<std::result::Result<Bytes, io::Error>>,
+        #[cfg(test)] task_monitor: TestTaskMonitor,
+    ) -> Result<()> {
+        self.requests
+            .send(ArtifactBlockingTask::Dataset {
+                source,
+                chunks,
+                #[cfg(test)]
+                task_monitor,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("artifact blocking task supervisor stopped"))
+    }
+}
+
+impl ArtifactBlockingTasks {
+    fn start(#[cfg(test)] task_monitor: TestTaskMonitor) -> Self {
+        let (requests_tx, mut requests_rx) = mpsc::channel(32);
+        let (shutdown, mut shutdown_rx) = watch::channel(());
+        #[cfg(test)]
+        let supervisor = task_monitor.enter(TestTaskKind::BlockingSupervisor);
+        let task = tokio::spawn(async move {
+            #[cfg(test)]
+            let _supervisor = supervisor;
+            let mut tasks = JoinSet::new();
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx.changed() => break,
+                    joined = tasks.join_next(), if !tasks.is_empty() => {
+                        if let Some(Err(error)) = joined {
+                            tracing::error!(target: "aiperf_cellular_artifact", error = %error, route_class = "artifact", outcome = "blocking_task_panicked", "artifact blocking task panicked");
+                        }
+                    }
+                    request = requests_rx.recv() => match request {
+                        Some(ArtifactBlockingTask::Upload { rx, dest, zstd, completed, #[cfg(test)] task_monitor }) => {
+                            #[cfg(test)]
+                            let writer = task_monitor.enter(TestTaskKind::UploadWriter);
+                            tasks.spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || {
+                                    #[cfg(test)] let _writer = writer;
+                                    decode_channel_to_file(rx, &dest, zstd)
+                                }).await;
+                                let result = match result {
+                                    Ok(Ok(())) => Ok(()),
+                                    Ok(Err(error)) => Err(error.to_string()),
+                                    Err(error) => Err(format!("artifact upload writer task panicked: {error}")),
+                                };
+                                if let Err(error) = &result {
+                                    tracing::debug!(target: "aiperf_cellular_artifact", error = %error, route_class = "artifact", outcome = "writer_failed", "artifact upload writer stopped");
+                                }
+                                let _ = completed.send(result);
+                            });
+                        }
+                        Some(ArtifactBlockingTask::Dataset { source, chunks, #[cfg(test)] task_monitor }) => {
+                            #[cfg(test)]
+                            let compressor = task_monitor.enter(TestTaskKind::DatasetCompressor);
+                            tasks.spawn(async move {
+                                let result = tokio::task::spawn_blocking(move || {
+                                    #[cfg(test)] let _compressor = compressor;
+                                    let DatasetSource::Path(path) = source;
+                                    let result = FileCompressor::open(&path).and_then(|mut compressor| {
+                                        while let Some(chunk) = compressor.next_chunk()? {
+                                            if chunks.blocking_send(Ok(Bytes::from(chunk))).is_err() { break; }
+                                        }
+                                        Ok(())
+                                    });
+                                    if let Err(error) = &result { let _ = chunks.blocking_send(Err(io::Error::new(error.kind(), error.to_string()))); }
+                                    result
+                                }).await;
+                                match result {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(error)) => tracing::debug!(
+                                        target: "aiperf_cellular_artifact",
+                                        error = %error,
+                                        route_class = "dataset",
+                                        outcome = "compressor_failed",
+                                        "dataset compressor stopped"
+                                    ),
+                                    Err(error) => tracing::error!(
+                                        target: "aiperf_cellular_artifact",
+                                        error = %error,
+                                        route_class = "dataset",
+                                        outcome = "compressor_panicked",
+                                        "dataset compressor task panicked"
+                                    ),
+                                }
+                            });
+                        }
+                        None => break,
+                    },
+                }
+            }
+            while let Some(result) = tasks.join_next().await {
+                if let Err(error) = result {
+                    tracing::error!(target: "aiperf_cellular_artifact", error = %error, route_class = "artifact", outcome = "blocking_task_panicked", "artifact blocking task panicked");
+                }
+            }
+        });
+        Self {
+            sender: ArtifactBlockingTaskSender {
+                requests: requests_tx,
+            },
+            shutdown,
+            task: Some(task),
+        }
+    }
+
+    fn signal_shutdown(&self) {
+        self.shutdown.send_modify(|_| {});
+    }
+
+    async fn join(&mut self) -> Result<()> {
+        self.signal_shutdown();
+        let result = match self.task.as_mut() {
+            Some(task) => Some(task.await),
+            None => None,
+        };
+        self.task = None;
+        if let Some(result) = result {
+            result.context("joining artifact blocking task supervisor")?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct TestTaskMonitor {
+    state: Arc<parking_lot::Mutex<TestTaskMonitorState>>,
+}
+
+#[cfg(test)]
+struct TestTaskMonitorState {
+    live_tasks: usize,
+    upload_writers: usize,
+    live_updates: watch::Sender<usize>,
+    upload_writer_updates: watch::Sender<usize>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestTaskKind {
+    TlsSupervisor,
+    TlsHandshake,
+    ApplicationSupervisor,
+    Connection,
+    BlockingSupervisor,
+    UploadWriter,
+    DatasetCompressor,
+    Reaper,
+}
+
+#[cfg(test)]
+struct TestTaskGuard {
+    monitor: TestTaskMonitor,
+    kind: TestTaskKind,
+}
+
+#[cfg(test)]
+impl TestTaskMonitor {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(parking_lot::Mutex::new(TestTaskMonitorState {
+                live_tasks: 0,
+                upload_writers: 0,
+                live_updates: watch::Sender::new(0),
+                upload_writer_updates: watch::Sender::new(0),
+            })),
+        }
+    }
+
+    fn enter(&self, kind: TestTaskKind) -> TestTaskGuard {
+        let mut state = self.state.lock();
+        state.live_tasks += 1;
+        state.live_updates.send_replace(state.live_tasks);
+        if kind == TestTaskKind::UploadWriter {
+            state.upload_writers += 1;
+            state
+                .upload_writer_updates
+                .send_replace(state.upload_writers);
+        }
+        TestTaskGuard {
+            monitor: self.clone(),
+            kind,
+        }
+    }
+
+    async fn wait_for_at_least(&self, expected: usize) {
+        let mut updates = self.state.lock().live_updates.subscribe();
+        loop {
+            if *updates.borrow_and_update() >= expected {
+                return;
+            }
+            updates.changed().await.unwrap();
+        }
+    }
+
+    async fn wait_for_idle(&self) {
+        let mut updates = self.state.lock().live_updates.subscribe();
+        loop {
+            if *updates.borrow_and_update() == 0 {
+                return;
+            }
+            updates.changed().await.unwrap();
+        }
+    }
+
+    async fn wait_for_upload_writer(&self) {
+        let mut updates = self.state.lock().upload_writer_updates.subscribe();
+        loop {
+            if *updates.borrow_and_update() > 0 {
+                return;
+            }
+            updates.changed().await.unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestTaskGuard {
+    fn drop(&mut self) {
+        let mut state = self.monitor.state.lock();
+        state.live_tasks = state
+            .live_tasks
+            .checked_sub(1)
+            .expect("test task monitor guard must be balanced");
+        state.live_updates.send_replace(state.live_tasks);
+        if self.kind == TestTaskKind::UploadWriter {
+            state.upload_writers = state
+                .upload_writers
+                .checked_sub(1)
+                .expect("test upload writer monitor guard must be balanced");
+            state
+                .upload_writer_updates
+                .send_replace(state.upload_writers);
+        }
+    }
 }
 
 impl TlsListener {
@@ -239,10 +620,15 @@ impl TlsListener {
         listener: tokio::net::TcpListener,
         acceptor: TlsAcceptor,
         local_addr: SocketAddr,
-    ) -> (Self, TlsHandshakeAdmission) {
+        #[cfg(test)] task_monitor: TestTaskMonitor,
+    ) -> (Self, oneshot::Sender<()>, JoinHandle<()>) {
         let (completed_tx, completed) = mpsc::channel(TLS_HANDSHAKE_MAX_CONCURRENT);
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        #[cfg(test)]
+        let supervisor = task_monitor.enter(TestTaskKind::TlsSupervisor);
         let task = tokio::spawn(async move {
+            #[cfg(test)]
+            let _supervisor = supervisor;
             let permits = Arc::new(Semaphore::new(TLS_HANDSHAKE_MAX_CONCURRENT));
             let mut handshakes = JoinSet::new();
             loop {
@@ -272,7 +658,13 @@ impl TlsListener {
                             };
                             let acceptor = acceptor.clone();
                             let completed_tx = completed_tx.clone();
+                            #[cfg(test)]
+                            let task_monitor = task_monitor.clone();
+                            #[cfg(test)]
+                            let handshake = task_monitor.enter(TestTaskKind::TlsHandshake);
                             handshakes.spawn(async move {
+                                #[cfg(test)]
+                                let _handshake = handshake;
                                 let _permit = permit;
                                 match tokio::time::timeout(TLS_HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
                                     Ok(Ok(stream)) => {
@@ -317,10 +709,8 @@ impl TlsListener {
                 completed,
                 local_addr,
             },
-            TlsHandshakeAdmission {
-                shutdown_tx: Some(shutdown_tx),
-                task: Some(task),
-            },
+            shutdown_tx,
+            task,
         )
     }
 }
@@ -341,23 +731,209 @@ impl axum::serve::Listener for TlsListener {
     }
 }
 
-impl TlsHandshakeAdmission {
-    async fn shutdown(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
+async fn serve_artifact_uploads(
+    mut listener: TlsListener,
+    app: Router,
+    mut shutdown_rx: oneshot::Receiver<()>,
+    mut force_rx: oneshot::Receiver<()>,
+    #[cfg(test)] task_monitor: TestTaskMonitor,
+    #[cfg(test)] supervisor: TestTaskGuard,
+) {
+    #[cfg(test)]
+    let _supervisor = supervisor;
+    let app = app.into_service::<hyper::body::Incoming>();
+    let mut connections = JoinSet::new();
+    let (connection_shutdown, _) = watch::channel(());
+    let mut needs_force = false;
+    loop {
+        tokio::select! {
+            _ = &mut shutdown_rx => {
+                break;
+            }
+            _ = &mut force_rx => {
+                needs_force = true;
+                break;
+            }
+            joined = connections.join_next(), if !connections.is_empty() => {
+                if let Some(Err(error)) = joined {
+                    tracing::debug!(
+                        target: "aiperf_cellular_artifact",
+                        error = %error,
+                        route_class = "http",
+                        outcome = "task_failed",
+                        "artifact HTTP connection task failed"
+                    );
+                }
+            }
+            (stream, address) = axum::serve::Listener::accept(&mut listener) => {
+                let app = app.clone();
+                let mut connection_shutdown = connection_shutdown.subscribe();
+                #[cfg(test)]
+                let task_monitor = task_monitor.clone();
+                #[cfg(test)]
+                let connection = task_monitor.enter(TestTaskKind::Connection);
+                connections.spawn(async move {
+                    #[cfg(test)]
+                    let _connection = connection;
+                    let io = TokioIo::new(stream);
+                    let connection = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(io, TowerToHyperService::new(app))
+                        .with_upgrades();
+                    tokio::pin!(connection);
+                    let result = tokio::select! {
+                        result = &mut connection => result,
+                        _ = connection_shutdown.changed() => {
+                            connection.as_mut().graceful_shutdown();
+                            connection.await
+                        }
+                    };
+                    if let Err(error) = result {
+                        tracing::debug!(
+                            target: "aiperf_cellular_artifact",
+                            error = %error,
+                            %address,
+                            route_class = "http",
+                            outcome = "connection_closed",
+                            "artifact HTTP connection closed"
+                        );
+                    }
+                });
+            }
+        }
+    }
+    connection_shutdown.send_modify(|_| {});
+    if needs_force {
+        connections.abort_all();
+    }
+    while !connections.is_empty() {
+        if needs_force {
+            let _ = connections.join_next().await;
+            continue;
+        }
+        tokio::select! {
+            joined = connections.join_next() => {
+                if let Some(Err(error)) = joined {
+                    tracing::debug!(
+                        target: "aiperf_cellular_artifact",
+                        error = %error,
+                        route_class = "http",
+                        outcome = "task_failed",
+                        "artifact HTTP connection task failed"
+                    );
+                }
+            }
+            _ = &mut force_rx => {
+                needs_force = true;
+                connections.abort_all();
+            }
+        }
+    }
+}
+
+impl ArtifactUploadLifecycle {
+    fn signal_shutdown(&mut self) {
+        if let Some(tx) = self.application_shutdown_tx.take() {
             let _ = tx.send(());
         }
-        if let Some(task) = self.task.take() {
-            let _ = task.await;
+        if let Some(tx) = self.admission_shutdown_tx.take() {
+            let _ = tx.send(());
         }
     }
 
-    fn abort(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
+    fn force_shutdown(&mut self) {
+        if let Some(tx) = self.application_force_tx.take() {
             let _ = tx.send(());
         }
-        if let Some(task) = self.task.take() {
-            task.abort();
+    }
+
+    async fn join(&mut self) -> Result<()> {
+        if self.application_error.is_none()
+            && let Some(task) = self.application_task.as_mut()
+        {
+            let result = task.await;
+            self.application_task = None;
+            if let Err(error) = result {
+                self.application_error = Some(error.to_string());
+            }
         }
+        if self.admission_error.is_none()
+            && let Some(task) = self.admission_task.as_mut()
+        {
+            let result = task.await;
+            self.admission_task = None;
+            if let Err(error) = result {
+                self.admission_error = Some(error.to_string());
+            }
+        }
+        if let Some(blocking_tasks) = self.blocking_tasks.as_mut() {
+            blocking_tasks.join().await?;
+        }
+        self.blocking_tasks = None;
+        if let Some(error) = self.application_error.take() {
+            bail!("joining artifact upload server: {error}");
+        }
+        if let Some(error) = self.admission_error.take() {
+            bail!("joining artifact TLS admission: {error}");
+        }
+        Ok(())
+    }
+
+    async fn shutdown(mut self) -> Result<()> {
+        self.signal_shutdown();
+        match tokio::time::timeout(SERVER_SHUTDOWN_TIMEOUT, self.join()).await {
+            Ok(result) => return result,
+            Err(_) => {}
+        }
+        self.force_shutdown();
+        tokio::time::timeout(SERVER_FORCE_SHUTDOWN_TIMEOUT, self.join())
+            .await
+            .map_err(|_| anyhow::anyhow!("timed out reaping forced artifact upload tasks"))?
+    }
+}
+
+impl Drop for ArtifactUploadLifecycle {
+    fn drop(&mut self) {
+        if self.application_task.is_none()
+            && self.admission_task.is_none()
+            && self.blocking_tasks.is_none()
+        {
+            return;
+        }
+        self.signal_shutdown();
+        self.force_shutdown();
+        if !self.can_spawn_reaper {
+            tracing::error!(
+                target: "aiperf_cellular_artifact",
+                route_class = "artifact",
+                outcome = "origin_runtime_closed",
+                has_blocking_tasks = self.blocking_tasks.is_some(),
+                "artifact lifecycle could not be reaped because its origin runtime stopped"
+            );
+            return;
+        }
+        #[cfg(test)]
+        let reaper = self.task_monitor.enter(TestTaskKind::Reaper);
+        let lifecycle = Self {
+            runtime: self.runtime.clone(),
+            can_spawn_reaper: false,
+            application_shutdown_tx: self.application_shutdown_tx.take(),
+            application_force_tx: self.application_force_tx.take(),
+            admission_shutdown_tx: self.admission_shutdown_tx.take(),
+            application_task: self.application_task.take(),
+            admission_task: self.admission_task.take(),
+            application_error: self.application_error.take(),
+            admission_error: self.admission_error.take(),
+            blocking_tasks: self.blocking_tasks.take(),
+            #[cfg(test)]
+            task_monitor: self.task_monitor.clone(),
+        };
+        lifecycle.runtime.clone().spawn(async move {
+            #[cfg(test)]
+            let _reaper = reaper;
+            if let Err(error) = lifecycle.shutdown().await {
+                tracing::error!(target: "aiperf_cellular_artifact", error = %error, route_class = "artifact", outcome = "reaper_failed", "artifact upload lifecycle reaper failed");
+            }
+        });
     }
 }
 
@@ -443,7 +1019,10 @@ fn part_path_for(final_path: &Path) -> PathBuf {
 /// onto the final path by [`finish`](Self::finish). A failed transfer leaves a
 /// `.part` file, never a truncated final artifact.
 pub struct DecompressToFile {
-    decoder: zstd::stream::write::Decoder<'static, io::BufWriter<std::fs::File>>,
+    decoder: zstd::stream::raw::Decoder<'static>,
+    writer: io::BufWriter<std::fs::File>,
+    output: Vec<u8>,
+    finished_frame: bool,
     part_path: PathBuf,
     final_path: PathBuf,
 }
@@ -469,13 +1048,16 @@ fn commit_part_file(file: std::fs::File, part_path: &Path, final_path: &Path) ->
 }
 
 impl DecompressToFile {
-    /// Create the `.part` staging file and wrap it in a streaming zstd
-    /// write-decoder.
+    /// Create the `.part` staging file and a raw zstd decoder. The raw decoder
+    /// exposes whether it consumed a complete frame, which the writer adapter
+    /// deliberately hides when it is merely flushed.
     pub fn create(final_path: &Path) -> io::Result<Self> {
         let (file, part_path) = create_part_file(final_path)?;
-        let decoder = zstd::stream::write::Decoder::new(io::BufWriter::new(file))?;
         Ok(Self {
-            decoder,
+            decoder: zstd::stream::raw::Decoder::new()?,
+            writer: io::BufWriter::new(file),
+            output: vec![0; CHUNK_SIZE],
+            finished_frame: false,
             part_path,
             final_path: final_path.to_path_buf(),
         })
@@ -484,14 +1066,50 @@ impl DecompressToFile {
     /// Feed one compressed chunk; its decompressed bytes stream straight to the
     /// `.part` file (nothing buffered whole).
     pub fn write_chunk(&mut self, compressed: &[u8]) -> io::Result<()> {
-        self.decoder.write_all(compressed)
+        use zstd::stream::raw::{InBuffer, Operation, OutBuffer};
+
+        let mut input = InBuffer::around(compressed);
+        while input.pos() < compressed.len() {
+            if self.finished_frame {
+                self.decoder.reinit()?;
+                self.finished_frame = false;
+            }
+
+            let input_before = input.pos();
+            let mut output = OutBuffer::around(&mut self.output);
+            let hint = self.decoder.run(&mut input, &mut output)?;
+            let written = output.pos();
+            self.writer.write_all(&self.output[..written])?;
+            self.finished_frame = hint == 0;
+
+            if written == 0 && input.pos() == input_before {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "zstd decoder made no progress",
+                ));
+            }
+        }
+
+        Ok(())
     }
 
-    /// Flush the decoder, then fsync and atomically commit the `.part` file.
+    /// Validate the terminal zstd frame, then fsync and atomically commit the
+    /// `.part` file. A truncated stream therefore remains only at `.part`.
     pub fn finish(mut self) -> io::Result<()> {
-        self.decoder.flush()?;
-        let writer = self.decoder.into_inner();
-        let file = writer
+        use zstd::stream::raw::{Operation, OutBuffer};
+
+        loop {
+            let mut output = OutBuffer::around(&mut self.output);
+            let hint = self.decoder.finish(&mut output, self.finished_frame)?;
+            let written = output.pos();
+            self.writer.write_all(&self.output[..written])?;
+            if hint == 0 {
+                break;
+            }
+        }
+        self.writer.flush()?;
+        let file = self
+            .writer
             .into_inner()
             .map_err(std::io::IntoInnerError::into_error)?;
         commit_part_file(file, &self.part_path, &self.final_path)
@@ -535,23 +1153,40 @@ impl PlainToFile {
 /// request body) into `dest`, streaming-decompressing when `zstd` is set, then
 /// atomic-rename. Runs on a blocking task so the file/zstd work never stalls the
 /// async runtime. Bounded memory: one [`CHUNK_SIZE`] chunk at a time.
+enum UploadChunk {
+    Data(Bytes),
+    Complete,
+}
+
 fn decode_channel_to_file(
-    mut rx: mpsc::Receiver<Bytes>,
+    mut rx: mpsc::Receiver<UploadChunk>,
     dest: &Path,
     zstd: bool,
 ) -> io::Result<()> {
     if zstd {
         let mut sink = DecompressToFile::create(dest)?;
         while let Some(chunk) = rx.blocking_recv() {
-            sink.write_chunk(&chunk)?;
+            match chunk {
+                UploadChunk::Data(chunk) => sink.write_chunk(&chunk)?,
+                UploadChunk::Complete => return sink.finish(),
+            }
         }
-        sink.finish()
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "artifact upload cancelled",
+        ))
     } else {
         let mut sink = PlainToFile::create(dest)?;
         while let Some(chunk) = rx.blocking_recv() {
-            sink.write_chunk(&chunk)?;
+            match chunk {
+                UploadChunk::Data(chunk) => sink.write_chunk(&chunk)?,
+                UploadChunk::Complete => return sink.finish(),
+            }
         }
-        sink.finish()
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "artifact upload cancelled",
+        ))
     }
 }
 
@@ -592,6 +1227,9 @@ pub(crate) fn validate_artifact_relpath(rel: &str, allowed: &HashSet<String>) ->
 struct UploadState {
     temp_root: PathBuf,
     allowed: HashSet<String>,
+    blocking_tasks: ArtifactBlockingTaskSender,
+    #[cfg(test)]
+    task_monitor: TestTaskMonitor,
     /// The non-synthetic dataset SOURCE files the controller may serve to cells
     /// over `GET /dataset/{name}`, keyed by the file name a cell
     /// requests. A cross-host cell cannot read the controller-local dataset path,
@@ -622,9 +1260,9 @@ pub struct ArtifactUploadServer {
     local_addr: SocketAddr,
     state: Arc<UploadState>,
     registrar: ArtifactChannelRegistrar,
-    shutdown_tx: Option<oneshot::Sender<()>>,
-    task: Option<JoinHandle<()>>,
-    tls_admission: Option<TlsHandshakeAdmission>,
+    lifecycle: Option<ArtifactUploadLifecycle>,
+    #[cfg(test)]
+    task_monitor: TestTaskMonitor,
 }
 
 impl ArtifactUploadServer {
@@ -672,13 +1310,8 @@ impl ArtifactUploadServer {
         manifest: Option<DatasetManifest>,
         cell_count: u32,
     ) -> Result<Self> {
-        let state = Arc::new(UploadState {
-            temp_root,
-            allowed,
-            datasets,
-            manifest,
-            done: watch::Sender::new(HashSet::new()),
-        });
+        #[cfg(test)]
+        let task_monitor = TestTaskMonitor::new();
         let rcgen::CertifiedKey { cert, key_pair } =
             rcgen::generate_simple_self_signed(vec![ARTIFACT_TLS_SERVER_NAME.to_owned()])
                 .context("generating per-run artifact TLS certificate")?;
@@ -700,6 +1333,28 @@ impl ArtifactUploadServer {
             })),
             server_config: ArtifactChannelServerConfig::new(certificate.to_vec()),
         };
+        let listener = tokio::net::TcpListener::bind(bind)
+            .await
+            .with_context(|| format!("binding artifact upload server to {bind}"))?;
+        let local_addr = listener
+            .local_addr()
+            .context("reading artifact upload server address")?;
+        // All fallible setup is complete before the supervisor exists, so a
+        // failed bind/configuration cannot detach its blocking children.
+        let blocking_tasks = ArtifactBlockingTasks::start(
+            #[cfg(test)]
+            task_monitor.clone(),
+        );
+        let state = Arc::new(UploadState {
+            temp_root,
+            allowed,
+            blocking_tasks: blocking_tasks.sender.clone(),
+            #[cfg(test)]
+            task_monitor: task_monitor.clone(),
+            datasets,
+            manifest,
+            done: watch::Sender::new(HashSet::new()),
+        });
         let app = Router::new()
             .route("/cell/{cell_id}/artifact/{*file}", post(upload_artifact))
             .route("/cell/{cell_id}/done", post(cell_done))
@@ -713,32 +1368,48 @@ impl ArtifactUploadServer {
                 authenticate_artifact_request,
             ))
             .with_state(state.clone());
-        let listener = tokio::net::TcpListener::bind(bind)
-            .await
-            .with_context(|| format!("binding artifact upload server to {bind}"))?;
-        let local_addr = listener
-            .local_addr()
-            .context("reading artifact upload server address")?;
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let (tls_listener, tls_admission) = TlsListener::admit(
+        let runtime = tokio::runtime::Handle::current();
+        let (application_shutdown_tx, application_shutdown_rx) = oneshot::channel();
+        let (application_force_tx, application_force_rx) = oneshot::channel();
+        #[cfg(test)]
+        let application_supervisor = task_monitor.enter(TestTaskKind::ApplicationSupervisor);
+        let (tls_listener, admission_shutdown_tx, admission_task) = TlsListener::admit(
             listener,
             TlsAcceptor::from(Arc::new(server_config)),
             local_addr,
+            #[cfg(test)]
+            task_monitor.clone(),
         );
-        let task = tokio::spawn(async move {
-            let _ = axum::serve(tls_listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.await;
-                })
-                .await;
-        });
+        let application_task = tokio::spawn(serve_artifact_uploads(
+            tls_listener,
+            app,
+            application_shutdown_rx,
+            application_force_rx,
+            #[cfg(test)]
+            task_monitor.clone(),
+            #[cfg(test)]
+            application_supervisor,
+        ));
         Ok(Self {
             local_addr,
             state,
             registrar,
-            shutdown_tx: Some(shutdown_tx),
-            task: Some(task),
-            tls_admission: Some(tls_admission),
+            lifecycle: Some(ArtifactUploadLifecycle {
+                runtime,
+                can_spawn_reaper: true,
+                application_shutdown_tx: Some(application_shutdown_tx),
+                application_force_tx: Some(application_force_tx),
+                admission_shutdown_tx: Some(admission_shutdown_tx),
+                application_task: Some(application_task),
+                admission_task: Some(admission_task),
+                application_error: None,
+                admission_error: None,
+                blocking_tasks: Some(blocking_tasks),
+                #[cfg(test)]
+                task_monitor: task_monitor.clone(),
+            }),
+            #[cfg(test)]
+            task_monitor,
         })
     }
 
@@ -750,6 +1421,11 @@ impl ArtifactUploadServer {
     /// A cheap clone that binds one registered bearer digest to each expected cell.
     pub(crate) fn registrar(&self) -> ArtifactChannelRegistrar {
         self.registrar.clone()
+    }
+
+    #[cfg(test)]
+    fn test_task_monitor(&self) -> TestTaskMonitor {
+        self.task_monitor.clone()
     }
 
     /// Wait until `cell_count` distinct cells have signaled `/done`, or `timeout`
@@ -793,28 +1469,22 @@ impl ArtifactUploadServer {
         })
     }
 
-    /// Stop serving and join the server task.
-    pub async fn shutdown(mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(admission) = self.tls_admission.as_mut() {
-            admission.shutdown().await;
-        }
-        if let Some(task) = self.task.take() {
-            let _ = task.await;
+    /// Stop serving and reap all server tasks within a finite deadline.
+    pub async fn shutdown(mut self) -> Result<()> {
+        match self.lifecycle.take() {
+            Some(lifecycle) => lifecycle.shutdown().await,
+            None => Ok(()),
         }
     }
 }
 
 impl Drop for ArtifactUploadServer {
     fn drop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(admission) = self.tls_admission.as_mut() {
-            admission.abort();
-        }
+        let Some(mut lifecycle) = self.lifecycle.take() else {
+            return;
+        };
+        lifecycle.signal_shutdown();
+        drop(lifecycle);
     }
 }
 
@@ -888,8 +1558,18 @@ async fn upload_artifact(
 
     // Async body frames → bounded channel → blocking decode/rename task. The
     // channel bound (4) is the backpressure that keeps in-flight bytes O(chunk).
-    let (tx, rx) = mpsc::channel::<Bytes>(4);
-    let writer = tokio::task::spawn_blocking(move || decode_channel_to_file(rx, &dest, zstd));
+    let (tx, rx) = mpsc::channel::<UploadChunk>(4);
+    let writer = state
+        .blocking_tasks
+        .start_upload(
+            rx,
+            dest,
+            zstd,
+            #[cfg(test)]
+            state.task_monitor.clone(),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     // Count the on-wire (post-compression) body bytes so the completion log below is
     // an unambiguous observable that this artifact really crossed the HTTP socket —
@@ -898,22 +1578,40 @@ async fn upload_artifact(
     // controller's stderr for one such line per cell × file.
     let mut received_bytes: u64 = 0;
     let mut stream = body.into_data_stream();
+    let mut body_error = None;
     while let Some(frame) = stream.next().await {
-        let bytes = frame.map_err(|error| {
-            (
-                StatusCode::BAD_REQUEST,
-                format!("reading upload body: {error}"),
-            )
-        })?;
+        let bytes = match frame {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                body_error = Some((
+                    StatusCode::BAD_REQUEST,
+                    format!("reading upload body: {error}"),
+                ));
+                break;
+            }
+        };
         received_bytes += bytes.len() as u64;
-        if tx.send(bytes).await.is_err() {
+        if tx.send(UploadChunk::Data(bytes)).await.is_err() {
             // The writer task failed and dropped rx; surface its error below.
             break;
         }
     }
+    if body_error.is_none() {
+        let _ = tx.send(UploadChunk::Complete).await;
+    }
     drop(tx);
-    match writer.await {
-        Ok(Ok(())) => {
+    let writer_result = writer.await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("artifact writer supervisor for cell {cell_id} stopped"),
+        )
+    })?;
+    if let Some(error) = body_error {
+        let _ = writer_result;
+        return Err(error);
+    }
+    match writer_result {
+        Ok(()) => {
             // Emit wire encoding and byte count on a dedicated target so operators
             // can enable this event
             // to `info` (`AIPERF_RUNNER_LOG=warn,aiperf_cellular_artifact=info`)
@@ -933,13 +1631,9 @@ async fn upload_artifact(
             );
             Ok(StatusCode::OK)
         }
-        Ok(Err(error)) => Err((
+        Err(error) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("writing cell {cell_id} artifact {file:?}: {error}"),
-        )),
-        Err(join) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("artifact writer task for cell {cell_id} panicked: {join}"),
         )),
     }
 }
@@ -984,20 +1678,16 @@ async fn serve_dataset(
     // error mid-stream is forwarded as a stream error, truncating the body so the
     // cell's decoder fails rather than landing a partial file.
     let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(4);
-    tokio::task::spawn_blocking(move || {
-        let DatasetSource::Path(path) = source;
-        let result = FileCompressor::open(&path).and_then(|mut compressor| {
-            while let Some(chunk) = compressor.next_chunk()? {
-                if tx.blocking_send(Ok(Bytes::from(chunk))).is_err() {
-                    break;
-                }
-            }
-            Ok(())
-        });
-        if let Err(error) = result {
-            let _ = tx.blocking_send(Err(error));
-        }
-    });
+    state
+        .blocking_tasks
+        .start_dataset(
+            source,
+            tx,
+            #[cfg(test)]
+            state.task_monitor.clone(),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     // Use the shared artifact target so this event can be enabled independently.
     tracing::event!(
@@ -1073,20 +1763,29 @@ async fn upload_one(
     use tokio_stream::wrappers::ReceiverStream;
 
     // Producer: chunked read + zstd on a blocking task → bounded channel.
-    let (tx, rx) = mpsc::channel::<Bytes>(4);
+    let (tx, rx) = mpsc::channel::<std::result::Result<Bytes, io::Error>>(4);
     let path = src.to_path_buf();
-    let producer = tokio::task::spawn_blocking(move || -> io::Result<()> {
-        let mut compressor = FileCompressor::open(&path)?;
-        while let Some(chunk) = compressor.next_chunk()? {
-            if tx.blocking_send(Bytes::from(chunk)).is_err() {
-                break; // receiver dropped (request failed); stop early
+    let mut producer = OwnedBlockingIoTask::new(
+        tokio::task::spawn_blocking(move || -> io::Result<()> {
+            let result: io::Result<()> = (|| {
+                let mut compressor = FileCompressor::open(&path)?;
+                while let Some(chunk) = compressor.next_chunk()? {
+                    if tx.blocking_send(Ok(Bytes::from(chunk))).is_err() {
+                        break; // receiver dropped (request failed); stop early
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(error) = &result {
+                let _ = tx.blocking_send(Err(io::Error::new(error.kind(), error.to_string())));
             }
-        }
-        Ok(())
-    });
+            result
+        }),
+        "artifact",
+        "streaming artifact compressor",
+    );
 
-    let body_stream =
-        ReceiverStream::new(rx).map(|bytes| Ok::<_, std::convert::Infallible>(Frame::data(bytes)));
+    let body_stream = ReceiverStream::new(rx).map(|chunk| chunk.map(Frame::data));
     let body = StreamBody::new(body_stream);
 
     let mut request = client.request("POST", &format!("/cell/{cell_id}/artifact/{rel}"), body)?;
@@ -1095,13 +1794,13 @@ async fn upload_one(
         hyper::header::HeaderValue::from_static(ZSTD_CONTENT_ENCODING),
     );
 
-    let status = send_request(client, request).await?;
-    // Join the producer so a compression/IO error is not silently swallowed.
-    match producer.await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => return Err(error).context("streaming compress"),
-        Err(join) => bail!("compression task panicked: {join}"),
-    }
+    // Always join the producer, including when the request itself failed. That
+    // keeps a compressor error from becoming a clean EOF and keeps cancellation
+    // ownership with `OwnedBlockingIoTask`.
+    let response = send_request(client, request).await;
+    let producer_result = producer.join().await;
+    let status = response?;
+    producer_result?;
     ensure!(
         status.is_success(),
         "artifact upload returned HTTP {status}"
@@ -1175,25 +1874,40 @@ pub(crate) async fn fetch_dataset_to_file(
         .unwrap_or(false);
 
     // Response frames → bounded channel → blocking decode/rename task.
-    let (tx, rx) = mpsc::channel::<Bytes>(4);
+    let (tx, rx) = mpsc::channel::<UploadChunk>(4);
     let dest_buf = dest.to_path_buf();
-    let writer = tokio::task::spawn_blocking(move || decode_channel_to_file(rx, &dest_buf, zstd));
+    let mut writer = OwnedBlockingIoTask::new(
+        tokio::task::spawn_blocking(move || decode_channel_to_file(rx, &dest_buf, zstd)),
+        "dataset",
+        "streaming dataset writer",
+    );
 
     let mut body = response.into_body();
+    let mut body_error = None;
     while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|error| anyhow::anyhow!("reading dataset body: {error}"))?;
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(error) => {
+                body_error = Some(anyhow::anyhow!("reading dataset body: {error}"));
+                break;
+            }
+        };
         if let Ok(data) = frame.into_data()
-            && tx.send(data).await.is_err()
+            && tx.send(UploadChunk::Data(data)).await.is_err()
         {
             break; // writer task failed and dropped rx; surface its error below
         }
     }
-    drop(tx);
-    match writer.await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(error)) => Err(error).with_context(|| format!("writing dataset {name:?}")),
-        Err(join) => bail!("dataset writer task panicked: {join}"),
+    if body_error.is_none() {
+        let _ = tx.send(UploadChunk::Complete).await;
     }
+    drop(tx);
+    let writer_result = writer.join().await;
+    if let Some(error) = body_error {
+        let _ = writer_result;
+        return Err(error);
+    }
+    writer_result.with_context(|| format!("writing dataset {name:?}"))
 }
 
 fn dataset_request_path(name: &str) -> String {
@@ -1575,7 +2289,7 @@ mod tests {
             fetch_status(&fixture.client(0), "/dataset/does-not-exist").await,
             StatusCode::NOT_FOUND,
         );
-        fixture.server.shutdown().await;
+        fixture.server.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1600,7 +2314,329 @@ mod tests {
             fetch_status(fixture.client(0), "/dataset/does-not-exist").await,
             StatusCode::NOT_FOUND
         );
-        fixture.server.shutdown().await;
+        fixture.server.shutdown().await.unwrap();
+    }
+
+    mod artifact_upload_server {
+        use super::*;
+        use http_body_util::{BodyExt, Empty};
+
+        #[tokio::test]
+        async fn task_monitor_retains_updates_without_subscribers() {
+            let monitor = TestTaskMonitor::new();
+            let guard = monitor.enter(TestTaskKind::ApplicationSupervisor);
+            tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                monitor.wait_for_at_least(1),
+            )
+            .await
+            .expect("monitor must retain the live-task count before subscription");
+            drop(guard);
+            monitor.wait_for_idle().await;
+        }
+
+        #[tokio::test]
+        async fn blocking_supervisor_join_clears_a_failed_handle() {
+            let monitor = TestTaskMonitor::new();
+            let mut tasks = ArtifactBlockingTasks::start(monitor);
+            tasks
+                .task
+                .as_ref()
+                .expect("blocking supervisor must have a join handle")
+                .abort();
+
+            assert!(tasks.join().await.is_err());
+            assert!(
+                tasks.join().await.is_ok(),
+                "a completed failed handle must not be polled a second time"
+            );
+        }
+
+        #[tokio::test]
+        async fn lifecycle_retains_early_supervisor_failure_across_cancelled_join() {
+            let application_task = tokio::spawn(std::future::pending::<()>());
+            application_task.abort();
+            let admission_task = tokio::spawn(std::future::pending::<()>());
+            let mut lifecycle = ArtifactUploadLifecycle {
+                runtime: tokio::runtime::Handle::current(),
+                can_spawn_reaper: true,
+                application_shutdown_tx: None,
+                application_force_tx: None,
+                admission_shutdown_tx: None,
+                application_task: Some(application_task),
+                admission_task: Some(admission_task),
+                application_error: None,
+                admission_error: None,
+                blocking_tasks: None,
+                task_monitor: TestTaskMonitor::new(),
+            };
+
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(25), lifecycle.join())
+                    .await
+                    .is_err(),
+                "the later stalled supervisor must cancel the join after the application error"
+            );
+            assert!(lifecycle.application_error.is_some());
+
+            lifecycle
+                .admission_task
+                .as_ref()
+                .expect("stalled admission handle must remain owned")
+                .abort();
+            let error = lifecycle
+                .join()
+                .await
+                .expect_err("the earlier application failure must not be lost");
+            assert!(error.to_string().contains("artifact upload server"));
+        }
+
+        #[tokio::test]
+        async fn monitor_reserves_server_work_before_spawned_tasks_run() {
+            let server = secure_server_fixture(1).await.server;
+            let monitor = server.test_task_monitor();
+
+            assert!(
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(25),
+                    monitor.wait_for_idle()
+                )
+                .await
+                .is_err(),
+                "server ownership must be visible before its spawned supervisors first poll"
+            );
+
+            server.shutdown().await.unwrap();
+            monitor.wait_for_idle().await;
+        }
+
+        #[tokio::test]
+        async fn failed_bind_returns_before_artifact_supervisors_start() {
+            let temporary = tempfile::tempdir().unwrap();
+            let held = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let result = ArtifactUploadServer::start(
+                held.local_addr().unwrap(),
+                temporary.path().to_path_buf(),
+                HashSet::new(),
+                1,
+            )
+            .await;
+            let Err(error) = result else {
+                panic!("an already-bound address must fail before lifecycle startup");
+            };
+            assert!(error.to_string().contains("binding artifact upload server"));
+        }
+
+        #[tokio::test]
+        async fn shutdown_is_bounded_with_a_stalled_tls_client() {
+            let server = secure_server_fixture(1).await.server;
+            let _stalled = tokio::net::TcpStream::connect(server.local_addr())
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(2), server.shutdown())
+                .await
+                .expect("shutdown must finish within its deadline")
+                .expect("shutdown must reap the server tasks");
+        }
+
+        #[tokio::test]
+        async fn shutdown_is_bounded_with_an_idle_hyper_client() {
+            let fixture = secure_server_fixture(1).await;
+            let client = fixture.client(0);
+            let stream = tokio::net::TcpStream::connect(fixture.server.local_addr())
+                .await
+                .unwrap();
+            let server_name = ServerName::try_from(ARTIFACT_TLS_SERVER_NAME.to_owned()).unwrap();
+            let stream = TlsConnector::from(client.tls.clone())
+                .connect(server_name, stream)
+                .await
+                .unwrap();
+            let (mut sender, connection) =
+                hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
+                    .await
+                    .unwrap();
+            let connection = tokio::spawn(async move {
+                let _ = connection.await;
+            });
+            let request = client
+                .request("GET", "/dataset/does-not-exist", Empty::<Bytes>::new())
+                .unwrap();
+            let response = sender.send_request(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            let _ = response.into_body().collect().await.unwrap();
+
+            tokio::time::timeout(std::time::Duration::from_secs(2), fixture.server.shutdown())
+                .await
+                .expect("shutdown must finish within its deadline")
+                .expect("shutdown must reap the server tasks");
+
+            drop(sender);
+            connection.abort();
+        }
+
+        #[tokio::test]
+        async fn drop_refuses_connections_after_reaping_tls_tasks() {
+            let server = secure_server_fixture(1).await.server;
+            let task_monitor = server.test_task_monitor();
+            let address = server.local_addr();
+            let stalled = tokio::net::TcpStream::connect(address).await.unwrap();
+            task_monitor.wait_for_at_least(2).await;
+
+            drop(server);
+
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                task_monitor.wait_for_idle(),
+            )
+            .await
+            .expect("Drop must reap TLS supervisor and handshake tasks");
+            assert!(tokio::net::TcpStream::connect(address).await.is_err());
+            drop(stalled);
+        }
+
+        #[tokio::test]
+        async fn shutdown_reaps_a_stalled_upload_connection() {
+            use http_body_util::StreamBody;
+            use hyper::body::Frame;
+            use tokio_stream::wrappers::ReceiverStream;
+
+            let temporary = tempfile::tempdir().unwrap();
+            let server = ArtifactUploadServer::start(
+                "127.0.0.1:0".parse().unwrap(),
+                temporary.path().join("landed"),
+                HashSet::from(["records.jsonl".to_owned()]),
+                1,
+            )
+            .await
+            .unwrap();
+            let task_monitor = server.test_task_monitor();
+            let client = test_client(&server, 0);
+            let (body_tx, body_rx) = mpsc::channel(1);
+            let body = StreamBody::new(
+                ReceiverStream::new(body_rx)
+                    .map(|bytes| Ok::<_, std::convert::Infallible>(Frame::data(bytes))),
+            );
+            let request = client
+                .request("POST", "/cell/0/artifact/records.jsonl", body)
+                .unwrap();
+            let upload =
+                tokio::spawn(async move { client.connect_and_send(request, "test").await });
+            body_tx.send(Bytes::from_static(b"partial")).await.unwrap();
+            task_monitor.wait_for_upload_writer().await;
+            let final_path = temporary.path().join("landed/cell-0/records.jsonl");
+            let part_path = part_path_for(&final_path);
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while !part_path.exists() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("upload handler must start its writer before shutdown");
+
+            server.shutdown().await.unwrap();
+
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                task_monitor.wait_for_idle(),
+            )
+            .await
+            .expect("shutdown must reap the stalled upload connection");
+            assert!(upload.await.unwrap().is_err());
+            assert!(!final_path.exists());
+        }
+
+        #[tokio::test]
+        async fn cancelled_shutdown_rehomes_the_stalled_upload_writer() {
+            use http_body_util::StreamBody;
+            use hyper::body::Frame;
+            use tokio_stream::wrappers::ReceiverStream;
+
+            let temporary = tempfile::tempdir().unwrap();
+            let server = ArtifactUploadServer::start(
+                "127.0.0.1:0".parse().unwrap(),
+                temporary.path().join("landed"),
+                HashSet::from(["records.jsonl".to_owned()]),
+                1,
+            )
+            .await
+            .unwrap();
+            let task_monitor = server.test_task_monitor();
+            let client = test_client(&server, 0);
+            let (body_tx, body_rx) = mpsc::channel(1);
+            let body = StreamBody::new(
+                ReceiverStream::new(body_rx)
+                    .map(|bytes| Ok::<_, std::convert::Infallible>(Frame::data(bytes))),
+            );
+            let request = client
+                .request("POST", "/cell/0/artifact/records.jsonl", body)
+                .unwrap();
+            let upload =
+                tokio::spawn(async move { client.connect_and_send(request, "test").await });
+            body_tx.send(Bytes::from_static(b"partial")).await.unwrap();
+            task_monitor.wait_for_upload_writer().await;
+
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(25), server.shutdown(),)
+                    .await
+                    .is_err()
+            );
+
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                task_monitor.wait_for_idle(),
+            )
+            .await
+            .expect("cancelling shutdown must rehome and reap every live task");
+            assert!(upload.await.unwrap().is_err());
+            assert!(
+                !temporary
+                    .path()
+                    .join("landed/cell-0/records.jsonl")
+                    .exists(),
+                "a reaped incomplete upload must not be published"
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn drop_reaps_tasks_outside_the_entered_runtime() {
+            let server = secure_server_fixture(1).await.server;
+            let task_monitor = server.test_task_monitor();
+            let address = server.local_addr();
+            let stalled = tokio::net::TcpStream::connect(address).await.unwrap();
+            task_monitor.wait_for_at_least(2).await;
+
+            std::thread::spawn(move || drop(server)).join().unwrap();
+
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                task_monitor.wait_for_idle(),
+            )
+            .await
+            .expect("Drop must use the origin runtime to reap its tasks");
+            drop(stalled);
+        }
+
+        #[test]
+        fn drop_after_origin_runtime_closes_does_not_recursively_reap() {
+            let temporary = tempfile::tempdir().unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let server = runtime.block_on(async {
+                ArtifactUploadServer::start(
+                    "127.0.0.1:0".parse().unwrap(),
+                    temporary.path().to_path_buf(),
+                    HashSet::new(),
+                    1,
+                )
+                .await
+                .unwrap()
+            });
+            runtime.shutdown_background();
+
+            drop(server);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1615,7 +2651,7 @@ mod tests {
             post_done_status(&cell_zero, 0).await.unwrap(),
             StatusCode::OK
         );
-        fixture.server.shutdown().await;
+        fixture.server.shutdown().await.unwrap();
     }
 
     #[tokio::test]
@@ -1628,7 +2664,7 @@ mod tests {
         assert!(fixture.registrar.register(0, digest_one).is_err());
         assert!(fixture.registrar.register(1, digest_zero).is_err());
         assert!(fixture.registrar.register(2, digest_one).is_err());
-        fixture.server.shutdown().await;
+        fixture.server.shutdown().await.unwrap();
     }
 
     #[test]
@@ -1752,6 +2788,47 @@ mod tests {
         assert_eq!(std::fs::read(&dest).unwrap(), payload);
     }
 
+    #[test]
+    fn truncated_zstd_frame_never_renames_the_part_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("truncated.bin");
+        let (tx, rx) = mpsc::channel(2);
+        tx.blocking_send(UploadChunk::Data(Bytes::from_static(b"\x28\xb5\x2f\xfd")))
+            .unwrap();
+        tx.blocking_send(UploadChunk::Complete).unwrap();
+        drop(tx);
+
+        assert!(decode_channel_to_file(rx, &dest, true).is_err());
+        assert!(!dest.exists(), "truncated zstd input must not be published");
+    }
+
+    #[tokio::test]
+    async fn failed_artifact_compressor_never_completes_the_upload() {
+        let temporary = tempfile::tempdir().unwrap();
+        let server = ArtifactUploadServer::start(
+            "127.0.0.1:0".parse().unwrap(),
+            temporary.path().join("landed"),
+            HashSet::from(["records.jsonl".to_owned()]),
+            1,
+        )
+        .await
+        .unwrap();
+        let task_monitor = server.test_task_monitor();
+        let missing = temporary.path().join("missing-records.jsonl");
+        let result = upload_one(&test_client(&server, 0), 0, "records.jsonl", &missing).await;
+
+        assert!(result.is_err(), "a failed compressor must fail the upload");
+        server.shutdown().await.unwrap();
+        task_monitor.wait_for_idle().await;
+        assert!(
+            !temporary
+                .path()
+                .join("landed/cell-0/records.jsonl")
+                .exists(),
+            "producer failure must not become a successful atomic rename"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn wait_for_cells_returns_when_completed_before_waiter_registers() {
         use std::time::{Duration, Instant};
@@ -1784,7 +2861,7 @@ mod tests {
             start.elapsed()
         );
 
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1816,7 +2893,7 @@ mod tests {
             "timeout error should report progress and the missing cell: {message}"
         );
 
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1932,7 +3009,7 @@ mod tests {
             4000,
         );
 
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[test]
@@ -2011,7 +3088,7 @@ mod tests {
         landed.sort();
         assert_eq!(landed, names, "reconstructed dir == shipped set");
 
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2054,7 +3131,7 @@ mod tests {
         for shard in shard_names {
             assert!(cell_dir.join(shard).is_file(), "shard {shard} landed");
         }
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2106,7 +3183,7 @@ mod tests {
             std::fs::read(landed.join("benchmark/pinchbench/assets/input.txt")).unwrap(),
             b"workspace asset"
         );
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2193,7 +3270,7 @@ mod tests {
             read_set_bytes(source_read_set),
             "the landed selected directory must rediscover the exact complete session set"
         );
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[tokio::test]
@@ -2248,7 +3325,7 @@ mod tests {
 
         let unknown = upload_one(&client, 0, "secret.parquet", &src).await;
         assert!(unknown.is_err(), "unallowed artifact must be rejected");
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2301,7 +3378,7 @@ mod tests {
             "an unregistered dataset name must be rejected"
         );
 
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2340,7 +3417,7 @@ mod tests {
         fetch_dataset_to_file(&client, "prompts.jsonl", &shipped)
             .await
             .unwrap();
-        server.shutdown().await;
+        server.shutdown().await.unwrap();
 
         let compile = |path: &Path| {
             let path = path.to_path_buf();
