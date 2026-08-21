@@ -35,31 +35,34 @@ of the metrics reference.
 
 ## Prerequisites
 
-- A vLLM server running **speculative decoding** with **per-request stats enabled** via
-  `--per-request-spec-decode-stats summary` (or `detailed`). The field shape tracks vLLM
+- A vLLM server running **speculative decoding** with **per-request metrics enabled** via
+  `--per-request-spec-decode-metrics summary` (or `detailed`). The field shape tracks vLLM
   [PR #48915](https://github.com/vllm-project/vllm/pull/48915) -- confirm your vLLM build
   includes it.
 - **Direct-to-vLLM only.** Behind Dynamo the custom stats field is currently stripped, so
   the per-request path is unavailable there (use the server-scrape path instead).
-- Streaming works out of the box; per-request `completion_tokens` is only populated when
-  the server also returns usage (enable server token counting if you want it).
+- Streaming works out of the box. In streaming, vLLM sends the metrics on the trailing
+  usage chunk, so AIPerf requests `stream_options.include_usage` on every streaming run;
+  no extra flag is needed.
 
 ---
 
-## Start a vLLM server with per-request spec-decode stats
+## Start a vLLM server with per-request spec-decode metrics
 
 This example uses a Llama-3.1-8B target with a Llama-3.2-1B draft model and a 5-token draft
-budget. `--per-request-spec-decode-stats` is the flag that makes vLLM attach acceptance
-stats to each response choice:
+budget. `--per-request-spec-decode-metrics` is the flag that makes vLLM attach acceptance
+metrics to each response at the root `metrics.speculative_decoding` object (single-sequence
+requests only):
 
 ```bash
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model meta-llama/Llama-3.1-8B-Instruct \
   --speculative-config '{"model": "meta-llama/Llama-3.2-1B-Instruct", "num_speculative_tokens": 5, "method": "draft_model"}' \
-  --per-request-spec-decode-stats summary
+  --per-request-spec-decode-metrics summary
 ```
 
-Verify the server is ready:
+Verify the server is ready and emitting the field (look for `metrics.speculative_decoding`
+in the response):
 
 ```bash
 curl -s localhost:8000/v1/chat/completions \
@@ -186,7 +189,7 @@ If the Spec Decode section, histogram, and `spec_decode_*` fields are all absent
 the expected clean-degradation behavior -- not an error. Common causes:
 
 - speculative decoding is off, or the requests had no verify steps;
-- the server was not started with `--per-request-spec-decode-stats`;
+- the server was not started with `--per-request-spec-decode-metrics`;
 - the server is behind Dynamo, which strips the custom field (use the
   [server-scrape path](speed-bench.md) instead);
 - the vLLM build predates [PR #48915](https://github.com/vllm-project/vllm/pull/48915).
