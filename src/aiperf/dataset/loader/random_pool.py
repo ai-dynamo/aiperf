@@ -45,8 +45,12 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
 
     Batching and named pools are mutually exclusive: batch sizes other than 1 are
     rejected outright for directory input (multiple named pools), since batching
-    flattens every pool into one anonymous pool per modality -- see
-    ``_reject_batching_with_named_pools``.
+    flattens every pool into one anonymous pool per modality. Directory input is
+    caught at config time by ``_reject_file_dataset_incompatible``; the pool shapes
+    only visible after parsing (inline multi-key ``records:``, entries embedding
+    named media objects) are caught here by ``_reject_batching_with_named_pools``.
+    A batch size on a modality absent from the pool does not count as batching --
+    see ``_batching_requested``.
 
     Note on batching and associations:
     When entries have paired data across modalities (e.g. {"image": "cat.png", "text": "describe
@@ -309,12 +313,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             "Sampling random_pool dataset entries with replacement. "
             "Duplicates within a single request are possible when batch_size exceeds pool size."
         )
-        if (
-            self.batch_size_image != 1
-            or self.batch_size_text != 1
-            or self.batch_size_audio != 1
-            or self.batch_size_video != 1
-        ):
+        if self._batching_requested(data):
             self._reject_batching_with_named_pools(data)
             return self._convert_to_conversations_batched(data)
 
@@ -349,6 +348,31 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
 
         return conversations
 
+    def _batching_requested(self, data: dict[Filename, list[RandomPool]]) -> bool:
+        """Return True if a modality actually present in the pool has batch size != 1.
+
+        A batch size on a modality absent from the pool produces the same (empty)
+        output on either path, so it must not select the flattened one:
+        ``--image-batch-size 0`` against a text-only pool means "disable image
+        inputs entirely" (as the flag's own description says), not "flatten every
+        named text pool into one anonymous pool".
+        """
+        for batch_size, singular, plural in (
+            (self.batch_size_text, "text", "texts"),
+            (self.batch_size_image, "image", "images"),
+            (self.batch_size_audio, "audio", "audios"),
+            (self.batch_size_video, "video", "videos"),
+        ):
+            if batch_size == 1:
+                continue
+            if any(
+                getattr(entry, singular) is not None or getattr(entry, plural)
+                for pool in data.values()
+                for entry in pool
+            ):
+                return True
+        return False
+
     @staticmethod
     def _reject_batching_with_named_pools(
         data: dict[Filename, list[RandomPool]],
@@ -382,25 +406,15 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             names = ", ".join(sorted(data))
             raise ValueError(
                 f"random_pool batch sizes other than 1 are not supported for named "
-                f"pools: the input has {len(data)} separately named pools ({names}) "
-                "-- either multiple files in a directory, or multiple top-level keys "
-                "under inline YAML records:. Batching flattens every pool into one "
-                "anonymous pool per modality, which discards those names and breaks "
-                "name-sensitive endpoints (e.g. rankings, which routes on 'query'/"
-                "'queries' and 'passages'). Either drop the batch-size flags to keep "
-                "one sample per named pool, or use a single unnamed pool (one file, "
-                "or a flat inline records: list) to batch."
+                f"pools (found {len(data)}: {names}). Drop the batch-size flags, or "
+                "use a single unnamed pool -- one file, or a flat inline records: list."
             )
         if RandomPoolDatasetLoader._pool_entries_carry_metadata(data):
             raise ValueError(
                 "random_pool batch sizes other than 1 are not supported when pool "
                 "entries carry named Text/Image/Audio/Video objects or image cache "
-                "uuids: batching flattens every modality into an anonymous pool, "
-                "which discards those names and uuids (e.g. breaking rankings, which "
-                "routes on 'query'/'queries' and 'passages' text names, and silently "
-                "dropping authored vLLM image cache uuids). Either drop the batch-size "
-                "flags, or strip name/uuids from the pool entries if only their "
-                "contents matter."
+                "uuids. Drop the batch-size flags, or strip name/uuids from the "
+                "entries if only their contents matter."
             )
 
     @staticmethod
@@ -486,16 +500,17 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             or (audio_pool and self.batch_size_audio > 0)
             or (video_pool and self.batch_size_video > 0)
         ):
-            logger.warning(
-                "random_pool dataset produces turns with no content in any modality: "
-                "every modality is either absent from the pool or has batch_size=0 "
-                "(batch_size_text=%d, batch_size_image=%d, batch_size_audio=%d, "
-                "batch_size_video=%d). Requests will be sent with empty content and "
-                "fail downstream.",
-                self.batch_size_text,
-                self.batch_size_image,
-                self.batch_size_audio,
-                self.batch_size_video,
+            # Raise rather than warn: this loader runs inside the DatasetManager
+            # subprocess, whose stdlib-logger output only reaches the log file, so a
+            # warning here never surfaces on the console. The run would then fail
+            # with a generic "check the server URL/endpoint/response format" error
+            # for what is purely a local config mistake.
+            raise ValueError(
+                f"random_pool batch sizes produce turns with no content: every "
+                f"modality is absent from the pool or has batch size 0 (text="
+                f"{self.batch_size_text}, image={self.batch_size_image}, audio="
+                f"{self.batch_size_audio}, video={self.batch_size_video}). Set a "
+                "batch size above 0 for a modality that is present in the pool."
             )
 
         conversations = []

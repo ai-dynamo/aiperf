@@ -1046,7 +1046,7 @@ class TestRandomPoolNamedPoolBatchingGuard:
 
     def test_batching_with_multi_file_data_raises(self, default_cfg):
         """Any batch size != 1 must raise when data spans more than one named pool."""
-        config = TestRandomPoolBatchSize()._make_config(batch_size_image=0)
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
         loader = RandomPoolDatasetLoader(
             filename="dummy_dir", run=make_run_from_cli(config), num_conversations=2
         )
@@ -1133,7 +1133,7 @@ class TestRandomPoolNamedPoolBatchingGuard:
         the same guard fires for inline YAML `records: {queries: [...], passages:
         [...]}`, which has no directory and no files on disk at all.
         """
-        config = TestRandomPoolBatchSize()._make_config(batch_size_image=0)
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
         loader = RandomPoolDatasetLoader(
             filename="dummy_inline", run=make_run_from_cli(config), num_conversations=2
         )
@@ -1363,33 +1363,29 @@ class TestRandomPoolBatchSizeWithFileDataset:
             assert turn.texts == []
             assert len(turn.images) == 1
 
-    def test_prompt_batch_size_zero_on_text_only_pool_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    def test_prompt_batch_size_zero_on_text_only_pool_raises(
+        self, tmp_path: Path
     ) -> None:
-        """prompt_batch_size=0 against a text-only pool must warn: every modality
-        is suppressed or absent, so every turn is empty and every request will
-        fail downstream with empty content.
+        """prompt_batch_size=0 against a text-only pool must raise: every modality
+        is suppressed or absent, so every turn would be empty and every request
+        would fail downstream with empty content.
+
+        A warning is not enough -- this loader runs inside the DatasetManager
+        subprocess, so its logger output only reaches the log file and never the
+        console the user is watching.
         """
         run, pool_path = self._make_file_run(tmp_path, prompt_batch_size=0)
         loader = RandomPoolDatasetLoader(
             filename=pool_path, run=run, num_conversations=2
         )
         data = {"pool.jsonl": [RandomPool(text="query1"), RandomPool(text="query2")]}
-        with caplog.at_level("WARNING", logger="aiperf.dataset.loader.random_pool"):
-            conversations = loader.convert_to_conversations(data)
+        with pytest.raises(ValueError, match="turns with no content"):
+            loader.convert_to_conversations(data)
 
-        for conv in conversations:
-            turn = conv.turns[0]
-            assert turn.texts == []
-            assert turn.images == []
-            assert turn.audios == []
-            assert turn.videos == []
-        assert "no content in any modality" in caplog.text
-
-    def test_prompt_batch_size_zero_with_images_present_does_not_warn(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    def test_prompt_batch_size_zero_with_images_present_does_not_raise(
+        self, tmp_path: Path
     ) -> None:
-        """prompt_batch_size=0 must not warn when another modality still produces
+        """prompt_batch_size=0 must not raise when another modality still produces
         content -- this is the legitimate image/audio/video-only workload case.
         """
         run, pool_path = self._make_file_run(
@@ -1403,10 +1399,37 @@ class TestRandomPoolBatchSizeWithFileDataset:
                 RandomPool(image="https://example.com/img1.png", text="query1"),
             ]
         }
-        with caplog.at_level("WARNING", logger="aiperf.dataset.loader.random_pool"):
-            loader.convert_to_conversations(data)
+        conversations = loader.convert_to_conversations(data)
 
-        assert "no content in any modality" not in caplog.text
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert turn.texts == []
+            assert len(turn.images) == 1
+
+    def test_zero_batch_size_for_absent_modality_does_not_select_batched_path(
+        self, tmp_path: Path
+    ) -> None:
+        """`--image-batch-size 0` means "disable image inputs entirely". Against a
+        text-only named-pool directory it must be a no-op, not a trip into the
+        flattened path and its named-pool rejection.
+        """
+        run, pool_path = self._make_file_run(tmp_path, image_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        data = {
+            "queries.jsonl": [RandomPool(texts=[Text(name="query", contents=["q1"])])],
+            "passages.jsonl": [
+                RandomPool(texts=[Text(name="passage", contents=["p1"])])
+            ],
+        }
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        for conv in conversations:
+            names = sorted(t.name for t in conv.turns[0].texts)
+            assert names == ["passage", "query"]
+            assert conv.turns[0].images == []
 
 
 def _extract_heredoc_lines(doc: str, heredoc_target: str) -> list[str]:
