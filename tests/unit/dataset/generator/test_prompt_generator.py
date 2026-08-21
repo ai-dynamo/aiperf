@@ -1050,6 +1050,47 @@ class TestPromptGeneratorRandomCorpus:
         assert random_generator._offset_idx == 2
         assert random_generator._offset_cache == expected
 
+    def test_topup_draws_stay_inside_the_decodable_pool(self, random_generator):
+        """Top-up must never emit an ID outside the tokenizer's decodable set.
+
+        vLLM tops up from raw `[0, vocab_size)`, which is safe only because HF
+        vocabularies are dense. tiktoken's ID space is sparse -- cl100k_base has
+        16 undecodable gap IDs -- and those raise `KeyError` inside
+        `_decode_to_exact_len`, aborting dataset generation.
+        """
+        import numpy as np
+
+        random_generator.preseed(4, np.random.default_rng(42))
+        allowed = set(random_generator._topup_tokens)
+        tokens = random_generator._sample_topup_tokens(5000)
+
+        assert len(tokens) == 5000
+        assert not [t for t in tokens if t not in allowed]
+
+    def test_topup_pool_is_the_full_vocab_not_the_vllm_subset(self, random_generator):
+        """vLLM's top-up does not exclude special tokens, so the narrower
+        VLLM-style `_allowed_tokens` would be the wrong pool and would change
+        the draw bound, breaking byte parity."""
+        tok = random_generator.tokenizer
+        assert random_generator._topup_tokens == tok.all_token_ids
+        assert len(random_generator._topup_tokens) == tok.vocab_size
+
+    def test_indexed_draw_equals_raw_draw_on_dense_vocab(self, random_generator):
+        """The parity guarantee: for a dense vocabulary `all_token_ids` is
+        `range(vocab_size)`, so indexing into it is bit-for-bit the same
+        sequence as drawing raw `[0, vocab_size)` from the same generator.
+        """
+        import numpy as np
+
+        tok = random_generator.tokenizer
+        pool = random_generator._topup_tokens
+        raw = np.random.default_rng(7).integers(0, tok.vocab_size, size=500).tolist()
+        indexed = [
+            pool[int(i)]
+            for i in np.random.default_rng(7).integers(0, len(pool), size=500)
+        ]
+        assert indexed == raw
+
 
 class _SeamTokenizer(Tokenizer):
     """Deterministic BPE-like tokenizer that charges a token for a joined space.

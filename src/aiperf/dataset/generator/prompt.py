@@ -95,6 +95,7 @@ class PromptGenerator(BaseGenerator):
         self._allowed_tokens: list[int] = []
         self._random_request_index: int = 0
         self._prefix_prompts: list[str] = []
+        self._topup_tokens: list[int] = []
         self._warned_offsets_exhausted = False
         self._prefix_prompt_tokens: list[list[int]] = []
 
@@ -167,9 +168,22 @@ class PromptGenerator(BaseGenerator):
             self._allowed_tokens = self.tokenizer.valid_token_ids
         else:
             self._allowed_tokens = self.tokenizer.all_token_ids
+
+        # Separate, wider pool for BPE top-up draws. vLLM's
+        # gen_prompt_decode_to_target_len tops up from the full
+        # [0, vocab_size) range without excluding special tokens, so the
+        # narrower VLLM-style _allowed_tokens would be the wrong pool here.
+        #
+        # Byte parity: for HF tokenizers all_token_ids IS list(range(vocab_size)),
+        # so indexing into it is bit-for-bit identical to drawing raw
+        # [0, vocab_size) -- same bound, same value. For tiktoken the two differ
+        # (cl100k_base: 100261 decodable vs vocab_size 100277) and the raw draw
+        # could return a gap ID that raises KeyError on decode.
+        self._topup_tokens = self.tokenizer.all_token_ids
         self.debug(
             lambda: (
-                f"Built random vocab corpus with {len(self._allowed_tokens)} allowed tokens"
+                f"Built random vocab corpus with {len(self._allowed_tokens)} allowed tokens "
+                f"({len(self._topup_tokens)} in the top-up pool)"
             )
         )
 
@@ -190,16 +204,19 @@ class PromptGenerator(BaseGenerator):
         if self._corpus == PromptCorpus.RANDOM:
             # vLLM bench passes rng=self._rng (the shared seeded generator) to
             # gen_prompt_decode_to_target_len, drawing top-up tokens from the
-            # same stream as ISL/OSL/offsets with range [0, vocab_size).
-            vocab_size = (
-                self.tokenizer.vocab_size
-                if self.tokenizer is not None
-                else len(self._allowed_tokens)
-            )
-            preseed_rng = getattr(self, "_preseed_rng", None)
-            if preseed_rng is not None:
-                return preseed_rng.integers(0, vocab_size, size=num_tokens).tolist()  # type: ignore[union-attr]
-            return self._corpus_rng.integers(0, vocab_size, size=num_tokens).tolist()
+            # same stream as ISL/OSL/offsets over the full vocab.
+            #
+            # Indexed into _topup_tokens rather than emitted as raw draws so
+            # sparse-vocabulary tokenizers cannot yield an undecodable ID. This
+            # is a no-op for HF tokenizers, where the pool is exactly
+            # range(vocab_size) -- same bound, same values, byte-identical
+            # prompts. See _build_allowed_tokens.
+            pool = self._topup_tokens or self._allowed_tokens
+            generator = getattr(self, "_preseed_rng", None) or self._corpus_rng
+            return [
+                pool[int(i)]
+                for i in generator.integers(0, len(pool), size=num_tokens)  # type: ignore[union-attr]
+            ]
         return self._sample_tokens(num_tokens)
 
     def preseed(self, n: int, generator: object) -> None:
