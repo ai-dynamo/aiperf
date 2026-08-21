@@ -86,6 +86,24 @@ enum ImportedSessionDelivery {
     LocalMaterialized,
 }
 
+#[cfg(feature = "cellular")]
+struct CellularTopologyPlan {
+    expected_partitions: u32,
+}
+
+#[cfg(feature = "cellular")]
+impl CellularTopologyPlan {
+    fn resolve(cell_count: u32) -> Result<Self> {
+        ensure!(
+            !crate::engine::cellular_aggregator::is_hierarchy_requested(cell_count),
+            "hierarchical cellular aggregation is unavailable until every tree edge has controller-provisioned role security"
+        );
+        Ok(Self {
+            expected_partitions: cell_count,
+        })
+    }
+}
+
 /// Env toggle standing up ONE per-run velo [hub](crate::hub) as the cellular anchor
 /// instead of the separate standalone planes. When enabled, the controller mounts the
 /// cell↔controller plugin (register/heartbeat/partition/store-partition), the
@@ -102,6 +120,21 @@ pub const CELLULAR_HUB_ENV: &str = "AIPERF_CELLULAR_HUB";
 /// owned index over velo and dispatches its owned requests. Default off
 /// (per-cell seed regeneration or controller file serving).
 pub const CELL_DATASET_FANOUT_ENV: &str = "AIPERF_CELL_DATASET_FANOUT";
+
+#[cfg(feature = "cellular")]
+trait StartupProbe {
+    fn before_import_acquisition(&self) {}
+    fn before_scratch_creation(&self) {}
+    fn before_artifact_bind(&self) {}
+    fn before_velo_bind(&self) {}
+    fn before_launcher_execution(&self) {}
+}
+
+#[cfg(feature = "cellular")]
+struct NoopStartupProbe;
+
+#[cfg(feature = "cellular")]
+impl StartupProbe for NoopStartupProbe {}
 
 /// The outcome of a cellular run: the merged report path plus a live view of the
 /// last heartbeat each cell reported (for diagnostics/logging).
@@ -136,18 +169,6 @@ impl ControllerProcessWatchers {
 
     fn watch_cell(&mut self, mut handle: CellHandle) {
         self.watch(async move { handle.wait_failure().await });
-    }
-
-    fn watch_aggregator(&mut self, aggregator_id: u32, mut child: tokio::process::Child) {
-        self.watch(async move {
-            match child.wait().await {
-                Ok(status) if !status.success() => {
-                    format!("aggregator {aggregator_id} exited with {status}")
-                }
-                Ok(_) => std::future::pending::<String>().await,
-                Err(error) => format!("aggregator {aggregator_id} could not be waited on: {error}"),
-            }
-        });
     }
 
     async fn recv_failure(&mut self) -> Option<String> {
@@ -539,6 +560,23 @@ pub fn run_cellular(
     report_path: &Path,
     exporters: &crate::export::ExporterRegistry,
 ) -> Result<CellularRunOutcome> {
+    run_cellular_with_startup_probe(
+        envelope,
+        cell_count,
+        report_path,
+        exporters,
+        &NoopStartupProbe,
+    )
+}
+
+#[cfg(feature = "cellular")]
+fn run_cellular_with_startup_probe<P: StartupProbe>(
+    envelope: &serde_json::Value,
+    cell_count: u32,
+    report_path: &Path,
+    exporters: &crate::export::ExporterRegistry,
+    startup_probe: &P,
+) -> Result<CellularRunOutcome> {
     ensure!(cell_count >= 1, "cell_count must be at least 1");
     validate_cellular_run_shape(envelope)?;
     validate_control_hook_transport(envelope)?;
@@ -560,11 +598,11 @@ pub fn run_cellular(
     // deployment exactly like k8s: cells cannot read the controller's local scratch,
     // so per-record artifacts and `file` datasets ship over HTTP, and the launcher
     // "expects, doesn't spawn" (srun already launched the cell tasks). The only k8s
-    // specifics SLURM does NOT share are the operator-wired aggregator DNS (SLURM runs
-    // the flat star) and the operator-injected cell env (the `aiperf slurm run` rank
+    // specifics SLURM does NOT share are the operator-injected cell env (the `aiperf slurm run` rank
     // dispatch injects it from the allocation instead).
     let is_slurm = launcher == "slurm";
     let cross_host = is_k8s || is_slurm;
+    let topology = CellularTopologyPlan::resolve(cell_count)?;
     // Barrier-free start skips the O(N) registration rendezvous.
     let barrier_free = matches!(
         std::env::var(CELL_BARRIER_FREE_ENV)
@@ -737,9 +775,11 @@ pub fn run_cellular(
     let local = tokio::task::LocalSet::new();
 
     local.block_on(&runtime, async move {
+        startup_probe.before_scratch_creation();
         let scratch = private_controller_scratch_lease()?;
         let acquired_imported = imported_request
             .map(|request| {
+                startup_probe.before_import_acquisition();
                 request
                     .acquire_in(scratch.path())
                     .map_err(|error| anyhow!(error.to_string()))
@@ -782,6 +822,7 @@ pub fn run_cellular(
             controller_artifact_bind()
         };
         let artifact_server = if need_artifact_server {
+            startup_probe.before_artifact_bind();
             // Upload allowlist: the run's requested per-record artifact paths when
             // shipping is active, else empty (a dataset-serve-only run accepts no
             // uploads, so every POST is rejected).
@@ -818,6 +859,7 @@ pub fn run_cellular(
         // Bind the controller's velo transport at a known endpoint cells `connect`
         // to (zero discovery — velo's `_hello` handshake resolves identity on dial).
         // `is_k8s` is resolved once above and moved in here.
+        startup_probe.before_velo_bind();
         let (bind, cell_coordinate) = controller_bind_and_endpoint(cross_host, &temp_root)?;
         let velo = build_velo(bind).await.context("building controller velo")?;
         bootstrap_provider
@@ -1110,92 +1152,12 @@ pub fn run_cellular(
             .context("binding controller transport")?
         };
 
-        // Insert a reduction TREE of aggregators between the cells and the controller.
-        // Each cell ships to its round-robin tier-1 aggregator; each aggregator merges
-        // its subtree and ships ONE store up (to a parent aggregator for a lower tier,
-        // the controller for the top tier), so the controller collects only the top
-        // tier's partitions instead of `cells`. Fold-only (sketch / exact-fold): the
-        // retain path keeps the star topology (needs global order).
-        //
-        // Placement differs by deployment, exactly like the cells:
-        // - SAME-HOST (`!is_k8s`): the controller spawns every tier's `aiperf
-        //   --aggregator` subprocess at a distinct fixed loopback port
-        //   ([`aggregator_nodes`]) and injects each cell's tier-1 loopback ship address
-        //   (via `CellLaunchContext::aggregator_count`). Depth `>= 2` tiers reduce a
-        //   large cell count geometrically.
-        // - K8S: the operator created the aggregator pods (one indexed `aggregators-{tier}`
-        //   replicatedJob per tier of the plan) and injected each cell/aggregator pod's
-        //   ship-DNS, so the controller must NOT spawn and must NOT inject loopback ship
-        //   addresses (`K8sLauncher` ignores `aggregator_count` — the pod env is the pod
-        //   spec's). It sizes `expected_partitions` from the top tier and collects those
-        //   merged stores. This cross-host "expect, don't spawn" path is gated on the
-        //   operator having signalled it wired the aggregators ([`AGG_DNS_TEMPLATE_ENV`]);
-        //   a fanout-set cross-host run without that signal fails closed to the flat star.
-        // - SLURM shares the cross-host "expect, don't spawn" gate: it never sets
-        //   `AGG_DNS_TEMPLATE_ENV`, so a SLURM run always falls closed to the flat star —
-        //   the multi-tier aggregator tree is a k8s-wired capability today (see
-        //   slurm-native.md).
-        use crate::engine::cellular_aggregator::{
-            aggregator_base_port as agg_base_port, aggregator_count as requested_agg_count,
-            tier_counts_from_env, AGG_DNS_TEMPLATE_ENV,
-        };
-        let aggregator_base_port = agg_base_port();
-        // Both same-host and cross-host use the full multi-tier plan. On a cross-host run
-        // (k8s or SLURM) the plan is honored only when an operator signalled it built the
-        // aggregator pods ([`AGG_DNS_TEMPLATE_ENV`]); otherwise a fanout-set run falls
-        // closed to the flat star (the cells would ship into pods that do not exist).
-        // Off a cross-host deployment the controller spawns the tiers itself.
-        let tiers: Vec<u32> = if cross_host {
-            let aggregators_wired = std::env::var_os(AGG_DNS_TEMPLATE_ENV).is_some();
-            if aggregators_wired {
-                tier_counts_from_env(cell_count)
-            } else {
-                if requested_agg_count(cell_count).is_some() {
-                    tracing::warn!(
-                        "AIPERF_CELL_AGG_FANOUT requests aggregators but the operator did not \
-                         wire the aggregators (AIPERF_CELL_AGG_DNS_TEMPLATE unset); falling \
-                         back to the flat star topology"
-                    );
-                }
-                Vec::new()
-            }
-        } else {
-            tier_counts_from_env(cell_count)
-        };
-        // Cells ship to tier 1 (the first tier); the controller collects the top tier.
-        // Both equal `cell_count` for the flat star.
-        let aggregator_count = tiers.first().copied();
-        let expected_partitions = tiers.last().copied().unwrap_or(cell_count);
-        if tiers.len() > 1 {
-            tracing::info!(?tiers, "cellular multi-tier aggregation tree");
-        }
-        // Spawn every tier's aggregator subprocess (same-host only) before the cells so
-        // they are bound and collecting by the time cells ship (cell `connect` also
-        // retries). Each gets the run envelope on stdin (for the merge config) and its
-        // placement (id, bind port, collect barrier, parent ship coordinate) via env. On
-        // k8s the aggregators are operator-created pods, so the controller expects rather
-        // than spawns — `aggregator_children` stays empty and pod liveness is the
-        // operator's concern.
-        let mut aggregator_children = if !cross_host && !tiers.is_empty() {
-            spawn_aggregators(
-                envelope,
-                cell_count,
-                aggregator_base_port,
-                &cell_coordinate,
-            )
-            .await
-            .context("spawning aggregators")?
-        } else {
-            Vec::new()
-        };
-
+        let expected_partitions = topology.expected_partitions;
         // Launch (local subprocesses) or expect (k8s pods) the cells.
         let launch_ctx = CellLaunchContext {
             cell_count,
             controller_coordinate: cell_coordinate,
             phase_ordinal_bases,
-            aggregator_count,
-            aggregator_base_port,
             // k8s pods derive the artifact authority from their operator-injected
             // `tcp://` controller coordinate + artifact port (the controller cannot
             // know its own routable host), so nothing is injected there. The same-host
@@ -1211,6 +1173,7 @@ pub fn run_cellular(
                 .map(|cell_id| bootstrap_provider.bundle_for_cell(cell_id))
                 .collect::<Result<Vec<_>>>()?,
         };
+        startup_probe.before_launcher_execution();
         let handles = select_launcher()
             .launch(&launch_ctx)
             .context("launching cells")?;
@@ -1220,9 +1183,6 @@ pub fn run_cellular(
         // their liveness backstop.
         for handle in handles {
             watchers.watch_cell(handle);
-        }
-        for (aggregator_id, child) in aggregator_children.drain(..).enumerate() {
-            watchers.watch_aggregator(aggregator_id as u32, child);
         }
 
         // Start policy. The default is a SYNCHRONIZED start: wait for every cell to
@@ -1307,8 +1267,7 @@ pub fn run_cellular(
         let collected = |records: &[RecordsShardPartition], stores: &[ColumnStorePartition]| {
             records.len() + stores.len()
         };
-        // In the flat topology this is one partition per cell; with aggregators it is one
-        // MERGED partition per aggregator (`expected_partitions == aggregator count`).
+        // The flat topology receives one terminal partition per cell.
         let mut profiler = endpoint_control_hooks
             .take()
             .and_then(|hooks| hooks.server_profiler)
@@ -2761,74 +2720,6 @@ fn validate_graph_cellular_phases(envelope: &serde_json::Value, cell_count: u32)
     Ok(())
 }
 
-/// Spawns one `aiperf --aggregator` subprocess per aggregator node across EVERY tier of
-/// the same-host reduction tree ([`aggregator_nodes`]). Each receives the run envelope
-/// on stdin for `MetricsConfig` and its placement via env: its id, the fixed loopback
-/// `tcp://` coordinate it binds (its children dial it there), its collect barrier, and
-/// where it ships its one merged store — a parent aggregator's loopback coordinate for
-/// a lower tier, or the controller for the top tier. Returns the children so the
-/// controller watches them for hard failure. `kill_on_drop` tears them down on any
-/// controller abort. The fanout is read from the environment; a single-tier tree spawns
-/// exactly the original topology.
-async fn spawn_aggregators(
-    envelope: &serde_json::Value,
-    cell_count: u32,
-    base_port: u16,
-    controller_coordinate: &str,
-) -> Result<Vec<tokio::process::Child>> {
-    use crate::engine::cellular_aggregator::{
-        AGG_BIND_ENV, AGG_CHILD_COUNT_ENV, AGG_ID_ENV, AGG_SHIP_ADDR_ENV, ShipTarget,
-        aggregator_nodes, tier_counts_from_env,
-    };
-    use crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV;
-    use std::process::Stdio;
-    use tokio::io::AsyncWriteExt;
-
-    // Recover the fanout the tier plan was sized with (the plan is derived from the same
-    // env), so `aggregator_nodes` computes the identical port/parent layout.
-    let fanout: u32 = std::env::var(crate::engine::cellular_aggregator::CELL_AGG_FANOUT_ENV)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .context("spawn_aggregators called without AIPERF_CELL_AGG_FANOUT")?;
-    debug_assert!(!tier_counts_from_env(cell_count).is_empty());
-    let nodes = aggregator_nodes(cell_count, fanout, base_port);
-
-    let envelope_bytes =
-        serde_json::to_vec(envelope).context("serializing envelope for aggregators")?;
-    let exe = std::env::current_exe().unwrap_or_else(|_| "aiperf runner".into());
-    let mut children = Vec::with_capacity(nodes.len());
-    for node in &nodes {
-        let mut command = tokio::process::Command::new(&exe);
-        command
-            .arg("--aggregator")
-            .env(AGG_ID_ENV, node.id.to_string())
-            .env(AGG_BIND_ENV, format!("tcp://127.0.0.1:{}", node.bind_port))
-            .env(AGG_CHILD_COUNT_ENV, node.child_count.to_string())
-            // The controller coordinate is carried for the top tier (which ships there);
-            // a lower tier ships to its parent via AGG_SHIP_ADDR below and ignores it.
-            .env(CELL_CONTROLLER_ADDR_ENV, controller_coordinate);
-        if let ShipTarget::Aggregator(port) = node.ship {
-            command.env(AGG_SHIP_ADDR_ENV, format!("tcp://127.0.0.1:{port}"));
-        }
-        let mut child = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| format!("spawning aggregator tier {} id {}", node.tier, node.id))?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(&envelope_bytes)
-                .await
-                .with_context(|| format!("writing envelope to aggregator {}", node.id))?;
-            // `stdin` drops here → EOF, so the aggregator's `read_to_end` returns.
-        }
-        children.push(child);
-    }
-    Ok(children)
-}
-
 /// Builds the native metrics policy for a cellular merge from `cfg.metrics` and
 /// `cfg.endpoint.use_server_token_count`.
 ///
@@ -3139,6 +3030,7 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+    use std::sync::{Mutex, OnceLock};
 
     use super::*;
 
@@ -3230,6 +3122,120 @@ mod tests {
     }
     use crate::cellular::RecordsShardPartition;
     use crate::engine::cellular_kind::{is_graph_dataset, is_graph_dataset_value};
+
+    static CELLULAR_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvVarRestore {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarRestore {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: the test holds CELLULAR_ENV_LOCK for this process-env mutation.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            // SAFETY: the test holds CELLULAR_ENV_LOCK until this restoration completes.
+            unsafe {
+                match self.previous.take() {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingStartupProbe(AtomicUsize);
+
+    impl RecordingStartupProbe {
+        fn bits(&self) -> usize {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    impl StartupProbe for RecordingStartupProbe {
+        fn before_import_acquisition(&self) {
+            self.0.fetch_or(1, Ordering::SeqCst);
+        }
+
+        fn before_scratch_creation(&self) {
+            self.0.fetch_or(2, Ordering::SeqCst);
+        }
+
+        fn before_artifact_bind(&self) {
+            self.0.fetch_or(4, Ordering::SeqCst);
+        }
+
+        fn before_velo_bind(&self) {
+            self.0.fetch_or(8, Ordering::SeqCst);
+        }
+
+        fn before_launcher_execution(&self) {
+            self.0.fetch_or(16, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn hierarchy_refuses_before_any_startup_side_effect() {
+        let _environment = CELLULAR_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock cellular environment");
+        let _fanout = EnvVarRestore::set("AIPERF_CELL_AGG_FANOUT", "2");
+        let probes = RecordingStartupProbe::default();
+        let temporary = tempfile::tempdir().expect("temporary report directory");
+        let envelope = serde_json::json!({"run": {"cfg": {
+            "transport": {"type": "http"},
+            "datasets": [{
+                "type": "file",
+                "format": "agent_recording",
+                "path": temporary.path().join("caller-owned-session.jsonl"),
+                "graph": {"source_format": "codex"}
+            }],
+            "phases": [{"name": "profiling", "sessions": 8}]
+        }}});
+        let error = match run_cellular_with_startup_probe(
+            &envelope,
+            8,
+            &temporary.path().join("report.json"),
+            &crate::export::ExporterRegistry::new(),
+            &probes,
+        ) {
+            Ok(_) => panic!("unsupported hierarchy must fail before acquiring the source"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("hierarchical cellular aggregation"),
+            "hierarchy must fail before touching the caller-owned imported source: {error:#}"
+        );
+        assert_eq!(
+            probes.bits(),
+            0,
+            "hierarchy refusal must precede imported acquisition, scratch creation, artifact bind, velo bind, and launcher execution"
+        );
+    }
+
+    #[test]
+    fn flat_topology_keeps_one_partition_per_cell() {
+        let _environment = CELLULAR_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock cellular environment");
+        let _fanout = EnvVarRestore::set("AIPERF_CELL_AGG_FANOUT", "8");
+
+        let topology = CellularTopologyPlan::resolve(8).expect("flat topology must resolve");
+
+        assert_eq!(topology.expected_partitions, 8);
+    }
 
     #[test]
     fn controller_folds_partitioned_replay_supplements_before_writing() {

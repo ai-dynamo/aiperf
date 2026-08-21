@@ -361,8 +361,8 @@ explainer "Rust Architecture Atlas" {
 
   slide "Cellular scale-out" {
     eyebrow: "9 · Cellular"
-    title: "Controller, cells, hierarchical merge"
-    lede: "`cells > 1` promotes the execute child into a controller. Cells fetch sliced envelopes over Velo, run the ordinary engine, and return records or folded stores. Optional aggregators merge subtrees; the controller commits once."
+    title: "Controller, cells, flat merge"
+    lede: "`cells > 1` promotes the execute child into a controller. Cells fetch sliced envelopes over Velo, run the ordinary engine, and return records or folded stores directly to the controller. Hierarchy requests are refused before startup."
     narration: "Cellular mode promotes the execute child into a controller. Cells run ordinary execute on sliced envelopes and return mergeable partitions over Velo."
     term: {
       word: "cellular feature"
@@ -383,17 +383,15 @@ explainer "Rust Architecture Atlas" {
       sdk.Panel(id = "launch", title = "cell launcher", detail = "sliced envelope", x = 1230, y = 243, width = 378, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "c0", title = "--cell 0", detail = "ordinary exec", x = 177, y = 567, width = 351, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
       sdk.Panel(id = "cn", title = "--cell N", detail = "ordinary exec", x = 636, y = 567, width = 351, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.primary")
-      sdk.Panel(id = "agg", title = "aggregators", detail = "optional", x = 1095, y = 567, width = 378, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
+      sdk.Panel(id = "agg", title = "hierarchy request", detail = "refused before startup", x = 1095, y = 567, width = 378, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "merge8", title = "merge", detail = "one commit", x = 1527, y = 567, width = 324, height = 210.6, surfaceRole = "@theme.surface.primary", strokeRole = "@theme.accent.warning")
       sdk.FanOut(id = "cell-fan", from = { nodeId: "launch", anchor: "s" }, to = [
             { nodeId: "c0", anchor: "n" },
-            { nodeId: "cn", anchor: "n" },
-            { nodeId: "agg", anchor: "n" }
+            { nodeId: "cn", anchor: "n" }
           ], axis = "y", style = { stroke: "@theme.accent.primary", strokeWidth: 5.94, fill: "none" })
       sdk.FanIn(id = "result-fan", from = [
             { nodeId: "c0", anchor: "e" },
-            { nodeId: "cn", anchor: "e" },
-            { nodeId: "agg", anchor: "e" }
+            { nodeId: "cn", anchor: "e" }
           ], to = { nodeId: "merge8", anchor: "w" }, axis = "x", style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94, fill: "none" })
       timeline primary {
         at 0 reveal hdr8 duration 280

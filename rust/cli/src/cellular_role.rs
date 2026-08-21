@@ -1,17 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Kubernetes cellular roles: `aiperf controller`, `cell`, and `aggregator`.
+//! Kubernetes cellular roles: `aiperf controller` and `cell`; `aggregator` refuses.
 //!
-//! The operator's JobSet invokes these subcommands in its controller, cell, and
-//! aggregator pods. Cross-pod execution uses the velo transport.
+//! The operator's JobSet invokes the controller and cell subcommands. Cross-pod
+//! execution uses the velo transport.
 //!
 //! - `controller` projects the mounted Config v2. `runtime.cells` and the
 //!   `AIPERF_CELL_*` environment select the pre-created pod topology.
 //! - `cell` fetches its sliced envelope over velo from the controller using the
 //!   `AIPERF_CELL_*` environment; it does not read the mounted `--config`.
-//! - `aggregator` projects Config v2 and sends the execute envelope to
-//!   `--aggregator` over stdin.
+//! - `aggregator` projects Config v2 and invokes the hierarchy refusal over stdin.
 
 use std::path::PathBuf;
 
@@ -92,7 +91,7 @@ pub fn run_cell(_args: &[String]) -> anyhow::Result<i32> {
     crate::execute_mode::dispatch(&[crate::execute_mode::CELL_FLAG.to_string()])
 }
 
-/// Run a tier-T2 merge aggregator pod.
+/// Refuse a requested hierarchical aggregator role.
 pub fn run_aggregator(args: &[String]) -> anyhow::Result<i32> {
     let config_path = config_flag(args).ok_or_else(|| {
         anyhow::anyhow!("`aiperf aggregator` requires `--config <file>` (the mounted Config v2)")

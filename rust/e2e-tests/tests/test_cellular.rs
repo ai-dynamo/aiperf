@@ -415,90 +415,9 @@ async fn test_cellular_sketch_matches_single_cell() {
     }
 }
 
-/// With `AIPERF_CELL_AGG_FANOUT` set, the controller
-/// routes the cells through an aggregator tier — `M = ceil(cells / fanout)` extra
-/// `aiperf --aggregator` processes, each collecting its round-robin subtree of
-/// cells' folded stores, merging them, and shipping ONE merged store up — instead of the
-/// flat star where all cells ship to the controller. Because the fold-mode store merge
-/// (`merge_store_partitions` → t-digest merge) is associative and deterministic-at-topology,
-/// the tree-merged report is BYTE-IDENTICAL to the flat-star report on the dataset-
-/// deterministic metrics. Sketch storage (a fold path) so the cells ship a `StorePartition`
-/// the aggregator can merge; a base port well clear of the default avoids any collision.
-///
+/// Hierarchical cellular aggregation is refused before any controller startup.
 #[tokio::test]
-async fn test_cellular_tree_merge_matches_flat_star() {
-    let args = |url: &str| {
-        format!(
-            "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
-             --request-count 60 --concurrency 6 --cells 6 --random-seed 42 \
-             --synthetic-input-tokens-mean 256 --synthetic-input-tokens-stddev 64 \
-             --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
-        )
-    };
-    let sketch = ("AIPERF_METRICS_SKETCH", "1");
-
-    // Flat star: 6 cells ship folded sketches straight to the controller.
-    let h_flat = AIPerfHarness::new().await;
-    let flat = h_flat.run_env(&args(&h_flat.mock.url), &[sketch]);
-    assert!(flat.success(), "flat cellular run failed: {}", flat.stderr);
-
-    // Tree: 6 cells → 2 aggregators (fanout 3) → controller. A base port clear of the
-    // 9700 default so a concurrent test never collides on the fixed aggregator port.
-    let h_tree = AIPerfHarness::new().await;
-    let tree = h_tree.run_env(
-        &args(&h_tree.mock.url),
-        &[
-            sketch,
-            ("AIPERF_CELL_AGG_FANOUT", "3"),
-            ("AIPERF_CELL_AGG_BASE_PORT", "9764"),
-        ],
-    );
-    assert!(tree.success(), "tree cellular run failed: {}", tree.stderr);
-
-    for (label, run) in [("flat", &flat), ("tree", &tree)] {
-        assert!(
-            run.artifacts
-                .find_file("**/cellular-heartbeat.json")
-                .is_some(),
-            "{label} run must go through the controller (cellular-heartbeat.json sidecar)"
-        );
-    }
-    assert_eq!(
-        flat.artifacts.request_count() as u32,
-        tree.artifacts.request_count() as u32,
-        "flat and tree must dispatch the same request count through the aggregator tier"
-    );
-
-    // The tree-merged report equals the flat-star report on the dataset-deterministic
-    // metrics (integer ISL/OSL: avg/percentiles/min/max/std are order-independent, so the
-    // associative aggregator-tier merge reproduces the flat star exactly at this size).
-    let flat_json = flat.artifacts.json();
-    let tree_json = tree.artifacts.json();
-    for metric in DETERMINISTIC_METRICS {
-        let a = &flat_json[metric];
-        let b = &tree_json[metric];
-        assert!(
-            !a.is_null(),
-            "flat report missing deterministic metric {metric}"
-        );
-        assert_eq!(
-            a, b,
-            "tree merge {metric} diverged from the flat star: flat={a}  tree={b}"
-        );
-    }
-}
-
-/// A fanout small enough to require MORE than one aggregator tier builds a
-/// multi-level reduction tree: cells → tier-1 aggregators → tier-2 aggregators → …
-/// → controller. Here `--cells 8 --fanout 2` resolves to tiers [4, 2]: 8 cells ship
-/// to 4 tier-1 aggregators, which ship to 2 tier-2 aggregators, which ship to the
-/// controller (a 3-level tree above the cells). Because the fold-mode store merge is
-/// associative at every tier, the deep-tree report is byte-identical to the flat star
-/// on the dataset-deterministic metrics — the same guarantee the single-tier tree
-/// makes, exercised through two aggregator hops. Base port well clear of the default
-/// and of the single-tier test so concurrent runs never collide on a fixed port.
-#[tokio::test]
-async fn test_cellular_multitier_tree_matches_flat_star() {
+async fn test_cellular_hierarchy_is_refused() {
     let args = |url: &str| {
         format!(
             "--model {DEFAULT_MODEL} --url {url} --endpoint-type chat \
@@ -507,61 +426,19 @@ async fn test_cellular_multitier_tree_matches_flat_star() {
              --output-tokens-mean 8 --output-tokens-stddev 0 --ui simple"
         )
     };
-    let sketch = ("AIPERF_METRICS_SKETCH", "1");
-
-    // Flat star: 8 cells ship folded sketches straight to the controller.
-    let h_flat = AIPerfHarness::new().await;
-    let flat = h_flat.run_env(&args(&h_flat.mock.url), &[sketch]);
-    assert!(flat.success(), "flat cellular run failed: {}", flat.stderr);
-
-    // Deep tree: 8 cells → 4 (tier 1) → 2 (tier 2) → controller. Fanout 2, so the
-    // first reduction (8→4) does NOT fit within the fanout and a second tier is added.
     let h_tree = AIPerfHarness::new().await;
-    let tree = h_tree.run_env(
-        &args(&h_tree.mock.url),
-        &[
-            sketch,
-            ("AIPERF_CELL_AGG_FANOUT", "2"),
-            ("AIPERF_CELL_AGG_BASE_PORT", "9820"),
-        ],
-    );
+    let tree = h_tree.run_env(&args(&h_tree.mock.url), &[("AIPERF_CELL_AGG_FANOUT", "2")]);
     assert!(
-        tree.success(),
-        "multi-tier tree cellular run failed: {}",
+        !tree.success(),
+        "hierarchical cellular run unexpectedly succeeded: {}",
         tree.stderr
     );
-
-    for (label, run) in [("flat", &flat), ("tree", &tree)] {
-        assert!(
-            run.artifacts
-                .find_file("**/cellular-heartbeat.json")
-                .is_some(),
-            "{label} run must go through the controller (cellular-heartbeat.json sidecar)"
-        );
-    }
-    assert_eq!(
-        flat.artifacts.request_count() as u32,
-        tree.artifacts.request_count() as u32,
-        "flat and multi-tier tree must dispatch the same request count"
+    assert!(
+        tree.stderr
+            .contains("hierarchical cellular aggregation is unavailable"),
+        "hierarchical refusal was not reported: {}",
+        tree.stderr
     );
-
-    // The deep-tree-merged report equals the flat-star report on the dataset-
-    // deterministic metrics (integer ISL/OSL: avg/percentiles/min/max/std are
-    // order-independent, so the associative two-hop merge reproduces the flat star).
-    let flat_json = flat.artifacts.json();
-    let tree_json = tree.artifacts.json();
-    for metric in DETERMINISTIC_METRICS {
-        let a = &flat_json[metric];
-        let b = &tree_json[metric];
-        assert!(
-            !a.is_null(),
-            "flat report missing deterministic metric {metric}"
-        );
-        assert_eq!(
-            a, b,
-            "multi-tier merge {metric} diverged from the flat star: flat={a}  tree={b}"
-        );
-    }
 }
 
 /// `AIPERF_CELL_BARRIER_FREE=1` makes the

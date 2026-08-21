@@ -62,7 +62,7 @@ export function FeaturesPage(): React.JSX.Element {
                 <NodeChip>controller · cell</NodeChip>
               </Diagram>
             ),
-            children: "Cross-process scale-out: controller · cell · aggregator. cells > 1 requires velo; lean builds reject it.",
+            children: "Cross-process scale-out: controller · cell. Cells > 1 requires Velo; hierarchy requests are refused before startup.",
           },
           {
             accent: "orange",

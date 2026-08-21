@@ -32,7 +32,7 @@ describe("AtlasPage", () => {
   it("re-derives the route topology when a recipe is selected", () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "T2 Hierarchical" }));
-    expect(screen.getByText("Cells → aggregators → controller")).toBeInTheDocument();
+    expect(screen.getByText("Hierarchy request → refusal")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "T3 External sink" }));
     expect(screen.getByText("Cells → external ingest (planned)")).toBeInTheDocument();

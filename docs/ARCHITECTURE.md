@@ -129,7 +129,7 @@ backend**.
                                  ▼
 ┌─ aiperf --execute  (execution engine, crate aiperf-cli) ──────────────────────────────┐
 │  • mimalloc global allocator; stderr tracing (AIPERF_RUNNER_LOG); stdout = protocol    │
-│  • arg dispatch: `--execute` | `--cell` | `--aggregator` | controller (validate too)   │
+│  • arg dispatch: `--execute` | `--cell` | `--aggregator` refusal | controller          │
 │  • compose_stock_application() → RunnerApplication::stock(distribution_id)              │
 │  • run_v2(): parse EnvelopeBootstrapV2 → RunnerEnvelopeV2 (strict, deny_unknown_fields) │
 │    catch_unwind around handle_v2 → exactly ONE terminal/validation JSONL + exit code   │
@@ -194,7 +194,7 @@ becomes a typed failure, never a bare crash — the entry point always sees one 
 - Tracing subscriber writes only to **stderr** (stdout is the protocol channel); default filter
   `warn`, overridable with `AIPERF_RUNNER_LOG`.
 - Argument dispatch: `--execute` runs one run/probe/cell; `--cell` runs one cell of a multi-cell
-  run; `--aggregator` runs the velo-gated aggregator; a plain `execute` envelope with
+  run; `--aggregator` refuses unavailable hierarchical aggregation; a plain `execute` envelope with
   `runtime.cells > 1` promotes this process to the **cellular controller**; otherwise the normal
   single-process path. (Capabilities is not an argv mode — it is the in-process
   `aiperf_cli::execute_mode::capabilities_catalog` function.)

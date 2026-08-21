@@ -774,12 +774,11 @@ function CellularView() {
         <Edge d="M475,225 L540,251" color={line} marker="cells" />
         <Edge d="M710,181 L775,205" color={line} marker="cells" dashed />
 
-        <Band t={t} x={12} y={316} w={916} h={112} label="Hierarchical merge" accent={purple} />
+        <Band t={t} x={12} y={316} w={916} h={112} label="Flat controller merge" accent={green} />
         <Box t={t} x={65} y={348} w={190} h={50} title="cell messages" sub="partitions + artifacts" />
-        <Box t={t} x={330} y={344} w={210} h={58} title="optional aggregators" sub="merge subtree stores" accent={purple} />
+        <Box t={t} x={330} y={344} w={210} h={58} title="hierarchy request" sub="refused before startup" accent={purple} />
         <Box t={t} x={615} y={344} w={245} h={58} title="controller merge" sub="global order or associative store merge" accent={green} />
-        <Edge d="M255,373 L330,373" color={line} marker="cells" />
-        <Edge d="M540,373 L615,373" color={line} marker="cells" />
+        <Edge d="M255,373 L615,373" color={line} marker="cells" />
 
         <Band t={t} x={12} y={446} w={916} h={60} label="Single commit point" accent={orange} />
         <Box t={t} x={180} y={457} w={220} h={36} title="sidecars on primary cell only" />
@@ -793,10 +792,10 @@ function CellularView() {
         <Callout tone="neutral" title="S4">Cell partitions define deterministic ownership.</Callout>
       </Grid>
       <EvidenceButtons paths={[
-        { label: "Controller", path: "rust/aiperf/src/runner_protocol/cellular_controller.rs" },
-        { label: "Cell mode", path: "rust/aiperf/src/runner_protocol/cellular_cell.rs" },
-        { label: "Aggregator", path: "rust/aiperf/src/runner_protocol/cellular_aggregator.rs" },
-        { label: "Cellular seams", path: "rust/aiperf/src/cellular/mod.rs" },
+        { label: "Controller", path: "rust/runtime/src/engine/cellular_controller.rs" },
+        { label: "Cell mode", path: "rust/runtime/src/engine/cellular_cell.rs" },
+        { label: "Hierarchy refusal", path: "rust/runtime/src/engine/cellular_aggregator.rs" },
+        { label: "Cellular seams", path: "rust/runtime/src/cellular/mod.rs" },
       ]} />
     </Stack>
   );
@@ -827,7 +826,7 @@ function FeaturesView() {
 
         <Band t={t} x={12} y={120} w={916} h={188} label="Orthogonal feature branches" accent={purple} />
         <Box t={t} x={35} y={154} w={190} h={56} title="parquet" sub="columnar datasets + artifacts" accent={orange} />
-        <Box t={t} x={255} y={154} w={190} h={56} title="velo" sub="controller · cell · aggregator" accent={purple} />
+        <Box t={t} x={255} y={154} w={190} h={56} title="velo" sub="controller · cell · hierarchy refusal" accent={purple} />
         <Box t={t} x={475} y={154} w={190} h={56} title="dynosim" sub="Dynamo mocker sibling checkout" accent={green} />
         <Box t={t} x={695} y={154} w={190} h={56} title="pyo3-embed" sub="in-process Python delegation" accent={blue} />
         <Box t={t} x={145} y={240} w={190} h={46} title="search-pyo3" sub="scipy + optuna planners" />
@@ -929,15 +928,14 @@ function SeamsView() {
         <Box t={t} x={270} y={20} w={155} h={50} title="cell 0" sub="ordinary execute path" accent={green} />
         <Box t={t} x={270} y={80} w={155} h={50} title="cell 1" sub="ordinary execute path" accent={green} />
         <Box t={t} x={270} y={140} w={155} h={50} title="cell N" sub="ordinary execute path" accent={green} />
-        <Box t={t} x={500} y={62} w={170} h={60} title="optional aggregators" sub="merge folded stores" accent={purple} />
+        <Box t={t} x={500} y={62} w={170} h={60} title="hierarchy request" sub="refused before startup" accent={purple} />
         <Box t={t} x={735} y={62} w={145} h={60} title="final report" sub="controller commit" accent={orange} />
         <Edge d="M205,84 L270,45" color={line} marker="cell" />
         <Edge d="M205,92 L270,105" color={line} marker="cell" />
         <Edge d="M205,100 L270,165" color={line} marker="cell" />
-        <Edge d="M425,45 C470,45 470,75 500,82" color={line} marker="cell" />
-        <Edge d="M425,105 L500,92" color={line} marker="cell" />
-        <Edge d="M425,165 C470,165 470,112 500,105" color={line} marker="cell" />
-        <Edge d="M670,92 L735,92" color={line} marker="cell" />
+        <Edge d="M425,45 C560,45 650,75 735,92" color={line} marker="cell" />
+        <Edge d="M425,105 L735,92" color={line} marker="cell" />
+        <Edge d="M425,165 C560,165 650,112 735,92" color={line} marker="cell" />
       </svg>
 
       <Grid columns={3} gap={12}>

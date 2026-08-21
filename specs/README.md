@@ -42,7 +42,7 @@ read the record for the subsystem you are touching.
 | [phase-orchestration.md](phase-orchestration.md) | One `Clock`-native lifecycle for warmup→profiling phases: the escalation ladder, cancellation latch, and the shared seam scheduled and graph runs both use. |
 | [ancillary-timing.md](ancillary-timing.md) | The three knobs that ride on a running phase: ramping, seeded request cancellation, and sticky round-robin URL selection. |
 | [adaptive-scale.md](adaptive-scale.md) | The closed-loop SLA controller (`ramp_until_fail`) layered over a running load phase, its actuators, and its schema-v2 artifacts. |
-| [cellular.md](cellular.md) | Partitioning one run across cell processes and merging records or folded metric stores, the multi-process and velo cross-host topologies, and the fidelity guards. |
+| [cellular.md](cellular.md) | Partitioning one run across cell processes and merging records or folded metric stores through the flat controller-to-cell Velo topology; hierarchy requests are refused before startup. |
 | [velo-hub.md](velo-hub.md) | The per-experiment control-plane hub: a plugin trait whose plugins each contribute an HTTP router and velo handlers backed by one shared handler function, the discovery connect-by-endpoint anchor, the cell↔controller, `/artifact`, `/dataset`, and `/phaser` plugins that fold every standalone velo plane onto the hub, and the `AIPERF_CELLULAR_HUB` bootstrap toggle. |
 | [slurm-native.md](slurm-native.md) | Running a cellular benchmark natively under a SLURM allocation: the `aiperf slurm run` rank dispatch, the `SLURM_*` → controller/cell topology mapping and nodelist expansion, the `SlurmLauncher`, and the `aiperf slurm generate` sbatch script generator. |
 

@@ -7,7 +7,7 @@ flowchart TD
 
     ROLE -->|"default"| APP["Application bootstrap"]
     ROLE -->|"--cell"| CELL["Cell role"]
-    ROLE -->|"--aggregator"| AGG["Aggregator role"]
+    ROLE -->|"--aggregator"| AGG["Hierarchy refusal"]
 
     APP --> FREEZE["Freeze registry capabilities"]
     FREEZE --> SELECT{"Selected workload + transport"}

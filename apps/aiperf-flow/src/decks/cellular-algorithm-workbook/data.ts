@@ -258,10 +258,6 @@ export const MERGE_IDS = [
   "sketch-tdigest-merge",
   "controller-partition-collection",
   "hierarchical-tier-sizing",
-  "aggregator-child-assignment",
-  "aggregator-placement-admission",
-  "aggregator-ship-target-assignment",
-  "local-tree-reduction",
   "heartbeat-aggregation",
   "final-report-assembly",
   "merged-report-fidelity-boundary",
@@ -345,14 +341,14 @@ export const ELIGIBILITY_ALGORITHMS: readonly AlgorithmDefinition[] = [
     title: "Dispatch the private execution protocol",
     status: "built",
     summary:
-      "The unified binary recognizes an exact one-argument private mode, then dispatch reads stdin for non-cell roles and routes cell, aggregator, controller, or ordinary v2 execution.",
+      "The unified binary recognizes an exact one-argument private mode, then dispatch routes cells and controllers while the aggregator role returns an explicit hierarchy-unavailable refusal.",
     source: { path: "rust/cli/src/execute_mode.rs", startLine: 60, endLine: 120, symbol: "is_execution_mode / dispatch" },
     evidence: [
       { path: "rust/cli/src/execute_mode.rs", symbol: "is_execution_mode exact-slice match at lines 60-65", kind: "boundary" },
       { path: "rust/cli/src/execute_mode.rs", symbol: "dispatch role routing at lines 83-120", kind: "boundary" },
     ],
     inputs: ["argv without argv[0]"],
-    outputs: ["execute, cell, or aggregator process role"],
+    outputs: ["execute, cell, controller, or hierarchy-refusal result"],
     state: ["process role", "stdin/stdout protocol ownership"],
     invariants: ["Private roles are intercepted before clap.", "Unknown arguments never enter the private protocol."],
     complexity: { time: "O(1): exact comparison against a one-element slice and three constants", memory: "O(1)" },
@@ -361,7 +357,7 @@ export const ELIGIBILITY_ALGORITHMS: readonly AlgorithmDefinition[] = [
     pseudocode: pseudocode(
       "admit only args == [--execute], [--cell], or [--aggregator]",
       "read stdin to EOF unless role is cell",
-      "route cell and aggregator immediately",
+      "route cell immediately; reject aggregator as unavailable hierarchy",
       "promote a qualifying execute envelope to controller; otherwise run protocol v2",
     ),
     frames: admissionFrames(
@@ -448,7 +444,7 @@ export const ELIGIBILITY_ALGORITHMS: readonly AlgorithmDefinition[] = [
     title: "Require Velo for cellular roles",
     status: "feature-gated",
     summary:
-      "Controller, cell, and aggregator handlers are compiled to fail closed when the binary lacks the Velo transport feature.",
+      "Controller and cell handlers fail closed when the binary lacks the Velo transport feature; aggregator invocation is an explicit hierarchy refusal.",
     source: { path: "rust/cli/src/execute_mode.rs", startLine: 221, endLine: 258, symbol: "run_aggregator / run_cell / run_controller" },
     evidence: [
       { path: "rust/cli/src/execute_mode.rs", symbol: "non-velo aggregator handling at lines 221-228", kind: "boundary" },
@@ -1839,7 +1835,7 @@ export const CONTROL_ALGORITHMS: readonly AlgorithmDefinition[] = [
       { path: "rust/runtime/src/runner_protocol/cell_launcher.rs", symbol: "spawn loop 0..cell_count at lines 152-164", kind: "boundary" },
       { path: "rust/runtime/src/runner_protocol/cell_launcher.rs", symbol: "local_launcher_sets_cell_env", kind: "unit" },
     ],
-    inputs: ["CellLaunchContext { cell_count, controller_coordinate, phase_ordinal_bases, artifact_authority, aggregator_* }"],
+    inputs: ["CellLaunchContext { cell_count, controller_coordinate, phase_ordinal_bases, artifact_authority }"],
     outputs: ["Vec<CellHandle> wrapping spawned children"],
     state: ["per-cell tokio::process::Command"],
     invariants: [
@@ -1944,14 +1940,14 @@ export const CONTROL_ALGORITHMS: readonly AlgorithmDefinition[] = [
     title: "Watch cells for hard failure",
     status: "feature-gated",
     summary:
-      "The velo-gated controller loop spawns one watcher per cell/aggregator handle: a local child exiting non-zero forwards a failure that bails the run; a clean exit parks (pending) so the collect keeps serving; a k8s handle never resolves (the collect deadline is its backstop). The collect select is biased so a ready cell message wins a ship-then-exit race. Its CellHandle::wait_failure primitive is ungated.",
+      "The Velo-gated controller loop spawns one watcher per cell handle: a local child exiting non-zero forwards a failure that bails the run; a clean exit parks (pending) so the collect keeps serving; a k8s handle never resolves (the collect deadline is its backstop). The collect select is biased so a ready cell message wins a ship-then-exit race. Its CellHandle::wait_failure primitive is ungated.",
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 592, endLine: 620, symbol: "per-handle failure watch" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "spawn wait_failure -> failure_tx per handle at lines 596-604", kind: "boundary" },
       { path: "rust/runtime/src/runner_protocol/cell_launcher.rs", symbol: "CellHandle::wait_failure park-on-clean-exit / never-resolve-for-k8s at lines 76-93", kind: "boundary" },
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "biased collect select: transport message before failure/deadline at lines 688-709", kind: "boundary" },
     ],
-    inputs: ["cell CellHandles", "aggregator children", "failure_rx"],
+    inputs: ["cell CellHandles", "failure_rx"],
     outputs: ["a hard-failure string that bails the run, or nothing (clean exit parks)"],
     state: ["one spawned watcher task per handle", "mpsc failure channel"],
     invariants: [
@@ -1960,7 +1956,7 @@ export const CONTROL_ALGORITHMS: readonly AlgorithmDefinition[] = [
     ],
     complexity: { time: "O(N) watcher tasks", memory: "O(N) failure channel" },
     gates: ["velo feature compiled for the controller loop", "a handle resolves with a non-success status (local child only); CellHandle::wait_failure itself is ungated"],
-    failures: ["Any cell/aggregator hard failure aborts the run via failure_rx; a k8s pod that hangs is bounded by the collect timeout, not this watch."],
+    failures: ["Any cell hard failure aborts the run via failure_rx; a k8s pod that hangs is bounded by the collect timeout, not this watch."],
     pseudocode: pseudocode(
       "for handle in handles: spawn { report = handle.wait_failure().await; failure_tx.send(report) }",
       "wait_failure: clean exit -> pending() (park); non-zero -> return diagnostic; k8s (no child) -> pending()",
@@ -3434,7 +3430,7 @@ export const CAPTURE_ALGORITHMS: readonly AlgorithmDefinition[] = [
       "  destination = entry(phase, tag).or_insert(empty with compression)",
       "  destination.merge(other_aggregate)",
     ),
-    frames: admissionFrames("step-3", ["aggregator"], {
+    frames: admissionFrames("step-3", ["controller"], {
       before: ["cell 0 has profiling/TTFT", "cell 1 has profiling/TTFT"], after: ["one profiling/TTFT aggregate"], invariant: "Counts add and digests merge under the same key.",
     }, {
       before: ["warmup/TTFT and profiling/TTFT"], after: ["two distinct entries remain after their per-key merges"], invariant: "Phase boundaries survive merge.", activeLineId: "step-3",
@@ -3467,7 +3463,7 @@ export const CAPTURE_ALGORITHMS: readonly AlgorithmDefinition[] = [
       "if self.sketch and other.sketch are both Some: merge sketches",
       "if other has rows: assert dense, then append/remap row, numeric, categorical, and ragged columns",
     ),
-    frames: admissionFrames("step-3", ["aggregator"], {
+    frames: admissionFrames("step-3", ["controller"], {
       before: ["two exact shard stores with dense local rows"], after: ["rows concatenated into one store"], invariant: "No row is coerced into a sketch.",
     }, {
       before: ["only one store has SketchColumns", "source has no rows"], after: ["no mode error", "ingested_total still added", "no sketch merge"], invariant: "append_store has no cross-mode validation; caller configuration is a separate concern.", activeLineId: "step-2",
@@ -3566,7 +3562,7 @@ export const CAPTURE_ALGORITHMS: readonly AlgorithmDefinition[] = [
       "map deserializer error to PartitionCodecError::Decode",
       "return partition without semantic validation",
     ),
-    frames: admissionFrames("step-3", ["wire", "aggregator"], {
+    frames: admissionFrames("step-3", ["wire", "controller"], {
       before: ["valid MessagePack for {cell_id,records}"], after: ["RecordsShardPartition returned"], invariant: "Decode reconstructs the declared fields only.",
     }, {
       before: ["truncated or wrong-shape bytes"], after: ["PartitionCodecError::Decode"], invariant: "Decode failure is the codec's only rejection path.", activeLineId: "step-2",
@@ -3594,7 +3590,7 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     gates: ["scheduled retain partition path", "every record has a dense unique in-range global ordinal"],
     failures: ["Missing, duplicate, or out-of-range ordinals return RecordsMergeError before accumulation."],
     pseudocode: pseudocode("records = flatten(partitions)", "validate every request_index against seen[0..records.len)", "stable-sort records by request_index", "process each record into a fresh accumulator"),
-    frames: admissionFrames("step-2", ["controller", "aggregator"], {
+    frames: admissionFrames("step-2", ["controller"], {
       before: ["cell 0 ordinals {0,2}", "cell 1 ordinals {1,3}"], after: ["seen={0,1,2,3}", "records sorted 0,1,2,3"], invariant: "Arrival order cannot change re-ingest order.",
     }, {
       before: ["all ordinals validated and sorted"], after: ["record slots and ragged append order match one-cell"], invariant: "Each record contributes exactly once.", activeLineId: "step-4",
@@ -3690,12 +3686,12 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     complexity: { time: "O(C log C + stored columns)", memory: "O(merged exact store)" },
     gates: ["uniform StorePartition run", "exact-fold storage"], failures: ["No explicit mode validation inside append_store; mixed terminal partition kinds are rejected by the controller."],
     pseudocode: pseudocode("sort store partitions by cell_id", "append each store into the accumulated store", "return accumulator from merged store or empty accumulator"),
-    frames: admissionFrames("step-1", ["controller", "aggregator"], {
+    frames: admissionFrames("step-1", ["controller"], {
       before: ["stores arrive ids 2,0,1"], after: ["reduction order 0,1,2"], invariant: "Network arrival does not choose floating reduction order.",
     }, {
       before: ["three dense exact stores"], after: ["one appended exact store"], invariant: "Counts/extrema/percentiles match; reordered float reductions may differ by last ULP.", activeLineId: "step-2",
     }),
-    predecessors: ["column-store-append", "controller-partition-collection"], successors: ["final-report-assembly", "local-tree-reduction"],
+    predecessors: ["column-store-append", "controller-partition-collection"], successors: ["final-report-assembly"],
     routeTags: ["merge", "exact-fold", "store", "within-tolerance"],
   },
   {
@@ -3715,17 +3711,17 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     complexity: { time: "O(C log C + C·tags·compression log compression)", memory: "O(tags·compression)" },
     gates: ["uniform StorePartition run", "MetricsStorageMode::Sketch"], failures: ["No raw rows remain for per-record artifacts.", "Floating sums/means/std can drift by merge order; quantiles are t-digest estimates."],
     pseudocode: pseudocode("sort sketch stores by producer id", "append ingested_total and exact aggregates", "merge each matching t-digest by centroid concatenate+compress", "report merged.ingested_count as run total"),
-    frames: admissionFrames("step-3", ["controller", "aggregator"], {
+    frames: admissionFrames("step-3", ["controller"], {
       before: ["three sketches each count=10", "row_count=0"], after: ["merged digest count=30", "ingested_count=30"], invariant: "Fold-and-clear does not erase work totals.",
     }, {
       before: ["three centroid sets"], after: ["one compressed centroid set", "exact min/max retained"], invariant: "Approximation is explicit and bounded by compression.", activeLineId: "step-3",
     }),
-    predecessors: ["tagged-sketch-merge", "ingested-count-preservation", "controller-partition-collection"], successors: ["final-report-assembly", "local-tree-reduction"],
+    predecessors: ["tagged-sketch-merge", "ingested-count-preservation", "controller-partition-collection"], successors: ["final-report-assembly"],
     routeTags: ["merge", "sketch", "tdigest", "bounded-memory"],
   },
   {
     id: "controller-partition-collection", chapter: "merge", title: "Collect the expected terminal partition count", status: "feature-gated",
-    summary: "The velo controller stops when raw plus store partition vector length reaches the expected flat-cell or tree-aggregator count. It does not validate terminal partition producer IDs for uniqueness or range, so a duplicate producer can satisfy the count while another producer is absent.",
+    summary: "The Velo controller stops when raw plus store partition vector length reaches the configured cell count. It does not validate terminal partition producer IDs for uniqueness or range, so a duplicate producer can satisfy the count while another producer is absent.",
     source: { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", startLine: 660, endLine: 710, symbol: "run_cellular terminal collection block" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "collected length closure and unvalidated partition pushes lines 683-704", kind: "boundary" },
@@ -3735,8 +3731,8 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     state: ["unkeyed raw partition vector", "unkeyed store partition vector", "heartbeats keyed by supplied cell_id", "deadline"],
     invariants: ["Heartbeats do not increment the terminal partition count.", "The implemented completion predicate is vector length only; it does not prove one partition per expected producer."],
     complexity: { time: "O(messages)", memory: "O(terminal payloads + cells·heartbeat)" },
-    gates: ["velo feature", "controller mode"], failures: ["Transport close, child/aggregator failure, or deadline expiry aborts collection.", "Mixed raw/store kinds are rejected after collection.", "Duplicate or out-of-range terminal producer IDs are not rejected here and can mask a missing expected producer."],
-    pseudocode: pseudocode("expected = aggregator_count or cell_count", "while raw.len + stores.len < expected: receive biased select", "append every terminal partition without producer-ID validation; heartbeat replaces map[cell_id]", "on close/failure/timeout: abort"),
+    gates: ["velo feature", "controller mode"], failures: ["Transport close, cell failure, or deadline expiry aborts collection.", "Mixed raw/store kinds are rejected after collection.", "Duplicate or out-of-range terminal producer IDs are not rejected here and can mask a missing expected producer."],
+    pseudocode: pseudocode("expected = cell_count", "while raw.len + stores.len < expected: receive biased select", "append every terminal partition without producer-ID validation; heartbeat replaces map[cell_id]", "on close/failure/timeout: abort"),
     frames: admissionFrames("step-3", ["controller", "wire", "cell"], {
       before: ["expected=3", "two stores collected", "heartbeat arrives"], after: ["two stores still", "heartbeat[cell] replaced"], invariant: "Progress telemetry cannot satisfy completion.",
     }, {
@@ -3746,105 +3742,25 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     routeTags: ["merge", "controller", "velo", "barrier"],
   },
   {
-    id: "hierarchical-tier-sizing", chapter: "merge", title: "Size the hierarchical aggregator tier", status: "feature-gated",
-    summary: "A requested fanout yields M=ceil(cells/fanout) only when 1<=fanout<cells; sizing is independent of retain versus fold storage, so a retain run can launch the tier and fail later when an aggregator receives a raw partition.",
-    source: { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", startLine: 81, endLine: 87, symbol: "aggregator_count" },
+    id: "hierarchical-tier-sizing", chapter: "merge", title: "Refuse hierarchical aggregation", status: "rejected",
+    summary: "A requested fanout is rejected before imported acquisition, scratch creation, artifact binding, Velo binding, or launcher execution. Supported cellular runs are flat controller-to-cell stars.",
+    source: { path: "rust/runtime/src/engine/cellular_aggregator.rs", startLine: 9, endLine: 24, symbol: "is_hierarchy_requested" },
     evidence: [
-      { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", symbol: "aggregator_count_selects_flat_or_tree lines 290-305", kind: "unit" },
-      { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "tier construction without storage-mode admission lines 509-567", kind: "boundary" },
+      { path: "rust/runtime/src/engine/cellular_controller.rs", symbol: "hierarchy_refuses_before_any_startup_side_effect", kind: "unit" },
+      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_hierarchy_is_refused", kind: "e2e" },
     ],
-    inputs: ["cell_count", "AIPERF_CELL_AGG_FANOUT"], outputs: ["Some(ceil(cell_count/fanout)) or None for flat topology"],
-    state: ["parsed fanout"], invariants: ["A tree is inserted only when it reduces controller fan-in.", "No admission-time storage-mode gate prevents retain runs from constructing the tier."],
-    complexity: { time: "O(1)", memory: "O(1)" }, gates: ["fanout parses as u32", "1 <= fanout < cell_count"],
-    failures: ["Missing, unparsable, zero, or fanout>=cells silently selects the flat star.", "A valid fanout with retain storage proceeds to launch; raw-partition rejection occurs inside the aggregator after launch."],
-    pseudocode: pseudocode("parse fanout from env", "if fanout < 1 or fanout >= cells: return None", "return ceil(cells / fanout)"),
-    frames: admissionFrames("step-3", ["controller", "aggregator"], {
-      before: ["cells=7", "fanout=3"], after: ["aggregator_count=3"], invariant: "ceil division covers every cell.",
+    inputs: ["cell_count", "AIPERF_CELL_AGG_FANOUT"], outputs: ["flat topology or refusal"],
+    state: ["parsed fanout"], invariants: ["A hierarchy request has no startup side effects.", "Flat topology has one terminal partition per cell."],
+    complexity: { time: "O(1)", memory: "O(1)" }, gates: ["fanout requests hierarchy"],
+    failures: ["A requested hierarchy returns an unavailable error before startup."],
+    pseudocode: pseudocode("parse fanout from env", "if fanout requests hierarchy: return refusal", "otherwise use the flat star"),
+    frames: admissionFrames("step-3", ["controller"], {
+      before: ["cells=7", "fanout=3"], after: ["unavailable hierarchy error"], invariant: "No startup side effect occurs.",
     }, {
-      before: ["cells=7", "fanout=7"], after: ["flat topology"], invariant: "A pointless tier is not created.", activeLineId: "step-2",
+      before: ["cells=7", "fanout absent"], after: ["flat topology"], invariant: "Every cell ships directly to the controller.", activeLineId: "step-2",
     }),
-    predecessors: ["controller-promotion"], successors: ["aggregator-child-assignment", "aggregator-placement-admission"],
-    routeTags: ["merge", "hierarchical", "tier-t2", "feature-gated"],
-  },
-  {
-    id: "aggregator-child-assignment", chapter: "merge", title: "Count round-robin children per aggregator", status: "feature-gated",
-    summary: "Under cell_id % aggregator_count assignment, children_of computes ceil((cell_count-agg_id)/agg_count), including uneven final groups.",
-    source: { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", startLine: 124, endLine: 129, symbol: "children_of" },
-    evidence: [{ path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", symbol: "children_tile_exactly_across_aggregators lines 261-279", kind: "unit" }],
-    inputs: ["agg_id", "agg_count", "cell_count"], outputs: ["exact child_count barrier for one aggregator"],
-    state: ["none"], invariants: ["Child counts sum to cell_count.", "Each cell maps to exactly one aggregator."],
-    complexity: { time: "O(1)", memory: "O(1)" }, gates: ["agg_count > 0"],
-    failures: ["agg_id >= cell_count returns zero children."],
-    pseudocode: pseudocode("if agg_id >= cell_count: return 0", "return ceil((cell_count - agg_id) / agg_count)"),
-    frames: admissionFrames("step-2", ["controller", "aggregator"], {
-      before: ["cells=7", "aggregators=3", "agg_id=0"], after: ["children=3: cells 0,3,6"], invariant: "Round-robin remainder goes to lower ids.",
-    }, {
-      before: ["agg_id=2"], after: ["children=2: cells 2,5"], invariant: "All seven assignments tile once.", activeLineId: "step-2",
-    }),
-    predecessors: ["hierarchical-tier-sizing"], successors: ["local-tree-reduction"],
-    routeTags: ["merge", "hierarchical", "assignment"],
-  },
-  {
-    id: "aggregator-placement-admission", chapter: "merge", title: "Admit local or operator-wired aggregator placement", status: "feature-gated",
-    summary: "Local deployments honor a valid requested tier and spawn aggregators. Kubernetes honors it only when the operator signals DNS wiring; otherwise the controller falls back to a flat star so cells never ship into a void.",
-    source: { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", startLine: 96, endLine: 105, symbol: "effective_aggregator_count" },
-    evidence: [{ path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", symbol: "effective_aggregator_count_gates_k8s_on_operator_signal lines 307-326", kind: "unit" }],
-    inputs: ["is_k8s", "operator wiring signal", "requested aggregator count"], outputs: ["effective aggregator count or flat None"],
-    state: ["deployment placement decision"], invariants: ["Kubernetes never assumes controller-spawned loopback aggregators.", "Unwired k8s requests fail safe to a reachable flat topology."],
-    complexity: { time: "O(1)", memory: "O(1)" }, gates: ["local request, or k8s with AIPERF_CELL_AGG_DNS_TEMPLATE present"],
-    failures: ["Unwired k8s tier request emits a warning and selects flat star rather than failing the run."],
-    pseudocode: pseudocode("if k8s and requested tier and not operator_wired: return None", "otherwise return requested"),
-    frames: admissionFrames("step-2", ["controller", "aggregator"], {
-      before: ["local deployment", "requested M=2"], after: ["effective M=2", "controller will spawn"], invariant: "Local placement is controller-owned.",
-    }, {
-      before: ["k8s", "requested M=2", "DNS signal absent"], after: ["effective=None", "flat star warning"], invariant: "No cell receives an unreachable ship target.", activeLineId: "step-1",
-    }),
-    predecessors: ["hierarchical-tier-sizing"], successors: ["aggregator-ship-target-assignment", "local-tree-reduction"],
-    routeTags: ["merge", "placement", "k8s", "fail-safe"],
-  },
-  {
-    id: "aggregator-ship-target-assignment", chapter: "merge", title: "Assign each cell an aggregator ship target", status: "feature-gated",
-    summary: "Local tree placement maps cell k to aggregator k mod M and formats tcp://127.0.0.1:(base+aggregator). The launcher redirects terminal shipping without checking whether the cell will emit a folded store or an unsupported raw partition.",
-    source: { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", startLine: 117, endLine: 120, symbol: "ship_coordinate" },
-    evidence: [
-      { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", symbol: "ship_coordinate_round_robins_over_the_base_port lines 281-288", kind: "unit" },
-      { path: "rust/runtime/src/runner_protocol/cell_launcher.rs", symbol: "LocalLauncher::cell_command aggregator env lines 133-146", kind: "boundary" },
-    ],
-    inputs: ["cell_id", "aggregator_count", "base loopback port"], outputs: ["AIPERF_CELL_SHIP_ADDR target"],
-    state: ["cell launch environment"], invariants: ["Only terminal shipping is redirected; envelope fetch and START remain controller-bound.", "Target assignment does not establish fold eligibility."],
-    complexity: { time: "O(1)", memory: "O(1)" }, gates: ["local effective aggregator tier"],
-    failures: ["Port arithmetic assumes the configured base plus aggregator id fits u16; base configuration owns that validity."],
-    pseudocode: pseudocode("agg_id = cell_id mod aggregator_count", "port = base_port + agg_id", "inject tcp loopback ship address into cell command"),
-    frames: admissionFrames("step-1", ["controller", "cell", "aggregator"], {
-      before: ["cell_id=5", "M=3", "base=9800"], after: ["agg_id=2", "ship target :9802"], invariant: "Assignment is deterministic and balanced round-robin.",
-    }, {
-      before: ["cell has aggregator ship target"], after: ["cell still fetches spec and START from controller"], invariant: "Control and terminal data destinations remain distinct.", activeLineId: "step-3",
-    }),
-    predecessors: ["aggregator-placement-admission"], successors: ["local-tree-reduction"],
-    routeTags: ["merge", "hierarchical", "shipping", "round-robin"],
-  },
-  {
-    id: "local-tree-reduction", chapter: "merge", title: "Reduce one aggregator subtree and ship once", status: "feature-gated",
-    summary: "After the tier has launched, an aggregator collects folded stores and terminal-adjacent heartbeat messages, rejects any raw record partition at receive time, merges accepted stores, and ships one store with summed counters upstream.",
-    source: { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", startLine: 136, endLine: 255, symbol: "run_aggregator" },
-    evidence: [
-      { path: "rust/e2e-tests/tests/test_cellular.rs", symbol: "test_cellular_tree_merge_matches_flat_star lines 471-532", kind: "e2e" },
-      { path: "rust/runtime/src/runner_protocol/cellular_aggregator.rs", symbol: "run_aggregator raw Partition rejection lines 219-223", kind: "boundary" },
-    ],
-    inputs: ["aggregator identity/bind env", "child_count", "folded StorePartition messages", "controller coordinate"], outputs: ["one merged StorePartition plus summed heartbeat counters"],
-    state: ["child stores", "saturating counters", "latest child heartbeats", "collect deadline"],
-    invariants: ["Exactly child_count stores satisfy the subtree barrier.", "Tree reduction is fold-only; raw record order cannot be reconstructed here.", "One upstream shipment represents one subtree."],
-    complexity: { time: "O(children merge cost)", memory: "O(children·store) during collection, then O(merged store)" },
-    gates: ["velo feature", "effective tier T2; there is no prelaunch fold-storage admission gate"],
-    failures: ["A retain cell's raw Partition is rejected only after tier and cells launch.", "Transport closure, child-store timeout, bind/codec/ship failure aborts the aggregator and is observed by the controller."],
-    pseudocode: pseudocode("bind aggregator transport and derive child_count", "collect stores and heartbeat counters until child_count", "reject raw Partition; timeout or closed transport aborts", "merge stores and ship one StorePartition upstream"),
-    frames: admissionFrames("step-2", ["aggregator", "wire", "cell"], {
-      before: ["child_count=3", "two stores collected", "one child's terminal-adjacent heartbeat arrives"], after: ["stores remain 2", "counters updated"], invariant: "Heartbeat does not satisfy the store-count barrier.",
-    }, {
-      before: ["retain cell ships a raw Partition after tier launch"], after: ["aggregator rejects the raw partition", "subtree fails"], invariant: "Fold-only enforcement is receive-time, not admission-time.", activeLineId: "step-3",
-    }),
-    predecessors: ["aggregator-child-assignment", "aggregator-ship-target-assignment", "exact-fold-store-merge", "sketch-tdigest-merge"], successors: ["controller-partition-collection"],
-    routeTags: ["merge", "tree", "aggregator", "fold-only"],
+    predecessors: ["controller-promotion"], successors: [],
+    routeTags: ["merge", "hierarchy", "refusal"],
   },
   {
     id: "heartbeat-aggregation", chapter: "merge", title: "Merge terminal-adjacent heartbeat messages", status: "approximate",
@@ -3854,7 +3770,7 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
       { path: "rust/runtime/src/cellular/heartbeat.rs", symbol: "heartbeat_merge_sums_counters_and_merges_sketches lines 236-288", kind: "unit" },
       { path: "rust/runtime/src/runner_protocol/cellular_cell.rs", symbol: "CellRecordsShipper::ship sends one heartbeat then terminal lines 743-790", kind: "boundary" },
     ],
-    inputs: ["one production MetricsHeartbeat per cell or aggregator; merge type also supports repeated snapshots"], outputs: ["summed counters/saturation and merged latency sketches"],
+    inputs: ["one production MetricsHeartbeat per cell; merge type also supports repeated snapshots"], outputs: ["summed counters/saturation and merged latency sketches"],
     state: ["controller map keyed by supplied cell_id", "max observed_at_ns", "counter sums", "three t-digests"], invariants: ["Current cell shipping orders one heartbeat immediately before one terminal partition.", "Heartbeat percentiles are approximate diagnostics; final report data comes from terminal partitions."],
     complexity: { time: "O(C·compression log compression)", memory: "O(C latest heartbeats + compression)" },
     gates: ["at least one terminal-adjacent heartbeat for sidecar output"], failures: ["Missing heartbeat yields no sidecar contribution.", "The current production path provides no periodic in-run heartbeat cadence despite the merge type supporting repeated snapshots."],
@@ -3883,7 +3799,7 @@ export const MERGE_ALGORITHMS: readonly AlgorithmDefinition[] = [
     gates: ["all expected terminal partitions collected", "no mixed raw/store partition kinds"],
     failures: ["Merge, report serialization, directory creation, or native-v2 write fails before artifact handling.", "Individual exporters log failures but do not fail the run.", "A later artifact barrier/concat failure returns run failure after native-v2 and exporter files may already exist."],
     pseudocode: pseudocode("select store merge or run-kind record merge", "record_count = merged.ingested_count", "export profiling and optional warmup", "build minimal RunOutcome and NativeReport", "write native-v2.json; run exporters best-effort before artifact barrier/concat"),
-    frames: admissionFrames("step-1", ["controller", "aggregator"], {
+    frames: admissionFrames("step-1", ["controller"], {
       before: ["three uniform StorePartitions"], after: ["one merged accumulator", "record_count from ingested_count"], invariant: "Sketch zero-row stores still report work.",
     }, {
       before: ["NativeReport serialized"], after: ["native-v2.json written", "exporters invoked", "artifact barrier still pending"], invariant: "Report publication precedes artifact completion and can survive a later artifact failure.", activeLineId: "step-5",
@@ -4097,23 +4013,23 @@ export const ARTIFACT_ALGORITHMS: readonly AlgorithmDefinition[] = [
   },
   {
     id: "child-exit-arbitration", chapter: "artifacts", title: "Arbitrate terminal messages against child exits", status: "feature-gated",
-    summary: "Local cell and aggregator watchers send only hard failures. Registration and collection use biased select, so a ready registration or terminal partition wins over a simultaneous nonzero exit; a clean cell exit parks forever and is not misclassified.",
+    summary: "Local cell watchers send only hard failures. Registration and collection use biased select, so a ready registration or terminal partition wins over a simultaneous nonzero exit; a clean cell exit parks forever and is not misclassified.",
     source: { path: "rust/runtime/src/runner_protocol/cell_launcher.rs", startLine: 76, endLine: 93, symbol: "CellHandle::wait_failure" },
     evidence: [
       { path: "rust/runtime/src/runner_protocol/cellular_controller.rs", symbol: "run_cellular failure watchers and biased selects lines 600-710", kind: "boundary" },
       { path: "rust/runtime/src/runner_protocol/cell_launcher.rs", symbol: "CellHandle::wait_failure lines 73-93", kind: "boundary" },
     ],
-    inputs: ["local child exit status", "aggregator exit status", "transport event readiness"], outputs: ["hard-failure diagnostic or accepted progress/terminal message"],
+    inputs: ["local cell exit status", "transport event readiness"], outputs: ["hard-failure diagnostic or accepted progress/terminal message"],
     state: ["failure channel", "biased registration/collection select"], invariants: ["Successful child exit is not failure.", "Ship-then-exit race accepts an already-ready terminal message first.", "Nonzero exit before required progress aborts."],
     complexity: { time: "O(children) watcher tasks", memory: "O(children)" },
-    gates: ["local launcher has child handles; k8s relies on deadlines"], failures: ["Nonzero status or wait error becomes a contextual controller failure.", "Aggregator nonzero status aborts its missing subtree."],
+    gates: ["local launcher has child handles; k8s relies on deadlines"], failures: ["Nonzero status or wait error becomes a contextual controller failure."],
     pseudocode: pseudocode("watch each local child; park forever on success", "send nonzero/wait failure into failure channel", "in biased select, consume ready transport progress first", "otherwise abort on failure diagnostic"),
-    frames: admissionFrames("step-3", ["controller", "cell", "aggregator"], {
+    frames: admissionFrames("step-3", ["controller", "cell"], {
       before: ["partition and nonzero exit become ready together"], after: ["partition consumed first"], invariant: "Completed shipment is not discarded by scheduler race.",
     }, {
       before: ["cell exits 1 before partition"], after: ["controller aborts with cell id and status"], invariant: "A missing producer cannot become a hang.", activeLineId: "step-4",
     }),
-    predecessors: ["controller-promotion", "local-tree-reduction"], successors: ["controller-timeout", "cancellation-propagation", "terminal-failure-envelope"],
+    predecessors: ["controller-promotion"], successors: ["controller-timeout", "cancellation-propagation", "terminal-failure-envelope"],
     routeTags: ["failure", "child-exit", "arbitration", "biased-select"],
   },
   {
@@ -4243,10 +4159,10 @@ export const CELLULAR_PER_RECORD_OTLP_LIMITATION =
   "The controller rebuilds NativeReport from merged records/stores with otel_per_record=None; aggregate OTLP can export, but cell-local per-record histogram accumulators are not shipped.";
 export const WORKLOAD_CLASSIFICATION_LIMITATION =
   "The authored workload selector is overridden by dataset shape: dag_jsonl, weka_trace, and dynamo_trace execute as graph; all other dataset shapes execute as scheduled.";
-export const K8S_TREE_FALLBACK_LIMITATION =
-  "A cross-host aggregator request without the operator-wired DNS tier falls back to the flat star topology.";
-export const LOCAL_EXTERNAL_TREE_LIMITATION =
-  "External-tree intent on a same-host launch resolves to controller-spawned local aggregators.";
+export const CROSS_HOST_HIERARCHY_REFUSAL =
+  "Cross-host hierarchy requests are refused before controller startup.";
+export const SAME_HOST_HIERARCHY_REFUSAL =
+  "Same-host hierarchy requests are refused before controller startup.";
 export const PARQUET_SKIPPED_LIMITATION =
   "Per-record Parquet is accepted on a build without the parquet feature, then warned and skipped; no Parquet concat stage runs.";
 export const PARQUET_RETAIN_LIMITATION =
@@ -4259,7 +4175,7 @@ export const GATE_STAGE_LABELS: Readonly<Record<GateStage, string>> = {
   "pre-controller": "Pre-controller role admission",
   "controller-prelaunch": "Controller prelaunch validation",
   "cell-side": "Cell-side execution validation after startup",
-  "aggregator-receive": "Aggregator receive-time enforcement",
+  "aggregator-receive": "Reserved hierarchy refusal stage",
 };
 
 export function effectiveWorkload(selection: SelectorState): SelectorState["workload"] {
@@ -4269,13 +4185,6 @@ export function effectiveWorkload(selection: SelectorState): SelectorState["work
 }
 
 export function effectiveTopology(selection: SelectorState): SelectorState["topology"] {
-  if (selection.topology === "flat") return "flat";
-  if (selection.deployment === "cross-host" && selection.topology === "local-tree") {
-    return "flat";
-  }
-  if (selection.deployment === "same-host" && selection.topology === "external-tree") {
-    return "local-tree";
-  }
   return selection.topology;
 }
 
@@ -4323,7 +4232,7 @@ export const VALIDATION_GATES: readonly ValidationGate[] = [
     order: 10,
     stage: "pre-controller",
     rejects: (selection) => selection.build === "lean",
-    reason: "Multi-cell controller, cell, and aggregator roles require a Velo-bearing build.",
+    reason: "Multi-cell controller and cell roles require a Velo-bearing build; the aggregator role is an explicit refusal.",
   },
   {
     id: "offline-transport-rejected",
@@ -4405,14 +4314,12 @@ export const VALIDATION_GATES: readonly ValidationGate[] = [
     reason: "validate_plan rejects native per-record OTLP when sketch storage is enabled.",
   },
   {
-    id: "tree-raw-partition-rejected",
-    algorithmId: "local-tree-reduction",
-    order: 70,
-    stage: "aggregator-receive",
-    rejects: (selection) =>
-      effectiveTopology(selection) !== "flat" &&
-      effectiveStorage(selection) === "retain",
-    reason: "The aggregator admits only StorePartition; a retained raw Partition is rejected at receive time.",
+    id: "hierarchy-request-rejected",
+    algorithmId: "hierarchical-tier-sizing",
+    order: 1,
+    stage: "pre-controller",
+    rejects: (selection) => selection.topology !== "flat",
+    reason: "Hierarchical cellular aggregation is unavailable and is refused before controller startup.",
   },
 ];
 
@@ -4442,7 +4349,7 @@ export const ACTOR_LABELS: Readonly<Record<Actor, string>> = {
   wire: "wire",
   cell: "cell",
   worker: "worker",
-  aggregator: "aggregator",
+  aggregator: "hierarchy refusal",
 };
 
 export function searchableText(algorithm: AlgorithmDefinition): string {
@@ -4664,16 +4571,7 @@ export function routeFragments(selection: SelectorState): Readonly<Record<Chapte
     : effective.storage === "exact-fold"
       ? ["exact-fold-store-merge"]
       : ["sketch-tdigest-merge"];
-  const topologyMerge = effective.topology === "flat"
-    ? ["controller-partition-collection"]
-    : [
-        "hierarchical-tier-sizing",
-        "aggregator-child-assignment",
-        "aggregator-placement-admission",
-        "aggregator-ship-target-assignment",
-        "local-tree-reduction",
-        "controller-partition-collection",
-      ];
+  const topologyMerge = ["controller-partition-collection"];
   const merge = [
     ...topologyMerge,
     ...storageMerge,
@@ -4717,11 +4615,11 @@ export function effectiveSettingLimitations(
       : []),
     ...(selection.topology !== effective.topology &&
     selection.deployment === "cross-host"
-      ? [K8S_TREE_FALLBACK_LIMITATION]
+      ? [CROSS_HOST_HIERARCHY_REFUSAL]
       : []),
     ...(selection.topology !== effective.topology &&
     selection.deployment === "same-host"
-      ? [LOCAL_EXTERNAL_TREE_LIMITATION]
+      ? [SAME_HOST_HIERARCHY_REFUSAL]
       : []),
     ...(selection.storage !== effective.storage
       ? [selection.artifacts === "parquet" && selection.build !== "full"
@@ -4824,8 +4722,6 @@ export function deriveRoute(selection: SelectorState): RouteResult {
     ...(selection.start === "phaser" ? ["AIPERF_CELL_PHASER_START=1"] : []),
     ...(selection.start === "barrier-free" ? ["AIPERF_CELL_BARRIER_FREE=1"] : []),
     ...(selection.fanout === "verify" ? ["AIPERF_CELL_DATASET_FANOUT=1"] : []),
-    ...(selection.topology !== "flat" ? ["AIPERF_CELL_AGG_FANOUT=<cells"] : []),
-    ...(selection.topology === "external-tree" ? ["AIPERF_CELL_AGG_DNS_TEMPLATE=<operator DNS template>"] : []),
     ...(crossHostDatasetShipping || stageEArtifactShipping
       ? ["AIPERF_CELL_HTTP_ARTIFACT_SHIPPING=1"]
       : []),
@@ -4914,7 +4810,7 @@ export const GATE_FIXTURES: readonly RouteFixture[] = [
   { name: "graph request rejection", selection: { ...DEFAULT_SELECTION, workload: "graph", dataset: "dag-jsonl" }, valid: false, rejectedBy: "graph-requests-rejected", excludes: ["partitioned-graph-source"], gateStage: "controller-prelaunch" },
   { name: "sketch records rejection", selection: { ...DEFAULT_SELECTION, storage: "sketch", artifacts: "records" }, valid: false, rejectedBy: "sketch-record-artifacts-rejected", gateStage: "cell-side", includes: ["local-cell-launch", "controller-child-arbitration", "synchronized-start", "canonical-dataset-regeneration", "sketch-artifact-validation"], excludes: ["terminal-record-finalization"], ordered: [["local-cell-launch", "controller-child-arbitration"], ["controller-child-arbitration", "synchronized-start"], ["synchronized-start", "canonical-dataset-regeneration"], ["canonical-dataset-regeneration", "sketch-artifact-validation"]] },
   { name: "sketch OTLP rejection", selection: { ...DEFAULT_SELECTION, storage: "sketch", artifacts: "otlp" }, valid: false, rejectedBy: "sketch-otlp-rejected", gateStage: "cell-side", includes: ["local-cell-launch", "controller-child-arbitration", "synchronized-start", "canonical-dataset-regeneration", "sketch-artifact-validation"], excludes: ["terminal-record-finalization"], ordered: [["local-cell-launch", "controller-child-arbitration"], ["controller-child-arbitration", "synchronized-start"], ["synchronized-start", "canonical-dataset-regeneration"], ["canonical-dataset-regeneration", "sketch-artifact-validation"]] },
-  { name: "tree raw partition receive-time rejection", selection: { ...DEFAULT_SELECTION, topology: "local-tree", storage: "retain" }, valid: false, rejectedBy: "tree-raw-partition-rejected", gateStage: "aggregator-receive", includes: ["retain-record-capture", "local-tree-reduction"], excludes: ["final-report-assembly"] },
+  { name: "hierarchy request refusal", selection: { ...DEFAULT_SELECTION, topology: "local-tree", storage: "retain" }, valid: false, rejectedBy: "hierarchy-request-rejected", gateStage: "pre-controller", includes: ["hierarchical-tier-sizing"], excludes: ["retain-record-capture", "final-report-assembly"] },
 ];
 
 export const ROUTE_RECIPES: readonly RouteRecipe[] = [
@@ -5020,19 +4916,19 @@ export const ROUTE_RECIPES: readonly RouteRecipe[] = [
   },
   {
     id: "local-tree",
-    title: "Local tree aggregation",
+    title: "Rejected hierarchy request",
     selection: { ...DEFAULT_SELECTION, topology: "local-tree" },
-    kind: "canonical",
+    kind: "rejected",
   },
   {
     id: "external-tree",
-    title: "Externally placed tree",
+    title: "Rejected external hierarchy request",
     selection: {
       ...DEFAULT_SELECTION,
       topology: "external-tree",
       deployment: "cross-host",
     },
-    kind: "canonical",
+    kind: "rejected",
   },
   {
     id: "stage-e-artifact",
@@ -5076,10 +4972,10 @@ export const ROUTE_RECIPES: readonly RouteRecipe[] = [
     kind: "canonical",
   },
   {
-    id: "cross-host-tree-fallback",
-    title: "Cross-host tree · flat fallback",
+    id: "cross-host-hierarchy-refusal",
+    title: "Cross-host hierarchy refusal",
     selection: { ...DEFAULT_SELECTION, topology: "local-tree", deployment: "cross-host" },
-    kind: "canonical",
+    kind: "rejected",
   },
   ...GATE_FIXTURES.map((fixture): RouteRecipe => ({
     id: `rejected-${fixture.rejectedBy}`,
@@ -5144,12 +5040,12 @@ export const DECISIONS: readonly DecisionCell[] = [
   },
   {
     id: "aggregation-topology",
-    title: "Cross-host tree fallback or wiring",
-    leftLabel: "Local-tree intent · no DNS",
+    title: "Hierarchy requests are refused",
+    leftLabel: "Local hierarchy request",
     left: { ...DEFAULT_SELECTION, topology: "local-tree", deployment: "cross-host" },
-    rightLabel: "External tree · operator wired",
+    rightLabel: "External hierarchy request",
     right: { ...DEFAULT_SELECTION, topology: "external-tree", deployment: "cross-host" },
-    invariant: "A cross-host tree exists only when the operator-wired DNS tier is present; otherwise the controller falls back flat.",
+    invariant: "No hierarchy topology is executable: every hierarchy request is refused before controller startup.",
   },
   {
     id: "dataset-verification",

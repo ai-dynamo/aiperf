@@ -63,7 +63,7 @@ function buildNodes(retention: Retention): Node[] {
 
     panelNode("perrecord", 20, 320, "per-record lane writes at completion", "JSONL · raw · CSV · outputs · Parquet"),
 
-    headerNode("band-merge", 0, 400, "Hierarchical merge"),
+    headerNode("band-merge", 0, 400, "Flat controller merge"),
     cardNode("worker-acc", 20, 450, "worker accumulator", "MetricsAccumulator::merge"),
     cardNode("shard-absorb", 250, 450, "shard absorb", "ColumnStore::append_store"),
     cardNode("cell-merge", 480, 450, "cell partition merge", "sorted by cell_id"),

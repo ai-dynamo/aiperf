@@ -104,7 +104,7 @@ export function CellularPage(): React.JSX.Element {
                 <NodeChip accent>merge</NodeChip>
               </Diagram>
             ),
-            children: "Optional aggregators fold subtrees; the controller does global-order or associative store merge.",
+            children: "Cells ship directly to the controller, which performs global-order or associative store merge. Hierarchy requests are refused before startup.",
           },
           {
             accent: "red",
@@ -124,10 +124,10 @@ export function CellularPage(): React.JSX.Element {
 
       <EvidenceRow
         items={[
-          { label: "Controller", path: "rust/aiperf/src/runner_protocol/cellular_controller.rs" },
-          { label: "Cell mode", path: "rust/aiperf/src/runner_protocol/cellular_cell.rs" },
-          { label: "Aggregator", path: "rust/aiperf/src/runner_protocol/cellular_aggregator.rs" },
-          { label: "Cellular seams", path: "rust/aiperf/src/cellular/mod.rs" },
+          { label: "Controller", path: "rust/runtime/src/engine/cellular_controller.rs" },
+          { label: "Cell mode", path: "rust/runtime/src/engine/cellular_cell.rs" },
+          { label: "Hierarchy refusal", path: "rust/runtime/src/engine/cellular_aggregator.rs" },
+          { label: "Cellular seams", path: "rust/runtime/src/cellular/mod.rs" },
         ]}
       />
     </div>

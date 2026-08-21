@@ -54,15 +54,6 @@ pub struct CellLaunchContext {
     pub artifact_authority: Option<String>,
     /// One opaque controller bootstrap bundle per locally launched cell.
     pub(crate) bootstrap_bundles: Vec<CellBootstrapBundle>,
-    /// The number of aggregators, or `None` for the flat
-    /// star topology. When `Some(M)`, each cell is injected an
-    /// [`AIPERF_CELL_SHIP_ADDR`](crate::engine::cellular_cell::CELL_SHIP_ADDR_ENV)
-    /// pointing at its round-robin aggregator (`cell_id % M`) instead of shipping to
-    /// the controller.
-    pub aggregator_count: Option<u32>,
-    /// Base loopback port aggregators bind (`base + agg_id`); only read when
-    /// `aggregator_count` is `Some`.
-    pub aggregator_base_port: u16,
 }
 
 /// A started cell the controller watches for hard failure. For a local subprocess
@@ -139,19 +130,6 @@ impl LocalLauncher {
         }
         if let Some(bundle) = ctx.bootstrap_bundles.get(cell_id as usize) {
             command.env(CELL_BOOTSTRAP_ENV, bundle.encode_launch_value());
-        }
-        // Aggregation changes only the terminal ship target; controller startup and
-        // partition ownership remain unchanged.
-        if let Some(agg_count) = ctx.aggregator_count {
-            // Round-robin: cell k ships to aggregator `k % M` at `base + (k % M)`.
-            // Inlined (not the velo-gated `cellular_aggregator::ship_coordinate`) so
-            // this file still compiles without the `velo` feature, where
-            // `aggregator_count` is always `None` and this branch never runs.
-            let port = ctx.aggregator_base_port + (cell_id % agg_count) as u16;
-            command.env(
-                crate::engine::cellular_cell::CELL_SHIP_ADDR_ENV,
-                format!("tcp://127.0.0.1:{port}"),
-            );
         }
         command
     }
@@ -329,8 +307,6 @@ mod tests {
             phase_ordinal_bases: bases,
             artifact_authority: Some("controller.local:9600".to_owned()),
             bootstrap_bundles: Vec::new(),
-            aggregator_count: None,
-            aggregator_base_port: 9700,
         }
     }
 
@@ -355,6 +331,7 @@ mod tests {
             envs.get(CELL_ARTIFACT_ADDR_ENV).map(String::as_str),
             Some("controller.local:9600")
         );
+        assert!(!envs.contains_key("AIPERF_CELL_SHIP_ADDR"));
     }
 
     #[test]

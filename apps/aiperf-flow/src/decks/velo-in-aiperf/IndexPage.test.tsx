@@ -28,7 +28,7 @@ describe("IndexPage", () => {
     );
     expect(MECHANISMS).toHaveLength(10);
     expect(screen.getByText("Connection radar")).toBeInTheDocument();
-    expect(screen.getByText("Aggregator tree")).toBeInTheDocument();
+    expect(screen.getByText("Hierarchy refusal")).toBeInTheDocument();
     expect(screen.getByText("R / 01")).toBeInTheDocument();
     expect(screen.getByText("T / 10")).toBeInTheDocument();
   });

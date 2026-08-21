@@ -30,7 +30,7 @@ export const MECHANISMS: ReadonlyArray<{ id: Exclude<VeloPageId, "index">; mark:
   { id: "merge", mark: "M", title: "Merge machine" },
   { id: "phaser", mark: "Φ", title: "Phaser clock" },
   { id: "dataset", mark: "D", title: "Dataset floodgate" },
-  { id: "tree", mark: "T", title: "Aggregator tree" },
+  { id: "tree", mark: "T", title: "Hierarchy refusal" },
 ];
 
 // Constellation offsets around a center core, roughly matching the canvas `.i0..i9` placement,

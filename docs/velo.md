@@ -124,10 +124,9 @@ Under `rust/runtime/src/engine/`:
   (dataset subscribe), and `ship` (final heartbeat + terminal partition). The ship runs
   on a dedicated thread with its own multi-thread runtime so velo never touches the
   cell's current-thread execute runtime.
-- **Aggregator** (`cellular_aggregator.rs`, selected by `--cells` fanout): reuses
-  `VeloControllerTransport` to collect `M` children's folded stores (fold-only — a raw
-  `Partition` is rejected), merges its subtree, and re-ships one merged store upward via
-  `CellRecordsShipper` (itself a `VeloCellClient`).
+- **Hierarchy refusal** (`cellular_aggregator.rs`): a requested cellular fanout is
+  rejected before controller startup. Supported cellular runs use only the flat
+  controller-to-cell Velo topology.
 
 ## What velo does NOT carry: the HTTP artifact plane
 
@@ -213,9 +212,7 @@ unblocking every waiting cell with an error rather than a hang.
                           authority = velo coordinate with port swapped
                           (engine/artifact_shipping.rs)
 
-   Optional aggregator tree (--cells fanout):
+   Hierarchical aggregation request:
 
-     CELL ──ship store──► AGGREGATOR ──merge subtree──► CELL ──► CONTROLLER
-                          (reuses VeloControllerTransport to collect M children;
-                           fold-only: raw record Partition rejected)
+     AIPERF_CELL_AGG_FANOUT ──► refusal before controller startup
 ```

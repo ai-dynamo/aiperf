@@ -100,10 +100,10 @@ export function SeamsPage(): React.JSX.Element {
                 <RoundNode accent>1</RoundNode>
                 <RoundNode>N</RoundNode>
                 <MiniArrow />
-                <NodeChip>aggregators</NodeChip>
+                <NodeChip>controller merge</NodeChip>
               </Diagram>
             ),
-            children: "The controller slices budgets to cell 0..N (ordinary execute paths); aggregators merge folded stores.",
+            children: "The controller slices budgets to cell 0..N (ordinary execute paths); every cell ships its terminal partition directly to the controller merge.",
           },
           {
             accent: "red",
@@ -111,12 +111,12 @@ export function SeamsPage(): React.JSX.Element {
             title: "Controller commit",
             diagram: (
               <Diagram>
-                <NodeChip>aggregators</NodeChip>
+                <NodeChip>cells</NodeChip>
                 <MiniArrow />
                 <NodeChip accent>final report</NodeChip>
               </Diagram>
             ),
-            children: "Cross-process cells use the opt-in velo feature; the controller commits the final report.",
+            children: "Cross-process cells use the opt-in Velo feature; hierarchy requests are refused before startup and the controller commits the final report.",
           },
         ]}
       />

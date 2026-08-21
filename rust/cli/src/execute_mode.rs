@@ -21,7 +21,8 @@
 //! Modes (selected by the first argument, set by the re-exec spawn site):
 //! `--execute` (single-process run / controller self-promotion on `cells>1`),
 //! `--validate` (side-effect-free validate of the same bare run), `--cell` and
-//! `--aggregator` (velo-gated multi-cell tiers). Capabilities is an in-process
+//! `--aggregator` (an early refusal for unavailable hierarchical aggregation).
+//! Capabilities is an in-process
 //! function, not a mode.
 
 use std::collections::BTreeMap;
@@ -53,7 +54,7 @@ pub const EXECUTE_FLAG: &str = "--execute";
 pub const VALIDATE_FLAG: &str = "--validate";
 /// `aiperf --cell` runs this process as one cell of a multi-cell run (velo).
 pub const CELL_FLAG: &str = "--cell";
-/// `aiperf --aggregator` runs this process as a tier-T2 merge aggregator (velo).
+/// `aiperf --aggregator` refuses unavailable hierarchical aggregation.
 pub const AGGREGATOR_FLAG: &str = "--aggregator";
 
 /// Return whether the arguments select an internal execution mode.
@@ -194,7 +195,7 @@ fn run_object_bytes(envelope: &[u8]) -> Vec<u8> {
     }
 }
 
-/// Run a tier-T2 aggregator and send its merged store to the controller.
+/// Refuse the unavailable hierarchical aggregation role.
 #[cfg(feature = "cellular")]
 fn run_aggregator(input: &[u8]) -> ! {
     let envelope = match serde_json::from_slice::<Value>(input) {
@@ -228,9 +229,7 @@ fn run_aggregator(input: &[u8]) -> ! {
 
 #[cfg(not(feature = "cellular"))]
 fn run_aggregator(_input: &[u8]) -> ! {
-    tracing::error!(
-        "aiperf was built without the `velo` feature; `--aggregator` (tier-T2 tree merge) requires it"
-    );
+    tracing::error!("aiperf was built without the `velo` feature; `--aggregator` is unavailable");
     std::process::exit(2);
 }
 

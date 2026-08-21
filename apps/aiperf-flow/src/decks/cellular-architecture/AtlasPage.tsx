@@ -197,7 +197,7 @@ export function AtlasPage(): React.JSX.Element {
         </h2>
         <p className={`mt-1 max-w-3xl text-sm ${inkClassName("secondary")}`}>
           Trace the authored run through deterministic ownership, nested worker shards, fold or
-          retain, flat or hierarchical merge, and the final report. Pick a fidelity recipe to
+          retain, flat controller merge, hierarchy refusal, and the final report. Pick a fidelity recipe to
           highlight its route; select any node for source-grounded evidence.
         </p>
       </div>

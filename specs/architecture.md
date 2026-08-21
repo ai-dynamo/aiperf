@@ -22,8 +22,8 @@ The native product entry point is the single `aiperf` binary from crate
 profile` resolves Config v2, projects a protocol-v2 benchmark request, and
 re-executes the same binary in an internal `--execute` mode over stdio; that
 child process is the sole Rust composition root for one run. Internal `--cell`
-and `--aggregator` modes support cellular execution and are intercepted before
-clap parsing.
+supports cellular execution; `--aggregator` is intercepted before clap parsing
+only to refuse unavailable hierarchical aggregation.
 
 Native commands include `profile`, `config`, `controller`, `cell`,
 `aggregator`, `results-sidecar`, `analyze-trace`, `chat`, `validate`,

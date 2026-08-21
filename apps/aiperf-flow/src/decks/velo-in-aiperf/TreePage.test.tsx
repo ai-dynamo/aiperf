@@ -17,18 +17,9 @@ function renderPage() {
 }
 
 describe("TreePage", () => {
-  it("defaults to the folded tree with two aggregators and the tree caption", () => {
+  it("renders the flat controller merge and hierarchy-refusal caption", () => {
     renderPage();
-    expect(screen.getByText("aggregator 0")).toBeInTheDocument();
-    expect(screen.getByText("cells 0–3")).toBeInTheDocument();
-    expect(screen.getByText("aggregator 1")).toBeInTheDocument();
-    expect(screen.getByText("8 cell stores → 2 subtree stores → 1 report")).toBeInTheDocument();
-  });
-
-  it("switches to flat records with the global-order caption", () => {
-    renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Flat records" }));
-    expect(screen.getByText("8 raw partitions → controller global-order merge")).toBeInTheDocument();
+    expect(screen.getByText(/8 cell partitions → controller merge → one report/i)).toBeInTheDocument();
     expect(screen.queryByText("aggregator 0")).not.toBeInTheDocument();
   });
 

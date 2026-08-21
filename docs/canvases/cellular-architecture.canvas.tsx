@@ -241,7 +241,7 @@ const NODES: AtlasNode[] = [
     id: "k8s-roles",
     lane: "control",
     label: "Native K8s roles",
-    detail: "controller · cell · aggregator",
+    detail: "controller · cell; aggregator refusal",
     status: "partial",
     symbol: "run_controller / run_cell / run_aggregator",
     path: "rust/cli/src/cellular_role.rs",
@@ -476,14 +476,14 @@ const NODES: AtlasNode[] = [
     h: 58,
   },
   {
-    id: "aggregator",
+    id: "hierarchy-refusal",
     lane: "results",
-    label: "Aggregator tier",
-    detail: "fold-only tree fan-in",
-    status: "built",
+    label: "Hierarchy refusal",
+    detail: "fanout rejected pre-startup",
+    status: "rejected",
     symbol: "run_aggregator",
     path: "rust/runtime/src/engine/cellular_aggregator.rs",
-    proof: "flat 6-cell vs tree e2e parity",
+    proof: "test_cellular_hierarchy_is_refused",
     x: 822,
     y: 520,
     w: 158,
@@ -587,8 +587,6 @@ const EDGES: AtlasEdge[] = [
   { id: "exact-wire", from: "exact-store", to: "partition-wire", lane: "results", payload: "StorePartition exact", status: "built", d: "M602 603 H628" },
   { id: "sketch-wire", from: "tag-sketch", to: "partition-wire", lane: "results", payload: "StorePartition sketch", status: "built", d: "M602 661 H615 V619 H628" },
   { id: "wire-merge", from: "partition-wire", to: "controller-merge", lane: "results", payload: "flat star fan-in", status: "built", d: "M778 607 H822" },
-  { id: "wire-aggregator", from: "partition-wire", to: "aggregator", lane: "results", payload: "bounded StorePartition", status: "built", d: "M778 590 C800 580 800 545 822 545" },
-  { id: "aggregator-merge", from: "aggregator", to: "controller-merge", lane: "results", payload: "one merged child partition", status: "built", d: "M901 570 V590" },
   { id: "wire-external", from: "partition-wire", to: "external-sink", lane: "results", payload: "bounded aggregates", status: "planned", d: "M778 625 C800 638 800 683 822 683" },
   { id: "merge-artifacts", from: "controller-merge", to: "artifacts", lane: "results", payload: "artifact completion barrier", status: "built", d: "M980 606 C1000 598 1000 552 1022 545" },
   { id: "artifacts-shipping", from: "artifacts", to: "artifact-shipping", lane: "results", payload: "Stage E upload", status: "built", d: "M1180 545 H1202" },
@@ -838,14 +836,14 @@ const STORY_STEPS = [
     page: 19,
     chapter: "Scale",
     title: "Merge, publish, and understand the boundary",
-    thesis: "Flat and hierarchical merges are built; external stream-only aggregation remains planned.",
-    addedNodeIds: ["aggregator", "controller-merge", "external-sink", "artifacts", "artifact-shipping", "report", "infinite"],
-    addedEdgeIds: ["wire-merge", "wire-aggregator", "aggregator-merge", "wire-external", "merge-artifacts", "artifacts-shipping", "merge-report", "external-report"],
+    thesis: "Flat controller merge is built; hierarchical aggregation is refused before startup and external stream-only aggregation remains planned.",
+    addedNodeIds: ["hierarchy-refusal", "controller-merge", "external-sink", "artifacts", "artifact-shipping", "report", "infinite"],
+    addedEdgeIds: ["wire-merge", "wire-external", "merge-artifacts", "artifacts-shipping", "merge-report", "external-report"],
     invariant: "One authoritative report exists unless a future external sink explicitly replaces it.",
     symbol: "merge_store_partitions",
-    path: "rust/runtime/src/engine/cellular_aggregator.rs",
-    proof: "rust/e2e-tests/tests/test_cellular.rs",
-    change: "Complete flat, tree, record-lane, cross-host shipping, report, rejected scheduled-infinite, and roadmap boundaries.",
+    path: "rust/runtime/src/engine/cellular_controller.rs",
+    proof: "rust/e2e-tests/tests/test_cellular.rs::test_cellular_hierarchy_is_refused",
+    change: "Complete flat merge, record-lane, cross-host shipping, report, hierarchy refusal, and roadmap boundaries.",
   },
   {
     page: 20,
@@ -916,15 +914,15 @@ const ABILITIES: Ability[] = [
   { dimension: "Heartbeat lane", built: "Cells ship sketches; controller emits a live cross-cell aggregate", boundary: "Enabling the lane forces retain", status: "Built" },
   { dimension: "Python live stream", built: "Cell-local consumer forces retain", boundary: "No merged cross-cell per-record live stream", status: "Partial" },
   { dimension: "Artifacts", built: "Same-host concat + HTTP/zstd shipping", boundary: "Sketch has no per-record files; cross-host k8s needs routable shipping or shared storage", status: "Built" },
-  { dimension: "Tree merge", built: "Local StorePartition through --aggregator", boundary: "Retain partitions cannot enter T2", status: "Built" },
-  { dimension: "K8s tree", built: "Controller expects operator-created aggregators", boundary: "Requires AIPERF_CELL_AGG_DNS_TEMPLATE; otherwise flat-star fallback", status: "Partial" },
+  { dimension: "Hierarchy", built: "Unavailable", boundary: "Hierarchy requests are refused before controller startup", status: "Rejected" },
+  { dimension: "K8s hierarchy", built: "Unavailable", boundary: "Operator DNS cannot enable unavailable hierarchy", status: "Rejected" },
   { dimension: "k6-class start", built: "Barrier-free START", boundary: "Looser cross-cell start correlation", status: "Approximation" },
   { dimension: "Phaser START", built: "Monotonic generation broadcast with replay-on-attach over Velo", boundary: "Opt-in; broader phase orchestration is separate", status: "Built" },
   { dimension: "Shared timing origin", built: "Cells zero timestamps at the synchronized START barrier", boundary: "Opt-in through AIPERF_CELL_SHARED_ORIGIN", status: "Built" },
   { dimension: "External sink", built: "Cell-local OTLP sink exists in scratch execution", boundary: "No authoritative no-central-merge stream-only mode", status: "Planned" },
   { dimension: "Dataset fan-out", built: "Velo replay/live index + controlled dispatch", boundary: "Built and e2e-proven as an opt-in verification overlay; canonical execution still runs separately", status: "Built" },
   { dimension: "Cross-host dataset", built: "Stage G HTTP+zstd serving for file and graph inputs", boundary: "Requires routable controller address across hosts", status: "Built" },
-  { dimension: "Native Kubernetes roles", built: "aiperf controller / cell / aggregator entry points", boundary: "Role wiring and CR client are tested; no full cluster e2e", status: "Partial" },
+  { dimension: "Native Kubernetes roles", built: "aiperf controller / cell entry points", boundary: "The aggregator entry point refuses hierarchy; no full cluster e2e", status: "Partial" },
   { dimension: "Side telemetry", built: "Collectors run on cell 0", boundary: "GPU/server/network sidecars are omitted from the merged report", status: "Partial" },
   { dimension: "Build image", built: "Cellular works with velo/full features", boundary: "Lean default CLI build rejects cells > 1", status: "Partial" },
 ];
@@ -956,6 +954,20 @@ function deriveRoute(
   storage: StorageMode,
   start: StartMode,
 ): RouteModel {
+  if (recipe === "t2") {
+    return {
+      nodeIds: new Set(["config", "execute"]),
+      edgeIds: new Set(["config-execute"]),
+      orderedEdges: ["config-execute"],
+      memory: "No execution",
+      percentiles: "No execution",
+      exactAggregates: "No execution",
+      artifacts: "No execution",
+      topology: "Hierarchy request → refusal",
+      warning: "Hierarchical aggregation is unavailable and refused before controller startup.",
+    };
+  }
+
   const nodeIds = new Set(["config", "execute", "controller", "dataset", "partition", "cell", "shard", "dispatch"]);
   const edgeIds = new Set(["config-execute", "execute-controller", "controller-dataset", "dataset-partition", "partition-cell", "cell-shard", "shard-dispatch"]);
   const orderedEdges = ["config-execute", "execute-controller"];
@@ -987,14 +999,7 @@ function deriveRoute(
   orderedEdges.push(resultEdge, wireEdge);
 
   let warning: string | undefined;
-  if (recipe === "t2") {
-    nodeIds.add("aggregator");
-    nodeIds.add("controller-merge");
-    edgeIds.add("wire-aggregator");
-    edgeIds.add("aggregator-merge");
-    orderedEdges.push("wire-aggregator", "aggregator-merge");
-    if (storage === "retain") warning = "T2 is fold-only: retain partitions are rejected by the aggregator.";
-  } else if (recipe === "t3") {
+  if (recipe === "t3") {
     nodeIds.add("external-sink");
     edgeIds.add("wire-external");
     orderedEdges.push("wire-external");
@@ -1037,11 +1042,9 @@ function deriveRoute(
           : "All record-derived metrics",
     artifacts: storage === "sketch" ? "Per-record artifacts unavailable" : "Lane, concat, or HTTP+zstd",
     topology:
-      recipe === "t2"
-        ? "Cells → aggregators → controller"
-        : recipe === "t3"
-          ? "Cells → external ingest (planned)"
-          : "Cells → controller",
+      recipe === "t3"
+        ? "Cells → external ingest (planned)"
+        : "Cells → controller",
     warning,
   };
 }
@@ -1516,7 +1519,7 @@ function FullAtlasPage() {
             <H1>One benchmark. Many autonomous cells. One measurement contract.</H1>
             <Text tone="secondary">
               Trace the authored run through deterministic ownership, nested worker shards, fold or retain,
-              flat or hierarchical merge, and the final report. Select any node for source-grounded evidence.
+              flat controller merge, hierarchy refusal, and the final report. Select any node for source-grounded evidence.
             </Text>
           </Stack>
           <Spacer />
@@ -1812,7 +1815,7 @@ function ScaleBoundaryStrip() {
   const tiers = [
     ["T0 Exact", "Retain · flat merge", "Built"],
     ["T1 Bounded", "Sketch · flat merge", "Built"],
-    ["T2 Hierarchical", "Fold · local tree built (e2e) · k8s wiring partial", "Built local / Partial k8s"],
+    ["T2 Hierarchical", "Unavailable · requests are refused before controller startup", "Rejected"],
     ["T3 External sink", "No-central-merge streaming is planned; barrier-free is a separate built START mode", "Planned"],
   ] as const;
   return (

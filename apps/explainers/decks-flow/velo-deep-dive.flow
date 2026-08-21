@@ -18,7 +18,7 @@ explainer "Velo deep dive" {
   hub: {
     title: "cellular transport mechanisms"
     highlight: "Velo deep dive"
-    description: "Ten mechanisms behind AIPerf's cellular Velo plane: connection resolve, registration reply, synchronized START, MessagePack, heartbeat, partition shipping, merge, phaser replay, dataset floodgate, and the aggregator tree. Deeper than the beginner SLURM & Velo tour."
+    description: "Ten mechanisms behind AIPerf's cellular Velo plane: connection resolve, registration reply, synchronized START, MessagePack, heartbeat, partition shipping, flat merge, phaser replay, dataset floodgate, and hierarchy refusal. Deeper than the beginner SLURM & Velo tour."
   }
 
   slide "Resolve the controller over Velo" {
@@ -1211,27 +1211,27 @@ explainer "Velo deep dive" {
   }
   }
 
-  slide "Collapse payload up a fold-only tree" {
+  slide "Refuse hierarchical aggregation" {
     eyebrow: "10 · Aggregators"
-    title: "Collapse payload up a fold-only tree"
-    lede: "Folded stores can reduce through an aggregator tier: cells ship bounded store partitions to aggregators, which merge subtrees before the controller. Retained raw records stay flat so the controller can still restore one global dispatch order."
-    narration: "Folded stores can reduce through an aggregator tree that merges subtrees before the controller. Retained raw records stay flat so global dispatch order can still be restored."
+    title: "Refuse hierarchical aggregation"
+    lede: "The controller accepts only the flat controller-to-cell topology. A requested fanout is refused before imported acquisition, binding, or launcher execution."
+    narration: "Hierarchical aggregation is unavailable. Fanout is refused before cellular startup; supported runs use flat controller merge."
     term: {
       word: "run_aggregator"
-      meaning: "Fold-only tree tier that merges bounded child store partitions into one partition per subtree."
+      meaning: "Private role retained solely to report hierarchy refusal."
     }
     points: [
-      "Tree merge requires fold mode; retain partitions cannot enter a subtree.",
-      "Flat star fan-in remains the fallback and the retain-mode path.",
+      "Any hierarchy request is refused before startup.",
+      "Flat star fan-in is the supported cellular path.",
       "Evidence: `rust/runtime/src/engine/cellular_aggregator.rs`."
     ]
-    caption: "fold: cells → aggregators → controller · retain stays flat."
+    caption: "flat: cells → controller · hierarchy refused."
 
     render: @scene {
       sdk.Header(
         id = "s9-hdr",
-        title = "AGGREGATOR TREE",
-        caption = "fold: cells → aggregators → controller · retain stays flat.",
+        title = "HIERARCHY REFUSAL",
+        caption = "flat: cells → controller · hierarchy requests stop before startup.",
         x = 63.6,
         y = 43.2,
         width = 1792.8,
@@ -1242,7 +1242,7 @@ explainer "Velo deep dive" {
       sdk.Panel(
         id = "s9-ctrl",
         title = "Controller",
-        detail = "one report",
+        detail = "flat merge · one report",
         x = 744,
         y = 243,
         width = 432,
@@ -1252,8 +1252,8 @@ explainer "Velo deep dive" {
       )
       sdk.Panel(
         id = "s9-agg0",
-        title = "aggregator 0",
-        detail = "cells 0–3",
+        title = "hierarchy request",
+        detail = "refused before startup",
         x = 339,
         y = 567,
         width = 405,
@@ -1263,22 +1263,14 @@ explainer "Velo deep dive" {
       )
       sdk.Panel(
         id = "s9-agg1",
-        title = "aggregator 1",
-        detail = "cells 4–7",
+        title = "no aggregator process",
+        detail = "flat star remains",
         x = 1176,
         y = 567,
         width = 405,
         height = 162,
         surfaceRole = theme(surface.elevated),
         strokeRole = theme(accent.warning)
-      )
-      sdk.FanIn(
-        id = "s9-agg-fan",
-        from = [{ nodeId: "s9-agg0", anchor: "n" }, { nodeId: "s9-agg1", anchor: "n" }],
-        to = { nodeId: "s9-ctrl", anchor: "s" },
-        axis = "y",
-        junction = { x: 350, y: 180 },
-        style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Panel(
         id = "s9-c0",
@@ -1327,14 +1319,14 @@ explainer "Velo deep dive" {
       sdk.FanIn(
         id = "s9-cell-fan",
         from = [{ nodeId: "s9-c0", anchor: "n" }, { nodeId: "s9-c1", anchor: "n" }, { nodeId: "s9-c2", anchor: "n" }, { nodeId: "s9-c3", anchor: "n" }],
-        to = { nodeId: "s9-agg0", anchor: "s" },
+        to = { nodeId: "s9-ctrl", anchor: "s" },
         axis = "y",
         junction = { x: 195, y: 290 },
         style = { stroke: theme(accent.tertiary), strokeWidth: 5.94, fill: "none" }
       )
       sdk.Label(
         id = "s9-note",
-        text = "fold only · retain stays flat",
+        text = "flat controller merge · hierarchy refused",
         x = 1176,
         y = 918,
         width = 648,
@@ -1348,8 +1340,7 @@ explainer "Velo deep dive" {
         at 0 reveal s9-hdr duration 260
         after s9-hdr reveal s9-ctrl duration 260
         after s9-ctrl stagger targets [s9-agg0, s9-agg1] step 100 duration 240
-        after s9-agg1 trace s9-agg-fan duration 460
-        after s9-agg-fan stagger targets [s9-c0, s9-c1, s9-c2, s9-c3] step 80 duration 200
+        after s9-agg1 stagger targets [s9-c0, s9-c1, s9-c2, s9-c3] step 80 duration 200
         after s9-c3 trace s9-cell-fan duration 600
         after s9-cell-fan reveal s9-note duration 200
       }

@@ -18,7 +18,7 @@ explainer "Cellular internals" {
   hub: {
     highlight: "Cellular internals"
     title: "launch · distribute · execute · reduce · scale"
-    description: "Twenty-slide walkthrough of AIPerf's cellular runtime in five chapters: promotion and validation, deterministic distribution, autonomous execution, retain/fold/sketch reduction, and flat-or-tree merge to one report. Grounded in rust/runtime source, deeper than the SLURM & Velo tour."
+    description: "Twenty-slide walkthrough of AIPerf's cellular runtime in five chapters: promotion and validation, deterministic distribution, autonomous execution, retain/fold/sketch reduction, and flat controller merge to one report. Hierarchy requests are refused before startup."
   }
 
   slide "One run, many cells, one report" {
@@ -162,7 +162,7 @@ explainer "Cellular internals" {
     }
     points: [
       "The controller coordinates but does not dispatch inference load.",
-      "Native `controller` / `cell` / `aggregator` roles wire the same model.",
+      "Native `controller` and `cell` roles run the model; `aggregator` refuses hierarchy.",
       "Evidence: `rust/runtime/src/engine/cellular_controller.rs`."
     ]
     caption: "cells > 1 → promote one coordinator."
@@ -173,7 +173,7 @@ explainer "Cellular internals" {
       sdk.Card(id = "exec3", title = "--execute", detail = "cells > 1", subtitle = "promotion gate", x = 96, y = 378, width = 405, height = 243, strokeRole = "@theme.accent.primary")
       sdk.Card(id = "ctrl", title = "Controller", detail = "coordinate · no load", subtitle = "partition + merge", x = 663, y = 378, width = 486, height = 243, strokeRole = "@theme.accent.secondary")
       sdk.Card(id = "single", title = "single cell", detail = "stays direct", subtitle = "no promotion", x = 177, y = 729, width = 405, height = 221.4, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "roles", title = "controller / cell / aggregator", detail = "native K8s roles", subtitle = "same entrypoints", x = 1284, y = 729, width = 594, height = 237.6, strokeRole = "@theme.accent.tertiary")
+      sdk.Card(id = "roles", title = "controller / cell", detail = "native K8s roles", subtitle = "aggregator refuses hierarchy", x = 1284, y = 729, width = 594, height = 237.6, strokeRole = "@theme.accent.tertiary")
       sdk.Edge(id = "a3a", mode = "connector", from = { nodeId: "exec3", anchor: "e" }, to = { nodeId: "ctrl", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
       sdk.Edge(id = "a3b", mode = "route", from = { nodeId: "ctrl", anchor: "s" }, to = { nodeId: "roles", anchor: "n" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       timeline primary {
@@ -788,33 +788,31 @@ explainer "Cellular internals" {
   slide "Merge, publish, and know the boundary" {
     eyebrow: "Scale · 19 of 20"
     title: "Merge, publish, and know the boundary"
-    lede: "Flat star fan-in and hierarchical aggregator trees are both built; external stream-only aggregation remains planned. One authoritative report exists — through controller merge, record-lane artifacts, and cross-host shipping — unless a future external sink explicitly replaces it."
-    narration: "Flat and hierarchical merges are both built while external stream-only aggregation is planned. One authoritative report exists through merge, artifacts, and shipping."
+    lede: "Flat star fan-in is built; hierarchical aggregation is refused before startup and external stream-only aggregation remains planned. One authoritative report exists through controller merge, record-lane artifacts, and cross-host shipping unless a future external sink explicitly replaces it."
+    narration: "Flat controller merge is built and hierarchy is refused. One authoritative report exists through merge, artifacts, and shipping."
     term: {
       word: "run_aggregator"
-      meaning: "Fold-only tree tier merging bounded child store partitions before the controller merge."
+      meaning: "The private role that refuses unavailable hierarchical aggregation."
     }
     points: [
       "One authoritative report exists unless an external sink replaces it.",
-      "Flat and tree merges built; scheduled infinite budgets rejected.",
+      "Flat merge is built; hierarchy and scheduled infinite budgets are rejected.",
       "Evidence: `rust/runtime/src/engine/cellular_aggregator.rs`, `record_lane.rs`, `artifact_shipping.rs`."
     ]
-    caption: "flat + tree merge → artifacts + report · external planned."
+    caption: "flat merge → artifacts + report · hierarchy refused · external planned."
 
     render: @scene {
-      sdk.Header(id = "hdr18", title = "SCALE · MERGE & PUBLISH", caption = "flat + tree merge → artifacts + report · external planned.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
-      sdk.Label(id = "phase18", text = "FLAT OR TREE → ONE REPORT", x = 123, y = 210.6, width = 756, height = 54, fontSize = 29.7, align = "start")
+      sdk.Header(id = "hdr18", title = "SCALE · MERGE & PUBLISH", caption = "flat merge → artifacts + report · hierarchy refused · external planned.", x = 63.6, y = 43.2, width = 1792.8, height = 118.8)
+      sdk.Label(id = "phase18", text = "FLAT MERGE → ONE REPORT", x = 123, y = 210.6, width = 756, height = 54, fontSize = 29.7, align = "start")
       sdk.Card(id = "cell180", title = "cell 0", detail = "store", subtitle = "local", x = 96, y = 275.4, width = 324, height = 183.6, strokeRole = "@theme.accent.secondary")
       sdk.Card(id = "cell181", title = "cell 1", detail = "store", subtitle = "local", x = 447, y = 275.4, width = 324, height = 183.6, strokeRole = "@theme.accent.secondary")
       sdk.Card(id = "cell182", title = "cell 2", detail = "store", subtitle = "local", x = 96, y = 529.2, width = 324, height = 183.6, strokeRole = "@theme.accent.secondary")
       sdk.Card(id = "cell183", title = "cell 3", detail = "store", subtitle = "local", x = 447, y = 529.2, width = 324, height = 183.6, strokeRole = "@theme.accent.secondary")
-      sdk.Card(id = "agg0", title = "aggregator 0", detail = "subtree fold", subtitle = "optional", x = 852, y = 318.6, width = 405, height = 237.6, strokeRole = "@theme.accent.primary")
-      sdk.Card(id = "agg1", title = "aggregator 1", detail = "subtree fold", subtitle = "optional", x = 852, y = 572.4, width = 405, height = 237.6, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "agg0", title = "hierarchy request", detail = "refused pre-startup", subtitle = "no cells launch", x = 852, y = 318.6, width = 405, height = 237.6, strokeRole = "@theme.accent.primary")
+      sdk.Card(id = "agg1", title = "flat controller", detail = "all cells ship here", subtitle = "supported", x = 852, y = 572.4, width = 405, height = 237.6, strokeRole = "@theme.accent.primary")
       sdk.Card(id = "merge", title = "Controller merge", detail = "one report", subtitle = "authoritative", x = 1365, y = 351, width = 405, height = 243, strokeRole = "@theme.accent.tertiary")
       sdk.Panel(id = "sink", title = "external sink", x = 1284, y = 669.6, width = 567, height = 140.4, strokeRole = "@theme.accent.primary")
-      sdk.FanIn(id = "cells-to-agg0", from = [{ nodeId: "cell180", anchor: "e" }, { nodeId: "cell181", anchor: "e" }], to = { nodeId: "agg0", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
-      sdk.FanIn(id = "cells-to-agg1", from = [{ nodeId: "cell182", anchor: "e" }, { nodeId: "cell183", anchor: "e" }], to = { nodeId: "agg1", anchor: "w" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
-      sdk.FanIn(id = "aggs-to-merge", from = [{ nodeId: "agg0", anchor: "e" }, { nodeId: "agg1", anchor: "e" }], to = { nodeId: "merge", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
+      sdk.FanIn(id = "cells-to-merge", from = [{ nodeId: "cell180", anchor: "e" }, { nodeId: "cell181", anchor: "e" }, { nodeId: "cell182", anchor: "e" }, { nodeId: "cell183", anchor: "e" }], to = { nodeId: "merge", anchor: "w" }, style = { stroke: "@theme.accent.tertiary", strokeWidth: 5.94 })
       sdk.Edge(id = "merge-to-sink", mode = "route", from = { nodeId: "merge", anchor: "s" }, to = { nodeId: "sink", anchor: "n" }, style = { stroke: "@theme.accent.primary", strokeWidth: 5.94 })
       timeline primary {
         at 0 reveal hdr18 duration 260
@@ -825,11 +823,9 @@ explainer "Cellular internals" {
         after cell182 reveal cell183 duration 260
         after cell183 reveal agg0 duration 260
         after agg0 reveal agg1 duration 260
-        after agg1 trace cells-to-agg0 duration 420
-        after cells-to-agg0 trace cells-to-agg1 duration 420
-        after cells-to-agg1 reveal merge duration 260
-        after merge trace aggs-to-merge duration 420
-        after aggs-to-merge reveal sink duration 260
+        after agg1 reveal merge duration 260
+        after merge trace cells-to-merge duration 420
+        after cells-to-merge reveal sink duration 260
         after sink trace merge-to-sink duration 420
       }
     }

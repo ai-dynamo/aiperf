@@ -441,7 +441,7 @@ explainer "Cellular algorithm workbook" {
     }
     points: [
       "Duplicate, missing, and out-of-range ordinals fail before accumulation.",
-      "Flat controller and hierarchical aggregator reductions share explicit topology.",
+      "The flat controller reduction is the only supported topology; hierarchy is refused before startup.",
       "merged-report-fidelity-boundary documents what each storage mode can reproduce."
     ]
     caption: "partition set → validated reduction → report."
@@ -725,14 +725,14 @@ explainer "Cellular algorithm workbook" {
   slide "placement-decision" {
     eyebrow: "Decisions · 15 of 16"
     title: "Placement decides topology and shipping"
-    lede: "Same-host routes can concatenate local files directly, and a same-host aggregator tree is always honored without any wiring requirement. Cross-host placement adds Stage G input reconstruction and Stage E artifact upload around the same execution route: an externally placed tree intent falls back flat without operator DNS wiring, so cells never ship into a void."
-    narration: "Placement adds topology and shipping decisions around the execution route. Cross-host runs reconstruct inputs through Stage G and upload artifacts through Stage E. A same-host aggregator tree is always honored, but an externally placed tree requires operator DNS wiring; without it, the controller falls back flat. Shipping changes byte placement, not measurement meaning."
+    lede: "Same-host routes can concatenate local files directly. Cross-host placement adds Stage G input reconstruction and Stage E artifact upload around the flat controller-to-cell route; every hierarchy request is refused before startup."
+    narration: "Placement adds shipping decisions around the flat execution route. Cross-host runs reconstruct inputs through Stage G and upload artifacts through Stage E. Hierarchy requests are refused before any cells start. Shipping changes byte placement, not measurement meaning."
     term: {
       word: "aggregation-topology decision"
-      meaning: "Choose flat, local tree, or externally placed tree under deployment constraints."
+      meaning: "Use the flat controller-to-cell topology; hierarchy choices are refused."
     }
     points: [
-      "Cross-host tree wiring is an admission decision, not best-effort discovery.",
+      "Hierarchy is refused before any deployment-specific wiring is attempted.",
       "Parquet emission depends on a parquet-bearing build and remains text-labeled.",
       "Shipping changes byte placement, not the measurement contract."
     ]

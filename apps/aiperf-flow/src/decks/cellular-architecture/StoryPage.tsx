@@ -47,7 +47,7 @@ const REDUCTION_LABELS = ["INPUT", "OPERATION", "WIRE OUTPUT", "FIDELITY"] as co
 const SCALE_TIERS: ReadonlyArray<readonly [string, string, string]> = [
   ["T0 Exact", "Retain · flat merge", "Built"],
   ["T1 Bounded", "Sketch · flat merge", "Built"],
-  ["T2 Hierarchical", "Fold · local tree built (e2e) · k8s wiring partial", "Built local / Partial k8s"],
+  ["T2 Hierarchical", "Unavailable · hierarchy requests are refused before startup", "Rejected"],
   ["T3 External sink", "No-central-merge streaming is planned; barrier-free is a separate built START mode", "Planned"],
 ];
 

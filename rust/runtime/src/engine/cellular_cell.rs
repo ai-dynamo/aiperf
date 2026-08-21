@@ -68,16 +68,6 @@ pub(crate) fn installed_artifact_channel() -> Option<&'static ArtifactChannelCli
 /// The cell id and count live in [`crate::cellular::partition`]'s env vars.
 pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 
-/// Env var carrying the velo coordinate a cell ships its
-/// terminal partition + heartbeat to, when it is NOT the controller. In the flat
-/// (star) topology this is unset and a cell ships to the controller
-/// ([`CELL_CONTROLLER_ADDR_ENV`]); in the tree topology the controller sets it to the
-/// cell's assigned aggregator (`tcp://HOST:PORT`), so the aggregator merges its
-/// subtree's stores and ships one merged partition up. Only the ship target changes —
-/// the cell still fetches its envelope and awaits START from the controller — so a
-/// cell's partition/issuer/sampler behaviour is byte-identical to the flat topology.
-pub const CELL_SHIP_ADDR_ENV: &str = "AIPERF_CELL_SHIP_ADDR";
-
 /// Env var carrying the per-phase global ordinal bases as JSON (`{name: base}`), so a
 /// cell's issuer recovers each turn's single-cell absolute slot from its phase-local
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
@@ -313,8 +303,8 @@ pub fn ship_http_artifacts_if_enabled(
 /// over the **velo** streaming plane (the shared cellular velo endpoint), when
 /// shipping is enabled and this process is a cell. Unlike the HTTP path this needs
 /// no separate artifact host/port: it dials the controller's velo coordinate
-/// ([`CELL_SHIP_ADDR_ENV`] if set, else [`CELL_CONTROLLER_ADDR_ENV`]) — the exact
-/// same endpoint the control plane already uses — and streams zstd chunks over
+/// ([`CELL_CONTROLLER_ADDR_ENV`]) — the exact same endpoint the control plane already
+/// uses — and streams zstd chunks over
 /// velo's native backpressured stream primitive (bounded memory).
 ///
 /// Runs on a dedicated thread + runtime (off the caller's execute runtime), mirroring
@@ -335,11 +325,8 @@ pub fn ship_velo_artifacts_if_enabled(
     if !http_artifact_shipping_enabled() {
         return Ok(()); // shipping disabled
     }
-    // Prefer the tree-topology ship target, else the controller coordinate.
-    let coordinate = std::env::var(CELL_SHIP_ADDR_ENV)
+    let coordinate = std::env::var(CELL_CONTROLLER_ADDR_ENV)
         .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| std::env::var(CELL_CONTROLLER_ADDR_ENV).ok())
         .filter(|value| !value.is_empty());
     let Some(coordinate) = coordinate else {
         return Ok(()); // no controller coordinate — nothing to ship to
@@ -1036,16 +1023,6 @@ async fn http_post_json(url: &str, body: Vec<u8>) -> anyhow::Result<u16> {
     Ok(response.status().as_u16())
 }
 
-/// Substitute a cell's round-robin aggregator id into the operator's ship-DNS
-/// template. The template is a concrete `tcp://…svc.cluster.local:PORT` coordinate
-/// with a single `{agg_id}` placeholder (jobset/namespace already resolved by the
-/// operator); the cell fills in `cell_id % agg_count`. Pure so the pod-side ship-target
-/// derivation is unit-testable without a velo runtime.
-pub(crate) fn k8s_agg_ship_coordinate(template: &str, cell_id: u32, agg_count: u32) -> String {
-    let agg_id = cell_id % agg_count.max(1);
-    template.replace("{agg_id}", &agg_id.to_string())
-}
-
 /// A cell's terminal partition, captured at the point in the finalize where its
 /// contents are correct but shipped only once the cell's artifact files are on disk.
 ///
@@ -1106,52 +1083,18 @@ impl CellRecordsShipper {
     /// Builds a shipper when the controller coordinate and cell partition env vars
     /// are set, else `None` (the ordinary single-process path).
     pub fn from_env() -> Option<Self> {
-        // Requires a controller address to exist (i.e. this is a real cell); the ship
-        // address alone never activates cellular shipping on a single-process run.
-        std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()?;
         let partition = ModuloCellPartition::from_env()?;
         let cell_id = partition.cell_id();
-        let coordinate = Self::ship_target(cell_id, partition.cell_count())?;
+        let coordinate = Self::ship_target(std::env::var(CELL_CONTROLLER_ADDR_ENV).ok())?;
         Some(Self {
             cell_id,
             coordinate,
         })
     }
 
-    /// This cell's terminal ship coordinate, in precedence order:
-    /// 1. `AIPERF_CELL_SHIP_ADDR` (same-host tree — the controller injected each
-    ///    local cell's assigned loopback aggregator coordinate directly);
-    /// 2. the k8s aggregator derived from the operator's DNS template
-    ///    ([`AGG_DNS_TEMPLATE_ENV`]) + this cell's round-robin aggregator
-    ///    (`cell_id % M`) — a JobSet indexed replicatedJob shares one env template, so
-    ///    the per-cell ship target must be computed pod-side from the shared template;
-    /// 3. the controller directly ([`CELL_CONTROLLER_ADDR_ENV`], flat star).
-    fn ship_target(cell_id: u32, cell_count: u32) -> Option<String> {
-        if let Ok(addr) = std::env::var(CELL_SHIP_ADDR_ENV)
-            && !addr.is_empty()
-        {
-            return Some(addr);
-        }
-        if let Ok(template) =
-            std::env::var(crate::engine::cellular_aggregator::AGG_DNS_TEMPLATE_ENV)
-            && !template.is_empty()
-            && let Some(agg_count) =
-                crate::engine::cellular_aggregator::aggregator_count(cell_count)
-        {
-            return Some(k8s_agg_ship_coordinate(&template, cell_id, agg_count));
-        }
-        std::env::var(CELL_CONTROLLER_ADDR_ENV).ok()
-    }
-
-    /// Builds a shipper that sends to an explicit velo `coordinate` under `cell_id`.
-    /// Used by an aggregator to ship its merged store to the controller
-    /// (the `cell_id` is the aggregator's id, which orders the controller's
-    /// `merge_store_partitions` deterministically).
-    pub fn to_coordinate(cell_id: u32, coordinate: String) -> Self {
-        Self {
-            cell_id,
-            coordinate,
-        }
+    /// Returns the controller's terminal partition coordinate.
+    fn ship_target(controller_coordinate: Option<String>) -> Option<String> {
+        controller_coordinate.filter(|coordinate| !coordinate.is_empty())
     }
 
     /// The cell's identifier.
@@ -1386,23 +1329,10 @@ mod tests {
     }
 
     #[test]
-    fn k8s_ship_coordinate_round_robins_cells_to_aggregators() {
-        let template = "tcp://js-aggregators-{agg_id}-0.js.ns.svc.cluster.local:9700";
+    fn cell_ship_target_is_the_controller_coordinate() {
         assert_eq!(
-            k8s_agg_ship_coordinate(template, 0, 2),
-            "tcp://js-aggregators-0-0.js.ns.svc.cluster.local:9700"
-        );
-        assert_eq!(
-            k8s_agg_ship_coordinate(template, 1, 2),
-            "tcp://js-aggregators-1-0.js.ns.svc.cluster.local:9700"
-        );
-        assert_eq!(
-            k8s_agg_ship_coordinate(template, 4, 2),
-            "tcp://js-aggregators-0-0.js.ns.svc.cluster.local:9700"
-        );
-        assert_eq!(
-            k8s_agg_ship_coordinate(template, 5, 3),
-            "tcp://js-aggregators-2-0.js.ns.svc.cluster.local:9700"
+            CellRecordsShipper::ship_target(Some("tcp://controller:9500".to_owned())),
+            Some("tcp://controller:9500".to_owned())
         );
     }
 

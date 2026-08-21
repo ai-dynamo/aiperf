@@ -80,11 +80,12 @@ describe("deriveRoute", () => {
     expect(route.warning).toBeUndefined();
   });
 
-  it("T2 with retain storage warns that the aggregator rejects retain partitions", () => {
+  it("refuses every hierarchy request before controller startup", () => {
     const route = deriveRoute("t2", "scheduled", "retain", "synchronized");
-    expect(route.topology).toBe("Cells → aggregators → controller");
-    expect(route.nodeIds.has("aggregator")).toBe(true);
-    expect(route.warning).toBe("T2 is fold-only: retain partitions are rejected by the aggregator.");
+    expect(route.topology).toBe("Hierarchy request → refusal");
+    expect(route.nodeIds.has("aggregator")).toBe(false);
+    expect(route.nodeIds.has("cell")).toBe(false);
+    expect(route.warning).toBe("Hierarchical aggregation is unavailable and refused before controller startup.");
   });
 
   it("T3 routes to the planned external sink with no authoritative report", () => {

@@ -91,8 +91,8 @@ coordinator `finalize_run` provenance or the grouped error-message list.
 - A per-request dispatch state machine (`Unknown → Indexed → InFlight → Done`) with
   dedup and bounded-await-then-counted misses.
 - A scale-adaptive fidelity ladder (exact/byte-parity default → bounded sketch →
-  hierarchical tree-merge → external streaming sink) so scale compromises are gated
-  behind scale, with counts/sums/rates exact at every tier.
+  external streaming sink). Hierarchical tree-merge is unavailable and refused
+  before cellular startup; counts/sums/rates remain exact in supported modes.
 - Cross-host beyond loopback, gRPC/offline cell wiring, and graph weighted-sampling
   plus static-node `request_limit` partition.
 

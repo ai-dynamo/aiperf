@@ -97,10 +97,9 @@ script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
 
 ## Future requirements
 
-- **Aggregator tier**: SLURM runs the flat star only. The `aiperf --aggregator`
-  tree is gated on the operator-wired aggregator DNS (`AIPERF_CELL_AGG_DNS_TEMPLATE`),
-  which SLURM does not set, so a fanout request falls closed to the flat star. A
-  SLURM-native aggregator placement (rank-band assignment) is unbuilt.
+- **Aggregator tier**: Hierarchical aggregation is unavailable in every launcher.
+  A fanout request is refused before cellular startup; SLURM runs the flat star
+  when no hierarchy is requested.
 - **Live in-sandbox multi-cell proof**: the topology, launcher selection, coordinate
   derivation, velo discovery/envelope-fetch, AND the controller's merge are proven
   end-to-end by the simulation in `rust/e2e-tests/scripts/slurm_sim.sh` — a 3-task loopback

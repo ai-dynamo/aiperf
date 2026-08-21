@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CellularDeepDiveSection } from "./CellularDeepDiveSection.js";
 
@@ -17,12 +17,11 @@ describe("CellularDeepDiveSection", () => {
     expect(screen.getByText(/Velo start event/)).toBeInTheDocument();
   });
 
-  it("switches to the T2 fold tree with aggregators", () => {
+  it("shows that a hierarchy request is refused before startup", () => {
     render(<CellularDeepDiveSection detail="engineering" />);
-    fireEvent.click(screen.getByRole("button", { name: "T2 fold tree" }));
-    expect(screen.getByText("aggregator 0")).toBeInTheDocument();
-    expect(screen.getByText("aggregator 1")).toBeInTheDocument();
-    expect(screen.getByText("controller store merge")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hierarchy refusal" }));
+    expect(screen.getByText(/hierarchy requests are refused before startup/i)).toBeInTheDocument();
+    expect(screen.queryByText("aggregator 0")).not.toBeInTheDocument();
   });
 
   it("shows the Phaser start generation caption in phaser focus", () => {
