@@ -1453,7 +1453,11 @@ class CLIConfig(BaseConfig):
             "non-special token pool (special tokens excluded). "
             "`sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: "
             "lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). "
-            "Only applies when `--prompt-corpus random` is set.",
+            "Applies in two independent places: token-pool selection whenever "
+            "`--prompt-corpus random` is set (including with no `--random-range-ratio`, "
+            "where the pool is the only thing the style selects), and the range-window "
+            "formula, special-token accounting and RNG algorithm whenever "
+            "`--random-range-ratio` is set — the latter regardless of corpus.",
         ),
         CLIParameter(
             name=("--random-corpus-style",),

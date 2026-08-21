@@ -774,7 +774,7 @@ Sample ISL and OSL uniformly from a ratio-defined integer window around the conf
 
 #### `--random-corpus-style` `<str>`
 
-Benchmark style for RANDOM corpus generation. Controls range ratio formula, token pool composition, and other per-tool behaviors. `vllm` (default) mirrors `vllm bench serve`: symmetric range window, non-special token pool (special tokens excluded). `sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). Only applies when `--prompt-corpus random` is set.
+Benchmark style for RANDOM corpus generation. Controls range ratio formula, token pool composition, and other per-tool behaviors. `vllm` (default) mirrors `vllm bench serve`: symmetric range window, non-special token pool (special tokens excluded). `sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). Applies in two independent places: token-pool selection whenever `--prompt-corpus random` is set (including with no `--random-range-ratio`, where the pool is the only thing the style selects), and the range-window formula, special-token accounting and RNG algorithm whenever `--random-range-ratio` is set — the latter regardless of corpus.
 
 **Choices:**
 
@@ -2365,7 +2365,7 @@ Sample ISL and OSL uniformly from a ratio-defined integer window around the conf
 
 #### `--random-corpus-style` `<str>`
 
-Benchmark style for RANDOM corpus generation. Controls range ratio formula, token pool composition, and other per-tool behaviors. `vllm` (default) mirrors `vllm bench serve`: symmetric range window, non-special token pool (special tokens excluded). `sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). Only applies when `--prompt-corpus random` is set.
+Benchmark style for RANDOM corpus generation. Controls range ratio formula, token pool composition, and other per-tool behaviors. `vllm` (default) mirrors `vllm bench serve`: symmetric range window, non-special token pool (special tokens excluded). `sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). Applies in two independent places: token-pool selection whenever `--prompt-corpus random` is set (including with no `--random-range-ratio`, where the pool is the only thing the style selects), and the range-window formula, special-token accounting and RNG algorithm whenever `--random-range-ratio` is set — the latter regardless of corpus.
 
 **Choices:**
 
