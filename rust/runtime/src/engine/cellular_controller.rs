@@ -46,9 +46,9 @@ use crate::cellular::transport::CellPhaseSignal;
 #[cfg(feature = "cellular")]
 use crate::cellular::transport::connect::{BindSpec, build_velo};
 #[cfg(feature = "cellular")]
-use crate::cellular::{
-    CellMessage, CellRegistrationSpec, ControllerTransport, SpecFor, VeloControllerTransport,
-};
+use crate::cellular::transport::velo_transport::{CellRegistrationPlan, PlanRegistration};
+#[cfg(feature = "cellular")]
+use crate::cellular::{CellMessage, ControllerTransport, VeloControllerTransport};
 #[cfg(feature = "cellular")]
 use crate::engine::cell_launcher::{CellHandle, CellLaunchContext, select_launcher};
 #[cfg(feature = "cellular")]
@@ -1055,8 +1055,8 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         };
 
         // Precompute each cell's sliced execute envelope; the register handler serves
-        // it as that cell's spec (replacing the stdin pipe).
-        let mut specs: Vec<Vec<u8>> = Vec::with_capacity(cell_count as usize);
+        // it as that cell's launch envelope (replacing the stdin pipe).
+        let mut envelopes: Vec<Vec<u8>> = Vec::with_capacity(cell_count as usize);
         let mut expected_replay_traces = BTreeSet::new();
         for cell_id in 0..cell_count {
             let cell_dir = temp_root.join(format!("cell-{cell_id}"));
@@ -1087,26 +1087,27 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                     "controller replay assignment duplicated {identity:?}"
                 );
             }
-            specs.push(
+            envelopes.push(
                 serde_json::to_vec(&cell_envelope)
                     .with_context(|| format!("serializing cell {cell_id} envelope"))?,
             );
         }
-        let specs = std::sync::Arc::new(specs);
-        let spec_for: SpecFor = {
-            let specs = specs.clone();
+        let envelopes = std::sync::Arc::new(envelopes);
+        let plan_registration: PlanRegistration = {
+            let envelopes = envelopes.clone();
             let registrar = artifact_server.as_ref().map(|server| server.registrar());
-            std::sync::Arc::new(move |register| {
-                let Some(envelope) = specs.get(register.cell_id as usize).cloned() else {
+            std::sync::Arc::new(move |verified| {
+                let register: crate::cellular::transport::CellRegister =
+                    verified.decode_payload()?;
+                let Some(envelope) = envelopes.get(register.cell_id as usize).cloned() else {
                     return Ok(None);
                 };
-                let artifact_channel = match &registrar {
+                let artifact = match &registrar {
                     Some(registrar) => {
                         let digest = register.artifact_capability_digest.context(
                             "cell omitted artifact capability while controller enabled artifact transfer",
                         )?;
-                        registrar.register(register.cell_id, digest)?;
-                        Some(registrar.server_config())
+                        Some(registrar.prepare(register.cell_id, digest)?)
                     }
                     None => {
                         ensure!(
@@ -1116,9 +1117,9 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                         None
                     }
                 };
-                Ok(Some(CellRegistrationSpec {
+                Ok(Some(CellRegistrationPlan {
                     envelope,
-                    artifact_channel,
+                    artifact,
                 }))
             })
         };
@@ -1140,7 +1141,7 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
             let (transport, receiver, server) = build_cellular_hub(
                 velo,
                 registration_authority.clone(),
-                spec_for,
+                plan_registration,
                 cell_count,
                 start_handle,
                 cell_coordinate.clone(),
@@ -1157,7 +1158,7 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
             VeloControllerTransport::bind_controller(
                 velo,
                 registration_authority.clone(),
-                spec_for,
+                plan_registration,
                 cell_count,
                 start_handle,
             )
@@ -1684,7 +1685,7 @@ async fn build_cellular_hub(
     registration_authority: std::sync::Arc<
         crate::engine::cellular_registration::CellRegistrationAuthority,
     >,
-    spec_for: SpecFor,
+    plan_registration: PlanRegistration,
     cell_count: u32,
     start_handle: velo::EventHandle,
     endpoint: String,
@@ -1706,7 +1707,7 @@ async fn build_cellular_hub(
 
     // Cell↔controller plugin: capture its transport for the collect loop to own.
     let cell_plugin = CellControllerHubPlugin::new(
-        spec_for,
+        plan_registration,
         cell_count,
         start_handle,
         registration_authority.clone(),
@@ -3354,16 +3355,17 @@ mod tests {
         let velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("hub velo");
-        let controller_peer = velo.peer_info();
+        let controller_peer = velo.messenger().peer_info();
         let start = velo.event_manager().new_event().expect("start event");
         let start_handle = start.handle();
         let (authority, credentials) =
             crate::engine::cellular_registration::CellRegistrationAuthority::mint(1)
                 .expect("registration authority");
-        let spec_for: SpecFor = std::sync::Arc::new(|register| {
-            Ok(Some(CellRegistrationSpec {
+        let plan_registration: PlanRegistration = std::sync::Arc::new(|verified| {
+            let register: crate::cellular::transport::CellRegister = verified.decode_payload()?;
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![register.cell_id as u8, 0x5A],
-                artifact_channel: None,
+                artifact: None,
             }))
         });
         let allowed: std::collections::HashSet<String> = [rel.to_owned()].into_iter().collect();
@@ -3371,7 +3373,7 @@ mod tests {
         let (mut transport, receiver, _server) = build_cellular_hub(
             velo,
             std::sync::Arc::new(authority),
-            spec_for,
+            plan_registration,
             1,
             start_handle,
             endpoint.clone(),
@@ -3386,8 +3388,12 @@ mod tests {
         // A cell dials the hub by its tcp:// coordinate (the same anchor), registers,
         // and ships a heartbeat surfaced by the hub-mounted cell↔controller handlers.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let mut cell =
-            VeloCellClient::connect(cell_velo, controller_peer.clone()).expect("connect");
+        let mut cell = VeloCellClient::connect_authenticated(
+            cell_velo,
+            controller_peer.clone(),
+            std::sync::Arc::new(credentials[0].clone()),
+        )
+        .expect("connect");
         let reply = cell
             .register_with_credential(0, None, &credentials[0])
             .await
@@ -3807,7 +3813,10 @@ mod tests {
         let landed = temporary.path().join("landed.jsonl");
         let bearer = crate::engine::artifact_shipping::ArtifactBearer::from_test_bytes([0xD1; 32]);
         let registrar = server.registrar();
-        registrar.register(0, bearer.digest_bytes()).unwrap();
+        registrar
+            .prepare(0, bearer.digest_bytes())
+            .unwrap()
+            .commit();
         let client = crate::engine::artifact_shipping::ArtifactChannelClient::new(
             server.local_addr().to_string(),
             registrar.server_config(),

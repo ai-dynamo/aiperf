@@ -45,23 +45,20 @@ use super::{
     HANDLER_PARTITION, HANDLER_PHASE_SIGNAL, HANDLER_PREFLIGHT, HANDLER_REGISTER,
     HANDLER_STORE_PARTITION,
 };
+use crate::engine::artifact_shipping::ArtifactRegistrationPlan;
 use crate::engine::cellular_registration::{
     AdmissionPurpose, AuthenticatedFrame, CellRegistrationAuthority, CellRegistrationCredential,
     ControllerRegisterAttestation, ControllerRegisterAttestor, ControllerRegisterVerifier,
+    RegistrationBegin, RegistrationLedger, VerifiedFrame,
 };
 
-/// Per-cell material returned only after the controller accepts registration.
-#[derive(Clone)]
-pub struct CellRegistrationSpec {
-    /// The cell's sliced execute envelope.
-    pub envelope: Vec<u8>,
-    /// The public certificate for the authenticated TLS artifact channel.
-    pub artifact_channel: Option<ArtifactChannelServerConfig>,
+pub(crate) struct CellRegistrationPlan {
+    pub(crate) envelope: Vec<u8>,
+    pub(crate) artifact: Option<ArtifactRegistrationPlan>,
 }
 
-/// Validates a complete registration request and returns its per-cell material.
-pub type SpecFor =
-    Arc<dyn Fn(&CellRegister) -> anyhow::Result<Option<CellRegistrationSpec>> + Send + Sync>;
+pub(crate) type PlanRegistration =
+    Arc<dyn Fn(&VerifiedFrame) -> anyhow::Result<Option<CellRegistrationPlan>> + Send + Sync>;
 
 /// The controller's reply to a cell's registration: the cell's sliced execute
 /// envelope plus the handle of the run-wide **START** event. The cell awaits that
@@ -99,6 +96,95 @@ struct RegisterReplyPayloadRef<'a> {
 struct AttestedRegisterReply {
     payload: Vec<u8>,
     attestation: ControllerRegisterAttestation,
+}
+
+fn encode_attested_register_reply(
+    payload: Vec<u8>,
+    attestation: ControllerRegisterAttestation,
+) -> Result<Bytes, CellTransportError> {
+    rmp_serde::to_vec(&AttestedRegisterReply {
+        payload,
+        attestation,
+    })
+    .map(Bytes::from)
+    .map_err(encode)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_registration_transaction<A, E, R, N>(
+    registration_authority: &CellRegistrationAuthority,
+    registration_ledger: &RegistrationLedger,
+    plan_registration: &PlanRegistration,
+    controller_peer: &PeerInfo,
+    start_event: EventHandle,
+    registration_frame: Bytes,
+    attest: A,
+    encode_reply: E,
+    register_peer: R,
+    notify_registered: N,
+) -> anyhow::Result<Bytes>
+where
+    A: FnOnce(
+        &ControllerPeerBinding,
+        &[u8],
+        &[u8],
+    ) -> anyhow::Result<ControllerRegisterAttestation>,
+    E: FnOnce(Vec<u8>, ControllerRegisterAttestation) -> anyhow::Result<Bytes>,
+    R: FnOnce(PeerInfo) -> anyhow::Result<()>,
+    N: FnOnce(),
+{
+    let verified = registration_authority
+        .verify_registration_frame(registration_frame)
+        .map_err(anyhow::Error::new)?;
+    if let Some(reply) = registration_ledger
+        .cached_reply(&verified)
+        .map_err(anyhow::Error::new)?
+    {
+        return Ok(reply);
+    }
+    let register: CellRegister = verified.decode_payload()?;
+    ensure!(
+        verified.role() == crate::engine::cellular_bootstrap::CellularRole::Cell(register.cell_id)
+            && verified.peer_info() == register.cell_peer,
+        "registration identity mismatch"
+    );
+    let registration = registration_authority.verify(&register, controller_peer)?;
+    ensure!(
+        registration.cell_id() == register.cell_id,
+        "registration cell mismatch"
+    );
+    let peer: PeerInfo = rmp_serde::from_slice(verified.peer_info())
+        .map_err(|_| anyhow::anyhow!("registration peer is malformed"))?;
+    let mut prepared = match registration_ledger
+        .begin(&verified)
+        .map_err(anyhow::Error::new)?
+    {
+        RegistrationBegin::ExactRetry { reply } => return Ok(reply),
+        RegistrationBegin::Prepared(prepared) => prepared,
+    };
+    let plan = plan_registration(&verified)?
+        .ok_or_else(|| anyhow::anyhow!("no launch plan for cell {}", register.cell_id))?;
+    prepared.install_plan(plan);
+    let artifact_channel = prepared.artifact_channel();
+    let reply_payload = encode_reply_payload(prepared.envelope(), start_event, &artifact_channel)
+        .map_err(anyhow::Error::new)?;
+    let binding = &register
+        .registration_proof
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("verified registration proof is missing"))?
+        .controller_binding;
+    let attestation = attest(
+        binding,
+        verified.encoded().as_ref(),
+        reply_payload.as_slice(),
+    )?;
+    let reply = encode_reply(reply_payload, attestation)?;
+    register_peer(peer)?;
+    let commit = prepared.commit(reply.clone());
+    if commit.should_advance_barrier() {
+        notify_registered();
+    }
+    Ok(reply)
 }
 
 fn encode_reply_payload(
@@ -194,12 +280,6 @@ fn io(error: impl std::fmt::Display) -> CellTransportError {
     CellTransportError::Io(error.to_string())
 }
 
-#[derive(Clone, Copy)]
-struct RegisteredCell {
-    session_nonce: [u8; 32],
-    payload_digest: [u8; 32],
-}
-
 /// The controller's velo endpoint: registers the control/partition handlers and exposes a
 /// merged [`ControllerTransport::recv`] stream of every cell's decoded messages.
 pub struct VeloControllerTransport {
@@ -215,13 +295,13 @@ pub struct VeloControllerTransport {
 
 impl VeloControllerTransport {
     /// Register the register/control/partition handlers on `velo` and return the
-    /// controller transport. `spec_for` supplies each registering cell's
-    /// `CellLaunchSpec` bytes; `start_event` is the run-wide START handle returned
-    /// to each cell; the barrier fires once all `cell_count` cells have registered.
+    /// controller transport. `plan_registration` validates each registering cell
+    /// and prepares its launch material; `start_event` is the run-wide START handle
+    /// returned to each cell. The barrier fires once every cell has registered.
     pub(crate) fn bind_controller(
         velo: Arc<Velo>,
         registration_authority: Arc<CellRegistrationAuthority>,
-        spec_for: SpecFor,
+        plan_registration: PlanRegistration,
         cell_count: u32,
         start_event: EventHandle,
     ) -> Result<Self, CellTransportError> {
@@ -230,7 +310,7 @@ impl VeloControllerTransport {
             velo,
             registration_authority,
             reply_attestor,
-            spec_for,
+            plan_registration,
             cell_count,
             start_event,
         )
@@ -240,7 +320,7 @@ impl VeloControllerTransport {
         velo: Arc<Velo>,
         registration_authority: Arc<CellRegistrationAuthority>,
         reply_attestor: ControllerRegisterAttestor,
-        spec_for: SpecFor,
+        plan_registration: PlanRegistration,
         cell_count: u32,
         start_event: EventHandle,
     ) -> Result<Self, CellTransportError> {
@@ -249,11 +329,8 @@ impl VeloControllerTransport {
         let preflight = Arc::new(crate::graph::supplement::GraphCellPreflightBarrier::new(
             cell_count,
         ));
-        let registered = Arc::new(parking_lot::Mutex::new(vec![
-            None::<RegisteredCell>;
-            registration_authority
-                .planned_cell_capacity()
-        ]));
+        let registration_ledger =
+            RegistrationLedger::new(Arc::clone(&registration_authority), cell_count);
         let register_authority = registration_authority.clone();
         let partition_authority = registration_authority.clone();
         let store_partition_authority = registration_authority.clone();
@@ -262,104 +339,41 @@ impl VeloControllerTransport {
         let controller_peer = velo.messenger().peer_info();
 
         // register (unary): learn the cell, count it toward the start barrier, and
-        // return its spec + the START handle it must await before dispatching.
+        // return its launch material + the START handle it must await before dispatching.
         let reg_notify = all_registered.clone();
-        let registration_state = registered.clone();
+        let registration_state = registration_ledger.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_REGISTER, move |ctx: Context| {
-                let spec_for = spec_for.clone();
+                let plan_registration = plan_registration.clone();
                 let registration_authority = register_authority.clone();
-                let registered = registration_state.clone();
+                let registration_ledger = registration_state.clone();
                 let reg_notify = reg_notify.clone();
                 let reply_attestor = reply_attestor.clone();
                 let controller_peer = controller_peer.clone();
                 async move {
-                    let opened = registration_authority
-                        .open_payload::<CellRegister>(AdmissionPurpose::Register, &ctx.payload)
-                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
-                    let (role, session_nonce, authenticated_peer, register) = opened.into_parts();
-                    ensure!(
-                        role == crate::engine::cellular_bootstrap::CellularRole::Cell(
-                            register.cell_id,
-                        ) && authenticated_peer == register.cell_peer,
-                        "AdmissionRejected"
-                    );
-                    let verified = registration_authority
-                        .verify(&register, &controller_peer)
-                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
-                    ensure!(verified.cell_id() == register.cell_id, "AdmissionRejected");
-                    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
-                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
-                    let payload_digest = *blake3::hash(
-                        &rmp_serde::to_vec(&register)
-                            .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?,
+                    execute_registration_transaction(
+                        &registration_authority,
+                        &registration_ledger,
+                        &plan_registration,
+                        &controller_peer,
+                        start_event,
+                        ctx.payload.clone(),
+                        |binding, registration, payload| {
+                            reply_attestor.attest(binding, registration, payload)
+                        },
+                        |payload, attestation| {
+                            encode_attested_register_reply(payload, attestation)
+                                .map_err(anyhow::Error::new)
+                        },
+                        |peer| {
+                            ctx.msg
+                                .register_peer(peer)
+                                .map_err(|error| anyhow::anyhow!("register_peer cell: {error}"))
+                        },
+                        || reg_notify.notify_one(),
                     )
-                    .as_bytes();
-                    if let Some(existing) = registered
-                        .lock()
-                        .get(register.cell_id as usize)
-                        .copied()
-                        .flatten()
-                    {
-                        ensure!(
-                            existing.session_nonce != session_nonce
-                                || existing.payload_digest == payload_digest,
-                            "AdmissionRejected"
-                        );
-                    }
-                    let Some(spec) = spec_for(&register)? else {
-                        return Err(anyhow::anyhow!(
-                            "no launch spec for cell {}",
-                            register.cell_id
-                        ));
-                    };
-                    let is_new_registration = {
-                        let mut registered = registered.lock();
-                        let slot = registered
-                            .get_mut(register.cell_id as usize)
-                            .ok_or_else(|| anyhow::anyhow!("AdmissionRejected"))?;
-                        if let Some(existing) = *slot {
-                            ensure!(
-                                existing.session_nonce != session_nonce
-                                    || existing.payload_digest == payload_digest,
-                                "AdmissionRejected"
-                            );
-                        }
-                        let is_new = slot.is_none();
-                        *slot = Some(RegisteredCell {
-                            session_nonce,
-                            payload_digest,
-                        });
-                        is_new
-                    };
-                    ctx.msg
-                        .register_peer(peer)
-                        .map_err(|error| anyhow::anyhow!("register_peer cell: {error}"))?;
-                    let is_last_registration = is_new_registration
-                        && registered
-                            .lock()
-                            .iter()
-                            .filter(|registered| registered.is_some())
-                            .count()
-                            == cell_count as usize;
-                    if is_last_registration {
-                        reg_notify.notify_one();
-                    }
-                    let reply_payload =
-                        encode_reply_payload(&spec.envelope, start_event, &spec.artifact_channel)?;
-                    let binding = &register
-                        .registration_proof
-                        .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("verified registration proof is missing"))?
-                        .controller_binding;
-                    let attestation =
-                        reply_attestor.attest(binding, &ctx.payload, &reply_payload)?;
-                    let bytes = rmp_serde::to_vec(&AttestedRegisterReply {
-                        payload: reply_payload,
-                        attestation,
-                    })
-                    .map_err(|error| anyhow::anyhow!("encode RegisterReply: {error}"))?;
-                    Ok(Some(Bytes::from(bytes)))
+                    .map(Some)
+                    .map_err(|_| anyhow::anyhow!("AdmissionRejected"))
                 }
             })
             .build(),
@@ -560,7 +574,7 @@ impl ControllerTransport for VeloControllerTransport {
 /// A cell's velo client to the controller. Built from a velo instance and the
 /// controller's resolved [`PeerInfo`] (obtained via the bootstrap in
 /// [`connect`](crate::cellular::transport::connect)); [`register`](Self::register)
-/// fetches the cell's launch spec, and [`CellClient::send`] ships control messages and
+/// fetches the cell's launch envelope, and [`CellClient::send`] ships control messages and
 /// the final partition.
 pub struct VeloCellClient {
     velo: Arc<Velo>,
@@ -896,7 +910,7 @@ impl CellClient for VeloCellClient {
 mod tests {
     use std::collections::HashSet;
     use std::process::Command;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
     use std::time::Duration;
 
     use super::*;
@@ -907,12 +921,18 @@ mod tests {
         DatasetServer, HANDLER_DATASET_SUBSCRIBE, WirePayload,
     };
     use crate::cellular::transport::phaser_velo::{HANDLER_PHASER_SUBSCRIBE, PhaserServer};
+    use crate::engine::artifact_shipping::{
+        ArtifactBearer, ArtifactChannelClient, ArtifactChannelRegistrar, ArtifactUploadServer,
+        ship_cell_artifacts,
+    };
     use crate::engine::artifact_stream_velo::{
         ArtifactVeloReceiver, HANDLER_ARTIFACT_CLOSE, HANDLER_ARTIFACT_DONE, HANDLER_ARTIFACT_OPEN,
     };
     use crate::engine::cellular_bootstrap::CellularRole;
     use crate::engine::cellular_registration::{
-        ADMISSION_PURPOSE_COUNT, CellRegistrationAuthority, MAX_AUTHENTICATED_FRAME_BYTES,
+        ADMISSION_PURPOSE_COUNT, AdmissionRejection, CellRegistrationAuthority,
+        CellRegistrationCredential, CellSecurityContext, MAX_AUTHENTICATED_FRAME_BYTES,
+        RegistrationBegin, RegistrationConflict, RegistrationLedger, RoleVerifyingKey,
     };
     use crate::metrics_core::accumulator::MetricsAccumulator;
 
@@ -1067,10 +1087,15 @@ mod tests {
     ) {
         let baseline = authority.invalid_count(purpose);
         let trace_baseline = trace_events.load(Ordering::Relaxed);
-        let mut invalids = vec![Bytes::copy_from_slice(valid), malformed_frame(valid, false)];
+        let mut invalids = if purpose == AdmissionPurpose::Register {
+            vec![malformed_frame(valid, false)]
+        } else {
+            vec![Bytes::copy_from_slice(valid), malformed_frame(valid, false)]
+        };
         if has_peer_decode {
             invalids.push(malformed_frame(valid, true));
         }
+        let rejected_frames = invalids.len();
 
         if is_fire {
             for body in &invalids {
@@ -1101,10 +1126,8 @@ mod tests {
 
         let rejected = if purpose == AdmissionPurpose::Heartbeat {
             10_000
-        } else if has_peer_decode {
-            3
         } else {
-            2
+            rejected_frames as u64
         };
         wait_for_invalid_count(authority, purpose, baseline + rejected).await;
         assert_eq!(
@@ -1205,19 +1228,19 @@ mod tests {
             .expect("start event");
         let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
         let authority = Arc::new(authority);
-        let spec_calls = Arc::new(AtomicUsize::new(0));
-        let seen_spec_calls = Arc::clone(&spec_calls);
-        let spec_for: SpecFor = Arc::new(move |_| {
-            seen_spec_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(Some(CellRegistrationSpec {
+        let plan_calls = Arc::new(AtomicUsize::new(0));
+        let seen_plan_calls = Arc::clone(&plan_calls);
+        let plan_registration: PlanRegistration = Arc::new(move |_| {
+            seen_plan_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![0xA5],
-                artifact_channel: None,
+                artifact: None,
             }))
         });
         let mut controller = VeloControllerTransport::bind_controller(
             Arc::clone(&controller_velo),
             Arc::clone(&authority),
-            spec_for,
+            plan_registration,
             1,
             start.handle(),
         )
@@ -1300,7 +1323,7 @@ mod tests {
                     let body = credential
                         .seal_payload(AdmissionPurpose::Register, &cell_peer, &register)
                         .expect("seal register");
-                    send_unary(
+                    let first = send_unary(
                         &cell_velo,
                         &controller_peer,
                         &handler,
@@ -1308,7 +1331,16 @@ mod tests {
                     )
                     .await
                     .expect("valid register");
-                    assert_eq!(spec_calls.load(Ordering::Relaxed), 1);
+                    let retry = send_unary(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await
+                    .expect("exact registration retry");
+                    assert_eq!(first, retry);
+                    assert_eq!(plan_calls.load(Ordering::Relaxed), 1);
                     reject_invalid_frames(
                         &cell_velo,
                         &controller_peer,
@@ -1322,7 +1354,7 @@ mod tests {
                         false,
                     )
                     .await;
-                    assert_eq!(spec_calls.load(Ordering::Relaxed), 1);
+                    assert_eq!(plan_calls.load(Ordering::Relaxed), 1);
                 }
                 HANDLER_PREFLIGHT => {
                     let body = credential
@@ -1819,14 +1851,447 @@ mod tests {
         }
     }
 
-    #[test]
-    fn artifact_channel_registration_keeps_envelope_separate() {
-        let public_config = ArtifactChannelServerConfig::new(vec![1, 2, 3]);
-        let spec = CellRegistrationSpec {
-            envelope: b"{\"run\":{}}".to_vec(),
-            artifact_channel: Some(public_config),
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[repr(u8)]
+    enum FailurePoint {
+        None,
+        Plan,
+        Attest,
+        Encode,
+        RegisterPeer,
+    }
+
+    struct PlanningReleaseGuard {
+        release: Arc<std::sync::Barrier>,
+        is_armed: bool,
+    }
+
+    impl PlanningReleaseGuard {
+        fn new(release: Arc<std::sync::Barrier>) -> Self {
+            Self {
+                release,
+                is_armed: true,
+            }
+        }
+
+        fn release(mut self) {
+            self.release.wait();
+            self.is_armed = false;
+        }
+    }
+
+    impl Drop for PlanningReleaseGuard {
+        fn drop(&mut self) {
+            if self.is_armed {
+                self.release.wait();
+            }
+        }
+    }
+
+    struct RegistrationTransactionFixture {
+        _temporary: tempfile::TempDir,
+        _cell: Arc<Velo>,
+        controller: Arc<Velo>,
+        controller_peer: PeerInfo,
+        cell_peer: PeerInfo,
+        authority: Arc<CellRegistrationAuthority>,
+        credentials: [CellRegistrationCredential; 2],
+        attestor: ControllerRegisterAttestor,
+        ledger: RegistrationLedger,
+        planner: PlanRegistration,
+        registrar: ArtifactChannelRegistrar,
+        artifact_authority: String,
+        _artifact_server: ArtifactUploadServer,
+        start_event: EventHandle,
+        failure: Arc<AtomicU8>,
+        plan_calls: Arc<AtomicUsize>,
+        barrier_count: Arc<AtomicUsize>,
+    }
+
+    impl RegistrationTransactionFixture {
+        async fn new(failure_point: FailurePoint) -> Self {
+            let temporary = tempfile::tempdir().expect("registration fixture temporary directory");
+            let artifact_server = ArtifactUploadServer::start(
+                "127.0.0.1:0".parse().unwrap(),
+                temporary.path().join("landed"),
+                HashSet::new(),
+                1,
+            )
+            .await
+            .expect("artifact server");
+            let registrar = artifact_server.registrar();
+            let artifact_authority = artifact_server.local_addr().to_string();
+            let controller = build_velo(BindSpec::TcpLoopback)
+                .await
+                .expect("controller velo");
+            let cell = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+            let controller_peer = controller.messenger().peer_info();
+            let cell_peer = cell.peer_info();
+            let run_nonce = [0x41; 32];
+            let controller_signer = ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]);
+            let cell_signer = ed25519_dalek::SigningKey::from_bytes(&[0x43; 32]);
+            let controller_context = Arc::new(
+                CellSecurityContext::controller(
+                    run_nonce,
+                    controller_signer.clone(),
+                    vec![RoleVerifyingKey {
+                        role: CellularRole::Cell(0),
+                        verifier: cell_signer.verifying_key(),
+                    }]
+                    .into_boxed_slice(),
+                )
+                .expect("controller security context"),
+            );
+            let worker = |signer| {
+                Arc::new(
+                    CellSecurityContext::worker(
+                        run_nonce,
+                        CellularRole::Cell(0),
+                        signer,
+                        controller_signer.verifying_key(),
+                    )
+                    .expect("worker security context"),
+                )
+                .registration_credential()
+                .expect("registration credential")
+            };
+            let credentials = [worker(cell_signer.clone()), worker(cell_signer)];
+            let authority = Arc::new(
+                controller_context
+                    .registration_authority()
+                    .expect("registration authority"),
+            );
+            let attestor = controller_context
+                .reply_attestor()
+                .expect("registration reply attestor");
+            let ledger = RegistrationLedger::new(Arc::clone(&authority), 1);
+            let failure = Arc::new(AtomicU8::new(failure_point as u8));
+            let plan_calls = Arc::new(AtomicUsize::new(0));
+            let planner: PlanRegistration = {
+                let failure = Arc::clone(&failure);
+                let plan_calls = Arc::clone(&plan_calls);
+                let registrar = registrar.clone();
+                Arc::new(move |verified| {
+                    plan_calls.fetch_add(1, Ordering::Relaxed);
+                    if failure.load(Ordering::Relaxed) == FailurePoint::Plan as u8 {
+                        anyhow::bail!("injected registration planning failure");
+                    }
+                    let register: CellRegister = verified.decode_payload()?;
+                    let digest = register
+                        .artifact_capability_digest
+                        .ok_or_else(|| anyhow::anyhow!("missing artifact capability"))?;
+                    Ok(Some(CellRegistrationPlan {
+                        envelope: vec![0xA5],
+                        artifact: Some(registrar.prepare(register.cell_id, digest)?),
+                    }))
+                })
+            };
+            let start_event = controller
+                .event_manager()
+                .new_event()
+                .expect("start event")
+                .handle();
+            Self {
+                _temporary: temporary,
+                _cell: cell,
+                controller,
+                controller_peer,
+                cell_peer,
+                authority,
+                credentials,
+                attestor,
+                ledger,
+                planner,
+                registrar,
+                artifact_authority,
+                _artifact_server: artifact_server,
+                start_event,
+                failure,
+                plan_calls,
+                barrier_count: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn frame(&self, credential_index: usize, peer: &PeerInfo, bearer_byte: u8) -> Bytes {
+            let credential = &self.credentials[credential_index];
+            let cell_peer = rmp_serde::to_vec(peer).expect("encode cell peer");
+            let digest = ArtifactBearer::from_test_bytes([bearer_byte; 32]).digest_bytes();
+            let binding = ControllerPeerBinding::new(
+                &self.controller_peer,
+                DialedControllerAddress::Tcp("127.0.0.1:9500".parse().unwrap()),
+            )
+            .expect("controller binding");
+            let register = CellRegister {
+                cell_id: 0,
+                cell_peer,
+                artifact_capability_digest: Some(digest),
+                registration_proof: Some(
+                    credential
+                        .sign_register(
+                            &rmp_serde::to_vec(peer).expect("encode proof peer"),
+                            Some(digest),
+                            binding,
+                        )
+                        .expect("registration proof"),
+                ),
+            };
+            Bytes::from(
+                credential
+                    .seal_payload(AdmissionPurpose::Register, peer, &register)
+                    .expect("authenticated registration frame"),
+            )
+        }
+
+        fn exact_frame(&self) -> Bytes {
+            self.frame(0, &self.cell_peer, 0x31)
+        }
+
+        fn heartbeat_frame(&self) -> Bytes {
+            Bytes::from(
+                self.credentials[0]
+                    .seal_payload(
+                        AdmissionPurpose::Heartbeat,
+                        &self.cell_peer,
+                        &CellMessage::Heartbeat {
+                            cell_id: 0,
+                            heartbeat: Box::new(sample_heartbeat()),
+                        },
+                    )
+                    .expect("authenticated heartbeat frame"),
+            )
+        }
+
+        fn register_frame(&self, frame: Bytes) -> anyhow::Result<Bytes> {
+            self.register_frame_with_planner(frame, &self.planner)
+        }
+
+        fn register_frame_with_planner(
+            &self,
+            frame: Bytes,
+            planner: &PlanRegistration,
+        ) -> anyhow::Result<Bytes> {
+            let failure = Arc::clone(&self.failure);
+            let barrier_count = Arc::clone(&self.barrier_count);
+            execute_registration_transaction(
+                &self.authority,
+                &self.ledger,
+                planner,
+                &self.controller_peer,
+                self.start_event,
+                frame,
+                |binding, registration, payload| {
+                    if failure.load(Ordering::Relaxed) == FailurePoint::Attest as u8 {
+                        anyhow::bail!("injected registration attestation failure");
+                    }
+                    self.attestor.attest(binding, registration, payload)
+                },
+                |payload, attestation| {
+                    if failure.load(Ordering::Relaxed) == FailurePoint::Encode as u8 {
+                        anyhow::bail!("injected registration encoding failure");
+                    }
+                    encode_attested_register_reply(payload, attestation).map_err(anyhow::Error::new)
+                },
+                |peer| {
+                    if failure.load(Ordering::Relaxed) == FailurePoint::RegisterPeer as u8 {
+                        anyhow::bail!("injected reverse peer registration failure");
+                    }
+                    self.controller
+                        .register_peer(peer)
+                        .map_err(|error| anyhow::anyhow!("register peer: {error}"))
+                },
+                move || {
+                    barrier_count.fetch_add(1, Ordering::Relaxed);
+                },
+            )
+        }
+
+        fn register(&self) -> anyhow::Result<Bytes> {
+            self.register_frame(self.exact_frame())
+        }
+
+        fn clear_failure(&self) {
+            self.failure
+                .store(FailurePoint::None as u8, Ordering::Relaxed);
+        }
+
+        async fn artifact_authorized(&self, bearer_byte: u8) -> bool {
+            let client = ArtifactChannelClient::new(
+                self.artifact_authority.clone(),
+                self.registrar.server_config(),
+                ArtifactBearer::from_test_bytes([bearer_byte; 32]),
+            )
+            .expect("artifact client");
+            ship_cell_artifacts(&client, 0, self._temporary.path(), &[])
+                .await
+                .is_ok()
+        }
+
+        fn artifact_publication_count(&self) -> usize {
+            self.registrar.authorization_publication_count()
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registration_transaction_failure_rolls_back_every_application_side_effect() {
+        for failure in [
+            FailurePoint::Plan,
+            FailurePoint::Attest,
+            FailurePoint::Encode,
+            FailurePoint::RegisterPeer,
+        ] {
+            let fixture = RegistrationTransactionFixture::new(failure).await;
+            let frame = fixture.exact_frame();
+            let heartbeat = fixture.heartbeat_frame();
+            assert!(
+                fixture.register_frame(frame.clone()).is_err(),
+                "failure point {failure:?}"
+            );
+            assert_eq!(fixture.barrier_count.load(Ordering::Relaxed), 0);
+            assert_eq!(fixture.artifact_publication_count(), 0);
+            assert!(!fixture.artifact_authorized(0x31).await);
+            assert!(matches!(
+                fixture
+                    .authority
+                    .open_payload::<CellMessage>(AdmissionPurpose::Heartbeat, heartbeat.as_ref(),),
+                Err(AdmissionRejection::Session)
+            ));
+
+            let plan_calls_after_failure = fixture.plan_calls.load(Ordering::Relaxed);
+            fixture.clear_failure();
+            let reply = fixture
+                .register_frame(frame.clone())
+                .unwrap_or_else(|error| panic!("retry after {failure:?}: {error}"));
+            assert_eq!(
+                fixture.plan_calls.load(Ordering::Relaxed),
+                plan_calls_after_failure + 1,
+                "retry after {failure:?} must replan instead of reading a cache"
+            );
+            assert_eq!(decode_reply(&reply, frame).unwrap().envelope, vec![0xA5]);
+            assert_eq!(fixture.barrier_count.load(Ordering::Relaxed), 1);
+            assert_eq!(fixture.artifact_publication_count(), 1);
+            assert!(fixture.artifact_authorized(0x31).await);
+            assert!(
+                fixture
+                    .authority
+                    .open_payload::<CellMessage>(AdmissionPurpose::Heartbeat, heartbeat.as_ref(),)
+                    .is_ok(),
+                "retry after {failure:?} must install the session baseline"
+            );
+            assert!(matches!(
+                fixture
+                    .authority
+                    .open_payload::<CellMessage>(AdmissionPurpose::Heartbeat, heartbeat.as_ref(),),
+                Err(AdmissionRejection::Replay)
+            ));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn exact_registration_transaction_retry_returns_cached_bytes_and_counts_once() {
+        let fixture = RegistrationTransactionFixture::new(FailurePoint::None).await;
+        let frame = fixture.exact_frame();
+        let first = fixture.register_frame(frame.clone()).unwrap();
+        let retry = fixture.register_frame(frame);
+
+        assert_eq!(fixture.plan_calls.load(Ordering::Relaxed), 1);
+        let retry = retry.unwrap();
+        assert_eq!(first, retry);
+        assert_eq!(fixture.barrier_count.load(Ordering::Relaxed), 1);
+        assert_eq!(fixture.artifact_publication_count(), 1);
+        assert!(fixture.artifact_authorized(0x31).await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn changed_registration_transaction_cannot_observe_or_replace_committed_material() {
+        for changed in ["session", "peer", "capability"] {
+            let fixture = RegistrationTransactionFixture::new(FailurePoint::None).await;
+            fixture.register().unwrap();
+            let changed_frame = match changed {
+                "session" => fixture.frame(1, &fixture.cell_peer, 0x31),
+                "peer" => fixture.frame(
+                    0,
+                    &PeerInfo::new(
+                        velo::InstanceId::new_v4(),
+                        velo::WorkerAddress::from_encoded(vec![0x91]),
+                    ),
+                    0x31,
+                ),
+                "capability" => fixture.frame(0, &fixture.cell_peer, 0x32),
+                _ => unreachable!(),
+            };
+            let error = fixture.register_frame(changed_frame).unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<RegistrationConflict>(),
+                Some(RegistrationConflict::ChangedTranscript)
+            ));
+            assert_eq!(fixture.plan_calls.load(Ordering::Relaxed), 1);
+            assert_eq!(fixture.barrier_count.load(Ordering::Relaxed), 1);
+            assert!(fixture.artifact_authorized(0x31).await);
+            if changed == "capability" {
+                assert!(!fixture.artifact_authorized(0x32).await);
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registration_transaction_concurrent_exact_is_busy_and_drop_restores_vacancy() {
+        let fixture = RegistrationTransactionFixture::new(FailurePoint::None).await;
+        let frame = fixture.exact_frame();
+        let planning_started = Arc::new(std::sync::Barrier::new(2));
+        let release_planning = Arc::new(std::sync::Barrier::new(2));
+        let held_planner: PlanRegistration = {
+            let planner = Arc::clone(&fixture.planner);
+            let planning_started = Arc::clone(&planning_started);
+            let release_planning = Arc::clone(&release_planning);
+            Arc::new(move |verified| {
+                let plan = planner(verified)?;
+                planning_started.wait();
+                release_planning.wait();
+                Ok(plan)
+            })
         };
-        assert_eq!(spec.envelope, b"{\"run\":{}}".to_vec());
+
+        std::thread::scope(|scope| {
+            let held_frame = frame.clone();
+            let held =
+                scope.spawn(|| fixture.register_frame_with_planner(held_frame, &held_planner));
+            planning_started.wait();
+            let release_guard = PlanningReleaseGuard::new(Arc::clone(&release_planning));
+            let changed_frame = fixture.frame(0, &fixture.cell_peer, 0x32);
+            let exact = scope.spawn(|| fixture.register_frame(frame.clone()));
+            let changed = scope.spawn(|| fixture.register_frame(changed_frame));
+            let exact = exact.join().unwrap();
+            let changed = changed.join().unwrap();
+            release_guard.release();
+            let held = held.join().unwrap();
+            assert!(matches!(
+                exact.unwrap_err().downcast_ref(),
+                Some(RegistrationConflict::Busy(_))
+            ));
+            assert!(matches!(
+                changed.unwrap_err().downcast_ref(),
+                Some(RegistrationConflict::ChangedTranscript)
+            ));
+            assert!(held.is_ok());
+        });
+        assert_eq!(fixture.plan_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(fixture.barrier_count.load(Ordering::Relaxed), 1);
+
+        let replacement = RegistrationTransactionFixture::new(FailurePoint::None).await;
+        let frame = replacement.exact_frame();
+        let verified = replacement
+            .authority
+            .verify_registration_frame(frame.clone())
+            .unwrap();
+        let mut prepared = match replacement.ledger.begin(&verified).unwrap() {
+            RegistrationBegin::Prepared(prepared) => prepared,
+            RegistrationBegin::ExactRetry { .. } => panic!("fresh slot returned a retry"),
+        };
+        let plan = (replacement.planner)(&verified).unwrap().unwrap();
+        prepared.install_plan(plan);
+        drop(prepared);
+        assert!(replacement.register_frame(frame).is_ok());
+        assert_eq!(replacement.barrier_count.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
@@ -1927,16 +2392,17 @@ mod tests {
             .expect("start event");
         let start_handle = start.handle();
         let (authority, credentials) = CellRegistrationAuthority::mint(4).expect("authority");
-        let spec_for: SpecFor = Arc::new(|register| {
-            Ok(Some(CellRegistrationSpec {
+        let plan_registration: PlanRegistration = Arc::new(|verified| {
+            let register: CellRegister = verified.decode_payload()?;
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![register.cell_id as u8, 0xAB],
-                artifact_channel: None,
+                artifact: None,
             }))
         });
         let mut controller = VeloControllerTransport::bind_controller(
             controller_velo,
             Arc::new(authority),
-            spec_for,
+            plan_registration,
             1,
             start_handle,
         )
@@ -1997,7 +2463,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn artifact_registration_requires_controller_minted_proof_before_spec() {
+    async fn artifact_registration_requires_controller_minted_proof_before_planning() {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
             .await
             .expect("controller velo");
@@ -2007,19 +2473,19 @@ mod tests {
             .new_event()
             .expect("start event");
         let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
-        let spec_calls = Arc::new(AtomicUsize::new(0));
-        let seen = spec_calls.clone();
-        let spec_for: SpecFor = Arc::new(move |_| {
+        let plan_calls = Arc::new(AtomicUsize::new(0));
+        let seen = plan_calls.clone();
+        let plan_registration: PlanRegistration = Arc::new(move |_| {
             seen.fetch_add(1, Ordering::Relaxed);
-            Ok(Some(CellRegistrationSpec {
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![0xA5],
-                artifact_channel: None,
+                artifact: None,
             }))
         });
         let _controller = VeloControllerTransport::bind_controller(
             controller_velo,
             Arc::new(authority),
-            spec_for,
+            plan_registration,
             1,
             start.handle(),
         )
@@ -2032,28 +2498,31 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert_eq!(spec_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(plan_calls.load(Ordering::Relaxed), 0);
 
         let reply = cell
             .register_with_credential(0, Some([0x11; 32]), &credentials[0])
             .await
             .expect("controller-minted proof registers");
         assert_eq!(reply.envelope, vec![0xA5]);
-        assert_eq!(spec_calls.load(Ordering::Relaxed), 1);
-        cell.register_with_credential(0, Some([0x11; 32]), &credentials[0])
-            .await
-            .expect("exact authenticated retry registers");
-        assert_eq!(spec_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(plan_calls.load(Ordering::Relaxed), 1);
+        assert!(
+            cell.register_with_credential(0, Some([0x11; 32]), &credentials[0])
+                .await
+                .is_err(),
+            "a newly sealed frame is a changed transcript, not an exact wire retry"
+        );
+        assert_eq!(plan_calls.load(Ordering::Relaxed), 1);
         assert!(
             cell.register_with_credential(0, Some([0x22; 32]), &credentials[0])
                 .await
                 .is_err()
         );
-        assert_eq!(spec_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(plan_calls.load(Ordering::Relaxed), 1);
     }
 
     // A cell ships its partition from a DIFFERENT velo instance than the one it
-    // registered with (as in a real cell, the spec-fetch instance is gone by
+    // registered with (as in a real cell, the registration instance is gone by
     // ship time). The partition ship carries its peer, so the controller can ack
     // the fresh instance even though it only saw the register instance.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2068,16 +2537,16 @@ mod tests {
             .expect("start event");
         let start_handle = start.handle();
         let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
-        let spec_for: SpecFor = Arc::new(|_| {
-            Ok(Some(CellRegistrationSpec {
+        let plan_registration: PlanRegistration = Arc::new(|_| {
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![1_u8],
-                artifact_channel: None,
+                artifact: None,
             }))
         });
         let mut controller = VeloControllerTransport::bind_controller(
             controller_velo,
             Arc::new(authority),
-            spec_for,
+            plan_registration,
             1,
             start_handle,
         )
@@ -2123,11 +2592,11 @@ mod tests {
         let controller_peer = controller_velo.peer_info();
         let start = controller_velo.event_manager().new_event().expect("start");
         let (authority, _) = CellRegistrationAuthority::mint(1).expect("authority");
-        let spec_for: SpecFor = Arc::new(|_| Ok(None));
+        let plan_registration: PlanRegistration = Arc::new(|_| Ok(None));
         let mut controller = VeloControllerTransport::bind_controller(
             controller_velo,
             Arc::new(authority),
-            spec_for,
+            plan_registration,
             1,
             start.handle(),
         )
@@ -2180,16 +2649,16 @@ mod tests {
             .expect("start event");
         let start_handle = start.handle();
         let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
-        let spec_for: SpecFor = Arc::new(|_| {
-            Ok(Some(CellRegistrationSpec {
+        let plan_registration: PlanRegistration = Arc::new(|_| {
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![7_u8],
-                artifact_channel: None,
+                artifact: None,
             }))
         });
         let mut controller = VeloControllerTransport::bind_controller(
             controller_velo,
             Arc::new(authority),
-            spec_for,
+            plan_registration,
             1,
             start_handle,
         )
@@ -2243,16 +2712,16 @@ mod tests {
             .expect("start event");
         let start_handle = start.handle();
         let (authority, credentials) = CellRegistrationAuthority::mint(2).expect("authority");
-        let spec_for: SpecFor = Arc::new(|_| {
-            Ok(Some(CellRegistrationSpec {
+        let plan_registration: PlanRegistration = Arc::new(|_| {
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![9_u8],
-                artifact_channel: None,
+                artifact: None,
             }))
         });
         let controller = VeloControllerTransport::bind_controller(
             controller_velo,
             Arc::new(authority),
-            spec_for,
+            plan_registration,
             2,
             start_handle,
         )
@@ -2299,16 +2768,16 @@ mod tests {
             .expect("start event");
         let start_handle = start.handle();
         let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
-        let spec_for: SpecFor = Arc::new(|_| {
-            Ok(Some(CellRegistrationSpec {
+        let plan_registration: PlanRegistration = Arc::new(|_| {
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![0xCD],
-                artifact_channel: None,
+                artifact: None,
             }))
         });
         let mut controller = VeloControllerTransport::bind_controller(
             controller_velo,
             Arc::new(authority),
-            spec_for,
+            plan_registration,
             1,
             start_handle,
         )

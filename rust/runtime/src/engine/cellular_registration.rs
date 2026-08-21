@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Result, ensure};
+use bytes::Bytes;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::TryRngCore;
 use serde::Serialize;
@@ -330,12 +331,42 @@ impl std::fmt::Display for AdmissionRejection {
 
 impl std::error::Error for AdmissionRejection {}
 
-/// A signature- and replay-verified frame whose raw payload is still undecoded.
+/// A signature-verified frame whose raw payload is still undecoded.
 pub(crate) struct VerifiedFrame {
     role: CellularRole,
     session_nonce: [u8; 32],
+    sequence: u64,
     peer_info: Vec<u8>,
     payload: Vec<u8>,
+    encoded: Bytes,
+    fingerprint: [u8; 32],
+}
+
+impl VerifiedFrame {
+    pub(crate) fn role(&self) -> CellularRole {
+        self.role
+    }
+
+    pub(crate) fn session_nonce(&self) -> [u8; 32] {
+        self.session_nonce
+    }
+
+    pub(crate) fn peer_info(&self) -> &[u8] {
+        &self.peer_info
+    }
+
+    pub(crate) fn encoded(&self) -> &Bytes {
+        &self.encoded
+    }
+
+    pub(crate) fn fingerprint(&self) -> [u8; 32] {
+        self.fingerprint
+    }
+
+    pub(crate) fn decode_payload<T: DeserializeOwned>(&self) -> Result<T> {
+        rmp_serde::from_slice(&self.payload)
+            .map_err(|_| anyhow::anyhow!("authenticated registration payload is malformed"))
+    }
 }
 
 /// A verified frame after its route-specific payload has been decoded.
@@ -471,6 +502,53 @@ impl AdmissionLedger {
         purpose: AdmissionPurpose,
         frame: AuthenticatedFrame,
     ) -> Result<VerifiedFrame, AdmissionRejection> {
+        let verified = self.authenticate_inner(purpose, frame, Bytes::new(), [0; 32])?;
+        {
+            let mut state = self
+                .slots
+                .iter()
+                .find(|slot| slot.role == verified.role)
+                .ok_or(AdmissionRejection::Role)?
+                .state
+                .lock();
+            if purpose == AdmissionPurpose::Register {
+                if state.session_nonce != Some(verified.session_nonce) {
+                    *state = RoleAdmissionState {
+                        session_nonce: Some(verified.session_nonce),
+                        replay: [ReplayWindow::default(); ADMISSION_PURPOSE_COUNT],
+                    };
+                }
+            } else if state.session_nonce != Some(verified.session_nonce) {
+                return Err(AdmissionRejection::Session);
+            }
+            if !state.replay[purpose.index()].accept(verified.sequence) {
+                return Err(AdmissionRejection::Replay);
+            }
+        }
+        Ok(verified)
+    }
+
+    fn authenticate(
+        &self,
+        purpose: AdmissionPurpose,
+        frame: AuthenticatedFrame,
+        encoded: Bytes,
+    ) -> Result<VerifiedFrame, AdmissionRejection> {
+        let fingerprint = *blake3::hash(&encoded).as_bytes();
+        self.authenticate_inner(purpose, frame, encoded, fingerprint)
+            .map_err(|rejection| {
+                self.drops.increment(purpose);
+                rejection
+            })
+    }
+
+    fn authenticate_inner(
+        &self,
+        purpose: AdmissionPurpose,
+        frame: AuthenticatedFrame,
+        encoded: Bytes,
+        fingerprint: [u8; 32],
+    ) -> Result<VerifiedFrame, AdmissionRejection> {
         if frame.version != REGISTRATION_PROTOCOL_VERSION || !purpose.supports(frame.role) {
             return Err(AdmissionRejection::Role);
         }
@@ -499,28 +577,14 @@ impl AdmissionLedger {
             )
             .map_err(|_| AdmissionRejection::Signature)?;
 
-        {
-            let mut state = slot.state.lock();
-            if purpose == AdmissionPurpose::Register {
-                if state.session_nonce != Some(frame.session_nonce) {
-                    *state = RoleAdmissionState {
-                        session_nonce: Some(frame.session_nonce),
-                        replay: [ReplayWindow::default(); ADMISSION_PURPOSE_COUNT],
-                    };
-                }
-            } else if state.session_nonce != Some(frame.session_nonce) {
-                return Err(AdmissionRejection::Session);
-            }
-            if !state.replay[purpose.index()].accept(frame.sequence) {
-                return Err(AdmissionRejection::Replay);
-            }
-        }
-
         Ok(VerifiedFrame {
             role: frame.role,
             session_nonce: frame.session_nonce,
+            sequence: frame.sequence,
             peer_info: frame.peer_info,
             payload: frame.payload,
+            encoded,
+            fingerprint,
         })
     }
 
@@ -533,10 +597,15 @@ impl AdmissionLedger {
         Err(rejection)
     }
 
-    #[cfg(test)]
     fn commit_session(&self, role: CellularRole, session_nonce: [u8; 32]) {
         if let Some(slot) = self.slots.iter().find(|slot| slot.role == role) {
-            slot.state.lock().session_nonce = Some(session_nonce);
+            let mut state = slot.state.lock();
+            if state.session_nonce != Some(session_nonce) {
+                *state = RoleAdmissionState {
+                    session_nonce: Some(session_nonce),
+                    replay: [ReplayWindow::default(); ADMISSION_PURPOSE_COUNT],
+                };
+            }
         }
     }
 
@@ -594,6 +663,262 @@ pub(crate) struct VerifiedCellRegistration {
 impl VerifiedCellRegistration {
     pub(crate) fn cell_id(self) -> u32 {
         self.cell_id
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RegistrationBusy;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RegistrationConflict {
+    ChangedTranscript,
+    Busy(RegistrationBusy),
+}
+
+impl std::fmt::Display for RegistrationConflict {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ChangedTranscript => formatter.write_str("ChangedTranscript"),
+            Self::Busy(_) => formatter.write_str("RegistrationBusy"),
+        }
+    }
+}
+
+impl std::error::Error for RegistrationConflict {}
+
+enum RegistrationSlot {
+    Vacant,
+    Preparing {
+        fingerprint: [u8; 32],
+    },
+    Committed {
+        fingerprint: [u8; 32],
+        session_nonce: [u8; 32],
+        reply: Bytes,
+    },
+}
+
+struct RegistrationLedgerState {
+    slots: Box<[RegistrationSlot]>,
+}
+
+#[derive(Clone)]
+pub(crate) struct RegistrationLedger {
+    state: Arc<parking_lot::Mutex<RegistrationLedgerState>>,
+    authority: Arc<CellRegistrationAuthority>,
+    expected_cell_count: u32,
+}
+
+pub(crate) enum RegistrationBegin {
+    ExactRetry { reply: Bytes },
+    Prepared(PreparedRegistration),
+}
+
+pub(crate) struct PreparedRegistration {
+    ledger: RegistrationLedger,
+    cell_id: usize,
+    role: CellularRole,
+    session_nonce: [u8; 32],
+    fingerprint: [u8; 32],
+    plan: Option<crate::cellular::transport::velo_transport::CellRegistrationPlan>,
+    is_active: bool,
+    #[cfg(test)]
+    drop_pause: Option<PreparedRegistrationDropPause>,
+}
+
+#[cfg(test)]
+struct PreparedRegistrationDropPause {
+    slot_is_vacant: Arc<std::sync::Barrier>,
+    release: Arc<std::sync::Barrier>,
+}
+
+pub(crate) struct RegistrationCommit {
+    should_advance_barrier: bool,
+}
+
+impl RegistrationCommit {
+    pub(crate) fn should_advance_barrier(&self) -> bool {
+        self.should_advance_barrier
+    }
+}
+
+impl RegistrationLedger {
+    pub(crate) fn new(authority: Arc<CellRegistrationAuthority>, expected_cell_count: u32) -> Self {
+        let capacity = authority.planned_cell_capacity();
+        Self {
+            state: Arc::new(parking_lot::Mutex::new(RegistrationLedgerState {
+                slots: (0..capacity)
+                    .map(|_| RegistrationSlot::Vacant)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            })),
+            authority,
+            expected_cell_count,
+        }
+    }
+
+    pub(crate) fn cached_reply(
+        &self,
+        verified: &VerifiedFrame,
+    ) -> Result<Option<Bytes>, RegistrationConflict> {
+        let cell_id = match verified.role() {
+            CellularRole::Cell(cell_id) => cell_id as usize,
+            CellularRole::Aggregator { .. } => {
+                return Err(RegistrationConflict::ChangedTranscript);
+            }
+        };
+        let state = self.state.lock();
+        let slot = state
+            .slots
+            .get(cell_id)
+            .ok_or(RegistrationConflict::ChangedTranscript)?;
+        match slot {
+            RegistrationSlot::Vacant => Ok(None),
+            RegistrationSlot::Preparing { fingerprint, .. }
+                if *fingerprint == verified.fingerprint() =>
+            {
+                Err(RegistrationConflict::Busy(RegistrationBusy))
+            }
+            RegistrationSlot::Preparing { .. } => Err(RegistrationConflict::ChangedTranscript),
+            RegistrationSlot::Committed {
+                fingerprint,
+                session_nonce,
+                reply,
+                ..
+            } if *fingerprint == verified.fingerprint()
+                && *session_nonce == verified.session_nonce() =>
+            {
+                Ok(Some(reply.clone()))
+            }
+            RegistrationSlot::Committed { .. } => Err(RegistrationConflict::ChangedTranscript),
+        }
+    }
+
+    pub(crate) fn begin(
+        &self,
+        verified: &VerifiedFrame,
+    ) -> Result<RegistrationBegin, RegistrationConflict> {
+        if let Some(reply) = self.cached_reply(&verified)? {
+            return Ok(RegistrationBegin::ExactRetry { reply });
+        }
+        let cell_id = match verified.role() {
+            CellularRole::Cell(cell_id) => cell_id as usize,
+            CellularRole::Aggregator { .. } => {
+                return Err(RegistrationConflict::ChangedTranscript);
+            }
+        };
+        let mut state = self.state.lock();
+        let slot = state
+            .slots
+            .get_mut(cell_id)
+            .ok_or(RegistrationConflict::ChangedTranscript)?;
+        match slot {
+            RegistrationSlot::Vacant => {
+                *slot = RegistrationSlot::Preparing {
+                    fingerprint: verified.fingerprint(),
+                };
+            }
+            RegistrationSlot::Preparing { fingerprint, .. }
+                if *fingerprint == verified.fingerprint() =>
+            {
+                return Err(RegistrationConflict::Busy(RegistrationBusy));
+            }
+            RegistrationSlot::Committed {
+                fingerprint, reply, ..
+            } if *fingerprint == verified.fingerprint() => {
+                return Ok(RegistrationBegin::ExactRetry {
+                    reply: reply.clone(),
+                });
+            }
+            RegistrationSlot::Preparing { .. } | RegistrationSlot::Committed { .. } => {
+                return Err(RegistrationConflict::ChangedTranscript);
+            }
+        }
+        Ok(RegistrationBegin::Prepared(PreparedRegistration {
+            ledger: self.clone(),
+            cell_id,
+            role: verified.role(),
+            session_nonce: verified.session_nonce(),
+            fingerprint: verified.fingerprint(),
+            plan: None,
+            is_active: true,
+            #[cfg(test)]
+            drop_pause: None,
+        }))
+    }
+}
+
+impl PreparedRegistration {
+    pub(crate) fn install_plan(
+        &mut self,
+        plan: crate::cellular::transport::velo_transport::CellRegistrationPlan,
+    ) {
+        self.plan = Some(plan);
+    }
+
+    pub(crate) fn envelope(&self) -> &[u8] {
+        self.plan
+            .as_ref()
+            .map_or(&[], |plan| plan.envelope.as_slice())
+    }
+
+    pub(crate) fn artifact_channel(
+        &self,
+    ) -> Option<crate::cellular::transport::ArtifactChannelServerConfig> {
+        self.plan
+            .as_ref()
+            .and_then(|plan| plan.artifact.as_ref())
+            .map(|artifact| artifact.server_config())
+    }
+
+    pub(crate) fn commit(mut self, reply: Bytes) -> RegistrationCommit {
+        self.ledger
+            .authority
+            .commit_registration_session(self.role, self.session_nonce);
+        if let Some(artifact) = self.plan.take().and_then(|plan| plan.artifact) {
+            artifact.commit();
+        }
+        let should_advance_barrier = {
+            let mut state = self.ledger.state.lock();
+            state.slots[self.cell_id] = RegistrationSlot::Committed {
+                fingerprint: self.fingerprint,
+                session_nonce: self.session_nonce,
+                reply,
+            };
+            state
+                .slots
+                .iter()
+                .filter(|slot| matches!(slot, RegistrationSlot::Committed { .. }))
+                .count()
+                == self.ledger.expected_cell_count as usize
+        };
+        self.is_active = false;
+        RegistrationCommit {
+            should_advance_barrier,
+        }
+    }
+}
+
+impl Drop for PreparedRegistration {
+    fn drop(&mut self) {
+        if !self.is_active {
+            return;
+        }
+        drop(self.plan.take());
+        let mut state = self.ledger.state.lock();
+        if matches!(
+            state.slots.get(self.cell_id),
+            Some(RegistrationSlot::Preparing { fingerprint, .. })
+                if *fingerprint == self.fingerprint
+        ) {
+            state.slots[self.cell_id] = RegistrationSlot::Vacant;
+        }
+        #[cfg(test)]
+        if let Some(pause) = self.drop_pause.as_ref() {
+            drop(state);
+            pause.slot_is_vacant.wait();
+            pause.release.wait();
+        }
     }
 }
 
@@ -698,6 +1023,31 @@ impl CellRegistrationAuthority {
             peer_info: verified.peer_info,
             payload,
         })
+    }
+
+    pub(crate) fn verify_registration_frame(
+        &self,
+        bytes: Bytes,
+    ) -> Result<VerifiedFrame, AdmissionRejection> {
+        if bytes.len() > MAX_AUTHENTICATED_FRAME_BYTES {
+            return self
+                .admission_ledger
+                .reject(AdmissionPurpose::Register, AdmissionRejection::Oversized);
+        }
+        let frame = match AuthenticatedFrame::decode(&bytes) {
+            Ok(frame) => frame,
+            Err(rejection) => {
+                return self
+                    .admission_ledger
+                    .reject(AdmissionPurpose::Register, rejection);
+            }
+        };
+        self.admission_ledger
+            .authenticate(AdmissionPurpose::Register, frame, bytes)
+    }
+
+    pub(crate) fn commit_registration_session(&self, role: CellularRole, session_nonce: [u8; 32]) {
+        self.admission_ledger.commit_session(role, session_nonce);
     }
 
     #[cfg(test)]
@@ -983,10 +1333,13 @@ mod tests {
     use crate::cellular::transport::CellRegister;
     use crate::cellular::transport::HANDLER_STORE_PARTITION;
     use crate::cellular::transport::connect::{ControllerPeerBinding, DialedControllerAddress};
+    use crate::cellular::transport::velo_transport::CellRegistrationPlan;
+    use crate::engine::artifact_shipping::{ArtifactBearer, ArtifactUploadServer};
 
     use super::{
         AdmissionPurpose, AdmissionRejection, AuthenticatedFrame, CellRegistrationAuthority,
-        ControllerRegisterAttestor, MAX_AUTHENTICATED_FRAME_BYTES, ReplayWindow,
+        ControllerRegisterAttestor, MAX_AUTHENTICATED_FRAME_BYTES, PreparedRegistrationDropPause,
+        RegistrationBegin, RegistrationLedger, ReplayWindow,
     };
 
     fn application_peer(marker: u8) -> velo::PeerInfo {
@@ -994,6 +1347,63 @@ mod tests {
             velo::InstanceId::new_v4(),
             velo::WorkerAddress::from_encoded(vec![marker]),
         )
+    }
+
+    #[tokio::test]
+    async fn prepared_drop_releases_artifact_before_publishing_ledger_vacancy() {
+        let temporary = tempfile::tempdir().unwrap();
+        let artifact_server = ArtifactUploadServer::start(
+            "127.0.0.1:0".parse().unwrap(),
+            temporary.path().join("landed"),
+            HashSet::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        let registrar = artifact_server.registrar();
+        let digest = ArtifactBearer::from_test_bytes([0x47; 32]).digest_bytes();
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).unwrap();
+        let authority = Arc::new(authority);
+        let ledger = RegistrationLedger::new(Arc::clone(&authority), 1);
+        let peer = application_peer(0x47);
+        let frame = bytes::Bytes::from(
+            credentials[0]
+                .seal_payload(AdmissionPurpose::Register, &peer, &0_u8)
+                .unwrap(),
+        );
+        let verified = authority.verify_registration_frame(frame).unwrap();
+        let mut abandoned = match ledger.begin(&verified).unwrap() {
+            RegistrationBegin::Prepared(prepared) => prepared,
+            RegistrationBegin::ExactRetry { .. } => panic!("fresh slot returned a retry"),
+        };
+        abandoned.install_plan(CellRegistrationPlan {
+            envelope: Vec::new(),
+            artifact: Some(registrar.prepare(0, digest).unwrap()),
+        });
+        let slot_is_vacant = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        abandoned.drop_pause = Some(PreparedRegistrationDropPause {
+            slot_is_vacant: Arc::clone(&slot_is_vacant),
+            release: Arc::clone(&release),
+        });
+
+        std::thread::scope(|scope| {
+            let dropping = scope.spawn(move || drop(abandoned));
+            slot_is_vacant.wait();
+            let retry = ledger.begin(&verified);
+            let artifact = registrar.prepare(0, digest);
+            release.wait();
+            dropping.join().unwrap();
+            let mut retry = match retry.unwrap() {
+                RegistrationBegin::Prepared(prepared) => prepared,
+                RegistrationBegin::ExactRetry { .. } => panic!("vacant slot returned a retry"),
+            };
+            retry.install_plan(CellRegistrationPlan {
+                envelope: Vec::new(),
+                artifact: Some(artifact.expect("artifact reservation must precede vacancy")),
+            });
+        });
+        artifact_server.shutdown().await.unwrap();
     }
 
     fn encoded_frame_with_len(

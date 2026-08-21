@@ -183,42 +183,108 @@ impl ArtifactChannelClient {
 
 #[derive(Clone)]
 pub(crate) struct ArtifactChannelRegistrar {
-    expected_cell_count: u32,
-    authorized_cells: Arc<parking_lot::RwLock<AuthorizedCells>>,
+    authorization_state: Arc<parking_lot::RwLock<ArtifactAuthorizationState>>,
     server_config: ArtifactChannelServerConfig,
 }
 
-struct AuthorizedCells {
-    by_digest: HashMap<blake3::Hash, u32>,
-    by_cell: HashMap<u32, blake3::Hash>,
+pub(crate) struct ArtifactRegistrationPlan {
+    registrar: ArtifactChannelRegistrar,
+    cell_id: usize,
+    digest: [u8; 32],
+    is_active: bool,
+}
+
+impl ArtifactRegistrationPlan {
+    pub(crate) fn server_config(&self) -> ArtifactChannelServerConfig {
+        self.registrar.server_config()
+    }
+
+    pub(crate) fn commit(mut self) {
+        {
+            let mut authorization = self.registrar.authorization_state.write();
+            authorization.slots[self.cell_id] = ArtifactAuthorizationSlot::Authorized(self.digest);
+            #[cfg(test)]
+            {
+                authorization.authorization_publication_count += 1;
+            }
+        }
+        self.is_active = false;
+    }
+}
+
+impl Drop for ArtifactRegistrationPlan {
+    fn drop(&mut self) {
+        if self.is_active {
+            self.registrar.authorization_state.write().slots[self.cell_id] =
+                ArtifactAuthorizationSlot::Vacant;
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ArtifactAuthorizationSlot {
+    Vacant,
+    Preparing([u8; 32]),
+    Authorized([u8; 32]),
+}
+
+struct ArtifactAuthorizationState {
+    slots: Box<[ArtifactAuthorizationSlot]>,
+    #[cfg(test)]
+    authorization_publication_count: usize,
 }
 
 impl ArtifactChannelRegistrar {
-    pub(crate) fn register(&self, cell_id: u32, digest: [u8; 32]) -> Result<()> {
+    pub(crate) fn prepare(
+        &self,
+        cell_id: u32,
+        digest: [u8; 32],
+    ) -> Result<ArtifactRegistrationPlan> {
+        let cell_id = cell_id as usize;
+        let mut authorization = self.authorization_state.write();
         ensure!(
-            cell_id < self.expected_cell_count,
+            cell_id < authorization.slots.len(),
             "artifact registration cell is out of range"
         );
-        let digest = blake3::Hash::from_bytes(digest);
-        let mut authorized = self.authorized_cells.write();
-        if let Some(existing) = authorized.by_cell.get(&cell_id) {
-            ensure!(
-                *existing == digest,
-                "cell registered a different artifact capability"
-            );
-            return Ok(());
-        }
         ensure!(
-            !authorized.by_digest.contains_key(&digest),
+            authorization
+                .slots
+                .iter()
+                .enumerate()
+                .all(|(other_id, slot)| other_id == cell_id
+                    || !matches!(
+                        slot,
+                        ArtifactAuthorizationSlot::Preparing(existing)
+                            | ArtifactAuthorizationSlot::Authorized(existing)
+                            if *existing == digest
+                    )),
             "artifact capability is already bound to another cell"
         );
-        authorized.by_digest.insert(digest, cell_id);
-        authorized.by_cell.insert(cell_id, digest);
-        Ok(())
+        ensure!(
+            matches!(
+                authorization.slots[cell_id],
+                ArtifactAuthorizationSlot::Vacant
+            ),
+            "cell already has an artifact registration"
+        );
+        authorization.slots[cell_id] = ArtifactAuthorizationSlot::Preparing(digest);
+        Ok(ArtifactRegistrationPlan {
+            registrar: self.clone(),
+            cell_id,
+            digest,
+            is_active: true,
+        })
     }
 
     pub(crate) fn server_config(&self) -> ArtifactChannelServerConfig {
         self.server_config.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn authorization_publication_count(&self) -> usize {
+        self.authorization_state
+            .read()
+            .authorization_publication_count
     }
 }
 
@@ -1326,10 +1392,11 @@ impl ArtifactUploadServer {
             .with_single_cert(vec![certificate.clone()], private_key)
             .context("installing per-run artifact TLS identity")?;
         let registrar = ArtifactChannelRegistrar {
-            expected_cell_count: cell_count,
-            authorized_cells: Arc::new(parking_lot::RwLock::new(AuthorizedCells {
-                by_digest: HashMap::new(),
-                by_cell: HashMap::new(),
+            authorization_state: Arc::new(parking_lot::RwLock::new(ArtifactAuthorizationState {
+                slots: vec![ArtifactAuthorizationSlot::Vacant; cell_count as usize]
+                    .into_boxed_slice(),
+                #[cfg(test)]
+                authorization_publication_count: 0,
             })),
             server_config: ArtifactChannelServerConfig::new(certificate.to_vec()),
         };
@@ -1364,7 +1431,7 @@ impl ArtifactUploadServer {
             // request-body cap so a large records.jsonl upload is not truncated.
             .layer(DefaultBodyLimit::disable())
             .layer(axum::middleware::from_fn_with_state(
-                registrar.authorized_cells.clone(),
+                registrar.authorization_state.clone(),
                 authenticate_artifact_request,
             ))
             .with_state(state.clone());
@@ -1493,7 +1560,7 @@ fn unauthorized_artifact_response() -> Response {
 }
 
 async fn authenticate_artifact_request(
-    State(authorized_cells): State<Arc<parking_lot::RwLock<AuthorizedCells>>>,
+    State(authorization_state): State<Arc<parking_lot::RwLock<ArtifactAuthorizationState>>>,
     mut request: Request,
     next: Next,
 ) -> Response {
@@ -1517,8 +1584,15 @@ async fn authenticate_artifact_request(
         );
         return unauthorized_artifact_response();
     };
-    let digest = blake3::hash(value.as_bytes());
-    let cell_id = authorized_cells.read().by_digest.get(&digest).copied();
+    let digest = *blake3::hash(value.as_bytes()).as_bytes();
+    let cell_id = authorization_state
+        .read()
+        .slots
+        .iter()
+        .position(|slot| {
+            matches!(slot, ArtifactAuthorizationSlot::Authorized(expected) if *expected == digest)
+        })
+        .and_then(|cell_id| u32::try_from(cell_id).ok());
     let Some(cell_id) = cell_id else {
         tracing::debug!(
             target: "aiperf_cellular_artifact",
@@ -2164,10 +2238,11 @@ mod tests {
         let mut clients = Vec::with_capacity(cell_count as usize);
         for cell_id in 0..cell_count {
             let bearer = ArtifactBearer::from_test_bytes([cell_id as u8 + 1; 32]);
-            fixture
+            let plan = fixture
                 .registrar
-                .register(cell_id, bearer.digest_bytes())
+                .prepare(cell_id, bearer.digest_bytes())
                 .unwrap();
+            plan.commit();
             clients.push(
                 ArtifactChannelClient::new(
                     authority.clone(),
@@ -2187,7 +2262,10 @@ mod tests {
     fn test_client(server: &ArtifactUploadServer, cell_id: u32) -> ArtifactChannelClient {
         let bearer = ArtifactBearer::from_test_bytes([cell_id as u8 + 1; 32]);
         let registrar = server.registrar();
-        registrar.register(cell_id, bearer.digest_bytes()).unwrap();
+        registrar
+            .prepare(cell_id, bearer.digest_bytes())
+            .unwrap()
+            .commit();
         ArtifactChannelClient::new(
             server.local_addr().to_string(),
             registrar.server_config(),
@@ -2659,11 +2737,85 @@ mod tests {
         let fixture = unregistered_secure_server_fixture(2).await;
         let digest_zero = ArtifactBearer::from_test_bytes([0x11; 32]).digest_bytes();
         let digest_one = ArtifactBearer::from_test_bytes([0x22; 32]).digest_bytes();
-        fixture.registrar.register(0, digest_zero).unwrap();
-        fixture.registrar.register(0, digest_zero).unwrap();
-        assert!(fixture.registrar.register(0, digest_one).is_err());
-        assert!(fixture.registrar.register(1, digest_zero).is_err());
-        assert!(fixture.registrar.register(2, digest_one).is_err());
+        fixture.registrar.prepare(0, digest_zero).unwrap().commit();
+        assert!(fixture.registrar.prepare(0, digest_zero).is_err());
+        assert!(fixture.registrar.prepare(0, digest_one).is_err());
+        assert!(fixture.registrar.prepare(1, digest_zero).is_err());
+        assert!(fixture.registrar.prepare(2, digest_one).is_err());
+        fixture.server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn artifact_registration_reservation_blocks_competing_cell() {
+        let fixture = unregistered_secure_server_fixture(2).await;
+        let bearer = ArtifactBearer::from_test_bytes([0x39; 32]);
+        let owner = ArtifactChannelClient::new(
+            fixture.server.local_addr().to_string(),
+            fixture.registrar.server_config(),
+            ArtifactBearer::from_test_bytes([0x39; 32]),
+        )
+        .unwrap();
+        let plan = fixture.registrar.prepare(0, bearer.digest_bytes()).unwrap();
+
+        assert!(fixture.registrar.prepare(1, bearer.digest_bytes()).is_err());
+        assert_eq!(
+            post_done_status(&owner, 0).await.unwrap(),
+            StatusCode::UNAUTHORIZED
+        );
+        plan.commit();
+        assert_eq!(post_done_status(&owner, 0).await.unwrap(), StatusCode::OK);
+        assert_eq!(
+            post_done_status(&owner, 1).await.unwrap(),
+            StatusCode::UNAUTHORIZED
+        );
+        fixture.server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_artifact_registration_reservation_allows_new_owner() {
+        let fixture = unregistered_secure_server_fixture(2).await;
+        let bearer = ArtifactBearer::from_test_bytes([0x3A; 32]);
+        let new_owner = ArtifactChannelClient::new(
+            fixture.server.local_addr().to_string(),
+            fixture.registrar.server_config(),
+            ArtifactBearer::from_test_bytes([0x3A; 32]),
+        )
+        .unwrap();
+        let abandoned = fixture.registrar.prepare(0, bearer.digest_bytes()).unwrap();
+
+        drop(abandoned);
+        let replacement = fixture.registrar.prepare(1, bearer.digest_bytes()).unwrap();
+        replacement.commit();
+
+        assert_eq!(
+            post_done_status(&new_owner, 0).await.unwrap(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            post_done_status(&new_owner, 1).await.unwrap(),
+            StatusCode::OK
+        );
+        fixture.server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn registration_transaction_artifact_plan_is_invisible_until_commit() {
+        let fixture = unregistered_secure_server_fixture(1).await;
+        let bearer = ArtifactBearer::from_test_bytes([0x31; 32]);
+        let client = ArtifactChannelClient::new(
+            fixture.server.local_addr().to_string(),
+            fixture.registrar.server_config(),
+            ArtifactBearer::from_test_bytes([0x31; 32]),
+        )
+        .unwrap();
+        let plan = fixture.registrar.prepare(0, bearer.digest_bytes()).unwrap();
+
+        assert_eq!(
+            post_done_status(&client, 0).await.unwrap(),
+            StatusCode::UNAUTHORIZED
+        );
+        plan.commit();
+        assert_eq!(post_done_status(&client, 0).await.unwrap(), StatusCode::OK);
         fixture.server.shutdown().await.unwrap();
     }
 

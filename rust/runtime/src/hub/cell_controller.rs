@@ -8,7 +8,7 @@
 //!
 //! Unlike the discovery plugin, this plugin's velo surface is inherently
 //! peer-registration + streaming coordination (it `register_peer`s each shipping
-//! instance and returns per-cell launch specs), which has no faithful plain-HTTP
+//! instance and returns per-cell launch envelopes), which has no faithful plain-HTTP
 //! mirror. The plugin therefore exposes a small **diagnostic** HTTP surface
 //! (`GET {prefix}/status`) reporting the anchor's fixed facts (cell count, prefix),
 //! and keeps the full protocol on velo. The velo handlers themselves are the exact
@@ -30,7 +30,7 @@ use serde_json::json;
 use velo::{EventHandle, Velo};
 
 use super::plugin::{HubAbiRequirement, HubError, HubPlugin};
-use crate::cellular::transport::velo_transport::{SpecFor, VeloControllerTransport};
+use crate::cellular::transport::velo_transport::{PlanRegistration, VeloControllerTransport};
 use crate::engine::cellular_registration::CellRegistrationAuthority;
 
 /// The default HTTP mount point / diagnostic identity for the cell↔controller plugin.
@@ -53,7 +53,7 @@ struct CellStatus {
 /// bootstrap to own.
 pub struct CellControllerHubPlugin {
     prefix: String,
-    spec_for: SpecFor,
+    plan_registration: PlanRegistration,
     cell_count: u32,
     start_event: EventHandle,
     registration_authority: Arc<CellRegistrationAuthority>,
@@ -61,18 +61,18 @@ pub struct CellControllerHubPlugin {
 }
 
 impl CellControllerHubPlugin {
-    /// Build the plugin over the controller's precomputed per-cell spec lookup, the
-    /// run's `cell_count`, and the run-wide START event handle each cell awaits. Uses
-    /// the default [`CELL_CONTROLLER_PREFIX`].
+    /// Build the plugin over the controller's per-cell registration planner, the run's
+    /// `cell_count`, and the run-wide START event handle each cell awaits. Uses the
+    /// default [`CELL_CONTROLLER_PREFIX`].
     pub(crate) fn new(
-        spec_for: SpecFor,
+        plan_registration: PlanRegistration,
         cell_count: u32,
         start_event: EventHandle,
         registration_authority: Arc<CellRegistrationAuthority>,
     ) -> Self {
         Self {
             prefix: CELL_CONTROLLER_PREFIX.to_owned(),
-            spec_for,
+            plan_registration,
             cell_count,
             start_event,
             registration_authority,
@@ -123,7 +123,7 @@ impl HubPlugin for CellControllerHubPlugin {
         let transport = VeloControllerTransport::bind_controller(
             velo.clone(),
             self.registration_authority.clone(),
-            self.spec_for.clone(),
+            self.plan_registration.clone(),
             self.cell_count,
             self.start_event,
         )
@@ -144,16 +144,18 @@ mod tests {
     use super::*;
     use crate::cellular::transport::CellClient;
     use crate::cellular::transport::connect::{BindSpec, build_velo};
+    use crate::cellular::transport::velo_transport::CellRegistrationPlan;
     use crate::cellular::transport::velo_transport::VeloCellClient;
-    use crate::cellular::{CellMessage, CellRegistrationSpec, ControllerTransport};
+    use crate::cellular::{CellMessage, ControllerTransport};
     use crate::engine::cellular_registration::CellRegistrationAuthority;
     use crate::hub::Hub;
 
-    fn spec_for() -> SpecFor {
-        Arc::new(|register| {
-            Ok(Some(CellRegistrationSpec {
+    fn plan_registration() -> PlanRegistration {
+        Arc::new(|verified| {
+            let register: crate::cellular::transport::CellRegister = verified.decode_payload()?;
+            Ok(Some(CellRegistrationPlan {
                 envelope: vec![register.cell_id as u8, 0xCC],
-                artifact_channel: None,
+                artifact: None,
             }))
         })
     }
@@ -174,7 +176,8 @@ mod tests {
         let (authority, credentials) =
             CellRegistrationAuthority::mint(1).expect("registration authority");
 
-        let plugin = CellControllerHubPlugin::new(spec_for(), 1, start_handle, Arc::new(authority));
+        let plugin =
+            CellControllerHubPlugin::new(plan_registration(), 1, start_handle, Arc::new(authority));
         let slot = plugin.transport_slot();
 
         let mut hub = Hub::new(velo);
