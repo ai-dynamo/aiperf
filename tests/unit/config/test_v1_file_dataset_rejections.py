@@ -291,3 +291,103 @@ def test_batch_size_fields_rejected_on_non_random_pool_format(tmp_path: Path) ->
             format=DatasetFormat.MOONCAKE_TRACE,
             prompt_batch_size=8,
         )
+
+
+class TestBatchSizeDirectoryAndTypeMessages:
+    """Config-time coverage for the batch-size rejection messages.
+
+    Both cases used to be discovered late or worded wrong: a directory input was
+    only rejected once the DatasetManager parsed the files (after SystemController
+    and the workers had already started, and truncated in the console panel), and
+    the "add --custom-dataset-type random_pool" remedy was printed even when the
+    user had already set that flag to something else.
+    """
+
+    @pytest.fixture
+    def pool_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / "pools"
+        d.mkdir()
+        (d / "queries.jsonl").touch()
+        (d / "passages.jsonl").touch()
+        return d
+
+    @pytest.mark.parametrize(
+        "batch_kwarg, expected_flag_fragment",
+        [
+            param({"prompt_batch_size": 4}, "--prompt-batch-size", id="text"),
+            param({"image_batch_size": 2}, "--image-batch-size", id="image"),
+            param({"audio_batch_size": 2}, "--audio-batch-size", id="audio"),
+            param({"video_batch_size": 2}, "--video-batch-size", id="video"),
+        ],
+    )  # fmt: skip
+    def test_batch_size_on_directory_input_rejected_at_config_time(
+        self, pool_dir: Path, batch_kwarg: dict, expected_flag_fragment: str
+    ) -> None:
+        """A directory --input-file is fully decidable here, so it must be rejected
+        before any service starts rather than at dataset-load time."""
+        user = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+            input_file=str(pool_dir),
+            custom_dataset_type="random_pool",
+            **batch_kwarg,
+        )
+        with pytest.raises(ValueError, match=expected_flag_fragment) as exc_info:
+            build_dataset(user)
+        assert "directory" in str(exc_info.value)
+
+    def test_directory_batch_size_message_does_not_demand_custom_dataset_type(
+        self, pool_dir: Path
+    ) -> None:
+        """Directory input auto-detects as random_pool, so a directory + batch flag
+        with no --custom-dataset-type must not send the user through a first failed
+        run adding the flag only to hit the directory rejection on the second."""
+        user = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+            input_file=str(pool_dir),
+            prompt_batch_size=4,
+        )
+        with pytest.raises(ValueError) as exc_info:
+            build_dataset(user)
+        message = str(exc_info.value)
+        assert "directory" in message
+        assert "add --custom-dataset-type random_pool" not in message
+
+    def test_wrong_custom_dataset_type_message_says_change_not_add(
+        self, mc_jsonl: Path
+    ) -> None:
+        """With --custom-dataset-type already set to a non-random_pool value there
+        is nothing to "add" -- the user has to change it."""
+        user = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+            input_file=str(mc_jsonl),
+            custom_dataset_type="mooncake_trace",
+            prompt_batch_size=4,
+        )
+        with pytest.raises(ValueError, match="--prompt-batch-size") as exc_info:
+            build_dataset(user)
+        message = str(exc_info.value)
+        assert (
+            "change --custom-dataset-type from mooncake_trace to random_pool" in message
+        )
+        assert "add --custom-dataset-type" not in message
+
+    def test_unset_custom_dataset_type_message_still_says_add(
+        self, mc_jsonl: Path
+    ) -> None:
+        """The "add" wording remains correct when the flag was never set."""
+        user = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+            input_file=str(mc_jsonl),
+            prompt_batch_size=4,
+        )
+        with pytest.raises(ValueError, match="--prompt-batch-size") as exc_info:
+            build_dataset(user)
+        assert "add --custom-dataset-type random_pool" in str(exc_info.value)

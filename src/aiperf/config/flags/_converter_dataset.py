@@ -13,6 +13,7 @@ Returns a *dict* (not a wrapped ``DatasetConfig``) — wrapping with
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiperf.config.flags._section_fields import (
@@ -662,11 +663,35 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
             "apply synthetic-only prompt shaping (ISL, prefix prompts, multimodal "
             "generation, multi-turn conversation, etc)."
         )
+    # Directory input is decidable here, before any service starts: each file forms
+    # a separately named pool and batching flattens them all into one anonymous pool
+    # per modality. Checked ahead of the random_pool gating below so a directory is
+    # not first told to add --custom-dataset-type random_pool and only then rejected
+    # at load time. The loader repeats an equivalent check for the pool shapes that
+    # are only visible once the files are parsed (inline records, named entries).
+    set_batch_flags = [
+        flag
+        for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
+        if attr in s and attr in batch_size_attrs
+    ]
+    if set_batch_flags and cli.input_file is not None and Path(cli.input_file).is_dir():
+        raise ValueError(
+            f"{', '.join(set_batch_flags)} is not supported when --input-file is a "
+            "directory: each file forms a separately named pool, and batching "
+            "flattens them into one anonymous pool per modality. Point --input-file "
+            "at a single random_pool file, or drop the batch-size flags."
+        )
     if batch_violations and cli.input_file is not None:
+        remedy = (
+            "Either add --custom-dataset-type random_pool to keep --input-file"
+            if cli.custom_dataset_type is None
+            else f"Either change --custom-dataset-type from {cli.custom_dataset_type} "
+            "to random_pool to keep --input-file"
+        )
         raise ValueError(
             f"{', '.join(batch_violations)} requires --custom-dataset-type random_pool "
-            "when used with --input-file. Either add --custom-dataset-type random_pool "
-            "to keep --input-file, or remove --input-file to use a synthetic dataset."
+            f"when used with --input-file. {remedy}, or remove --input-file to use a "
+            "synthetic dataset."
         )
     if batch_violations:
         raise ValueError(
