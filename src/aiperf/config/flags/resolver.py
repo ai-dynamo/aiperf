@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_JINJA_MARKERS = ("{{", "{%", "{#")
+
 
 def resolve_config(
     cli_config: CLIConfig,
@@ -146,8 +148,10 @@ def _merge_overrides_into_envelope(
     # `overrides` dict; without the copy the second envelope would merge an
     # already-consumed override.
     overrides = copy.deepcopy(overrides) if overrides else overrides
-    envelope = normalize_gpu_telemetry_base_for_override(envelope, overrides)
-    envelope = normalize_server_metrics_base_for_override(envelope, overrides)
+    if not _block_has_jinja(envelope, "gpu_telemetry"):
+        envelope = normalize_gpu_telemetry_base_for_override(envelope, overrides)
+    if not _block_has_jinja(envelope, "server_metrics"):
+        envelope = normalize_server_metrics_base_for_override(envelope, overrides)
     merged = deep_merge(envelope, overrides) if overrides else copy.deepcopy(envelope)
     _apply_dataset_synthesis_overrides(merged, cli_config)
     _apply_dataset_filter_overrides(merged, cli_config)
@@ -160,6 +164,37 @@ def _merge_overrides_into_envelope(
         retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
     )
     return merged
+
+
+def _block_has_jinja(envelope: dict[str, Any], key: str) -> bool:
+    """Report whether ``benchmark.<key>`` still carries un-rendered Jinja.
+
+    The two telemetry normalizers canonicalize their block by round-tripping it
+    through ``model_validate`` / ``model_dump``. That is correct for the
+    rendered envelope and wrong for the pre-Jinja one: ``mode: "{{ gpu_mode }}"``
+    is not a valid enum member, so the round-trip raises, and even a block that
+    happened to validate would come back with concrete defaults substituted for
+    its templates. Skip normalization while the templates are live; each sweep
+    variation validates the block for real once it re-renders.
+
+    The rendered envelope has no ``{{ }}`` left by construction, so this is a
+    no-op there and the existing normalize-then-merge behavior is unchanged.
+    """
+    benchmark = envelope.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return False
+    return _contains_jinja(benchmark.get(key))
+
+
+def _contains_jinja(value: Any) -> bool:
+    """Recursively report whether ``value`` holds a Jinja marker."""
+    if isinstance(value, str):
+        return any(marker in value for marker in _JINJA_MARKERS)
+    if isinstance(value, dict):
+        return any(_contains_jinja(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_jinja(v) for v in value)
+    return False
 
 
 def _normalize_loaded_benchmark_shorthands(yaml_dict: dict[str, Any]) -> None:
