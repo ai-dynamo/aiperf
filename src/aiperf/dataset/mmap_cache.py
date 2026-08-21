@@ -78,6 +78,13 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v27: streaming chat/completions payloads now always carry
+    # stream_options.include_usage, not just when use_server_token_count is set
+    # (vLLM only emits the trailing usage chunk -- which carries per-request
+    # spec-decode metrics -- when it is present). Under PREFORMAT_PAYLOADS the
+    # payload bytes are baked at build time, and the key's preformat_endpoint
+    # dict is unchanged for a streaming + use_server_token_count=False run, so
+    # a warm entry would keep serving payloads without the field.
     # v26: weka inter-turn delays are now always end-to-start
     # (t_k - (t_{k-1} + api_{k-1}), floored at 0) instead of start-to-start.
     # The use_end_to_start_delays flag was removed, so Turn.delay decodes to
@@ -174,7 +181,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    26
+    27
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -796,10 +803,12 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # When preformat_payloads is on, endpoint.format_payload() bakes the
         # stream flag, endpoint.extra, the max_tokens-vs-max_completion_tokens
         # field name, and (for streaming OpenAI-compatible endpoints)
-        # stream_options.include_usage from use_server_token_count into the
-        # stored bytes, so those knobs must key the cache or a warm entry serves
-        # bytes the run never asked for (e.g. "stream": true). Gated on the flag
-        # so the common non-preformat key stays stable.
+        # stream_options.include_usage into the stored bytes, so those knobs
+        # must key the cache or a warm entry serves bytes the run never asked
+        # for (e.g. "stream": true). include_usage now follows streaming alone,
+        # but use_server_token_count still keys the cache because it selects
+        # the token-count source baked into the run. Gated on the flag so the
+        # common non-preformat key stays stable.
         "preformat_endpoint": (
             {
                 "streaming": cfg.endpoint.streaming,
