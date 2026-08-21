@@ -47,8 +47,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_JINJA_MARKERS = ("{{", "{%", "{#")
-
 
 def resolve_config(
     cli_config: CLIConfig,
@@ -67,10 +65,11 @@ def resolve_config(
             CLIConfig -> AIPerfConfig converter handles the full CLI-only path.
 
     Returns:
-        Fully resolved `AIPerfConfig` ready for downstream use, carrying the
-        matching pre-Jinja envelope on ``_raw_envelope`` for sweep expansion.
+        Fully resolved `AIPerfConfig` ready for downstream use.
     """
     from aiperf.config.flags.converter import (
+        _promote_cli_dataset_magic_lists,
+        _promote_magic_lists_to_sweep_block,
         _wrap_under_envelope,
         convert_cli_to_aiperf,
     )
@@ -82,16 +81,10 @@ def resolve_config(
         return convert_cli_to_aiperf(cli_config)
 
     from aiperf.config import AIPerfConfig
-    from aiperf.config.loader import load_config_dict_with_raw_envelope
+    from aiperf.config.loader import load_config_dict
 
-    # Both envelopes are needed: the rendered one for Pydantic validation, and
-    # the pre-Jinja one so build_benchmark_plan can re-render `{{ var }}` body
-    # fields per sweep variation. Loading only the rendered dict leaves
-    # `_raw_envelope` unset, and every variation collapses onto the base
-    # variables block -- see test_swept_variable_propagates_via_resolve_config.
-    yaml_dict, raw_yaml_dict = load_config_dict_with_raw_envelope(config_file)
+    yaml_dict = load_config_dict(config_file)
     _normalize_loaded_benchmark_shorthands(yaml_dict)
-    _normalize_loaded_benchmark_shorthands(raw_yaml_dict)
     # Build the recipe's view of BenchmarkConfig from YAML + the
     # endpoint/input CLI overrides ONLY: the recipe inspects fields like
     # ``endpoint.streaming`` (via ``require_streaming``) before emitting
@@ -104,55 +97,18 @@ def resolve_config(
     pre_overrides: dict[str, Any] = {}
     _apply_endpoint_overrides(pre_overrides, cli_config)
     _apply_input_overrides(pre_overrides, cli_config)
-    # Deep-copy even in the no-override branch: model_validate mutates the dict
-    # it is handed (the dataset before-validators hoist in place), so aliasing
-    # yaml_dict here would silently pre-normalize the envelope that the real
-    # merge below still has to work from.
     pre_merged = (
         deep_merge(yaml_dict, _wrap_under_envelope(copy.deepcopy(pre_overrides)))
         if pre_overrides
-        else copy.deepcopy(yaml_dict)
+        else yaml_dict
     )
     base_config = AIPerfConfig.model_validate(pre_merged)
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
-    merged = _merge_overrides_into_envelope(yaml_dict, overrides, cli_config)
-    raw_merged = _merge_overrides_into_envelope(raw_yaml_dict, overrides, cli_config)
-
-    config = AIPerfConfig.model_validate(merged)
-    config._raw_envelope = raw_merged
-    return config
-
-
-def _merge_overrides_into_envelope(
-    envelope: dict[str, Any],
-    overrides: dict[str, Any] | None,
-    cli_config: CLIConfig,
-) -> dict[str, Any]:
-    """Apply the config-file CLI override pipeline to one envelope.
-
-    Called once for the rendered envelope used for Pydantic validation and
-    once for the retained pre-Jinja envelope used by sweep expansion. Keeping
-    both transformations identical prevents CLI overrides and Jinja-backed
-    ``sweep.parameters`` from disagreeing at execution time: an override that
-    reached only the rendered envelope would be discarded the moment a
-    variation re-rendered from the raw one.
-    """
-    from aiperf.config.flags.converter import (
-        _promote_cli_dataset_magic_lists,
-        _promote_magic_lists_to_sweep_block,
-    )
-
-    # The helpers below mutate what they are given, and this runs twice off one
-    # `overrides` dict; without the copy the second envelope would merge an
-    # already-consumed override.
-    overrides = copy.deepcopy(overrides) if overrides else overrides
-    if not _block_has_jinja(envelope, "gpu_telemetry"):
-        envelope = normalize_gpu_telemetry_base_for_override(envelope, overrides)
-    if not _block_has_jinja(envelope, "server_metrics"):
-        envelope = normalize_server_metrics_base_for_override(envelope, overrides)
-    merged = deep_merge(envelope, overrides) if overrides else copy.deepcopy(envelope)
+    yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
+    yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
+    merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
     _apply_dataset_synthesis_overrides(merged, cli_config)
     _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
@@ -163,38 +119,7 @@ def _merge_overrides_into_envelope(
         promote_magic_lists_to_sweep_block=_promote_magic_lists_to_sweep_block,
         retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
     )
-    return merged
-
-
-def _block_has_jinja(envelope: dict[str, Any], key: str) -> bool:
-    """Report whether ``benchmark.<key>`` still carries un-rendered Jinja.
-
-    The two telemetry normalizers canonicalize their block by round-tripping it
-    through ``model_validate`` / ``model_dump``. That is correct for the
-    rendered envelope and wrong for the pre-Jinja one: ``mode: "{{ gpu_mode }}"``
-    is not a valid enum member, so the round-trip raises, and even a block that
-    happened to validate would come back with concrete defaults substituted for
-    its templates. Skip normalization while the templates are live; each sweep
-    variation validates the block for real once it re-renders.
-
-    The rendered envelope has no ``{{ }}`` left by construction, so this is a
-    no-op there and the existing normalize-then-merge behavior is unchanged.
-    """
-    benchmark = envelope.get("benchmark")
-    if not isinstance(benchmark, dict):
-        return False
-    return _contains_jinja(benchmark.get(key))
-
-
-def _contains_jinja(value: Any) -> bool:
-    """Recursively report whether ``value`` holds a Jinja marker."""
-    if isinstance(value, str):
-        return any(marker in value for marker in _JINJA_MARKERS)
-    if isinstance(value, dict):
-        return any(_contains_jinja(v) for v in value.values())
-    if isinstance(value, list):
-        return any(_contains_jinja(v) for v in value)
-    return False
+    return AIPerfConfig.model_validate(merged)
 
 
 def _normalize_loaded_benchmark_shorthands(yaml_dict: dict[str, Any]) -> None:
