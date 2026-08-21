@@ -65,11 +65,10 @@ def resolve_config(
             CLIConfig -> AIPerfConfig converter handles the full CLI-only path.
 
     Returns:
-        Fully resolved `AIPerfConfig` ready for downstream use.
+        Fully resolved `AIPerfConfig` ready for downstream use, carrying the
+        matching pre-Jinja envelope on ``_raw_envelope`` for sweep expansion.
     """
     from aiperf.config.flags.converter import (
-        _promote_cli_dataset_magic_lists,
-        _promote_magic_lists_to_sweep_block,
         _wrap_under_envelope,
         convert_cli_to_aiperf,
     )
@@ -81,10 +80,16 @@ def resolve_config(
         return convert_cli_to_aiperf(cli_config)
 
     from aiperf.config import AIPerfConfig
-    from aiperf.config.loader import load_config_dict
+    from aiperf.config.loader import load_config_dict_with_raw_envelope
 
-    yaml_dict = load_config_dict(config_file)
+    # Both envelopes are needed: the rendered one for Pydantic validation, and
+    # the pre-Jinja one so build_benchmark_plan can re-render `{{ var }}` body
+    # fields per sweep variation. Loading only the rendered dict leaves
+    # `_raw_envelope` unset, and every variation collapses onto the base
+    # variables block -- see test_swept_variable_propagates_via_resolve_config.
+    yaml_dict, raw_yaml_dict = load_config_dict_with_raw_envelope(config_file)
     _normalize_loaded_benchmark_shorthands(yaml_dict)
+    _normalize_loaded_benchmark_shorthands(raw_yaml_dict)
     # Build the recipe's view of BenchmarkConfig from YAML + the
     # endpoint/input CLI overrides ONLY: the recipe inspects fields like
     # ``endpoint.streaming`` (via ``require_streaming``) before emitting
@@ -97,18 +102,53 @@ def resolve_config(
     pre_overrides: dict[str, Any] = {}
     _apply_endpoint_overrides(pre_overrides, cli_config)
     _apply_input_overrides(pre_overrides, cli_config)
+    # Deep-copy even in the no-override branch: model_validate mutates the dict
+    # it is handed (the dataset before-validators hoist in place), so aliasing
+    # yaml_dict here would silently pre-normalize the envelope that the real
+    # merge below still has to work from.
     pre_merged = (
         deep_merge(yaml_dict, _wrap_under_envelope(copy.deepcopy(pre_overrides)))
         if pre_overrides
-        else yaml_dict
+        else copy.deepcopy(yaml_dict)
     )
     base_config = AIPerfConfig.model_validate(pre_merged)
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
-    yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
-    yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
-    merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
+    merged = _merge_overrides_into_envelope(yaml_dict, overrides, cli_config)
+    raw_merged = _merge_overrides_into_envelope(raw_yaml_dict, overrides, cli_config)
+
+    config = AIPerfConfig.model_validate(merged)
+    config._raw_envelope = raw_merged
+    return config
+
+
+def _merge_overrides_into_envelope(
+    envelope: dict[str, Any],
+    overrides: dict[str, Any] | None,
+    cli_config: CLIConfig,
+) -> dict[str, Any]:
+    """Apply the config-file CLI override pipeline to one envelope.
+
+    Called once for the rendered envelope used for Pydantic validation and
+    once for the retained pre-Jinja envelope used by sweep expansion. Keeping
+    both transformations identical prevents CLI overrides and Jinja-backed
+    ``sweep.parameters`` from disagreeing at execution time: an override that
+    reached only the rendered envelope would be discarded the moment a
+    variation re-rendered from the raw one.
+    """
+    from aiperf.config.flags.converter import (
+        _promote_cli_dataset_magic_lists,
+        _promote_magic_lists_to_sweep_block,
+    )
+
+    # The helpers below mutate what they are given, and this runs twice off one
+    # `overrides` dict; without the copy the second envelope would merge an
+    # already-consumed override.
+    overrides = copy.deepcopy(overrides) if overrides else overrides
+    envelope = normalize_gpu_telemetry_base_for_override(envelope, overrides)
+    envelope = normalize_server_metrics_base_for_override(envelope, overrides)
+    merged = deep_merge(envelope, overrides) if overrides else copy.deepcopy(envelope)
     _apply_dataset_synthesis_overrides(merged, cli_config)
     _apply_dataset_filter_overrides(merged, cli_config)
     _apply_phase_loadgen_overrides(merged, cli_config)
@@ -119,7 +159,7 @@ def resolve_config(
         promote_magic_lists_to_sweep_block=_promote_magic_lists_to_sweep_block,
         retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
     )
-    return AIPerfConfig.model_validate(merged)
+    return merged
 
 
 def _normalize_loaded_benchmark_shorthands(yaml_dict: dict[str, Any]) -> None:
