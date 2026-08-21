@@ -1566,10 +1566,11 @@ spec_decode_adapter:
   vllm:
     class: aiperf.spec_decode.vllm_adapter:VLLMSpecDecodeAdapter
     description: |
-      Reads vLLM's per-choice ``speculative_decoding_stats`` (emitted when the
-      server runs with ``--per-request-spec-decode-stats``) and fills the
+      Reads vLLM's response-root ``metrics.speculative_decoding`` (emitted when
+      the server runs with ``--per-request-spec-decode-metrics``) and fills the
       engine-neutral SpecDecodeAcceptanceRecord. Handles chat and completions,
-      streaming and non-streaming; int-casts the string histogram keys.
+      streaming and non-streaming; inflates the dense ``acceptance_histogram``
+      list into the record's sparse map.
     metadata: {}
 
 accuracy_grader:
