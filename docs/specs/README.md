@@ -48,9 +48,9 @@ read the record for the subsystem you are touching.
 | [phase-orchestration.md](phase-orchestration.md) | One `Clock`-native lifecycle for warmup→profiling phases: the escalation ladder, cancellation latch, and the shared seam scheduled and graph runs both use. |
 | [ancillary-timing.md](ancillary-timing.md) | The three knobs that ride on a running phase: ramping, seeded request cancellation, and sticky round-robin URL selection. |
 | [adaptive-scale.md](adaptive-scale.md) | The closed-loop SLA controller (`ramp_until_fail`) layered over a running load phase, its actuators, and its schema-v2 artifacts. |
-| [cellular.md](cellular.md) | Partitioning one run across cell processes and merging records or folded metric stores through the flat controller-to-cell Velo topology; hierarchy requests are refused before startup. |
+| [cellular.md](cellular.md) | Partitioning and merge through the flat controller-to-cell Velo topology, including fixed binary role provisioning, exact connection/reply attestation, sequenced application admission, transactional registration, and early hierarchy refusal. |
 | [velo-hub.md](velo-hub.md) | The per-experiment control-plane hub: a plugin trait whose plugins each contribute an HTTP router and velo handlers backed by one shared handler function, the discovery connect-by-endpoint anchor, the cell↔controller, `/artifact`, `/dataset`, and `/phaser` plugins that fold every standalone velo plane onto the hub, and the `AIPERF_CELLULAR_HUB` bootstrap toggle. |
-| [slurm-native.md](slurm-native.md) | Running a cellular benchmark natively under a SLURM allocation: the `aiperf slurm run` rank dispatch, the `SLURM_*` → controller/cell topology mapping and nodelist expansion, the `SlurmLauncher`, and the `aiperf slurm generate` sbatch script generator. |
+| [slurm-native.md](slurm-native.md) | Native cellular execution under a SLURM allocation: rank dispatch and topology mapping, private fixed-binary role mounts distinct from public routing coordinates, the `SlurmLauncher`, and sbatch generation. |
 
 ### Transports
 
@@ -101,6 +101,7 @@ read the record for the subsystem you are touching.
 | [eval-node-metrics-artifact.md](eval-node-metrics-artifact.md) | Built host-owned `aiperf eval --records-output` JSONL sidecar: streams one canonical record per completed NativeGraph model node (with status retained in raw-record capture) while keeping reward JSON and package trust boundaries unchanged. |
 | [definition-registry.md](definition-registry.md) | Built single shared definition layer: a lookup-only `Definition` (header, units, `larger_is_better`, `value_type`, group, order) for metrics and dataset-analysis outputs (server/GPU telemetry still seam-only) — split out of `MetricSpec`, keyed by namespaced id, made compile-time complete via the const-array `[MetricSpec; COUNT]` length, and used for SLA comparison, table rendering, and the `aiperf metrics` command. |
 | [telemetry.md](telemetry.md) | Side-channel measurement: GPU telemetry, server metrics, and network latency, feeding values into the metrics seam. |
+| [native-gpu-telemetry.md](native-gpu-telemetry.md) | Planned explicit native NVML and AMD SMI collectors over the existing Rust GPU telemetry source, phase-boundary, and accumulation seams, with no automatic fallback. |
 | [exporters.md](exporters.md) | The native output plane: the typed report core and the static set of `Exporter` sinks behind one trait. |
 | [dataset-analysis.md](dataset-analysis.md) | Built `--dry-run` analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse (ideal and finite-capacity), and the real execution timeline (concurrency, throughput, backlog) distilled from a dry run's records, emitted as `dataset_analysis.{txt,json,csv,html}`. |
 | [accuracy.md](accuracy.md) | The Rust dispatch/capture vs pinned-Python grading split, the injected evaluator seam, and sharded capture with a single grade. |

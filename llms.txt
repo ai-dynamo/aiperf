@@ -527,9 +527,12 @@ Execution and scheduling:
 - [`docs/specs/adaptive-scale.md`](docs/specs/adaptive-scale.md) — the closed-loop SLA
   controller (`ramp_until_fail`), its four live actuators, and its schema-v2
   artifacts.
-- [`docs/specs/cellular.md`](docs/specs/cellular.md) — partitioning one run across cell
-  processes, the multi-process and velo cross-host topologies, and the fidelity
-  guards.
+- [`docs/specs/cellular.md`](docs/specs/cellular.md) — partitioning and merge across
+  cell processes plus cross-host session trust: `_hello` is an unauthenticated
+  routing fact, not application admission; one-shot fixed binary role material
+  installs one process security context; exact connection/reply attestation,
+  sequenced payload-bound frames, transactional registration, and early
+  hierarchy refusal protect AIPerf effects without claiming transport confidentiality.
 - [`docs/specs/velo-hub.md`](docs/specs/velo-hub.md) — the per-experiment control-plane hub
   (`aiperf_runtime::hub`, `cellular` feature): a plugin trait whose plugins each
   contribute an HTTP router and velo handlers backed by one shared handler
@@ -537,10 +540,10 @@ Execution and scheduling:
   `/artifact`, `/dataset` (fan-out), and `/phaser` plugins that fold every standalone
   velo plane onto the hub, and the `AIPERF_CELLULAR_HUB` bootstrap toggle in
   `engine::cellular_controller`.
-- [`docs/specs/slurm-native.md`](docs/specs/slurm-native.md) — running a cellular benchmark
-  natively under a SLURM allocation: the `aiperf slurm run` rank dispatch, the
-  `SLURM_*` → controller/cell topology mapping, the `SlurmLauncher`, and the
-  `aiperf slurm generate` sbatch generator.
+- [`docs/specs/slurm-native.md`](docs/specs/slurm-native.md) — native cellular execution
+  under a SLURM allocation: rank dispatch and topology, public routing coordinates
+  distinct from exact-`0600` controller/cell binary role mounts, the
+  `SlurmLauncher`, and sbatch generation.
 
 Transports:
 
@@ -724,6 +727,9 @@ Measurement and output:
   command.
 - [`docs/specs/telemetry.md`](docs/specs/telemetry.md) — GPU telemetry, server metrics, and
   network latency side channels feeding the metrics seam.
+- [`docs/specs/native-gpu-telemetry.md`](docs/specs/native-gpu-telemetry.md) — planned
+  explicit native `nvml` and `amdsmi` collectors over the Rust GPU telemetry source,
+  phase-boundary, and accumulation seams, with no automatic fallback.
 - [`docs/specs/exporters.md`](docs/specs/exporters.md) — the typed report core and the
   static set of `Exporter` sinks behind one trait.
 - [`docs/specs/accuracy.md`](docs/specs/accuracy.md) — the Rust dispatch/capture vs
