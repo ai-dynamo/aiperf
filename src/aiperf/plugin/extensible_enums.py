@@ -110,11 +110,12 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
     def _norm_value(self: Self) -> str:
         # Lazily cached: members can be created dynamically via register(),
         # so there is no single construction point to precompute this.
-        norm = self.__dict__.get("_norm_value_cache")
-        if norm is None:
+        try:
+            return self._norm_value_cache
+        except AttributeError:
             norm = _normalize_name(self.value)
             self._norm_value_cache = norm
-        return norm
+            return norm
 
     def __eq__(self: Self, other: object) -> bool:
         if self is other:
@@ -137,11 +138,12 @@ class ExtensibleStrEnum(str, Enum, metaclass=ExtensibleStrEnumMeta):
         return not result
 
     def __hash__(self: Self) -> int:
-        norm_hash = self.__dict__.get("_norm_hash_cache")
-        if norm_hash is None:
+        try:
+            return self._norm_hash_cache
+        except AttributeError:
             norm_hash = hash(self._norm_value())
             self._norm_hash_cache = norm_hash
-        return norm_hash
+            return norm_hash
 
     @property
     def name(self) -> str:
