@@ -243,6 +243,8 @@ class CacheBustTarget(CaseInsensitiveStrEnum):
     SYSTEM_SUFFIX = "system_suffix"
     FIRST_TURN_PREFIX = "first_turn_prefix"
     FIRST_TURN_SUFFIX = "first_turn_suffix"
+    WARMUP_ISOLATION_SYSTEM = "warmup_isolation_system"
+    WARMUP_ISOLATION_FIRST_TURN = "warmup_isolation_first_turn"
 
 
 class PromptCorpus(CaseInsensitiveStrEnum):
@@ -661,13 +663,15 @@ class VideoAudioCodec(CaseInsensitiveStrEnum):
     """Audio codecs for embedding audio in synthetic video files."""
 
     AAC = "aac"
-    """AAC codec. Default for MP4 containers."""
+    """AAC codec. Not built into the AIPerf container's FFmpeg; selecting it
+    requires an FFmpeg build that includes an AAC encoder."""
 
     LIBVORBIS = "libvorbis"
     """Vorbis codec. Default for WebM containers."""
 
     LIBOPUS = "libopus"
-    """Opus codec. Alternative for WebM containers."""
+    """Opus codec. Default for MP4 containers. Always encodes at 48 kHz
+    regardless of the requested sample rate."""
 
 
 class VideoSynthType(CaseInsensitiveStrEnum):

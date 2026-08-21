@@ -106,6 +106,8 @@ navigation:
       path: tutorials/agentic-code-generator.md
     - page: Replay Weka Agentic Coding Traces
       path: tutorials/weka-trace.md
+    - page: Replay TraceLab Agentic Coding Traces
+      path: tutorials/tracelab-trace.md
     - page: InferenceX AgentX MVP Benchmark
       path: tutorials/agentx-mvp.md
   - section: Load Patterns & Scheduling
@@ -203,8 +205,6 @@ navigation:
     path: tutorials/baseten-trace.md
   - page: Conversation DAG Benchmarks
     path: benchmark-modes/dag.md
-  - page: "SemiAnalysis AgentX: How the Benchmark Works (FAQ)"
-    path: benchmark-modes/semianalysis-agentx-faq.md
 
 - section: Accuracy
   collapsed: true
@@ -247,6 +247,8 @@ navigation:
     path: reference/json-export-schema.md
   - page: HTTP API Endpoints
     path: reference/api-endpoints.md
+  - page: Cache-Bust Targets
+    path: reference/cache-bust.md
   - page: YAML Config Roadmap
     path: reference/yaml-config-roadmap.md
   - page: Mocking a ROCm Environment

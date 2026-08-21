@@ -117,6 +117,73 @@ class TestComputeCacheKey:
         assert base is not None
         assert len({base, speedup, out_mult, prefix_mult}) == 4
 
+    def test_key_changes_with_system_prompt(self, tmp_path: Path) -> None:
+        # The composer bakes the verbatim system prompt into
+        # Conversation.system_message, which round-trips through the stored mmap.
+        # A cache HIT skips the composer entirely, so two runs differing only in
+        # --system-prompt must NOT share an entry -- otherwise the second run
+        # silently replays the first one's prompt.
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(
+            tmp_path,
+            b'{"session_id": "s1", "timestamp": 0, "input_length": 8}\n',
+        )
+        prompt_a = tmp_path / "a.txt"
+        prompt_a.write_text("Prompt A.")
+        prompt_b = tmp_path / "b.txt"
+        prompt_b.write_text("Prompt B, different content.")
+
+        def _key(**system_kw: str) -> str | None:
+            run = make_run_from_cli(
+                CLIConfig(
+                    model_names=["test-model"],
+                    input_file=str(trace),
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    **system_kw,
+                )
+            )
+            return mmap_cache.compute_cache_key_from_run(run)
+
+        none_key = _key()
+        a_key = _key(system_prompt_file=str(prompt_a))
+        b_key = _key(system_prompt_file=str(prompt_b))
+        assert none_key is not None
+        assert len({none_key, a_key, b_key}) == 3
+
+        # Identical text through either source composes identical bytes, so the
+        # two spellings must collapse onto one entry.
+        assert a_key == _key(system_prompt="Prompt A.")
+
+    def test_key_omits_system_prompt_field_when_unset(self, tmp_path: Path) -> None:
+        # Emitting an explicit None would serialize as ``null`` through
+        # orjson.dumps and shift every pre-existing key, needlessly cold-starting
+        # warm caches for runs that never touch the feature.
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(
+            tmp_path,
+            b'{"session_id": "s1", "timestamp": 0, "input_length": 8}\n',
+        )
+
+        def _payload(**system_kw: str) -> dict:
+            run = make_run_from_cli(
+                CLIConfig(
+                    model_names=["test-model"],
+                    input_file=str(trace),
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    **system_kw,
+                )
+            )
+            return mmap_cache._settings_payload_from_run(run)
+
+        unset = _payload()
+        configured = _payload(system_prompt="Prompt A.")
+        assert "system_prompt_sha256" not in unset
+        assert "system_prompt_sha256" in configured
+        # Every other key is untouched by the addition.
+        assert set(unset) == set(configured) - {"system_prompt_sha256"}
+
     def test_key_changes_with_preformat_payloads(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -247,6 +314,84 @@ class TestComputeCacheKey:
         k1, k2 = _key(1), _key(2)
         assert k1 is not None and k2 is not None
         assert k1 != k2, "random_seed must distinguish the cache key"
+
+    def test_settings_payload_key_set_is_frozen(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Any new cache-affecting field must be added here intentionally.
+
+        This test is the gate for the class of cache-key holes where a setting
+        that rewrites cached bytes is accidentally omitted from the payload.
+        Covers both the top-level key set and the nested preformat_endpoint
+        sub-dict (the latter only populated when PREFORMAT_PAYLOADS is on).
+        """
+        from aiperf.common.environment import Environment
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(tmp_path, b'{"session_id": "s1"}\n')
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                input_file=str(trace),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            )
+        )
+        payload = mmap_cache._settings_payload_from_run(run)
+        assert set(payload.keys()) == {
+            "num_dataset_entries",
+            "dataset_sampling_strategy",
+            "custom_dataset_type",
+            "public_dataset_source",
+            "random_seed",
+            "dataset_random_seed",
+            "corpus",
+            "osl_fallback",
+            "preformat_payloads",
+            "preformat_endpoint",
+            "inline_records_sha256",
+            "prompt",
+            "endpoint_type",
+            "model_names",
+            "fixed_schedule_start_offset",
+            "fixed_schedule_end_offset",
+            "ignore_trace_delays",
+            "use_think_time_only",
+            "inter_turn_delay_cap_seconds",
+            "trace_idle_gap_cap_seconds",
+            "weka_split_flattened_agents",
+            "weka_aux_max_requests",
+            "weka_aux_isl_ratio",
+            "weka_aux_isl_floor",
+            "weka_aux_cross_model",
+            "weka_aux_reduction_osl_max",
+            "weka_aux_reduction_ratio",
+            "weka_worker_group_min",
+            "weka_tool_shaped_messages",
+            "weka_seam_max_gap_seconds",
+            "weka_seam_min_overlap_ratio",
+            "block_size",
+            "tracelab_subagent_join",
+            "tracelab_codex_subagent_join",
+            "tracelab_min_spawn_ms",
+            "synthesis",
+            "max_context_length",
+            "entries_explicit",
+        }
+
+        # Also gate the nested preformat_endpoint sub-dict — force_content_parts
+        # lives there, not at the top level, so the key-set check above doesn't
+        # catch a future omission inside this dict.
+        monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", True)
+        payload_with_preformat = mmap_cache._settings_payload_from_run(run)
+        preformat = payload_with_preformat["preformat_endpoint"]
+        assert preformat is not None
+        assert set(preformat.keys()) == {
+            "streaming",
+            "use_legacy_max_tokens",
+            "use_server_token_count",
+            "extra",
+            "force_content_parts",
+        }
 
     def test_settings_payload_includes_seed_corpus_osl(self, tmp_path: Path) -> None:
         # Regression guard for the wrong-cache-hit findings: random_seed,
@@ -496,7 +641,7 @@ class TestLookupAndPopulate:
         raw["version"] = 22
         manifest_path.write_bytes(orjson.dumps(raw))
 
-        assert mmap_cache.MANIFEST_VERSION == 26
+        assert mmap_cache.MANIFEST_VERSION == 27
         assert mmap_cache.lookup("pre-overlap-frontier", compressed=False) is None
 
     def test_lookup_compressed_mismatch_returns_none(self, tmp_path: Path) -> None:
