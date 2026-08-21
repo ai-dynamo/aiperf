@@ -60,6 +60,15 @@ class CaseInsensitiveStrEnum(str, Enum):
             )
         return super().__eq__(other)
 
+    def __ne__(self: Self, other: object) -> bool:
+        # str.__ne__ sits between this class and object in the MRO, so an
+        # inherited __ne__ would compare raw values and disagree with the
+        # normalizing __eq__ above.
+        result = self.__eq__(other)
+        if result is NotImplemented:
+            return result
+        return not result
+
     def __hash__(self: Self) -> int:
         norm_hash = self.__dict__.get("_norm_hash_cache")
         if norm_hash is None:
