@@ -6,6 +6,7 @@ from typing import Self
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from pytest import param
 
 from aiperf.plugin.extensible_enums import (
     ExtensibleStrEnum,
@@ -829,7 +830,15 @@ class TestNotEqualMirrorsEqual:
         assert (SampleEnum.ALPHA != None) is True  # noqa: E711 - testing __ne__ with None
         assert (SampleEnum.ALPHA != []) is True
 
-    @pytest.mark.parametrize("other", [123, None, [], 4.5])  # fmt: skip
+    @pytest.mark.parametrize(
+        "other",
+        [
+            param(123, id="int"),
+            param(None, id="none"),
+            param([], id="list"),
+            param(4.5, id="float"),
+        ],
+    )  # fmt: skip
     def test_ne_forwards_notimplemented_for_unsupported_operands(
         self: Self, other: object
     ) -> None:
