@@ -244,6 +244,7 @@ A: None measurable. Network I/O dominates by 1000×.
 ```python
 "composer.turn.model_selection"    # Model selection per turn
 "composer.turn.max_tokens"         # max_tokens sampling
+"composer.turn.sequence_length"    # Per-turn ISL/OSL sequence-length sampling
 "composer.conversation.turn_count" # Number of turns per conversation
 "composer.conversation.turn_delay" # Delay between turns
 ```

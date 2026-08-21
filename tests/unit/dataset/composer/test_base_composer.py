@@ -6,9 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytest import param
 
+from aiperf.common import random_generator as rng
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import Turn
+from aiperf.config.distributions import LogNormalDistribution
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.types import SequenceDistributionEntry
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from tests.unit.dataset.composer.conftest import make_run
 
@@ -71,17 +74,60 @@ class TestBaseDatasetComposer:
             run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
         )
 
-        # Distribution was built directly from the v2 entries (not via
-        # DistributionParser.parse, which only accepts strings).
+        # Distribution preserves the typed v2 entries at runtime (typed ISL/OSL
+        # distributions kept intact, not flattened to mean + stddev).
         assert composer._seq_distribution is not None
-        pairs = composer._seq_distribution.pairs
-        assert len(pairs) == 2
-        assert pairs[0].input_seq_len == 100
-        assert pairs[0].output_seq_len == 25
-        assert pairs[0].probability == 50.0
-        assert pairs[1].input_seq_len == 200
-        assert pairs[1].output_seq_len == 50
-        assert pairs[1].probability == 50.0
+        entries = composer._seq_distribution.entries
+        assert len(entries) == 2
+        assert entries[0].isl.expected_value == 100
+        assert entries[0].osl.expected_value == 25
+        assert entries[0].probability == 50.0
+        assert entries[1].isl.expected_value == 200
+        assert entries[1].osl.expected_value == 50
+        assert entries[1].probability == 50.0
+
+    def test_sequence_distribution_non_normal_entry_varies_per_turn(
+        self, sequence_dist_config, mock_tokenizer
+    ):
+        """Regression: a sequence_distribution entry with a non-Normal (log-normal)
+        ISL/OSL must vary per turn instead of collapsing to the entry mean."""
+        composer = ConcreteBaseComposer(
+            run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+        )
+        # Single 100%-weight entry whose ISL and OSL are log-normal.
+        composer._synthetic_prompts.sequence_distribution = [
+            SequenceDistributionEntry(
+                isl={"mean": 6000, "median": 2000, "min": 50, "max": 50000},
+                osl={"mean": 6000, "median": 2000, "min": 50, "max": 50000},
+                probability=100,
+            )
+        ]
+        composer._seq_distribution = composer._build_sequence_distribution()
+
+        pairs = [composer._get_turn_sequence_lengths(t) for t in range(200)]
+        isls = [p[0] for p in pairs]
+        osls = [p[1] for p in pairs]
+
+        assert len(set(isls)) > 50, "seq-dist ISL collapsed to (near-)constant"
+        assert len(set(osls)) > 50, "seq-dist OSL collapsed to (near-)constant"
+        assert min(isls) >= 50 and max(isls) <= 50000
+        assert min(osls) >= 50 and max(osls) <= 50000
+        assert max(isls) > 3 * (sum(isls) / len(isls))
+
+    def test_sequence_distribution_deterministic_across_composers(
+        self, sequence_dist_config, mock_tokenizer
+    ):
+        """Same seed -> identical per-turn seq-dist samples."""
+        runs = []
+        for _ in range(2):
+            rng.reset()
+            rng.init(42)
+            composer = ConcreteBaseComposer(
+                run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+            )
+            runs.append([composer._get_turn_sequence_lengths(t) for t in range(20)])
+
+        assert runs[0] == runs[1]
 
     def test_model_selection_round_robin(self, base_config, mock_tokenizer):
         """Test round robin model selection."""
@@ -136,24 +182,47 @@ class TestBaseDatasetComposer:
     def test_get_turn_sequence_lengths_without_distribution(
         self, base_config, mock_tokenizer
     ):
-        """Test getting sequence lengths without distribution (fallback)."""
+        """Without a sequence_distribution, ISL/OSL are sampled per turn from
+        the typed ISL/OSL distributions (here Normal), not pinned to the mean."""
         composer = ConcreteBaseComposer(
             run=make_run(base_config), tokenizer=mock_tokenizer
         )
 
         turn_id = 12345
-        result = composer._get_turn_sequence_lengths(turn_id)
+        isl, osl = composer._get_turn_sequence_lengths(turn_id)
 
-        # Should use fallback values from config
-        expected = (
-            base_config.prompt_input_tokens_mean,
-            base_config.prompt_output_tokens_mean,
+        # Drawn from Normal(mean, stddev): positive and within a wide band
+        assert 0 < isl < base_config.prompt_input_tokens_mean * 3
+        assert 0 < osl < base_config.prompt_output_tokens_mean * 3
+
+        # Cached so repeated calls in the same turn are consistent.
+        assert composer._turn_sequence_cache[turn_id] == (isl, osl)
+        assert composer._get_turn_sequence_lengths(turn_id) == (isl, osl)
+
+    def test_get_turn_sequence_lengths_varies_across_turns(
+        self, base_config, mock_tokenizer
+    ):
+        """Regression: per-turn sampling vary."""
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
         )
-        assert result == expected
+        isls = [composer._get_turn_sequence_lengths(t)[0] for t in range(50)]
+        assert len(set(isls)) > 1
 
-        # Should be cached
-        assert turn_id in composer._turn_sequence_cache
-        assert composer._turn_sequence_cache[turn_id] == expected
+    def test_get_turn_sequence_lengths_deterministic_across_composers(
+        self, base_config, mock_tokenizer
+    ):
+        """Same seed -> identical per-turn ISL/OSL."""
+        runs = []
+        for _ in range(2):
+            rng.reset()
+            rng.init(42)
+            composer = ConcreteBaseComposer(
+                run=make_run(base_config), tokenizer=mock_tokenizer
+            )
+            runs.append([composer._get_turn_sequence_lengths(t) for t in range(20)])
+
+        assert runs[0] == runs[1]
 
     def test_clear_turn_cache(self, sequence_dist_config, mock_tokenizer):
         """Test clearing turn cache."""
@@ -245,6 +314,28 @@ class TestBaseDatasetComposer:
         composer._set_max_tokens(turn)
 
         assert turn.max_tokens == 42
+
+    def test_set_max_tokens_non_normal_osl_varies_per_turn(
+        self, base_config, mock_tokenizer
+    ):
+        """Non-Normal OSL (here log-normal) must vary max_tokens per turn."""
+        composer = ConcreteBaseComposer(
+            run=make_run(base_config), tokenizer=mock_tokenizer
+        )
+        composer._synthetic_prompts.osl = LogNormalDistribution(
+            mean=6000, median=2000, min=50, max=50000
+        )
+
+        max_tokens = []
+        for _ in range(200):
+            turn = Turn()
+            composer._set_max_tokens(turn)
+            max_tokens.append(turn.max_tokens)
+
+        assert len(set(max_tokens)) > 50, "OSL collapsed to (near-)constant"
+        assert min(max_tokens) >= 50 and max(max_tokens) <= 50000
+        # A heavy right tail must actually appear, not just jitter around a point.
+        assert max(max_tokens) > 3 * (sum(max_tokens) / len(max_tokens))
 
     def test_finalize_turn(self, sequence_dist_config, mock_tokenizer):
         """Test turn finalization."""
