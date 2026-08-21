@@ -46,7 +46,7 @@ use super::{
     HANDLER_STORE_PARTITION,
 };
 use crate::engine::cellular_registration::{
-    CellPeerAdmissionPurpose, CellRegistrationAuthority, CellRegistrationCredential,
+    AdmissionPurpose, AuthenticatedFrame, CellRegistrationAuthority, CellRegistrationCredential,
     ControllerRegisterAttestation, ControllerRegisterAttestor, ControllerRegisterVerifier,
 };
 
@@ -162,7 +162,14 @@ pub(crate) fn verify_reply(
         ));
     }
     let encoded_registration = rmp_serde::to_vec(registration).map_err(encode)?;
-    if encoded_registration.as_slice() != reply.registration_frame.as_ref() {
+    let registration_frame =
+        AuthenticatedFrame::decode(&reply.registration_frame).map_err(|_| {
+            CellTransportError::Authentication("controller registration frame is invalid")
+        })?;
+    if registration_frame.role() != crate::engine::cellular_bootstrap::CellularRole::Cell(cell_id)
+        || registration_frame.peer_info() != registration.cell_peer
+        || encoded_registration.as_slice() != registration_frame.payload()
+    {
         return Err(CellTransportError::Authentication(
             "controller registration frame is inconsistent",
         ));
@@ -185,6 +192,12 @@ fn decode(error: impl std::fmt::Display) -> CellTransportError {
 }
 fn io(error: impl std::fmt::Display) -> CellTransportError {
     CellTransportError::Io(error.to_string())
+}
+
+#[derive(Clone, Copy)]
+struct RegisteredCell {
+    session_nonce: [u8; 32],
+    payload_digest: [u8; 32],
 }
 
 /// The controller's velo endpoint: registers the control/partition handlers and exposes a
@@ -236,7 +249,11 @@ impl VeloControllerTransport {
         let preflight = Arc::new(crate::graph::supplement::GraphCellPreflightBarrier::new(
             cell_count,
         ));
-        let registered = Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new()));
+        let registered = Arc::new(parking_lot::Mutex::new(vec![
+            None::<RegisteredCell>;
+            registration_authority
+                .planned_cell_capacity()
+        ]));
         let register_authority = registration_authority.clone();
         let partition_authority = registration_authority.clone();
         let store_partition_authority = registration_authority.clone();
@@ -257,20 +274,37 @@ impl VeloControllerTransport {
                 let reply_attestor = reply_attestor.clone();
                 let controller_peer = controller_peer.clone();
                 async move {
-                    let register: CellRegister = rmp_serde::from_slice(&ctx.payload)
-                        .map_err(|error| anyhow::anyhow!("decode CellRegister: {error}"))?;
-                    let verified = registration_authority.verify(&register, &controller_peer)?;
+                    let opened = registration_authority
+                        .open_payload::<CellRegister>(AdmissionPurpose::Register, &ctx.payload)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    let (role, session_nonce, authenticated_peer, register) = opened.into_parts();
                     ensure!(
-                        verified.cell_id() == register.cell_id,
-                        "cell registration proof identity does not match its request"
+                        role == crate::engine::cellular_bootstrap::CellularRole::Cell(
+                            register.cell_id,
+                        ) && authenticated_peer == register.cell_peer,
+                        "AdmissionRejected"
                     );
-                    let peer: PeerInfo = rmp_serde::from_slice(&register.cell_peer)
-                        .map_err(|error| anyhow::anyhow!("decode cell PeerInfo: {error}"))?;
-                    let registration_fingerprint = blake3::hash(&ctx.payload);
-                    if let Some(existing) = registered.lock().get(&register.cell_id) {
+                    let verified = registration_authority
+                        .verify(&register, &controller_peer)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    ensure!(verified.cell_id() == register.cell_id, "AdmissionRejected");
+                    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    let payload_digest = *blake3::hash(
+                        &rmp_serde::to_vec(&register)
+                            .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?,
+                    )
+                    .as_bytes();
+                    if let Some(existing) = registered
+                        .lock()
+                        .get(register.cell_id as usize)
+                        .copied()
+                        .flatten()
+                    {
                         ensure!(
-                            *existing == registration_fingerprint,
-                            "cell registration retry changed its authenticated identity"
+                            existing.session_nonce != session_nonce
+                                || existing.payload_digest == payload_digest,
+                            "AdmissionRejected"
                         );
                     }
                     let Some(spec) = spec_for(&register)? else {
@@ -281,27 +315,33 @@ impl VeloControllerTransport {
                     };
                     let is_new_registration = {
                         let mut registered = registered.lock();
-                        match registered.get(&register.cell_id) {
-                            Some(existing) => {
-                                ensure!(
-                                    *existing == registration_fingerprint,
-                                    "cell registration retry changed its authenticated identity"
-                                );
-                                false
-                            }
-                            None => {
-                                registered.insert(register.cell_id, registration_fingerprint);
-                                true
-                            }
+                        let slot = registered
+                            .get_mut(register.cell_id as usize)
+                            .ok_or_else(|| anyhow::anyhow!("AdmissionRejected"))?;
+                        if let Some(existing) = *slot {
+                            ensure!(
+                                existing.session_nonce != session_nonce
+                                    || existing.payload_digest == payload_digest,
+                                "AdmissionRejected"
+                            );
                         }
+                        let is_new = slot.is_none();
+                        *slot = Some(RegisteredCell {
+                            session_nonce,
+                            payload_digest,
+                        });
+                        is_new
                     };
                     ctx.msg
                         .register_peer(peer)
                         .map_err(|error| anyhow::anyhow!("register_peer cell: {error}"))?;
-                    // A successful exact retry returns the same material without
-                    // counting one cell twice toward the synchronized start barrier.
-                    let is_last_registration =
-                        is_new_registration && registered.lock().len() == cell_count as usize;
+                    let is_last_registration = is_new_registration
+                        && registered
+                            .lock()
+                            .iter()
+                            .filter(|registered| registered.is_some())
+                            .count()
+                            == cell_count as usize;
                     if is_last_registration {
                         reg_notify.notify_one();
                     }
@@ -327,18 +367,22 @@ impl VeloControllerTransport {
         .map_err(io)?;
 
         let preflight_barrier = preflight.clone();
+        let preflight_authority = registration_authority.clone();
         velo.register_handler(
             Handler::am_handler_async(HANDLER_PREFLIGHT, move |ctx: Context| {
                 let preflight_barrier = preflight_barrier.clone();
+                let registration_authority = preflight_authority.clone();
                 async move {
-                    match rmp_serde::from_slice::<CellMessage>(&ctx.payload) {
-                        Ok(CellMessage::Preflight { cell_id, result }) => {
-                            preflight_barrier.report(cell_id, result);
-                        }
-                        Ok(_) => {}
-                        Err(error) => {
-                            tracing::warn!(error = %error, "invalid cellular preflight message")
-                        }
+                    let Ok(opened) = registration_authority
+                        .open_payload::<CellMessage>(AdmissionPurpose::Preflight, &ctx.payload)
+                    else {
+                        return Ok(());
+                    };
+                    let role = opened.role();
+                    if let CellMessage::Preflight { cell_id, result } = opened.into_payload()
+                        && role == crate::engine::cellular_bootstrap::CellularRole::Cell(cell_id)
+                    {
+                        preflight_barrier.report(cell_id, result);
                     }
                     Ok(())
                 }
@@ -349,21 +393,23 @@ impl VeloControllerTransport {
 
         // heartbeat (fire-and-forget): push the decoded CellMessage::Heartbeat.
         let heartbeat_sender = sender.clone();
+        let heartbeat_authority = registration_authority.clone();
         velo.register_handler(
             Handler::am_handler_async(HANDLER_HEARTBEAT, move |ctx: Context| {
                 let sender = heartbeat_sender.clone();
+                let registration_authority = heartbeat_authority.clone();
                 async move {
-                    match rmp_serde::from_slice::<CellMessage>(&ctx.payload) {
-                        Ok(message) => {
-                            let _ = sender.send(Ok(message)).await;
-                        }
-                        Err(error) => {
-                            let _ = sender
-                                .send(Err(CellTransportError::Decode(format!(
-                                    "heartbeat: {error}"
-                                ))))
-                                .await;
-                        }
+                    let Ok(opened) = registration_authority
+                        .open_payload::<CellMessage>(AdmissionPurpose::Heartbeat, &ctx.payload)
+                    else {
+                        return Ok(());
+                    };
+                    let role = opened.role();
+                    let message = opened.into_payload();
+                    if let CellMessage::Heartbeat { cell_id, .. } = &message
+                        && role == crate::engine::cellular_bootstrap::CellularRole::Cell(*cell_id)
+                    {
+                        let _ = sender.send(Ok(message)).await;
                     }
                     Ok(())
                 }
@@ -374,21 +420,23 @@ impl VeloControllerTransport {
 
         // phase_signal (fire-and-forget): push the decoded CellMessage::PhaseSignal.
         let phase_signal_sender = sender.clone();
+        let phase_signal_authority = registration_authority.clone();
         velo.register_handler(
             Handler::am_handler_async(HANDLER_PHASE_SIGNAL, move |ctx: Context| {
                 let sender = phase_signal_sender.clone();
+                let registration_authority = phase_signal_authority.clone();
                 async move {
-                    match rmp_serde::from_slice::<CellMessage>(&ctx.payload) {
-                        Ok(message) => {
-                            let _ = sender.send(Ok(message)).await;
-                        }
-                        Err(error) => {
-                            let _ = sender
-                                .send(Err(CellTransportError::Decode(format!(
-                                    "phase signal: {error}"
-                                ))))
-                                .await;
-                        }
+                    let Ok(opened) = registration_authority
+                        .open_payload::<CellMessage>(AdmissionPurpose::PhaseSignal, &ctx.payload)
+                    else {
+                        return Ok(());
+                    };
+                    let role = opened.role();
+                    let message = opened.into_payload();
+                    if let CellMessage::PhaseSignal { cell_id, .. } = &message
+                        && role == crate::engine::cellular_bootstrap::CellularRole::Cell(*cell_id)
+                    {
+                        let _ = sender.send(Ok(message)).await;
                     }
                     Ok(())
                 }
@@ -404,22 +452,23 @@ impl VeloControllerTransport {
                 let sender = partition_sender.clone();
                 let registration_authority = partition_authority.clone();
                 async move {
-                    let ship: CellPartitionShip = rmp_serde::from_slice(&ctx.payload)
-                        .map_err(|error| anyhow::anyhow!("decode partition ship: {error}"))?;
+                    let opened = registration_authority
+                        .open_payload::<CellPartitionShip>(
+                            AdmissionPurpose::Partition,
+                            &ctx.payload,
+                        )
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    let (role, _, authenticated_peer, ship) = opened.into_parts();
                     ensure!(
-                        ship.partition.cell_id() == ship.cell_id,
-                        "partition ship identity does not match its partition"
+                        ship.partition.cell_id() == ship.cell_id
+                            && role
+                                == crate::engine::cellular_bootstrap::CellularRole::Cell(
+                                    ship.cell_id,
+                                ),
+                        "AdmissionRejected"
                     );
-                    registration_authority.verify_peer_admission(
-                        ship.cell_id,
-                        CellPeerAdmissionPurpose::Partition,
-                        &ship.cell_peer,
-                        &ship.admission_proof,
-                    )?;
-                    // The cell ships from a fresh velo instance the controller has
-                    // not seen. Its exact peer proof is checked before admission.
-                    let peer: PeerInfo = rmp_serde::from_slice(&ship.cell_peer)
-                        .map_err(|error| anyhow::anyhow!("decode ship peer: {error}"))?;
+                    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
                     ctx.msg
                         .register_peer(peer)
                         .map_err(|error| anyhow::anyhow!("register_peer shipper: {error}"))?;
@@ -443,22 +492,23 @@ impl VeloControllerTransport {
                 let sender = store_partition_sender.clone();
                 let registration_authority = store_partition_authority.clone();
                 async move {
-                    let ship: CellStorePartitionShip = rmp_serde::from_slice(&ctx.payload)
-                        .map_err(|error| anyhow::anyhow!("decode store partition ship: {error}"))?;
+                    let opened = registration_authority
+                        .open_payload::<CellStorePartitionShip>(
+                            AdmissionPurpose::StorePartition,
+                            &ctx.payload,
+                        )
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    let (role, _, authenticated_peer, ship) = opened.into_parts();
                     ensure!(
-                        ship.partition.cell_id() == ship.cell_id,
-                        "store partition ship identity does not match its partition"
+                        ship.partition.cell_id() == ship.cell_id
+                            && role
+                                == crate::engine::cellular_bootstrap::CellularRole::Cell(
+                                    ship.cell_id,
+                                ),
+                        "AdmissionRejected"
                     );
-                    registration_authority.verify_peer_admission(
-                        ship.cell_id,
-                        CellPeerAdmissionPurpose::StorePartition,
-                        &ship.cell_peer,
-                        &ship.admission_proof,
-                    )?;
-                    // The cell ships from a fresh velo instance the controller has
-                    // not seen. Its exact peer proof is checked before admission.
-                    let peer: PeerInfo = rmp_serde::from_slice(&ship.cell_peer)
-                        .map_err(|error| anyhow::anyhow!("decode store ship peer: {error}"))?;
+                    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
                     ctx.msg
                         .register_peer(peer)
                         .map_err(|error| anyhow::anyhow!("register_peer store shipper: {error}"))?;
@@ -515,7 +565,7 @@ impl ControllerTransport for VeloControllerTransport {
 pub struct VeloCellClient {
     velo: Arc<Velo>,
     controller: PeerInfo,
-    registration_peer: Vec<u8>,
+    registration_peer: PeerInfo,
     credential: Option<Arc<CellRegistrationCredential>>,
 }
 
@@ -523,7 +573,7 @@ impl VeloCellClient {
     /// Register the controller peer so the cell can address it, and return the client.
     pub fn connect(velo: Arc<Velo>, controller: PeerInfo) -> Result<Self, CellTransportError> {
         velo.register_peer(controller.clone()).map_err(io)?;
-        let registration_peer = rmp_serde::to_vec(&velo.peer_info()).map_err(encode)?;
+        let registration_peer = velo.peer_info();
         Ok(Self {
             velo,
             controller,
@@ -532,7 +582,7 @@ impl VeloCellClient {
         })
     }
 
-    /// Build a client with the per-cell credential needed for fresh peer tickets.
+    /// Build a client with the per-cell credential needed for authenticated frames.
     pub(crate) fn connect_authenticated(
         velo: Arc<Velo>,
         controller: PeerInfo,
@@ -568,7 +618,7 @@ impl VeloCellClient {
     ) -> Result<RegisterReply, CellTransportError> {
         self.send_registration(
             cell_id,
-            self.registration_peer.clone(),
+            rmp_serde::to_vec(&self.registration_peer).map_err(encode)?,
             artifact_capability_digest,
             registration_proof,
         )
@@ -582,14 +632,13 @@ impl VeloCellClient {
         artifact_capability_digest: Option<[u8; 32]>,
         registration_proof: Option<super::CellRegistrationProof>,
     ) -> Result<RegisterReply, CellTransportError> {
-        let body = rmp_serde::to_vec(&CellRegister {
+        let registration = CellRegister {
             cell_id,
             cell_peer,
             artifact_capability_digest,
             registration_proof,
-        })
-        .map_err(encode)?;
-        self.send_registration_frame(Bytes::from(body)).await
+        };
+        self.register_request(&registration).await
     }
 
     async fn send_registration_frame(
@@ -636,7 +685,7 @@ impl VeloCellClient {
         credential: &CellRegistrationCredential,
         controller_binding: ControllerPeerBinding,
     ) -> Result<CellRegister, CellTransportError> {
-        let cell_peer = self.registration_peer.clone();
+        let cell_peer = rmp_serde::to_vec(&self.registration_peer).map_err(encode)?;
         let registration_proof = credential
             .sign_register(&cell_peer, artifact_capability_digest, controller_binding)
             .map_err(encode)?;
@@ -653,10 +702,22 @@ impl VeloCellClient {
         &self,
         registration: &CellRegister,
     ) -> Result<RegisterReply, CellTransportError> {
-        self.send_registration_frame(Bytes::from(
-            rmp_serde::to_vec(registration).map_err(encode)?,
-        ))
-        .await
+        let credential = self.credential.as_ref().ok_or_else(|| {
+            CellTransportError::Authentication("cell registration credential is missing")
+        })?;
+        if credential.cell_id() != registration.cell_id {
+            return Err(CellTransportError::Authentication(
+                "cell registration credential has the wrong identity",
+            ));
+        }
+        let frame = credential
+            .seal_payload(
+                AdmissionPurpose::Register,
+                &self.registration_peer,
+                registration,
+            )
+            .map_err(encode)?;
+        self.send_registration_frame(Bytes::from(frame)).await
     }
 
     /// Await typed handler publication and send under the caller's one deadline.
@@ -684,7 +745,14 @@ impl VeloCellClient {
     ) -> Result<RegisterReply, CellTransportError> {
         let registration =
             self.signed_registration(cell_id, artifact_capability_digest, credential)?;
-        self.register_request(&registration).await
+        let frame = credential
+            .seal_payload(
+                AdmissionPurpose::Register,
+                &self.registration_peer,
+                &registration,
+            )
+            .map_err(encode)?;
+        self.send_registration_frame(Bytes::from(frame)).await
     }
 
     /// Block until the controller triggers the run-wide START event (a synchronized
@@ -698,6 +766,20 @@ impl VeloCellClient {
             .await
             .map_err(io)
     }
+
+    fn seal_payload<T: Serialize>(
+        &self,
+        purpose: AdmissionPurpose,
+        payload: &T,
+    ) -> Result<Bytes, CellTransportError> {
+        let credential = self.credential.as_ref().ok_or_else(|| {
+            CellTransportError::Authentication("cell application credential is missing")
+        })?;
+        credential
+            .seal_payload(purpose, &self.registration_peer, payload)
+            .map(Bytes::from)
+            .map_err(encode)
+    }
 }
 
 #[async_trait::async_trait]
@@ -705,11 +787,11 @@ impl CellClient for VeloCellClient {
     async fn send(&mut self, message: &CellMessage) -> Result<(), CellTransportError> {
         match message {
             CellMessage::Preflight { .. } => {
-                let body = rmp_serde::to_vec(message).map_err(encode)?;
+                let body = self.seal_payload(AdmissionPurpose::Preflight, message)?;
                 self.velo
                     .am_send(HANDLER_PREFLIGHT)
                     .map_err(io)?
-                    .raw_payload(Bytes::from(body))
+                    .raw_payload(body)
                     .instance(self.controller.instance_id())
                     .send()
                     .await
@@ -717,22 +799,22 @@ impl CellClient for VeloCellClient {
             }
             CellMessage::Heartbeat { .. } => {
                 // Fire-and-forget: no ack, so the controller needs no return route.
-                let body = rmp_serde::to_vec(message).map_err(encode)?;
+                let body = self.seal_payload(AdmissionPurpose::Heartbeat, message)?;
                 self.velo
                     .am_send(HANDLER_HEARTBEAT)
                     .map_err(io)?
-                    .raw_payload(Bytes::from(body))
+                    .raw_payload(body)
                     .instance(self.controller.instance_id())
                     .send()
                     .await
                     .map_err(io)?;
             }
             CellMessage::PhaseSignal { .. } => {
-                let body = rmp_serde::to_vec(message).map_err(encode)?;
+                let body = self.seal_payload(AdmissionPurpose::PhaseSignal, message)?;
                 self.velo
                     .am_send(HANDLER_PHASE_SIGNAL)
                     .map_err(io)?
-                    .raw_payload(Bytes::from(body))
+                    .raw_payload(body)
                     .instance(self.controller.instance_id())
                     .send()
                     .await
@@ -750,21 +832,16 @@ impl CellClient for VeloCellClient {
                         "partition credential does not match the cell identity".to_owned(),
                     ));
                 }
-                let cell_peer = self.registration_peer.clone();
                 let ship = CellPartitionShip {
                     cell_id: partition.cell_id(),
-                    admission_proof: credential
-                        .sign_peer_admission(CellPeerAdmissionPurpose::Partition, &cell_peer)
-                        .map_err(encode)?,
-                    cell_peer,
                     partition: partition.clone(),
                 };
-                let body = rmp_serde::to_vec(&ship).map_err(encode)?;
+                let body = self.seal_payload(AdmissionPurpose::Partition, &ship)?;
                 let reply: Bytes = self
                     .velo
                     .unary(HANDLER_PARTITION)
                     .map_err(io)?
-                    .raw_payload(Bytes::from(body))
+                    .raw_payload(body)
                     .instance(self.controller.instance_id())
                     .send()
                     .await
@@ -789,21 +866,16 @@ impl CellClient for VeloCellClient {
                         "store partition credential does not match the cell identity".to_owned(),
                     ));
                 }
-                let cell_peer = self.registration_peer.clone();
                 let ship = CellStorePartitionShip {
                     cell_id: partition.cell_id(),
-                    admission_proof: credential
-                        .sign_peer_admission(CellPeerAdmissionPurpose::StorePartition, &cell_peer)
-                        .map_err(encode)?,
-                    cell_peer,
                     partition: (**partition).clone(),
                 };
-                let body = rmp_serde::to_vec(&ship).map_err(encode)?;
+                let body = self.seal_payload(AdmissionPurpose::StorePartition, &ship)?;
                 let reply: Bytes = self
                     .velo
                     .unary(HANDLER_STORE_PARTITION)
                     .map_err(io)?
-                    .raw_payload(Bytes::from(body))
+                    .raw_payload(body)
                     .instance(self.controller.instance_id())
                     .send()
                     .await
@@ -822,15 +894,828 @@ impl CellClient for VeloCellClient {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use super::*;
-    use crate::engine::cellular_registration::CellRegistrationAuthority;
+    use crate::cellular::dataset_session::DatasetPublisher;
+    use crate::cellular::phaser::Phaser;
+    use crate::cellular::shard::ColumnStorePartition;
+    use crate::cellular::transport::dataset_velo::{
+        DatasetServer, HANDLER_DATASET_SUBSCRIBE, WirePayload,
+    };
+    use crate::cellular::transport::phaser_velo::{HANDLER_PHASER_SUBSCRIBE, PhaserServer};
+    use crate::engine::artifact_stream_velo::{
+        ArtifactVeloReceiver, HANDLER_ARTIFACT_CLOSE, HANDLER_ARTIFACT_DONE, HANDLER_ARTIFACT_OPEN,
+    };
+    use crate::engine::cellular_bootstrap::CellularRole;
+    use crate::engine::cellular_registration::{
+        ADMISSION_PURPOSE_COUNT, CellRegistrationAuthority, MAX_AUTHENTICATED_FRAME_BYTES,
+    };
+    use crate::metrics_core::accumulator::MetricsAccumulator;
+
+    const PRODUCTION_ROUTE_CHILD_ENV: &str = "AIPERF_PRODUCTION_ROUTE_AUTH_CHILD";
+    const PRODUCTION_ROUTE_TEST: &str = "cellular::transport::velo_transport::tests::production_handlers_authenticate_payloads_and_reject_replay";
+    const VELO_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+    const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
+
+    #[derive(Serialize, Deserialize)]
+    struct TestAuthenticatedFrame {
+        version: u8,
+        role: CellularRole,
+        session_nonce: [u8; 32],
+        sequence: u64,
+        peer_info: Vec<u8>,
+        payload: Vec<u8>,
+        signature: Vec<u8>,
+    }
+
+    #[derive(Serialize)]
+    struct CellIdRequest {
+        cell_id: u32,
+    }
+
+    #[derive(Serialize)]
+    struct ArtifactPathRequest {
+        cell_id: u32,
+        rel: String,
+    }
+
+    #[derive(Deserialize)]
+    struct ArtifactAck {
+        ok: bool,
+        error: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct ArtifactOpenReply {
+        handle: velo::StreamAnchorHandle,
+        controller_peer: Vec<u8>,
+    }
+
+    struct CountingSubscriber(Arc<AtomicUsize>);
+
+    impl tracing::Subscriber for CountingSubscriber {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            if event.metadata().target().starts_with("aiperf") {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        fn enter(&self, _: &tracing::span::Id) {}
+
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    fn malformed_frame(encoded: &[u8], has_malformed_peer: bool) -> Bytes {
+        let mut frame: TestAuthenticatedFrame =
+            rmp_serde::from_slice(encoded).expect("decode authenticated test frame");
+        if has_malformed_peer {
+            frame.peer_info = vec![0xC1];
+        } else {
+            frame.payload = vec![0xC1];
+        }
+        Bytes::from(rmp_serde::to_vec(&frame).expect("encode tampered test frame"))
+    }
+
+    async fn wait_for_invalid_count(
+        authority: &CellRegistrationAuthority,
+        purpose: AdmissionPurpose,
+        expected: u64,
+    ) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while authority.invalid_count(purpose) != expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "timed out waiting for {purpose:?} invalid count {expected}; observed {}",
+                authority.invalid_count(purpose)
+            )
+        });
+    }
+
+    async fn send_fire(cell: &Velo, controller: &PeerInfo, handler: &str, body: Bytes) {
+        cell.am_send(handler)
+            .expect("fire builder")
+            .raw_payload(body)
+            .instance(controller.instance_id())
+            .send()
+            .await
+            .expect("fire send");
+    }
+
+    async fn send_unary(
+        cell: &Velo,
+        controller: &PeerInfo,
+        handler: &str,
+        body: Bytes,
+    ) -> anyhow::Result<Bytes> {
+        cell.unary(handler)?
+            .raw_payload(body)
+            .instance(controller.instance_id())
+            .send()
+            .await
+    }
+
+    async fn unary_rejection(
+        cell: &Velo,
+        controller: &PeerInfo,
+        handler: &str,
+        body: Bytes,
+        returns_ack: bool,
+    ) -> String {
+        match send_unary(cell, controller, handler, body).await {
+            Ok(reply) if returns_ack => {
+                let ack: ArtifactAck =
+                    rmp_serde::from_slice(&reply).expect("decode artifact rejection ack");
+                assert!(!ack.ok, "{handler} accepted an invalid frame");
+                ack.error.expect("artifact rejection reason")
+            }
+            Ok(_) => panic!("{handler} accepted an invalid frame"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    async fn reject_invalid_frames(
+        cell: &Velo,
+        controller: &PeerInfo,
+        authority: &CellRegistrationAuthority,
+        trace_events: &AtomicUsize,
+        handler: &str,
+        purpose: AdmissionPurpose,
+        valid: &[u8],
+        is_fire: bool,
+        has_peer_decode: bool,
+        returns_ack: bool,
+    ) {
+        let baseline = authority.invalid_count(purpose);
+        let trace_baseline = trace_events.load(Ordering::Relaxed);
+        let mut invalids = vec![Bytes::copy_from_slice(valid), malformed_frame(valid, false)];
+        if has_peer_decode {
+            invalids.push(malformed_frame(valid, true));
+        }
+
+        if is_fire {
+            for body in &invalids {
+                send_fire(cell, controller, handler, body.clone()).await;
+            }
+            if purpose == AdmissionPurpose::Heartbeat {
+                for _ in invalids.len()..10_000 {
+                    send_fire(cell, controller, handler, invalids[1].clone()).await;
+                }
+            }
+        } else {
+            let mut rejections = Vec::with_capacity(invalids.len());
+            for body in invalids {
+                rejections
+                    .push(unary_rejection(cell, controller, handler, body, returns_ack).await);
+            }
+            assert!(
+                rejections
+                    .iter()
+                    .all(|rejection| rejection == &rejections[0]),
+                "{handler} exposed non-constant rejection details: {rejections:?}"
+            );
+            assert!(
+                rejections[0].contains("AdmissionRejected"),
+                "{handler} did not use the constant admission rejection: {rejections:?}"
+            );
+        }
+
+        let rejected = if purpose == AdmissionPurpose::Heartbeat {
+            10_000
+        } else if has_peer_decode {
+            3
+        } else {
+            2
+        };
+        wait_for_invalid_count(authority, purpose, baseline + rejected).await;
+        assert_eq!(
+            trace_events.load(Ordering::Relaxed),
+            trace_baseline,
+            "{handler} traced an invalid frame"
+        );
+    }
+
+    async fn assert_no_controller_message(controller: &mut VeloControllerTransport) {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), controller.recv())
+                .await
+                .is_err(),
+            "an invalid frame reached the controller application channel"
+        );
+    }
+
+    async fn open_artifact_stream(
+        cell: &Velo,
+        controller: &PeerInfo,
+        credential: &CellRegistrationCredential,
+        rel: &str,
+    ) -> (Vec<u8>, velo::StreamSender<Vec<u8>>) {
+        let request = ArtifactPathRequest {
+            cell_id: 0,
+            rel: rel.to_owned(),
+        };
+        let body = credential
+            .seal_payload(AdmissionPurpose::ArtifactOpen, &cell.peer_info(), &request)
+            .expect("seal artifact open");
+        let reply = send_unary(
+            cell,
+            controller,
+            HANDLER_ARTIFACT_OPEN,
+            Bytes::copy_from_slice(&body),
+        )
+        .await
+        .expect("valid artifact open");
+        let open: ArtifactOpenReply =
+            rmp_serde::from_slice(&reply).expect("decode artifact open reply");
+        let controller_full: PeerInfo =
+            rmp_serde::from_slice(&open.controller_peer).expect("decode full controller peer");
+        cell.register_peer(controller_full)
+            .expect("register full controller peer");
+        let sender = cell
+            .attach_anchor::<Vec<u8>>(open.handle)
+            .await
+            .expect("attach artifact anchor");
+        (body, sender)
+    }
+
+    #[test]
+    fn production_handlers_authenticate_payloads_and_reject_replay() {
+        if std::env::var_os(PRODUCTION_ROUTE_CHILD_ENV).is_none() {
+            let output = Command::new(std::env::current_exe().expect("current test binary"))
+                .arg("--exact")
+                .arg(PRODUCTION_ROUTE_TEST)
+                .arg("--nocapture")
+                .env(PRODUCTION_ROUTE_CHILD_ENV, "1")
+                .env("RUST_TEST_THREADS", "1")
+                .output()
+                .expect("spawn isolated production-route test");
+            assert!(
+                output.status.success(),
+                "isolated production-route child failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let trace_events = Arc::new(AtomicUsize::new(0));
+        tracing::subscriber::set_global_default(CountingSubscriber(Arc::clone(&trace_events)))
+            .expect("install isolated trace subscriber");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("production-route runtime");
+        runtime.block_on(async {
+            production_handlers_authenticate_payloads_and_reject_replay_impl(trace_events).await;
+        });
+    }
+
+    async fn production_handlers_authenticate_payloads_and_reject_replay_impl(
+        trace_events: Arc<AtomicUsize>,
+    ) {
+        let temp = tempfile::tempdir().expect("route fixture tempdir");
+        let controller_velo = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
+        let controller_peer = controller_velo.peer_info();
+        let controller_messenger_peer = controller_velo.messenger().peer_info();
+        let start = controller_velo
+            .event_manager()
+            .new_event()
+            .expect("start event");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let authority = Arc::new(authority);
+        let spec_calls = Arc::new(AtomicUsize::new(0));
+        let seen_spec_calls = Arc::clone(&spec_calls);
+        let spec_for: SpecFor = Arc::new(move |_| {
+            seen_spec_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(Some(CellRegistrationSpec {
+                envelope: vec![0xA5],
+                artifact_channel: None,
+            }))
+        });
+        let mut controller = VeloControllerTransport::bind_controller(
+            Arc::clone(&controller_velo),
+            Arc::clone(&authority),
+            spec_for,
+            1,
+            start.handle(),
+        )
+        .expect("bind controller handlers");
+        let _phaser = PhaserServer::bind(
+            Arc::clone(&controller_velo),
+            Phaser::new(),
+            Arc::clone(&authority),
+        )
+        .expect("bind phaser handler");
+        let _dataset = DatasetServer::bind(
+            Arc::clone(&controller_velo),
+            DatasetPublisher::<WirePayload>::new(),
+            Arc::clone(&authority),
+        )
+        .expect("bind dataset handler");
+        let allowed: HashSet<String> = [
+            "inventory-open.bin".to_owned(),
+            "inventory-close.bin".to_owned(),
+        ]
+        .into_iter()
+        .collect();
+        let artifact = ArtifactVeloReceiver::register(
+            Arc::clone(&controller_velo),
+            temp.path().to_path_buf(),
+            allowed,
+            Arc::clone(&authority),
+        )
+        .expect("bind artifact handlers");
+
+        let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        cell_velo
+            .register_peer(controller_peer.clone())
+            .expect("register controller peer");
+        let credential = &credentials[0];
+        let cell_peer = cell_velo.peer_info();
+
+        let mut handlers: Vec<String> = controller_velo
+            .list_local_handlers()
+            .into_iter()
+            .filter(|handler| handler.starts_with("aiperf."))
+            .collect();
+        handlers.sort();
+        assert_eq!(
+            handlers.len(),
+            ADMISSION_PURPOSE_COUNT - 1,
+            "the live controller handler inventory changed without a production-route security test adapter"
+        );
+        for handler in &handlers {
+            assert!(
+                MAX_AUTHENTICATED_FRAME_BYTES
+                    + VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES
+                    + handler.len()
+                    <= VELO_MAX_FRAME_BYTES,
+                "the authenticated-frame ceiling no longer fits production route {handler}"
+            );
+        }
+        for handler in handlers {
+            match handler.as_str() {
+                HANDLER_REGISTER => {
+                    let connected = ConnectedController::from_parts(
+                        controller_messenger_peer.clone(),
+                        DialedControllerAddress::Tcp("127.0.0.1:9500".parse().unwrap()),
+                    );
+                    let cell_peer_bytes = rmp_serde::to_vec(&cell_peer).unwrap();
+                    let register = CellRegister {
+                        cell_id: 0,
+                        cell_peer: cell_peer_bytes.clone(),
+                        artifact_capability_digest: None,
+                        registration_proof: Some(
+                            credential
+                                .sign_register(
+                                    &cell_peer_bytes,
+                                    None,
+                                    connected.binding().expect("controller binding"),
+                                )
+                                .expect("registration proof"),
+                        ),
+                    };
+                    let body = credential
+                        .seal_payload(AdmissionPurpose::Register, &cell_peer, &register)
+                        .expect("seal register");
+                    send_unary(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await
+                    .expect("valid register");
+                    assert_eq!(spec_calls.load(Ordering::Relaxed), 1);
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::Register,
+                        &body,
+                        false,
+                        true,
+                        false,
+                    )
+                    .await;
+                    assert_eq!(spec_calls.load(Ordering::Relaxed), 1);
+                }
+                HANDLER_PREFLIGHT => {
+                    let body = credential
+                        .seal_payload(
+                            AdmissionPurpose::Preflight,
+                            &cell_peer,
+                            &CellMessage::Preflight {
+                                cell_id: 0,
+                                result: Ok(()),
+                            },
+                        )
+                        .expect("seal preflight");
+                    send_fire(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await;
+                    controller
+                        .await_all_preflight()
+                        .await
+                        .expect("valid preflight effect");
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::Preflight,
+                        &body,
+                        true,
+                        false,
+                        false,
+                    )
+                    .await;
+                }
+                HANDLER_HEARTBEAT => {
+                    let body = credential
+                        .seal_payload(
+                            AdmissionPurpose::Heartbeat,
+                            &cell_peer,
+                            &CellMessage::Heartbeat {
+                                cell_id: 0,
+                                heartbeat: Box::new(sample_heartbeat()),
+                            },
+                        )
+                        .expect("seal heartbeat");
+                    send_fire(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await;
+                    assert!(matches!(
+                        tokio::time::timeout(Duration::from_secs(2), controller.recv())
+                            .await
+                            .expect("valid heartbeat effect timed out")
+                            .expect("heartbeat recv"),
+                        Some(CellMessage::Heartbeat { cell_id: 0, .. })
+                    ));
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::Heartbeat,
+                        &body,
+                        true,
+                        false,
+                        false,
+                    )
+                    .await;
+                    assert_no_controller_message(&mut controller).await;
+                }
+                HANDLER_PHASE_SIGNAL => {
+                    let body = credential
+                        .seal_payload(
+                            AdmissionPurpose::PhaseSignal,
+                            &cell_peer,
+                            &CellMessage::PhaseSignal {
+                                cell_id: 0,
+                                phase: "profiling".to_owned(),
+                                signal: CellPhaseSignal::Complete,
+                            },
+                        )
+                        .expect("seal phase signal");
+                    send_fire(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await;
+                    assert!(matches!(
+                        tokio::time::timeout(Duration::from_secs(2), controller.recv())
+                            .await
+                            .expect("valid phase effect timed out")
+                            .expect("phase recv"),
+                        Some(CellMessage::PhaseSignal { cell_id: 0, .. })
+                    ));
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::PhaseSignal,
+                        &body,
+                        true,
+                        false,
+                        false,
+                    )
+                    .await;
+                    assert_no_controller_message(&mut controller).await;
+                }
+                HANDLER_PARTITION => {
+                    let ship = CellPartitionShip {
+                        cell_id: 0,
+                        partition: sample_partition(0),
+                    };
+                    let body = credential
+                        .seal_payload(AdmissionPurpose::Partition, &cell_peer, &ship)
+                        .expect("seal partition");
+                    let reply = send_unary(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await
+                    .expect("valid partition");
+                    let ack: CellAck = rmp_serde::from_slice(&reply).expect("partition ack");
+                    assert!(ack.ok);
+                    assert!(matches!(
+                        tokio::time::timeout(Duration::from_secs(2), controller.recv())
+                            .await
+                            .expect("valid partition effect timed out")
+                            .expect("partition recv"),
+                        Some(CellMessage::Partition(_))
+                    ));
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::Partition,
+                        &body,
+                        false,
+                        true,
+                        false,
+                    )
+                    .await;
+                    assert_no_controller_message(&mut controller).await;
+                }
+                HANDLER_STORE_PARTITION => {
+                    let mut accumulator = MetricsAccumulator::new();
+                    accumulator.process_record(&RecordIngest::minimal(
+                        1_000,
+                        5_000,
+                        Phase::Profiling,
+                    ));
+                    let ship = CellStorePartitionShip {
+                        cell_id: 0,
+                        partition: ColumnStorePartition::from_accumulator(0, &accumulator),
+                    };
+                    let body = credential
+                        .seal_payload(AdmissionPurpose::StorePartition, &cell_peer, &ship)
+                        .expect("seal store partition");
+                    let reply = send_unary(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await
+                    .expect("valid store partition");
+                    let ack: CellAck = rmp_serde::from_slice(&reply).expect("store ack");
+                    assert!(ack.ok);
+                    assert!(matches!(
+                        tokio::time::timeout(Duration::from_secs(2), controller.recv())
+                            .await
+                            .expect("valid store-partition effect timed out")
+                            .expect("store recv"),
+                        Some(CellMessage::StorePartition(_))
+                    ));
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::StorePartition,
+                        &body,
+                        false,
+                        true,
+                        false,
+                    )
+                    .await;
+                    assert_no_controller_message(&mut controller).await;
+                }
+                HANDLER_PHASER_SUBSCRIBE => {
+                    let body = credential
+                        .seal_payload(
+                            AdmissionPurpose::PhaserSubscribe,
+                            &cell_peer,
+                            &CellIdRequest { cell_id: 0 },
+                        )
+                        .expect("seal phaser subscribe");
+                    assert!(
+                        !send_unary(
+                            &cell_velo,
+                            &controller_peer,
+                            &handler,
+                            Bytes::copy_from_slice(&body),
+                        )
+                        .await
+                        .expect("valid phaser subscribe")
+                        .is_empty()
+                    );
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::PhaserSubscribe,
+                        &body,
+                        false,
+                        true,
+                        false,
+                    )
+                    .await;
+                }
+                HANDLER_DATASET_SUBSCRIBE => {
+                    let body = credential
+                        .seal_payload(
+                            AdmissionPurpose::DatasetSubscribe,
+                            &cell_peer,
+                            &CellIdRequest { cell_id: 0 },
+                        )
+                        .expect("seal dataset subscribe");
+                    assert!(
+                        !send_unary(
+                            &cell_velo,
+                            &controller_peer,
+                            &handler,
+                            Bytes::copy_from_slice(&body),
+                        )
+                        .await
+                        .expect("valid dataset subscribe")
+                        .is_empty()
+                    );
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::DatasetSubscribe,
+                        &body,
+                        false,
+                        true,
+                        false,
+                    )
+                    .await;
+                }
+                HANDLER_ARTIFACT_OPEN => {
+                    let (body, _sender) = open_artifact_stream(
+                        &cell_velo,
+                        &controller_peer,
+                        credential,
+                        "inventory-open.bin",
+                    )
+                    .await;
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::ArtifactOpen,
+                        &body,
+                        false,
+                        true,
+                        true,
+                    )
+                    .await;
+                }
+                HANDLER_ARTIFACT_CLOSE => {
+                    let (_, sender) = open_artifact_stream(
+                        &cell_velo,
+                        &controller_peer,
+                        credential,
+                        "inventory-close.bin",
+                    )
+                    .await;
+                    sender
+                        .send(zstd::encode_all(b"route".as_slice(), 3).unwrap())
+                        .await
+                        .expect("send compressed artifact");
+                    sender.finalize().expect("finalize artifact");
+                    let close = ArtifactPathRequest {
+                        cell_id: 0,
+                        rel: "inventory-close.bin".to_owned(),
+                    };
+                    let body = credential
+                        .seal_payload(AdmissionPurpose::ArtifactClose, &cell_peer, &close)
+                        .expect("seal artifact close");
+                    let reply = send_unary(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await
+                    .expect("valid artifact close");
+                    let ack: ArtifactAck =
+                        rmp_serde::from_slice(&reply).expect("artifact close ack");
+                    assert!(ack.ok, "artifact close failed: {:?}", ack.error);
+                    assert_eq!(
+                        std::fs::read(temp.path().join("cell-0/inventory-close.bin")).unwrap(),
+                        b"route"
+                    );
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::ArtifactClose,
+                        &body,
+                        false,
+                        false,
+                        true,
+                    )
+                    .await;
+                }
+                HANDLER_ARTIFACT_DONE => {
+                    let body = credential
+                        .seal_payload(
+                            AdmissionPurpose::ArtifactDone,
+                            &cell_peer,
+                            &CellIdRequest { cell_id: 0 },
+                        )
+                        .expect("seal artifact done");
+                    let reply = send_unary(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await
+                    .expect("valid artifact done");
+                    let ack: ArtifactAck =
+                        rmp_serde::from_slice(&reply).expect("artifact done ack");
+                    assert!(ack.ok);
+                    artifact
+                        .wait_for_cells(1, Duration::from_secs(1))
+                        .await
+                        .expect("artifact done effect");
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::ArtifactDone,
+                        &body,
+                        false,
+                        false,
+                        true,
+                    )
+                    .await;
+                }
+                _ => panic!(
+                    "live production handler {handler} has no authentication behavior adapter"
+                ),
+            }
+        }
+
+        assert_eq!(authority.replay_slot_count(), ADMISSION_PURPOSE_COUNT);
+    }
 
     struct AuthenticatedRegisterFixture {
         connected: ConnectedController,
         verifier: ControllerRegisterVerifier,
         registration: CellRegister,
+        credential: CellRegistrationCredential,
+        cell_peer: PeerInfo,
         attestor: ControllerRegisterAttestor,
         start_event: EventHandle,
     }
@@ -840,7 +1725,13 @@ mod tests {
             let reply_payload = encode_reply_payload(envelope, self.start_event, &None)
                 .expect("encode reply payload");
             let registration_frame = Bytes::from(
-                rmp_serde::to_vec(&self.registration).expect("encode registration frame"),
+                self.credential
+                    .seal_payload(
+                        AdmissionPurpose::Register,
+                        &self.cell_peer,
+                        &self.registration,
+                    )
+                    .expect("encode registration frame"),
             );
             let attestation = self
                 .attestor
@@ -898,13 +1789,18 @@ mod tests {
             DialedControllerAddress::Tcp("127.0.0.1:9500".parse().unwrap()),
         );
         let binding = connected.binding().expect("controller binding");
+        let cell_peer = PeerInfo::new(
+            velo::InstanceId::new_v4(),
+            velo::WorkerAddress::from_encoded(vec![0x81]),
+        );
+        let encoded_cell_peer = rmp_serde::to_vec(&cell_peer).expect("cell peer");
         let registration = CellRegister {
             cell_id: 0,
-            cell_peer: b"cell-registration-peer".to_vec(),
+            cell_peer: encoded_cell_peer.clone(),
             artifact_capability_digest: None,
             registration_proof: Some(
                 credentials[0]
-                    .sign_register(b"cell-registration-peer", None, binding)
+                    .sign_register(&encoded_cell_peer, None, binding)
                     .expect("registration proof"),
             ),
         };
@@ -912,6 +1808,8 @@ mod tests {
             connected,
             verifier: attestor.verifier(),
             registration,
+            credential: credentials[0].clone(),
+            cell_peer,
             attestor,
             start_event: controller
                 .event_manager()
@@ -1400,7 +2298,7 @@ mod tests {
             .new_event()
             .expect("start event");
         let start_handle = start.handle();
-        let (authority, _) = CellRegistrationAuthority::mint(1).expect("authority");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
         let spec_for: SpecFor = Arc::new(|_| {
             Ok(Some(CellRegistrationSpec {
                 envelope: vec![0xCD],
@@ -1417,10 +2315,15 @@ mod tests {
         .expect("bind");
 
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
+        let mut cell = VeloCellClient::connect_authenticated(
+            cell_velo,
+            controller_peer,
+            Arc::new(credentials[0].clone()),
+        )
+        .expect("connect");
 
         cell.send(&CellMessage::PhaseSignal {
-            cell_id: 7,
+            cell_id: 0,
             phase: "profiling".to_owned(),
             signal: CellPhaseSignal::Complete,
         })
@@ -1433,7 +2336,7 @@ mod tests {
                 phase,
                 signal,
             } => {
-                assert_eq!(cell_id, 7);
+                assert_eq!(cell_id, 0);
                 assert_eq!(phase, "profiling");
                 assert_eq!(signal, CellPhaseSignal::Complete);
             }

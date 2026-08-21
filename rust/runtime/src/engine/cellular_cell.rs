@@ -1366,6 +1366,35 @@ impl CellRecordsShipper {
 mod tests {
     use super::*;
 
+    #[test]
+    fn cell_channels_share_one_process_session_and_sequence_space() {
+        use crate::engine::cellular_registration::{
+            AdmissionPurpose, AuthenticatedFrame, CellRegistrationAuthority,
+        };
+
+        let (_, credentials) = CellRegistrationAuthority::mint(1).unwrap();
+        let peer = velo::PeerInfo::new(
+            velo::InstanceId::new_v4(),
+            velo::WorkerAddress::from_encoded(vec![0x80]),
+        );
+        let credential = credentials[0].clone();
+        let first = AuthenticatedFrame::decode(
+            &credential
+                .seal_payload(AdmissionPurpose::Heartbeat, &peer, &0_u8)
+                .unwrap(),
+        )
+        .unwrap();
+        let second = AuthenticatedFrame::decode(
+            &credential
+                .seal_payload(AdmissionPurpose::Heartbeat, &peer, &1_u8)
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(first.session_nonce(), second.session_nonce());
+        assert_eq!(first.sequence() + 1, second.sequence());
+    }
+
     #[cfg(unix)]
     #[test]
     fn remote_dataset_landing_lease_is_private_and_cleans_up_on_drop() {

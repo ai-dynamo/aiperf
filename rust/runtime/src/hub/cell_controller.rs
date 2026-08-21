@@ -168,7 +168,7 @@ mod tests {
         let velo = build_velo(BindSpec::TcpListener(listener))
             .await
             .expect("hub velo");
-        let controller_peer = velo.peer_info();
+        let controller_peer = velo.messenger().peer_info();
         let start = velo.event_manager().new_event().expect("start event");
         let start_handle = start.handle();
         let (authority, credentials) =
@@ -192,7 +192,12 @@ mod tests {
         // A real cell connects to the hub's velo by PeerInfo, registers, and ships a
         // heartbeat that the hub-mounted handler surfaces on the captured transport.
         let cell_velo = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
-        let mut cell = VeloCellClient::connect(cell_velo, controller_peer).expect("connect");
+        let mut cell = VeloCellClient::connect_authenticated(
+            cell_velo,
+            controller_peer,
+            Arc::new(credentials[0].clone()),
+        )
+        .expect("connect");
         let reply = cell
             .register_with_credential(0, None, &credentials[0])
             .await

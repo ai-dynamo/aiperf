@@ -9,9 +9,10 @@
 //! the **live tail** (pushed as the controller advances). Two handlers:
 //!
 //! - `aiperf.phaser.subscribe` (unary, cell → controller): the cell sends its
-//!   `PeerInfo`; the controller `register_peer`s it, atomically attaches a broadcast
-//!   consumer (snapshot + live receiver split at the seam), returns the snapshot as the
-//!   reply, and spawns a **pump** task that forwards the live tail to the cell.
+//!   `cell_id`; the surrounding `AuthenticatedFrame` carries its `PeerInfo`. The
+//!   controller `register_peer`s it, atomically attaches a broadcast consumer
+//!   (snapshot + live receiver split at the seam), returns the snapshot as the reply,
+//!   and spawns a **pump** task that forwards the live tail to the cell.
 //! - `aiperf.phaser.event` (fire-and-forget, controller → cell): each live
 //!   [`BroadcastEvent`](crate::cellular::broadcast::BroadcastEvent)`<PhaseEvent>` the pump
 //!   pushes, delivered into the cell's live
@@ -30,8 +31,7 @@ use velo::{Context, Handler, PeerInfo, Velo};
 use crate::cellular::broadcast::{BroadcastEvent, Subscription};
 use crate::cellular::phaser::{PhaseEvent, Phaser, PhaserSubscription};
 use crate::engine::cellular_registration::{
-    CellPeerAdmissionProof, CellPeerAdmissionPurpose, CellRegistrationAuthority,
-    CellRegistrationCredential,
+    AdmissionPurpose, CellRegistrationAuthority, CellRegistrationCredential,
 };
 
 /// Handler: a cell subscribes to the phaser and gets the replay snapshot.
@@ -39,13 +39,11 @@ pub const HANDLER_PHASER_SUBSCRIBE: &str = "aiperf.phaser.subscribe";
 /// Handler: the controller pushes one live phaser event to a subscribed cell.
 pub const HANDLER_PHASER_EVENT: &str = "aiperf.phaser.event";
 
-/// A cell's subscribe request: its own `PeerInfo` (rmp) so the controller can push
-/// live events back to it.
+/// A cell's subscribe request. Its surrounding `AuthenticatedFrame` carries the
+/// `PeerInfo` the controller uses to push live events back to it.
 #[derive(Serialize, Deserialize)]
 struct PhaserSubscribeRequest {
     cell_id: u32,
-    cell_peer: Vec<u8>,
-    admission_proof: CellPeerAdmissionProof,
 }
 
 /// The controller's reply: the replay snapshot (everything advanced before this
@@ -76,18 +74,21 @@ impl PhaserServer {
                 let push_velo = push_velo.clone();
                 let registration_authority = registration_authority.clone();
                 async move {
-                    let request: PhaserSubscribeRequest = rmp_serde::from_slice(&ctx.payload)
-                        .map_err(|error| {
-                            anyhow::anyhow!("decode PhaserSubscribeRequest: {error}")
-                        })?;
-                    registration_authority.verify_peer_admission(
-                        request.cell_id,
-                        CellPeerAdmissionPurpose::PhaserSubscribe,
-                        &request.cell_peer,
-                        &request.admission_proof,
-                    )?;
-                    let peer: PeerInfo = rmp_serde::from_slice(&request.cell_peer)
-                        .map_err(|error| anyhow::anyhow!("decode cell PeerInfo: {error}"))?;
+                    let opened = registration_authority
+                        .open_payload::<PhaserSubscribeRequest>(
+                            AdmissionPurpose::PhaserSubscribe,
+                            &ctx.payload,
+                        )
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    let (role, _, authenticated_peer, request) = opened.into_parts();
+                    anyhow::ensure!(
+                        role == crate::engine::cellular_bootstrap::CellularRole::Cell(
+                            request.cell_id,
+                        ),
+                        "AdmissionRejected"
+                    );
+                    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
                     let cell = peer.instance_id();
                     // Register the cell so the pump's `am_send` can route to it.
                     push_velo
@@ -177,16 +178,12 @@ impl PhaserClient {
         if credential.cell_id() != cell_id {
             anyhow::bail!("phaser credential does not match the cell identity");
         }
-        let cell_peer = rmp_serde::to_vec(&velo.peer_info())
-            .map_err(|error| anyhow::anyhow!("encode cell PeerInfo: {error}"))?;
-        let request = PhaserSubscribeRequest {
-            cell_id,
-            admission_proof: credential
-                .sign_peer_admission(CellPeerAdmissionPurpose::PhaserSubscribe, &cell_peer)?,
-            cell_peer,
-        };
-        let body = rmp_serde::to_vec(&request)
-            .map_err(|error| anyhow::anyhow!("encode PhaserSubscribeRequest: {error}"))?;
+        let request = PhaserSubscribeRequest { cell_id };
+        let body = credential.seal_payload(
+            AdmissionPurpose::PhaserSubscribe,
+            &velo.peer_info(),
+            &request,
+        )?;
         let reply_bytes: Bytes = velo
             .unary(HANDLER_PHASER_SUBSCRIBE)
             .map_err(|error| anyhow::anyhow!("phaser subscribe builder: {error}"))?

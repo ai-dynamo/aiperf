@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::cellular::heartbeat::MetricsHeartbeat;
 use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
-use crate::engine::cellular_registration::CellPeerAdmissionProof;
 
 /// Public, secret-free identity of a controller's per-run artifact TLS channel.
 ///
@@ -164,36 +163,20 @@ pub struct CellRegistrationProof {
     pub signature: Vec<u8>,
 }
 
-/// A cell's records-shard partition ship. Carries the shipping velo instance's
-/// own serialized `PeerInfo` alongside the partition so the controller can
-/// `register_peer` it and route the ack back — a cell ships from a *fresh* velo
-/// instance (its spec-fetch instance is already gone), which the controller has
-/// not yet seen, so the register-time peer does not suffice.
+/// A cell's records-shard partition payload inside an authenticated frame.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellPartitionShip {
-    /// Identity whose credential minted this ticket and partition.
+    /// Identity repeated in the payload and checked against the authenticated role.
     pub cell_id: u32,
-    /// `rmp_serde`-encoded `velo::PeerInfo` of the shipping cell instance.
-    pub cell_peer: Vec<u8>,
-    /// Controller-verifiable authorization for this fresh peer instance.
-    pub admission_proof: CellPeerAdmissionProof,
     /// The cell's records-shard partition.
     pub partition: RecordsShardPartition,
 }
 
-/// A cell's column-store partition ship — the exact-fold sibling of
-/// [`CellPartitionShip`]. Carries the shipping velo instance's own serialized
-/// `velo::PeerInfo` (rmp-encoded) alongside the folded store so the controller can
-/// `register_peer` it and route the ack back (the cell ships from a *fresh* velo
-/// instance the controller has not yet seen).
+/// A cell's column-store partition payload inside an authenticated frame.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellStorePartitionShip {
-    /// Identity whose credential minted this ticket and partition.
+    /// Identity repeated in the payload and checked against the authenticated role.
     pub cell_id: u32,
-    /// `rmp_serde`-encoded `velo::PeerInfo` of the shipping cell instance.
-    pub cell_peer: Vec<u8>,
-    /// Controller-verifiable authorization for this fresh peer instance.
-    pub admission_proof: CellPeerAdmissionProof,
     /// The cell's folded column-store partition.
     pub partition: ColumnStorePartition,
 }

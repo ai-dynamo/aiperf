@@ -34,8 +34,9 @@
 //! file so the producer learns the handle and the consumer's commit is observable:
 //!
 //! - [`HANDLER_ARTIFACT_OPEN`] (unary): a cell sends [`OpenRequest`]
-//!   (`cell_id`, its own `PeerInfo`, and the relative artifact path). The controller
-//!   `register_peer`s the cell (so the reverse streaming attach routes back),
+//!   (`cell_id` and the relative artifact path); its surrounding `AuthenticatedFrame`
+//!   carries the cell's `PeerInfo`. The controller `register_peer`s the cell (so the
+//!   reverse streaming attach routes back),
 //!   validates the path against the run allowlist, creates a per-file
 //!   [`velo::StreamAnchor`], spawns a consumer that streaming-decompresses each
 //!   frame into a `.part` file (bounded memory), and replies with the anchor
@@ -64,8 +65,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use velo::{Context, Handler, PeerInfo, StreamAnchorHandle, StreamFrame, Velo};
 
 use crate::engine::cellular_registration::{
-    CellPeerAdmissionProof, CellPeerAdmissionPurpose, CellRegistrationAuthority,
-    CellRegistrationCredential,
+    AdmissionPurpose, CellRegistrationAuthority, CellRegistrationCredential,
 };
 
 use super::artifact_shipping::{
@@ -79,16 +79,12 @@ pub const HANDLER_ARTIFACT_CLOSE: &str = "aiperf.artifact.close";
 /// Unary handler: a cell signals it has shipped all of its artifact files.
 pub const HANDLER_ARTIFACT_DONE: &str = "aiperf.artifact.done";
 
-/// A cell's request to open a per-file artifact stream. Carries the cell's own
-/// `PeerInfo` (rmp bytes) so the controller can `register_peer` the fresh shipping
-/// instance and route the streaming attach back, mirroring the partition-ship path.
+/// A cell's request to open a per-file artifact stream. Its surrounding
+/// `AuthenticatedFrame` carries the cell's `PeerInfo` so the controller can
+/// `register_peer` the shipping instance and route the streaming attach back.
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenRequest {
     cell_id: u32,
-    /// The shipping instance's `PeerInfo` (`rmp`), so the controller can address it.
-    cell_peer: Vec<u8>,
-    /// Controller-verifiable proof for this fresh streaming peer.
-    admission_proof: CellPeerAdmissionProof,
     /// The relative artifact path (validated against the run allowlist).
     rel: String,
 }
@@ -216,7 +212,19 @@ impl ArtifactVeloReceiver {
                             "velo instance dropped before artifact open"
                         ));
                     };
-                    handle_open(&state, &velo, registration_authority, ctx).await
+                    let opened = match registration_authority
+                        .open_payload::<OpenRequest>(AdmissionPurpose::ArtifactOpen, &ctx.payload)
+                    {
+                        Ok(opened) => opened,
+                        Err(_) => return encode_reply(&Ack::err("AdmissionRejected")),
+                    };
+                    let (role, _, authenticated_peer, request) = opened.into_parts();
+                    if role
+                        != crate::engine::cellular_bootstrap::CellularRole::Cell(request.cell_id)
+                    {
+                        return encode_reply(&Ack::err("AdmissionRejected"));
+                    }
+                    handle_open(&state, &velo, ctx, request, authenticated_peer).await
                 }
             })
             .build(),
@@ -225,10 +233,27 @@ impl ArtifactVeloReceiver {
 
         // CLOSE (unary): await the per-file commit, reply with its result.
         let close_state = state.clone();
+        let close_authority = registration_authority.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_ARTIFACT_CLOSE, move |ctx: Context| {
                 let state = close_state.clone();
-                async move { handle_close(&state, ctx).await }
+                let registration_authority = close_authority.clone();
+                async move {
+                    let opened = match registration_authority
+                        .open_payload::<CloseRequest>(AdmissionPurpose::ArtifactClose, &ctx.payload)
+                    {
+                        Ok(opened) => opened,
+                        Err(_) => return encode_reply(&Ack::err("AdmissionRejected")),
+                    };
+                    let role = opened.role();
+                    let request = opened.into_payload();
+                    if role
+                        != crate::engine::cellular_bootstrap::CellularRole::Cell(request.cell_id)
+                    {
+                        return encode_reply(&Ack::err("AdmissionRejected"));
+                    }
+                    handle_close(&state, request).await
+                }
             })
             .build(),
         )
@@ -236,12 +261,25 @@ impl ArtifactVeloReceiver {
 
         // DONE (unary): mark the cell done, wake the barrier.
         let done_state = state.clone();
+        let done_authority = registration_authority;
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_ARTIFACT_DONE, move |ctx: Context| {
                 let state = done_state.clone();
+                let registration_authority = done_authority.clone();
                 async move {
-                    let request: DoneRequest = rmp_serde::from_slice(&ctx.payload)
-                        .map_err(|error| anyhow::anyhow!("decode DoneRequest: {error}"))?;
+                    let opened = match registration_authority
+                        .open_payload::<DoneRequest>(AdmissionPurpose::ArtifactDone, &ctx.payload)
+                    {
+                        Ok(opened) => opened,
+                        Err(_) => return encode_reply(&Ack::err("AdmissionRejected")),
+                    };
+                    let role = opened.role();
+                    let request = opened.into_payload();
+                    if role
+                        != crate::engine::cellular_bootstrap::CellularRole::Cell(request.cell_id)
+                    {
+                        return encode_reply(&Ack::err("AdmissionRejected"));
+                    }
                     // `send_modify` bumps the watch version even with no parked
                     // receiver, so a barrier not yet registered still observes this.
                     state.done.send_modify(|done| {
@@ -288,25 +326,18 @@ impl ArtifactVeloReceiver {
 async fn handle_open(
     state: &Arc<ReceiverState>,
     velo: &Arc<Velo>,
-    registration_authority: Arc<CellRegistrationAuthority>,
     ctx: Context,
+    request: OpenRequest,
+    authenticated_peer: Vec<u8>,
 ) -> anyhow::Result<Option<Bytes>> {
-    let request: OpenRequest = rmp_serde::from_slice(&ctx.payload)
-        .map_err(|error| anyhow::anyhow!("decode OpenRequest: {error}"))?;
-    registration_authority.verify_peer_admission(
-        request.cell_id,
-        CellPeerAdmissionPurpose::ArtifactOpen,
-        &request.cell_peer,
-        &request.admission_proof,
-    )?;
     // Validate the relative path against the run allowlist (fail closed on traversal
     // or unknown artifacts) before creating any anchor or file.
     let rel = match validate_artifact_relpath(&request.rel, &state.allowed) {
         Ok(rel) => rel,
         Err(error) => return encode_reply(&Ack::err(error)),
     };
-    let peer: PeerInfo = rmp_serde::from_slice(&request.cell_peer)
-        .map_err(|error| anyhow::anyhow!("decode cell PeerInfo: {error}"))?;
+    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
+        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
     // Register the fresh shipping instance so the streaming attach routes back.
     ctx.msg
         .register_peer(peer)
@@ -402,9 +433,10 @@ async fn consume_stream_to_file(
 }
 
 /// Handle a CLOSE: await the per-file commit and report its result.
-async fn handle_close(state: &Arc<ReceiverState>, ctx: Context) -> anyhow::Result<Option<Bytes>> {
-    let request: CloseRequest = rmp_serde::from_slice(&ctx.payload)
-        .map_err(|error| anyhow::anyhow!("decode CloseRequest: {error}"))?;
+async fn handle_close(
+    state: &Arc<ReceiverState>,
+    request: CloseRequest,
+) -> anyhow::Result<Option<Bytes>> {
     let key: FileKey = (request.cell_id, request.rel.clone());
     let rx = state
         .completions
@@ -455,7 +487,11 @@ pub(crate) async fn ship_cell_artifacts_velo(
             .with_context(|| format!("cell {cell_id} shipping artifact {rel:?} over velo"))?;
     }
     // DONE marker: the controller's barrier releases once every cell signals.
-    let body = rmp_serde::to_vec(&DoneRequest { cell_id }).context("encode DoneRequest")?;
+    let body = credential.seal_payload(
+        AdmissionPurpose::ArtifactDone,
+        &velo.peer_info(),
+        &DoneRequest { cell_id },
+    )?;
     let reply: Bytes = velo
         .unary(HANDLER_ARTIFACT_DONE)
         .context("artifact done unary")?
@@ -480,20 +516,16 @@ async fn ship_one_velo(
     rel: &str,
     src: &Path,
 ) -> Result<()> {
-    // OPEN: hand the controller our peer + path, receive the anchor handle.
-    let cell_peer = rmp_serde::to_vec(&velo.peer_info()).context("encode cell peer")?;
+    // OPEN: authenticate our peer + path, then receive the anchor handle.
     ensure!(
         credential.cell_id() == cell_id,
         "artifact credential does not match the cell identity"
     );
     let open = OpenRequest {
         cell_id,
-        admission_proof: credential
-            .sign_peer_admission(CellPeerAdmissionPurpose::ArtifactOpen, &cell_peer)?,
-        cell_peer,
         rel: rel.to_owned(),
     };
-    let body = rmp_serde::to_vec(&open).context("encode OpenRequest")?;
+    let body = credential.seal_payload(AdmissionPurpose::ArtifactOpen, &velo.peer_info(), &open)?;
     let reply: Bytes = velo
         .unary(HANDLER_ARTIFACT_OPEN)
         .context("artifact open unary")?
@@ -558,7 +590,8 @@ async fn ship_one_velo(
         cell_id,
         rel: rel.to_owned(),
     };
-    let body = rmp_serde::to_vec(&close).context("encode CloseRequest")?;
+    let body =
+        credential.seal_payload(AdmissionPurpose::ArtifactClose, &velo.peer_info(), &close)?;
     let reply: Bytes = velo
         .unary(HANDLER_ARTIFACT_CLOSE)
         .context("artifact close unary")?

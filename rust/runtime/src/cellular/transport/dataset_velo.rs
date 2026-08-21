@@ -27,8 +27,7 @@ use velo::{Context, Handler, PeerInfo, Velo};
 use crate::cellular::broadcast::{BroadcastEvent, Subscription};
 use crate::cellular::dataset_session::{DatasetChunk, DatasetIndex, DatasetPublisher};
 use crate::engine::cellular_registration::{
-    CellPeerAdmissionProof, CellPeerAdmissionPurpose, CellRegistrationAuthority,
-    CellRegistrationCredential,
+    AdmissionPurpose, CellRegistrationAuthority, CellRegistrationCredential,
 };
 
 /// The opaque dataset payload on the wire (the cell decodes its own request shape).
@@ -64,8 +63,6 @@ pub const HANDLER_DATASET_CHUNK: &str = "aiperf.dataset.chunk";
 #[derive(Serialize, Deserialize)]
 struct DatasetSubscribeRequest {
     cell_id: u32,
-    cell_peer: Vec<u8>,
-    admission_proof: CellPeerAdmissionProof,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -94,18 +91,21 @@ impl DatasetServer {
                 let push_velo = push_velo.clone();
                 let registration_authority = registration_authority.clone();
                 async move {
-                    let request: DatasetSubscribeRequest = rmp_serde::from_slice(&ctx.payload)
-                        .map_err(|error| {
-                            anyhow::anyhow!("decode DatasetSubscribeRequest: {error}")
-                        })?;
-                    registration_authority.verify_peer_admission(
-                        request.cell_id,
-                        CellPeerAdmissionPurpose::DatasetSubscribe,
-                        &request.cell_peer,
-                        &request.admission_proof,
-                    )?;
-                    let peer: PeerInfo = rmp_serde::from_slice(&request.cell_peer)
-                        .map_err(|error| anyhow::anyhow!("decode cell PeerInfo: {error}"))?;
+                    let opened = registration_authority
+                        .open_payload::<DatasetSubscribeRequest>(
+                            AdmissionPurpose::DatasetSubscribe,
+                            &ctx.payload,
+                        )
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    let (role, _, authenticated_peer, request) = opened.into_parts();
+                    anyhow::ensure!(
+                        role == crate::engine::cellular_bootstrap::CellularRole::Cell(
+                            request.cell_id,
+                        ),
+                        "AdmissionRejected"
+                    );
+                    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
                     let cell = peer.instance_id();
                     push_velo
                         .register_peer(peer)
@@ -182,16 +182,12 @@ impl DatasetClient {
         if credential.cell_id() != cell_id {
             anyhow::bail!("dataset credential does not match the cell identity");
         }
-        let cell_peer = rmp_serde::to_vec(&velo.peer_info())
-            .map_err(|error| anyhow::anyhow!("encode cell PeerInfo: {error}"))?;
-        let request = DatasetSubscribeRequest {
-            cell_id,
-            admission_proof: credential
-                .sign_peer_admission(CellPeerAdmissionPurpose::DatasetSubscribe, &cell_peer)?,
-            cell_peer,
-        };
-        let body = rmp_serde::to_vec(&request)
-            .map_err(|error| anyhow::anyhow!("encode DatasetSubscribeRequest: {error}"))?;
+        let request = DatasetSubscribeRequest { cell_id };
+        let body = credential.seal_payload(
+            AdmissionPurpose::DatasetSubscribe,
+            &velo.peer_info(),
+            &request,
+        )?;
         let reply_bytes: Bytes = velo
             .unary(HANDLER_DATASET_SUBSCRIBE)
             .map_err(|error| anyhow::anyhow!("dataset subscribe builder: {error}"))?

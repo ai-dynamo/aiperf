@@ -4,20 +4,26 @@
 //! Controller-owned admission credentials for cellular registrations.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Result, ensure};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::TryRngCore;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::cellular::transport::connect::ControllerPeerBinding;
-use crate::cellular::transport::{CellRegister, CellRegistrationProof};
+use crate::cellular::transport::{CellRegister, CellRegistrationProof, HANDLER_STORE_PARTITION};
 use crate::engine::cellular_bootstrap::CellularRole;
 
 const REGISTRATION_PROTOCOL_VERSION: u8 = 1;
 const TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-registration-v1\0";
-const PEER_ADMISSION_TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-peer-admission-v1\0";
-pub(crate) const ADMISSION_PURPOSE_COUNT: usize = 6;
+const AUTHENTICATED_FRAME_TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-frame-v1\0";
+pub(crate) const ADMISSION_PURPOSE_COUNT: usize = 12;
+const VELO_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
+pub(crate) const MAX_AUTHENTICATED_FRAME_BYTES: usize =
+    VELO_MAX_FRAME_BYTES - VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES - HANDLER_STORE_PARTITION.len();
 const REGISTER_REPLY_TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-register-reply-v1\0";
 
 /// One public role key in the controller's fixed authorization roster.
@@ -32,7 +38,6 @@ pub(crate) struct CellSecurityContext {
     run_nonce: [u8; 32],
     session_nonce: [u8; 32],
     authority: ProcessSecurityAuthority,
-    #[allow(dead_code)]
     send_sequences: [AtomicU64; ADMISSION_PURPOSE_COUNT],
 }
 
@@ -65,7 +70,7 @@ impl CellSecurityContext {
                 signer,
                 role_verifiers,
             },
-            send_sequences: std::array::from_fn(|_| AtomicU64::new(0)),
+            send_sequences: std::array::from_fn(|_| AtomicU64::new(1)),
         })
     }
 
@@ -83,17 +88,12 @@ impl CellSecurityContext {
                 signer,
                 controller_verifier,
             },
-            send_sequences: std::array::from_fn(|_| AtomicU64::new(0)),
+            send_sequences: std::array::from_fn(|_| AtomicU64::new(1)),
         })
     }
 
     pub(crate) fn run_nonce(&self) -> [u8; 32] {
         self.run_nonce
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn session_nonce(&self) -> [u8; 32] {
-        self.session_nonce
     }
 
     pub(crate) fn role(&self) -> Option<CellularRole> {
@@ -144,6 +144,42 @@ impl CellSecurityContext {
         }
     }
 
+    pub(crate) fn seal(
+        &self,
+        purpose: AdmissionPurpose,
+        peer: &velo::PeerInfo,
+        payload: Vec<u8>,
+    ) -> Result<AuthenticatedFrame> {
+        let role = self
+            .role()
+            .ok_or_else(|| anyhow::anyhow!("controller cannot seal worker application frames"))?;
+        ensure!(
+            purpose.supports(role),
+            "cellular role cannot use this admission purpose"
+        );
+        let sequence = next_sequence(&self.send_sequences[purpose.index()])?;
+        let peer_info = rmp_serde::to_vec(peer)
+            .map_err(|error| anyhow::anyhow!("encode authenticated frame peer: {error}"))?;
+        let transcript = authenticated_frame_transcript(
+            self.run_nonce,
+            role,
+            purpose,
+            self.session_nonce,
+            sequence,
+            &peer_info,
+            &payload,
+        );
+        Ok(AuthenticatedFrame {
+            version: REGISTRATION_PROTOCOL_VERSION,
+            role,
+            session_nonce: self.session_nonce,
+            sequence,
+            peer_info,
+            payload,
+            signature: self.sign_worker(&transcript)?.to_bytes().to_vec(),
+        })
+    }
+
     pub(crate) fn registration_credential(self: &Arc<Self>) -> Result<CellRegistrationCredential> {
         let Some(CellularRole::Cell(cell_id)) = self.role() else {
             anyhow::bail!("security context has no cell credential");
@@ -169,6 +205,18 @@ impl CellSecurityContext {
     }
 }
 
+fn next_sequence(sequence: &AtomicU64) -> Result<u64> {
+    let mut current = sequence.load(Ordering::Relaxed);
+    loop {
+        ensure!(current != 0, "cellular admission sequence is exhausted");
+        let next = if current == u64::MAX { 0 } else { current + 1 };
+        match sequence.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return Ok(current),
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 fn random_nonce(class: &str) -> Result<[u8; 32]> {
     let mut nonce = [0_u8; 32];
     rand::rngs::OsRng
@@ -177,33 +225,325 @@ fn random_nonce(class: &str) -> Result<[u8; 32]> {
     Ok(nonce)
 }
 
-/// The controller operation for which a fresh Velo peer may be admitted.
-///
-/// A proof for one purpose is deliberately unusable for another; a partition
-/// shipper must not be able to turn its ticket into a dataset subscription.
+/// One authenticated cell-to-controller application operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
-pub enum CellPeerAdmissionPurpose {
+pub enum AdmissionPurpose {
+    /// Registers one launched role and commits its process session nonce.
+    Register = 1,
+    /// Reports the envelope-local replay preflight result.
+    Preflight = 2,
+    /// Delivers one cell metrics heartbeat.
+    Heartbeat = 3,
+    /// Delivers one controller-owned phase barrier signal.
+    PhaseSignal = 4,
     /// Delivers a records shard to the controller.
-    Partition = 1,
+    Partition = 5,
     /// Delivers a folded column store to the controller.
-    StorePartition = 2,
+    StorePartition = 6,
     /// Subscribes to controller-owned phase transitions.
-    PhaserSubscribe = 3,
+    PhaserSubscribe = 7,
     /// Subscribes to controller-owned dataset chunks.
-    DatasetSubscribe = 4,
+    DatasetSubscribe = 8,
     /// Opens a Velo artifact stream.
-    ArtifactOpen = 5,
+    ArtifactOpen = 9,
+    /// Waits for an exact artifact path to commit.
+    ArtifactClose = 10,
+    /// Marks one cell's artifact stream terminal.
+    ArtifactDone = 11,
     /// Delivers an aggregator-owned upstream partition.
-    AggregatorStorePartition = 6,
+    AggregatorStorePartition = 12,
 }
 
-/// Wire-visible proof for admitting one fresh, purpose-limited Velo peer.
+impl AdmissionPurpose {
+    const fn index(self) -> usize {
+        self as usize - 1
+    }
+
+    const fn supports(self, role: CellularRole) -> bool {
+        match self {
+            Self::AggregatorStorePartition => matches!(role, CellularRole::Aggregator { .. }),
+            _ => matches!(role, CellularRole::Cell(_)),
+        }
+    }
+}
+
+/// One signed, raw-payload application frame.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct CellPeerAdmissionProof {
+pub struct AuthenticatedFrame {
     version: u8,
-    run_nonce: [u8; 32],
+    role: CellularRole,
+    session_nonce: [u8; 32],
+    sequence: u64,
+    peer_info: Vec<u8>,
+    payload: Vec<u8>,
     signature: Vec<u8>,
+}
+
+impl AuthenticatedFrame {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, AdmissionRejection> {
+        if bytes.len() > MAX_AUTHENTICATED_FRAME_BYTES {
+            return Err(AdmissionRejection::Oversized);
+        }
+        rmp_serde::from_slice(bytes).map_err(|_| AdmissionRejection::Malformed)
+    }
+
+    pub(crate) fn role(&self) -> CellularRole {
+        self.role
+    }
+
+    pub(crate) fn peer_info(&self) -> &[u8] {
+        &self.peer_info
+    }
+
+    pub(crate) fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+
+    #[cfg(test)]
+    pub(crate) fn session_nonce(&self) -> [u8; 32] {
+        self.session_nonce
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+/// A fixed-class admission failure. Wire handlers expose only `AdmissionRejected`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AdmissionRejection {
+    Oversized,
+    Malformed,
+    Role,
+    Signature,
+    Session,
+    Replay,
+}
+
+impl std::fmt::Display for AdmissionRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AdmissionRejected")
+    }
+}
+
+impl std::error::Error for AdmissionRejection {}
+
+/// A signature- and replay-verified frame whose raw payload is still undecoded.
+pub(crate) struct VerifiedFrame {
+    role: CellularRole,
+    session_nonce: [u8; 32],
+    peer_info: Vec<u8>,
+    payload: Vec<u8>,
+}
+
+/// A verified frame after its route-specific payload has been decoded.
+pub(crate) struct VerifiedPayload<T> {
+    role: CellularRole,
+    session_nonce: [u8; 32],
+    peer_info: Vec<u8>,
+    payload: T,
+}
+
+impl<T> VerifiedPayload<T> {
+    pub(crate) fn role(&self) -> CellularRole {
+        self.role
+    }
+
+    pub(crate) fn into_payload(self) -> T {
+        self.payload
+    }
+
+    pub(crate) fn into_parts(self) -> (CellularRole, [u8; 32], Vec<u8>, T) {
+        (self.role, self.session_nonce, self.peer_info, self.payload)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ReplayWindow {
+    highest: u64,
+    seen: u64,
+}
+
+impl ReplayWindow {
+    fn accept(&mut self, sequence: u64) -> bool {
+        if self.seen == 0 {
+            self.highest = sequence;
+            self.seen = 1;
+            return true;
+        }
+        if sequence > self.highest {
+            let distance = sequence - self.highest;
+            self.highest = sequence;
+            self.seen = if distance >= 64 {
+                1
+            } else {
+                (self.seen << distance) | 1
+            };
+            return true;
+        }
+        let distance = self.highest - sequence;
+        if distance >= 64 {
+            return false;
+        }
+        let mask = 1_u64 << distance;
+        if self.seen & mask != 0 {
+            return false;
+        }
+        self.seen |= mask;
+        true
+    }
+}
+
+#[derive(Default)]
+struct RoleAdmissionState {
+    session_nonce: Option<[u8; 32]>,
+    replay: [ReplayWindow; ADMISSION_PURPOSE_COUNT],
+}
+
+struct RoleAdmissionSlot {
+    role: CellularRole,
+    verifier: VerifyingKey,
+    state: parking_lot::Mutex<RoleAdmissionState>,
+}
+
+/// Fixed per-purpose rejection counters.
+pub(crate) struct AdmissionDropCounters {
+    counts: [AtomicU64; ADMISSION_PURPOSE_COUNT],
+}
+
+impl AdmissionDropCounters {
+    fn new() -> Self {
+        Self {
+            counts: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    fn increment(&self, purpose: AdmissionPurpose) {
+        self.counts[purpose.index()].fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    fn get(&self, purpose: AdmissionPurpose) -> u64 {
+        self.counts[purpose.index()].load(Ordering::Relaxed)
+    }
+}
+
+/// Controller-owned fixed role slots and replay windows.
+pub(crate) struct AdmissionLedger {
+    run_nonce: [u8; 32],
+    slots: Box<[RoleAdmissionSlot]>,
+    drops: AdmissionDropCounters,
+}
+
+impl AdmissionLedger {
+    fn new(run_nonce: [u8; 32], roster: &[RoleVerifyingKey]) -> Self {
+        let slots = roster
+            .iter()
+            .map(|entry| RoleAdmissionSlot {
+                role: entry.role,
+                verifier: entry.verifier,
+                state: parking_lot::Mutex::new(RoleAdmissionState::default()),
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        Self {
+            run_nonce,
+            slots,
+            drops: AdmissionDropCounters::new(),
+        }
+    }
+
+    pub(crate) fn open(
+        &self,
+        purpose: AdmissionPurpose,
+        frame: AuthenticatedFrame,
+    ) -> Result<VerifiedFrame, AdmissionRejection> {
+        self.open_inner(purpose, frame).map_err(|rejection| {
+            self.drops.increment(purpose);
+            rejection
+        })
+    }
+
+    fn open_inner(
+        &self,
+        purpose: AdmissionPurpose,
+        frame: AuthenticatedFrame,
+    ) -> Result<VerifiedFrame, AdmissionRejection> {
+        if frame.version != REGISTRATION_PROTOCOL_VERSION || !purpose.supports(frame.role) {
+            return Err(AdmissionRejection::Role);
+        }
+        if frame.signature.len() != Signature::BYTE_SIZE {
+            return Err(AdmissionRejection::Malformed);
+        }
+        let slot = self
+            .slots
+            .iter()
+            .find(|slot| slot.role == frame.role)
+            .ok_or(AdmissionRejection::Role)?;
+        let signature =
+            Signature::from_slice(&frame.signature).map_err(|_| AdmissionRejection::Malformed)?;
+        slot.verifier
+            .verify(
+                &authenticated_frame_transcript(
+                    self.run_nonce,
+                    frame.role,
+                    purpose,
+                    frame.session_nonce,
+                    frame.sequence,
+                    &frame.peer_info,
+                    &frame.payload,
+                ),
+                &signature,
+            )
+            .map_err(|_| AdmissionRejection::Signature)?;
+
+        {
+            let mut state = slot.state.lock();
+            if purpose == AdmissionPurpose::Register {
+                if state.session_nonce != Some(frame.session_nonce) {
+                    *state = RoleAdmissionState {
+                        session_nonce: Some(frame.session_nonce),
+                        replay: [ReplayWindow::default(); ADMISSION_PURPOSE_COUNT],
+                    };
+                }
+            } else if state.session_nonce != Some(frame.session_nonce) {
+                return Err(AdmissionRejection::Session);
+            }
+            if !state.replay[purpose.index()].accept(frame.sequence) {
+                return Err(AdmissionRejection::Replay);
+            }
+        }
+
+        Ok(VerifiedFrame {
+            role: frame.role,
+            session_nonce: frame.session_nonce,
+            peer_info: frame.peer_info,
+            payload: frame.payload,
+        })
+    }
+
+    fn reject<T>(
+        &self,
+        purpose: AdmissionPurpose,
+        rejection: AdmissionRejection,
+    ) -> Result<T, AdmissionRejection> {
+        self.drops.increment(purpose);
+        Err(rejection)
+    }
+
+    #[cfg(test)]
+    fn commit_session(&self, role: CellularRole, session_nonce: [u8; 32]) {
+        if let Some(slot) = self.slots.iter().find(|slot| slot.role == role) {
+            slot.state.lock().session_nonce = Some(session_nonce);
+        }
+    }
+
+    #[cfg(test)]
+    fn replay_slot_count(&self) -> usize {
+        self.slots.len() * ADMISSION_PURPOSE_COUNT
+    }
 }
 
 /// Controller-owned cell verifiers, run nonce, and provisioned reply-attestation capability.
@@ -211,6 +551,7 @@ pub(crate) struct CellRegistrationAuthority {
     run_nonce: [u8; 32],
     role_verifiers: Box<[RoleVerifyingKey]>,
     reply_attestor: ControllerRegisterAttestor,
+    admission_ledger: AdmissionLedger,
 }
 
 /// The private, cell-specific signing key delivered only by a trusted launcher.
@@ -291,7 +632,14 @@ impl CellRegistrationAuthority {
             controller_signer,
             role_verifiers.into_boxed_slice(),
         )?);
-        Ok((context.registration_authority()?, credentials))
+        let authority = context.registration_authority()?;
+        for credential in &credentials {
+            authority.admission_ledger.commit_session(
+                CellularRole::Cell(credential.cell_id),
+                credential.context.session_nonce,
+            );
+        }
+        Ok((authority, credentials))
     }
 
     #[cfg(test)]
@@ -307,6 +655,7 @@ impl CellRegistrationAuthority {
         );
         Ok(Self {
             run_nonce: context.run_nonce,
+            admission_ledger: AdmissionLedger::new(context.run_nonce, &role_verifiers),
             role_verifiers,
             reply_attestor: context.reply_attestor()?,
         })
@@ -314,6 +663,62 @@ impl CellRegistrationAuthority {
 
     pub(crate) fn reply_attestor(&self) -> ControllerRegisterAttestor {
         self.reply_attestor.clone()
+    }
+
+    pub(crate) fn open_payload<T: DeserializeOwned>(
+        &self,
+        purpose: AdmissionPurpose,
+        bytes: &[u8],
+    ) -> Result<VerifiedPayload<T>, AdmissionRejection> {
+        if bytes.len() > MAX_AUTHENTICATED_FRAME_BYTES {
+            return self
+                .admission_ledger
+                .reject(purpose, AdmissionRejection::Oversized);
+        }
+        let frame: AuthenticatedFrame = match rmp_serde::from_slice(bytes) {
+            Ok(frame) => frame,
+            Err(_) => {
+                return self
+                    .admission_ledger
+                    .reject(purpose, AdmissionRejection::Malformed);
+            }
+        };
+        let verified = self.admission_ledger.open(purpose, frame)?;
+        let payload = match rmp_serde::from_slice(&verified.payload) {
+            Ok(payload) => payload,
+            Err(_) => {
+                return self
+                    .admission_ledger
+                    .reject(purpose, AdmissionRejection::Malformed);
+            }
+        };
+        Ok(VerifiedPayload {
+            role: verified.role,
+            session_nonce: verified.session_nonce,
+            peer_info: verified.peer_info,
+            payload,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalid_count(&self, purpose: AdmissionPurpose) -> u64 {
+        self.admission_ledger.drops.get(purpose)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replay_slot_count(&self) -> usize {
+        self.admission_ledger.replay_slot_count()
+    }
+
+    pub(crate) fn planned_cell_capacity(&self) -> usize {
+        self.role_verifiers
+            .iter()
+            .filter_map(|entry| match entry.role {
+                CellularRole::Cell(cell_id) => Some(cell_id as usize + 1),
+                CellularRole::Aggregator { .. } => None,
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     pub(crate) fn verify(
@@ -356,33 +761,6 @@ impl CellRegistrationAuthority {
         Ok(VerifiedCellRegistration {
             cell_id: registration.cell_id,
         })
-    }
-
-    /// Verify a ticket before an AIPerf handler registers a fresh Velo peer.
-    pub(crate) fn verify_peer_admission(
-        &self,
-        cell_id: u32,
-        purpose: CellPeerAdmissionPurpose,
-        cell_peer: &[u8],
-        proof: &CellPeerAdmissionProof,
-    ) -> Result<()> {
-        ensure!(
-            proof.version == REGISTRATION_PROTOCOL_VERSION && proof.run_nonce == self.run_nonce,
-            "cell peer admission proof does not belong to this run"
-        );
-        let key = self
-            .role_verifiers
-            .iter()
-            .find(|entry| entry.role == CellularRole::Cell(cell_id))
-            .map(|entry| &entry.verifier)
-            .ok_or_else(|| anyhow::anyhow!("cell peer admission id is out of range"))?;
-        let signature = Signature::from_slice(&proof.signature)
-            .map_err(|_| anyhow::anyhow!("cell peer admission proof is malformed"))?;
-        key.verify(
-            &peer_admission_transcript(cell_id, purpose, cell_peer, proof.version, proof.run_nonce),
-            &signature,
-        )
-        .map_err(|_| anyhow::anyhow!("cell peer admission proof is invalid"))
     }
 }
 
@@ -502,24 +880,22 @@ impl CellRegistrationCredential {
         })
     }
 
-    /// Mint a ticket for exactly one ephemeral peer and controller operation.
-    pub(crate) fn sign_peer_admission(
+    pub(crate) fn seal_payload<T: Serialize>(
         &self,
-        purpose: CellPeerAdmissionPurpose,
-        cell_peer: &[u8],
-    ) -> Result<CellPeerAdmissionProof> {
-        let transcript = peer_admission_transcript(
-            self.cell_id(),
-            purpose,
-            cell_peer,
-            REGISTRATION_PROTOCOL_VERSION,
-            self.context.run_nonce,
+        purpose: AdmissionPurpose,
+        peer: &velo::PeerInfo,
+        payload: &T,
+    ) -> Result<Vec<u8>> {
+        let payload = rmp_serde::to_vec(payload)
+            .map_err(|error| anyhow::anyhow!("encode authenticated payload: {error}"))?;
+        let frame = self.context.seal(purpose, peer, payload)?;
+        let encoded = rmp_serde::to_vec(&frame)
+            .map_err(|error| anyhow::anyhow!("encode authenticated frame: {error}"))?;
+        ensure!(
+            encoded.len() <= MAX_AUTHENTICATED_FRAME_BYTES,
+            "authenticated frame exceeds the Velo frame limit"
         );
-        Ok(CellPeerAdmissionProof {
-            version: REGISTRATION_PROTOCOL_VERSION,
-            run_nonce: self.context.run_nonce,
-            signature: self.context.sign_worker(&transcript)?.to_bytes().to_vec(),
-        })
+        Ok(encoded)
     }
 }
 
@@ -548,21 +924,37 @@ fn registration_transcript(
     transcript
 }
 
-fn peer_admission_transcript(
-    cell_id: u32,
-    purpose: CellPeerAdmissionPurpose,
-    cell_peer: &[u8],
-    version: u8,
+fn authenticated_frame_transcript(
     run_nonce: [u8; 32],
+    role: CellularRole,
+    purpose: AdmissionPurpose,
+    session_nonce: [u8; 32],
+    sequence: u64,
+    peer_info: &[u8],
+    payload: &[u8],
 ) -> Vec<u8> {
-    let mut transcript =
-        Vec::with_capacity(PEER_ADMISSION_TRANSCRIPT_DOMAIN.len() + 1 + 32 + 4 + 1 + 32);
-    transcript.extend_from_slice(PEER_ADMISSION_TRANSCRIPT_DOMAIN);
-    transcript.push(version);
+    let mut transcript = Vec::with_capacity(
+        AUTHENTICATED_FRAME_TRANSCRIPT_DOMAIN.len() + 1 + 32 + 9 + 1 + 32 + 8 + 64,
+    );
+    transcript.extend_from_slice(AUTHENTICATED_FRAME_TRANSCRIPT_DOMAIN);
+    transcript.push(REGISTRATION_PROTOCOL_VERSION);
     transcript.extend_from_slice(&run_nonce);
-    transcript.extend_from_slice(&cell_id.to_le_bytes());
+    match role {
+        CellularRole::Cell(cell_id) => {
+            transcript.push(1);
+            transcript.extend_from_slice(&cell_id.to_le_bytes());
+        }
+        CellularRole::Aggregator { tier, id } => {
+            transcript.push(2);
+            transcript.extend_from_slice(&tier.to_le_bytes());
+            transcript.extend_from_slice(&id.to_le_bytes());
+        }
+    }
     transcript.push(purpose as u8);
-    transcript.extend_from_slice(blake3::hash(cell_peer).as_bytes());
+    transcript.extend_from_slice(&session_nonce);
+    transcript.extend_from_slice(&sequence.to_le_bytes());
+    transcript.extend_from_slice(blake3::hash(peer_info).as_bytes());
+    transcript.extend_from_slice(blake3::hash(payload).as_bytes());
     transcript
 }
 
@@ -585,10 +977,164 @@ fn register_reply_transcript(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
     use crate::cellular::transport::CellRegister;
+    use crate::cellular::transport::HANDLER_STORE_PARTITION;
     use crate::cellular::transport::connect::{ControllerPeerBinding, DialedControllerAddress};
 
-    use super::{CellPeerAdmissionPurpose, CellRegistrationAuthority, ControllerRegisterAttestor};
+    use super::{
+        AdmissionPurpose, AdmissionRejection, AuthenticatedFrame, CellRegistrationAuthority,
+        ControllerRegisterAttestor, MAX_AUTHENTICATED_FRAME_BYTES, ReplayWindow,
+    };
+
+    fn application_peer(marker: u8) -> velo::PeerInfo {
+        velo::PeerInfo::new(
+            velo::InstanceId::new_v4(),
+            velo::WorkerAddress::from_encoded(vec![marker]),
+        )
+    }
+
+    fn encoded_frame_with_len(
+        credential: &super::CellRegistrationCredential,
+        peer: &velo::PeerInfo,
+        target_len: usize,
+    ) -> Vec<u8> {
+        let mut payload_len = target_len - 256;
+        for _ in 0..8 {
+            let payload = rmp_serde::to_vec(&vec![0_u8; payload_len]).unwrap();
+            let mut frame = credential
+                .context
+                .seal(AdmissionPurpose::StorePartition, peer, payload)
+                .unwrap();
+            frame.signature.fill(0);
+            let encoded = rmp_serde::to_vec(&frame).unwrap();
+            if encoded.len() == target_len {
+                return encoded;
+            }
+            payload_len = if encoded.len() < target_len {
+                payload_len + target_len - encoded.len()
+            } else {
+                payload_len - (encoded.len() - target_len)
+            };
+        }
+        panic!("could not construct an authenticated frame of length {target_len}");
+    }
+
+    #[test]
+    fn authenticated_frame_limit_fits_velo_store_partition_route() {
+        const VELO_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+        const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
+
+        let (_, credentials) = CellRegistrationAuthority::mint(1).unwrap();
+        let peer = application_peer(0x84);
+        let accepted =
+            encoded_frame_with_len(&credentials[0], &peer, MAX_AUTHENTICATED_FRAME_BYTES);
+        assert!(AuthenticatedFrame::decode(&accepted).is_ok());
+        assert!(
+            accepted.len() + VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES + HANDLER_STORE_PARTITION.len()
+                <= VELO_MAX_FRAME_BYTES,
+            "AIPerf accepted a payload that Velo cannot frame on the longest route"
+        );
+
+        let rejected =
+            encoded_frame_with_len(&credentials[0], &peer, MAX_AUTHENTICATED_FRAME_BYTES + 1);
+        assert!(matches!(
+            AuthenticatedFrame::decode(&rejected),
+            Err(AdmissionRejection::Oversized)
+        ));
+    }
+
+    #[test]
+    fn authenticated_frame_binds_payload_peer_purpose_and_sequence() {
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).unwrap();
+        let peer = application_peer(0x80);
+        let frame = credentials[0]
+            .context
+            .seal(AdmissionPurpose::PhaseSignal, &peer, b"warmup".to_vec())
+            .unwrap();
+
+        assert!(
+            authority
+                .admission_ledger
+                .open(AdmissionPurpose::PhaseSignal, frame.clone())
+                .is_ok()
+        );
+        assert!(matches!(
+            authority
+                .admission_ledger
+                .open(AdmissionPurpose::PhaseSignal, frame.clone()),
+            Err(AdmissionRejection::Replay)
+        ));
+
+        let mut tampered_payload = frame.clone();
+        tampered_payload.payload = b"profiling".to_vec();
+        assert!(
+            authority
+                .admission_ledger
+                .open(AdmissionPurpose::PhaseSignal, tampered_payload)
+                .is_err()
+        );
+
+        let mut tampered_peer = frame.clone();
+        tampered_peer.peer_info = rmp_serde::to_vec(&application_peer(0x81)).unwrap();
+        assert!(
+            authority
+                .admission_ledger
+                .open(AdmissionPurpose::PhaseSignal, tampered_peer)
+                .is_err()
+        );
+
+        assert!(
+            authority
+                .admission_ledger
+                .open(AdmissionPurpose::Heartbeat, frame)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn replay_window_handles_zero_sixty_three_sixty_four_and_max() {
+        let mut window = ReplayWindow::default();
+        assert!(window.accept(0));
+        assert!(window.accept(64));
+        assert!(window.accept(1));
+        assert!(!window.accept(0));
+
+        let mut high = ReplayWindow::default();
+        assert!(high.accept(u64::MAX));
+        assert!(high.accept(u64::MAX - 63));
+        assert!(!high.accept(u64::MAX - 64));
+        assert!(!high.accept(u64::MAX));
+    }
+
+    #[test]
+    fn concurrent_sealing_allocates_unique_sequences() {
+        let (_, credentials) = CellRegistrationAuthority::mint(1).unwrap();
+        let context = Arc::clone(&credentials[0].context);
+        let peer = application_peer(0x84);
+        let mut threads = Vec::new();
+        for _ in 0..8 {
+            let context = Arc::clone(&context);
+            let peer = peer.clone();
+            threads.push(std::thread::spawn(move || {
+                (0..128)
+                    .map(|_| {
+                        context
+                            .seal(AdmissionPurpose::Heartbeat, &peer, Vec::new())
+                            .unwrap()
+                            .sequence
+                    })
+                    .collect::<Vec<_>>()
+            }));
+        }
+        let sequences = threads
+            .into_iter()
+            .flat_map(|thread| thread.join().unwrap())
+            .collect::<HashSet<_>>();
+        assert_eq!(sequences.len(), 1024);
+    }
 
     fn controller_binding() -> (velo::PeerInfo, ControllerPeerBinding) {
         let peer = velo::PeerInfo::new(
@@ -779,49 +1325,5 @@ mod tests {
                 .is_err(),
             "the original controller attestation must not authorize a changed dial target"
         );
-    }
-
-    #[test]
-    fn peer_admission_ticket_is_bound_to_peer_cell_and_purpose() {
-        let (authority, credentials) = CellRegistrationAuthority::mint(2).unwrap();
-        let peer = b"ephemeral-peer";
-        let proof = credentials[1]
-            .sign_peer_admission(CellPeerAdmissionPurpose::Partition, peer)
-            .unwrap();
-
-        assert!(
-            authority
-                .verify_peer_admission(1, CellPeerAdmissionPurpose::Partition, peer, &proof)
-                .is_ok()
-        );
-        assert!(
-            authority
-                .verify_peer_admission(1, CellPeerAdmissionPurpose::StorePartition, peer, &proof)
-                .is_err()
-        );
-        assert!(
-            authority
-                .verify_peer_admission(0, CellPeerAdmissionPurpose::Partition, peer, &proof)
-                .is_err()
-        );
-        assert!(
-            authority
-                .verify_peer_admission(1, CellPeerAdmissionPurpose::Partition, b"other", &proof)
-                .is_err()
-        );
-        for purpose in [
-            CellPeerAdmissionPurpose::StorePartition,
-            CellPeerAdmissionPurpose::PhaserSubscribe,
-            CellPeerAdmissionPurpose::DatasetSubscribe,
-            CellPeerAdmissionPurpose::ArtifactOpen,
-            CellPeerAdmissionPurpose::AggregatorStorePartition,
-        ] {
-            assert!(
-                authority
-                    .verify_peer_admission(1, purpose, peer, &proof)
-                    .is_err(),
-                "a partition ticket must not authorize {purpose:?}"
-            );
-        }
     }
 }
