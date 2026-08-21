@@ -784,6 +784,126 @@ traces: [{id: cycle}]
 }
 
 #[test]
+fn conditional_non_finite_timing_is_refused_before_inspection_rendering() {
+    for value in [".nan", ".inf", "-.inf"] {
+        let fixture = tempfile::NamedTempFile::new().expect("create non-finite fixture");
+        fs::write(
+            fixture.path(),
+            r#"graph:
+  state: {out: {type: text}}
+  nodes:
+    node: {node_type: llm, prompt: [x], output: out, min_start_delay_us: VALUE}
+  edges:
+    - {source: START, target: node}
+traces: [{id: non-finite}]
+"#
+            .replace("VALUE", value),
+        )
+        .expect("write non-finite fixture");
+
+        let output = explain_output(
+            fixture.path().to_str().expect("fixture path"),
+            "conditional_graph",
+            &["--output-format=json"],
+        );
+        assert_eq!(output.status.code(), Some(2), "{value}");
+        let report_json = String::from_utf8(output.stdout).expect("JSON error");
+        assert!(
+            report_json.contains("graph input could not be lowered"),
+            "{value}"
+        );
+        assert!(!report_json.contains("\"topology\""), "{value}");
+        assert!(
+            !report_json.contains("\"min_start_delay_us\":null"),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn conditional_non_finite_replay_duration_and_arrival_time_are_refused() {
+    for (field, value, source) in [
+        (
+            "duration_ms",
+            ".nan",
+            r#"graph:
+  nodes:
+    replay: {node_type: replay, outputs: [out], duration_ms: VALUE}
+"#,
+        ),
+        (
+            "arrival_time",
+            "-.inf",
+            r#"graph:
+  nodes:
+    node: {node_type: llm, prompt: [x], output: out}
+  edges:
+    - {source: START, target: node}
+traces: [{id: trace, arrival_time: VALUE}]
+"#,
+        ),
+    ] {
+        let fixture = tempfile::NamedTempFile::new().expect("create non-finite fixture");
+        fs::write(fixture.path(), source.replace("VALUE", value)).expect("write fixture");
+        let output = explain_output(
+            fixture.path().to_str().expect("fixture path"),
+            "conditional_graph",
+            &["--output-format=json"],
+        );
+        assert_eq!(output.status.code(), Some(2), "{field}");
+        let report_json = String::from_utf8(output.stdout).expect("JSON error");
+        assert!(
+            report_json.contains("graph input could not be lowered"),
+            "{field}"
+        );
+        assert!(!report_json.contains("\"topology\""), "{field}");
+    }
+}
+
+#[test]
+fn conditional_replay_folding_refuses_cycles_and_unrepresentable_timing() {
+    for source in [
+        r#"graph:
+  state: {out: {}}
+  nodes:
+    source: {prompt: [x], output: out}
+    replay: {node_type: replay, outputs: [out]}
+    target: {prompt: [x], output: out}
+  edges:
+    - {source: START, target: source}
+    - {source: source, target: replay, min_start_delay_us: 1}
+    - {source: replay, target: target}
+traces: [{id: trace, replay_outputs: {replay: {out: replayed}}}]
+"#,
+        r#"graph:
+  state: {out: {}}
+  nodes:
+    source: {prompt: [x], output: out}
+    r1: {node_type: replay, outputs: [out]}
+    r2: {node_type: replay, outputs: [out]}
+  edges:
+    - {source: START, target: source}
+    - {source: source, target: r1}
+    - {source: r1, target: r2}
+    - {source: r2, target: r1}
+traces: [{id: trace, replay_outputs: {r1: {out: one}, r2: {out: two}}}]
+"#,
+    ] {
+        let fixture = tempfile::NamedTempFile::new().expect("create replay fixture");
+        fs::write(fixture.path(), source).expect("write replay fixture");
+        let output = explain_output(
+            fixture.path().to_str().expect("fixture path"),
+            "conditional_graph",
+            &["--output-format=json"],
+        );
+        assert_eq!(output.status.code(), Some(2));
+        let report_json = String::from_utf8(output.stdout).expect("JSON error");
+        assert!(report_json.contains("graph input could not be lowered"));
+        assert!(!report_json.contains("\"topology\""));
+    }
+}
+
+#[test]
 fn conditional_graph_rejects_invalid_channel_counts_before_readiness() {
     for count in ["-1", "any"] {
         let (_directory, source) = conditional_count_fixture(count);

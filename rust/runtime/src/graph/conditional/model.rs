@@ -20,6 +20,9 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::graph::model::{ChannelRequirement, ChannelType, Count, ReducerName};
+use crate::graph::timing::{
+    TimingRangeError, validate_microseconds, validate_milliseconds, validate_seconds,
+};
 
 /// Focused authored-graph parse or lowering failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +99,7 @@ pub struct AuthoredLlmNode {
     pub max_tokens: Option<usize>,
     pub metadata: BTreeMap<String, Value>,
     pub terminal_for_user: bool,
+    /// Earliest start delay for this LLM node in microseconds.
     pub min_start_delay_us: Option<f64>,
 }
 
@@ -103,8 +107,10 @@ pub struct AuthoredLlmNode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuthoredReplayNode {
     pub outputs: Vec<String>,
+    /// Recorded replay duration in milliseconds, folded into successor timing.
     pub duration_ms: f64,
     pub metadata: BTreeMap<String, Value>,
+    /// Earliest start delay for this replay node in microseconds.
     pub min_start_delay_us: Option<f64>,
 }
 
@@ -120,9 +126,13 @@ pub enum AuthoredEdge {
 pub struct AuthoredStaticEdge {
     pub source: String,
     pub target: String,
+    /// Completion-anchored delay in microseconds.
     pub delay_after_predecessor_us: Option<f64>,
+    /// Minimum-start delay in microseconds.
     pub min_start_delay_us: Option<f64>,
+    /// Predecessor-start-anchored delay in microseconds.
     pub delay_after_predecessor_start_us: Option<f64>,
+    /// Predecessor-first-token-anchored delay in microseconds.
     pub delay_after_predecessor_first_token_us: Option<f64>,
 }
 
@@ -132,8 +142,14 @@ pub struct AuthoredConditionalEdge {
     pub source: String,
     pub branches: BTreeMap<String, BranchTargets>,
     pub branch_weights: Option<BTreeMap<String, f64>>,
+    /// Completion-anchored delay in microseconds.
     pub delay_after_predecessor_us: Option<f64>,
+    /// Minimum-start delay in microseconds.
     pub min_start_delay_us: Option<f64>,
+    /// Predecessor-start-anchored delay in microseconds.
+    pub delay_after_predecessor_start_us: Option<f64>,
+    /// Predecessor-first-token-anchored delay in microseconds.
+    pub delay_after_predecessor_first_token_us: Option<f64>,
 }
 
 /// One or more successor ids reached by a branch key.
@@ -191,6 +207,7 @@ pub struct AuthoredTrace {
     #[serde(default)]
     pub replay_outputs: BTreeMap<String, BTreeMap<String, Value>>,
     #[serde(default)]
+    /// Trace arrival offset in seconds.
     pub arrival_time: Option<f64>,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -433,6 +450,9 @@ pub(super) fn convert_authored_graph(raw: RawDoc) -> Result<AuthoredGraphDoc, Co
         .into_iter()
         .map(convert_edge)
         .collect::<Result<Vec<_>, _>>()?;
+    for trace in &raw.traces {
+        finite_optional_arrival_time(trace.arrival_time, &trace.id)?;
+    }
     Ok(AuthoredGraphDoc {
         graph: AuthoredGraph {
             state,
@@ -493,6 +513,8 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
             let output = node.output.ok_or_else(|| {
                 ConditionalError::message(format!("llm node {id:?} is missing `output`"))
             })?;
+            let min_start_delay_us =
+                finite_optional_node_timing(node.min_start_delay_us, "min_start_delay_us", id)?;
             Ok(AuthoredNode::Llm(AuthoredLlmNode {
                 prompt,
                 output,
@@ -502,7 +524,7 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
                 max_tokens: node.max_tokens,
                 metadata: node.metadata,
                 terminal_for_user: node.terminal_for_user,
-                min_start_delay_us: node.min_start_delay_us,
+                min_start_delay_us,
             }))
         }
         "replay" => {
@@ -529,11 +551,14 @@ fn convert_node(id: &str, node: RawNode) -> Result<AuthoredNode, ConditionalErro
                     "replay node {id:?} declares no output channels"
                 )));
             }
+            let min_start_delay_us =
+                finite_optional_node_timing(node.min_start_delay_us, "min_start_delay_us", id)?;
+            let duration_ms = finite_replay_duration(node.duration_ms.unwrap_or(0.0), id)?;
             Ok(AuthoredNode::Replay(AuthoredReplayNode {
                 outputs,
-                duration_ms: node.duration_ms.unwrap_or(0.0),
+                duration_ms,
                 metadata: node.metadata,
-                min_start_delay_us: node.min_start_delay_us,
+                min_start_delay_us,
             }))
         }
         other => Err(ConditionalError::message(format!(
@@ -568,14 +593,31 @@ fn convert_input_requirements(
 }
 
 fn convert_edge(edge: RawEdge) -> Result<AuthoredEdge, ConditionalError> {
+    let delay_after_predecessor_us = finite_optional_timing(
+        edge.delay_after_predecessor_us,
+        "delay_after_predecessor_us",
+        &edge.source,
+    )?;
+    let min_start_delay_us =
+        finite_optional_timing(edge.min_start_delay_us, "min_start_delay_us", &edge.source)?;
+    let delay_after_predecessor_start_us = finite_optional_timing(
+        edge.delay_after_predecessor_start_us,
+        "delay_after_predecessor_start_us",
+        &edge.source,
+    )?;
+    let delay_after_predecessor_first_token_us = finite_optional_timing(
+        edge.delay_after_predecessor_first_token_us,
+        "delay_after_predecessor_first_token_us",
+        &edge.source,
+    )?;
     match (edge.target, edge.branches) {
         (Some(target), None) => Ok(AuthoredEdge::Static(AuthoredStaticEdge {
             source: edge.source,
             target,
-            delay_after_predecessor_us: edge.delay_after_predecessor_us,
-            min_start_delay_us: edge.min_start_delay_us,
-            delay_after_predecessor_start_us: edge.delay_after_predecessor_start_us,
-            delay_after_predecessor_first_token_us: edge.delay_after_predecessor_first_token_us,
+            delay_after_predecessor_us,
+            min_start_delay_us,
+            delay_after_predecessor_start_us,
+            delay_after_predecessor_first_token_us,
         })),
         (None, Some(branches)) => {
             if branches.is_empty() {
@@ -588,8 +630,10 @@ fn convert_edge(edge: RawEdge) -> Result<AuthoredEdge, ConditionalError> {
                 source: edge.source,
                 branches,
                 branch_weights: edge.branch_weights,
-                delay_after_predecessor_us: edge.delay_after_predecessor_us,
-                min_start_delay_us: edge.min_start_delay_us,
+                delay_after_predecessor_us,
+                min_start_delay_us,
+                delay_after_predecessor_start_us,
+                delay_after_predecessor_first_token_us,
             }))
         }
         (Some(_), Some(_)) => Err(ConditionalError::message(format!(
@@ -601,6 +645,71 @@ fn convert_edge(edge: RawEdge) -> Result<AuthoredEdge, ConditionalError> {
             edge.source
         ))),
     }
+}
+
+fn finite_optional_timing(
+    value: Option<f64>,
+    field: &str,
+    source: &str,
+) -> Result<Option<f64>, ConditionalError> {
+    if let Some(value) = value {
+        validate_microseconds(value).map_err(|error| match error {
+            TimingRangeError::NonFinite => {
+                ConditionalError::message(format!("{field} must be finite on edge from {source:?}"))
+            }
+            TimingRangeError::OutsideI64Nanoseconds => ConditionalError::message(format!(
+                "{field} must fit i64 nanoseconds on edge from {source:?}"
+            )),
+        })?;
+    }
+    Ok(value)
+}
+
+fn finite_optional_node_timing(
+    value: Option<f64>,
+    field: &str,
+    node_id: &str,
+) -> Result<Option<f64>, ConditionalError> {
+    if let Some(value) = value {
+        validate_microseconds(value).map_err(|error| match error {
+            TimingRangeError::NonFinite => {
+                ConditionalError::message(format!("{field} must be finite on node {node_id:?}"))
+            }
+            TimingRangeError::OutsideI64Nanoseconds => ConditionalError::message(format!(
+                "{field} must fit i64 nanoseconds on node {node_id:?}"
+            )),
+        })?;
+    }
+    Ok(value)
+}
+
+fn finite_replay_duration(value: f64, node_id: &str) -> Result<f64, ConditionalError> {
+    validate_milliseconds(value).map_err(|error| match error {
+        TimingRangeError::NonFinite => ConditionalError::message(format!(
+            "duration_ms must be finite on replay node {node_id:?}"
+        )),
+        TimingRangeError::OutsideI64Nanoseconds => ConditionalError::message(format!(
+            "duration_ms must fit i64 nanoseconds on replay node {node_id:?}"
+        )),
+    })?;
+    Ok(value)
+}
+
+fn finite_optional_arrival_time(
+    value: Option<f64>,
+    trace_id: &str,
+) -> Result<Option<f64>, ConditionalError> {
+    if let Some(value) = value {
+        validate_seconds(value).map_err(|error| match error {
+            TimingRangeError::NonFinite => ConditionalError::message(format!(
+                "arrival_time must be finite on trace {trace_id:?}"
+            )),
+            TimingRangeError::OutsideI64Nanoseconds => ConditionalError::message(format!(
+                "arrival_time must fit i64 nanoseconds on trace {trace_id:?}"
+            )),
+        })?;
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -635,6 +744,157 @@ traces:
     replay_outputs:
       tool_exec: {raw_results: [], brand_cands: "Nike, Adidas"}
 "#;
+
+    #[test]
+    fn rejects_non_finite_edge_timing_at_decode() {
+        for field in [
+            "delay_after_predecessor_us",
+            "min_start_delay_us",
+            "delay_after_predecessor_start_us",
+            "delay_after_predecessor_first_token_us",
+        ] {
+            for value in [".nan", ".inf", "-.inf"] {
+                let source = format!(
+                    "graph:\n  nodes: {{n: {{prompt: [x], output: out}}}}\n  edges:\n    - {{source: START, target: n, {field}: {value}}}\n"
+                );
+                let error = parse_authored_graph(source.as_bytes()).expect_err("non-finite timing");
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("{field} must be finite"))
+                );
+                assert!(error.to_string().contains("edge from \"START\""));
+            }
+        }
+
+        for field in [
+            "delay_after_predecessor_us",
+            "min_start_delay_us",
+            "delay_after_predecessor_start_us",
+            "delay_after_predecessor_first_token_us",
+        ] {
+            for value in [".nan", ".inf", "-.inf"] {
+                let source = format!(
+                    "graph:\n  nodes: {{n: {{prompt: [x], output: out}}}}\n  edges:\n    - {{source: START, branches: {{taken: n}}, {field}: {value}}}\n    - {{source: n, target: END}}\ntraces:\n  - {{id: t, selected_branches: {{START: taken}}}}\n"
+                );
+                let error = parse_authored_graph(source.as_bytes()).expect_err("non-finite timing");
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("{field} must be finite"))
+                );
+                assert!(error.to_string().contains("edge from \"START\""));
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_node_timing_at_decode() {
+        for value in [".nan", ".inf", "-.inf"] {
+            let source = format!(
+                "graph:\n  nodes: {{n: {{prompt: [x], output: out, min_start_delay_us: {value}}}}}\n  edges:\n    - {{source: START, target: n}}\n"
+            );
+            let error = parse_authored_graph(source.as_bytes()).expect_err("non-finite timing");
+            assert!(
+                error
+                    .to_string()
+                    .contains("min_start_delay_us must be finite on node \"n\"")
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_replay_duration_and_arrival_time_at_decode() {
+        for value in [".nan", ".inf", "-.inf"] {
+            let duration_source = format!(
+                "graph:\n  nodes: {{replay: {{node_type: replay, outputs: [out], duration_ms: {value}}}}}\n"
+            );
+            let error = parse_authored_graph(duration_source.as_bytes())
+                .expect_err("non-finite replay duration");
+            assert!(
+                error
+                    .to_string()
+                    .contains("duration_ms must be finite on replay node \"replay\"")
+            );
+
+            let arrival_source = format!(
+                "graph:\n  nodes: {{node: {{prompt: [x], output: out}}}}\n  edges:\n    - {{source: START, target: node}}\ntraces:\n  - {{id: trace, arrival_time: {value}}}\n"
+            );
+            let error = parse_authored_graph(arrival_source.as_bytes())
+                .expect_err("non-finite arrival time");
+            assert!(
+                error
+                    .to_string()
+                    .contains("arrival_time must be finite on trace \"trace\"")
+            );
+        }
+
+        let out_of_range = br#"
+graph:
+  nodes: {node: {prompt: [x], output: out}}
+  edges: [{source: START, target: node}]
+traces: [{id: trace, arrival_time: 1e20}]
+"#;
+        let error = parse_authored_graph(out_of_range).expect_err("arrival time out of range");
+        assert!(
+            error
+                .to_string()
+                .contains("arrival_time must fit i64 nanoseconds")
+        );
+
+        let max_boundary = br#"
+graph:
+  nodes: {node: {prompt: [x], output: out}}
+  edges: [{source: START, target: node}]
+traces: [{id: trace, arrival_time: 9223372036.854776}]
+"#;
+        let error = parse_authored_graph(max_boundary).expect_err("arrival time i64 boundary");
+        assert!(
+            error
+                .to_string()
+                .contains("arrival_time must fit i64 nanoseconds")
+        );
+    }
+
+    #[test]
+    fn rejects_every_authored_timing_unit_outside_signed_nanoseconds() {
+        for field in [
+            "delay_after_predecessor_us",
+            "min_start_delay_us",
+            "delay_after_predecessor_start_us",
+            "delay_after_predecessor_first_token_us",
+        ] {
+            let source = format!(
+                "graph:\n  nodes: {{n: {{prompt: [x], output: out}}}}\n  edges:\n    - {{source: START, target: n, {field}: 1e20}}\n"
+            );
+            let error = parse_authored_graph(source.as_bytes()).expect_err("edge timing range");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("{field} must fit i64 nanoseconds"))
+            );
+        }
+
+        let node_error = parse_authored_graph(
+            b"graph:\n  nodes: {n: {prompt: [x], output: out, min_start_delay_us: -1e20}}\n",
+        )
+        .expect_err("node timing range");
+        assert!(
+            node_error
+                .to_string()
+                .contains("min_start_delay_us must fit i64 nanoseconds on node \"n\"")
+        );
+
+        let duration_error = parse_authored_graph(
+            b"graph:\n  nodes: {r: {node_type: replay, outputs: [out], duration_ms: -1e20}}\n",
+        )
+        .expect_err("replay duration range");
+        assert!(
+            duration_error
+                .to_string()
+                .contains("duration_ms must fit i64 nanoseconds on replay node \"r\"")
+        );
+    }
 
     #[test]
     fn public_error_tuple_source_compatibility() {

@@ -12,9 +12,10 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::graph::inspect::{GraphInspectionIssue, GraphInspectionSeverity};
-use crate::graph::model::{Count, END_NODE_ID, GraphRecord, PromptItem, START_NODE_ID};
+use crate::graph::model::{Count, END_NODE_ID, GraphRecord, PromptItem, START_NODE_ID, StaticEdge};
 use crate::graph::scheduler::Scheduler;
 use crate::graph::static_readiness::analyze_static_readiness;
+use crate::graph::timing::{TimingRangeError, validate_microseconds};
 
 /// One structural problem found in a graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +38,16 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
         non_completion_start_errors(graph)
             .into_iter()
             .map(|(_, error)| error),
+    );
+    errors.extend(
+        edge_timing_errors(graph)
+            .into_iter()
+            .map(|(_, _, error)| error),
+    );
+    errors.extend(
+        node_timing_errors(graph)
+            .into_iter()
+            .map(|(_, _, error)| error),
     );
     errors
 }
@@ -67,7 +78,102 @@ pub fn validate_detailed(graph: &GraphRecord) -> Vec<GraphInspectionIssue> {
                 )
             }),
     );
+    issues.extend(
+        edge_timing_errors(graph)
+            .into_iter()
+            .map(|(edge_index, range, error)| {
+                issue(
+                    timing_issue_code(range),
+                    Some(format!("graph.edges[{edge_index}]")),
+                    error.0,
+                    [("edge_index", &edge_index.to_string())],
+                )
+            }),
+    );
+    issues.extend(
+        node_timing_errors(graph)
+            .into_iter()
+            .map(|(node_id, range, error)| {
+                issue(
+                    timing_issue_code(range),
+                    Some(format!("graph.nodes.{node_id}")),
+                    error.0,
+                    [("node_id", &node_id)],
+                )
+            }),
+    );
     issues
+}
+
+fn timing_issue_code(error: TimingRangeError) -> &'static str {
+    match error {
+        TimingRangeError::NonFinite => "non-finite-timing",
+        TimingRangeError::OutsideI64Nanoseconds => "out-of-range-timing",
+    }
+}
+
+type EdgeTimingField = (&'static str, fn(&StaticEdge) -> Option<f64>);
+
+fn edge_timing_errors(graph: &GraphRecord) -> Vec<(usize, TimingRangeError, ValidationError)> {
+    const FIELDS: [EdgeTimingField; 4] = [
+        ("delay_after_predecessor_us", |edge| {
+            edge.delay_after_predecessor_us
+        }),
+        ("min_start_delay_us", |edge| edge.min_start_delay_us),
+        ("delay_after_predecessor_start_us", |edge| {
+            edge.delay_after_predecessor_start_us
+        }),
+        ("delay_after_predecessor_first_token_us", |edge| {
+            edge.delay_after_predecessor_first_token_us
+        }),
+    ];
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .flat_map(|(edge_index, edge)| {
+            FIELDS.into_iter().filter_map(move |(field, read)| {
+                read(edge)
+                    .and_then(|value| validate_microseconds(value).err())
+                    .map(|range| {
+                        let constraint = match range {
+                            TimingRangeError::NonFinite => "be finite",
+                            TimingRangeError::OutsideI64Nanoseconds => "fit i64 nanoseconds",
+                        };
+                        (
+                            edge_index,
+                            range,
+                            ValidationError(format!(
+                                "{field} must {constraint} on edge {:?} -> {:?}",
+                                edge.source, edge.target
+                            )),
+                        )
+                    })
+            })
+        })
+        .collect()
+}
+
+fn node_timing_errors(graph: &GraphRecord) -> Vec<(String, TimingRangeError, ValidationError)> {
+    graph
+        .nodes
+        .iter()
+        .filter_map(|(node_id, node)| {
+            let value = node.as_llm()?.min_start_delay_us?;
+            let range = validate_microseconds(value).err()?;
+            let constraint = match range {
+                TimingRangeError::NonFinite => "be finite",
+                TimingRangeError::OutsideI64Nanoseconds => "fit i64 nanoseconds",
+            };
+            Some((
+                node_id.clone(),
+                range,
+                ValidationError(format!(
+                    "min_start_delay_us must {constraint} on node {node_id:?}"
+                )),
+            ))
+        })
+        .collect()
 }
 
 fn non_completion_start_errors(graph: &GraphRecord) -> Vec<(usize, ValidationError)> {
@@ -932,6 +1038,74 @@ mod tests {
             .expect("valid graph");
             assert!(!validate(&graph).is_empty(), "{timing}");
         }
+    }
+
+    #[test]
+    fn rejects_non_finite_static_edge_timing() {
+        for field in [
+            "delay_after_predecessor_us",
+            "min_start_delay_us",
+            "delay_after_predecessor_start_us",
+            "delay_after_predecessor_first_token_us",
+        ] {
+            let mut graph = graph(
+                json!({"state": {"out": {}}, "nodes": {"n": {"output": "out"}}, "edges": [{"source": "START", "target": "n"}]}),
+            );
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                match field {
+                    "delay_after_predecessor_us" => {
+                        graph.edges[0].delay_after_predecessor_us = Some(value)
+                    }
+                    "min_start_delay_us" => graph.edges[0].min_start_delay_us = Some(value),
+                    "delay_after_predecessor_start_us" => {
+                        graph.edges[0].delay_after_predecessor_start_us = Some(value)
+                    }
+                    "delay_after_predecessor_first_token_us" => {
+                        graph.edges[0].delay_after_predecessor_first_token_us = Some(value)
+                    }
+                    _ => unreachable!(),
+                }
+                assert!(validate_detailed(&graph).iter().any(|issue| issue.code
+                    == "non-finite-timing"
+                    && issue.message.contains(field)));
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_llm_node_timing() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut graph = graph(
+                json!({"state": {"out": {}}, "nodes": {"n": {"output": "out"}}, "edges": [{"source": "START", "target": "n"}]}),
+            );
+            let Some(crate::graph::model::ExecutableGraphNode::Llm(node)) =
+                graph.nodes.get_mut("n")
+            else {
+                panic!("fixture node must be LLM");
+            };
+            node.min_start_delay_us = Some(value);
+            let issue = validate_detailed(&graph)
+                .into_iter()
+                .find(|issue| issue.code == "non-finite-timing")
+                .expect("non-finite node timing issue");
+            assert_eq!(issue.location.as_deref(), Some("graph.nodes.n"));
+            assert!(issue.message.contains("min_start_delay_us must be finite"));
+        }
+    }
+
+    #[test]
+    fn out_of_range_graph_timing_is_structural_issue() {
+        let mut graph = graph(json!({
+            "state": {"out": {}},
+            "nodes": {"n": {"output": "out"}},
+            "edges": [{"source": "START", "target": "n"}]
+        }));
+        graph.edges[0].delay_after_predecessor_us = Some(1.0e308);
+        let issue = validate_detailed(&graph)
+            .into_iter()
+            .find(|issue| issue.code == "out-of-range-timing")
+            .expect("out-of-range edge timing issue");
+        assert!(issue.message.contains("delay_after_predecessor_us"));
     }
 
     #[test]

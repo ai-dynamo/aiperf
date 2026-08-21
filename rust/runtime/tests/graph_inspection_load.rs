@@ -183,3 +183,23 @@ fn graph_cycle_is_deterministic_and_structural() {
         Some(&"a,b,a".to_string())
     );
 }
+
+#[test]
+fn direct_graph_non_finite_timing_is_a_structural_issue() {
+    let mut graph = serde_json::from_value::<GraphRecord>(serde_json::json!({
+        "state": {"out": {}},
+        "nodes": {"node": {"output": "out"}},
+        "edges": [{"source": "START", "target": "node"}]
+    }))
+    .expect("finite graph fixture");
+    graph.edges[0].delay_after_predecessor_us = Some(f64::NAN);
+
+    let issues = validate_detailed(&graph);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].code, "non-finite-timing");
+    assert!(
+        issues[0]
+            .message
+            .contains("delay_after_predecessor_us must be finite")
+    );
+}

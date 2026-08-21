@@ -160,8 +160,10 @@ pub fn resolve_and_prune(
                         target: target.to_string(),
                         delay_after_predecessor_us: conditional.delay_after_predecessor_us,
                         min_start_delay_us: conditional.min_start_delay_us,
-                        delay_after_predecessor_start_us: None,
-                        delay_after_predecessor_first_token_us: None,
+                        delay_after_predecessor_start_us: conditional
+                            .delay_after_predecessor_start_us,
+                        delay_after_predecessor_first_token_us: conditional
+                            .delay_after_predecessor_first_token_us,
                     });
                 }
             }
@@ -296,6 +298,26 @@ traces:
         assert_eq!(taken_a, taken_b);
         // weight 1.0 on `shopping`/`safe` always fires the shopping path.
         assert!(taken_a.nodes.contains_key("plan"));
+    }
+
+    #[test]
+    fn selected_conditional_edge_preserves_all_finite_timing_anchors() {
+        let doc = parse_authored_graph(br#"graph:
+  nodes: {n: {prompt: [x], output: out}}
+  edges:
+    - {source: START, branches: {taken: n}, delay_after_predecessor_us: -1.0, min_start_delay_us: 0.0, delay_after_predecessor_start_us: 2.0, delay_after_predecessor_first_token_us: 3.0}
+traces: [{id: t, selected_branches: {START: taken}}]
+"#).expect("timed conditional graph");
+        let taken = resolve_and_prune(&doc.graph, &doc.traces[0], 0).expect("selected branch");
+        let edge = taken
+            .edges
+            .iter()
+            .find(|edge| edge.target == "n")
+            .expect("taken edge");
+        assert_eq!(edge.delay_after_predecessor_us, Some(-1.0));
+        assert_eq!(edge.min_start_delay_us, Some(0.0));
+        assert_eq!(edge.delay_after_predecessor_start_us, Some(2.0));
+        assert_eq!(edge.delay_after_predecessor_first_token_us, Some(3.0));
     }
 
     #[test]

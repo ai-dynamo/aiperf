@@ -9,12 +9,13 @@ SPDX-License-Identifier: Apache-2.0
 
 Define how model-independent conditional branching and recorded non-LLM content
 enter the flat Graph-IR **without adding a runtime node kind, edge kind, or
-reactive machinery**. The Graph-IR runtime executes exactly one node kind
-(`LlmNode`) and one edge kind (`StaticEdge`); every richer authored shape — a
-routing branch, a recorded tool result, a fan-out/fan-in join — is resolved and
-collapsed into that substrate at **lowering**, before any `GraphTracePlan`
-exists. This spec states the contract that lets an authored conditional graph
-reach the runtime, and draws the line between what is lowerable and what is not.
+reactive machinery**. Graph-IR supports `LlmNode` and `ToolNode` through
+`ExecutableGraphNode`, plus one edge kind (`StaticEdge`). The conditional-graph
+compiler emits the LLM-only subset: every richer authored shape — a routing
+branch, a recorded non-dispatching replay result, or a fan-out/fan-in join — is
+resolved and collapsed at **lowering**, before any `GraphTracePlan` exists. This
+spec states the contract that lets an authored conditional graph reach the
+runtime, and draws the line between what is lowerable and what is not.
 
 The governing doctrine is a single rule:
 
@@ -35,17 +36,20 @@ below is new.
 
 ### Flat substrate
 
-`GraphRecord` carries only `nodes: BTreeMap<String, LlmNode>` and
-`edges: Vec<StaticEdge>` (`graph/model.rs`). `LlmNode` writes exactly one channel
-(`output`), reads channel state only through `PromptItem::Splice` items, and
-carries the generation cap, streaming flag, AND-fan-in `inputs`, and node-level
-`min_start_delay_us`. `StaticEdge` carries four independent delay anchors
-(completion, absolute floor, predecessor-start, predecessor-first-token). There
-is no conditional edge, multi-output node, typed channel beyond `text`/`messages`,
-or reducer beyond `overwrite`/`add_messages`. The IR-model layer silently ignores
-unknown node/edge fields; the strict decode boundary is the engine input adapter
-(`engine/graph_input.rs`, `deny_unknown_fields` envelopes, unknown-`format` hard
-error).
+`GraphRecord` carries `nodes: BTreeMap<String, ExecutableGraphNode>` and
+`edges: Vec<StaticEdge>` (`graph/model.rs`). `ExecutableGraphNode` is either an
+`LlmNode` or a `ToolNode`; this compiler emits only `LlmNode`. An `LlmNode` writes
+exactly one channel (`output`), reads channel state through
+`PromptItem::Splice` and explicit inputs, and carries the generation cap,
+streaming flag, AND-fan-in `inputs`, and node-level `min_start_delay_us`.
+`StaticEdge` carries four independent delay anchors (completion, absolute floor,
+predecessor-start, predecessor-first-token). There is no conditional edge or
+multi-output executable node. Conditional authored state may name `text`,
+`messages`, `image`, or `json`; lowering represents executable Graph-IR channels
+as `text`/`messages` with `overwrite`/`add_messages`. The IR-model layer silently
+ignores unknown node/edge fields; the strict decode boundary is the engine input
+adapter (`engine/graph_input.rs`, `deny_unknown_fields` envelopes,
+unknown-`format` hard error).
 
 ### Per-trace resolved-graph seam
 
@@ -92,9 +96,24 @@ non-dispatching *replay* nodes that carry recorded `outputs`), and edges
 (including `branches: {<key>: <target>|[<target>...]}` conditional edges with an
 optional static `branch_weights`). A `traces:` block declares, per trace,
 `initial_state`, a pinned `selected_branches` map, optional per-trace branch
-distributions, `replay_outputs` keyed by node id, arrival time, and token hints.
+distributions, `replay_outputs` keyed by node id, an optional arrival time, and
+tags.
 The adapter performs its **own** strict decode (`deny_unknown_fields`); the
 IR-model layer will not reject a malformed authored body.
+
+**Timing contract.** Every authored timing value must be finite and, after its
+declared seconds, milliseconds, or microseconds unit is applied, fit the signed
+`i64` nanosecond domain used by the clock. Replay folding composes only
+completion-anchored edge delays and replay `duration_ms`, with the same bound
+checked after every addition. It preserves finite negative and zero completion
+delays. A replay path rejects replay-node `min_start_delay_us` and edge
+`min_start_delay_us`, `delay_after_predecessor_start_us`, or
+`delay_after_predecessor_first_token_us`, because the rerouted edge cannot
+faithfully represent those intermediate events. Direct non-replay edges retain
+all four anchors byte-for-byte. A folded path from `START` is accepted only when
+its composed completion delay is exactly zero; nonzero completion timing is
+refused because replay removal would otherwise assign timing to a synthetic
+completion event.
 
 **Per-trace lowering algorithm.**
 
@@ -112,16 +131,29 @@ IR-model layer will not reject a malformed authored body.
      resolves the seed with no re-encode;
    - a multi-output replay node pre-seeds N channel keys (the single-`output`
      `LlmNode` limit is a runtime-dispatch limit, never engaged at build time);
-   - the node's recorded latency (`duration_ms` / `wait`) collapses onto the
-     rerouted successor edge's `delay_after_predecessor_us`;
+   - replay-only indegrees feed a deterministic Kahn topological pass; any nodes
+     left with replay indegree produce a stable cycle refusal before timing is
+     folded;
+   - reverse topological memoization computes successor tails without enumerating
+     replay paths; where paths reconverge on the same non-replay target, the
+     largest composed delay wins, matching the firing gate's `max` semantics;
+   - the node's recorded latency (`duration_ms`) and any
+     completion-anchored path delay collapse onto the rerouted successor edge's
+     `delay_after_predecessor_us`; other replay-path timing anchors are refused
+     under the timing contract above;
+   - structural cycle discovery visits each replay node and replay edge once
+     (`O(V + E)`); tail propagation adds work only for the target states carried
+     by the memo, and each emitted folded source/target pair is materialized once;
    - typed `image`/`json` channels collapse to `text`/`messages` plus segment
      bytes — the flat core does no structured field-extraction from channel
      state, so there is no runtime type to preserve.
 4. **Emit** a flat `GraphRecord` into `parsed.graphs[trace.id]`, set
    `graph_ref = Some(trace.id)`, and run `graph::validate::validate`.
 
-After pruning, each trace retains exactly one live user-visible terminal path, so
-recorded dual-terminal graphs need no first-writer-wins accounting.
+Pruning retains every path selected independently by that trace. Multiple
+`terminal_for_user` nodes may therefore remain and dispatch, as in the unsafe
+fixture whose shopping summary and safety redirect both fire. The compiler does
+not add first-writer-wins or terminal-cancellation semantics.
 
 **Forbidden (not lowerable; require the omitted reactive primitive).** These all
 reduce to *cancel-in-flight-on-live-completion* and are explicitly out of scope:
@@ -152,9 +184,11 @@ flat fast path (see [flatgraph-fast-path.md](flatgraph-fast-path.md)).
 `rust/e2e-tests/tests/test_conditional_graph.rs` drives an authored conditional graph
 (`e2e/tests/fixtures/conditional/conditional_shopping.yaml`) with pinned
 `selected_branches` through the real `aiperf` binary against a deterministic
-`aiperf-mock-server`, asserting the per-record projection for each taken path
-(the branch fan-out, folded replay content, folded edge delays, and the single
-terminal).
+`aiperf-mock-server`. It asserts exact per-node and total dispatch cardinality
+for the selected paths, proves replay nodes do not dispatch, and checks error-free
+chat-message payload shape. Raw request timestamps additionally prove the two
+authored replay delays through exact predecessor/successor pair cardinality,
+bounded gaps, and their expected relative separation.
 
 ## Future requirements
 
@@ -165,15 +199,16 @@ non-LLM output to occupy an **arrival slot** in a downstream `count` / `count:
 "all"` gate (rather than serve as a splice value or reducer base), the minimal
 addition is an `initial_arrivals` field on `TraceRecord` that pre-commits
 `write_seq > 0` log entries under a synthetic writer at store construction —
-incrementing `arrival_count` and decrementing `producers_remaining`. This
-preserves the single-executable-kind IR: no dispatch, no reactive machinery, no
-replay node. It is reserved, not built; no current target requires it.
+incrementing `arrival_count` and decrementing `producers_remaining`. This would
+preserve the conditional compiler's LLM-only emitted subset: it adds no replay
+executable kind, dispatch, or reactive machinery. It is reserved, not built; no
+current target requires it.
 
 ## Source anchors
 
 - Flat substrate and per-trace seam: `rust/runtime/src/graph/model.rs`
-  (`GraphRecord`, `LlmNode`, `StaticEdge`, `ParsedGraph`, `resolve_trace_graph`,
-  `TraceRecord.graph_ref`/`initial_state`).
+  (`GraphRecord`, `ExecutableGraphNode`, `LlmNode`, `ToolNode`, `StaticEdge`,
+  `ParsedGraph`, `resolve_trace_graph`, `TraceRecord.graph_ref`/`initial_state`).
 - Eager-conditional adapter: `rust/runtime/src/graph/conditional/` (`mod.rs`,
   `model.rs`, `resolve.rs`, `fold.rs`) — authored-model decode, branch
   resolution/pruning, and the replay fold.

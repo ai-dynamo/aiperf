@@ -16,7 +16,8 @@ use crate::config::model::dataset::{RecordedAgentGraphConfig, RecordedAgentSourc
 use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
 use crate::graph::conditional::compile_conditional_graph_input_classified;
 use crate::graph::input::{
-    GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input, validate_lowered_bundle,
+    GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input, validate_inspection_bundle,
+    validate_lowered_bundle,
 };
 use crate::graph::recorded::agent_recording::{
     BuiltinReplayRequestProfileResolver, ImportedAgentReadSet, ImportedAgentSelectionRequest,
@@ -518,7 +519,7 @@ pub async fn prepare_local_graph_inspection_input(
         input["graph"] = serde_json::json!({"source_format": source_format.to_string()});
     }
     let raw = serde_json::value::to_raw_value(&input)?;
-    resolver
+    let mut prepared = resolver
         .load_for_endpoint(
             &raw,
             &GraphInputContext {
@@ -527,7 +528,10 @@ pub async fn prepare_local_graph_inspection_input(
             },
             endpoint_id,
         )
-        .await
+        .await?;
+    prepared.bundle =
+        validate_inspection_bundle(prepared.bundle).map_err(|error| anyhow!(error))?;
+    Ok(prepared)
 }
 
 #[derive(Deserialize)]
@@ -2049,6 +2053,7 @@ mod tests {
     use std::io::Write;
 
     use crate::dataset::{Payload, TiktokenTokenizer};
+    use crate::graph::model::{GraphTracePlan, GraphTraceProgram};
     use async_trait::async_trait;
     use flate2::{Compression, write::GzEncoder};
     use serde_json::json;
@@ -2142,6 +2147,98 @@ mod tests {
         .await
         .expect_err("execution boundary must reject the custom cyclic bundle");
         assert_eq!(error.to_string(), graph_cycle_test_support::CYCLE_ERROR);
+    }
+
+    #[derive(Debug)]
+    struct NonFiniteResolver;
+
+    #[async_trait(?Send)]
+    impl GraphInputAdapterResolver for NonFiniteResolver {
+        fn validate_identity(&self, _raw: &RawValue) -> Result<()> {
+            Ok(())
+        }
+
+        async fn load(
+            &self,
+            _raw: &RawValue,
+            _context: &GraphInputContext<'_>,
+        ) -> Result<PreparedRunnerGraphInput> {
+            let mut graph = serde_json::from_value::<crate::graph::model::GraphRecord>(json!({
+                "state": {"out": {}},
+                "nodes": {"node": {"output": "out"}},
+                "edges": [{"source": "START", "target": "node"}]
+            }))?;
+            let Some(crate::graph::model::ExecutableGraphNode::Llm(node)) =
+                graph.nodes.get_mut("node")
+            else {
+                unreachable!("non-finite fixture has an LLM node")
+            };
+            node.min_start_delay_us = Some(f64::NAN);
+            Ok(PreparedRunnerGraphInput {
+                bundle: GraphInputBundle {
+                    programs: vec![GraphTraceProgram::static_graph(GraphTracePlan {
+                        graph,
+                        trace: crate::graph::model::TraceRecord {
+                            id: "non-finite".into(),
+                            graph_ref: None,
+                            initial_state: BTreeMap::new(),
+                        },
+                        arrival_offset_ns: None,
+                    })],
+                    segments: Arc::new(crate::graph::segment::SegmentPool::new().freeze()),
+                    metadata: crate::graph::input::GraphInputMetadata {
+                        format: "custom".into(),
+                        root_count: 1,
+                        node_count: 1,
+                        warning_facts: Vec::new(),
+                    },
+                },
+                random_seed: None,
+                default_output_tokens: 1,
+                allow_dataset_wrap: false,
+                t_star_window: TStarWindow::default(),
+                cache_bust_target: CacheBustTarget::None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn inspection_loader_refuses_non_finite_custom_graph_before_rendering() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let error = prepare_local_graph_inspection_input(
+            &NonFiniteResolver,
+            std::path::Path::new("/tmp/non-finite.graph"),
+            "custom",
+            &tokenizer,
+            "chat",
+            None,
+            0,
+        )
+        .await
+        .expect_err("inspection must not serialize non-finite topology");
+        assert_eq!(
+            error.to_string(),
+            "min_start_delay_us must be finite on node \"node\""
+        );
+    }
+
+    #[tokio::test]
+    async fn inspection_loader_retains_cycles_for_diagnostic_reporting() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let prepared = prepare_local_graph_inspection_input(
+            &graph_cycle_test_support::CyclicResolver,
+            std::path::Path::new("/tmp/cycle.graph"),
+            "custom",
+            &tokenizer,
+            "chat",
+            None,
+            0,
+        )
+        .await
+        .expect("inspection must retain graph cycles for detailed reporting");
+        let issues =
+            crate::graph::inspect::validate_detailed(&prepared.bundle.programs[0].profiling.graph);
+        assert_eq!(issues[0].code, "graph-cycle");
     }
 
     #[async_trait(?Send)]

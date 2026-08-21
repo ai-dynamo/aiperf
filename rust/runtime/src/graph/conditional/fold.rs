@@ -12,15 +12,16 @@
 //! the successor edge — leaving a flat `LlmNode`/`StaticEdge` `GraphRecord` that
 //! the runtime executes unchanged.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use serde_json::Value;
 
 use crate::dataset::{SegmentPool, TextTokenizer};
 use crate::graph::model::{
-    ChannelSpec, ExecutableGraphNode, GraphRecord, LlmNode, PromptItem, StaticEdge,
+    ChannelSpec, ExecutableGraphNode, GraphRecord, LlmNode, PromptItem, START_NODE_ID, StaticEdge,
 };
 use crate::graph::segment::intern_message;
+use crate::graph::timing::{checked_add_microseconds, milliseconds_to_microseconds};
 use crate::graph::validate::{validate, validate_detailed};
 use crate::graph::wire::OpenAiChatMessage;
 
@@ -182,7 +183,15 @@ pub fn fold_replay_and_emit(
         }
     }
 
-    let edges = emit_edges(taken, &replay_ids, &replay_duration_ms);
+    if let Some((id, _)) = taken.nodes.iter().find(|(_, node)| {
+        matches!(node, AuthoredNode::Replay(replay) if replay.min_start_delay_us.is_some())
+    }) {
+        return Err(ConditionalError::message(format!(
+            "cannot fold replay node {id:?} with min_start_delay_us"
+        )));
+    }
+
+    let edges = emit_edges(taken, &replay_ids, &replay_duration_ms)?;
 
     let state_map = state
         .iter()
@@ -245,78 +254,260 @@ pub fn fold_replay_and_emit(
     })
 }
 
-/// Build the emitted static edges, skipping replay nodes by connecting each
-/// non-replay source to the non-replay targets reachable through replay chains,
-/// accumulating each skipped replay node's recorded latency onto the edge delay.
+/// Preserve direct edges and replace replay paths with their maximum composed
+/// completion delay for each reachable non-replay target.
 fn emit_edges(
     taken: &TakenGraph,
     replay_ids: &BTreeSet<String>,
     replay_duration_ms: &BTreeMap<String, f64>,
-) -> Vec<StaticEdge> {
-    let mut out_adjacency: BTreeMap<&str, Vec<&TakenEdge>> = BTreeMap::new();
+) -> Result<Vec<StaticEdge>, ConditionalError> {
+    let mut out_adjacency: HashMap<&str, Vec<&TakenEdge>> = HashMap::new();
     for edge in &taken.edges {
         out_adjacency
             .entry(edge.source.as_str())
             .or_default()
             .push(edge);
     }
+    let replay_order = replay_topological_order(&out_adjacency, replay_ids)?;
+    let replay_tails = replay_tail_delays(
+        &out_adjacency,
+        replay_ids,
+        replay_duration_ms,
+        &replay_order,
+    )?;
 
-    let delay_of = |edge: &TakenEdge| edge.delay_after_predecessor_us.unwrap_or(0.0);
-    let duration_us = |node: &str| replay_duration_ms.get(node).copied().unwrap_or(0.0) * 1_000.0;
-
-    let mut result: Vec<StaticEdge> = Vec::new();
-    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut folded_delays = BTreeMap::<(String, String), f64>::new();
     for edge in &taken.edges {
-        // Edges leaving a replay node are folded in via the DFS below; skip them
-        // as independent edges.
+        if replay_ids.contains(&edge.source) || !replay_ids.contains(&edge.target) {
+            continue;
+        }
+        reject_unfoldable_replay_edge_timing(edge)?;
+        let Some(tails) = replay_tails.get(&edge.target) else {
+            return Err(ConditionalError::message(format!(
+                "replay node {:?} has no folded timing state",
+                edge.target
+            )));
+        };
+        for (target, tail_delay) in tails {
+            let total =
+                add_replay_delay(edge.delay_after_predecessor_us.unwrap_or(0.0), *tail_delay)?;
+            if edge.source == START_NODE_ID && total != 0.0 {
+                return Err(ConditionalError::message(
+                    "cannot fold nonzero replay completion delay from START",
+                ));
+            }
+            folded_delays
+                .entry((edge.source.clone(), target.clone()))
+                .and_modify(|current| *current = current.max(total))
+                .or_insert(total);
+        }
+    }
+
+    let mut result = Vec::new();
+    let mut emitted_folded = BTreeSet::new();
+    for edge in &taken.edges {
         if replay_ids.contains(&edge.source) {
             continue;
         }
         if !replay_ids.contains(&edge.target) {
-            // Direct non-replay -> non-replay/END edge: copy every anchor.
-            if seen.insert((edge.source.clone(), edge.target.clone())) {
-                result.push(StaticEdge {
-                    source: edge.source.clone(),
-                    target: edge.target.clone(),
-                    delay_after_predecessor_us: edge.delay_after_predecessor_us,
-                    min_start_delay_us: edge.min_start_delay_us,
-                    delay_after_predecessor_start_us: edge.delay_after_predecessor_start_us,
-                    delay_after_predecessor_first_token_us: edge
-                        .delay_after_predecessor_first_token_us,
-                });
-            }
+            result.push(StaticEdge {
+                source: edge.source.clone(),
+                target: edge.target.clone(),
+                delay_after_predecessor_us: edge.delay_after_predecessor_us,
+                min_start_delay_us: edge.min_start_delay_us,
+                delay_after_predecessor_start_us: edge.delay_after_predecessor_start_us,
+                delay_after_predecessor_first_token_us: edge.delay_after_predecessor_first_token_us,
+            });
             continue;
         }
-        // Fold: DFS through the replay chain rooted at edge.target, summing each
-        // replay node's latency plus the intervening edge delays.
-        let mut stack: Vec<(&str, f64)> = vec![(
-            edge.target.as_str(),
-            delay_of(edge) + duration_us(&edge.target),
-        )];
-        while let Some((node, accumulated)) = stack.pop() {
-            for next in out_adjacency.get(node).into_iter().flatten() {
-                if replay_ids.contains(&next.target) {
-                    stack.push((
-                        next.target.as_str(),
-                        accumulated + delay_of(next) + duration_us(&next.target),
-                    ));
-                } else {
-                    let total = accumulated + delay_of(next);
-                    if seen.insert((edge.source.clone(), next.target.clone())) {
-                        result.push(StaticEdge {
-                            source: edge.source.clone(),
-                            target: next.target.clone(),
-                            delay_after_predecessor_us: (total > 0.0).then_some(total),
-                            min_start_delay_us: None,
-                            delay_after_predecessor_start_us: None,
-                            delay_after_predecessor_first_token_us: None,
-                        });
-                    }
-                }
+        let Some(tails) = replay_tails.get(&edge.target) else {
+            continue;
+        };
+        for target in tails.keys() {
+            let key = (edge.source.clone(), target.clone());
+            if !emitted_folded.insert(key.clone()) {
+                continue;
+            }
+            let Some(delay) = folded_delays.get(&key).copied() else {
+                continue;
+            };
+            result.push(StaticEdge {
+                source: key.0,
+                target: key.1,
+                delay_after_predecessor_us: Some(delay),
+                min_start_delay_us: None,
+                delay_after_predecessor_start_us: None,
+                delay_after_predecessor_first_token_us: None,
+            });
+        }
+    }
+    Ok(result)
+}
+
+fn replay_topological_order(
+    out_adjacency: &HashMap<&str, Vec<&TakenEdge>>,
+    replay_ids: &BTreeSet<String>,
+) -> Result<Vec<String>, ConditionalError> {
+    let replay_nodes = replay_ids.iter().map(String::as_str).collect::<Vec<_>>();
+    let node_index = replay_nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (*node, index))
+        .collect::<HashMap<_, _>>();
+    let mut replay_adjacency = vec![Vec::<usize>::new(); replay_nodes.len()];
+    let mut indegree = vec![0_usize; replay_nodes.len()];
+    for (source_index, source) in replay_nodes.iter().enumerate() {
+        for edge in out_adjacency.get(source).into_iter().flatten() {
+            if let Some(&target_index) = node_index.get(edge.target.as_str()) {
+                replay_adjacency[source_index].push(target_index);
+                indegree[target_index] += 1;
             }
         }
     }
-    result
+    let mut ready = indegree
+        .iter()
+        .enumerate()
+        .filter_map(|(index, degree)| (*degree == 0).then_some(index))
+        .collect::<VecDeque<_>>();
+    let mut order = Vec::with_capacity(replay_nodes.len());
+    while let Some(node_index) = ready.pop_front() {
+        for &target_index in &replay_adjacency[node_index] {
+            indegree[target_index] -= 1;
+            if indegree[target_index] == 0 {
+                ready.push_back(target_index);
+            }
+        }
+        order.push(replay_nodes[node_index].to_owned());
+    }
+    if order.len() == replay_nodes.len() {
+        return Ok(order);
+    }
+    let cyclic = replay_cycle_witness(&replay_nodes, &replay_adjacency, &indegree).join(", ");
+    Err(ConditionalError::message(format!(
+        "cannot fold replay cycle through [{cyclic}]"
+    )))
+}
+
+fn replay_cycle_witness(
+    replay_nodes: &[&str],
+    adjacency: &[Vec<usize>],
+    residual_indegree: &[usize],
+) -> Vec<String> {
+    let mut state = vec![0_u8; replay_nodes.len()];
+    let mut position = vec![usize::MAX; replay_nodes.len()];
+    for start in 0..replay_nodes.len() {
+        if residual_indegree[start] == 0 || state[start] != 0 {
+            continue;
+        }
+        state[start] = 1;
+        position[start] = 0;
+        let mut stack = vec![(start, 0_usize)];
+        while !stack.is_empty() {
+            let frame_index = stack.len() - 1;
+            let node = stack[frame_index].0;
+            let next_edge = stack[frame_index].1;
+            if next_edge == adjacency[node].len() {
+                stack.pop();
+                position[node] = usize::MAX;
+                state[node] = 2;
+                continue;
+            }
+            stack[frame_index].1 += 1;
+            let target = adjacency[node][next_edge];
+            if residual_indegree[target] == 0 {
+                continue;
+            }
+            match state[target] {
+                0 => {
+                    state[target] = 1;
+                    position[target] = stack.len();
+                    stack.push((target, 0));
+                }
+                1 => {
+                    return stack[position[target]..]
+                        .iter()
+                        .map(|(index, _)| replay_nodes[*index].to_owned())
+                        .collect();
+                }
+                _ => {}
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn replay_tail_delays(
+    out_adjacency: &HashMap<&str, Vec<&TakenEdge>>,
+    replay_ids: &BTreeSet<String>,
+    replay_duration_ms: &BTreeMap<String, f64>,
+    replay_order: &[String],
+) -> Result<BTreeMap<String, BTreeMap<String, f64>>, ConditionalError> {
+    let mut tails = BTreeMap::<String, BTreeMap<String, f64>>::new();
+    for node in replay_order.iter().rev() {
+        let duration =
+            milliseconds_to_microseconds(replay_duration_ms.get(node).copied().unwrap_or(0.0))
+                .map_err(|_| {
+                    ConditionalError::message(format!(
+                        "duration_ms must fit i64 nanoseconds on replay node {node:?}"
+                    ))
+                })?;
+        let mut node_tails = BTreeMap::<String, f64>::new();
+        for edge in out_adjacency.get(node.as_str()).into_iter().flatten() {
+            reject_unfoldable_replay_edge_timing(edge)?;
+            let edge_delay = edge.delay_after_predecessor_us.unwrap_or(0.0);
+            let prefix_delay = add_replay_delay(duration, edge_delay)?;
+            if replay_ids.contains(&edge.target) {
+                let Some(child_tails) = tails.get(&edge.target) else {
+                    return Err(ConditionalError::message(format!(
+                        "replay successor {:?} has no folded timing state",
+                        edge.target
+                    )));
+                };
+                for (target, child_delay) in child_tails {
+                    let total = add_replay_delay(prefix_delay, *child_delay)?;
+                    node_tails
+                        .entry(target.clone())
+                        .and_modify(|current| *current = current.max(total))
+                        .or_insert(total);
+                }
+            } else {
+                node_tails
+                    .entry(edge.target.clone())
+                    .and_modify(|current| *current = current.max(prefix_delay))
+                    .or_insert(prefix_delay);
+            }
+        }
+        tails.insert(node.clone(), node_tails);
+    }
+    Ok(tails)
+}
+
+fn add_replay_delay(left: f64, right: f64) -> Result<f64, ConditionalError> {
+    checked_add_microseconds(left, right).map_err(|_| {
+        ConditionalError::message("folded replay completion delay must fit i64 nanoseconds")
+    })
+}
+
+fn reject_unfoldable_replay_edge_timing(edge: &TakenEdge) -> Result<(), ConditionalError> {
+    for (field, value) in [
+        ("min_start_delay_us", edge.min_start_delay_us),
+        (
+            "delay_after_predecessor_start_us",
+            edge.delay_after_predecessor_start_us,
+        ),
+        (
+            "delay_after_predecessor_first_token_us",
+            edge.delay_after_predecessor_first_token_us,
+        ),
+    ] {
+        if value.is_some() {
+            return Err(ConditionalError::message(format!(
+                "cannot fold replay path with {field} on edge {:?} -> {:?}",
+                edge.source, edge.target
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -390,6 +581,15 @@ traces:
         fold_replay_and_emit(&taken, &doc.traces[0], &doc.graph.state, &prompts).unwrap()
     }
 
+    fn fold_source(source: &str) -> std::result::Result<FoldedTrace, ConditionalError> {
+        let doc = parse_authored_graph(source.as_bytes())?;
+        let tokenizer = TiktokenTokenizer::builtin();
+        let mut pool = SegmentPool::new();
+        let prompts = compile_prompts(&doc.graph, &mut pool, &tokenizer)?;
+        let taken = resolve_and_prune(&doc.graph, &doc.traces[0], 0)?;
+        fold_replay_and_emit(&taken, &doc.traces[0], &doc.graph.state, &prompts)
+    }
+
     #[test]
     fn channel_ref_becomes_splice_and_message_interns_segment() {
         let doc = parse_authored_graph(DOC.as_bytes()).unwrap();
@@ -446,6 +646,262 @@ traces:
                 .metadata
                 .get("terminal_for_user"),
             Some(&Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn replay_fold_preserves_nonpositive_completion_delay() {
+        let folded = fold_source(
+            r#"graph:
+  state: {out: {}}
+  nodes:
+    source: {prompt: [x], output: out}
+    replay: {node_type: replay, outputs: [out], duration_ms: 0}
+    target: {prompt: [x], output: out}
+  edges:
+    - {source: START, target: source}
+    - {source: source, target: replay, delay_after_predecessor_us: -1}
+    - {source: replay, target: target}
+traces:
+  - id: trace
+    replay_outputs: {replay: {out: replayed}}
+"#,
+        )
+        .expect("folded replay graph");
+        let edge = folded
+            .graph
+            .edges
+            .iter()
+            .find(|edge| edge.source == "source" && edge.target == "target")
+            .expect("folded edge");
+        assert_eq!(edge.delay_after_predecessor_us, Some(-1.0));
+    }
+
+    #[test]
+    fn replay_fold_refuses_unrepresentable_timing_and_cycles() {
+        for timing in [
+            "min_start_delay_us: 1",
+            "delay_after_predecessor_start_us: 1",
+            "delay_after_predecessor_first_token_us: 1",
+        ] {
+            let source = format!(
+                "graph:\n  state: {{out: {{}}}}\n  nodes:\n    source: {{prompt: [x], output: out}}\n    replay: {{node_type: replay, outputs: [out]}}\n    target: {{prompt: [x], output: out}}\n  edges:\n    - {{source: START, target: source}}\n    - {{source: source, target: replay, {timing}}}\n    - {{source: replay, target: target}}\ntraces:\n  - id: trace\n    replay_outputs: {{replay: {{out: replayed}}}}\n"
+            );
+            let error = fold_source(&source).expect_err("unrepresentable replay timing");
+            assert!(error.to_string().contains("cannot fold replay path"));
+        }
+
+        let error = fold_source(
+            r#"graph:
+  state: {out: {}}
+  nodes:
+    source: {prompt: [x], output: out}
+    r1: {node_type: replay, outputs: [out]}
+    r2: {node_type: replay, outputs: [out]}
+    tail: {node_type: replay, outputs: [out]}
+    target: {prompt: [x], output: out}
+  edges:
+    - {source: START, target: source}
+    - {source: source, target: r1}
+    - {source: r1, target: r2}
+    - {source: r2, target: r1}
+    - {source: r2, target: tail}
+    - {source: tail, target: target}
+traces:
+  - id: trace
+    replay_outputs: {r1: {out: one}, r2: {out: two}, tail: {out: tail}}
+"#,
+        )
+        .expect_err("replay cycle");
+        assert_eq!(
+            error.to_string(),
+            "cannot fold replay cycle through [r1, r2]"
+        );
+    }
+
+    #[test]
+    fn replay_fold_refuses_replay_node_min_start_delay() {
+        let error = fold_source(
+            r#"graph:
+  state: {out: {}}
+  nodes:
+    source: {prompt: [x], output: out}
+    replay: {node_type: replay, outputs: [out], min_start_delay_us: 1}
+    target: {prompt: [x], output: out}
+  edges:
+    - {source: START, target: source}
+    - {source: source, target: replay}
+    - {source: replay, target: target}
+traces:
+  - id: trace
+    replay_outputs: {replay: {out: replayed}}
+"#,
+        )
+        .expect_err("replay node minimum-start delay");
+        assert!(error.to_string().contains("cannot fold replay node"));
+    }
+
+    #[test]
+    fn replay_fold_handles_a_long_acyclic_chain_without_path_copies() {
+        const REPLAYS: usize = 256;
+        let mut source = String::from(
+            "graph:\n  state: {out: {}}\n  nodes:\n    source: {prompt: [x], output: out}\n    target: {prompt: [x], output: out}\n",
+        );
+        for index in 0..REPLAYS {
+            source.push_str(&format!(
+                "    r{index}: {{node_type: replay, outputs: [out]}}\n"
+            ));
+        }
+        source.push_str("  edges:\n    - {source: START, target: source}\n");
+        source.push_str("    - {source: source, target: r0}\n");
+        for index in 0..REPLAYS - 1 {
+            source.push_str(&format!(
+                "    - {{source: r{index}, target: r{}}}\n",
+                index + 1
+            ));
+        }
+        source.push_str(&format!(
+            "    - {{source: r{}, target: target}}\n",
+            REPLAYS - 1
+        ));
+        source.push_str("traces:\n  - id: trace\n    replay_outputs:\n");
+        for index in 0..REPLAYS {
+            source.push_str(&format!("      r{index}: {{out: replayed}}\n"));
+        }
+
+        let folded = fold_source(&source).expect("long replay chain");
+        assert!(
+            folded
+                .graph
+                .edges
+                .iter()
+                .any(|edge| edge.source == "source" && edge.target == "target")
+        );
+    }
+
+    #[test]
+    fn replay_fold_uses_maximum_delay_across_reconvergent_paths() {
+        let folded = fold_source(
+            r#"graph:
+  state: {out: {}}
+  nodes:
+    source: {prompt: [x], output: out}
+    root: {node_type: replay, outputs: [out]}
+    quick: {node_type: replay, outputs: [out], duration_ms: 0.005}
+    slow: {node_type: replay, outputs: [out], duration_ms: 0.02}
+    target: {prompt: [x], output: out}
+  edges:
+    - {source: START, target: source}
+    - {source: source, target: root}
+    - {source: root, target: slow}
+    - {source: slow, target: target, delay_after_predecessor_us: 13}
+    - {source: root, target: quick}
+    - {source: quick, target: target}
+traces:
+  - id: trace
+    replay_outputs: {root: {out: root}, quick: {out: quick}, slow: {out: slow}}
+"#,
+        )
+        .expect("reconvergent replay DAG");
+        let edge = folded
+            .graph
+            .edges
+            .iter()
+            .find(|edge| edge.source == "source" && edge.target == "target")
+            .expect("collapsed edge");
+        assert_eq!(edge.delay_after_predecessor_us, Some(33.0));
+    }
+
+    #[test]
+    fn replay_fold_refuses_nonzero_start_completion_timing() {
+        let error = fold_source(
+            r#"graph:
+  state: {out: {}}
+  nodes:
+    replay: {node_type: replay, outputs: [out], duration_ms: 1}
+    target: {prompt: [x], output: out}
+  edges:
+    - {source: START, target: replay}
+    - {source: replay, target: target}
+traces:
+  - id: trace
+    replay_outputs: {replay: {out: replayed}}
+"#,
+        )
+        .expect_err("START has no completion event");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot fold nonzero replay completion delay from START")
+        );
+    }
+
+    #[test]
+    fn replay_fold_preserves_direct_edges_and_zero_start_delay() {
+        let folded = fold_source(
+            r#"graph:
+  state: {out: {}}
+  nodes:
+    replay: {node_type: replay, outputs: [out]}
+    direct: {prompt: [x], output: out}
+    folded: {prompt: [x], output: out}
+  edges:
+    - {source: START, target: replay}
+    - {source: replay, target: folded}
+    - {source: START, target: direct}
+    - {source: direct, target: END, delay_after_predecessor_us: -1, min_start_delay_us: 2, delay_after_predecessor_start_us: 3, delay_after_predecessor_first_token_us: 4}
+traces:
+  - id: trace
+    replay_outputs: {replay: {out: replayed}}
+"#,
+        )
+        .expect("zero-delay START replay path");
+
+        let start_edge = folded
+            .graph
+            .edges
+            .iter()
+            .find(|edge| edge.source == START_NODE_ID && edge.target == "folded")
+            .expect("folded START edge");
+        assert_eq!(start_edge.delay_after_predecessor_us, Some(0.0));
+
+        let direct_edge = folded
+            .graph
+            .edges
+            .iter()
+            .find(|edge| edge.source == "direct" && edge.target == "END")
+            .expect("direct edge");
+        assert_eq!(direct_edge.delay_after_predecessor_us, Some(-1.0));
+        assert_eq!(direct_edge.min_start_delay_us, Some(2.0));
+        assert_eq!(direct_edge.delay_after_predecessor_start_us, Some(3.0));
+        assert_eq!(
+            direct_edge.delay_after_predecessor_first_token_us,
+            Some(4.0)
+        );
+    }
+
+    #[test]
+    fn replay_fold_refuses_a_composed_out_of_range_delay() {
+        let error = fold_source(
+            r#"graph:
+  state: {out: {}}
+  nodes:
+    source: {prompt: [x], output: out}
+    replay: {node_type: replay, outputs: [out], duration_ms: 5000000000000}
+    target: {prompt: [x], output: out}
+  edges:
+    - {source: START, target: source}
+    - {source: source, target: replay, delay_after_predecessor_us: 5000000000000000}
+    - {source: replay, target: target}
+traces:
+  - id: trace
+    replay_outputs: {replay: {out: replayed}}
+"#,
+        )
+        .expect_err("composed delay exceeds signed nanosecond range");
+        assert_eq!(
+            error.to_string(),
+            "folded replay completion delay must fit i64 nanoseconds"
         );
     }
 }

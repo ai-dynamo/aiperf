@@ -163,4 +163,44 @@ mod tests {
         // after n0 with n0's reply present in its materialized prompt.
         assert!(n1_reply.contains("continue"), "n1 saw its turn: {n1_reply}");
     }
+
+    #[test]
+    fn run_trace_refuses_non_finite_node_timing_before_execution() {
+        let mut graph: GraphRecord = serde_json::from_value(json!({
+            "state": {"out": {}},
+            "nodes": {"node": {"output": "out"}},
+            "edges": [{"source": "START", "target": "node"}]
+        }))
+        .expect("finite graph fixture");
+        let Some(crate::graph::model::ExecutableGraphNode::Llm(node)) = graph.nodes.get_mut("node")
+        else {
+            panic!("fixture node must be LLM");
+        };
+        node.min_start_delay_us = Some(f64::NAN);
+
+        let errors = crate::graph::validate::validate(&graph);
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0]
+                .to_string()
+                .contains("min_start_delay_us must be finite")
+        );
+
+        let materializer = Rc::new(SegmentItemsMaterializer::new(Arc::new(
+            SegmentPool::new().freeze(),
+        )));
+        let error = run_trace::<Msg>(
+            Rc::new(graph),
+            serde_json::from_value(json!({"id": "non-finite"})).expect("trace fixture"),
+            materializer,
+            Rc::new(EchoSink),
+            TimeBase::Sim,
+        )
+        .expect_err("run trace must reject non-finite timing before execution");
+        assert!(
+            error
+                .to_string()
+                .contains("min_start_delay_us must be finite")
+        );
+    }
 }

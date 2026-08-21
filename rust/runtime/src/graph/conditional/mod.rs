@@ -11,6 +11,11 @@
 //! or static-seed `branch_weights`); the taken subgraph is pruned; recorded
 //! replay outputs fold into `TraceRecord.initial_state`; and one validated
 //! `GraphRecord` is emitted into `parsed.graphs[trace.id]`.
+//! Completion-anchored edge delays and replay durations compose across folded
+//! replay paths. Replay paths reject minimum-start, predecessor-start, and
+//! predecessor-first-token anchors because the flat edge has no equivalent
+//! event sequence; every authored timing value must be finite and fit signed
+//! `i64` nanoseconds after applying its declared unit.
 //!
 //! No runtime node kind, edge kind, reducer, channel type, or reactive branch
 //! machinery is introduced.

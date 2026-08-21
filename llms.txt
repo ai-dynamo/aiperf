@@ -674,11 +674,11 @@ Inputs, endpoints, and graph:
   verifier transfer, and labelled cleanup.
 - [`docs/specs/graph-ir-system-idle-gap.md`](docs/specs/graph-ir-system-idle-gap.md) — Graph-IR system idle-gap cap at the centralized node firing gate.
 - [`docs/specs/conditional-graph-lowering.md`](docs/specs/conditional-graph-lowering.md) —
-  the model-independent-branching contract: pinned/recorded/weighted conditional
-  branching and recorded non-LLM content resolved and folded into the flat
-  `LlmNode`/`StaticEdge` substrate at lowering, the eager-vs-forbidden
-  (branch-on-live-output) line, and the built `conditional_graph` eager-conditional
-  compiler (`rust/runtime/src/graph/conditional/`).
+  current `conditional_graph` lowering contract: deterministic eager branching,
+  replay-only Kahn cycle refusal, checked maximum completion-delay folding into
+  the LLM-only `GraphRecord` subset, direct-anchor preservation, explicit START
+  and unrepresentable-anchor refusals, signed-nanosecond timing bounds, and the
+  branch-on-live-output boundary (`rust/runtime/src/graph/conditional/`).
 - [`docs/specs/otlp-genai-graph-input.md`](docs/specs/otlp-genai-graph-input.md) —
   native OTLP/HTTP JSON OpenInference and GenAI graph input, including strict
   decoding, trace-local span topology, and replay-span folding into static

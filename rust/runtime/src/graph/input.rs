@@ -74,13 +74,33 @@ pub struct GraphInputBundle {
     pub metadata: GraphInputMetadata,
 }
 
-/// Refuse lowered plans with cycles before they can reach execution.
+/// Refuse lowered plans with cycles or unsafe timing before execution.
 pub fn validate_lowered_bundle(bundle: GraphInputBundle) -> Result<GraphInputBundle, String> {
+    validate_bundle_with_issues(
+        bundle,
+        &["graph-cycle", "non-finite-timing", "out-of-range-timing"],
+    )
+}
+
+/// Refuse timing values that cannot safely cross an inspection serialization boundary.
+///
+/// Cycles intentionally remain inspectable so the local graph commands can report
+/// their detailed structural finding.
+pub(crate) fn validate_inspection_bundle(
+    bundle: GraphInputBundle,
+) -> Result<GraphInputBundle, String> {
+    validate_bundle_with_issues(bundle, &["non-finite-timing", "out-of-range-timing"])
+}
+
+fn validate_bundle_with_issues(
+    bundle: GraphInputBundle,
+    refused_codes: &[&str],
+) -> Result<GraphInputBundle, String> {
     for program in &bundle.programs {
         for plan in std::iter::once(&program.profiling).chain(program.warmup.as_ref()) {
             if let Some(issue) = validate_detailed(&plan.graph)
                 .into_iter()
-                .find(|issue| issue.code == "graph-cycle")
+                .find(|issue| refused_codes.contains(&issue.code.as_str()))
             {
                 return Err(issue.message);
             }

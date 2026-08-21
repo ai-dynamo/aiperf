@@ -70,6 +70,12 @@ fn classify_node(record: &Value) -> String {
     matched[0].to_string()
 }
 
+fn timestamp_ns(record: &Value, field: &str) -> i64 {
+    record["metadata"][field]
+        .as_i64()
+        .unwrap_or_else(|| panic!("record missing integer metadata.{field}: {record:?}"))
+}
+
 #[tokio::test]
 async fn conditional_graph_resolves_branches_and_folds_replay_end_to_end() {
     assert!(
@@ -115,6 +121,56 @@ async fn conditional_graph_resolves_branches_and_folds_replay_end_to_end() {
     assert_eq!(counts, expected, "per-node dispatch counts");
 
     assert_eq!(raw.len(), 13, "total dispatched requests");
+
+    // Concurrency one keeps the two shopping traces sequential. Within each,
+    // replay folding must retain tool_exec's 80 ms and preprocess's 5 ms as
+    // completion-anchored gaps between the surrounding dispatched requests.
+    let mut by_node: HashMap<String, Vec<&Value>> = HashMap::new();
+    for record in &raw {
+        by_node
+            .entry(classify_node(record))
+            .or_default()
+            .push(record);
+    }
+    for records in by_node.values_mut() {
+        records.sort_by_key(|record| timestamp_ns(record, "request_start_ns"));
+    }
+    assert_eq!(by_node["plan"].len(), 2, "timed tool predecessors");
+    assert_eq!(by_node["brandmap"].len(), 2, "timed tool successors");
+    assert_eq!(by_node["summarize"].len(), 2, "timed preprocess successors");
+    let tool_gaps = by_node["plan"]
+        .iter()
+        .zip(&by_node["brandmap"])
+        .map(|(plan, brandmap)| {
+            timestamp_ns(brandmap, "request_start_ns") - timestamp_ns(plan, "request_end_ns")
+        })
+        .collect::<Vec<_>>();
+    let preprocess_gaps = by_node["brandmap"]
+        .iter()
+        .zip(&by_node["summarize"])
+        .map(|(brandmap, summarize)| {
+            timestamp_ns(summarize, "request_start_ns") - timestamp_ns(brandmap, "request_end_ns")
+        })
+        .collect::<Vec<_>>();
+    for &folded_gap_ns in &tool_gaps {
+        assert!(
+            (80_000_000..1_000_000_000).contains(&folded_gap_ns),
+            "tool_exec's folded delay was {folded_gap_ns} ns, expected [80 ms, 1 s)"
+        );
+    }
+    for &folded_gap_ns in &preprocess_gaps {
+        assert!(
+            (5_000_000..1_000_000_000).contains(&folded_gap_ns),
+            "preprocess's folded delay was {folded_gap_ns} ns, expected [5 ms, 1 s)"
+        );
+    }
+    for (&tool_gap_ns, &preprocess_gap_ns) in tool_gaps.iter().zip(&preprocess_gaps) {
+        let authored_delta_ns = tool_gap_ns - preprocess_gap_ns;
+        assert!(
+            (50_000_000..200_000_000).contains(&authored_delta_ns),
+            "folded 80 ms and 5 ms delays differed by {authored_delta_ns} ns; an absent fold would remove the authored 75 ms separation"
+        );
+    }
 
     // The replay nodes never dispatch: no record carries a tool_exec/preprocess
     // marker, and every record is a well-formed chat request with a model.

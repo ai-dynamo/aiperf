@@ -47,6 +47,7 @@ pub mod snapshot;
 mod static_readiness;
 pub mod supplement;
 mod syslimits;
+mod timing;
 pub mod tools;
 pub mod transport_bench;
 pub mod transport_sink;
