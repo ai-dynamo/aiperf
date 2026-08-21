@@ -249,6 +249,25 @@ class TestExtensibleStrEnum:
         assert hash(ext) == hash("ext")
         assert ext.__dict__.get("_norm_hash_cache") == hash("ext")
 
+    def test_norm_value_populated_on_never_used_extension(self: Self) -> None:
+        """A registered member that has never been compared still normalizes.
+
+        Distinct from the pop-and-recompute case above: register() creates the
+        member via str.__new__ so the cache attribute is absent, not stale.
+        """
+
+        class TestEnum(ExtensibleStrEnum):
+            BASE = "base"
+
+        TestEnum.register("FOO_BAR", "foo_bar")
+        ext = TestEnum.FOO_BAR
+        assert "_norm_value_cache" not in ext.__dict__
+        assert "_norm_hash_cache" not in ext.__dict__
+
+        assert ext == "FOO-BAR"
+        assert hash(ext) == hash("foo_bar")
+        assert ext.__dict__.get("_norm_value_cache") == "foo_bar"
+
 
 # =============================================================================
 # Registration Tests
