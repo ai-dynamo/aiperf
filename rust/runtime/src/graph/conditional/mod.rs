@@ -261,6 +261,30 @@ traces:
     }
 
     #[tokio::test]
+    async fn selected_conditional_cycle_is_rejected_by_execution_finalization() {
+        let source = br#"
+graph:
+  state: {a: {type: text}, b: {type: text}}
+  nodes:
+    a: {node_type: llm, prompt: [a], output: a}
+    b: {node_type: llm, prompt: [b], output: b}
+  edges:
+    - {source: START, target: a}
+    - {source: a, target: b}
+    - {source: b, target: a}
+traces: [{id: cycle}]
+"#;
+        let bundle =
+            compile_conditional_graph_input(config(source), &TiktokenTokenizer::builtin(), 0)
+                .await
+                .expect("inspection lowering retains the selected cycle");
+        let Err(error) = crate::graph::input::validate_lowered_bundle(bundle) else {
+            panic!("selected cycle must not leave execution finalization");
+        };
+        assert!(error.to_string().contains("graph-cycle"));
+    }
+
+    #[tokio::test]
     async fn classified_error_compatibility_preserves_yaml_decode_source() {
         let error = compile_conditional_graph_input_classified(
             config(b"traces: ["),

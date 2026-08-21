@@ -742,6 +742,48 @@ fn static_channel_readiness_rejects_deadlocks_and_marks_explain_unavailable() {
 }
 
 #[test]
+fn conditional_cycle_remains_available_to_graph_validate() {
+    let fixture = tempfile::NamedTempFile::new().expect("create cycle fixture");
+    fs::write(
+        fixture.path(),
+        r#"
+graph:
+  state: {a: {type: text}, b: {type: text}}
+  nodes:
+    a: {node_type: llm, prompt: [a], output: a}
+    b: {node_type: llm, prompt: [b], output: b}
+  edges:
+    - {source: START, target: a}
+    - {source: a, target: b}
+    - {source: b, target: a}
+traces: [{id: cycle}]
+"#,
+    )
+    .expect("write cycle fixture");
+
+    let output = validate_output(
+        fixture.path().to_str().expect("UTF-8 fixture"),
+        "conditional_graph",
+        &["--output-format", "json"],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr: {}\nstdout: {}",
+        stderr(&output),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report: GraphValidateReport =
+        serde_json::from_slice(&output.stdout).expect("validation JSON");
+    assert_eq!(report.issues.len(), 1);
+    assert_eq!(report.issues[0].code, "graph-cycle");
+    assert_eq!(
+        report.issues[0].context.get("node_ids"),
+        Some(&"a,b,a".to_owned())
+    );
+}
+
+#[test]
 fn conditional_graph_rejects_invalid_channel_counts_before_readiness() {
     for count in ["-1", "any"] {
         let (_directory, source) = conditional_count_fixture(count);

@@ -1510,7 +1510,8 @@ pub(crate) fn prepare_dynosim_graph(
         .build()
         .context("creating direct graph preparation runtime")?;
     let prepared = runtime
-        .block_on(context.graph_inputs().load_for_endpoint(
+        .block_on(crate::engine::graph_input::load_execution_graph_input(
+            context.graph_inputs(),
             &workload.dataset,
             &GraphInputContext {
                 tokenizer: tokenizer.as_ref(),
@@ -2403,6 +2404,29 @@ mod tests {
             4
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn dynosim_graph_assembly_refuses_a_cycle_from_a_custom_resolver() {
+        let run = crate::engine::graph_input::graph_cycle_test_support::run();
+        let context = crate::engine::graph_input::graph_cycle_test_support::context();
+        let error = match prepare_dynosim_graph(
+            &run,
+            &context,
+            validate(serde_json::json!({})).expect("valid dynosim transport"),
+            Box::new(crate::engine::graph_input::graph_cycle_test_support::workload()),
+            Arc::new(
+                crate::engine::online_execution::NativeOnlineTokenizerSourceResolver::default(),
+            ),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("dynosim assembly must reject a cyclic custom resolver bundle"),
+        };
+
+        assert_eq!(
+            error.root_cause().to_string(),
+            crate::engine::graph_input::graph_cycle_test_support::CYCLE_ERROR
+        );
     }
 
     #[test]

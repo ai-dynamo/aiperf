@@ -1237,7 +1237,8 @@ fn lower_graph(
     let prepared = local
         .block_on(
             &runtime,
-            context.graph_inputs().load_for_endpoint(
+            crate::engine::graph_input::load_execution_graph_input(
+                context.graph_inputs(),
                 &workload.dataset,
                 &GraphInputContext {
                     tokenizer: tokenizer_impl.as_ref(),
@@ -1906,6 +1907,30 @@ mod tests {
         let error = validate_canonical_recorded_agent_bundle(&bundle)
             .expect_err("scenario must reject the actual lowered task order");
         assert!(error.to_string().contains("canonical manifest task order"));
+    }
+
+    #[test]
+    fn online_graph_assembly_refuses_a_cycle_from_a_custom_resolver() {
+        let run = crate::engine::graph_input::graph_cycle_test_support::run();
+        let context = crate::engine::graph_input::graph_cycle_test_support::context();
+        let workload = crate::engine::graph_input::graph_cycle_test_support::workload();
+        let error = match lower_graph(
+            &run,
+            &context,
+            &workload,
+            &NativeOnlineTokenizerSourceResolver::default(),
+            Arc::new(HttpNativeExecution::new(Arc::new(
+                crate::engine::turn_execution::HttpExecutionFactory,
+            ))),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("online assembly must reject a cyclic custom resolver bundle"),
+        };
+
+        assert_eq!(
+            error.root_cause().to_string(),
+            crate::engine::graph_input::graph_cycle_test_support::CYCLE_ERROR
+        );
     }
 
     struct NeverEvaluatorFactory;

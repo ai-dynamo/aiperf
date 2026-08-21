@@ -22,6 +22,7 @@ use crate::graph::lowering::{
     lower_catalog,
 };
 use crate::graph::model::{GraphTracePlan, GraphTraceProgram};
+use crate::graph::validate::{find_graph_cycle, graph_cycle_message, validate_detailed};
 
 /// Inputs supplied to one format-specific Graph-IR compiler.
 pub struct GraphInputConfig {
@@ -71,6 +72,21 @@ pub struct GraphInputBundle {
     pub segments: Arc<dyn SegmentStore>,
     /// Static load facts for reporting and validation.
     pub metadata: GraphInputMetadata,
+}
+
+/// Refuse lowered plans with cycles before they can reach execution.
+pub fn validate_lowered_bundle(bundle: GraphInputBundle) -> Result<GraphInputBundle, String> {
+    for program in &bundle.programs {
+        for plan in std::iter::once(&program.profiling).chain(program.warmup.as_ref()) {
+            if let Some(issue) = validate_detailed(&plan.graph)
+                .into_iter()
+                .find(|issue| issue.code == "graph-cycle")
+            {
+                return Err(issue.message);
+            }
+        }
+    }
+    Ok(bundle)
 }
 
 /// Parse, validate, intern, and lower one complete `dag_jsonl` source.
@@ -340,7 +356,7 @@ fn validate_program_topology(program: &DagJsonlProgram) -> Result<(), GraphInput
         .iter()
         .map(|conversation| conversation.session_id.as_str())
         .collect::<HashSet<_>>();
-    let mut edges = HashMap::<String, Vec<String>>::new();
+    let mut edges = Vec::new();
     let mut fork_parent = HashMap::<String, String>::new();
     let mut pre_spawns = HashSet::<String>::new();
     for conversation in &program.conversations {
@@ -374,7 +390,11 @@ fn validate_program_topology(program: &DagJsonlProgram) -> Result<(), GraphInput
                 )));
             }
         }
-        edges.insert(conversation.session_id.clone(), children);
+        edges.extend(
+            children
+                .into_iter()
+                .map(|child| (conversation.session_id.clone(), child)),
+        );
     }
     if let Some(child) = pre_spawns
         .iter()
@@ -384,7 +404,14 @@ fn validate_program_topology(program: &DagJsonlProgram) -> Result<(), GraphInput
             "DAG child {child:?} is both a pre-session spawn and a fork target"
         )));
     }
-    detect_cycles(&edges)?;
+    let cycle_nodes = program
+        .conversations
+        .iter()
+        .map(|conversation| conversation.session_id.clone())
+        .collect();
+    if let Some(cycle) = find_graph_cycle(&cycle_nodes, &edges) {
+        return Err(GraphInputError(graph_cycle_message(&cycle)));
+    }
     for conversation in &program.conversations {
         for (turn_index, turn) in conversation.turns.iter().enumerate() {
             if (turn_index > 0 || fork_parent.contains_key(&conversation.session_id))
@@ -396,39 +423,6 @@ fn validate_program_topology(program: &DagJsonlProgram) -> Result<(), GraphInput
                 )));
             }
         }
-    }
-    Ok(())
-}
-
-fn detect_cycles(edges: &HashMap<String, Vec<String>>) -> Result<(), GraphInputError> {
-    fn visit(
-        id: &str,
-        edges: &HashMap<String, Vec<String>>,
-        visiting: &mut Vec<String>,
-        visited: &mut HashSet<String>,
-    ) -> Result<(), GraphInputError> {
-        if let Some(position) = visiting.iter().position(|candidate| candidate == id) {
-            let mut cycle = visiting[position..].to_vec();
-            cycle.push(id.to_string());
-            return Err(GraphInputError(format!(
-                "DAG cycle detected: {}",
-                cycle.join(" -> ")
-            )));
-        }
-        if !visited.insert(id.to_string()) {
-            return Ok(());
-        }
-        visiting.push(id.to_string());
-        for child in edges.get(id).into_iter().flatten() {
-            visit(child, edges, visiting, visited)?;
-        }
-        visiting.pop();
-        Ok(())
-    }
-    let mut visiting = Vec::new();
-    let mut visited = HashSet::new();
-    for id in edges.keys() {
-        visit(id, edges, &mut visiting, &mut visited)?;
     }
     Ok(())
 }

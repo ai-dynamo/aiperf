@@ -12,6 +12,7 @@ use aiperf_runtime::engine::graph_input::{
     BuiltinRunnerGraphInputAdapterResolver, CacheBustTarget, GraphInputAdapter, GraphInputContext,
     RecordedAgentRunnerGraphInputAdapter, prepare_local_graph_inspection_input,
 };
+use aiperf_runtime::graph::input::validate_lowered_bundle;
 use aiperf_runtime::graph::model::{ChannelType, ExecutableGraphNode, PromptItem, ReducerName};
 use aiperf_runtime::graph::recorded::agent_recording::{
     BuiltinReplayRequestProfileResolver, ImportedAgentSession, ImportedAgentSource,
@@ -197,6 +198,43 @@ fn imported_codex_sessions_lower_to_linear_recorded_replay_graphs() {
         wire,
         "{\"role\":\"system\",\"content\":\"You are Codex…\"}".as_bytes()
     );
+}
+
+#[test]
+fn imported_replay_cycle_is_refused_by_execution_finalization() {
+    let read_set = discover_imported_agent_read_set(
+        &fixture("codex/linear.jsonl"),
+        None,
+        RecordedAgentSourceFormat::Codex,
+        None,
+    )
+    .expect("discover Codex fixture");
+    let sessions = parse_imported_agent_sessions(&read_set).expect("parse Codex fixture");
+    let mut pool = SegmentPool::new();
+    let mut bundle = lower_imported_agent_sessions(
+        &sessions,
+        &BuiltinReplayRequestProfileResolver::default(),
+        &builtin_tokenizer(),
+        &mut pool,
+    )
+    .expect("lower imported Codex session");
+    bundle.programs[0]
+        .profiling
+        .graph
+        .edges
+        .push(aiperf_runtime::graph::model::StaticEdge {
+            source: "llm_1".into(),
+            target: "llm_0".into(),
+            delay_after_predecessor_us: None,
+            min_start_delay_us: None,
+            delay_after_predecessor_start_us: None,
+            delay_after_predecessor_first_token_us: None,
+        });
+
+    let Err(error) = validate_lowered_bundle(bundle) else {
+        panic!("execution finalization must reject the replay cycle");
+    };
+    assert_eq!(error, "graph-cycle: \"llm_0\" -> \"llm_1\" -> \"llm_0\"");
 }
 
 #[test]

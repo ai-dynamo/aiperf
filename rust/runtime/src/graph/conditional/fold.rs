@@ -209,11 +209,14 @@ pub fn fold_replay_and_emit(
     // Keep this tooling diagnostic in the retained Graph-IR so `graph validate`
     // can return its structured finding; `run_trace` validates again before any
     // executor state is created.
-    let has_static_readiness_deadlock = validation.len() == 1
-        && validate_detailed(&graph)
-            .iter()
-            .any(|issue| issue.code == "static-channel-readiness-deadlock");
-    if !validation.is_empty() && !has_static_readiness_deadlock {
+    let retain_for_inspection = validation.len() == 1
+        && validate_detailed(&graph).iter().any(|issue| {
+            matches!(
+                issue.code.as_str(),
+                "graph-cycle" | "static-channel-readiness-deadlock"
+            )
+        });
+    if !validation.is_empty() && !retain_for_inspection {
         let detail = validation
             .iter()
             .map(ToString::to_string)

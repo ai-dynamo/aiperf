@@ -15,7 +15,9 @@ use std::sync::Arc;
 use crate::config::model::dataset::{RecordedAgentGraphConfig, RecordedAgentSourceFormat};
 use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer};
 use crate::graph::conditional::compile_conditional_graph_input_classified;
-use crate::graph::input::{GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input};
+use crate::graph::input::{
+    GraphInputBundle, GraphInputConfig, compile_dag_jsonl_input, validate_lowered_bundle,
+};
 use crate::graph::recorded::agent_recording::{
     BuiltinReplayRequestProfileResolver, ImportedAgentReadSet, ImportedAgentSelectionRequest,
     RecordedAgentInputSource, discover_recorded_agent_input, lower_imported_agent_sessions,
@@ -362,6 +364,134 @@ impl GraphInputAdapterResolver for BuiltinRunnerGraphInputAdapterResolver {
         self.selected(raw)?
             .load_for_endpoint(raw, context, endpoint_id)
             .await
+    }
+}
+
+/// Load and finalize a graph bundle at the execution boundary.
+pub(crate) async fn load_execution_graph_input(
+    resolver: &dyn GraphInputAdapterResolver,
+    raw: &RawValue,
+    context: &GraphInputContext<'_>,
+    endpoint_id: &str,
+) -> Result<PreparedRunnerGraphInput> {
+    let mut prepared = resolver
+        .load_for_endpoint(raw, context, endpoint_id)
+        .await?;
+    prepared.bundle = validate_lowered_bundle(prepared.bundle).map_err(|error| anyhow!(error))?;
+    Ok(prepared)
+}
+
+#[cfg(test)]
+pub(crate) mod graph_cycle_test_support {
+    use super::*;
+    use crate::endpoints::{EndpointId, RawEndpointConfig};
+    use crate::graph::model::{GraphRecord, GraphTracePlan, GraphTraceProgram, TraceRecord};
+    use crate::transport::core::ConnectionReuseStrategy;
+    use crate::transport::http::config::ClientConfig;
+
+    pub(crate) const CYCLE_ERROR: &str = "graph-cycle: \"a\" -> \"b\" -> \"a\"";
+
+    #[derive(Debug)]
+    pub(crate) struct CyclicResolver;
+
+    #[async_trait(?Send)]
+    impl GraphInputAdapterResolver for CyclicResolver {
+        fn validate_identity(&self, _raw: &RawValue) -> Result<()> {
+            Ok(())
+        }
+
+        async fn load(
+            &self,
+            _raw: &RawValue,
+            _context: &GraphInputContext<'_>,
+        ) -> Result<PreparedRunnerGraphInput> {
+            let graph = serde_json::from_value::<GraphRecord>(serde_json::json!({
+                "state": {"a": {}, "b": {}},
+                "nodes": {"a": {"output": "a"}, "b": {"output": "b"}},
+                "edges": [
+                    {"source": "START", "target": "a"},
+                    {"source": "a", "target": "b"},
+                    {"source": "b", "target": "a"}
+                ]
+            }))
+            .expect("cyclic graph fixture");
+            Ok(PreparedRunnerGraphInput {
+                bundle: GraphInputBundle {
+                    programs: vec![GraphTraceProgram::static_graph(GraphTracePlan {
+                        graph,
+                        trace: TraceRecord {
+                            id: "cycle".into(),
+                            graph_ref: None,
+                            initial_state: BTreeMap::new(),
+                        },
+                        arrival_offset_ns: None,
+                    })],
+                    segments: Arc::new(SegmentPool::new().freeze()),
+                    metadata: crate::graph::input::GraphInputMetadata {
+                        format: "custom".into(),
+                        root_count: 1,
+                        node_count: 2,
+                        warning_facts: Vec::new(),
+                    },
+                },
+                random_seed: None,
+                default_output_tokens: 1,
+                allow_dataset_wrap: false,
+                t_star_window: TStarWindow::default(),
+                cache_bust_target: CacheBustTarget::None,
+            })
+        }
+    }
+
+    pub(crate) fn run() -> crate::engine::protocol_v2::AuthoredRunSpecV2 {
+        serde_json::from_value(serde_json::json!({
+            "identity": {"benchmark_id": "graph-cycle-test"},
+            "artifact_target": "/tmp/graph-cycle-test",
+            "transport": {"type": "http", "config": {}},
+            "workload": {"type": "graph", "config": {}},
+            "resources": {
+                "models": {"items": [{"name": "model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["http://127.0.0.1:9"]
+                }]}
+            }
+        }))
+        .expect("minimal graph run fixture")
+    }
+
+    pub(crate) fn workload() -> crate::engine::registry::GraphWorkloadConfigV2 {
+        serde_json::from_value(serde_json::json!({
+            "worker_count": 1,
+            "dataset": {"format": "custom"},
+            "tokenizer": {"name": "builtin"},
+            "phases": []
+        }))
+        .expect("minimal graph workload fixture")
+    }
+
+    pub(crate) fn context() -> crate::engine::registry::RunContext {
+        crate::engine::registry::RunContext::new(
+            format!("blake3:{}", "a".repeat(64)),
+            Arc::new(crate::extensions::AIPerfRegistry::builtin().expect("builtin registry")),
+            crate::engine::execution_factories::native_execution_factories(),
+            Arc::new(CyclicResolver),
+            Arc::new(crate::engine::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
+            Arc::new(crate::engine::sidecar_input::PreparedSidecarInputs::default()),
+            vec![crate::engine::registry::ValidatedEndpointProfileV2 {
+                profile_id: "default".into(),
+                endpoint_id: EndpointId::new("chat").expect("chat endpoint"),
+                config: RawEndpointConfig {
+                    urls: vec!["http://127.0.0.1:9".into()],
+                    ..RawEndpointConfig::default()
+                },
+                connection_reuse: ConnectionReuseStrategy::default(),
+                client: ClientConfig::default(),
+                session_header: None,
+            }],
+        )
+        .expect("graph cycle run context")
     }
 }
 
@@ -1995,6 +2125,23 @@ mod tests {
     struct CountingResolver {
         load_calls: AtomicUsize,
         endpoint_id: Mutex<Option<String>>,
+    }
+
+    #[tokio::test]
+    async fn execution_loader_refuses_a_cycle_from_a_custom_resolver() {
+        let tokenizer = TiktokenTokenizer::builtin();
+        let error = load_execution_graph_input(
+            &graph_cycle_test_support::CyclicResolver,
+            &raw(json!({"format": "custom"})),
+            &GraphInputContext {
+                tokenizer: &tokenizer,
+                run_random_seed: None,
+            },
+            "chat",
+        )
+        .await
+        .expect_err("execution boundary must reject the custom cyclic bundle");
+        assert_eq!(error.to_string(), graph_cycle_test_support::CYCLE_ERROR);
     }
 
     #[async_trait(?Send)]

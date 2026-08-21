@@ -157,3 +157,29 @@ fn direct_graph_count_validation_is_canonical() {
         assert!(validate_detailed(&graph(count)).is_empty());
     }
 }
+
+#[test]
+fn graph_cycle_is_deterministic_and_structural() {
+    let graph = serde_json::from_value::<GraphRecord>(serde_json::json!({
+        "state": {"a": {}, "b": {}},
+        "nodes": {"a": {"output": "a"}, "b": {"output": "b"}},
+        "edges": [
+            {"source": "START", "target": "a"},
+            {"source": "a", "target": "b"},
+            {"source": "b", "target": "a"}
+        ]
+    }))
+    .expect("cycle graph record");
+    let issues = validate_detailed(&graph);
+    assert_eq!(
+        issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        ["graph-cycle"]
+    );
+    assert_eq!(
+        issues[0].context.get("node_ids"),
+        Some(&"a,b,a".to_string())
+    );
+}

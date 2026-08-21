@@ -45,7 +45,7 @@ pub fn validate(graph: &GraphRecord) -> Vec<ValidationError> {
 pub fn validate_detailed(graph: &GraphRecord) -> Vec<GraphInspectionIssue> {
     let findings = collect_findings(graph);
     let mut issues = Vec::new();
-    for rank in 0..=6 {
+    for rank in 0..=7 {
         for finding in &findings {
             if finding.detailed_rank() != rank {
                 continue;
@@ -103,6 +103,9 @@ enum Finding {
         input_index: usize,
         count: Count,
     },
+    GraphCycle {
+        node_ids: Vec<String>,
+    },
     NodeUnreachable {
         node_id: String,
     },
@@ -151,6 +154,7 @@ impl Finding {
                 ),
                 Ok(_) => "channel count validation finding has a valid count".to_string(),
             },
+            Finding::GraphCycle { node_ids } => graph_cycle_message(node_ids),
             Finding::NodeUnreachable { node_id } => {
                 format!("node {node_id:?} is unreachable from START (it would never fire)")
             }
@@ -181,9 +185,10 @@ producer(s) but {reason}"
             Finding::ChannelWriteUndeclared { .. } => 1,
             Finding::ChannelReadUndeclared { .. } => 2,
             Finding::ChannelCountInvalid { .. } => 3,
-            Finding::NodeUnreachable { .. } => 4,
-            Finding::NodeNeverFireable { .. } => 5,
-            Finding::StaticChannelReadinessDeadlock { .. } => 6,
+            Finding::GraphCycle { .. } => 4,
+            Finding::NodeUnreachable { .. } => 5,
+            Finding::NodeNeverFireable { .. } => 6,
+            Finding::StaticChannelReadinessDeadlock { .. } => 7,
         }
     }
 
@@ -257,6 +262,12 @@ producer(s) but {reason}"
                     ("count", &count.to_string()),
                 ],
             )),
+            Finding::GraphCycle { node_ids } => Some(issue(
+                "graph-cycle",
+                Some("graph.edges".to_string()),
+                self.message(),
+                [("node_ids", &node_ids.join(","))],
+            )),
             Finding::NodeUnreachable { node_id } => Some(issue(
                 "node-unreachable",
                 Some(format!("graph.nodes.{node_id}")),
@@ -323,6 +334,16 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
                 target: edge.target.clone(),
             });
         }
+    }
+
+    let cycle_nodes = graph.nodes.keys().cloned().collect();
+    let cycle_edges = graph
+        .edges
+        .iter()
+        .map(|edge| (edge.source.clone(), edge.target.clone()))
+        .collect::<Vec<_>>();
+    if let Some(node_ids) = find_graph_cycle(&cycle_nodes, &cycle_edges) {
+        findings.push(Finding::GraphCycle { node_ids });
     }
 
     for (nid, node) in &graph.nodes {
@@ -482,6 +503,79 @@ fn collect_findings(graph: &GraphRecord) -> Vec<Finding> {
     }
 
     findings
+}
+
+/// Find one normalized closed cycle among declared graph nodes.
+pub(crate) fn find_graph_cycle(
+    node_ids: &BTreeSet<String>,
+    edges: &[(String, String)],
+) -> Option<Vec<String>> {
+    let mut adjacent = BTreeMap::<String, Vec<String>>::new();
+    for (source, target) in edges {
+        if node_ids.contains(source) && node_ids.contains(target) {
+            adjacent
+                .entry(source.clone())
+                .or_default()
+                .push(target.clone());
+        }
+    }
+    for targets in adjacent.values_mut() {
+        targets.sort_unstable();
+        targets.dedup();
+    }
+    let mut state = BTreeMap::<String, u8>::new();
+    for node in node_ids {
+        if state.contains_key(node) {
+            continue;
+        }
+        let mut stack = vec![(node.clone(), 0_usize)];
+        let mut positions = BTreeMap::from([(node.clone(), 0_usize)]);
+        state.insert(node.clone(), 1);
+        while let Some((current, target_index)) = stack.last_mut() {
+            let targets = adjacent.get(current).map(Vec::as_slice).unwrap_or_default();
+            if *target_index == targets.len() {
+                let Some((completed, _)) = stack.pop() else {
+                    return None;
+                };
+                positions.remove(&completed);
+                state.insert(completed, 2);
+                continue;
+            }
+            let target = targets[*target_index].clone();
+            *target_index += 1;
+            match state.get(&target).copied().unwrap_or_default() {
+                1 => {
+                    let start = positions[&target];
+                    let mut cycle = stack[start..]
+                        .iter()
+                        .map(|(node, _)| node.clone())
+                        .collect::<Vec<_>>();
+                    cycle.push(target);
+                    return Some(cycle);
+                }
+                2 => {}
+                _ => {
+                    let position = stack.len();
+                    positions.insert(target.clone(), position);
+                    state.insert(target.clone(), 1);
+                    stack.push((target, 0));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Render the stable cycle error shared by Graph-IR inspection and input adapters.
+pub(crate) fn graph_cycle_message(node_ids: &[String]) -> String {
+    format!(
+        "graph-cycle: {}",
+        node_ids
+            .iter()
+            .map(|node| format!("{node:?}"))
+            .collect::<Vec<_>>()
+            .join(" -> ")
+    )
 }
 
 fn issue<'a, const N: usize>(
