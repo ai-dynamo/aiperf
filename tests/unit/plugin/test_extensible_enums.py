@@ -712,3 +712,94 @@ class TestDashUnderscoreNormalization:
         assert EnumA.ITEM == "foo_bar"
         assert EnumB.ITEM == "foo-bar"
         assert EnumB.ITEM == "foo_bar"
+
+
+# =============================================================================
+# __ne__ / __eq__ Symmetry Tests
+# =============================================================================
+
+
+class TestNotEqualMirrorsEqual:
+    """`!=` must be the exact negation of `==` for every operand shape.
+
+    Regression guard: `str.__ne__` sits between this class and `object` in the
+    MRO, so an inherited `__ne__` silently bypasses the normalizing `__eq__`
+    and makes `a == b` and `a != b` both True.
+    """
+
+    @pytest.fixture
+    def enum_with_underscores(self) -> type[ExtensibleStrEnum]:
+        class UnderscoreEnum(ExtensibleStrEnum):
+            FOO_BAR = "foo_bar"
+            BAZ_QUX = "baz_qux"
+
+        return UnderscoreEnum
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            "alpha",
+            "ALPHA",
+            "Alpha",
+            "aLpHa",
+            "beta",
+            "nonexistent",
+            123,
+            None,
+            [],
+            SampleEnum.ALPHA,
+            SampleEnum.BETA,
+        ],
+    )  # fmt: skip
+    def test_ne_is_negation_of_eq(self, other):
+        """`member != other` equals `not (member == other)` for any operand."""
+        assert (SampleEnum.ALPHA != other) is not (SampleEnum.ALPHA == other)
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_for_normalized_match(self, enum_with_underscores, other):
+        """A normalized match is never `!=`."""
+        assert (enum_with_underscores.FOO_BAR != other) is False
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_with_string_on_the_left(self, enum_with_underscores, other):
+        """Reflected `!=` also routes through the normalizing comparison."""
+        assert (other != enum_with_underscores.FOO_BAR) is False
+
+    def test_ne_true_for_different_member(self, enum_with_underscores):
+        """Genuinely different members stay `!=`."""
+        assert (enum_with_underscores.FOO_BAR != enum_with_underscores.BAZ_QUX) is True
+
+    def test_ne_false_for_registered_extension_spellings(self):
+        """Runtime-registered extensions negate consistently too."""
+
+        class TestEnum(ExtensibleStrEnum):
+            BASE = "base"
+
+        TestEnum.register("FOO_BAR", "foo_bar")
+
+        assert (TestEnum.FOO_BAR != "foo-bar") is False
+        assert (TestEnum.FOO_BAR != "FOO-BAR") is False
+        assert (TestEnum.FOO_BAR != "base") is True
+
+    def test_ne_false_across_enums_with_same_normalized_value(self):
+        """Cross-enum members sharing a normalized value are not `!=`."""
+
+        class EnumA(ExtensibleStrEnum):
+            ITEM = "foo_bar"
+
+        class EnumB(ExtensibleStrEnum):
+            ITEM = "foo-bar"
+
+        assert (EnumA.ITEM != EnumB.ITEM) is False
+
+    def test_ne_true_for_non_string_types(self):
+        """Non-string, non-enum operands remain `!=`."""
+        assert (SampleEnum.ALPHA != 123) is True
+        assert (SampleEnum.ALPHA != None) is True  # noqa: E711 - testing __ne__ with None
+        assert (SampleEnum.ALPHA != []) is True

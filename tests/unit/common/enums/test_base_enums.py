@@ -354,3 +354,90 @@ class TestNormalizationCaching:
             X = 1
 
         assert SampleEnum.ALPHA != IntEnum.X
+
+
+# =============================================================================
+# __ne__ / __eq__ Symmetry Tests
+# =============================================================================
+
+
+class TestNotEqualMirrorsEqual:
+    """`!=` must be the exact negation of `==` for every operand shape.
+
+    Regression guard: `str.__ne__` sits between these classes and `object` in
+    the MRO, so an inherited `__ne__` silently bypasses the normalizing
+    `__eq__` and makes `a == b` and `a != b` both True.
+    """
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            "alpha",
+            "ALPHA",
+            "Alpha",
+            "aLpHa",
+            "beta",
+            "nonexistent",
+            123,
+            None,
+            [],
+            SampleEnum.ALPHA,
+            SampleEnum.BETA,
+        ],
+    )  # fmt: skip
+    def test_ne_is_negation_of_eq(self, other):
+        """`member != other` equals `not (member == other)` for any operand."""
+        assert (SampleEnum.ALPHA != other) is not (SampleEnum.ALPHA == other)
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar", "baz"],
+    )  # fmt: skip
+    def test_ne_is_negation_of_eq_across_dash_forms(self, other):
+        """Dash/underscore/case variants negate consistently."""
+        assert (SampleEnum.FOO_BAR != other) is not (SampleEnum.FOO_BAR == other)
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_for_normalized_match(self, other):
+        """A normalized match is never `!=`."""
+        assert (SampleEnum.FOO_BAR != other) is False
+
+    @pytest.mark.parametrize(
+        "other",
+        ["my_value", "my-value", "MY_VALUE", "MY-VALUE"],
+    )  # fmt: skip
+    def test_ne_false_for_dash_valued_enum(self, other):
+        """Dash-valued members are not `!=` their underscore spellings."""
+        assert (DashValueEnum.MY_VALUE != other) is False
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_with_string_on_the_left(self, other):
+        """Reflected `!=` also routes through the normalizing comparison."""
+        assert (other != SampleEnum.FOO_BAR) is False
+
+    def test_ne_true_for_different_member(self):
+        """Genuinely different members stay `!=`."""
+        assert (SampleEnum.ALPHA != SampleEnum.BETA) is True
+
+    def test_ne_false_across_enums_with_same_normalized_value(self):
+        """Cross-enum members sharing a normalized value are not `!=`."""
+
+        class EnumA(CaseInsensitiveStrEnum):
+            ITEM = "foo_bar"
+
+        class EnumB(CaseInsensitiveStrEnum):
+            ITEM = "foo-bar"
+
+        assert (EnumA.ITEM != EnumB.ITEM) is False
+
+    def test_ne_true_for_non_string_types(self):
+        """Non-string, non-enum operands remain `!=`."""
+        assert (SampleEnum.ALPHA != 123) is True
+        assert (SampleEnum.ALPHA != None) is True  # noqa: E711 - testing __ne__ with None
+        assert (SampleEnum.ALPHA != []) is True
