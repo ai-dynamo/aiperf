@@ -468,6 +468,13 @@ def load_config_from_mapping(
         )
 
     copied = copy.deepcopy(data)
+    # A caller-built mapping can be self-referential in a way YAML aliases
+    # cannot reach this far: the string path's cyclic aliases are caught by
+    # _detect_cycles_or_depth during expansion, but _assert_string_keys
+    # recurses with no cycle guard and runs first, so an in-memory cycle would
+    # surface as a bare RecursionError. Run the guard up front -- it is
+    # cycle-safe and raises the ConfigurationError callers already handle.
+    _detect_cycles_or_depth(copied, file_path)
     try:
         _assert_string_keys(copied)
     except ConfigurationError as e:
