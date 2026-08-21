@@ -3,16 +3,158 @@
 
 //! Controller-owned admission credentials for cellular registrations.
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+
 use anyhow::{Result, ensure};
-use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::TryRngCore;
 
 use crate::cellular::transport::{CellRegister, CellRegistrationProof};
+use crate::engine::cellular_bootstrap::CellularRole;
 
 const REGISTRATION_PROTOCOL_VERSION: u8 = 1;
 const TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-registration-v1\0";
 const PEER_ADMISSION_TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-peer-admission-v1\0";
+pub(crate) const ADMISSION_PURPOSE_COUNT: usize = 6;
+
+/// One public role key in the controller's fixed authorization roster.
+#[derive(Clone, Copy)]
+pub(crate) struct RoleVerifyingKey {
+    pub(crate) role: CellularRole,
+    pub(crate) verifier: VerifyingKey,
+}
+
+/// The sole private cellular authority owned by one process.
+pub(crate) struct CellSecurityContext {
+    run_nonce: [u8; 32],
+    session_nonce: [u8; 32],
+    authority: ProcessSecurityAuthority,
+    #[allow(dead_code)]
+    send_sequences: [AtomicU64; ADMISSION_PURPOSE_COUNT],
+}
+
+enum ProcessSecurityAuthority {
+    Controller {
+        signer: SigningKey,
+        role_verifiers: Box<[RoleVerifyingKey]>,
+    },
+    Worker {
+        role: CellularRole,
+        signer: SigningKey,
+        controller_verifier: VerifyingKey,
+    },
+}
+
+impl CellSecurityContext {
+    pub(crate) fn controller(
+        run_nonce: [u8; 32],
+        signer: SigningKey,
+        role_verifiers: Box<[RoleVerifyingKey]>,
+    ) -> Result<Self> {
+        ensure!(
+            !role_verifiers.is_empty(),
+            "controller security roster is empty"
+        );
+        Ok(Self {
+            run_nonce,
+            session_nonce: random_nonce("process session nonce")?,
+            authority: ProcessSecurityAuthority::Controller {
+                signer,
+                role_verifiers,
+            },
+            send_sequences: std::array::from_fn(|_| AtomicU64::new(0)),
+        })
+    }
+
+    pub(crate) fn worker(
+        run_nonce: [u8; 32],
+        role: CellularRole,
+        signer: SigningKey,
+        controller_verifier: VerifyingKey,
+    ) -> Result<Self> {
+        Ok(Self {
+            run_nonce,
+            session_nonce: random_nonce("process session nonce")?,
+            authority: ProcessSecurityAuthority::Worker {
+                role,
+                signer,
+                controller_verifier,
+            },
+            send_sequences: std::array::from_fn(|_| AtomicU64::new(0)),
+        })
+    }
+
+    pub(crate) fn run_nonce(&self) -> [u8; 32] {
+        self.run_nonce
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn session_nonce(&self) -> [u8; 32] {
+        self.session_nonce
+    }
+
+    pub(crate) fn role(&self) -> Option<CellularRole> {
+        match self.authority {
+            ProcessSecurityAuthority::Controller { .. } => None,
+            ProcessSecurityAuthority::Worker { role, .. } => Some(role),
+        }
+    }
+
+    pub(crate) fn role_verifiers(&self) -> Result<Box<[RoleVerifyingKey]>> {
+        match &self.authority {
+            ProcessSecurityAuthority::Controller { role_verifiers, .. } => {
+                Ok(role_verifiers.to_vec().into_boxed_slice())
+            }
+            ProcessSecurityAuthority::Worker { .. } => {
+                anyhow::bail!("worker security context has no controller roster")
+            }
+        }
+    }
+
+    pub(crate) fn controller_verifier(&self) -> Result<VerifyingKey> {
+        match &self.authority {
+            ProcessSecurityAuthority::Worker {
+                controller_verifier,
+                ..
+            } => Ok(*controller_verifier),
+            ProcessSecurityAuthority::Controller { .. } => {
+                anyhow::bail!("controller security context has no controller verifier")
+            }
+        }
+    }
+
+    fn sign_worker(&self, transcript: &[u8]) -> Result<Signature> {
+        match &self.authority {
+            ProcessSecurityAuthority::Worker { signer, .. } => Ok(signer.sign(transcript)),
+            ProcessSecurityAuthority::Controller { .. } => {
+                anyhow::bail!("controller security context cannot sign worker admission")
+            }
+        }
+    }
+
+    pub(crate) fn registration_credential(self: &Arc<Self>) -> Result<CellRegistrationCredential> {
+        let Some(CellularRole::Cell(cell_id)) = self.role() else {
+            anyhow::bail!("security context has no cell credential");
+        };
+        Ok(CellRegistrationCredential {
+            cell_id,
+            context: Arc::clone(self),
+        })
+    }
+
+    pub(crate) fn registration_authority(self: &Arc<Self>) -> Result<CellRegistrationAuthority> {
+        CellRegistrationAuthority::from_role_keys(self.run_nonce, self.role_verifiers()?)
+    }
+}
+
+fn random_nonce(class: &str) -> Result<[u8; 32]> {
+    let mut nonce = [0_u8; 32];
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut nonce)
+        .map_err(|_| anyhow::anyhow!("OS RNG could not mint cellular {class}"))?;
+    Ok(nonce)
+}
 
 /// The controller operation for which a fresh Velo peer may be admitted.
 ///
@@ -46,15 +188,14 @@ pub struct CellPeerAdmissionProof {
 /// Controller-owned public keys and nonce for one cellular run.
 pub(crate) struct CellRegistrationAuthority {
     run_nonce: [u8; 32],
-    verifying_keys: Vec<VerifyingKey>,
+    role_verifiers: Box<[RoleVerifyingKey]>,
 }
 
 /// The private, cell-specific signing key delivered only by a trusted launcher.
-#[derive(Clone)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct CellRegistrationCredential {
     cell_id: u32,
-    run_nonce: [u8; 32],
-    signing_key: SigningKey,
+    context: Arc<CellSecurityContext>,
 }
 
 /// A controller-verified registration identity.
@@ -70,6 +211,7 @@ impl VerifiedCellRegistration {
 }
 
 impl CellRegistrationAuthority {
+    #[cfg(test)]
     pub(crate) fn mint(cell_count: u32) -> Result<(Self, Vec<CellRegistrationCredential>)> {
         ensure!(
             cell_count > 0,
@@ -79,28 +221,51 @@ impl CellRegistrationAuthority {
         rand::rngs::OsRng
             .try_fill_bytes(&mut run_nonce)
             .map_err(|_| anyhow::anyhow!("OS RNG could not mint cellular registration nonce"))?;
-        let mut verifying_keys = Vec::with_capacity(cell_count as usize);
+        let controller_signer = SigningKey::from_bytes(&random_nonce("controller reply key")?);
+        let controller_verifier = controller_signer.verifying_key();
+        let mut role_verifiers = Vec::with_capacity(cell_count as usize);
         let mut credentials = Vec::with_capacity(cell_count as usize);
         for cell_id in 0..cell_count {
-            let mut seed = [0_u8; 32];
-            rand::rngs::OsRng
-                .try_fill_bytes(&mut seed)
-                .map_err(|_| anyhow::anyhow!("OS RNG could not mint cellular registration key"))?;
+            let seed = random_nonce("registration key")?;
             let signing_key = SigningKey::from_bytes(&seed);
-            verifying_keys.push(signing_key.verifying_key());
-            credentials.push(CellRegistrationCredential {
-                cell_id,
-                run_nonce,
-                signing_key,
+            role_verifiers.push(RoleVerifyingKey {
+                role: CellularRole::Cell(cell_id),
+                verifier: signing_key.verifying_key(),
             });
+            let context = Arc::new(CellSecurityContext::worker(
+                run_nonce,
+                CellularRole::Cell(cell_id),
+                signing_key,
+                controller_verifier,
+            )?);
+            credentials.push(CellRegistrationCredential { cell_id, context });
         }
         Ok((
             Self {
                 run_nonce,
-                verifying_keys,
+                role_verifiers: role_verifiers.into_boxed_slice(),
             },
             credentials,
         ))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_nonce(&self) -> [u8; 32] {
+        self.run_nonce
+    }
+
+    pub(crate) fn from_role_keys(
+        run_nonce: [u8; 32],
+        role_verifiers: Box<[RoleVerifyingKey]>,
+    ) -> Result<Self> {
+        ensure!(
+            !role_verifiers.is_empty(),
+            "cell registration roster requires at least one public key"
+        );
+        Ok(Self {
+            run_nonce,
+            role_verifiers,
+        })
     }
 
     pub(crate) fn verify(&self, registration: &CellRegister) -> Result<VerifiedCellRegistration> {
@@ -113,8 +278,10 @@ impl CellRegistrationAuthority {
             "cell registration proof does not belong to this run"
         );
         let key = self
-            .verifying_keys
-            .get(registration.cell_id as usize)
+            .role_verifiers
+            .iter()
+            .find(|entry| entry.role == CellularRole::Cell(registration.cell_id))
+            .map(|entry| &entry.verifier)
             .ok_or_else(|| anyhow::anyhow!("cell registration id is out of range"))?;
         let signature = Signature::from_slice(&proof.signature)
             .map_err(|_| anyhow::anyhow!("cell registration proof is malformed"))?;
@@ -147,8 +314,10 @@ impl CellRegistrationAuthority {
             "cell peer admission proof does not belong to this run"
         );
         let key = self
-            .verifying_keys
-            .get(cell_id as usize)
+            .role_verifiers
+            .iter()
+            .find(|entry| entry.role == CellularRole::Cell(cell_id))
+            .map(|entry| &entry.verifier)
             .ok_or_else(|| anyhow::anyhow!("cell peer admission id is out of range"))?;
         let signature = Signature::from_slice(&proof.signature)
             .map_err(|_| anyhow::anyhow!("cell peer admission proof is malformed"))?;
@@ -164,54 +333,22 @@ impl CellRegistrationCredential {
     pub(crate) fn cell_id(&self) -> u32 {
         self.cell_id
     }
-
-    pub(crate) fn encode_launch_value(&self) -> String {
-        let mut raw = Vec::with_capacity(68);
-        raw.extend_from_slice(&self.cell_id.to_le_bytes());
-        raw.extend_from_slice(&self.run_nonce);
-        raw.extend_from_slice(&self.signing_key.to_bytes());
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
-    }
-
-    pub(crate) fn from_launch_value(raw: &str) -> Result<Self> {
-        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(raw)
-            .map_err(|_| anyhow::anyhow!("cell registration credential is malformed"))?;
-        ensure!(
-            raw.len() == 68,
-            "cell registration credential has invalid length"
-        );
-        let cell_id: [u8; 4] = raw[..4]
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("cell registration credential is malformed"))?;
-        let run_nonce: [u8; 32] = raw[4..36]
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("cell registration credential is malformed"))?;
-        let signing_key: [u8; 32] = raw[36..]
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("cell registration credential is malformed"))?;
-        Ok(Self {
-            cell_id: u32::from_le_bytes(cell_id),
-            run_nonce,
-            signing_key: SigningKey::from_bytes(&signing_key),
-        })
-    }
     pub(crate) fn sign_register(
         &self,
         cell_peer: &[u8],
         artifact_capability_digest: Option<[u8; 32]>,
     ) -> Result<CellRegistrationProof> {
         let transcript = registration_transcript(
-            self.cell_id,
+            self.cell_id(),
             cell_peer,
             artifact_capability_digest,
             REGISTRATION_PROTOCOL_VERSION,
-            self.run_nonce,
+            self.context.run_nonce,
         );
         Ok(CellRegistrationProof {
             version: REGISTRATION_PROTOCOL_VERSION,
-            run_nonce: self.run_nonce,
-            signature: self.signing_key.sign(&transcript).to_bytes().to_vec(),
+            run_nonce: self.context.run_nonce,
+            signature: self.context.sign_worker(&transcript)?.to_bytes().to_vec(),
         })
     }
 
@@ -222,16 +359,16 @@ impl CellRegistrationCredential {
         cell_peer: &[u8],
     ) -> Result<CellPeerAdmissionProof> {
         let transcript = peer_admission_transcript(
-            self.cell_id,
+            self.cell_id(),
             purpose,
             cell_peer,
             REGISTRATION_PROTOCOL_VERSION,
-            self.run_nonce,
+            self.context.run_nonce,
         );
         Ok(CellPeerAdmissionProof {
             version: REGISTRATION_PROTOCOL_VERSION,
-            run_nonce: self.run_nonce,
-            signature: self.signing_key.sign(&transcript).to_bytes().to_vec(),
+            run_nonce: self.context.run_nonce,
+            signature: self.context.sign_worker(&transcript)?.to_bytes().to_vec(),
         })
     }
 }

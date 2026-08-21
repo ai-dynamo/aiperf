@@ -138,6 +138,22 @@ pub fn dispatch(args: &[String]) -> ! {
 /// Run one cell using the launcher-provided `AIPERF_CELL_*` environment.
 #[cfg(feature = "cellular")]
 fn run_cell() -> ! {
+    let cell_id = match std::env::var(aiperf_runtime::cellular::partition::CELL_ID_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+    {
+        Some(cell_id) => cell_id,
+        None => {
+            tracing::error!("cell has no valid AIPERF_CELL_ID");
+            std::process::exit(2);
+        }
+    };
+    if let Err(error) =
+        aiperf_runtime::engine::cellular_cell::acquire_cell_process_security(cell_id)
+    {
+        tracing::error!(error = %error, cell_id, "cell security acquisition failed");
+        std::process::exit(2);
+    }
     // Drop the fetch runtime before execution creates its thread-per-core runtime.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

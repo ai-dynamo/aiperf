@@ -52,7 +52,10 @@ use crate::cellular::{
 #[cfg(feature = "cellular")]
 use crate::engine::cell_launcher::{CellHandle, CellLaunchContext, select_launcher};
 #[cfg(feature = "cellular")]
-use crate::engine::cellular_bootstrap::prepare_cell_bootstrap;
+use crate::engine::cellular_bootstrap::{
+    CONTROLLER_BOOTSTRAP_FILE_ENV, CellularRole, ControllerSecuritySource,
+    prepare_controller_security,
+};
 #[cfg(feature = "cellular")]
 use crate::engine::control_hooks::{
     PreparedEndpointControlHooks, PreparedServerProfilerHook,
@@ -736,8 +739,20 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
     };
     // One HTTP server handles per-record uploads (HTTP transport only) and dataset serving.
     let need_artifact_server = http_upload || dataset_ship;
-    let bootstrap_provider = prepare_cell_bootstrap(cross_host, cell_count)?;
-    let registration_authority = bootstrap_provider.authority();
+    let security_roles = (0..cell_count).map(CellularRole::Cell).collect::<Vec<_>>();
+    let security_source = if cross_host {
+        let path = std::env::var_os(CONTROLLER_BOOTSTRAP_FILE_ENV)
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("cross-host controller has no deployment security file")
+            })?;
+        ControllerSecuritySource::DeploymentFile(path.into())
+    } else {
+        ControllerSecuritySource::LocalMint
+    };
+    let mut prepared_security = prepare_controller_security(security_source, &security_roles)?;
+    let registration_authority =
+        std::sync::Arc::new(prepared_security.context.registration_authority()?);
     // The force seam only applies to the same-host launcher (k8s already ships): when
     // true, cells write to their own controller-local `temp_root/cell-{id}` scratch AND
     // ship those files to a SEPARATE loopback landing dir, from which the concat reads —
@@ -862,9 +877,6 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         startup_probe.before_velo_bind();
         let (bind, cell_coordinate) = controller_bind_and_endpoint(cross_host, &temp_root)?;
         let velo = build_velo(bind).await.context("building controller velo")?;
-        bootstrap_provider
-            .publish_controller_peer(&velo.peer_info())
-            .context("publishing authenticated controller bootstrap")?;
         // When artifacts ride velo, hang the artifact receive handlers off THIS same
         // control-plane velo instance (no second port): cells stream their zstd chunks
         // here and the receiver lands them at `landing_root/cell-{id}/{rel}`, exactly
@@ -1169,13 +1181,11 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
             } else {
                 None
             },
-            bootstrap_bundles: (0..cell_count)
-                .map(|cell_id| bootstrap_provider.bundle_for_cell(cell_id))
-                .collect::<Result<Vec<_>>>()?,
+            local_roles: prepared_security.local_roles.take(),
         };
         startup_probe.before_launcher_execution();
         let handles = select_launcher()
-            .launch(&launch_ctx)
+            .launch(launch_ctx)
             .context("launching cells")?;
 
         // Each watcher owns one local child until the terminal shutdown boundary.

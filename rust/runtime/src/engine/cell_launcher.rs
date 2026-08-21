@@ -19,13 +19,23 @@
 //! registration timeout.
 
 use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::io::Write;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
-use anyhow::{Context, Result};
+#[cfg(not(unix))]
+use anyhow::bail;
+use anyhow::{Context, Result, ensure};
 use tokio::process::Child;
 
 use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
 
-use crate::engine::cellular_bootstrap::{CELL_BOOTSTRAP_ENV, CellBootstrapBundle};
+use crate::engine::cellular_bootstrap::{
+    CELL_SECURITY_FD, CELL_SECURITY_FD_ENV, CellularRole, LocalRoleProvisioner,
+};
 use crate::engine::cellular_cell::{
     CELL_ARTIFACT_ADDR_ENV, CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
 };
@@ -52,8 +62,8 @@ pub struct CellLaunchContext {
     /// artifact files there. `None` when HTTP artifact shipping is off or on the
     /// same-host path, which concatenates local writes instead of shipping.
     pub artifact_authority: Option<String>,
-    /// One opaque controller bootstrap bundle per locally launched cell.
-    pub(crate) bootstrap_bundles: Vec<CellBootstrapBundle>,
+    /// One-shot local role material. Cross-host launchers receive `None`.
+    pub(crate) local_roles: Option<LocalRoleProvisioner>,
 }
 
 /// A started cell the controller watches for hard failure. For a local subprocess
@@ -90,7 +100,7 @@ impl CellHandle {
 /// Starts (or expects) a run's cells; the transport is always velo.
 pub trait CellLauncher {
     /// Start the cells and return handles the controller watches for hard failure.
-    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>>;
+    fn launch(&self, ctx: CellLaunchContext) -> Result<Vec<CellHandle>>;
 }
 
 /// Spawns `aiperf --cell` subprocesses on this host.
@@ -128,11 +138,30 @@ impl LocalLauncher {
         if let Some(authority) = &ctx.artifact_authority {
             command.env(CELL_ARTIFACT_ADDR_ENV, authority);
         }
-        if let Some(bundle) = ctx.bootstrap_bundles.get(cell_id as usize) {
-            command.env(CELL_BOOTSTRAP_ENV, bundle.encode_launch_value());
-        }
         command
     }
+}
+
+#[cfg(unix)]
+fn inherit_security_fd(command: &mut tokio::process::Command, source_fd: i32) {
+    // SAFETY: this hook runs after fork and before exec and invokes only async-signal-safe
+    // descriptor operations. The parent retains ownership and closes its copy after spawn.
+    unsafe {
+        command.pre_exec(move || {
+            if source_fd == CELL_SECURITY_FD {
+                if libc::fcntl(CELL_SECURITY_FD, libc::F_SETFD, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            } else {
+                if libc::dup2(source_fd, CELL_SECURITY_FD) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                libc::close(source_fd);
+            }
+            Ok(())
+        });
+    }
+    command.env(CELL_SECURITY_FD_ENV, CELL_SECURITY_FD.to_string());
 }
 
 /// Arm a kernel-backed parent-death signal so a cell is SIGKILLed the instant the
@@ -159,13 +188,33 @@ fn set_parent_death_signal(command: &mut tokio::process::Command) {
 fn set_parent_death_signal(_command: &mut tokio::process::Command) {}
 
 impl CellLauncher for LocalLauncher {
-    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>> {
+    fn launch(&self, mut ctx: CellLaunchContext) -> Result<Vec<CellHandle>> {
+        let mut local_roles = ctx
+            .local_roles
+            .take()
+            .context("local launcher has no role provisioner")?;
         let mut handles = Vec::with_capacity(ctx.cell_count as usize);
         for cell_id in 0..ctx.cell_count {
-            let child = self
-                .cell_command(ctx, cell_id)
+            let material = local_roles.take(CellularRole::Cell(cell_id))?;
+            #[cfg(unix)]
+            let (child_read, mut parent_write) =
+                UnixStream::pair().context("creating cell security pipe")?;
+            let mut command = self.cell_command(&ctx, cell_id);
+            #[cfg(unix)]
+            inherit_security_fd(&mut command, child_read.as_raw_fd());
+            #[cfg(not(unix))]
+            bail!("local cellular security delivery requires unix inherited descriptors");
+            let child = command
                 .spawn()
                 .with_context(|| format!("spawning cell {cell_id}"))?;
+            #[cfg(unix)]
+            {
+                drop(child_read);
+                parent_write
+                    .write_all(&material)
+                    .with_context(|| format!("delivering security material to cell {cell_id}"))?;
+                drop(parent_write);
+            }
             handles.push(CellHandle {
                 child: Some(child),
                 cell_id,
@@ -180,7 +229,11 @@ impl CellLauncher for LocalLauncher {
 pub struct K8sLauncher;
 
 impl CellLauncher for K8sLauncher {
-    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>> {
+    fn launch(&self, ctx: CellLaunchContext) -> Result<Vec<CellHandle>> {
+        ensure!(
+            ctx.local_roles.is_none(),
+            "k8s launcher received local role material"
+        );
         tracing::info!(
             cell_count = ctx.cell_count,
             "cellular k8s launcher: expecting cell pods to register (no local spawn)"
@@ -206,7 +259,11 @@ impl CellLauncher for K8sLauncher {
 pub struct SlurmLauncher;
 
 impl CellLauncher for SlurmLauncher {
-    fn launch(&self, ctx: &CellLaunchContext) -> Result<Vec<CellHandle>> {
+    fn launch(&self, ctx: CellLaunchContext) -> Result<Vec<CellHandle>> {
+        ensure!(
+            ctx.local_roles.is_none(),
+            "slurm launcher received local role material"
+        );
         tracing::info!(
             cell_count = ctx.cell_count,
             "cellular slurm launcher: expecting srun-launched cell tasks to register (no local spawn)"
@@ -298,6 +355,55 @@ pub fn resolved_envelope_from_input(input: &[u8]) -> Option<(serde_json::Value, 
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn local_child_receives_secret_only_on_inherited_pipe() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let output = directory.path().join("role-material.bin");
+        let secret = b"opaque-role-material";
+        let (child_read, mut parent_write) = UnixStream::pair().expect("security pipe");
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("cat <&3 >\"$1\"")
+            .arg("aiperf-security-test")
+            .arg(&output);
+        inherit_security_fd(&mut command, child_read.as_raw_fd());
+
+        let env_values = command
+            .as_std()
+            .get_envs()
+            .filter_map(|(_, value)| value.and_then(std::ffi::OsStr::to_str))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            env_values
+                .iter()
+                .find(|value| **value == CELL_SECURITY_FD.to_string()),
+            Some(&"3")
+        );
+        assert!(!env_values.iter().any(|value| value.as_bytes() == secret));
+        assert!(
+            !command
+                .as_std()
+                .get_args()
+                .any(|value| value.as_encoded_bytes() == secret)
+        );
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let status = runtime.block_on(async move {
+            let mut child = command.spawn().expect("spawn child");
+            drop(child_read);
+            parent_write.write_all(secret).expect("write material");
+            drop(parent_write);
+            child.wait().await.expect("wait child")
+        });
+        assert!(status.success());
+        assert_eq!(std::fs::read(output).expect("read material"), secret);
+    }
+
     fn context() -> CellLaunchContext {
         let mut bases = BTreeMap::new();
         bases.insert("profiling".to_owned(), 0);
@@ -306,7 +412,7 @@ mod tests {
             controller_coordinate: "file:/tmp/controller-peer.rmp".to_owned(),
             phase_ordinal_bases: bases,
             artifact_authority: Some("controller.local:9600".to_owned()),
-            bootstrap_bundles: Vec::new(),
+            local_roles: None,
         }
     }
 
@@ -336,14 +442,14 @@ mod tests {
 
     #[test]
     fn k8s_launcher_spawns_nothing_but_expects_all_cells() {
-        let handles = K8sLauncher.launch(&context()).expect("k8s launch");
+        let handles = K8sLauncher.launch(context()).expect("k8s launch");
         assert_eq!(handles.len(), 2);
         assert!(handles.iter().all(|handle| handle.child.is_none()));
     }
 
     #[test]
     fn slurm_launcher_spawns_nothing_but_expects_all_cells() {
-        let handles = SlurmLauncher.launch(&context()).expect("slurm launch");
+        let handles = SlurmLauncher.launch(context()).expect("slurm launch");
         assert_eq!(handles.len(), 2);
         assert!(handles.iter().all(|handle| handle.child.is_none()));
     }

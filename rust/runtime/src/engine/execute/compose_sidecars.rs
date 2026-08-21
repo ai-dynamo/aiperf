@@ -855,7 +855,7 @@ pub(crate) async fn execute_native_inner(
     // point in the finalize, and `accumulator` is mutated by `summarize_run_metrics`
     // below, so its store must be cloned before that runs.
     #[cfg(feature = "cellular")]
-    let cell_partition_ship = crate::engine::cellular_cell::CellRecordsShipper::from_env().map(
+    let cell_partition_ship = crate::engine::cellular_cell::CellRecordsShipper::from_env()?.map(
         |shipper| -> (_, crate::engine::cellular_cell::CellPartitionPayload) {
             use crate::engine::cellular_cell::CellPartitionPayload;
             let epoch_ns: i64 = clock.now_ns().saturating_sub(start_ns);

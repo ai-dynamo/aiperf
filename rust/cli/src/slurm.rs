@@ -35,6 +35,39 @@ use anyhow::{Context, Result};
 /// subcommand (`generate`) is delegated to the Python CLI.
 pub const RUN_SUBCOMMAND: &str = "run";
 
+const CONTROLLER_BOOTSTRAP_FILE_ENV: &str = "AIPERF_CONTROLLER_BOOTSTRAP_FILE";
+const ROLE_BOOTSTRAP_FILE_ENV: &str = "AIPERF_ROLE_BOOTSTRAP_FILE";
+
+/// Require the deployment-owned bootstrap mount for this SLURM role.
+///
+/// This only establishes that the launcher mounted a path. The runtime opens it
+/// with no-follow/regular-file checks and validates its signed-role material
+/// before binding a controller or cell listener.
+fn require_bootstrap_mount(env: &str, role: &str) -> Result<()> {
+    let path = std::env::var_os(env)
+        .filter(|path| !path.is_empty())
+        .with_context(|| format!("SLURM {role} has no deployment-provisioned {env}"))?;
+    validate_bootstrap_mount(std::path::Path::new(&path), role)
+}
+
+fn validate_bootstrap_mount(path: &std::path::Path, role: &str) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("SLURM {role} bootstrap mount is unavailable"))?;
+    anyhow::ensure!(
+        metadata.file_type().is_file(),
+        "SLURM {role} bootstrap mount is not a regular file"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        anyhow::ensure!(
+            metadata.permissions().mode() & 0o7777 == 0o600,
+            "SLURM {role} bootstrap mount is not private"
+        );
+    }
+    Ok(())
+}
+
 /// Dispatch `aiperf slurm run` for one SLURM task.
 ///
 /// `args` are the arguments after `run` (typically `--config <file>` plus any
@@ -62,8 +95,10 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
 
     if topology.is_controller() {
+        require_bootstrap_mount(CONTROLLER_BOOTSTRAP_FILE_ENV, "controller")?;
         run_controller(args, &topology, &coordinate)
     } else {
+        require_bootstrap_mount(ROLE_BOOTSTRAP_FILE_ENV, "cell")?;
         run_cell(&topology, &coordinate)
     }
 }
@@ -113,4 +148,27 @@ fn run_cell(topology: &SlurmTopology, coordinate: &str) -> Result<i32> {
     );
     // Diverges (`-> !`): drives the cell to its terminal and exits the process.
     crate::execute_mode::dispatch(&[crate::execute_mode::CELL_FLAG.to_string()])
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn bootstrap_mount_requires_exact_private_permissions() {
+        let file = tempfile::NamedTempFile::new().expect("temporary bootstrap file");
+
+        for mode in [0o400, 0o700] {
+            std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(mode))
+                .expect("permissions");
+            assert!(
+                validate_bootstrap_mount(file.path(), "test role").is_err(),
+                "mode {mode:o} must be refused"
+            );
+        }
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600))
+            .expect("permissions");
+        assert!(validate_bootstrap_mount(file.path(), "test role").is_ok());
+    }
 }

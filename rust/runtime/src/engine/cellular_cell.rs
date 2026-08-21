@@ -41,7 +41,6 @@ use crate::cellular::transport::ArtifactChannelServerConfig;
 use crate::engine::artifact_shipping::{ArtifactBearer, ArtifactChannelClient};
 
 static ARTIFACT_CHANNEL: OnceLock<ArtifactChannelClient> = OnceLock::new();
-
 /// Install this cell's pinned-TLS artifact client once the controller returns its
 /// public identity beside the Velo envelope.
 pub(crate) fn install_artifact_channel(
@@ -72,6 +71,14 @@ pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 /// cell's issuer recovers each turn's single-cell absolute slot from its phase-local
 /// slot (the cell's sampler restarts each phase; see [`phase_ordinal_bases_from_env`]).
 pub const CELL_PHASE_ORDINAL_BASES_ENV: &str = "AIPERF_CELL_PHASE_ORDINAL_BASES";
+
+/// Acquire this cell process's private security context before any network activity.
+pub fn acquire_cell_process_security(cell_id: u32) -> Result<()> {
+    crate::engine::cellular_bootstrap::acquire_process_cell_security(
+        crate::engine::cellular_bootstrap::CellularRole::Cell(cell_id),
+    )?;
+    Ok(())
+}
 
 /// Env var carrying the controller's artifact upload `host:port`. The
 /// operator injects this into k8s pods (or the local launcher sets it to the
@@ -364,6 +371,8 @@ pub fn ship_velo_artifacts_if_enabled(
         "velo artifact shipping starting"
     );
     let cell_dir = cell_dir.to_path_buf();
+    let security =
+        std::sync::Arc::clone(crate::engine::cellular_bootstrap::process_cell_security()?);
     std::thread::spawn(move || -> Result<()> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -377,7 +386,13 @@ pub fn ship_velo_artifacts_if_enabled(
                 .await
                 .context("building cell artifact velo")?;
             let (controller, credential) =
-                crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
+                crate::engine::cellular_bootstrap::connect_authenticated_controller(
+                    &velo,
+                    &coordinate,
+                    cell_id,
+                    &security,
+                )
+                .await?;
             crate::engine::artifact_stream_velo::ship_cell_artifacts_velo(
                 &velo,
                 &controller,
@@ -682,7 +697,7 @@ fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connec
 /// runtime; the velo instance is dropped on return.
 #[cfg(feature = "cellular")]
 pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
-    use crate::cellular::transport::connect::build_velo;
+    use crate::cellular::transport::connect::{build_velo, connect_controller};
     use crate::cellular::{CellClient, CellMessage, VeloCellClient};
     use anyhow::Context;
 
@@ -691,9 +706,19 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
     let cell_id = ModuloCellPartition::from_env()
         .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
         .cell_id();
-    let (controller, credential) =
-        crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
+    let security = crate::engine::cellular_bootstrap::process_cell_security()?;
+    ensure!(
+        security.role()
+            == Some(crate::engine::cellular_bootstrap::CellularRole::Cell(
+                cell_id
+            )),
+        "installed security context has the wrong cell role"
+    );
     let velo = build_velo(cell_bind(&coordinate, "fetch")).await?;
+    let controller = connect_controller(&velo, &coordinate)
+        .await
+        .context("connecting to controller")?;
+    let credential = std::sync::Arc::new(security.registration_credential()?);
     // Keep handles before constructing the client so the phaser can subscribe over
     // the same fetch instance.
     let phaser_start = matches!(
@@ -704,14 +729,15 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
         "1" | "true" | "on" | "yes"
     );
     let phaser_handles = phaser_start.then(|| (velo.clone(), controller.clone()));
-    let mut client = VeloCellClient::connect(velo, controller)
-        .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
+    let mut client =
+        VeloCellClient::connect_authenticated(velo, controller, std::sync::Arc::clone(&credential))
+            .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
     let bearer = cell_artifact_authority()
         .map(|_| ArtifactBearer::generate())
         .transpose()?;
     let artifact_digest = bearer.as_ref().map(ArtifactBearer::digest_bytes);
     let reply = client
-        .register_with_credential(cell_id, artifact_digest, &credential)
+        .register_with_credential(cell_id, artifact_digest, credential.as_ref())
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))?;
     let has_artifact_channel = reply.artifact_channel.is_some();
@@ -857,8 +883,15 @@ pub async fn await_controller_phase_advance(phase: &str) -> Result<()> {
         .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
         .cell_id();
     let velo = build_velo(cell_bind(&coordinate, "phase-await")).await?;
+    let security = crate::engine::cellular_bootstrap::process_cell_security()?;
     let (controller, credential) =
-        crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
+        crate::engine::cellular_bootstrap::connect_authenticated_controller(
+            &velo,
+            &coordinate,
+            cell_id,
+            security,
+        )
+        .await?;
     let mut sub = PhaserClient::subscribe(velo, &controller, cell_id, &credential)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} phaser subscribe: {error}"))?;
@@ -885,8 +918,15 @@ pub async fn send_controller_phase_signal(
         .context("cell has no partition env (AIPERF_CELL_ID/_COUNT)")?
         .cell_id();
     let velo = build_velo(cell_bind(&coordinate, "phase-signal")).await?;
+    let security = crate::engine::cellular_bootstrap::process_cell_security()?;
     let (controller, credential) =
-        crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
+        crate::engine::cellular_bootstrap::connect_authenticated_controller(
+            &velo,
+            &coordinate,
+            cell_id,
+            security,
+        )
+        .await?;
     let mut client =
         VeloCellClient::connect_authenticated(velo, controller, std::sync::Arc::new(credential))
             .map_err(|error| anyhow::anyhow!("cell {cell_id} connect: {error}"))?;
@@ -931,8 +971,15 @@ pub async fn verify_dataset_fanout() -> Result<()> {
     let cell_count = partition.cell_count() as u64;
 
     let velo = build_velo(cell_bind(&coordinate, "dataset")).await?;
+    let security = crate::engine::cellular_bootstrap::process_cell_security()?;
     let (controller, credential) =
-        crate::engine::cellular_bootstrap::load_authenticated_controller_peer(partition.cell_id())?;
+        crate::engine::cellular_bootstrap::connect_authenticated_controller(
+            &velo,
+            &coordinate,
+            partition.cell_id(),
+            security,
+        )
+        .await?;
     let index = DatasetClient::build_owned_index(
         velo,
         &controller,
@@ -1076,20 +1123,30 @@ impl CellPartitionPayload {
 pub struct CellRecordsShipper {
     cell_id: u32,
     coordinate: String,
+    security: std::sync::Arc<crate::engine::cellular_registration::CellSecurityContext>,
 }
 
 #[cfg(feature = "cellular")]
 impl CellRecordsShipper {
     /// Builds a shipper when the controller coordinate and cell partition env vars
-    /// are set, else `None` (the ordinary single-process path).
-    pub fn from_env() -> Option<Self> {
-        let partition = ModuloCellPartition::from_env()?;
+    /// are set, else `None` (the ordinary single-process path). A configured cell
+    /// fails when its process security context has not been installed.
+    pub fn from_env() -> Result<Option<Self>> {
+        let Some(partition) = ModuloCellPartition::from_env() else {
+            return Ok(None);
+        };
         let cell_id = partition.cell_id();
-        let coordinate = Self::ship_target(std::env::var(CELL_CONTROLLER_ADDR_ENV).ok())?;
-        Some(Self {
+        let Some(coordinate) = Self::ship_target(std::env::var(CELL_CONTROLLER_ADDR_ENV).ok())
+        else {
+            return Ok(None);
+        };
+        let security =
+            std::sync::Arc::clone(crate::engine::cellular_bootstrap::process_cell_security()?);
+        Ok(Some(Self {
             cell_id,
             coordinate,
-        })
+            security,
+        }))
     }
 
     /// Returns the controller's terminal partition coordinate.
@@ -1234,6 +1291,7 @@ impl CellRecordsShipper {
 
         let coordinate = self.coordinate.clone();
         let cell_id = self.cell_id;
+        let security = std::sync::Arc::clone(&self.security);
 
         // A dedicated thread + multi-thread runtime for the velo ship: velo builds
         // and drives its own tasks here, isolated from the execute runtime.
@@ -1245,7 +1303,13 @@ impl CellRecordsShipper {
             runtime.block_on(async move {
                 let velo = build_velo(cell_bind(&coordinate, "ship")).await?;
                 let (controller, credential) =
-                    crate::engine::cellular_bootstrap::load_authenticated_controller_peer(cell_id)?;
+                    crate::engine::cellular_bootstrap::connect_authenticated_controller(
+                        &velo,
+                        &coordinate,
+                        cell_id,
+                        &security,
+                    )
+                    .await?;
                 let mut client = VeloCellClient::connect_authenticated(
                     velo,
                     controller,
@@ -1334,6 +1398,35 @@ mod tests {
             CellRecordsShipper::ship_target(Some("tcp://controller:9500".to_owned())),
             Some("tcp://controller:9500".to_owned())
         );
+    }
+
+    #[test]
+    fn configured_cell_process_security_state_cannot_silently_disable_shipping() {
+        use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
+        use std::process::Command;
+
+        const CHILD_ENV: &str = "AIPERF_TEST_MISSING_SHIPPER_SECURITY_CHILD";
+        const TEST_NAME: &str = "engine::cellular_cell::tests::configured_cell_process_security_state_cannot_silently_disable_shipping";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let status = Command::new(std::env::current_exe().expect("current test executable"))
+                .args(["--exact", TEST_NAME, "--nocapture"])
+                .env(CHILD_ENV, "1")
+                .status()
+                .expect("run isolated missing-security test");
+            assert!(status.success(), "isolated missing-security test failed");
+            return;
+        }
+
+        let env = ScopedCellEnv::capture(&[CELL_ID_ENV, CELL_COUNT_ENV, CELL_CONTROLLER_ADDR_ENV]);
+        env.set(CELL_ID_ENV, "0");
+        env.set(CELL_COUNT_ENV, "1");
+        env.set(CELL_CONTROLLER_ADDR_ENV, "tcp://controller:9500");
+
+        let error = match CellRecordsShipper::from_env() {
+            Err(error) => error,
+            Ok(_) => panic!("configured cell must fail when security is missing"),
+        };
+        assert!(format!("{error:#}").contains("not installed"));
     }
 
     #[test]

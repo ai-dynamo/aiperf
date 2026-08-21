@@ -850,7 +850,7 @@ pub(crate) async fn execute_graph_native(
     // same-host barrier for this cell, and `accumulator` is mutated by
     // `summarize_run_metrics` below, so its store must be cloned before that runs.
     #[cfg(feature = "cellular")]
-    let cell_partition_ship = crate::engine::cellular_cell::CellRecordsShipper::from_env().map(
+    let cell_partition_ship = crate::engine::cellular_cell::CellRecordsShipper::from_env()?.map(
         |shipper| -> (_, crate::engine::cellular_cell::CellPartitionPayload) {
             use crate::engine::cellular_cell::CellPartitionPayload;
             // No `capture`/wall clock is in scope on the graph path, so derive the run span
