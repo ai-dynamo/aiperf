@@ -5,26 +5,28 @@
 //!
 //! A cell reaches the controller with **`velo.connect(Endpoint)`** — velo's
 //! address-first bootstrap handshake (`ajcasagrande/velo` `feat/connect-by-endpoint`):
-//! it dials the controller's operator/launcher-injected endpoint, learns the
-//! controller's real `PeerInfo` via the `_hello` handshake, and mutually registers.
-//! No discovery backend, no bootstrap side-channel, no forged identities — the only
-//! a-priori fact a cell needs is the one endpoint (`AIPERF_CELL_CONTROLLER_ADDR`,
-//! `tcp://HOST:PORT`; also `uds://PATH` for a pure-local run without HTTP artifact
-//! shipping).
+//! it dials the controller's operator/launcher-injected endpoint and learns the
+//! controller-presented `PeerInfo` via the unauthenticated `_hello` handshake. The
+//! cell retains those exact bytes and the resolved dial target until the signed
+//! registration reply binds them to its provisioned controller key. No discovery
+//! backend or bootstrap side-channel is involved; the only a-priori network fact is
+//! the endpoint (`AIPERF_CELL_CONTROLLER_ADDR`, `tcp://HOST:PORT`; also `uds://PATH`
+//! for a pure-local run without HTTP artifact shipping).
 //!
 //! The coordinate stays a `tcp://HOST:PORT` string in every shipping deployment so
 //! the HTTP artifact plane (`engine::artifact_shipping`, which derives its
 //! authority by swapping the port on the same coordinate) keeps working.
 
 use std::net::SocketAddr;
-use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use velo::transports::tcp::TcpTransportBuilder;
 use velo::{Endpoint, PeerInfo, Transport, Velo};
+
+use super::CellTransportError;
 
 /// How long a cell keeps retrying `connect` before giving up (the controller may
 /// not have bound its listener yet when a k8s cell pod starts first).
@@ -32,6 +34,136 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// One retry interval for `connect`.
 const CONNECT_RETRY_INTERVAL: Duration = Duration::from_millis(200);
+
+const HANDLER_READY_RETRY_INTERVAL: Duration = Duration::from_millis(10);
+
+/// The exact address selected when resolving and dialing the controller coordinate.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) enum DialedControllerAddress {
+    /// The resolved TCP socket address passed to Velo.
+    Tcp(SocketAddr),
+    /// The exact Unix-domain socket pathname bytes passed to Velo.
+    #[cfg(unix)]
+    Uds(Box<[u8]>),
+}
+
+/// Controller identity returned by Velo's endpoint handshake plus the exact dial target.
+#[derive(Clone)]
+pub(crate) struct ConnectedController {
+    peer: PeerInfo,
+    dialed: DialedControllerAddress,
+}
+
+impl ConnectedController {
+    pub(crate) fn peer(&self) -> &PeerInfo {
+        &self.peer
+    }
+
+    pub(crate) fn binding(&self) -> Result<ControllerPeerBinding, CellTransportError> {
+        ControllerPeerBinding::new(&self.peer, self.dialed.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts(peer: PeerInfo, dialed: DialedControllerAddress) -> Self {
+        Self { peer, dialed }
+    }
+}
+
+/// Exact controller identity and dial target covered by registration signatures.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct ControllerPeerBinding {
+    instance_id: Vec<u8>,
+    worker_address: Vec<u8>,
+    dialed: DialedControllerAddress,
+}
+
+impl ControllerPeerBinding {
+    pub(crate) fn new(
+        peer: &PeerInfo,
+        dialed: DialedControllerAddress,
+    ) -> Result<Self, CellTransportError> {
+        Ok(Self {
+            instance_id: rmp_serde::to_vec(&peer.instance_id()).map_err(|_| {
+                CellTransportError::Authentication("controller binding encoding failed")
+            })?,
+            worker_address: peer.worker_address().as_bytes().to_vec(),
+            dialed,
+        })
+    }
+
+    pub(crate) fn matches_peer(&self, peer: &PeerInfo) -> Result<bool, CellTransportError> {
+        let instance_id = rmp_serde::to_vec(&peer.instance_id()).map_err(|_| {
+            CellTransportError::Authentication("controller binding encoding failed")
+        })?;
+        Ok(self.instance_id == instance_id
+            && self.worker_address.as_slice() == peer.worker_address().as_bytes())
+    }
+
+    pub(crate) fn append_transcript(&self, transcript: &mut Vec<u8>) {
+        append_len_prefixed(transcript, &self.instance_id);
+        append_len_prefixed(transcript, &self.worker_address);
+        match &self.dialed {
+            DialedControllerAddress::Tcp(address) => {
+                transcript.push(1);
+                let address_len = match address {
+                    SocketAddr::V4(_) => 1_u64 + 4 + 2,
+                    SocketAddr::V6(_) => 1_u64 + 16 + 2 + 4 + 4,
+                };
+                transcript.extend_from_slice(&address_len.to_le_bytes());
+                match address {
+                    SocketAddr::V4(address) => {
+                        transcript.push(4);
+                        transcript.extend_from_slice(&address.ip().octets());
+                        transcript.extend_from_slice(&address.port().to_be_bytes());
+                    }
+                    SocketAddr::V6(address) => {
+                        transcript.push(6);
+                        transcript.extend_from_slice(&address.ip().octets());
+                        transcript.extend_from_slice(&address.port().to_be_bytes());
+                        transcript.extend_from_slice(&address.flowinfo().to_be_bytes());
+                        transcript.extend_from_slice(&address.scope_id().to_be_bytes());
+                    }
+                }
+            }
+            #[cfg(unix)]
+            DialedControllerAddress::Uds(path) => {
+                transcript.push(2);
+                append_len_prefixed(transcript, path);
+            }
+        }
+    }
+}
+
+fn append_len_prefixed(output: &mut Vec<u8>, bytes: &[u8]) {
+    output.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    output.extend_from_slice(bytes);
+}
+
+/// Absolute bound shared by connection, readiness, registration, and attestation.
+#[derive(Clone, Copy)]
+pub(crate) struct RegistrationDeadline(tokio::time::Instant);
+
+impl RegistrationDeadline {
+    pub(crate) fn after(duration: Duration) -> Self {
+        Self(tokio::time::Instant::now() + duration)
+    }
+
+    pub(crate) fn instant(self) -> tokio::time::Instant {
+        self.0
+    }
+
+    pub(crate) fn is_elapsed(self) -> bool {
+        tokio::time::Instant::now() >= self.0
+    }
+
+    pub(crate) fn for_registration() -> Self {
+        let seconds = std::env::var("AIPERF_CELL_REGISTER_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(300);
+        Self::after(Duration::from_secs(seconds))
+    }
+}
 
 /// How the controller or a cell binds its velo messaging transport.
 pub enum BindSpec {
@@ -89,51 +221,131 @@ fn build_tcp_transport(addr: impl std::net::ToSocketAddrs) -> Result<Arc<dyn Tra
 
 /// Parse a controller endpoint coordinate into a velo [`Endpoint`]: `tcp://HOST:PORT`
 /// or `uds://PATH` (unix, pure-local).
-pub fn parse_endpoint(coordinate: &str) -> Result<Endpoint> {
+async fn parse_endpoint_until(
+    coordinate: &str,
+    deadline: RegistrationDeadline,
+) -> Result<(Endpoint, DialedControllerAddress), CellTransportError> {
     if let Some(addr) = coordinate.strip_prefix("tcp://") {
-        // `Endpoint::Tcp` wants a concrete `SocketAddr`, but `SocketAddr::parse`
-        // only accepts a numeric `IP:PORT`. Kubernetes coordinates are DNS names
-        // (the controller pod's headless-service FQDN, e.g.
-        // `<pod>.<svc>.<ns>.svc.cluster.local:9500`), so resolve through
-        // `to_socket_addrs` (getaddrinfo) and take the first address. The
-        // controller pod is up before cells dial it, so a one-shot resolve at
-        // connect time is sufficient; a bare `IP:PORT` resolves trivially.
-        let socket: SocketAddr = addr
-            .to_socket_addrs()
-            .with_context(|| format!("resolving tcp endpoint {addr:?}"))?
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("tcp endpoint {addr:?} resolved to no addresses"))?;
-        return Ok(Endpoint::Tcp(socket));
+        if deadline.is_elapsed() {
+            return Err(connection_deadline_error(None));
+        }
+        let mut addresses =
+            tokio::time::timeout_at(deadline.instant(), tokio::net::lookup_host(addr))
+                .await
+                .map_err(|_| connection_deadline_error(None))?
+                .map_err(|error| CellTransportError::Io(error.to_string()))?;
+        let socket = addresses.next().ok_or_else(|| {
+            CellTransportError::Io("controller endpoint resolved to no addresses".to_owned())
+        })?;
+        return Ok((Endpoint::Tcp(socket), DialedControllerAddress::Tcp(socket)));
     }
     if let Some(path) = coordinate.strip_prefix("uds://") {
         #[cfg(unix)]
         {
-            return Ok(Endpoint::Uds(PathBuf::from(path)));
+            use std::os::unix::ffi::OsStrExt as _;
+
+            let path = PathBuf::from(path);
+            let dialed = DialedControllerAddress::Uds(
+                path.as_os_str().as_bytes().to_vec().into_boxed_slice(),
+            );
+            return Ok((Endpoint::Uds(path), dialed));
         }
         #[cfg(not(unix))]
         {
             let _ = path;
-            bail!("uds endpoints are unix-only: {coordinate:?}");
+            return Err(CellTransportError::Io(
+                "uds controller endpoints are unix-only".to_owned(),
+            ));
         }
     }
-    bail!("unrecognized controller endpoint {coordinate:?}; expected tcp://HOST:PORT or uds://PATH")
+    Err(CellTransportError::Io(
+        "unrecognized controller endpoint; expected tcp://HOST:PORT or uds://PATH".to_owned(),
+    ))
+}
+
+fn connection_deadline_error(last_error: Option<&str>) -> CellTransportError {
+    match last_error {
+        Some(error) => CellTransportError::Io(format!(
+            "controller connection deadline elapsed; last connection error: {error}"
+        )),
+        None => CellTransportError::Io("controller connection deadline elapsed".to_owned()),
+    }
 }
 
 /// Connect to the controller at `coordinate`, retrying until it is reachable or
 /// `CONNECT_TIMEOUT` elapses, and return its `PeerInfo`. Wraps `velo.connect`.
 pub async fn connect_controller(velo: &Velo, coordinate: &str) -> Result<PeerInfo> {
-    let endpoint = parse_endpoint(coordinate)?;
-    let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
+    connect_controller_until(
+        velo,
+        coordinate,
+        RegistrationDeadline::after(CONNECT_TIMEOUT),
+    )
+    .await
+    .map(|controller| controller.peer)
+    .map_err(anyhow::Error::new)
+}
+
+/// Connect to one resolved controller address before the shared registration deadline.
+pub(crate) async fn connect_controller_until(
+    velo: &Velo,
+    coordinate: &str,
+    deadline: RegistrationDeadline,
+) -> Result<ConnectedController, CellTransportError> {
+    let (endpoint, dialed) = parse_endpoint_until(coordinate, deadline).await?;
+    let mut last_error = None;
     loop {
-        match velo.connect(endpoint.clone()).await {
-            Ok(peer) => return Ok(peer),
-            Err(error) => {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(error).context("connecting to controller (timed out)");
-                }
+        match tokio::time::timeout_at(deadline.instant(), velo.connect(endpoint.clone())).await {
+            Ok(Ok(peer)) => {
+                return Ok(ConnectedController { peer, dialed });
+            }
+            Ok(Err(error)) => last_error = Some(error.to_string()),
+            Err(_) => {
+                return Err(connection_deadline_error(last_error.as_deref()));
             }
         }
-        tokio::time::sleep(CONNECT_RETRY_INTERVAL).await;
+        if tokio::time::timeout_at(
+            deadline.instant(),
+            tokio::time::sleep(CONNECT_RETRY_INTERVAL),
+        )
+        .await
+        .is_err()
+        {
+            return Err(connection_deadline_error(last_error.as_deref()));
+        }
+    }
+}
+
+/// Wait for a named controller handler using Velo's typed handler inventory.
+pub(crate) async fn await_handler_until(
+    velo: &Velo,
+    controller: &ConnectedController,
+    handler: &'static str,
+    deadline: RegistrationDeadline,
+) -> Result<(), CellTransportError> {
+    loop {
+        tokio::time::timeout_at(
+            deadline.instant(),
+            velo.refresh_handlers(controller.peer.instance_id()),
+        )
+        .await
+        .map_err(|_| CellTransportError::ReadinessTimeout { handler })?
+        .map_err(|error| CellTransportError::Io(error.to_string()))?;
+        let handlers = tokio::time::timeout_at(
+            deadline.instant(),
+            velo.available_handlers(controller.peer.instance_id()),
+        )
+        .await
+        .map_err(|_| CellTransportError::ReadinessTimeout { handler })?
+        .map_err(|error| CellTransportError::Io(error.to_string()))?;
+        if handlers.iter().any(|candidate| candidate == handler) {
+            return Ok(());
+        }
+        tokio::time::timeout_at(
+            deadline.instant(),
+            tokio::time::sleep(HANDLER_READY_RETRY_INTERVAL),
+        )
+        .await
+        .map_err(|_| CellTransportError::ReadinessTimeout { handler })?;
     }
 }
 
@@ -141,28 +353,83 @@ pub async fn connect_controller(velo: &Velo, coordinate: &str) -> Result<PeerInf
 mod tests {
     use super::*;
 
+    // Catches omission of the fixed-width dial-address length from the signature transcript.
     #[test]
-    fn parse_recognizes_tcp_and_uds_endpoints() {
+    fn tcp_controller_binding_has_canonical_literal_encoding() {
+        let binding = ControllerPeerBinding {
+            instance_id: Vec::new(),
+            worker_address: Vec::new(),
+            dialed: DialedControllerAddress::Tcp("127.0.0.1:9500".parse().unwrap()),
+        };
+        let mut transcript = Vec::new();
+        binding.append_transcript(&mut transcript);
+
+        assert_eq!(
+            transcript,
+            vec![
+                0, 0, 0, 0, 0, 0, 0, 0, // empty instance id
+                0, 0, 0, 0, 0, 0, 0, 0, // empty worker address
+                1, // TCP dial variant
+                7, 0, 0, 0, 0, 0, 0, 0, // fixed-width dial-address length
+                4, 127, 0, 0, 1, 0x25, 0x1c,
+            ]
+        );
+    }
+
+    // Catches DNS resolution happening before the caller's registration deadline.
+    #[tokio::test]
+    async fn expired_registration_deadline_prevents_tcp_resolution() {
+        let cell = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        let error = match connect_controller_until(
+            &cell,
+            "tcp://not a socket address",
+            RegistrationDeadline::after(Duration::ZERO),
+        )
+        .await
+        {
+            Ok(_) => panic!("an expired deadline must prevent resolution"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error,
+            CellTransportError::Io("controller connection deadline elapsed".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_recognizes_tcp_and_uds_endpoints() {
+        let deadline = RegistrationDeadline::after(Duration::from_secs(1));
         assert!(matches!(
-            parse_endpoint("tcp://127.0.0.1:9500").unwrap(),
-            Endpoint::Tcp(_)
+            parse_endpoint_until("tcp://127.0.0.1:9500", deadline)
+                .await
+                .unwrap(),
+            (Endpoint::Tcp(_), DialedControllerAddress::Tcp(_))
         ));
-        assert!(parse_endpoint("http://nope").is_err());
-        assert!(parse_endpoint("tcp://not-an-addr").is_err());
+        assert!(parse_endpoint_until("http://nope", deadline).await.is_err());
+        assert!(
+            parse_endpoint_until("tcp://not-an-addr", deadline)
+                .await
+                .is_err()
+        );
         // `localhost` stands in for the DNS name supplied by Kubernetes.
         assert!(matches!(
-            parse_endpoint("tcp://localhost:9500").unwrap(),
-            Endpoint::Tcp(_)
+            parse_endpoint_until("tcp://localhost:9500", deadline)
+                .await
+                .unwrap(),
+            (Endpoint::Tcp(_), DialedControllerAddress::Tcp(_))
         ));
         #[cfg(unix)]
         assert!(matches!(
-            parse_endpoint("uds:///tmp/controller.sock").unwrap(),
-            Endpoint::Uds(_)
+            parse_endpoint_until("uds:///tmp/controller.sock", deadline)
+                .await
+                .unwrap(),
+            (Endpoint::Uds(_), DialedControllerAddress::Uds(_))
         ));
     }
 
     // A cell `connect`s the controller by TCP address alone (no PeerInfo), and the
-    // returned peer is the controller's real identity.
+    // returned peer is the exact identity presented by the endpoint handshake.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn connect_controller_bootstraps_by_endpoint() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -176,5 +443,73 @@ mod tests {
             .await
             .expect("connect");
         assert_eq!(peer.instance_id(), controller.instance_id());
+        assert_eq!(
+            peer.worker_address().as_bytes(),
+            controller
+                .messenger()
+                .peer_info()
+                .worker_address()
+                .as_bytes()
+        );
+        assert_ne!(
+            peer.worker_address().as_bytes(),
+            controller.peer_info().worker_address().as_bytes(),
+            "Velo::peer_info includes streaming addresses that _hello does not publish"
+        );
+    }
+
+    // Catches readiness retries that infer state by parsing English send errors.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registration_waits_for_typed_handler_publication_under_one_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let controller = build_velo(BindSpec::TcpListener(listener))
+            .await
+            .expect("controller velo");
+        let cell = build_velo(BindSpec::TcpLoopback).await.expect("cell velo");
+        let connected = connect_controller_until(
+            &cell,
+            &format!("tcp://{addr}"),
+            RegistrationDeadline::after(Duration::from_millis(200)),
+        )
+        .await
+        .expect("connect");
+
+        let delayed_controller = Arc::clone(&controller);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            delayed_controller
+                .register_handler(
+                    velo::Handler::unary_handler_async(
+                        super::super::HANDLER_REGISTER,
+                        |_ctx| async { Ok(Some(bytes::Bytes::new())) },
+                    )
+                    .build(),
+                )
+                .expect("publish register handler");
+        });
+        await_handler_until(
+            &cell,
+            &connected,
+            super::super::HANDLER_REGISTER,
+            RegistrationDeadline::after(Duration::from_millis(200)),
+        )
+        .await
+        .expect("published handler");
+
+        let timeout = await_handler_until(
+            &cell,
+            &connected,
+            "aiperf.cell.absent",
+            RegistrationDeadline::after(Duration::from_millis(20)),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            timeout,
+            CellTransportError::ReadinessTimeout {
+                handler: "aiperf.cell.absent"
+            }
+        );
     }
 }

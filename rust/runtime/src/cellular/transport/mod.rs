@@ -158,6 +158,8 @@ pub struct CellRegistrationProof {
     pub version: u8,
     /// Per-run nonce selected by the controller.
     pub run_nonce: [u8; 32],
+    /// Exact controller peer and resolved dial address observed by the cell.
+    pub(crate) controller_binding: connect::ControllerPeerBinding,
     /// Ed25519 signature over the canonical registration transcript.
     pub signature: Vec<u8>,
 }
@@ -232,6 +234,13 @@ pub enum CellTransportError {
     Decode(String),
     /// A transport (velo send/receive, connection) failure.
     Io(String),
+    /// A controller handler was not published before the registration deadline.
+    ReadinessTimeout {
+        /// Handler whose typed publication was awaited.
+        handler: &'static str,
+    },
+    /// A constant, redacted authentication failure.
+    Authentication(&'static str),
 }
 
 impl std::fmt::Display for CellTransportError {
@@ -240,6 +249,15 @@ impl std::fmt::Display for CellTransportError {
             Self::Encode(error) => write!(f, "failed to encode cell message: {error}"),
             Self::Decode(error) => write!(f, "failed to decode cell message: {error}"),
             Self::Io(error) => write!(f, "cell transport io error: {error}"),
+            Self::ReadinessTimeout { handler } => {
+                write!(
+                    f,
+                    "cell transport readiness timed out for handler {handler}"
+                )
+            }
+            Self::Authentication(detail) => {
+                write!(f, "cell transport authentication failed: {detail}")
+            }
         }
     }
 }

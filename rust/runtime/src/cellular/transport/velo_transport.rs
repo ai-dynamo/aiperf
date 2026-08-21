@@ -34,6 +34,11 @@ use velo::{Context, EventHandle, Handler, PeerInfo, Velo};
 
 #[cfg(test)]
 use super::CellPhaseSignal;
+#[cfg(test)]
+use super::connect::DialedControllerAddress;
+use super::connect::{
+    ConnectedController, ControllerPeerBinding, RegistrationDeadline, await_handler_until,
+};
 use super::{
     ArtifactChannelServerConfig, CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister,
     CellStorePartitionShip, CellTransportError, ControllerTransport, HANDLER_HEARTBEAT,
@@ -42,6 +47,7 @@ use super::{
 };
 use crate::engine::cellular_registration::{
     CellPeerAdmissionPurpose, CellRegistrationAuthority, CellRegistrationCredential,
+    ControllerRegisterAttestation, ControllerRegisterAttestor, ControllerRegisterVerifier,
 };
 
 /// Per-cell material returned only after the controller accepts registration.
@@ -61,7 +67,7 @@ pub type SpecFor =
 /// envelope plus the handle of the run-wide **START** event. The cell awaits that
 /// event before dispatching, so every cell begins the benchmark together once the
 /// controller has seen all `cell_count` registrations (synchronized start).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RegisterReply {
     /// The cell's sliced execute envelope (protocol-v2 JSON bytes).
     pub envelope: Vec<u8>,
@@ -69,6 +75,106 @@ pub struct RegisterReply {
     pub start_event: EventHandle,
     /// The public artifact TLS certificate, when cross-host transfer is enabled.
     pub artifact_channel: Option<ArtifactChannelServerConfig>,
+    /// Controller signature binding this reply to the connected controller and request.
+    attestation: ControllerRegisterAttestation,
+    registration_frame: Bytes,
+    reply_payload: Bytes,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RegisterReplyPayload {
+    envelope: Vec<u8>,
+    start_event: EventHandle,
+    artifact_channel: Option<ArtifactChannelServerConfig>,
+}
+
+#[derive(Serialize)]
+struct RegisterReplyPayloadRef<'a> {
+    envelope: &'a [u8],
+    start_event: EventHandle,
+    artifact_channel: &'a Option<ArtifactChannelServerConfig>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AttestedRegisterReply {
+    payload: Vec<u8>,
+    attestation: ControllerRegisterAttestation,
+}
+
+fn encode_reply_payload(
+    envelope: &[u8],
+    start_event: EventHandle,
+    artifact_channel: &Option<ArtifactChannelServerConfig>,
+) -> Result<Vec<u8>, CellTransportError> {
+    rmp_serde::to_vec(&RegisterReplyPayloadRef {
+        envelope,
+        start_event,
+        artifact_channel,
+    })
+    .map_err(encode)
+}
+
+pub(crate) fn decode_reply(
+    bytes: &[u8],
+    registration_frame: Bytes,
+) -> Result<RegisterReply, CellTransportError> {
+    let wire: AttestedRegisterReply = rmp_serde::from_slice(bytes).map_err(decode)?;
+    let payload: RegisterReplyPayload = rmp_serde::from_slice(&wire.payload).map_err(decode)?;
+    Ok(RegisterReply {
+        envelope: payload.envelope,
+        start_event: payload.start_event,
+        artifact_channel: payload.artifact_channel,
+        attestation: wire.attestation,
+        registration_frame,
+        reply_payload: Bytes::from(wire.payload),
+    })
+}
+
+pub(crate) fn verify_reply(
+    controller: &ConnectedController,
+    verifier: &ControllerRegisterVerifier,
+    registration: &CellRegister,
+    reply: &RegisterReply,
+    cell_id: u32,
+) -> Result<(), CellTransportError> {
+    if registration.cell_id != cell_id {
+        return Err(CellTransportError::Authentication(
+            "controller reply has the wrong cell identity",
+        ));
+    }
+    let proof =
+        registration
+            .registration_proof
+            .as_ref()
+            .ok_or(CellTransportError::Authentication(
+                "controller binding is missing",
+            ))?;
+    if proof.controller_binding != controller.binding()? {
+        return Err(CellTransportError::Authentication(
+            "controller binding does not match the connection",
+        ));
+    }
+    let encoded_payload =
+        encode_reply_payload(&reply.envelope, reply.start_event, &reply.artifact_channel)?;
+    if encoded_payload.as_slice() != reply.reply_payload.as_ref() {
+        return Err(CellTransportError::Authentication(
+            "controller reply payload is inconsistent",
+        ));
+    }
+    let encoded_registration = rmp_serde::to_vec(registration).map_err(encode)?;
+    if encoded_registration.as_slice() != reply.registration_frame.as_ref() {
+        return Err(CellTransportError::Authentication(
+            "controller registration frame is inconsistent",
+        ));
+    }
+    verifier
+        .verify(
+            &proof.controller_binding,
+            &reply.registration_frame,
+            &reply.reply_payload,
+            &reply.attestation,
+        )
+        .map_err(|_| CellTransportError::Authentication("controller reply attestation is invalid"))
 }
 
 fn encode(error: impl std::fmt::Display) -> CellTransportError {
@@ -106,28 +212,54 @@ impl VeloControllerTransport {
         cell_count: u32,
         start_event: EventHandle,
     ) -> Result<Self, CellTransportError> {
+        let reply_attestor = registration_authority.reply_attestor();
+        Self::bind_controller_inner(
+            velo,
+            registration_authority,
+            reply_attestor,
+            spec_for,
+            cell_count,
+            start_event,
+        )
+    }
+
+    fn bind_controller_inner(
+        velo: Arc<Velo>,
+        registration_authority: Arc<CellRegistrationAuthority>,
+        reply_attestor: ControllerRegisterAttestor,
+        spec_for: SpecFor,
+        cell_count: u32,
+        start_event: EventHandle,
+    ) -> Result<Self, CellTransportError> {
         let (sender, receiver) = mpsc::channel(1024);
         let all_registered = Arc::new(Notify::new());
         let preflight = Arc::new(crate::graph::supplement::GraphCellPreflightBarrier::new(
             cell_count,
         ));
         let registered = Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new()));
+        let register_authority = registration_authority.clone();
         let partition_authority = registration_authority.clone();
         let store_partition_authority = registration_authority.clone();
+        // `_hello` publishes the messenger peer. `Velo::peer_info()` augments it
+        // with streaming addresses the connected cell never observed.
+        let controller_peer = velo.messenger().peer_info();
 
         // register (unary): learn the cell, count it toward the start barrier, and
         // return its spec + the START handle it must await before dispatching.
         let reg_notify = all_registered.clone();
+        let registration_state = registered.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_REGISTER, move |ctx: Context| {
                 let spec_for = spec_for.clone();
-                let registration_authority = registration_authority.clone();
-                let registered = registered.clone();
+                let registration_authority = register_authority.clone();
+                let registered = registration_state.clone();
                 let reg_notify = reg_notify.clone();
+                let reply_attestor = reply_attestor.clone();
+                let controller_peer = controller_peer.clone();
                 async move {
                     let register: CellRegister = rmp_serde::from_slice(&ctx.payload)
                         .map_err(|error| anyhow::anyhow!("decode CellRegister: {error}"))?;
-                    let verified = registration_authority.verify(&register)?;
+                    let verified = registration_authority.verify(&register, &controller_peer)?;
                     ensure!(
                         verified.cell_id() == register.cell_id,
                         "cell registration proof identity does not match its request"
@@ -173,13 +305,20 @@ impl VeloControllerTransport {
                     if is_last_registration {
                         reg_notify.notify_one();
                     }
-                    let reply = RegisterReply {
-                        envelope: spec.envelope,
-                        start_event,
-                        artifact_channel: spec.artifact_channel,
-                    };
-                    let bytes = rmp_serde::to_vec(&reply)
-                        .map_err(|error| anyhow::anyhow!("encode RegisterReply: {error}"))?;
+                    let reply_payload =
+                        encode_reply_payload(&spec.envelope, start_event, &spec.artifact_channel)?;
+                    let binding = &register
+                        .registration_proof
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("verified registration proof is missing"))?
+                        .controller_binding;
+                    let attestation =
+                        reply_attestor.attest(binding, &ctx.payload, &reply_payload)?;
+                    let bytes = rmp_serde::to_vec(&AttestedRegisterReply {
+                        payload: reply_payload,
+                        attestation,
+                    })
+                    .map_err(|error| anyhow::anyhow!("encode RegisterReply: {error}"))?;
                     Ok(Some(Bytes::from(bytes)))
                 }
             })
@@ -450,31 +589,102 @@ impl VeloCellClient {
             registration_proof,
         })
         .map_err(encode)?;
+        self.send_registration_frame(Bytes::from(body)).await
+    }
+
+    async fn send_registration_frame(
+        &self,
+        registration_frame: Bytes,
+    ) -> Result<RegisterReply, CellTransportError> {
         let reply: Bytes = self
             .velo
             .unary(HANDLER_REGISTER)
             .map_err(io)?
-            .raw_payload(Bytes::from(body))
+            .raw_payload(registration_frame.clone())
             .instance(self.controller.instance_id())
             .send()
             .await
             .map_err(io)?;
-        rmp_serde::from_slice(&reply).map_err(decode)
+        decode_reply(&reply, registration_frame)
+    }
+
+    /// Build the exact signed request whose reply will be verified by the cell.
+    #[cfg(test)]
+    pub(crate) fn signed_registration(
+        &self,
+        cell_id: u32,
+        artifact_capability_digest: Option<[u8; 32]>,
+        credential: &CellRegistrationCredential,
+    ) -> Result<CellRegister, CellTransportError> {
+        let binding = ControllerPeerBinding::new(
+            &self.controller,
+            DialedControllerAddress::Tcp("127.0.0.1:0".parse().map_err(io)?),
+        )?;
+        self.signed_registration_for_controller(
+            cell_id,
+            artifact_capability_digest,
+            credential,
+            binding,
+        )
+    }
+
+    /// Build a request signed for the exact connected controller and dial target.
+    pub(crate) fn signed_registration_for_controller(
+        &self,
+        cell_id: u32,
+        artifact_capability_digest: Option<[u8; 32]>,
+        credential: &CellRegistrationCredential,
+        controller_binding: ControllerPeerBinding,
+    ) -> Result<CellRegister, CellTransportError> {
+        let cell_peer = self.registration_peer.clone();
+        let registration_proof = credential
+            .sign_register(&cell_peer, artifact_capability_digest, controller_binding)
+            .map_err(encode)?;
+        Ok(CellRegister {
+            cell_id,
+            cell_peer,
+            artifact_capability_digest,
+            registration_proof: Some(registration_proof),
+        })
+    }
+
+    /// Send a caller-retained request so it can verify the signed reply transcript.
+    pub(crate) async fn register_request(
+        &self,
+        registration: &CellRegister,
+    ) -> Result<RegisterReply, CellTransportError> {
+        self.send_registration_frame(Bytes::from(
+            rmp_serde::to_vec(registration).map_err(encode)?,
+        ))
+        .await
+    }
+
+    /// Await typed handler publication and send under the caller's one deadline.
+    pub(crate) async fn register_request_until(
+        &self,
+        controller: &ConnectedController,
+        registration: &CellRegister,
+        deadline: RegistrationDeadline,
+    ) -> Result<RegisterReply, CellTransportError> {
+        await_handler_until(&self.velo, controller, HANDLER_REGISTER, deadline).await?;
+        tokio::time::timeout_at(deadline.instant(), self.register_request(registration))
+            .await
+            .map_err(|_| {
+                CellTransportError::Io("controller registration deadline elapsed".to_owned())
+            })?
     }
 
     /// Sign the exact peer bytes and capability digest before registration.
+    #[cfg(test)]
     pub(crate) async fn register_with_credential(
         &self,
         cell_id: u32,
         artifact_capability_digest: Option<[u8; 32]>,
         credential: &CellRegistrationCredential,
     ) -> Result<RegisterReply, CellTransportError> {
-        let peer = self.registration_peer.clone();
-        let proof = credential
-            .sign_register(&peer, artifact_capability_digest)
-            .map_err(|error| CellTransportError::Encode(error.to_string()))?;
-        self.send_registration(cell_id, peer, artifact_capability_digest, Some(proof))
-            .await
+        let registration =
+            self.signed_registration(cell_id, artifact_capability_digest, credential)?;
+        self.register_request(&registration).await
     }
 
     /// Block until the controller triggers the run-wide START event (a synchronized
@@ -617,6 +827,100 @@ mod tests {
     use super::*;
     use crate::engine::cellular_registration::CellRegistrationAuthority;
 
+    struct AuthenticatedRegisterFixture {
+        connected: ConnectedController,
+        verifier: ControllerRegisterVerifier,
+        registration: CellRegister,
+        attestor: ControllerRegisterAttestor,
+        start_event: EventHandle,
+    }
+
+    impl AuthenticatedRegisterFixture {
+        fn signed_reply(&self, cell_id: u32, envelope: &[u8]) -> RegisterReply {
+            let reply_payload = encode_reply_payload(envelope, self.start_event, &None)
+                .expect("encode reply payload");
+            let registration_frame = Bytes::from(
+                rmp_serde::to_vec(&self.registration).expect("encode registration frame"),
+            );
+            let attestation = self
+                .attestor
+                .attest(
+                    &self.connected.binding().expect("controller binding"),
+                    &registration_frame,
+                    &reply_payload,
+                )
+                .expect("attest reply");
+            assert_eq!(self.registration.cell_id, cell_id);
+            RegisterReply {
+                envelope: envelope.to_vec(),
+                start_event: self.start_event,
+                artifact_channel: None,
+                attestation,
+                registration_frame,
+                reply_payload: Bytes::from(reply_payload),
+            }
+        }
+
+        fn with_envelope(&self, mut reply: RegisterReply, envelope: &[u8]) -> RegisterReply {
+            reply.envelope = envelope.to_vec();
+            reply
+        }
+
+        fn connected_with_changed_worker_address(&self) -> ConnectedController {
+            ConnectedController::from_parts(
+                PeerInfo::new(
+                    self.connected.peer().instance_id(),
+                    velo::WorkerAddress::from_encoded(vec![0x80]),
+                ),
+                DialedControllerAddress::Tcp("127.0.0.1:9500".parse().unwrap()),
+            )
+        }
+
+        fn with_dial_port(&self, port_offset: u16) -> ConnectedController {
+            ConnectedController::from_parts(
+                self.connected.peer().clone(),
+                DialedControllerAddress::Tcp(
+                    format!("127.0.0.1:{}", 9500 + port_offset).parse().unwrap(),
+                ),
+            )
+        }
+    }
+
+    async fn authenticated_register_fixture() -> AuthenticatedRegisterFixture {
+        let controller = build_velo(BindSpec::TcpLoopback)
+            .await
+            .expect("controller velo");
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).expect("authority");
+        let controller_peer = controller.peer_info();
+        let attestor = ControllerRegisterAttestor::mint(authority.run_nonce()).expect("attestor");
+        let connected = ConnectedController::from_parts(
+            controller_peer,
+            DialedControllerAddress::Tcp("127.0.0.1:9500".parse().unwrap()),
+        );
+        let binding = connected.binding().expect("controller binding");
+        let registration = CellRegister {
+            cell_id: 0,
+            cell_peer: b"cell-registration-peer".to_vec(),
+            artifact_capability_digest: None,
+            registration_proof: Some(
+                credentials[0]
+                    .sign_register(b"cell-registration-peer", None, binding)
+                    .expect("registration proof"),
+            ),
+        };
+        AuthenticatedRegisterFixture {
+            connected,
+            verifier: attestor.verifier(),
+            registration,
+            attestor,
+            start_event: controller
+                .event_manager()
+                .new_event()
+                .expect("start event")
+                .handle(),
+        }
+    }
+
     #[test]
     fn artifact_channel_registration_keeps_envelope_separate() {
         let public_config = ArtifactChannelServerConfig::new(vec![1, 2, 3]);
@@ -625,6 +929,75 @@ mod tests {
             artifact_channel: Some(public_config),
         };
         assert_eq!(spec.envelope, b"{\"run\":{}}".to_vec());
+    }
+
+    #[tokio::test]
+    async fn cell_refuses_envelope_without_matching_controller_attestation() {
+        let fixture = authenticated_register_fixture().await;
+        let reply = fixture.signed_reply(0, b"a");
+        assert!(
+            verify_reply(
+                &fixture.connected,
+                &fixture.verifier,
+                &fixture.registration,
+                &reply,
+                0,
+            )
+            .is_ok()
+        );
+        assert!(
+            verify_reply(
+                &fixture.connected,
+                &fixture.verifier,
+                &fixture.registration,
+                &fixture.with_envelope(reply, b"b"),
+                0,
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn controller_attestation_rejects_same_instance_with_changed_worker_address() {
+        let fixture = authenticated_register_fixture().await;
+        let reply = fixture.signed_reply(0, b"a");
+
+        assert!(
+            verify_reply(
+                &fixture.connected_with_changed_worker_address(),
+                &fixture.verifier,
+                &fixture.registration,
+                &reply,
+                0,
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn controller_attestation_rejects_changed_dial_address_or_reply_payload() {
+        let fixture = authenticated_register_fixture().await;
+        let reply = fixture.signed_reply(0, b"a");
+        assert!(
+            verify_reply(
+                &fixture.with_dial_port(1),
+                &fixture.verifier,
+                &fixture.registration,
+                &reply,
+                0,
+            )
+            .is_err()
+        );
+        assert!(
+            verify_reply(
+                &fixture.connected,
+                &fixture.verifier,
+                &fixture.registration,
+                &fixture.with_envelope(reply, b"changed"),
+                0,
+            )
+            .is_err()
+        );
     }
     use crate::cellular::heartbeat::HeartbeatAccumulator;
     use crate::cellular::shard::RecordsShardPartition;
@@ -649,7 +1022,7 @@ mod tests {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
             .await
             .expect("controller velo");
-        let controller_peer = controller_velo.peer_info();
+        let controller_peer = controller_velo.messenger().peer_info();
         let start = controller_velo
             .event_manager()
             .new_event()
@@ -730,7 +1103,7 @@ mod tests {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
             .await
             .expect("controller velo");
-        let controller_peer = controller_velo.peer_info();
+        let controller_peer = controller_velo.messenger().peer_info();
         let start = controller_velo
             .event_manager()
             .new_event()
@@ -790,7 +1163,7 @@ mod tests {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
             .await
             .expect("controller velo");
-        let controller_peer = controller_velo.peer_info();
+        let controller_peer = controller_velo.messenger().peer_info();
         let start = controller_velo
             .event_manager()
             .new_event()
@@ -902,7 +1275,7 @@ mod tests {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
             .await
             .expect("controller velo");
-        let controller_peer = controller_velo.peer_info();
+        let controller_peer = controller_velo.messenger().peer_info();
         let start = controller_velo
             .event_manager()
             .new_event()
@@ -965,7 +1338,7 @@ mod tests {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
             .await
             .expect("controller velo");
-        let controller_peer = controller_velo.peer_info();
+        let controller_peer = controller_velo.messenger().peer_info();
         let start = controller_velo
             .event_manager()
             .new_event()
@@ -1021,7 +1394,7 @@ mod tests {
         let controller_velo = build_velo(BindSpec::TcpLoopback)
             .await
             .expect("controller velo");
-        let controller_peer = controller_velo.peer_info();
+        let controller_peer = controller_velo.messenger().peer_info();
         let start = controller_velo
             .event_manager()
             .new_event()

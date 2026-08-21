@@ -10,6 +10,7 @@ use anyhow::{Result, ensure};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::TryRngCore;
 
+use crate::cellular::transport::connect::ControllerPeerBinding;
 use crate::cellular::transport::{CellRegister, CellRegistrationProof};
 use crate::engine::cellular_bootstrap::CellularRole;
 
@@ -17,6 +18,7 @@ const REGISTRATION_PROTOCOL_VERSION: u8 = 1;
 const TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-registration-v1\0";
 const PEER_ADMISSION_TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-peer-admission-v1\0";
 pub(crate) const ADMISSION_PURPOSE_COUNT: usize = 6;
+const REGISTER_REPLY_TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-register-reply-v1\0";
 
 /// One public role key in the controller's fixed authorization roster.
 #[derive(Clone, Copy)]
@@ -133,6 +135,15 @@ impl CellSecurityContext {
         }
     }
 
+    fn sign_controller(&self, transcript: &[u8]) -> Result<Signature> {
+        match &self.authority {
+            ProcessSecurityAuthority::Controller { signer, .. } => Ok(signer.sign(transcript)),
+            ProcessSecurityAuthority::Worker { .. } => {
+                anyhow::bail!("worker security context cannot attest controller replies")
+            }
+        }
+    }
+
     pub(crate) fn registration_credential(self: &Arc<Self>) -> Result<CellRegistrationCredential> {
         let Some(CellularRole::Cell(cell_id)) = self.role() else {
             anyhow::bail!("security context has no cell credential");
@@ -144,7 +155,17 @@ impl CellSecurityContext {
     }
 
     pub(crate) fn registration_authority(self: &Arc<Self>) -> Result<CellRegistrationAuthority> {
-        CellRegistrationAuthority::from_role_keys(self.run_nonce, self.role_verifiers()?)
+        CellRegistrationAuthority::from_controller_context(self)
+    }
+
+    pub(crate) fn reply_attestor(self: &Arc<Self>) -> Result<ControllerRegisterAttestor> {
+        ensure!(
+            matches!(self.authority, ProcessSecurityAuthority::Controller { .. }),
+            "worker has no controller reply authority"
+        );
+        Ok(ControllerRegisterAttestor {
+            context: Arc::clone(self),
+        })
     }
 }
 
@@ -185,10 +206,11 @@ pub struct CellPeerAdmissionProof {
     signature: Vec<u8>,
 }
 
-/// Controller-owned public keys and nonce for one cellular run.
+/// Controller-owned cell verifiers, run nonce, and provisioned reply-attestation capability.
 pub(crate) struct CellRegistrationAuthority {
     run_nonce: [u8; 32],
     role_verifiers: Box<[RoleVerifyingKey]>,
+    reply_attestor: ControllerRegisterAttestor,
 }
 
 /// The private, cell-specific signing key delivered only by a trusted launcher.
@@ -196,6 +218,30 @@ pub(crate) struct CellRegistrationAuthority {
 pub(crate) struct CellRegistrationCredential {
     cell_id: u32,
     context: Arc<CellSecurityContext>,
+}
+
+/// Signed controller evidence for one complete registration reply.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ControllerRegisterAttestation {
+    /// Fixed protocol version for the signed reply transcript.
+    pub version: u8,
+    /// Per-run nonce selected by the deployment or local controller.
+    pub run_nonce: [u8; 32],
+    /// Ed25519 signature over controller peer, registration, and reply material.
+    pub signature: Vec<u8>,
+}
+
+/// Controller-only signing authority for registration replies.
+#[derive(Clone)]
+pub(crate) struct ControllerRegisterAttestor {
+    context: Arc<CellSecurityContext>,
+}
+
+/// Role-local verifier for controller registration replies.
+#[derive(Clone)]
+pub(crate) struct ControllerRegisterVerifier {
+    run_nonce: [u8; 32],
+    verifying_key: VerifyingKey,
 }
 
 /// A controller-verified registration identity.
@@ -240,13 +286,12 @@ impl CellRegistrationAuthority {
             )?);
             credentials.push(CellRegistrationCredential { cell_id, context });
         }
-        Ok((
-            Self {
-                run_nonce,
-                role_verifiers: role_verifiers.into_boxed_slice(),
-            },
-            credentials,
-        ))
+        let context = Arc::new(CellSecurityContext::controller(
+            run_nonce,
+            controller_signer,
+            role_verifiers.into_boxed_slice(),
+        )?);
+        Ok((context.registration_authority()?, credentials))
     }
 
     #[cfg(test)]
@@ -254,21 +299,28 @@ impl CellRegistrationAuthority {
         self.run_nonce
     }
 
-    pub(crate) fn from_role_keys(
-        run_nonce: [u8; 32],
-        role_verifiers: Box<[RoleVerifyingKey]>,
-    ) -> Result<Self> {
+    fn from_controller_context(context: &Arc<CellSecurityContext>) -> Result<Self> {
+        let role_verifiers = context.role_verifiers()?;
         ensure!(
             !role_verifiers.is_empty(),
             "cell registration roster requires at least one public key"
         );
         Ok(Self {
-            run_nonce,
+            run_nonce: context.run_nonce,
             role_verifiers,
+            reply_attestor: context.reply_attestor()?,
         })
     }
 
-    pub(crate) fn verify(&self, registration: &CellRegister) -> Result<VerifiedCellRegistration> {
+    pub(crate) fn reply_attestor(&self) -> ControllerRegisterAttestor {
+        self.reply_attestor.clone()
+    }
+
+    pub(crate) fn verify(
+        &self,
+        registration: &CellRegister,
+        controller_peer: &velo::PeerInfo,
+    ) -> Result<VerifiedCellRegistration> {
         let proof = registration
             .registration_proof
             .as_ref()
@@ -276,6 +328,10 @@ impl CellRegistrationAuthority {
         ensure!(
             proof.version == REGISTRATION_PROTOCOL_VERSION && proof.run_nonce == self.run_nonce,
             "cell registration proof does not belong to this run"
+        );
+        ensure!(
+            proof.controller_binding.matches_peer(controller_peer)?,
+            "cell registration names a different controller peer"
         );
         let key = self
             .role_verifiers
@@ -290,6 +346,7 @@ impl CellRegistrationAuthority {
                 registration.cell_id,
                 &registration.cell_peer,
                 registration.artifact_capability_digest,
+                &proof.controller_binding,
                 proof.version,
                 proof.run_nonce,
             ),
@@ -329,6 +386,96 @@ impl CellRegistrationAuthority {
     }
 }
 
+impl ControllerRegisterAttestor {
+    #[cfg(test)]
+    pub(crate) fn mint(run_nonce: [u8; 32]) -> Result<Self> {
+        let signer = SigningKey::from_bytes(&random_nonce("controller reply key")?);
+        let placeholder = RoleVerifyingKey {
+            role: CellularRole::Cell(0),
+            verifier: signer.verifying_key(),
+        };
+        Ok(Self {
+            context: Arc::new(CellSecurityContext::controller(
+                run_nonce,
+                signer,
+                vec![placeholder].into_boxed_slice(),
+            )?),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn verifier(&self) -> ControllerRegisterVerifier {
+        ControllerRegisterVerifier {
+            run_nonce: self.context.run_nonce,
+            verifying_key: match &self.context.authority {
+                ProcessSecurityAuthority::Controller { signer, .. } => signer.verifying_key(),
+                ProcessSecurityAuthority::Worker { .. } => unreachable!("attestor is controller"),
+            },
+        }
+    }
+
+    pub(crate) fn attest(
+        &self,
+        controller_binding: &ControllerPeerBinding,
+        registration_frame: &[u8],
+        reply_payload: &[u8],
+    ) -> Result<ControllerRegisterAttestation> {
+        let transcript = register_reply_transcript(
+            controller_binding,
+            registration_frame,
+            reply_payload,
+            REGISTRATION_PROTOCOL_VERSION,
+            self.context.run_nonce,
+        );
+        Ok(ControllerRegisterAttestation {
+            version: REGISTRATION_PROTOCOL_VERSION,
+            run_nonce: self.context.run_nonce,
+            signature: self
+                .context
+                .sign_controller(&transcript)?
+                .to_bytes()
+                .to_vec(),
+        })
+    }
+}
+
+impl ControllerRegisterVerifier {
+    pub(crate) fn from_public_key(run_nonce: [u8; 32], verifying_key: [u8; 32]) -> Result<Self> {
+        Ok(Self {
+            run_nonce,
+            verifying_key: VerifyingKey::from_bytes(&verifying_key)
+                .map_err(|_| anyhow::anyhow!("controller verification key is malformed"))?,
+        })
+    }
+    pub(crate) fn verify(
+        &self,
+        controller_binding: &ControllerPeerBinding,
+        registration_frame: &[u8],
+        reply_payload: &[u8],
+        attestation: &ControllerRegisterAttestation,
+    ) -> Result<()> {
+        ensure!(
+            attestation.version == REGISTRATION_PROTOCOL_VERSION
+                && attestation.run_nonce == self.run_nonce,
+            "controller registration attestation does not belong to this run"
+        );
+        let signature = Signature::from_slice(&attestation.signature)
+            .map_err(|_| anyhow::anyhow!("controller registration attestation is malformed"))?;
+        self.verifying_key
+            .verify(
+                &register_reply_transcript(
+                    controller_binding,
+                    registration_frame,
+                    reply_payload,
+                    attestation.version,
+                    attestation.run_nonce,
+                ),
+                &signature,
+            )
+            .map_err(|_| anyhow::anyhow!("controller registration attestation is invalid"))
+    }
+}
+
 impl CellRegistrationCredential {
     pub(crate) fn cell_id(&self) -> u32 {
         self.cell_id
@@ -337,17 +484,20 @@ impl CellRegistrationCredential {
         &self,
         cell_peer: &[u8],
         artifact_capability_digest: Option<[u8; 32]>,
+        controller_binding: ControllerPeerBinding,
     ) -> Result<CellRegistrationProof> {
         let transcript = registration_transcript(
             self.cell_id(),
             cell_peer,
             artifact_capability_digest,
+            &controller_binding,
             REGISTRATION_PROTOCOL_VERSION,
             self.context.run_nonce,
         );
         Ok(CellRegistrationProof {
             version: REGISTRATION_PROTOCOL_VERSION,
             run_nonce: self.context.run_nonce,
+            controller_binding,
             signature: self.context.sign_worker(&transcript)?.to_bytes().to_vec(),
         })
     }
@@ -377,6 +527,7 @@ fn registration_transcript(
     cell_id: u32,
     cell_peer: &[u8],
     artifact_capability_digest: Option<[u8; 32]>,
+    controller_binding: &ControllerPeerBinding,
     version: u8,
     run_nonce: [u8; 32],
 ) -> Vec<u8> {
@@ -386,6 +537,7 @@ fn registration_transcript(
     transcript.extend_from_slice(&run_nonce);
     transcript.extend_from_slice(&cell_id.to_le_bytes());
     transcript.extend_from_slice(blake3::hash(cell_peer).as_bytes());
+    controller_binding.append_transcript(&mut transcript);
     match artifact_capability_digest {
         Some(digest) => {
             transcript.push(1);
@@ -414,19 +566,53 @@ fn peer_admission_transcript(
     transcript
 }
 
+fn register_reply_transcript(
+    controller_binding: &ControllerPeerBinding,
+    registration_frame: &[u8],
+    reply_payload: &[u8],
+    version: u8,
+    run_nonce: [u8; 32],
+) -> Vec<u8> {
+    let mut transcript = Vec::with_capacity(REGISTER_REPLY_TRANSCRIPT_DOMAIN.len() + 1 + 32 + 96);
+    transcript.extend_from_slice(REGISTER_REPLY_TRANSCRIPT_DOMAIN);
+    transcript.push(version);
+    transcript.extend_from_slice(&run_nonce);
+    controller_binding.append_transcript(&mut transcript);
+    transcript.extend_from_slice(blake3::hash(registration_frame).as_bytes());
+    transcript.extend_from_slice(blake3::hash(reply_payload).as_bytes());
+    transcript
+}
+
 #[cfg(test)]
 mod tests {
     use crate::cellular::transport::CellRegister;
+    use crate::cellular::transport::connect::{ControllerPeerBinding, DialedControllerAddress};
 
-    use super::{CellPeerAdmissionPurpose, CellRegistrationAuthority};
+    use super::{CellPeerAdmissionPurpose, CellRegistrationAuthority, ControllerRegisterAttestor};
+
+    fn controller_binding() -> (velo::PeerInfo, ControllerPeerBinding) {
+        let peer = velo::PeerInfo::new(
+            velo::InstanceId::new_v4(),
+            velo::WorkerAddress::from_encoded(vec![0x80]),
+        );
+        let binding = ControllerPeerBinding::new(
+            &peer,
+            DialedControllerAddress::Tcp("127.0.0.1:9500".parse().unwrap()),
+        )
+        .unwrap();
+        (peer, binding)
+    }
 
     #[test]
-    fn registration_proof_binds_cell_peer_and_capability_digest() {
+    fn registration_proof_binds_controller_cell_peer_and_capability_digest() {
         let (authority, credentials) = CellRegistrationAuthority::mint(2).unwrap();
         let credential = &credentials[1];
         let peer = b"encoded-peer";
         let digest = [0x11; 32];
-        let proof = credential.sign_register(peer, Some(digest)).unwrap();
+        let (controller_peer, binding) = controller_binding();
+        let proof = credential
+            .sign_register(peer, Some(digest), binding)
+            .unwrap();
         let register = CellRegister {
             cell_id: 1,
             cell_peer: peer.to_vec(),
@@ -434,10 +620,165 @@ mod tests {
             registration_proof: Some(proof),
         };
 
-        assert!(authority.verify(&register).is_ok());
+        assert!(authority.verify(&register, &controller_peer).is_ok());
+        let changed_controller_peer = velo::PeerInfo::new(
+            controller_peer.instance_id(),
+            velo::WorkerAddress::from_encoded(vec![0x81]),
+        );
+        assert!(
+            authority
+                .verify(&register, &changed_controller_peer)
+                .is_err()
+        );
         let mut changed_digest = register.clone();
         changed_digest.artifact_capability_digest = Some([0x22; 32]);
-        assert!(authority.verify(&changed_digest).is_err());
+        assert!(authority.verify(&changed_digest, &controller_peer).is_err());
+    }
+
+    // Catches a cell signature that authenticates only structural peer equality,
+    // rather than the exact controller binding carried by the proof.
+    #[test]
+    fn registration_signature_rejects_consistently_replaced_controller_binding() {
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).unwrap();
+        let (controller_peer, binding) = controller_binding();
+        let proof = credentials[0]
+            .sign_register(b"cell-peer", None, binding)
+            .unwrap();
+        let mut register = CellRegister {
+            cell_id: 0,
+            cell_peer: b"cell-peer".to_vec(),
+            artifact_capability_digest: None,
+            registration_proof: Some(proof),
+        };
+        let changed_controller_peer = velo::PeerInfo::new(
+            controller_peer.instance_id(),
+            velo::WorkerAddress::from_encoded(vec![0x81]),
+        );
+        register
+            .registration_proof
+            .as_mut()
+            .unwrap()
+            .controller_binding = ControllerPeerBinding::new(
+            &changed_controller_peer,
+            DialedControllerAddress::Tcp("127.0.0.1:9500".parse().unwrap()),
+        )
+        .unwrap();
+
+        assert!(
+            authority
+                .verify(&register, &changed_controller_peer)
+                .is_err(),
+            "the original signature must not authorize a replacement binding"
+        );
+    }
+
+    // Catches a cell signature that omits only the resolved dial target.
+    #[test]
+    fn registration_signature_rejects_dial_only_replacement() {
+        let (authority, credentials) = CellRegistrationAuthority::mint(1).unwrap();
+        let (controller_peer, binding) = controller_binding();
+        let proof = credentials[0]
+            .sign_register(b"cell-peer", None, binding)
+            .unwrap();
+        let mut register = CellRegister {
+            cell_id: 0,
+            cell_peer: b"cell-peer".to_vec(),
+            artifact_capability_digest: None,
+            registration_proof: Some(proof),
+        };
+        register
+            .registration_proof
+            .as_mut()
+            .unwrap()
+            .controller_binding = ControllerPeerBinding::new(
+            &controller_peer,
+            DialedControllerAddress::Tcp("127.0.0.1:9501".parse().unwrap()),
+        )
+        .unwrap();
+
+        assert!(
+            authority.verify(&register, &controller_peer).is_err(),
+            "the original cell signature must not authorize a changed dial target"
+        );
+    }
+
+    // Catches controller attestations that omit any exact registration-reply input.
+    #[test]
+    fn controller_attestation_covers_binding_registration_frame_and_reply_payload() {
+        let attestor = ControllerRegisterAttestor::mint([0x42; 32]).unwrap();
+        let verifier = attestor.verifier();
+        let (_, binding) = controller_binding();
+        let changed_peer = velo::PeerInfo::new(
+            velo::InstanceId::new_v4(),
+            velo::WorkerAddress::from_encoded(vec![0x82]),
+        );
+        let changed_binding = ControllerPeerBinding::new(
+            &changed_peer,
+            DialedControllerAddress::Tcp("127.0.0.1:9501".parse().unwrap()),
+        )
+        .unwrap();
+        let registration_frame = b"exact registration frame";
+        let reply_payload = b"exact reply payload";
+        let attestation = attestor
+            .attest(&binding, registration_frame, reply_payload)
+            .unwrap();
+
+        assert!(
+            verifier
+                .verify(
+                    &changed_binding,
+                    registration_frame,
+                    reply_payload,
+                    &attestation,
+                )
+                .is_err(),
+            "the controller binding must be covered"
+        );
+        assert!(
+            verifier
+                .verify(
+                    &binding,
+                    b"changed registration frame",
+                    reply_payload,
+                    &attestation,
+                )
+                .is_err(),
+            "the exact registration frame must be covered"
+        );
+        assert!(
+            verifier
+                .verify(
+                    &binding,
+                    registration_frame,
+                    b"changed reply payload",
+                    &attestation,
+                )
+                .is_err(),
+            "the exact reply payload must be covered"
+        );
+    }
+
+    // Catches a controller attestation that omits only the resolved dial target.
+    #[test]
+    fn controller_attestation_rejects_dial_only_replacement() {
+        let attestor = ControllerRegisterAttestor::mint([0x42; 32]).unwrap();
+        let verifier = attestor.verifier();
+        let (controller_peer, binding) = controller_binding();
+        let changed_binding = ControllerPeerBinding::new(
+            &controller_peer,
+            DialedControllerAddress::Tcp("127.0.0.1:9501".parse().unwrap()),
+        )
+        .unwrap();
+        let attestation = attestor
+            .attest(&binding, b"registration", b"reply")
+            .unwrap();
+
+        assert!(
+            verifier
+                .verify(&changed_binding, b"registration", b"reply", &attestation,)
+                .is_err(),
+            "the original controller attestation must not authorize a changed dial target"
+        );
     }
 
     #[test]

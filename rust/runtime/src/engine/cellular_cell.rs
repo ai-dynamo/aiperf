@@ -697,7 +697,10 @@ fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connec
 /// runtime; the velo instance is dropped on return.
 #[cfg(feature = "cellular")]
 pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
-    use crate::cellular::transport::connect::{build_velo, connect_controller};
+    use crate::cellular::transport::connect::{
+        RegistrationDeadline, build_velo, connect_controller_until,
+    };
+    use crate::cellular::transport::velo_transport::verify_reply;
     use crate::cellular::{CellClient, CellMessage, VeloCellClient};
     use anyhow::Context;
 
@@ -715,10 +718,17 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
         "installed security context has the wrong cell role"
     );
     let velo = build_velo(cell_bind(&coordinate, "fetch")).await?;
-    let controller = connect_controller(&velo, &coordinate)
+    let deadline = RegistrationDeadline::for_registration();
+    let connected_controller = connect_controller_until(&velo, &coordinate, deadline)
         .await
         .context("connecting to controller")?;
+    let controller = connected_controller.peer().clone();
     let credential = std::sync::Arc::new(security.registration_credential()?);
+    let verifier =
+        crate::engine::cellular_registration::ControllerRegisterVerifier::from_public_key(
+            security.run_nonce(),
+            security.controller_verifier()?.to_bytes(),
+        )?;
     // Keep handles before constructing the client so the phaser can subscribe over
     // the same fetch instance.
     let phaser_start = matches!(
@@ -736,10 +746,27 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
         .map(|_| ArtifactBearer::generate())
         .transpose()?;
     let artifact_digest = bearer.as_ref().map(ArtifactBearer::digest_bytes);
+    let registration = client
+        .signed_registration_for_controller(
+            cell_id,
+            artifact_digest,
+            credential.as_ref(),
+            connected_controller.binding()?,
+        )
+        .map_err(|error| anyhow::anyhow!("cell {cell_id} sign registration: {error}"))?;
     let reply = client
-        .register_with_credential(cell_id, artifact_digest, credential.as_ref())
+        .register_request_until(&connected_controller, &registration, deadline)
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} register: {error}"))?;
+    verify_reply(
+        &connected_controller,
+        &verifier,
+        &registration,
+        &reply,
+        cell_id,
+    )
+    .map_err(|error| anyhow::anyhow!("cell {cell_id} controller reply: {error}"))?;
+    ensure!(!deadline.is_elapsed(), "cell registration deadline elapsed");
     let has_artifact_channel = reply.artifact_channel.is_some();
     ensure!(
         bearer.is_some() == has_artifact_channel,
