@@ -10,6 +10,8 @@ use aiperf_cli::load;
 use aiperf_cli::model::BenchmarkRun;
 use aiperf_runtime::engine::protocol_v2::BenchmarkRunWireV2;
 
+mod common;
+
 const MODELED_CFG_SECTIONS: &[&str] = &[
     "endpoint",
     "models",
@@ -271,14 +273,7 @@ fn ensure_fixture_inputs() {
 
 #[test]
 fn loader_reproduces_goldens() {
-    let worker = std::thread::Builder::new()
-        .name("parity-loader".to_owned())
-        .stack_size(4 * 1024 * 1024)
-        .spawn(loader_reproduces_goldens_on_larger_stack)
-        .expect("spawn parity loader worker");
-    if let Err(payload) = worker.join() {
-        std::panic::resume_unwind(payload);
-    }
+    common::on_profile_flags_stack(loader_reproduces_goldens_on_larger_stack);
 }
 
 fn loader_reproduces_goldens_on_larger_stack() {

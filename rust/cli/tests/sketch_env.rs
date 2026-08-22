@@ -6,9 +6,16 @@
 use aiperf_cli::flags::ProfileFlags;
 use aiperf_cli::load;
 
+mod common;
+
 #[test]
 fn env_var_enables_sketch_without_flag() {
-    // SAFETY: single-threaded test binary; no other test reads this env here.
+    common::on_profile_flags_stack(env_var_enables_sketch_without_flag_on_larger_stack);
+}
+
+fn env_var_enables_sketch_without_flag_on_larger_stack() {
+    // SAFETY: this is the binary's only test, and its parent thread waits for
+    // this worker without accessing the environment.
     unsafe { std::env::set_var("AIPERF_METRICS_SKETCH", "1") };
     let args: Vec<String> = [
         "--model",
