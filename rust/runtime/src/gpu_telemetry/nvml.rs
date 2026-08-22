@@ -253,12 +253,18 @@ mod tests {
         .unwrap();
         let fixture = fixture.as_array().unwrap().first().unwrap();
         let metrics = &fixture["telemetry_data"];
-        assert_eq!(milliwatts_to_watts(250_000), metrics["nvidia_power_usage"]);
+        assert_eq!(
+            milliwatts_to_watts(250_000),
+            metrics["nvidia_power_usage"].as_f64().unwrap()
+        );
         assert_eq!(
             millijoules_to_megajoules(3_000_000),
-            metrics["nvidia_energy_consumption"]
+            metrics["nvidia_energy_consumption"].as_f64().unwrap()
         );
-        assert_eq!(bytes_to_gigabytes(12_000_000_000), metrics["nvidia_memory_used"]);
+        assert_eq!(
+            bytes_to_gigabytes(12_000_000_000),
+            metrics["nvidia_memory_used"].as_f64().unwrap()
+        );
         let metadata = metadata_from_parts(
             0,
             "GPU-nvml".to_string(),

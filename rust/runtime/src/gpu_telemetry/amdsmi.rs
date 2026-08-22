@@ -317,6 +317,15 @@ fn metadata(library: &Library, device: ProcessorHandle, index: usize) -> GpuMeta
         .ok()
         .filter(|function| unsafe { function(device, &mut bdf) } == AMDSMI_SUCCESS)
         .map(|_| pci_bus_id(bdf));
+    metadata_from_parts(index, gpu_uuid, gpu_model_name, pci_bus_id)
+}
+
+fn metadata_from_parts(
+    index: usize,
+    gpu_uuid: String,
+    gpu_model_name: String,
+    pci_bus_id: Option<String>,
+) -> GpuMetadata {
     GpuMetadata {
         gpu_index: index.min(i32::MAX as usize) as i32,
         gpu_uuid,
@@ -341,7 +350,15 @@ fn pci_bus_id(bdf: AmdsmiBdf) -> String {
 }
 
 fn mebibytes_to_gigabytes(value: u32) -> f64 {
-    value as f64 * 1.048_576e-3
+    bytes_to_gigabytes(value as u64 * 1_048_576)
+}
+
+fn bytes_to_gigabytes(value: u64) -> f64 {
+    value as f64 * 1e-9
+}
+
+fn energy_count_to_megajoules(count: u64, resolution: f32) -> f64 {
+    count as f64 * resolution as f64 * 1e-12
 }
 
 fn is_throttled(status: u32, independent_status: u64) -> bool {
@@ -444,7 +461,11 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
     let mut resolution = 0_f32;
     let mut timestamp = 0_u64;
     if unsafe { library.get::<EnergyCountFn>(b"amdsmi_get_energy_count\0") }.ok().is_some_and(|function| unsafe { function(device, &mut energy, &mut resolution, &mut timestamp) } == AMDSMI_SUCCESS) {
-        insert_finite(&mut metrics, "amd_energy_consumption", energy as f64 * resolution as f64 * 1e-12);
+        insert_finite(
+            &mut metrics,
+            "amd_energy_consumption",
+            energy_count_to_megajoules(energy, resolution),
+        );
     }
     metrics
 }
@@ -476,6 +497,40 @@ mod tests {
     #[test]
     fn normalizes_vram_mib_like_origin_main_bytes() {
         assert_eq!(mebibytes_to_gigabytes(1024), 1.073_741_824);
+    }
+
+    #[test]
+    fn origin_main_fixture_units_and_identity_use_production_normalizers() {
+        let fixture = serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../tests/data/gpu_telemetry/amdsmi_origin_main.json"
+        ))
+        .unwrap();
+        let fixture = fixture.as_array().unwrap().first().unwrap();
+        let metrics = &fixture["telemetry_data"];
+        assert_eq!(
+            bytes_to_gigabytes(16_000_000_000),
+            metrics["amd_memory_used"].as_f64().unwrap()
+        );
+        assert_eq!(
+            energy_count_to_megajoules(2_000_000, 2.0),
+            metrics["amd_energy_consumption"].as_f64().unwrap()
+        );
+        assert!(is_throttled(0, 2));
+        assert_eq!(metrics["amd_throttle_status"].as_f64(), Some(1.0));
+        let metadata = metadata_from_parts(
+            0,
+            "GPU-amd".to_string(),
+            "MI300X".to_string(),
+            Some("0000:41:00.0".to_string()),
+        );
+        assert_eq!(metadata.gpu_uuid, fixture["gpu_uuid"].as_str().unwrap());
+        assert_eq!(
+            metadata.gpu_model_name,
+            fixture["gpu_model_name"].as_str().unwrap()
+        );
+        assert_eq!(metadata.pci_bus_id.as_deref(), fixture["pci_bus_id"].as_str());
+        assert_eq!(metadata.device.as_deref(), fixture["device"].as_str());
+        assert_eq!(metadata.hostname.as_deref(), fixture["hostname"].as_str());
     }
 
     #[test]
