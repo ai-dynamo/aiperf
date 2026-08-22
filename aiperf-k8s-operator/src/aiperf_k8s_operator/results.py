@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -73,5 +74,45 @@ class ResultsIndex:
         }
 
     def rebuild(self) -> None:
-        """Discard ephemeral index entries; reconciler repopulates them from CRs."""
+        """Rebuild readiness state from private result roots without trusting markers."""
         self._runs.clear()
+        if not self._root.is_dir():
+            return
+        for run_dir in self._root.iterdir():
+            if not run_dir.is_dir() or run_dir.is_symlink():
+                continue
+            manifest_path = run_dir / "results-manifest.json"
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not self._is_ready_manifest(run_dir.name, manifest):
+                continue
+            self.publish_manifest(run_dir.name, manifest)
+
+    @staticmethod
+    def _is_ready_manifest(run_id: str, manifest: Any) -> bool:
+        """Accept only a complete v1 manifest addressed to its containing run directory."""
+        if not isinstance(manifest, dict):
+            return False
+        if manifest.get("contractVersion") != "native-k8s/v1":
+            return False
+        if manifest.get("runId") != run_id or manifest.get("ready") is not True:
+            return False
+        if not isinstance(manifest.get("artifactRoot"), str):
+            return False
+        if not isinstance(manifest.get("wasCancelled"), bool):
+            return False
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, list):
+            return False
+        return all(
+            isinstance(artifact, dict)
+            and isinstance(artifact.get("path"), str)
+            and isinstance(artifact.get("sha256"), str)
+            and len(artifact["sha256"]) == 64
+            and isinstance(artifact.get("bytes"), int)
+            and artifact["bytes"] >= 0
+            and isinstance(artifact.get("contentType"), str)
+            for artifact in artifacts
+        )
