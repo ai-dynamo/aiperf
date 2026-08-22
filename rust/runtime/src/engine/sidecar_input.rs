@@ -213,6 +213,10 @@ pub enum GpuTelemetrySourceSpec {
         /// Metrics endpoint; `/metrics` is appended when absent.
         url: String,
     },
+    /// In-process NVIDIA NVML collection on the local host.
+    Nvml,
+    /// In-process AMD SMI collection on the local host.
+    AmdSmi,
     /// Collector or user extension supervised as a worker process.
     Python {
         /// Registered Config-v2 collector name.
@@ -533,6 +537,9 @@ impl SidecarInputAdapter for GpuTelemetryInputAdapter {
         for source in &spec.sources {
             match source {
                 GpuTelemetrySourceSpec::Dcgm { url } => ensure_nonempty(url, "DCGM url")?,
+                // Local collectors carry no configuration to validate; their
+                // strict URL-less decode is the whole contract.
+                GpuTelemetrySourceSpec::Nvml | GpuTelemetrySourceSpec::AmdSmi => {}
                 GpuTelemetrySourceSpec::Python {
                     collector,
                     url,

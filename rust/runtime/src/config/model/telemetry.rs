@@ -108,13 +108,22 @@ impl Default for NetworkLatencyConfig {
 }
 
 /// One lowered GPU telemetry source.
+///
+/// The tag is the collector identity: `dcgm` keeps its historical
+/// `{"type": "dcgm", "url": ...}` wire shape, while the two local collectors
+/// read the host's own driver and therefore carry no URL at all.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GpuSource {
-    /// Source type (`dcgm`).
-    #[serde(rename = "type")]
-    pub source_type: String,
-    /// Scrape URL.
-    pub url: String,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GpuSource {
+    /// NVIDIA DCGM exporter scraped over HTTP.
+    Dcgm {
+        /// Scrape URL.
+        url: String,
+    },
+    /// In-process NVIDIA NVML on the local host.
+    Nvml,
+    /// In-process AMD SMI on the local host.
+    AmdSmi,
 }
 
 /// The lowered `sidecars.gpu_telemetry` block.
@@ -291,10 +300,75 @@ impl ContentServerSidecar {
 }
 
 impl GpuTelemetrySidecar {
+    /// Lower one authored [`GpuTelemetryConfig`] into the sidecar block.
+    ///
+    /// The authored collector selects exactly one source family; there is no
+    /// fallback to another collector when the selected one is unavailable, so a
+    /// misspelled name fails here rather than silently benchmarking with DCGM.
+    /// `enabled` is not consulted — the caller decides whether to attach the
+    /// result — so an unusable selection is rejected even on a disabled run.
+    pub fn from_config(cfg: &GpuTelemetryConfig) -> anyhow::Result<Self> {
+        if cfg.mode != "summary" {
+            anyhow::bail!(
+                "gpu_telemetry.mode {:?} is not supported \
+                 (the native runtime implements only \"summary\")",
+                cfg.mode
+            );
+        }
+        let sources = match cfg.collector.as_str() {
+            "dcgm" => Self::dcgm_sources(&cfg.urls),
+            local @ ("pynvml" | "amdsmi") => {
+                // Both local collectors read the host driver in-process: an
+                // endpoint and a DCGM exporter field CSV have no meaning for
+                // them, and accepting either would silently drop authored intent.
+                if !cfg.urls.is_empty() {
+                    anyhow::bail!(
+                        "gpu_telemetry.urls is not supported by the {local:?} collector \
+                         (it reads the local host, not a scrape endpoint)"
+                    );
+                }
+                if cfg.metrics_file.is_some() {
+                    anyhow::bail!(
+                        "gpu_telemetry.metrics_file is not supported by the {local:?} collector \
+                         (custom field definitions apply to the DCGM exporter only)"
+                    );
+                }
+                vec![if local == "pynvml" {
+                    GpuSource::Nvml
+                } else {
+                    GpuSource::AmdSmi
+                }]
+            }
+            other => anyhow::bail!(
+                "gpu_telemetry.collector {other:?} is not supported \
+                 (the native runtime implements \"dcgm\", \"pynvml\", and \"amdsmi\")"
+            ),
+        };
+        Ok(Self {
+            collection_interval_ns: COLLECTION_INTERVAL_NS,
+            request_timeout_ns: REACHABILITY_TIMEOUT_NS,
+            records_path: "gpu_telemetry_export.jsonl".to_string(),
+            sources,
+            metrics_file: cfg.metrics_file.clone(),
+        })
+    }
+
     /// Build the default DCGM sidecar (the enabled-by-default path); `extra` are
     /// custom DCGM URLs appended after the defaults (deduped). `metrics_file` is
     /// the optional custom DCGM metrics CSV path (`--gpu-telemetry <file>.csv`).
     pub fn default_dcgm(extra: &[String], metrics_file: Option<&str>) -> Self {
+        Self {
+            collection_interval_ns: COLLECTION_INTERVAL_NS,
+            request_timeout_ns: REACHABILITY_TIMEOUT_NS,
+            records_path: "gpu_telemetry_export.jsonl".to_string(),
+            sources: Self::dcgm_sources(extra),
+            metrics_file: metrics_file.map(str::to_string),
+        }
+    }
+
+    /// The default DCGM endpoints followed by any authored `extra`, normalized
+    /// to `/metrics` and deduplicated in first-seen order.
+    fn dcgm_sources(extra: &[String]) -> Vec<GpuSource> {
         let mut urls: Vec<String> = DEFAULT_DCGM_ENDPOINTS
             .iter()
             .map(|e| normalize_metrics_url(e))
@@ -305,19 +379,7 @@ impl GpuTelemetrySidecar {
                 urls.push(n);
             }
         }
-        Self {
-            collection_interval_ns: COLLECTION_INTERVAL_NS,
-            request_timeout_ns: REACHABILITY_TIMEOUT_NS,
-            records_path: "gpu_telemetry_export.jsonl".to_string(),
-            sources: urls
-                .into_iter()
-                .map(|url| GpuSource {
-                    source_type: "dcgm".to_string(),
-                    url,
-                })
-                .collect(),
-            metrics_file: metrics_file.map(str::to_string),
-        }
+        urls.into_iter().map(|url| GpuSource::Dcgm { url }).collect()
     }
 }
 

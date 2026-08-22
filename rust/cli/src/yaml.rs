@@ -650,11 +650,9 @@ enum RecordsFormats {
 struct GpuTelemetrySection {
     enabled: Option<bool>,
     urls: Option<Vec<String>>,
-    /// Collector backend. `dcgm` is the only backend the native runtime builds
-    /// (`GpuTelemetrySidecar::default_dcgm` always stamps `source_type: "dcgm"`),
-    /// so it is honored by construction; `pynvml` requires the supervised
-    /// `GpuTelemetrySourceSpec::Python` worker, which the config layer cannot
-    /// launch, and is rejected rather than accepted and downgraded to DCGM.
+    /// Collector backend: the DCGM exporter scraped over HTTP, or one of the two
+    /// local collectors (`pynvml`, `amdsmi`) that read the host's own driver.
+    /// Anything else is rejected rather than downgraded to DCGM.
     #[serde(default)]
     collector: Option<String>,
     /// Display mode. `summary` is what the native runtime does; the live TUI
@@ -662,6 +660,9 @@ struct GpuTelemetrySection {
     /// rather than accepted and silently rendered as a summary table.
     #[serde(default)]
     mode: Option<String>,
+    /// Custom DCGM exporter field definitions (CSV). DCGM-only.
+    #[serde(default, alias = "metricsFile")]
+    metrics_file: Option<String>,
 }
 
 impl GpuTelemetrySection {
@@ -669,12 +670,11 @@ impl GpuTelemetrySection {
     /// implement, so an unsupported backend or display mode fails loudly instead
     /// of resolving to the one thing the runtime always does.
     fn validate(&self) -> anyhow::Result<()> {
-        if let Some(collector) = self.collector.as_deref()
-            && collector != "dcgm"
-        {
+        let collector = self.collector.as_deref().unwrap_or("dcgm");
+        if !matches!(collector, "dcgm" | "pynvml" | "amdsmi") {
             anyhow::bail!(
                 "gpuTelemetry.collector {collector:?} is not supported \
-                 (the native runtime implements only \"dcgm\")"
+                 (the native runtime implements \"dcgm\", \"pynvml\", and \"amdsmi\")"
             );
         }
         if let Some(mode) = self.mode.as_deref()
@@ -684,6 +684,23 @@ impl GpuTelemetrySection {
                 "gpuTelemetry.mode {mode:?} is not supported \
                  (the native runtime implements only \"summary\")"
             );
+        }
+        // The local collectors read the host driver in-process: neither a scrape
+        // endpoint nor a DCGM exporter field CSV applies to them, so authoring
+        // one fails here instead of being accepted and dropped at lowering.
+        if collector != "dcgm" {
+            if self.urls.as_ref().is_some_and(|urls| !urls.is_empty()) {
+                anyhow::bail!(
+                    "gpuTelemetry.urls is not supported by the {collector:?} collector \
+                     (it reads the local host, not a scrape endpoint)"
+                );
+            }
+            if self.metrics_file.is_some() {
+                anyhow::bail!(
+                    "gpuTelemetry.metricsFile is not supported by the {collector:?} collector \
+                     (custom field definitions apply to the DCGM exporter only)"
+                );
+            }
         }
         Ok(())
     }
@@ -2052,16 +2069,18 @@ impl Benchmark {
         if let Some(gpu) = self.gpu_telemetry.as_ref() {
             gpu.validate()?;
         }
-        let (gpu_enabled, gpu_urls) = self
+        let (gpu_enabled, gpu_urls, gpu_collector, gpu_metrics_file) = self
             .gpu_telemetry
             .as_ref()
             .map(|g| {
                 (
                     g.enabled.unwrap_or(true),
                     g.urls.clone().unwrap_or_default(),
+                    g.collector.clone(),
+                    g.metrics_file.clone(),
                 )
             })
-            .unwrap_or((true, Vec::new()));
+            .unwrap_or((true, Vec::new(), None, None));
 
         // Server metrics (default enabled): optional scrape URLs and formats.
         let (sm_enabled, sm_urls, sm_formats) = self
@@ -2282,8 +2301,9 @@ impl Benchmark {
                 phase.prefill_ramp
             },
             gpu_telemetry_enabled: gpu_enabled,
+            gpu_telemetry_collector: gpu_collector,
             gpu_telemetry_urls: gpu_urls,
-            gpu_telemetry_metrics_file: None,
+            gpu_telemetry_metrics_file: gpu_metrics_file,
             server_metrics_enabled: sm_enabled,
             server_metrics_formats: sm_formats,
             slos,

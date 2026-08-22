@@ -414,6 +414,8 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         prefill_concurrency: flags.prefill_concurrency,
         prefill_ramp: flags.prefill_concurrency_ramp_duration,
         gpu_telemetry_enabled: !flags.no_gpu_telemetry.unwrap_or(false),
+        // No flag selects a collector; YAML is the only authoring surface for it.
+        gpu_telemetry_collector: None,
         // A `.csv` value selects custom metrics; all other values are scrape URLs.
         gpu_telemetry_urls: flags
             .gpu_telemetry

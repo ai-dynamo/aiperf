@@ -240,6 +240,10 @@ pub struct Inputs {
     pub prefill_concurrency: Option<u32>,
     pub prefill_ramp: Option<f64>,
     pub gpu_telemetry_enabled: bool,
+    /// Collector backend id (`dcgm`, `pynvml`, or `amdsmi`). Absent selects the
+    /// `dcgm` default.
+    #[serde(default)]
+    pub gpu_telemetry_collector: Option<String>,
     /// Custom DCGM URLs.
     pub gpu_telemetry_urls: Vec<String>,
     /// Custom DCGM metrics CSV path (`--gpu-telemetry <file>.csv`).
@@ -1304,6 +1308,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // server-metrics scraping are enabled by default and independently toggled.
     let gpu_enabled = inputs.gpu_telemetry_enabled && !no_server_sidecars;
     let server_enabled = inputs.server_metrics_enabled && !no_server_sidecars;
+    let default_gpu_cfg = crate::config::model::telemetry::GpuTelemetryConfig::default();
     // A fixed mean takes precedence over active network probing.
     let mut network_latency_cfg = crate::config::model::telemetry::NetworkLatencyConfig::default();
     let network_latency_sidecar = if no_server_sidecars {
@@ -1319,13 +1324,23 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     } else {
         None
     };
+    // The raw policy is the single source of the collector selection; the sidecar
+    // is lowered from it so the two cannot describe different collectors. It is
+    // built (and therefore validated) even when telemetry is off, so an unusable
+    // selection fails at resolve time rather than the next time it is enabled.
+    let gpu_cfg = crate::config::model::telemetry::GpuTelemetryConfig {
+        enabled: inputs.gpu_telemetry_enabled,
+        collector: inputs
+            .gpu_telemetry_collector
+            .clone()
+            .unwrap_or_else(|| default_gpu_cfg.collector.clone()),
+        mode: default_gpu_cfg.mode.clone(),
+        metrics_file: inputs.gpu_telemetry_metrics_file.clone(),
+        urls: inputs.gpu_telemetry_urls.clone(),
+    };
+    let gpu_sidecar = crate::config::model::telemetry::GpuTelemetrySidecar::from_config(&gpu_cfg)?;
     let sidecars = crate::config::model::telemetry::Sidecars {
-        gpu_telemetry: gpu_enabled.then(|| {
-            crate::config::model::telemetry::GpuTelemetrySidecar::default_dcgm(
-                &inputs.gpu_telemetry_urls,
-                inputs.gpu_telemetry_metrics_file.as_deref(),
-            )
-        }),
+        gpu_telemetry: gpu_enabled.then_some(gpu_sidecar),
         server_metrics: server_enabled.then(|| {
             let mut all_urls = endpoint_urls.clone();
             all_urls.extend(inputs.server_metrics_urls.iter().cloned());
@@ -1343,11 +1358,6 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         // externalizes generated images/videos as HTTP URLs. The runtime enforces
         // its online-HTTP placement rules and directory validation.
         content_server: crate::config::model::telemetry::ContentServerSidecar::from_env(),
-    };
-    let gpu_cfg = crate::config::model::telemetry::GpuTelemetryConfig {
-        enabled: inputs.gpu_telemetry_enabled,
-        urls: inputs.gpu_telemetry_urls.clone(),
-        ..Default::default()
     };
     let server_cfg = crate::config::model::telemetry::ServerMetricsConfig {
         enabled: inputs.server_metrics_enabled,
