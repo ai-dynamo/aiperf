@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use super::auth::KubeAuthOptions;
-use super::client::{AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, KubeClient};
+use super::client::{AIPERF_GROUP, AIPERF_VERSION, KubeClient};
 use super::submission::{envelope_paths, jobs_path, load_envelope, submit_profile, submit_sweep};
 
 const COMMANDS: &[&str] = &[

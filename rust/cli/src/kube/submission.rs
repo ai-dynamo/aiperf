@@ -110,12 +110,12 @@ mod tests {
 
     #[test]
     fn envelope_arguments_preserve_repeatable_order() {
-        let paths = envelope_paths(&[
+        let arguments = [
             "--envelope".to_string(),
             "one.json".to_string(),
             "--envelope=two.json".to_string(),
-        ])
-        .expect("paths");
+        ];
+        let paths = envelope_paths(&arguments).expect("paths");
         assert_eq!(paths, vec![Path::new("one.json"), Path::new("two.json")]);
     }
 
