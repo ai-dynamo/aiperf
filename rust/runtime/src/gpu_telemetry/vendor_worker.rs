@@ -551,7 +551,9 @@ async fn wait_with_timeout<T>(
 }
 
 fn timeout_error(operation: &str, request_timeout_ns: i64) -> GpuTelemetryError {
-    GpuTelemetryError::Worker(format!("vendor {operation} timed out after {request_timeout_ns}ns"))
+    GpuTelemetryError::Worker(format!(
+        "vendor {operation} timed out after {request_timeout_ns}ns"
+    ))
 }
 
 async fn receive_reply<T>(

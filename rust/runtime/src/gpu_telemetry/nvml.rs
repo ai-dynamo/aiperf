@@ -263,16 +263,19 @@ fn observe_device(
             .ok()
             .map(|value| value.utilization),
         gpm_sm_utilization,
-        sm_utilization: gpm_sm_utilization.is_none().then(|| {
-            process_sm_utilization(process_utilization_timestamps, index, |timestamp| {
-                device.process_utilization_stats(timestamp).map(|samples| {
-                    samples
-                        .into_iter()
-                        .map(|sample| (sample.timestamp, sample.sm_util))
-                        .collect()
+        sm_utilization: gpm_sm_utilization
+            .is_none()
+            .then(|| {
+                process_sm_utilization(process_utilization_timestamps, index, |timestamp| {
+                    device.process_utilization_stats(timestamp).map(|samples| {
+                        samples
+                            .into_iter()
+                            .map(|sample| (sample.timestamp, sample.sm_util))
+                            .collect()
+                    })
                 })
             })
-        }).flatten(),
+            .flatten(),
         jpg_utilization: jpg_utilization(nvml, device),
         power_violation_nanoseconds: device
             .violation_status(PerformancePolicy::Power)
@@ -290,7 +293,12 @@ fn process_sm_utilization<E>(
     if let Some(timestamp) = samples.iter().map(|(timestamp, _)| *timestamp).max() {
         timestamps.insert(index, timestamp);
     }
-    Some(samples.into_iter().map(|(_, sm_utilization)| sm_utilization).collect())
+    Some(
+        samples
+            .into_iter()
+            .map(|(_, sm_utilization)| sm_utilization)
+            .collect(),
+    )
 }
 
 fn record_from_observation(

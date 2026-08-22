@@ -153,7 +153,8 @@ impl GpuTelemetryRun {
                     }
                 }
                 GpuTelemetrySourceSpec::AmdSmi {} => {
-                    match AmdSmiTelemetrySource::spawn(clock.clone(), spec.request_timeout_ns).await {
+                    match AmdSmiTelemetrySource::spawn(clock.clone(), spec.request_timeout_ns).await
+                    {
                         Ok(source) => {
                             collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source))))
                         }
