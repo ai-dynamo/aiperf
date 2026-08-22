@@ -75,7 +75,7 @@ configuration is a per-run CLI flag, not a cluster-wide operator setting.
 When `gpu_telemetry_enabled=True`, the JobSet builder injects a dedicated
 `gpu-telemetry-manager` container into the controller pod via
 `_create_optional_manager_containers` in
-[`src/aiperf/kubernetes/jobset_builder.py`](../../src/aiperf/kubernetes/jobset_builder.py).
+[`rust/cli/src/kube/manifest.rs`](../../rust/cli/src/kube/manifest.rs).
 It runs the `GPUTelemetryManager` service from
 [`src/aiperf/gpu_telemetry/manager.py`](../../src/aiperf/gpu_telemetry/manager.py).
 

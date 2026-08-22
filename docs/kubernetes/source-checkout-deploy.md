@@ -60,7 +60,7 @@ export AIPERF_TAG="$(git rev-parse --short HEAD)"
 
 ## 2. Build and push the AIPerf image
 
-The same image is used by the operator containers and benchmark JobSet pods unless you explicitly override `defaults.image` in the Helm chart.
+The benchmark image contains the native `aiperf` binary. The independently packaged operator has its own image; configure it through the operator chart separately from the submitted benchmark image.
 
 ### NGC-style registry
 
@@ -148,7 +148,7 @@ export AIPERF_IMAGE_TAG="${AIPERF_IMAGE##*:}"
 Install the operator:
 
 ```bash
-helm upgrade --install aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade --install aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --create-namespace \
   --set image.repository="${AIPERF_IMAGE_REPOSITORY}" \
@@ -159,7 +159,7 @@ helm upgrade --install aiperf-operator deploy/helm/aiperf-operator \
 If you created `aiperf-registry`, include it in the Helm release:
 
 ```bash
-helm upgrade --install aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade --install aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --create-namespace \
   --set image.repository="${AIPERF_IMAGE_REPOSITORY}" \
@@ -326,7 +326,7 @@ docker push "${AIPERF_IMAGE}"
 export AIPERF_IMAGE_REPOSITORY="${AIPERF_IMAGE%:*}"
 export AIPERF_IMAGE_TAG="${AIPERF_IMAGE##*:}"
 
-helm upgrade aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --reuse-values \
   --set image.repository="${AIPERF_IMAGE_REPOSITORY}" \
@@ -387,7 +387,7 @@ If the server is still starting and you intentionally want the benchmark to wait
 The Helm chart creates benchmark RBAC for `benchmarkNamespace.name` and any namespaces listed in `benchmarkRbacNamespaces`. If you run jobs in a different namespace, either install the chart with that namespace configured or add the namespace to `benchmarkRbacNamespaces`:
 
 ```bash
-helm upgrade aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --reuse-values \
   --set 'benchmarkRbacNamespaces[0]=team-a-benchmarks'

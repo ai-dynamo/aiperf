@@ -147,7 +147,7 @@ In direct mode there is no operator PVC. Results must be pulled via
    volume if the API service is not reachable.
 
 The controller pod runs a small results sidecar that serves those files from
-the shared `/results` volume (see `src/aiperf/kubernetes/results_sidecar.py`),
+the shared `/results` volume (see `rust/cli/src/results_sidecar.rs`),
 so the files survive even after the main controller container exits.
 
 **The pod must still exist when you run `aiperf kube results --from-pods`.**

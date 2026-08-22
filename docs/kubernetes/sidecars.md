@@ -18,7 +18,7 @@ sidebar-title: Controller Pod Sidecars
 
 Every AIPerf benchmark controller pod runs a short stack of sidecar containers alongside the control-plane process. Two of them — the **event-bus proxy** and the **results sidecar** — exist to offload load or provide a fallback surface that the SystemController itself cannot reliably host. They are invisible in normal usage, but anyone debugging fan-in hangs, startup races, or partial result retrieval needs to know what they do and how to tune them.
 
-The source of truth is `src/aiperf/kubernetes/jobset_builder.py` (composition), `src/aiperf/kubernetes/results_sidecar.py` (FastAPI app), and `src/aiperf/kubernetes/environment.py` (resource defaults and ports).
+The source of truth is `rust/cli/src/kube/manifest.rs` (composition), `rust/cli/src/results_sidecar.rs` (FastAPI app), and `src/aiperf/kubernetes/environment.py` (resource defaults and ports).
 
 ---
 
@@ -26,7 +26,7 @@ The source of truth is `src/aiperf/kubernetes/jobset_builder.py` (composition), 
 
 **Event-bus proxy** runs the XPUB/XSUB ZMQ proxy for the benchmark's pub/sub event bus in a dedicated container. It exposes `tcp://*:5663` (XSUB frontend — publishers connect here) and `tcp://*:5664` (XPUB backend — subscribers connect here) on the controller pod so that workers and record processors can connect and publish/subscribe without talking to the SystemController directly. It is an independent sidecar because, at high concurrency, hundreds of simultaneous RP and worker pub/sub connections arriving at pod startup previously starved the SystemController's event loop while it tried to forward socket I/O itself. Health endpoint is `:8088/healthz` and `:8088/readyz`.
 
-**Results sidecar** runs a minimal FastAPI app on `:9091` that serves the controller pod's `/results` volume read-only. It exists as a fallback so the operator (and `aiperf kube results --from-pods`) can still retrieve exported artifacts after the main control-plane container exits — for example, when the controller completes exports and terminates but the JobSet TTL hasn't cleaned the pod up yet. Files are hidden until the controller writes the `.aiperf_results_ready.json` marker on clean exit, so clients never download half-written artifacts.
+**Results sidecar** runs the native `aiperf results-sidecar` artifact server on `:9091` against the controller pod's read-only `/results` volume. It exposes only a validated `results-manifest.json` and the artifacts declared by that manifest after the controller commits exports; this keeps incomplete artifacts unavailable after the controller exits.
 
 Both sidecars are always injected into controller pods by default. Disabling them is almost never correct.
 
@@ -93,84 +93,62 @@ This reverts to pre-sidecar behavior: the SystemController itself hosts the XPUB
 
 ## Results sidecar
 
-The results sidecar is a small FastAPI app launched via `python -m aiperf.kubernetes.results_sidecar`. It mounts the controller pod's `/results` PVC volume read-only and exposes three endpoints on port **9091**.
+The native `aiperf results-sidecar` runs beside the controller with a read-only
+`/results` mount and exposes the final artifact contract on port **9091**. It is
+not an in-process controller API and shares no Python response-model source.
 
 ### Endpoint catalog
 
-| Method | Path                              | Purpose                                        |
-|--------|-----------------------------------|------------------------------------------------|
-| GET    | `/healthz`                        | Liveness probe. Always `200 OK`.               |
-| GET    | `/api/results/list`               | List available result files (JSON)             |
-| GET    | `/api/results/files/{filename}`   | Download a result file (with content negotiation) |
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/healthz` | Liveness probe; always `200 OK`. |
+| GET | `/api/results/list` | List the committed manifest and its declared artifacts. |
+| GET | `/api/results/files/{filename}` | Download the manifest or one declared artifact. |
 
-The response models (`ResultFileInfo`, `ResultsListResponse`) are shared with the in-process controller API router at `src/aiperf/api/models/results.py`, so the two HTTP surfaces are contractually identical.
+### Results-manifest authorization
 
-### `GET /healthz`
+The controller commits `results-manifest.json` only after all exported
+artifacts are complete. It writes the file atomically, fsyncs the file and its
+parent directory, writes the private `.aiperf_results_ready.json` compatibility
+marker, then reports completion to the AIPerfJob. The compatibility marker is
+not listed or downloadable.
 
-```bash
-curl http://localhost:9091/healthz
-# {"status":"ok"}
-```
+A valid manifest carries the run identifier, readiness and cancellation state,
+artifact root, and each artifact's relative path, digest, byte length, and
+content type. Before serving any file, the sidecar validates that the manifest
+is well formed, the request is the manifest itself or an exact declared
+artifact path, and the file still matches its declared metadata. It never
+serves checkpoints, temporary files, or other present-but-undeclared files.
+
+Until a valid manifest exists, final artifacts are unavailable. A malformed
+manifest, duplicate path, traversal path, directory, symlink escape, reserved
+compatibility-marker path, missing file, size mismatch, or digest mismatch
+fails closed.
 
 ### `GET /api/results/list`
 
-Returns the JSON body defined by `ResultsListResponse`:
-
-```json
-{
-  "files": [
-    {"name": "metrics.json",                "size": 41820},
-    {"name": "profile_export_aiperf.json",  "size": 18331144},
-    {"name": "profile_export_console.txt",  "size": 3402},
-    {"name": "checkpoints/phase_0.parquet", "size": 1048576}
-  ]
-}
-```
-
-Readiness semantics:
-
-- If `.aiperf_results_ready.json` exists, all top-level files under `/results` are listed (except the marker itself).
-- If the marker is absent, only files under `/results/checkpoints/` are listed. Top-level exports are hidden until the controller finishes cleanly.
+The list response contains `results-manifest.json` and exactly the artifact
+paths declared by its validated manifest. It returns no partial or live-run
+artifacts.
 
 ### `GET /api/results/files/{filename}`
 
-Streams a single file. Honors `Accept-Encoding` — if the client advertises `zstd` or `gzip`, the sidecar streams the compressed body and sets `Content-Encoding` accordingly (via `aiperf.common.compression.stream_file_compressed`). Otherwise the file is returned as-is.
-
-- Sets `Content-Disposition: attachment; filename="..."` and `X-Filename` headers.
-- `Content-Type` is inferred from the extension: `.json`, `.jsonl`, `.csv`, `.parquet`, `.txt`; everything else is `application/octet-stream`.
-
-Error semantics:
-
-| Status | When                                                                          |
-|--------|-------------------------------------------------------------------------------|
-| 400    | Path traversal (`..`, symlink escaping `/results`) or reserved marker name    |
-| 404    | Controller not ready (marker absent) and file is not under `checkpoints/`     |
-| 404    | File path resolves correctly but does not exist                               |
-
-### Path safety
-
-`_safe_resolve` resolves the requested filename under the base directory and rejects anything that, after resolution, does not sit inside `base_dir.resolve()`. This catches `..`, absolute paths, and symlinks that would escape `/results`. The readiness marker `.aiperf_results_ready.json` is explicitly unfetchable.
-
-### Readiness marker
-
-The controller writes `/results/.aiperf_results_ready.json` via `write_ready_marker()` at the end of `SystemController` shutdown, once all exporters have flushed. The payload records whether the run was cancelled:
-
-```json
-{"ready": true, "was_cancelled": false}
-```
-
-Until the marker exists, the sidecar returns 404 on any top-level file. Checkpoint artifacts under `/results/checkpoints/` are served unconditionally so that in-flight progress can be inspected mid-run.
+The manifest and declared regular artifacts are available after validation.
+The sidecar sets an appropriate content type from manifest metadata and may use
+content negotiation for the response representation without changing the
+artifact's declared digest. Requests outside the manifest authorization set
+return `404`; invalid paths return `400`.
 
 ---
 
 ## When the results sidecar is used
 
-The results sidecar is reached by the operator, not directly by `aiperf kube results --from-pods`:
-
-1. **`aiperf kube results --from-pods`** tries two tiers: the **Controller API** (`http://controller-pod:9090/api/results/files/...`) via port-forward, then **`kubectl cp`** against the `control-plane` container's `/results` directory. Both require the control-plane container to still be running.
-2. **Operator completion fetch** reaches the results sidecar directly via `_download_final_and_sidecar` in `src/aiperf/operator/handlers/_completion_fetch.py`. When the primary client returns without the key result files, the operator re-issues the download against the sidecar port (`:9091`). Because the sidecar outlives the control-plane container, it covers the window between export completion and pod deletion.
-
-If neither path returns the files, results can only be recovered from operator-side storage (see `aiperf kube results` without `--from-pods`).
+The independent `aiperf-k8s-operator` indexes the committed manifest through
+the sidecar after the controller completes. Its result index and dashboard
+consume the versioned artifact contract; the operator does not infer completion
+from conventional filenames or read the controller's private marker. Native
+`aiperf kube results` renders the indexed result reference or retrieves the
+manifest-authorized artifacts through the same public sidecar surface.
 
 ---
 
@@ -186,33 +164,29 @@ If neither path returns the files, results can only be recovered from operator-s
 
 ### Results sidecar
 
-| Env var                              | Default | Notes                                                               |
-|--------------------------------------|---------|---------------------------------------------------------------------|
-| `AIPERF_K8S_RESULTS_SIDECAR_CPU`     | `25m`   | Adequate; streaming is compression-bound not CPU-bound              |
-| `AIPERF_K8S_RESULTS_SIDECAR_MEMORY`  | `192Mi` | Adequate                                                            |
-| `AIPERF_RESULTS_DIR`                 | `/results` | Volume mount path; do not change unless remounting the PVC        |
-| `AIPERF_RESULTS_SIDECAR_PORT`        | `9091`  | Container port; set by the JobSet builder to match `PORTS.RESULTS_SIDECAR` |
-| `AIPERF_RESULTS_SIDECAR_LOG_LEVEL`   | `info`  | uvicorn log level                                                   |
+The native manifest sets the artifact contract. The operator chart supplies
+container resources, mount location, and port as explicit envelope material;
+the operator does not synthesize native runtime settings.
 
 ---
 
 ## When to disable
 
 - **Event-bus proxy**: basically never. The pre-sidecar code path exists only as a bisection escape hatch and will reintroduce the SystemController startup starvation it was built to fix.
-- **Results sidecar**: always-on. There is no supported toggle to turn it off, because the operator's completion-fetch path depends on it when the control-plane container has already exited. If you want to skip artifact retrieval entirely, set `ttlSecondsAfterFinished: 0` on the AIPerfJob and let the JobSet delete the pod immediately.
+- **Results sidecar**: always-on for a `native-k8s/v1` controller. Final artifact discovery depends on its manifest-authorized surface.
 
 ---
 
 ## Troubleshooting
 
-### The `results-sidecar` container shows `Running` but `/api/results/list` returns only checkpoints (or 404 on key files)
+### The `results-sidecar` container is running but final results return `404`
 
-The controller has not finished exporting. The sidecar filters out top-level files until `.aiperf_results_ready.json` is written. This is expected while the run is still in progress — checkpoint artifacts will appear as they are written, but `metrics.json` and the profile exports only show up after a clean controller exit.
-
-If the controller has exited but the marker is still missing, the run was killed (OOM, SIGKILL, node eviction) before exporters flushed. Recover partial results by:
-
-1. Downloading `checkpoints/` via the sidecar — these are written incrementally.
-2. Falling back to `aiperf kube results` without `--from-pods` (operator-side storage, if the operator successfully fetched anything before termination).
+The controller has not committed a valid `results-manifest.json`, so the run has
+no network-visible final artifacts. This is expected while export is in
+progress. If the controller has exited, inspect the controller status and pod
+termination reason: an interrupted export intentionally leaves partial files
+unpublished. The sidecar cannot recover data that has not been committed into a
+manifest.
 
 ### `event-bus-proxy` is `CrashLoopBackOff`
 

@@ -350,7 +350,7 @@ ingress:
   tls: []                     # optional: list of {hosts: [...], secretName: ...}
 ```
 
-The template lives at `deploy/helm/aiperf-operator/templates/ingress.yaml` and routes to the operator Service on `resultsServer.port`. Each path may override the backend port via `portNumber`.
+The template lives at `deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/ingress.yaml` and routes to the operator Service on `resultsServer.port`. Each path may override the backend port via `portNumber`.
 
 ---
 
@@ -409,7 +409,7 @@ If the namespace has a ResourceQuota, preflight projects the total CPU and memor
 ### Upgrading
 
 ```bash
-helm upgrade aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system
 ```
 

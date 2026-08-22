@@ -60,6 +60,11 @@ purpose for each, so an agent knows which file to open for a given question.
   truth includes `src/aiperf/config`, `src/aiperf/orchestrator`, and
   `src/aiperf/cli_runner`. The old controller/service/ZMQ implementation under
   `src/` remains legacy and is not an alternate hot path.
+- **Kubernetes control-plane isolation:** `docs/specs/kubernetes-control-plane-isolation.md`
+  defines the planned `native-k8s/v1` boundary: Rust owns the public `aiperf kube`
+  CLI and native controller/cell/results-sidecar roles; the independently packaged
+  `aiperf-k8s-operator` owns reconciliation and its API/dashboard without importing
+  `aiperf.*`; only versioned contract, CRD, and artifact data cross the boundary.
 - **Native graph inspection:** `aiperf graph validate`, `aiperf graph explain`,
   and `aiperf graph visualize` are local-only Rust commands. Each resolves one
   selected stock built-in graph adapter exactly once, then inspects the retained

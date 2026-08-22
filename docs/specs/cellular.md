@@ -95,6 +95,10 @@ coordinator `finalize_run` provenance or the grouped error-message list.
   before cellular startup; counts/sums/rates remain exact in supported modes.
 - Cross-host beyond loopback, gRPC/offline cell wiring, and graph weighted-sampling
   plus static-node `request_limit` partition.
+- Kubernetes control-plane isolation: the planned `native-k8s/v1` deployment
+  has only controller, cell, and results-sidecar roles. Rust mints fixed binary
+  role material into named immutable mounts; the independent operator validates
+  reference metadata and never reads Secret bytes. Hierarchy remains refused.
 
 ## Source anchors
 

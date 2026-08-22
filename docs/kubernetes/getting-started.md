@@ -157,7 +157,7 @@ kubectl get pods -n dynamo-system
 ### Install the AIPerf Operator
 
 ```bash
-helm install aiperf-operator deploy/helm/aiperf-operator \
+helm install aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --create-namespace
 ```
@@ -165,7 +165,7 @@ helm install aiperf-operator deploy/helm/aiperf-operator \
 For Kind clusters using a locally built image, override the image:
 
 ```bash
-helm install aiperf-operator deploy/helm/aiperf-operator \
+helm install aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --create-namespace \
   --set image.repository=aiperf \

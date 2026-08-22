@@ -61,6 +61,10 @@ The MUST/SHOULD words are normative for any new package:
 5. Code, scripts, CI, and documentation treat Cargo metadata as the authority for
    package identity, never a directory basename.
 
+These Cargo-only naming rules do not apply to repository assets outside `rust/`:
+`aiperf-k8s-operator/` is an independent Python distribution, while
+`contracts/` and `deploy/` hold versioned contract and deployment assets.
+
 The metadata-based conformance gate is `tools/check_crate_layout.py`, wired into
 `.pre-commit-config.yaml` as `check-crate-layout`. It resolves its root as
 `repo_root / "rust"`, enforces the directory/package rules, and fails closed on
