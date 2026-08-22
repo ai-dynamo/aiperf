@@ -265,7 +265,7 @@ fn nanoseconds_to_microseconds(value: u64) -> f64 {
     value as f64 * 1e-3
 }
 
-fn jpg_utilization(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<f64> {
+fn jpg_utilization(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<u32> {
     let symbol = nvml.lib().nvmlDeviceGetJpgUtilization.as_ref().ok()?;
     let mut utilization = 0_u32;
     let mut sampling_period_us = 0_u32;
