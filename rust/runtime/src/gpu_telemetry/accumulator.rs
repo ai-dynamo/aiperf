@@ -750,12 +750,14 @@ mod tests {
             .with_gauge_window(5, 25);
         let summary = accumulator.summarize_phase(&boundary, None, None);
 
-        let SidecarStats::Gauge(power) = &summary.sidecar_metrics()["nvidia_power_usage"].series[0].stats else {
+        let SidecarStats::Gauge(power) =
+            &summary.sidecar_metrics()["nvidia_power_usage"].series[0].stats
+        else {
             panic!("expected power gauge")
         };
         assert_eq!(power.avg.as_f64(), Some(25.0));
-        let SidecarStats::Counter { rate, .. } = &summary.sidecar_metrics()
-            ["nvidia_energy_consumption"].series[0].stats
+        let SidecarStats::Counter { rate, .. } =
+            &summary.sidecar_metrics()["nvidia_energy_consumption"].series[0].stats
         else {
             panic!("expected energy counter")
         };

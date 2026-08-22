@@ -419,10 +419,9 @@ impl GpuTelemetryState {
             combine_snapshots(&end_snapshots, end_ns),
         ) {
             let mut boundary = GpuPhaseBoundary::new(start, end)?;
-            if let (Some(opening), Some(closing)) = (
-                self.opening_scrape_ns.get(),
-                self.closing_scrape_ns.get(),
-            ) {
+            if let (Some(opening), Some(closing)) =
+                (self.opening_scrape_ns.get(), self.closing_scrape_ns.get())
+            {
                 boundary = boundary.with_gauge_window(opening, closing);
             }
             self.accumulator
