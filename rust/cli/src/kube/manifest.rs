@@ -48,7 +48,7 @@ fn job(name: &str, replicas: u32, envelope: &ControllerEnvelope, roles: &[&RoleE
             "restartPolicy": "Never",
             "serviceAccountName": "aiperf-workload",
             "containers": roles.iter().map(|role| container(role, envelope)).collect::<Vec<_>>(),
-            "volumes": roles.iter().map(volume).collect::<Vec<_>>(),
+            "volumes": roles.iter().map(volume).chain(std::iter::once(json!({"name": "config", "configMap": {"name": envelope.config_ref.name}}))).collect::<Vec<_>>(),
         }}
     })
 }
@@ -58,6 +58,7 @@ fn container(role: &RoleEnvelope, envelope: &ControllerEnvelope) -> Value {
     environment.insert("AIPERF_JOB_ID".to_string(), envelope.job_id.clone());
     environment.insert("AIPERF_NAMESPACE".to_string(), envelope.namespace.clone());
     environment.insert("AIPERF_CELL_LAUNCHER".to_string(), "k8s".to_string());
+    environment.insert("AIPERF_CELL_COUNT".to_string(), envelope.cells.to_string());
     environment.insert(
         "AIPERF_CONTROLLER_ADDRESS".to_string(),
         envelope.controller_address.clone(),
@@ -72,7 +73,10 @@ fn container(role: &RoleEnvelope, envelope: &ControllerEnvelope) -> Value {
         "command": role.command,
         "args": role.argv,
         "env": environment.into_iter().map(|(name, value)| json!({"name": name, "value": value})).collect::<Vec<_>>(),
-        "volumeMounts": [{"name": format!("bootstrap-{}", role_name(role.name)), "mountPath": role.bootstrap.mount_path, "readOnly": true}],
+        "volumeMounts": [
+            {"name": format!("bootstrap-{}", role_name(role.name)), "mountPath": role.bootstrap.mount_path, "readOnly": true},
+            {"name": "config", "mountPath": "/etc/aiperf/config", "readOnly": true},
+        ],
     })
 }
 
@@ -114,6 +118,19 @@ mod tests {
             2
         );
         assert_eq!(jobs[1]["replicas"], 4);
+        assert_eq!(
+            jobs[0]["template"]["spec"]["volumes"][2]["configMap"]["name"],
+            "config-1"
+        );
+        assert_eq!(
+            jobs[1]["template"]["spec"]["containers"][0]["env"]
+                .as_array()
+                .expect("environment")
+                .iter()
+                .find(|entry| entry["name"] == "AIPERF_CELL_COUNT")
+                .expect("cell count")["value"],
+            "4"
+        );
         assert!(
             serde_json::to_string(&projected)
                 .expect("JSON")
