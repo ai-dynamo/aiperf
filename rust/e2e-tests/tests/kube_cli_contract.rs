@@ -114,7 +114,10 @@ fn kind_chart_installs_the_standalone_operator() {
 #[ignore]
 fn kind_preflight_and_list_reach_the_live_api() {
     let (code, _, stderr) = kube(&["preflight"]);
-    assert_eq!(code, 0, "preflight failed against the live cluster: {stderr}");
+    assert_eq!(
+        code, 0,
+        "preflight failed against the live cluster: {stderr}"
+    );
     let (code, _, stderr) = kube(&["list", "--namespace", "aiperf-system"]);
     assert_eq!(code, 0, "list failed against the live cluster: {stderr}");
 }
@@ -147,14 +150,12 @@ fn kind_profile_submits_and_results_verify_digests() {
 fn kind_inspection_commands_render_live_documents() {
     for command in ["show", "debug", "index", "logs", "watch", "attach"] {
         let (code, _, stderr) = kube(&[command, "aiperf-run", "--namespace", "aiperf-system"]);
-        assert_eq!(code, 0, "{command} failed against the live cluster: {stderr}");
+        assert_eq!(
+            code, 0,
+            "{command} failed against the live cluster: {stderr}"
+        );
     }
-    let (code, stdout, stderr) = kube(&[
-        "dashboard",
-        "aiperf-run",
-        "--namespace",
-        "aiperf-system",
-    ]);
+    let (code, stdout, stderr) = kube(&["dashboard", "aiperf-run", "--namespace", "aiperf-system"]);
     assert_eq!(code, 0, "dashboard failed: {stderr}");
     assert!(
         stdout.contains("127.0.0.1"),
