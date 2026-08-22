@@ -128,16 +128,21 @@ impl KubeClient {
         })
     }
 
-    /// Submit a JSON merge patch using the shared authenticated transport.
-    pub fn merge_patch(&self, path: &str, body: &serde_json::Value) -> Result<u16, KubeError> {
-        let body = serde_json::to_vec(body).map_err(|error| KubeError::Decode(error.to_string()))?;
+    /// Submit one bounded JSON API request through the shared authenticated transport.
+    pub fn request(&self, method: &str, path: &str, content_type: &str, body: Vec<u8>) -> Result<u16, KubeError> {
         self.transport.send(&self.credentials, KubeRequest {
-            method: "PATCH".to_string(),
+            method: method.to_string(),
             path: path.to_string(),
-            content_type: "application/merge-patch+json".to_string(),
+            content_type: content_type.to_string(),
             body,
             deadline: self.request_deadline,
         })
+    }
+
+    /// Submit a JSON merge patch using the shared authenticated transport.
+    pub fn merge_patch(&self, path: &str, body: &serde_json::Value) -> Result<u16, KubeError> {
+        let body = serde_json::to_vec(body).map_err(|error| KubeError::Decode(error.to_string()))?;
+        self.request("PATCH", path, "application/merge-patch+json", body)
     }
 }
 
