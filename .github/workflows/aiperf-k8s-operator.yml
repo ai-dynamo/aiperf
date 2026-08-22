@@ -1,0 +1,23 @@
+name: AIPerf Kubernetes Operator
+on:
+  pull_request:
+    paths: ["aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**"]
+  push:
+    paths: ["aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with: {python-version: "3.11"}
+    - run: python -m pip install -e './aiperf-k8s-operator[test]'
+    - run: pytest -n auto aiperf-k8s-operator/tests
+  kind:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: helm/kind-action@v1
+    - run: helm install aiperf-k8s deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator
+    - run: python -m pip install -e './aiperf-k8s-operator[test]'
+    - run: pytest -n auto aiperf-k8s-operator/tests/integration --run-integration
