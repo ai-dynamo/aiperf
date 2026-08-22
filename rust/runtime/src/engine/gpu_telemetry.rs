@@ -583,6 +583,35 @@ mod tests {
     }
 
     #[test]
+    fn telemetry_row_preserves_native_local_source_identity() {
+        let record = GpuTelemetryRecord {
+            timestamp_ns: 42,
+            endpoint_url: "amdsmi://localhost".to_string(),
+            metadata: GpuMetadata {
+                gpu_index: 0,
+                gpu_uuid: "GPU-amd".to_string(),
+                gpu_model_name: "MI300X".to_string(),
+                pci_bus_id: Some("0000:41:00.0".to_string()),
+                device: Some("amd0".to_string()),
+                hostname: Some("localhost".to_string()),
+                namespace: None,
+                pod_name: None,
+                platform: crate::gpu_telemetry::AMD_GPU_TELEMETRY_PLATFORM.to_string(),
+            },
+            metrics: BTreeMap::from([
+                ("amd_energy_consumption".to_string(), 1.25),
+                ("amd_throttle_status".to_string(), 1.0),
+            ]),
+        };
+        let value = serde_json::to_value(TelemetryRow::from(&record)).unwrap();
+        assert_eq!(value["dcgm_url"], "amdsmi://localhost");
+        assert_eq!(value["platform"], "amd");
+        assert_eq!(value["pci_bus_id"], "0000:41:00.0");
+        assert_eq!(value["telemetry_data"]["amd_energy_consumption"], 1.25);
+        assert_eq!(value["telemetry_data"]["amd_throttle_status"], 1.0);
+    }
+
+    #[test]
     fn telemetry_row_jsonl_includes_platform_and_normalized_metrics() {
         let metrics = BTreeMap::from([("nvidia_power_usage".to_string(), 250.0)]);
         let record = GpuTelemetryRecord {
