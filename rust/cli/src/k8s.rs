@@ -6,7 +6,9 @@
 //! Kubernetes authentication and TLS live in [`crate::kube`]. Reporting is a
 //! no-op off-cluster and API failures never fail a benchmark.
 
-use std::io::Write;
+use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::Arc;
@@ -16,10 +18,12 @@ use sha2::{Digest, Sha256};
 
 use crate::kube::auth::in_cluster_credentials;
 use crate::kube::client::{AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, KubeClient};
+use crate::kube::results::MAX_ARTIFACT_BYTES;
 
 const READY_MARKER_NAME: &str = ".aiperf_results_ready.json";
 const SA_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 const SA_CA_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
+const ARTIFACT_HASH_BUFFER_BYTES: usize = 64 * 1024;
 
 /// The owning AIPerfJob identity plus rotating Kubernetes credentials.
 pub struct InClusterConfig {
@@ -164,19 +168,82 @@ fn collect_artifacts(base_dir: &Path) -> std::io::Result<Vec<Value>> {
                 continue;
             }
             if !kind.is_file() {
-                continue;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("result artifact {} is not a regular file", path.display()),
+                ));
             }
             let relative = path.strip_prefix(base_dir).map_err(std::io::Error::other)?;
             let name = relative.to_string_lossy().replace('\\', "/");
             if name == READY_MARKER_NAME || name == "results-manifest.json" {
                 continue;
             }
-            let bytes = std::fs::read(&path)?;
-            out.push(json!({"path": name, "sha256": format!("{:x}", Sha256::digest(&bytes)), "bytes": bytes.len(), "contentType": content_type(&path)}));
+            let mut file = open_regular_artifact(&path)?;
+            if file.metadata()?.len() > MAX_ARTIFACT_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "result artifact {} exceeds {MAX_ARTIFACT_BYTES} bytes",
+                        path.display()
+                    ),
+                ));
+            }
+            let (sha256, bytes) = hash_artifact_reader(&mut file, MAX_ARTIFACT_BYTES)?;
+            out.push(json!({"path": name, "sha256": sha256, "bytes": bytes, "contentType": content_type(&path)}));
         }
     }
     out.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
     Ok(out)
+}
+
+#[cfg(unix)]
+fn open_regular_artifact(path: &Path) -> std::io::Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if file.metadata()?.is_file() {
+        Ok(file)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("result artifact {} is not a regular file", path.display()),
+        ))
+    }
+}
+
+#[cfg(not(unix))]
+fn open_regular_artifact(_path: &Path) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "result collection requires POSIX no-follow descriptors",
+    ))
+}
+
+fn hash_artifact_reader<R: Read>(reader: &mut R, maximum: u64) -> std::io::Result<(String, u64)> {
+    let mut hasher = Sha256::new();
+    let mut bytes = 0_u64;
+    let mut buffer = [0_u8; ARTIFACT_HASH_BUFFER_BYTES];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        bytes = bytes.checked_add(read as u64).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "result artifact is too large",
+            )
+        })?;
+        if bytes > maximum {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("result artifact exceeds {maximum} bytes"),
+            ));
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok((format!("{:x}", hasher.finalize()), bytes))
 }
 
 fn write_atomic_json(path: &Path, value: &Value) -> std::io::Result<()> {
@@ -294,6 +361,72 @@ mod tests {
         let value: Value = serde_json::from_slice(&std::fs::read(marker).expect("marker read"))
             .expect("marker JSON");
         assert_eq!(value["ready"], true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publish_results_refuses_a_symlinked_artifact() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let outside = tempfile::NamedTempFile::new().expect("outside artifact");
+        symlink(outside.path(), directory.path().join("profile.json")).expect("artifact symlink");
+
+        let error = publish_results(directory.path(), "run-1", false)
+            .expect_err("unsafe artifacts must prevent manifest publication");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!directory.path().join("results-manifest.json").exists());
+    }
+
+    #[test]
+    fn publish_results_refuses_an_artifact_over_the_upload_limit() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let artifact =
+            std::fs::File::create(directory.path().join("large.bin")).expect("artifact creation");
+        artifact
+            .set_len(512 * 1024 * 1024 + 1)
+            .expect("sparse oversized artifact");
+
+        let error = publish_results(directory.path(), "run-1", false)
+            .expect_err("oversized artifacts must prevent manifest publication");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!directory.path().join("results-manifest.json").exists());
+    }
+
+    #[test]
+    fn artifact_hashing_never_requests_more_than_64_kib() {
+        let payload = vec![b'x'; 64 * 1024 + 1];
+        let mut reader = RequestedBufferReader {
+            source: std::io::Cursor::new(payload.clone()),
+            largest_request: 0,
+        };
+
+        let (digest, bytes) =
+            hash_artifact_reader(&mut reader, payload.len() as u64).expect("bounded artifact hash");
+
+        assert_eq!(digest, format!("{:x}", Sha256::digest(&payload)));
+        assert_eq!(bytes, payload.len() as u64);
+        assert!(reader.largest_request <= 64 * 1024);
+    }
+
+    struct RequestedBufferReader {
+        source: std::io::Cursor<Vec<u8>>,
+        largest_request: usize,
+    }
+
+    impl std::io::Read for RequestedBufferReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.largest_request = self.largest_request.max(buffer.len());
+            if buffer.len() > 64 * 1024 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "hash reader requested more than 64 KiB",
+                ));
+            }
+            self.source.read(buffer)
+        }
     }
 
     #[test]
