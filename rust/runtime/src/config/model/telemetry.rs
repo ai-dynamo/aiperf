@@ -377,6 +377,105 @@ pub fn normalize_metrics_url(url: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The two local collectors are URL-less by construction, so their wire form
+    /// must carry the discriminant and nothing else.
+    #[test]
+    fn gpu_sources_serialize_local_collectors_without_urls() {
+        assert_eq!(
+            serde_json::to_value(GpuSource::Nvml).unwrap(),
+            serde_json::json!({"type": "nvml"}),
+        );
+        assert_eq!(
+            serde_json::to_value(GpuSource::AmdSmi).unwrap(),
+            serde_json::json!({"type": "amd_smi"}),
+        );
+    }
+
+    /// DCGM sources are an existing wire contract and must round-trip unchanged.
+    #[test]
+    fn gpu_sources_keep_the_dcgm_wire_shape() {
+        let value = serde_json::json!({"type": "dcgm", "url": "http://h:9400/metrics"});
+        assert_eq!(
+            serde_json::to_value(GpuSource::Dcgm {
+                url: "http://h:9400/metrics".to_string(),
+            })
+            .unwrap(),
+            value,
+        );
+        let decoded: GpuSource = serde_json::from_value(value).unwrap();
+        assert!(matches!(decoded, GpuSource::Dcgm { url } if url == "http://h:9400/metrics"));
+    }
+
+    /// Each authored collector selects exactly its own source; there is no
+    /// fallback to DCGM and no second collector alongside it.
+    #[test]
+    fn from_config_selects_only_the_authored_collector() {
+        let dcgm = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig::default()).unwrap();
+        assert!(
+            dcgm.sources
+                .iter()
+                .all(|s| matches!(s, GpuSource::Dcgm { .. })),
+        );
+        assert_eq!(dcgm.sources.len(), 2, "the two default DCGM endpoints");
+
+        let nvml = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+            collector: "pynvml".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(matches!(nvml.sources.as_slice(), [GpuSource::Nvml]));
+        assert!(nvml.metrics_file.is_none());
+
+        let amd = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+            collector: "amdsmi".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(matches!(amd.sources.as_slice(), [GpuSource::AmdSmi]));
+    }
+
+    /// Local collectors scrape no endpoint and read no DCGM field CSV, so both
+    /// options must fail rather than be accepted and ignored.
+    #[test]
+    fn from_config_rejects_dcgm_only_options_for_local_collectors() {
+        for collector in ["pynvml", "amdsmi"] {
+            let err = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+                collector: collector.to_string(),
+                urls: vec!["http://x".to_string()],
+                ..Default::default()
+            })
+            .expect_err("a local collector has no scrape URL");
+            assert!(err.to_string().contains("urls"), "{err}");
+
+            let err = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+                collector: collector.to_string(),
+                metrics_file: Some("fields.csv".to_string()),
+                ..Default::default()
+            })
+            .expect_err("a local collector has no DCGM field CSV");
+            assert!(err.to_string().contains("metrics_file"), "{err}");
+        }
+    }
+
+    /// An unknown collector or a mode the native runtime does not render must
+    /// fail closed instead of silently resolving to the DCGM summary path.
+    #[test]
+    fn from_config_rejects_unknown_collectors_and_modes() {
+        let err = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+            collector: "nvidia-smi".to_string(),
+            ..Default::default()
+        })
+        .expect_err("unknown collector");
+        assert!(err.to_string().contains("collector"), "{err}");
+
+        let err = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+            mode: "realtime_dashboard".to_string(),
+            ..Default::default()
+        })
+        .expect_err("no native dashboard renderer");
+        assert!(err.to_string().contains("mode"), "{err}");
+    }
+
     #[test]
     fn metrics_url_normalization() {
         assert_eq!(

@@ -3079,10 +3079,10 @@ mod tests {
         );
     }
 
-    /// `dcgm`/`summary` are what the native runtime builds unconditionally, so
-    /// they must be accepted; `pynvml` needs the supervised Python worker and
-    /// `realtime_dashboard` has no native renderer, so both must fail rather than
-    /// resolve to DCGM-and-a-summary-table under another name.
+    /// `dcgm`, `pynvml`, and `amdsmi` are the three collectors the native runtime
+    /// builds; anything else, and the `realtime_dashboard` mode that has no native
+    /// renderer, must fail rather than resolve to DCGM-and-a-summary-table under
+    /// another name.
     #[test]
     fn gpu_telemetry_rejects_backends_and_modes_it_cannot_honor() {
         let with = |body: &str| {
@@ -3094,7 +3094,7 @@ mod tests {
             )
         };
         with("    collector: dcgm\n    mode: summary\n").expect("the native backend and mode");
-        let err = with("    collector: pynvml\n").expect_err("pynvml has no native collector");
+        let err = with("    collector: nvidia-smi\n").expect_err("no such native collector");
         assert!(
             err.to_string().contains("collector"),
             "error should name the key: {err}"
@@ -3103,6 +3103,32 @@ mod tests {
         assert!(
             err.to_string().contains("mode"),
             "error should name the key: {err}"
+        );
+    }
+
+    /// The native local collectors read the host's own driver: they are
+    /// authorable by name, and the DCGM-only scrape URLs and field CSV must fail
+    /// rather than be accepted and silently dropped.
+    #[test]
+    fn gpu_telemetry_accepts_local_collectors_and_rejects_dcgm_only_options() {
+        let with = |body: &str| {
+            resolve_str(
+                &cfg(&format!(
+                    "  gpuTelemetry: {{{body}}}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+                )),
+                Some("/tmp/x".into()),
+            )
+        };
+        with("collector: pynvml, mode: summary").expect("the native NVML collector");
+        with("collector: amdsmi").expect("the native AMD SMI collector");
+        let err = with("collector: amdsmi, urls: [http://x]")
+            .expect_err("a local collector scrapes no URL");
+        assert!(err.to_string().contains("urls"), "should name the key: {err}");
+        let err = with("collector: pynvml, metricsFile: fields.csv")
+            .expect_err("a local collector reads no DCGM field CSV");
+        assert!(
+            err.to_string().contains("metricsFile") || err.to_string().contains("metrics_file"),
+            "should name the key: {err}"
         );
     }
 

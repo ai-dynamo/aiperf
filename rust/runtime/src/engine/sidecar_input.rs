@@ -907,6 +907,43 @@ mod tests {
         assert!(format!("{error:#}").contains("unknown field"));
     }
 
+    /// The lowered local-collector sources decode strictly: no `url` is accepted
+    /// on them, and the DCGM shape is unchanged.
+    #[test]
+    fn gpu_telemetry_accepts_url_less_local_sources() {
+        let resolver = BuiltinRunnerSidecarInputAdapterResolver::new();
+        let spec = |sources: serde_json::Value| {
+            raw(serde_json::json!({
+                "collection_interval_ns": 333_000_000,
+                "request_timeout_ns": 10_000_000_000_i64,
+                "records_path": "gpu.jsonl",
+                "sources": sources
+            }))
+        };
+        for source in [
+            serde_json::json!({"type": "nvml"}),
+            serde_json::json!({"type": "amd_smi"}),
+            serde_json::json!({"type": "dcgm", "url": "http://gpu:9400/metrics"}),
+        ] {
+            let config = spec(serde_json::json!([source]));
+            resolver
+                .prepare(&[AuthoredSidecarInput {
+                    id: GPU_TELEMETRY_SIDECAR_ID,
+                    config: &config,
+                }])
+                .expect("a lowered source must validate");
+        }
+
+        let config = spec(serde_json::json!([{"type": "nvml", "url": "http://x/metrics"}]));
+        let error = resolver
+            .prepare(&[AuthoredSidecarInput {
+                id: GPU_TELEMETRY_SIDECAR_ID,
+                config: &config,
+            }])
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("unknown field"), "{error:#}");
+    }
+
     #[test]
     fn unknown_and_duplicate_adapter_ids_fail_closed() {
         let raw_config = raw(serde_json::json!({}));
