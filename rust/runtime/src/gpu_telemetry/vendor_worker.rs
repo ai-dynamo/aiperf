@@ -514,6 +514,8 @@ mod tests {
         shutdown_error: Option<GpuTelemetryError>,
         records: Vec<GpuTelemetryRecord>,
         panic_on_scrape: bool,
+        initialize_started: Option<SyncSender<()>>,
+        initialize_release: Option<Receiver<()>>,
         shutdown_started: Option<SyncSender<()>>,
         shutdown_release: Option<Receiver<()>>,
         drop_reply: Option<SyncSender<ThreadId>>,
@@ -527,6 +529,8 @@ mod tests {
                 shutdown_error: None,
                 records: Vec::new(),
                 panic_on_scrape: false,
+                initialize_started: None,
+                initialize_release: None,
                 shutdown_started: None,
                 shutdown_release: None,
                 drop_reply: None,
@@ -544,6 +548,12 @@ mod tests {
                 current_thread_name(),
                 thread::current().id(),
             ));
+            if let Some(started) = &self.initialize_started {
+                let _ = started.try_send(());
+            }
+            if let Some(release) = &self.initialize_release {
+                let _ = release.recv();
+            }
             if let Some(error) = &self.initialize_error {
                 return Err(error.clone());
             }
@@ -696,6 +706,51 @@ mod tests {
                 && thread_1 == thread_2
                 && thread_2 == thread_3
                 && thread_3 == thread_4
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn initialization_timeout_returns_at_clock_deadline() {
+        let clock = Rc::new(SimClock::new());
+        let actions = Arc::new(StdMutex::new(Vec::new()));
+        let (started_reply, started_receiver) = sync_channel(CHANNEL_CAPACITY);
+        let (release_reply, release_receiver) = sync_channel(CHANNEL_CAPACITY);
+        let (drop_reply, drop_receiver) = sync_channel(CHANNEL_CAPACITY);
+        let spawn = VendorWorkerSource::spawn_with_timeout(
+            clock.clone(),
+            ENDPOINT,
+            1,
+            fake_factory(actions.clone(), move |worker| {
+                worker.initialize_started = Some(started_reply);
+                worker.initialize_release = Some(release_receiver);
+                worker.drop_reply = Some(drop_reply);
+            }),
+        );
+        tokio::pin!(spawn);
+        tokio::select! {
+            () = receive_signal(started_receiver) => {}
+            result = &mut spawn => panic!("initialization unexpectedly completed: {result:?}"),
+        }
+
+        clock.advance_to(1);
+        assert!(matches!(
+            spawn.await,
+            Err(GpuTelemetryError::Worker(message)) if message == "vendor initialization timed out after 1ns"
+        ));
+        release_reply.try_send(()).unwrap();
+        let dropped_on = receive_drop(drop_receiver).await;
+        assert_ne!(dropped_on, thread::current().id());
+        assert!(matches!(
+            actions.lock().unwrap().as_slice(),
+            [
+                Action::Construct(_, worker_thread),
+                Action::Initialize(_, initialize_thread),
+                Action::Shutdown(_, shutdown_thread),
+                Action::Drop(_, drop_thread),
+            ] if worker_thread == initialize_thread
+                && initialize_thread == shutdown_thread
+                && shutdown_thread == drop_thread
+                && *drop_thread == dropped_on
         ));
     }
 
