@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(jobs[1]["replicas"], 4);
         assert_eq!(
             jobs[0]["template"]["spec"]["volumes"][2]["configMap"]["name"],
-            "config-1"
+            "config-2"
         );
         assert_eq!(
             jobs[1]["template"]["spec"]["containers"][0]["env"]
