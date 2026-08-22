@@ -395,6 +395,29 @@ One transport family at a time, byte-exact against the mock server at each step:
    leaves it. Verify with the http + grpc e2e suites **and** the native-graph eval
    path. Note that http and grpc alone do **not** exercise a payload-bearing
    transport arm, so dry_run (`rust/dry-run-tests`) must be in the same gate.
+   **(d) Added while implementing step 2:** two doc comments on the very seam
+   this step narrows assert the opposite property, and both become false the
+   moment the match lands. `registry.rs:215` calls `native_execution` "the seam
+   that makes a transport *swappable*: the workload asks the registered
+   transport for its execution binding … never matching on a transport kind",
+   and `registry.rs:236` states "There is no `match` on a closed transport enum:
+   adding a native transport means registering a factory that returns its own
+   binding, and nothing in the workloads changes." Step 2 must rewrite both.
+   That rewrite is not a concession, because the openness they describe is
+   already unreachable from authored config: `Transport`
+   (`config/model/transport.rs:16-18`) is `#[serde(tag = "type")]` over six
+   variants, so an out-of-tree `AIPerfExtension` may still call the public
+   `register_transport` (`registry.rs:530`) with a new id, but no Config v2
+   document can select it — `cfg.transport` fails to decode on an unknown tag.
+   Registry openness is therefore real only for the *id-addressed* consumers,
+   which are exactly obligations (b) and (c), and both already require the
+   migration to keep those entries. Verified one-to-one correspondence today:
+   every in-tree registration (`registry.rs:735`, `:770`, `:788`,
+   `dry_run.rs:582`, `offline_execution.rs:851-852`) registers exactly one of
+   the six `Transport` variants, so step 2 opens no selection gap. What it does
+   introduce is a standing duty to keep the match arms and the registry in
+   correspondence, and the compiler enforces only the match side — a factory
+   registered under an id with no arm fails at run time, not at build time.
 3. Repeat for the workload seam; collapse `ScheduledWorkloadConfigV2` /
    `GraphWorkloadConfigV2` into typed-optional fields — all **five** graph-only
    fields, including the `recorded_agent_default` derivation and the
