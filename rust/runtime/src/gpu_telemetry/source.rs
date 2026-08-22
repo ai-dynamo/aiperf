@@ -3,11 +3,10 @@
 
 //! Clock-injected telemetry-source seam and DCGM HTTP implementation.
 //!
-//! Fetch deduplication and typed response metadata, along with DCGM's
-//! fetch/decode flow, are implemented here. Forced boundary scrapes
-//! deliberately bypass dedup so unchanged counters still form an exact snapshot.
+//! Typed response metadata and DCGM's fetch/decode flow are implemented here.
+//! Every successful scrape is retained so cadence observations remain complete
+//! when the exporter body is stable between exporter updates.
 
-use std::cell::RefCell;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::rc::Rc;
 
@@ -24,9 +23,9 @@ use crate::gpu_telemetry::parser::{DcgmPrometheusDecoder, GpuTelemetryDecoder};
 /// Whether a scrape is cadence-driven or a mandatory phase barrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuScrapeMode {
-    /// Cadence scrape; an identical body may be skipped.
+    /// Cadence scrape.
     Continuous,
-    /// Synchronous phase-boundary scrape; never skipped as a duplicate.
+    /// Synchronous phase-boundary scrape.
     Boundary,
 }
 
@@ -39,7 +38,9 @@ pub enum GpuTelemetryError {
     HttpStatus(u16),
     /// Successful response did not carry a text body.
     MissingBody,
-    /// Supervised Python source violated its process or wire contract.
+    /// A telemetry source violated the scrape contract.
+    Protocol(String),
+    /// Dedicated source worker violated its process, thread, or wire contract.
     Worker(String),
     /// Prometheus exposition was malformed.
     Parse {
@@ -69,6 +70,12 @@ impl Display for GpuTelemetryError {
             Self::MissingBody => {
                 formatter.write_str("GPU telemetry endpoint returned no text body")
             }
+            Self::Protocol(message) => {
+                write!(
+                    formatter,
+                    "GPU telemetry source violated its contract: {message}"
+                )
+            }
             Self::Worker(message) => write!(formatter, "GPU telemetry worker failed: {message}"),
             Self::Parse { line, message } => {
                 write!(formatter, "invalid DCGM metrics at line {line}: {message}")
@@ -89,7 +96,11 @@ pub trait GpuTelemetrySource {
     /// Credential-free source identifier used in reports.
     fn endpoint_url(&self) -> &str;
 
-    /// Collects one scrape, returning `None` only for a duplicate cadence body.
+    /// Collects one scrape.
+    ///
+    /// Sources return a scrape or a typed error. `None` remains reserved for
+    /// compatibility with optional source implementations and is not emitted by
+    /// the native DCGM, NVML, or AMD SMI sources.
     async fn scrape(&self, mode: GpuScrapeMode) -> Result<Option<GpuScrape>, GpuTelemetryError>;
 
     /// Releases source-owned process or device resources.
@@ -105,7 +116,6 @@ pub struct DcgmTelemetrySource {
     request: RequestConfig,
     display_url: String,
     decoder: Rc<dyn GpuTelemetryDecoder>,
-    last_body: RefCell<Option<String>>,
 }
 
 impl DcgmTelemetrySource {
@@ -138,7 +148,6 @@ impl DcgmTelemetrySource {
             request: RequestConfig::new(endpoint_url),
             display_url,
             decoder,
-            last_body: RefCell::new(None),
         }
     }
 }
@@ -149,7 +158,7 @@ impl GpuTelemetrySource for DcgmTelemetrySource {
         &self.display_url
     }
 
-    async fn scrape(&self, mode: GpuScrapeMode) -> Result<Option<GpuScrape>, GpuTelemetryError> {
+    async fn scrape(&self, _mode: GpuScrapeMode) -> Result<Option<GpuScrape>, GpuTelemetryError> {
         let record = self.transport.get(&self.request).await;
         if let Some(error) = record.error {
             return Err(GpuTelemetryError::Transport(error.message));
@@ -166,23 +175,9 @@ impl GpuTelemetrySource for DcgmTelemetrySource {
                 Response::Sse(_) => None,
             })
             .ok_or(GpuTelemetryError::MissingBody)?;
-        let duplicate = self
-            .last_body
-            .borrow()
-            .as_ref()
-            .is_some_and(|last| last == &body);
-        if duplicate && mode == GpuScrapeMode::Continuous {
-            // A duplicate cadence body carries no new counters; skip decode
-            // without cloning or re-storing the identical body already held.
-            return Ok(None);
-        }
         let timestamp_ns = self.clock.now_ns();
-        // Store the fetched body first, then decode it by reference so the
-        // cadence path never clones the full Prometheus exposition.
-        let mut last_body = self.last_body.borrow_mut();
-        let body: &str = last_body.insert(body);
         self.decoder
-            .decode(&self.display_url, timestamp_ns, body)
+            .decode(&self.display_url, timestamp_ns, &body)
             .map(Some)
     }
 }
@@ -209,6 +204,11 @@ fn redact_url(endpoint_url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::RealClock;
+    use crate::transport::http::config::ClientConfig;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::LocalSet;
 
     #[test]
     fn endpoint_normalization_and_redaction_are_artifact_safe() {
@@ -220,5 +220,43 @@ mod tests {
             redact_url("http://user:secret@host:9400/metrics"),
             "http://host:9400/metrics"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn continuous_scrapes_retain_identical_successful_bodies() {
+        LocalSet::new()
+            .run_until(async {
+                let body = "DCGM_FI_DEV_POWER_USAGE{gpu=\"0\",UUID=\"GPU-a\",modelName=\"H100\"} 250\n";
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                let server = tokio::task::spawn_local(async move {
+                    for _ in 0..2 {
+                        let (mut stream, _) = listener.accept().await.unwrap();
+                        let mut request = [0_u8; 1024];
+                        let _ = stream.read(&mut request).await.unwrap();
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        stream.write_all(response.as_bytes()).await.unwrap();
+                        stream.shutdown().await.unwrap();
+                    }
+                });
+                let clock: Rc<dyn Clock> = RealClock::new();
+                let transport = Rc::new(HttpTransport::new(clock.clone(), ClientConfig::default()));
+                let source = DcgmTelemetrySource::new(
+                    clock,
+                    transport,
+                    format!("http://{address}"),
+                );
+
+                let first = source.scrape(GpuScrapeMode::Continuous).await.unwrap();
+                let second = source.scrape(GpuScrapeMode::Continuous).await.unwrap();
+
+                assert_eq!(first.unwrap().records.len(), 1);
+                assert_eq!(second.unwrap().records.len(), 1);
+                server.await.unwrap();
+            })
+            .await;
     }
 }

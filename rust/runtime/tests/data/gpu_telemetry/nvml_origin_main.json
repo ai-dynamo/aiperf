@@ -1,0 +1,26 @@
+[
+  {
+    "device": "nvidia0",
+    "gpu_index": 0,
+    "gpu_model_name": "H100",
+    "gpu_uuid": "GPU-nvml",
+    "hostname": "localhost",
+    "pci_bus_id": "0000:01:00.0",
+    "platform": "nvidia",
+    "telemetry_data": {
+      "nvidia_decoder_utilization": 12.0,
+      "nvidia_encoder_utilization": 34.0,
+      "nvidia_energy_consumption": 0.003,
+      "nvidia_gpu_utilization": 80.0,
+      "nvidia_jpg_utilization": 56.0,
+      "nvidia_memory_used": 12.0,
+      "nvidia_memory_utilization": 40.0,
+      "nvidia_power_usage": 250.0,
+      "nvidia_power_violation": 4.0,
+      "nvidia_sm_utilization": 25.0,
+      "nvidia_temperature": 65.0
+    },
+    "telemetry_source_url": "pynvml://localhost",
+    "timestamp_ns": 123
+  }
+]

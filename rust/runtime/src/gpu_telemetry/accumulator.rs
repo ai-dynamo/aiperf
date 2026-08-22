@@ -45,6 +45,8 @@ pub struct GpuPhaseBoundary {
     pub start: GpuBoundarySnapshot,
     /// Counter values forced at phase end.
     pub end: GpuBoundarySnapshot,
+    gauge_start_ns: i64,
+    gauge_end_ns: i64,
 }
 
 impl GpuPhaseBoundary {
@@ -59,7 +61,21 @@ impl GpuPhaseBoundary {
                 end_ns: end.timestamp_ns,
             });
         }
-        Ok(Self { start, end })
+        let gauge_start_ns = start.timestamp_ns;
+        let gauge_end_ns = end.timestamp_ns;
+        Ok(Self {
+            start,
+            end,
+            gauge_start_ns,
+            gauge_end_ns,
+        })
+    }
+
+    /// Widens gauge inclusion to successful source-boundary scrape times.
+    pub(crate) fn with_gauge_window(mut self, start_scrape_ns: i64, end_scrape_ns: i64) -> Self {
+        self.gauge_start_ns = self.gauge_start_ns.min(start_scrape_ns);
+        self.gauge_end_ns = self.gauge_end_ns.max(end_scrape_ns);
+        self
     }
 
     /// Exact authoritative phase duration in seconds.
@@ -363,8 +379,8 @@ impl GpuTelemetryAccumulator {
             .samples
             .iter()
             .filter(|sample| {
-                sample.timestamp_ns >= boundary.start.timestamp_ns
-                    && sample.timestamp_ns <= boundary.end.timestamp_ns
+                sample.timestamp_ns >= boundary.gauge_start_ns
+                    && sample.timestamp_ns <= boundary.gauge_end_ns
             })
             .filter_map(|sample| sample.metrics.get(&spec.name).copied())
             .filter(|value| value.is_finite())
@@ -623,6 +639,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn jpg_utilization_is_registered_for_summary_output() {
+        assert!(
+            GpuTelemetryAccumulator::new()
+                .metric_specs
+                .contains_key("nvidia_jpg_utilization")
+        );
+    }
+
     fn custom_spec(name: &str, unit: Unit) -> RuntimeGpuMetricSpec {
         RuntimeGpuMetricSpec {
             name: name.to_string(),
@@ -708,6 +733,35 @@ mod tests {
                 .unwrap_err(),
             GpuMetricRegistrationError::EmptyName
         );
+    }
+
+    #[test]
+    fn gauge_window_includes_boundary_scrapes_without_changing_counter_duration() {
+        let mut accumulator = GpuTelemetryAccumulator::new();
+        let opening = record(5, 0, 10.0, 0.0);
+        let start = record(10, 0, 20.0, 1.0);
+        let end = record(20, 0, 30.0, 3.0);
+        let closing = record(25, 0, 40.0, 4.0);
+        for record in [&opening, &start, &end, &closing] {
+            accumulator.ingest_record(record);
+        }
+        let boundary = GpuPhaseBoundary::new(snapshot(10, &[start]), snapshot(20, &[end]))
+            .unwrap()
+            .with_gauge_window(5, 25);
+        let summary = accumulator.summarize_phase(&boundary, None, None);
+
+        let SidecarStats::Gauge(power) =
+            &summary.sidecar_metrics()["nvidia_power_usage"].series[0].stats
+        else {
+            panic!("expected power gauge")
+        };
+        assert_eq!(power.avg.as_f64(), Some(25.0));
+        let SidecarStats::Counter { rate, .. } =
+            &summary.sidecar_metrics()["nvidia_energy_consumption"].series[0].stats
+        else {
+            panic!("expected energy counter")
+        };
+        assert_eq!(rate.and_then(|value| value.as_f64()), Some(200_000_000.0));
     }
 
     #[test]

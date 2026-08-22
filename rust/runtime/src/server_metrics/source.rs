@@ -343,7 +343,11 @@ impl ServerMetricsSource for PrometheusHttpSource {
 
 /// Normalize a server-metrics URL exactly once.
 pub fn normalize_metrics_url(value: &str) -> String {
-    let mut normalized = if value.starts_with("http://") || value.starts_with("https://") {
+    let mut normalized = if let Some(endpoint) = value.strip_prefix("grpc://") {
+        format!("http://{endpoint}")
+    } else if let Some(endpoint) = value.strip_prefix("grpcs://") {
+        format!("https://{endpoint}")
+    } else if value.starts_with("http://") || value.starts_with("https://") {
         value.to_string()
     } else {
         format!("http://{value}")
@@ -431,6 +435,14 @@ mod tests {
         assert_eq!(
             normalize_metrics_url("http://host/v1/chat/completions"),
             "http://host/v1/chat/completions/metrics"
+        );
+        assert_eq!(
+            normalize_metrics_url("grpc://host:9000"),
+            "http://host:9000/metrics"
+        );
+        assert_eq!(
+            normalize_metrics_url("grpcs://host:9000"),
+            "https://host:9000/metrics"
         );
         assert_eq!(
             redact_url("https://user:secret@host/metrics"),

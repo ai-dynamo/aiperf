@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Default sidecar cadence: 0.333 s in nanoseconds.
 const COLLECTION_INTERVAL_NS: u64 = 333_000_000;
-/// Default reachability timeout: 10 s in nanoseconds.
+/// Default telemetry source operation timeout: 10 s in nanoseconds.
 const REACHABILITY_TIMEOUT_NS: u64 = 10_000_000_000;
 /// Default DCGM exporter endpoints.
 const DEFAULT_DCGM_ENDPOINTS: [&str; 2] = ["localhost:9400", "localhost:9401"];
@@ -108,13 +108,22 @@ impl Default for NetworkLatencyConfig {
 }
 
 /// One lowered GPU telemetry source.
+///
+/// The tag is the collector identity: `dcgm` keeps its historical
+/// `{"type": "dcgm", "url": ...}` wire shape, while the two local collectors
+/// read the host's own driver and therefore carry no URL at all.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GpuSource {
-    /// Source type (`dcgm`).
-    #[serde(rename = "type")]
-    pub source_type: String,
-    /// Scrape URL.
-    pub url: String,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GpuSource {
+    /// NVIDIA DCGM exporter scraped over HTTP.
+    Dcgm {
+        /// Scrape URL.
+        url: String,
+    },
+    /// In-process NVIDIA NVML on the local host.
+    Nvml,
+    /// In-process AMD SMI on the local host.
+    AmdSmi,
 }
 
 /// The lowered `sidecars.gpu_telemetry` block.
@@ -291,10 +300,62 @@ impl ContentServerSidecar {
 }
 
 impl GpuTelemetrySidecar {
-    /// Build the default DCGM sidecar (the enabled-by-default path); `extra` are
-    /// custom DCGM URLs appended after the defaults (deduped). `metrics_file` is
-    /// the optional custom DCGM metrics CSV path (`--gpu-telemetry <file>.csv`).
-    pub fn default_dcgm(extra: &[String], metrics_file: Option<&str>) -> Self {
+    /// Lower one authored [`GpuTelemetryConfig`] into the sidecar block.
+    ///
+    /// The authored collector selects exactly one source family; there is no
+    /// fallback to another collector when the selected one is unavailable, so a
+    /// misspelled name fails here rather than silently benchmarking with DCGM.
+    /// `enabled` is not consulted — the caller decides whether to attach the
+    /// result — so an unusable selection is rejected even on a disabled run.
+    pub fn from_config(cfg: &GpuTelemetryConfig) -> anyhow::Result<Self> {
+        if cfg.mode != "summary" {
+            anyhow::bail!(
+                "gpu_telemetry.mode {:?} is not supported \
+                 (the native runtime implements only \"summary\")",
+                cfg.mode
+            );
+        }
+        let sources = match cfg.collector.as_str() {
+            "dcgm" => Self::dcgm_sources(&cfg.urls),
+            local @ ("pynvml" | "amdsmi") => {
+                // Both local collectors read the host driver in-process: an
+                // endpoint and a DCGM exporter field CSV have no meaning for
+                // them, and accepting either would silently drop authored intent.
+                if !cfg.urls.is_empty() {
+                    anyhow::bail!(
+                        "gpu_telemetry.urls is not supported by the {local:?} collector \
+                         (it reads the local host, not a scrape endpoint)"
+                    );
+                }
+                if cfg.metrics_file.is_some() {
+                    anyhow::bail!(
+                        "gpu_telemetry.metrics_file is not supported by the {local:?} collector \
+                         (custom field definitions apply to the DCGM exporter only)"
+                    );
+                }
+                vec![if local == "pynvml" {
+                    GpuSource::Nvml
+                } else {
+                    GpuSource::AmdSmi
+                }]
+            }
+            other => anyhow::bail!(
+                "gpu_telemetry.collector {other:?} is not supported \
+                 (the native runtime implements \"dcgm\", \"pynvml\", and \"amdsmi\")"
+            ),
+        };
+        Ok(Self {
+            collection_interval_ns: COLLECTION_INTERVAL_NS,
+            request_timeout_ns: REACHABILITY_TIMEOUT_NS,
+            records_path: "gpu_telemetry_export.jsonl".to_string(),
+            sources,
+            metrics_file: cfg.metrics_file.clone(),
+        })
+    }
+
+    /// The default DCGM endpoints followed by any authored `extra`, normalized
+    /// to `/metrics` and deduplicated in first-seen order.
+    fn dcgm_sources(extra: &[String]) -> Vec<GpuSource> {
         let mut urls: Vec<String> = DEFAULT_DCGM_ENDPOINTS
             .iter()
             .map(|e| normalize_metrics_url(e))
@@ -305,19 +366,9 @@ impl GpuTelemetrySidecar {
                 urls.push(n);
             }
         }
-        Self {
-            collection_interval_ns: COLLECTION_INTERVAL_NS,
-            request_timeout_ns: REACHABILITY_TIMEOUT_NS,
-            records_path: "gpu_telemetry_export.jsonl".to_string(),
-            sources: urls
-                .into_iter()
-                .map(|url| GpuSource {
-                    source_type: "dcgm".to_string(),
-                    url,
-                })
-                .collect(),
-            metrics_file: metrics_file.map(str::to_string),
-        }
+        urls.into_iter()
+            .map(|url| GpuSource::Dcgm { url })
+            .collect()
     }
 }
 
@@ -358,9 +409,14 @@ impl ServerMetricsSidecar {
 
 /// Normalize a scrape target to end with `/metrics`.
 ///
-/// Non-HTTP schemes are treated as bare hosts and prefixed with `http://`.
+/// gRPC transport schemes are translated to their HTTP(S) metrics endpoints;
+/// bare hosts are prefixed with `http://`.
 pub fn normalize_metrics_url(url: &str) -> String {
-    let mut url = if url.starts_with("http://") || url.starts_with("https://") {
+    let mut url = if let Some(endpoint) = url.strip_prefix("grpc://") {
+        format!("http://{endpoint}")
+    } else if let Some(endpoint) = url.strip_prefix("grpcs://") {
+        format!("https://{endpoint}")
+    } else if url.starts_with("http://") || url.starts_with("https://") {
         url.to_string()
     } else {
         format!("http://{url}")
@@ -377,6 +433,105 @@ pub fn normalize_metrics_url(url: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The two local collectors are URL-less by construction, so their wire form
+    /// must carry the discriminant and nothing else.
+    #[test]
+    fn gpu_sources_serialize_local_collectors_without_urls() {
+        assert_eq!(
+            serde_json::to_value(GpuSource::Nvml).unwrap(),
+            serde_json::json!({"type": "nvml"}),
+        );
+        assert_eq!(
+            serde_json::to_value(GpuSource::AmdSmi).unwrap(),
+            serde_json::json!({"type": "amd_smi"}),
+        );
+    }
+
+    /// DCGM sources are an existing wire contract and must round-trip unchanged.
+    #[test]
+    fn gpu_sources_keep_the_dcgm_wire_shape() {
+        let value = serde_json::json!({"type": "dcgm", "url": "http://h:9400/metrics"});
+        assert_eq!(
+            serde_json::to_value(GpuSource::Dcgm {
+                url: "http://h:9400/metrics".to_string(),
+            })
+            .unwrap(),
+            value,
+        );
+        let decoded: GpuSource = serde_json::from_value(value).unwrap();
+        assert!(matches!(decoded, GpuSource::Dcgm { url } if url == "http://h:9400/metrics"));
+    }
+
+    /// Each authored collector selects exactly its own source; there is no
+    /// fallback to DCGM and no second collector alongside it.
+    #[test]
+    fn from_config_selects_only_the_authored_collector() {
+        let dcgm = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig::default()).unwrap();
+        assert!(
+            dcgm.sources
+                .iter()
+                .all(|s| matches!(s, GpuSource::Dcgm { .. })),
+        );
+        assert_eq!(dcgm.sources.len(), 2, "the two default DCGM endpoints");
+
+        let nvml = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+            collector: "pynvml".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(matches!(nvml.sources.as_slice(), [GpuSource::Nvml]));
+        assert!(nvml.metrics_file.is_none());
+
+        let amd = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+            collector: "amdsmi".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(matches!(amd.sources.as_slice(), [GpuSource::AmdSmi]));
+    }
+
+    /// Local collectors scrape no endpoint and read no DCGM field CSV, so both
+    /// options must fail rather than be accepted and ignored.
+    #[test]
+    fn from_config_rejects_dcgm_only_options_for_local_collectors() {
+        for collector in ["pynvml", "amdsmi"] {
+            let err = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+                collector: collector.to_string(),
+                urls: vec!["http://x".to_string()],
+                ..Default::default()
+            })
+            .expect_err("a local collector has no scrape URL");
+            assert!(err.to_string().contains("urls"), "{err}");
+
+            let err = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+                collector: collector.to_string(),
+                metrics_file: Some("fields.csv".to_string()),
+                ..Default::default()
+            })
+            .expect_err("a local collector has no DCGM field CSV");
+            assert!(err.to_string().contains("metrics_file"), "{err}");
+        }
+    }
+
+    /// An unknown collector or a mode the native runtime does not render must
+    /// fail closed instead of silently resolving to the DCGM summary path.
+    #[test]
+    fn from_config_rejects_unknown_collectors_and_modes() {
+        let err = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+            collector: "nvidia-smi".to_string(),
+            ..Default::default()
+        })
+        .expect_err("unknown collector");
+        assert!(err.to_string().contains("collector"), "{err}");
+
+        let err = GpuTelemetrySidecar::from_config(&GpuTelemetryConfig {
+            mode: "realtime_dashboard".to_string(),
+            ..Default::default()
+        })
+        .expect_err("no native dashboard renderer");
+        assert!(err.to_string().contains("mode"), "{err}");
+    }
+
     #[test]
     fn metrics_url_normalization() {
         assert_eq!(
@@ -389,7 +544,11 @@ mod tests {
         );
         assert_eq!(
             normalize_metrics_url("grpc://127.0.0.1:8001"),
-            "http://grpc://127.0.0.1:8001/metrics"
+            "http://127.0.0.1:8001/metrics"
+        );
+        assert_eq!(
+            normalize_metrics_url("grpcs://127.0.0.1:8001"),
+            "https://127.0.0.1:8001/metrics"
         );
         assert_eq!(
             normalize_metrics_url("http://h:9/custom"),

@@ -126,7 +126,7 @@ pub struct MLflowStreamingSpec {
 pub struct GpuTelemetrySpec {
     /// Clock cadence between continuous scrapes.
     pub collection_interval_ns: i64,
-    /// Clock deadline applied independently to each telemetry HTTP request.
+    /// Clock deadline applied independently to every telemetry source operation.
     pub request_timeout_ns: i64,
     /// Per-GPU JSONL path relative to the run directory.
     pub records_path: PathBuf,
@@ -213,21 +213,14 @@ pub enum GpuTelemetrySourceSpec {
         /// Metrics endpoint; `/metrics` is appended when absent.
         url: String,
     },
-    /// Collector or user extension supervised as a worker process.
-    Python {
-        /// Registered Config-v2 collector name.
-        collector: String,
-        /// Optional remote endpoint used by the DCGM collector.
-        #[serde(default)]
-        url: Option<String>,
-        /// Optional custom DCGM metrics definition.
-        #[serde(default)]
-        metrics_file: Option<PathBuf>,
-        /// Absolute interpreter used to launch the worker.
-        python_executable: PathBuf,
-        /// Importable strict-stdio worker module.
-        worker_module: String,
-    },
+    /// In-process NVIDIA NVML collection on the local host. Braced-empty so
+    /// `deny_unknown_fields` applies: serde silently accepts extra keys on a
+    /// unit variant of an internally-tagged enum, which would let a stray `url`
+    /// through instead of failing closed.
+    Nvml {},
+    /// In-process AMD SMI collection on the local host. Braced-empty for the
+    /// same strict-decode reason as [`GpuTelemetrySourceSpec::Nvml`].
+    AmdSmi {},
 }
 
 /// One Config-v2 custom GPU signal exposed in native-v2 output.
@@ -533,23 +526,9 @@ impl SidecarInputAdapter for GpuTelemetryInputAdapter {
         for source in &spec.sources {
             match source {
                 GpuTelemetrySourceSpec::Dcgm { url } => ensure_nonempty(url, "DCGM url")?,
-                GpuTelemetrySourceSpec::Python {
-                    collector,
-                    url,
-                    python_executable,
-                    worker_module,
-                    ..
-                } => {
-                    ensure_nonempty(collector, "Python collector")?;
-                    if let Some(url) = url {
-                        ensure_nonempty(url, "Python collector url")?;
-                    }
-                    ensure!(
-                        python_executable.is_absolute(),
-                        "python_executable must be absolute"
-                    );
-                    ensure_nonempty(worker_module, "worker_module")?;
-                }
+                // Local collectors carry no configuration to validate; their
+                // strict URL-less decode is the whole contract.
+                GpuTelemetrySourceSpec::Nvml {} | GpuTelemetrySourceSpec::AmdSmi {} => {}
             }
         }
         for metric in &spec.custom_metrics {
@@ -905,6 +884,60 @@ mod tests {
             .unwrap_err();
 
         assert!(format!("{error:#}").contains("unknown field"));
+    }
+
+    /// The lowered local-collector sources decode strictly: no `url` is accepted
+    /// on them, and the DCGM shape is unchanged.
+    #[test]
+    fn gpu_telemetry_accepts_url_less_local_sources() {
+        let resolver = BuiltinRunnerSidecarInputAdapterResolver::new();
+        let spec = |sources: serde_json::Value| {
+            raw(serde_json::json!({
+                "collection_interval_ns": 333_000_000,
+                "request_timeout_ns": 10_000_000_000_i64,
+                "records_path": "gpu.jsonl",
+                "sources": sources
+            }))
+        };
+        for source in [
+            serde_json::json!({"type": "nvml"}),
+            serde_json::json!({"type": "amd_smi"}),
+            serde_json::json!({"type": "dcgm", "url": "http://gpu:9400/metrics"}),
+        ] {
+            let config = spec(serde_json::json!([source]));
+            resolver
+                .prepare(&[AuthoredSidecarInput {
+                    id: GPU_TELEMETRY_SIDECAR_ID,
+                    config: &config,
+                }])
+                .expect("a lowered source must validate");
+        }
+
+        let config = spec(serde_json::json!([{"type": "nvml", "url": "http://x/metrics"}]));
+        let error = resolver
+            .prepare(&[AuthoredSidecarInput {
+                id: GPU_TELEMETRY_SIDECAR_ID,
+                config: &config,
+            }])
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("unknown field"), "{error:#}");
+
+        let config = spec(serde_json::json!([{
+            "type": "python",
+            "collector": "pynvml",
+            "python_executable": "/usr/bin/python3",
+            "worker_module": "aiperf.gpu_telemetry.native_worker"
+        }]));
+        let error = resolver
+            .prepare(&[AuthoredSidecarInput {
+                id: GPU_TELEMETRY_SIDECAR_ID,
+                config: &config,
+            }])
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unknown variant"),
+            "{error:#}"
+        );
     }
 
     #[test]

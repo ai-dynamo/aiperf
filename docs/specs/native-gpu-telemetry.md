@@ -15,12 +15,11 @@ collectors.
 
 ## Built
 
-The native runtime already owns GPU telemetry cadence, authoritative profiling
-boundary snapshots, accumulation, JSONL output, and the report join. Its public
-native collector is DCGM Exporter Prometheus scraping. The lower-level source
-seam can also supervise a Python worker, which retains the established Python
-`pynvml` and `amdsmi` collectors, but native YAML does not lower either local
-collector today.
+The native runtime owns GPU telemetry cadence, authoritative profiling boundary
+snapshots, accumulation, JSONL output, and the report join. DCGM Exporter
+Prometheus scraping, native NVML, and native AMD SMI are the public collector
+selections. Native YAML lowers `pynvml` and `amdsmi` to their local native
+sources; the native runtime does not launch Python collector workers.
 
 `DCGM_METRICS` and `AMD_METRICS` define the registered normalized metric names,
 units, and counter-versus-gauge behavior. Their `scale` values apply only when
@@ -53,8 +52,8 @@ URL-optional representation) so `dcgm` alone serializes a required URL and
 local selections serialize no URL. The strict protocol-v2
 `GpuTelemetrySourceSpec` in `engine/sidecar_input.rs` gains URL-less `Nvml` and
 `AmdSmi` variants. The config projection maps the three collector IDs directly
-to `Dcgm { url }`, `Nvml`, or `AmdSmi`; it must not use
-`GpuTelemetrySourceSpec::Python`.
+to `Dcgm { url }`, `Nvml`, or `AmdSmi`; it must not route through a Python
+telemetry worker.
 
 ### Source lifecycle and isolation
 
@@ -66,17 +65,22 @@ boundary, and releases the library from `shutdown`.
 Vendor FFI is not run on the phase runner's current-thread `LocalSet`. Each
 source owns a dedicated blocking worker thread that initializes its library,
 performs all enumeration and FFI calls, and shuts it down. The `!Send` source
-forwards bounded scrape/shutdown requests and awaits bounded replies; it never
-calls synchronous vendor FFI itself. This keeps the co-located `workers == 1`
-request issuer responsive while preserving Rust-owned `Clock` cadence and phase
-barriers. Thread startup, request, response, and shutdown failures surface as
-`GpuTelemetryError`.
+forwards bounded scrape/shutdown requests and awaits Clock-bounded replies; it
+never calls synchronous vendor FFI itself. A timeout abandons only the caller
+wait: the worker remains owned by the global reaper until it exits, because a
+vendor FFI call cannot be interrupted safely. This keeps the co-located
+`workers == 1` request issuer responsive while preserving Rust-owned `Clock`
+cadence and phase barriers. Thread startup, request, response, timeout, and
+shutdown failures surface as `GpuTelemetryError`.
 
 NVML uses `nvml-wrapper` for its dynamically loaded base API and a narrow,
-versioned raw `nvml-wrapper-sys` call where the safe wrapper lacks a required
-function (currently JPEG utilization). NVML devices are re-resolved by retained
-index inside the worker for each scrape; no self-referential `Device<'nvml>` or
-GPM sample is stored.
+versioned raw `nvml-wrapper-sys` calls where the safe wrapper lacks required
+functions (JPEG utilization and GPM SM utilization). NVML devices are
+re-resolved by retained index inside the worker for each scrape; no
+self-referential `Device<'nvml>` is stored. GPM uses worker-owned paired opaque
+samples, is preferred for SM utilization, and rotates samples after every
+attempted read. If GPM is unavailable, the process-utilization fallback retains
+a per-device timestamp and requests only newer driver-buffered samples.
 
 AMD SMI uses direct, dynamically loaded `libamd_smi.so*` FFI generated and
 verified from the target ROCm installation's AMD SMI headers before a dependency
@@ -154,7 +158,7 @@ when an AMD ROCm host is available.
 
 ## Source anchors
 
-- `rust/runtime/src/gpu_telemetry/{source.rs,collector.rs,model.rs,fields.rs,accumulator.rs,python_source.rs}`.
+- `rust/runtime/src/gpu_telemetry/{source.rs,collector.rs,model.rs,fields.rs,accumulator.rs,nvml.rs,amdsmi.rs,vendor_worker.rs}`.
 - `rust/runtime/src/engine/{gpu_telemetry.rs,sidecar_input.rs}`.
 - `rust/runtime/src/config/model/telemetry.rs` and `rust/cli/src/yaml.rs`.
 - `rust/e2e-tests/tests/{test_gpu_telemetry.rs,test_dcgm_faker.rs}`.

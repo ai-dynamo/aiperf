@@ -19,7 +19,8 @@ use crate::clock::Clock;
 use crate::gpu_telemetry::{
     DcgmPrometheusDecoder, DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind,
     GpuPhaseBoundary, GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord,
-    GpuTelemetrySummary, PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
+    GpuTelemetrySummary, RuntimeGpuMetricSpec, amdsmi::AmdSmiTelemetrySource,
+    nvml::NvmlTelemetrySource,
 };
 use crate::metrics_core::Unit;
 use crate::phase_runtime::ScheduledPhaseSidecar;
@@ -57,32 +58,9 @@ impl GpuTelemetryRun {
                 GpuTelemetrySourceSpec::Dcgm { url } => {
                     ensure!(!url.trim().is_empty(), "DCGM telemetry URL cannot be empty");
                 }
-                GpuTelemetrySourceSpec::Python {
-                    collector,
-                    url,
-                    python_executable,
-                    worker_module,
-                    ..
-                } => {
-                    ensure!(
-                        !collector.trim().is_empty(),
-                        "Python GPU telemetry collector cannot be empty"
-                    );
-                    if let Some(url) = url {
-                        ensure!(
-                            !url.trim().is_empty(),
-                            "Python GPU telemetry URL cannot be empty"
-                        );
-                    }
-                    ensure!(
-                        python_executable.is_absolute(),
-                        "GPU telemetry python_executable must be absolute"
-                    );
-                    ensure!(
-                        !worker_module.trim().is_empty(),
-                        "GPU telemetry worker_module cannot be empty"
-                    );
-                }
+                // The local collectors are URL-less by construction, so there is
+                // nothing to check beyond their strict decode.
+                GpuTelemetrySourceSpec::Nvml {} | GpuTelemetrySourceSpec::AmdSmi {} => {}
             }
         }
 
@@ -138,27 +116,24 @@ impl GpuTelemetryRun {
                     };
                     collectors.push(Rc::new(GpuTelemetryCollector::new(source)));
                 }
-                GpuTelemetrySourceSpec::Python {
-                    collector,
-                    url,
-                    metrics_file,
-                    python_executable,
-                    worker_module,
-                } => {
-                    let config = PythonGpuTelemetryConfig {
-                        python_executable: python_executable.clone(),
-                        worker_module: worker_module.clone(),
-                        collector: collector.clone(),
-                        url: url.clone(),
-                        metrics_file: metrics_file.clone(),
-                        request_timeout_seconds: spec.request_timeout_ns as f64 / 1_000_000_000.0,
-                    };
-                    match PythonGpuTelemetrySource::spawn(clock.clone(), config).await {
+                GpuTelemetrySourceSpec::Nvml {} => {
+                    match NvmlTelemetrySource::spawn(clock.clone(), spec.request_timeout_ns).await {
                         Ok(source) => {
                             collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source))))
                         }
                         Err(error) => {
-                            tracing::warn!(error = %error, "GPU telemetry skipped unavailable Python source")
+                            tracing::warn!(error = %error, collector = "pynvml", "GPU telemetry skipped unavailable native source")
+                        }
+                    }
+                }
+                GpuTelemetrySourceSpec::AmdSmi {} => {
+                    match AmdSmiTelemetrySource::spawn(clock.clone(), spec.request_timeout_ns).await
+                    {
+                        Ok(source) => {
+                            collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source))))
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, collector = "amdsmi", "GPU telemetry skipped unavailable native source")
                         }
                     }
                 }
@@ -196,6 +171,7 @@ impl GpuTelemetryRun {
     /// Gracefully stop supervised sources when execution ends before a phase
     /// can own their normal `finish` barrier.
     pub(crate) async fn shutdown(&self) {
+        self.sidecar.state.stop_cadence().await;
         self.sidecar.state.shutdown_sources().await;
     }
 }
@@ -214,6 +190,8 @@ struct GpuTelemetryState {
     boundary: RefCell<Option<GpuPhaseBoundary>>,
     phase_start_ns: Cell<Option<i64>>,
     phase_end_ns: Cell<Option<i64>>,
+    opening_scrape_ns: Cell<Option<i64>>,
+    closing_scrape_ns: Cell<Option<i64>>,
     stop: Rc<Notify>,
     task: RefCell<Option<JoinHandle<()>>>,
     started: Cell<bool>,
@@ -239,6 +217,8 @@ impl GpuTelemetrySidecar {
                 boundary: RefCell::new(None),
                 phase_start_ns: Cell::new(None),
                 phase_end_ns: Cell::new(None),
+                opening_scrape_ns: Cell::new(None),
+                closing_scrape_ns: Cell::new(None),
                 stop: Rc::new(Notify::new()),
                 task: RefCell::new(None),
                 started: Cell::new(false),
@@ -316,9 +296,15 @@ impl GpuTelemetryState {
 
         let mut active = Vec::new();
         let mut snapshots = Vec::new();
+        let mut opening_scrape_ns = None;
         for collector in &self.candidates {
             match collector.collect_boundary().await {
                 Ok((scrape, snapshot)) => {
+                    opening_scrape_ns = Some(
+                        opening_scrape_ns.map_or(scrape.timestamp_ns, |current: i64| {
+                            current.min(scrape.timestamp_ns)
+                        }),
+                    );
                     GpuTelemetryCollector::ingest_scrape(
                         &scrape,
                         &mut self.accumulator.borrow_mut(),
@@ -335,6 +321,7 @@ impl GpuTelemetryState {
         }
         *self.active.borrow_mut() = active;
         *self.start_snapshots.borrow_mut() = snapshots;
+        self.opening_scrape_ns.set(opening_scrape_ns);
         if self.active.borrow().is_empty() {
             return Ok(());
         }
@@ -388,19 +375,19 @@ impl GpuTelemetryState {
         if self.finished.replace(true) {
             return Ok(());
         }
-        self.stop.notify_one();
-        let task = self.task.borrow_mut().take();
-        if let Some(task) = task
-            && let Err(error) = task.await
-        {
-            tracing::warn!(error = %error, "GPU telemetry cadence task failed");
-        }
+        self.stop_cadence().await;
 
         let collectors = self.active.borrow().clone();
         let mut end_snapshots = Vec::new();
+        let mut closing_scrape_ns = None;
         for collector in collectors {
             match collector.collect_boundary().await {
                 Ok((scrape, snapshot)) => {
+                    closing_scrape_ns = Some(
+                        closing_scrape_ns.map_or(scrape.timestamp_ns, |current: i64| {
+                            current.max(scrape.timestamp_ns)
+                        }),
+                    );
                     GpuTelemetryCollector::ingest_scrape(
                         &scrape,
                         &mut self.accumulator.borrow_mut(),
@@ -415,6 +402,7 @@ impl GpuTelemetryState {
             }
         }
 
+        self.closing_scrape_ns.set(closing_scrape_ns);
         self.shutdown_sources().await;
 
         let start_snapshots = self.start_snapshots.borrow();
@@ -430,13 +418,28 @@ impl GpuTelemetryState {
             combine_snapshots(&start_snapshots, start_ns),
             combine_snapshots(&end_snapshots, end_ns),
         ) {
-            let boundary = GpuPhaseBoundary::new(start, end)?;
+            let mut boundary = GpuPhaseBoundary::new(start, end)?;
+            if let (Some(opening), Some(closing)) =
+                (self.opening_scrape_ns.get(), self.closing_scrape_ns.get())
+            {
+                boundary = boundary.with_gauge_window(opening, closing);
+            }
             self.accumulator
                 .borrow_mut()
                 .set_phase_boundary(boundary.clone());
             *self.boundary.borrow_mut() = Some(boundary);
         }
         Ok(())
+    }
+
+    async fn stop_cadence(&self) {
+        self.stop.notify_one();
+        let task = self.task.borrow_mut().take();
+        if let Some(task) = task
+            && let Err(error) = task.await
+        {
+            tracing::warn!(error = %error, "GPU telemetry cadence task failed");
+        }
     }
 
     async fn shutdown_sources(&self) {
@@ -532,7 +535,62 @@ impl<'a> From<&'a GpuTelemetryRecord> for TelemetryRow<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu_telemetry::{GpuMetadata, NVIDIA_GPU_TELEMETRY_PLATFORM};
+    use crate::clock::SimClock;
+    use crate::gpu_telemetry::{
+        AMD_GPU_TELEMETRY_PLATFORM, GpuMetadata, GpuScrape, GpuScrapeMode, GpuTelemetryError,
+        GpuTelemetrySource, NVIDIA_GPU_TELEMETRY_PLATFORM,
+    };
+
+    struct FixtureSource {
+        calls: Cell<i64>,
+        shutdown_calls: Cell<u32>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl GpuTelemetrySource for FixtureSource {
+        fn endpoint_url(&self) -> &str {
+            "amdsmi://localhost"
+        }
+
+        async fn scrape(
+            &self,
+            _mode: GpuScrapeMode,
+        ) -> Result<Option<GpuScrape>, GpuTelemetryError> {
+            let timestamp_ns = 100 + self.calls.get() * 50;
+            self.calls.set(self.calls.get() + 1);
+            Ok(Some(GpuScrape {
+                timestamp_ns,
+                endpoint_url: self.endpoint_url().to_string(),
+                records: vec![GpuTelemetryRecord {
+                    timestamp_ns,
+                    endpoint_url: self.endpoint_url().to_string(),
+                    metadata: GpuMetadata {
+                        gpu_index: 0,
+                        gpu_uuid: "GPU-fixture".to_string(),
+                        gpu_model_name: "MI300X".to_string(),
+                        pci_bus_id: Some("0000:41:00.0".to_string()),
+                        device: Some("amd0".to_string()),
+                        hostname: Some("localhost".to_string()),
+                        namespace: None,
+                        pod_name: None,
+                        platform: AMD_GPU_TELEMETRY_PLATFORM.to_string(),
+                    },
+                    metrics: BTreeMap::from([
+                        (
+                            "amd_energy_consumption".to_string(),
+                            1.0 + timestamp_ns as f64,
+                        ),
+                        ("amd_throttle_status".to_string(), 1.0),
+                    ]),
+                }],
+            }))
+        }
+
+        async fn shutdown(&self) -> Result<(), GpuTelemetryError> {
+            self.shutdown_calls.set(self.shutdown_calls.get() + 1);
+            Ok(())
+        }
+    }
 
     #[test]
     fn snapshot_merge_keeps_all_endpoints_and_uses_runtime_boundary() {
@@ -556,6 +614,123 @@ mod tests {
                 .timestamp_ns,
             40
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fixture_source_exercises_sidecar_lifecycle_jsonl_and_summary() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let source = Rc::new(FixtureSource {
+                    calls: Cell::new(0),
+                    shutdown_calls: Cell::new(0),
+                });
+                let collector = Rc::new(GpuTelemetryCollector::new(source.clone()));
+                let sidecar = GpuTelemetrySidecar::new(
+                    Rc::new(SimClock::new()),
+                    1_000_000,
+                    vec![collector],
+                    GpuTelemetryAccumulator::new(),
+                );
+
+                sidecar.start().await.unwrap();
+                tokio::task::yield_now().await;
+                sidecar.on_phase_start(100);
+                sidecar.on_phase_end(200);
+                sidecar.finish().await.unwrap();
+
+                assert_eq!(source.shutdown_calls.get(), 1);
+                let temporary = tempfile::tempdir().unwrap();
+                let output = temporary.path().join("gpu.jsonl");
+                sidecar.write_records_jsonl(&output).unwrap();
+                let rows = std::fs::read_to_string(&output)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(rows.len(), 3);
+                assert!(
+                    rows.iter()
+                        .all(|row| row["dcgm_url"] == "amdsmi://localhost")
+                );
+                assert!(rows.iter().all(|row| row["platform"] == "amd"));
+                assert!(rows.iter().all(|row| {
+                    row["telemetry_data"]["amd_energy_consumption"].is_number()
+                        && row["telemetry_data"]["amd_throttle_status"] == 1.0
+                }));
+
+                let summary = sidecar.summarize(Some(10.0), Some(1));
+                assert_eq!(summary.energy_gpu_count(), 1);
+                assert!(
+                    summary
+                        .sidecar_metrics()
+                        .contains_key("amd_energy_consumption")
+                );
+                assert!(
+                    summary
+                        .sidecar_metrics()
+                        .contains_key("amd_throttle_status")
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_stops_cadence_before_shutting_down_sources() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let source = Rc::new(FixtureSource {
+                    calls: Cell::new(0),
+                    shutdown_calls: Cell::new(0),
+                });
+                let sidecar = Rc::new(GpuTelemetrySidecar::new(
+                    Rc::new(SimClock::new()),
+                    1_000_000,
+                    vec![Rc::new(GpuTelemetryCollector::new(source.clone()))],
+                    GpuTelemetryAccumulator::new(),
+                ));
+                let run = GpuTelemetryRun {
+                    sidecar: sidecar.clone(),
+                };
+
+                sidecar.start().await.unwrap();
+                tokio::task::yield_now().await;
+                run.shutdown().await;
+
+                assert!(sidecar.state.task.borrow().is_none());
+                assert_eq!(source.shutdown_calls.get(), 1);
+            })
+            .await;
+    }
+
+    #[test]
+    fn telemetry_row_preserves_native_local_source_identity() {
+        let record = GpuTelemetryRecord {
+            timestamp_ns: 42,
+            endpoint_url: "amdsmi://localhost".to_string(),
+            metadata: GpuMetadata {
+                gpu_index: 0,
+                gpu_uuid: "GPU-amd".to_string(),
+                gpu_model_name: "MI300X".to_string(),
+                pci_bus_id: Some("0000:41:00.0".to_string()),
+                device: Some("amd0".to_string()),
+                hostname: Some("localhost".to_string()),
+                namespace: None,
+                pod_name: None,
+                platform: crate::gpu_telemetry::AMD_GPU_TELEMETRY_PLATFORM.to_string(),
+            },
+            metrics: BTreeMap::from([
+                ("amd_energy_consumption".to_string(), 1.25),
+                ("amd_throttle_status".to_string(), 1.0),
+            ]),
+        };
+        let value = serde_json::to_value(TelemetryRow::from(&record)).unwrap();
+        assert_eq!(value["dcgm_url"], "amdsmi://localhost");
+        assert_eq!(value["platform"], "amd");
+        assert_eq!(value["pci_bus_id"], "0000:41:00.0");
+        assert_eq!(value["telemetry_data"]["amd_energy_consumption"], 1.25);
+        assert_eq!(value["telemetry_data"]["amd_throttle_status"], 1.0);
     }
 
     #[test]
