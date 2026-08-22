@@ -9,7 +9,8 @@ use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::graph::driver::TraceIdentity;
 use aiperf_runtime::graph::replay::ReplayRunIdentity;
 use aiperf_runtime::graph::tools::{
-    DockerSessionSandbox, EnvironmentRecipe, ResolvedTraceEnvironment, ToolSandbox, WorkspaceSpec,
+    DockerSessionSandbox, EnvironmentRecipe, ResolvedTraceEnvironment, ToolExecutionBackend,
+    ToolSandbox, WorkspaceSpec,
 };
 use aiperf_runtime::rng::RngRoot;
 
@@ -23,6 +24,7 @@ async fn docker_executes_a_pinch_recipe_with_network_disabled() {
     let sandbox = DockerSessionSandbox::with_docker_cli(
         ResolvedTraceEnvironment {
             kind: EnvironmentRecipe::PinchBench,
+            backend: ToolExecutionBackend::Docker,
             image: "aiperf-recorded-agent-pinchbench:v1".into(),
             workspace: WorkspaceSpec {
                 files: Vec::new(),

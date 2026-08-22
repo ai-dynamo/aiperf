@@ -328,7 +328,7 @@ fn run_workload(base_url: &str, routing: HopRouting) -> Vec<ObservedTurn> {
         }
         let end_ns = RealClock::from_anchor(RealClockAnchor::now()).now_ns();
         let records = backend.drain_records(end_ns).expect("drain records");
-        backend.shutdown().unwrap();
+        backend.shutdown().await.unwrap();
         records
             .into_iter()
             .map(|(_uuid, ingest): (Uuid, RecordIngest)| ObservedTurn {
