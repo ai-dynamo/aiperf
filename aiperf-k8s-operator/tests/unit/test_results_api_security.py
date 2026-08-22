@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import base64
 import hashlib
 import json
 import threading
@@ -11,39 +10,19 @@ from pathlib import Path
 import aiperf_k8s_operator.api as api_module
 from aiperf_k8s_operator.results import ResultIdentity, ResultsIndex, StorageLimits
 from aiperf_k8s_operator.settings import OperatorSettings
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from httpx import ASGITransport, AsyncClient
 
-OBJECT_UID = "9d2f3e2a-1111-4222-8333-abcdefabcdef"
-UPLOAD_PRIVATE_SEED = bytes.fromhex(
-    "cb0c5712ee5b05b22c22b136db935113f7b7d7a29356737e7f030be19cfabbf6"
-)
-UPLOAD_PUBLIC_KEY = "8uFXJpCIj094psVHjvxpu5_YA6Ruivm9sb8z4GNRlTo"
-READ_RAW = bytes(range(32))
-READ_TOKEN = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
-READ_TOKEN_SHA256 = "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
-IDENTITY = ResultIdentity("bench", "job-1", "run-1", OBJECT_UID)
+IDENTITY = ResultIdentity("bench", "job-1", "run-1")
 
 
-class StaticAuthorities:
+class StaticLifecycle:
     def __init__(self) -> None:
-        self.ready: list[tuple[str, str, str, str]] = []
-
-    async def authorities(self, namespace: str, job_id: str, run_id: str):
-        authority_type = getattr(api_module, "RunAuthorities", None)
-        assert authority_type is not None
-        if (namespace, job_id, run_id) != (
-            IDENTITY.namespace,
-            IDENTITY.job_id,
-            IDENTITY.run_id,
-        ):
-            return None
-        return authority_type(OBJECT_UID, UPLOAD_PUBLIC_KEY, READ_TOKEN_SHA256)
+        self.ready: list[tuple[str, str, str]] = []
 
     async def mark_results_ready(
-        self, namespace: str, job_id: str, run_id: str, object_uid: str
+        self, namespace: str, job_id: str, run_id: str
     ) -> None:
-        self.ready.append((namespace, job_id, run_id, object_uid))
+        self.ready.append((namespace, job_id, run_id))
 
 
 async def chunks(body: bytes) -> AsyncIterator[bytes]:
@@ -88,80 +67,38 @@ async def publish(index: ResultsIndex, body: bytes) -> None:
     )
 
 
-def upload_headers(kind: str, path: str, body: bytes) -> dict[str, str]:
+def upload_headers(body: bytes) -> dict[str, str]:
     digest = hashlib.sha256(body).hexdigest()
-    fields = (
-        "bench",
-        "job-1",
-        "run-1",
-        OBJECT_UID,
-        kind,
-        path,
-        digest,
-        str(len(body)),
-    )
-    message = bytearray(b"AIPERF-RESULTS-UPLOAD-SIGNATURE\x01")
-    for field in fields:
-        encoded = field.encode()
-        message.extend(len(encoded).to_bytes(8, "big"))
-        message.extend(encoded)
-    signature = Ed25519PrivateKey.from_private_bytes(UPLOAD_PRIVATE_SEED).sign(message)
     return {
         "X-AIPerf-Content-SHA256": digest,
         "X-AIPerf-Content-Length": str(len(body)),
-        "X-AIPerf-Signature": base64.urlsafe_b64encode(signature)
-        .rstrip(b"=")
-        .decode(),
     }
 
 
-def app(tmp_path: Path, index: ResultsIndex, authorities: StaticAuthorities):
+def app(tmp_path: Path, index: ResultsIndex, lifecycle: StaticLifecycle):
     return api_module.create_app(
-        OperatorSettings(artifact_root=str(tmp_path), index_rebuild_token="admin"),
+        OperatorSettings(artifact_root=str(tmp_path)),
         index,
-        authorities,
+        lifecycle,
     )
 
 
-async def test_direct_result_reads_require_exact_triple_and_capability(
+async def test_direct_result_reads_use_exact_triple_without_application_auth(
     tmp_path: Path,
 ) -> None:
     index = ResultsIndex(tmp_path)
     await publish(index, b"result")
     async with AsyncClient(
-        transport=ASGITransport(app=app(tmp_path, index, StaticAuthorities())),
+        transport=ASGITransport(app=app(tmp_path, index, StaticLifecycle())),
         base_url="http://operator.test",
     ) as client:
         path = "/api/results/bench/job-1/run-1/manifest"
-        assert (await client.get(path)).status_code == 401
-        assert (
-            await client.get(path, headers={"Authorization": "Bearer wrong"})
-        ).status_code == 401
-        response = await client.get(
-            path, headers={"Authorization": f"Bearer {READ_TOKEN}"}
-        )
+        response = await client.get(path)
         assert response.status_code == 200
         assert response.json()["runId"] == "run-1"
         assert (
-            await client.get(
-                path, headers={"X-AIPerf-Results-Token": READ_TOKEN}
-            )
-        ).status_code == 200
-        assert (
-            await client.get(
-                path,
-                headers={
-                    "Authorization": f"Bearer {READ_TOKEN}",
-                    "X-AIPerf-Results-Token": READ_TOKEN,
-                },
-            )
-        ).status_code == 401
-        assert (
-            await client.get(
-                "/api/results/other/job-1/run-1/manifest",
-                headers={"Authorization": f"Bearer {READ_TOKEN}"},
-            )
-        ).status_code == 401
+            await client.get("/api/results/other/job-1/run-1/manifest")
+        ).status_code == 409
         assert (await client.get("/runs/run-1/manifest")).status_code == 404
 
 
@@ -181,23 +118,22 @@ async def test_artifact_open_and_hash_run_off_loop_and_response_streams(
 
     index.open_artifact = observed_open  # type: ignore[method-assign]
     async with AsyncClient(
-        transport=ASGITransport(app=app(tmp_path, index, StaticAuthorities())),
+        transport=ASGITransport(app=app(tmp_path, index, StaticLifecycle())),
         base_url="http://operator.test",
     ) as client:
         response = await client.get(
-            "/api/results/bench/job-1/run-1/artifacts/summary.bin",
-            headers={"Authorization": f"Bearer {READ_TOKEN}"},
+            "/api/results/bench/job-1/run-1/artifacts/summary.bin"
         )
     assert response.status_code == 200
     assert response.content == body
     assert open_threads and open_threads[0] != event_loop_thread
 
 
-async def test_upload_authority_and_commit_are_bound_to_current_object_uid(
+async def test_manifest_commit_runs_off_loop_and_marks_lifecycle_ready(
     tmp_path: Path,
 ) -> None:
     index = ResultsIndex(tmp_path)
-    authorities = StaticAuthorities()
+    lifecycle = StaticLifecycle()
     commit_threads: list[int] = []
     event_loop_thread = threading.get_ident()
     original = index.commit_manifest
@@ -208,7 +144,7 @@ async def test_upload_authority_and_commit_are_bound_to_current_object_uid(
 
     index.commit_manifest = observed_commit  # type: ignore[method-assign]
     async with AsyncClient(
-        transport=ASGITransport(app=app(tmp_path, index, authorities)),
+        transport=ASGITransport(app=app(tmp_path, index, lifecycle)),
         base_url="http://operator.test",
     ) as client:
         artifact = b"result"
@@ -216,7 +152,7 @@ async def test_upload_authority_and_commit_are_bound_to_current_object_uid(
         assert (
             await client.put(
                 artifact_url,
-                headers=upload_headers("artifact", "summary.bin", artifact),
+                headers=upload_headers(artifact),
                 content=artifact,
             )
         ).status_code == 201
@@ -224,15 +160,15 @@ async def test_upload_authority_and_commit_are_bound_to_current_object_uid(
         assert (
             await client.post(
                 "/api/uploads/bench/job-1/run-1/manifest",
-                headers=upload_headers("manifest", "results-manifest.json", document),
+                headers=upload_headers(document),
                 content=document,
             )
         ).status_code == 201
     assert commit_threads and commit_threads[0] != event_loop_thread
-    assert authorities.ready == [("bench", "job-1", "run-1", OBJECT_UID)]
+    assert lifecycle.ready == [("bench", "job-1", "run-1")]
 
 
-async def test_expired_completed_results_return_gone_while_authority_exists(
+async def test_expired_completed_results_return_gone(
     tmp_path: Path,
 ) -> None:
     now = [100.0]
@@ -245,12 +181,9 @@ async def test_expired_completed_results_return_gone_while_authority_exists(
     now[0] = 111.0
 
     async with AsyncClient(
-        transport=ASGITransport(app=app(tmp_path, index, StaticAuthorities())),
+        transport=ASGITransport(app=app(tmp_path, index, StaticLifecycle())),
         base_url="http://operator.test",
     ) as client:
-        response = await client.get(
-            "/api/results/bench/job-1/run-1/manifest",
-            headers={"Authorization": f"Bearer {READ_TOKEN}"},
-        )
+        response = await client.get("/api/results/bench/job-1/run-1/manifest")
 
     assert response.status_code == 410

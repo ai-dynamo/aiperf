@@ -62,7 +62,7 @@ class BootstrapReference(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     secret_name: str = Field(alias="secretName", min_length=1)
-    role: Literal["controller", "cell", "results-sidecar"]
+    role: Literal["controller", "cell"]
     mount_path: str = Field(alias="mountPath", pattern=r"^/")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -93,12 +93,12 @@ class RoleEnvelope(BaseModel):
     @model_validator(mode="after")
     def bootstrap_matches_role(self) -> RoleEnvelope:
         """Reject a reference that could mount one role's bootstrap into another."""
-        if self.name == "cell":
+        if self.name != "controller":
             if self.bootstrap is not None:
-                raise ValueError("cell bootstrap must be specified by cellBootstraps")
+                raise ValueError(f"{self.name} must not carry a role bootstrap")
             return self
         if self.bootstrap is None:
-            raise ValueError("non-cell role requires bootstrap")
+            raise ValueError("controller role requires bootstrap")
         if self.bootstrap.role != self.name:
             raise ValueError("bootstrap.role must equal role name")
         return self

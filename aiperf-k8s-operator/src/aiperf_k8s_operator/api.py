@@ -1,18 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Authenticated streaming API for immutable native Kubernetes results."""
+"""Streaming API for immutable native Kubernetes results."""
 
 from __future__ import annotations
 
 import asyncio
-import hmac
+import logging
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Protocol
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from starlette.responses import StreamingResponse
 
 from .dashboard import router as dashboard_router
@@ -26,65 +25,32 @@ from .results import (
     UploadTooLarge,
 )
 from .settings import OperatorSettings
-from .upload_auth import verify_results_read_token, verify_upload_signature
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_LENGTH = re.compile(r"^(?:0|[1-9][0-9]*)$")
+_LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class RunAuthorities:
-    """Immutable authorities bound to one exact Kubernetes object incarnation."""
-
-    object_uid: str
-    upload_public_key: str
-    read_token_sha256: str
-
-
-class RunAuthorityProvider(Protocol):
-    """Resolve one transactional immutable run-authority record."""
-
-    async def authorities(
-        self, namespace: str, job_id: str, run_id: str
-    ) -> RunAuthorities | None:
-        """Return exact authorities, or None when the identity is unauthorized."""
+class ResultsLifecycle(Protocol):
+    """Best-effort Kubernetes lifecycle update after durable publication."""
 
     async def mark_results_ready(
         self,
         namespace: str,
         job_id: str,
         run_id: str,
-        object_uid: str,
     ) -> None:
-        """Publish readiness for the same object after durable manifest commit."""
-
-
-class RejectRunAuthorities:
-    """Fail closed when Kubernetes authority wiring is unavailable."""
-
-    async def authorities(
-        self, namespace: str, job_id: str, run_id: str
-    ) -> RunAuthorities | None:
-        return None
-
-    async def mark_results_ready(
-        self,
-        namespace: str,
-        job_id: str,
-        run_id: str,
-        object_uid: str,
-    ) -> None:
-        raise RuntimeError("result authority is not configured")
+        """Best-effort publish readiness for the current matching AIPerfJob."""
 
 
 def create_app(
     settings: OperatorSettings | None = None,
     index: ResultsIndex | None = None,
-    authorities: RunAuthorityProvider | None = None,
+    lifecycle: ResultsLifecycle | None = None,
 ) -> FastAPI:
     """Create the dependency-injectable operator API."""
     settings = settings or OperatorSettings()
     index = index or ResultsIndex(Path(settings.artifact_root))
-    authorities = authorities or RejectRunAuthorities()
     app = FastAPI(title="AIPerf Kubernetes Operator")
     app.include_router(dashboard_router)
 
@@ -92,60 +58,17 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    async def admin_authorized(
-        authorization: Annotated[str | None, Header()] = None,
-    ) -> None:
-        expected = settings.index_rebuild_token
-        provided = authorization.removeprefix("Bearer ") if authorization else ""
-        if not expected or not hmac.compare_digest(provided, expected):
-            raise HTTPException(
-                status_code=401, detail="missing or invalid bearer token"
-            )
-
-    @app.get("/index/stats", dependencies=[Depends(admin_authorized)])
-    async def stats() -> dict[str, int]:
+    @app.get("/index/stats")
+    async def stats() -> dict[str, int | float]:
         return index.stats()
-
-    @app.post("/index/rebuild", dependencies=[Depends(admin_authorized)])
-    async def rebuild() -> dict[str, str]:
-        await asyncio.to_thread(index.rebuild)
-        return {"status": "rebuilt"}
-
-    async def read_authority(
-        namespace: str,
-        job_id: str,
-        run_id: str,
-        authorization: str | None,
-        proxy_token: str | None,
-    ) -> ResultIdentity:
-        if authorization is not None and proxy_token is not None:
-            raise HTTPException(status_code=401, detail="ambiguous results-read authority")
-        if proxy_token is not None:
-            bearer = proxy_token
-        elif authorization is not None and authorization.startswith("Bearer "):
-            bearer = authorization[len("Bearer ") :]
-        else:
-            bearer = ""
-        record = await authorities.authorities(namespace, job_id, run_id)
-        if record is None or not verify_results_read_token(
-            record.read_token_sha256, bearer
-        ):
-            raise HTTPException(status_code=401, detail="invalid results-read authority")
-        return ResultIdentity(namespace, job_id, run_id, record.object_uid)
 
     @app.get("/api/results/{namespace}/{job_id}/{run_id}/manifest")
     async def manifest(
         namespace: str,
         job_id: str,
         run_id: str,
-        authorization: Annotated[str | None, Header()] = None,
-        x_aiperf_results_token: Annotated[
-            str | None, Header(alias="X-AIPerf-Results-Token")
-        ] = None,
     ) -> dict[str, object]:
-        identity = await read_authority(
-            namespace, job_id, run_id, authorization, x_aiperf_results_token
-        )
+        identity = ResultIdentity(namespace, job_id, run_id)
         try:
             result = index.ready_manifest(identity)
         except ResultsExpired as error:
@@ -160,14 +83,8 @@ def create_app(
         job_id: str,
         run_id: str,
         path: str,
-        authorization: Annotated[str | None, Header()] = None,
-        x_aiperf_results_token: Annotated[
-            str | None, Header(alias="X-AIPerf-Results-Token")
-        ] = None,
     ) -> StreamingResponse:
-        identity = await read_authority(
-            namespace, job_id, run_id, authorization, x_aiperf_results_token
-        )
+        identity = ResultIdentity(namespace, job_id, run_id)
         try:
             opened = await asyncio.to_thread(index.open_artifact, identity, path)
         except ResultsExpired as error:
@@ -182,41 +99,20 @@ def create_app(
             headers={"Content-Length": str(opened.length)},
         )
 
-    async def upload_authority(
-        namespace: str,
-        job_id: str,
-        run_id: str,
-        kind: str,
-        path: str,
+    def upload_metadata(
         content_sha256: str | None,
         content_length: str | None,
-        signature: str | None,
-    ) -> tuple[RunAuthorities, str, int]:
-        if not content_sha256 or content_length is None or not signature:
-            raise HTTPException(status_code=401, detail="missing upload authority")
-        if not _SHA256.fullmatch(content_sha256):
+        wire_length: str | None,
+    ) -> tuple[str, int]:
+        if content_sha256 is None or not _SHA256.fullmatch(content_sha256):
             raise HTTPException(status_code=422, detail="invalid content digest")
-        try:
-            length = int(content_length)
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail="invalid content length") from error
-        if length < 0:
+        if content_length is None or not _LENGTH.fullmatch(content_length):
             raise HTTPException(status_code=422, detail="invalid content length")
-        record = await authorities.authorities(namespace, job_id, run_id)
-        if record is None or not verify_upload_signature(
-            record.upload_public_key,
-            signature,
-            namespace,
-            job_id,
-            run_id,
-            record.object_uid,
-            kind,
-            path,
-            content_sha256,
-            length,
-        ):
-            raise HTTPException(status_code=401, detail="invalid upload authority")
-        return record, content_sha256, length
+        if wire_length is None or wire_length != content_length:
+            raise HTTPException(
+                status_code=422, detail="HTTP content length is inconsistent"
+            )
+        return content_sha256, int(content_length)
 
     def upload_error(error: Exception) -> HTTPException:
         if isinstance(error, ResultsExpired):
@@ -243,23 +139,15 @@ def create_app(
         x_aiperf_content_length: Annotated[
             str | None, Header(alias="X-AIPerf-Content-Length")
         ] = None,
-        x_aiperf_signature: Annotated[
-            str | None, Header(alias="X-AIPerf-Signature")
-        ] = None,
     ) -> Response:
-        record, digest, length = await upload_authority(
-            namespace,
-            job_id,
-            run_id,
-            "artifact",
-            path,
+        digest, length = upload_metadata(
             x_aiperf_content_sha256,
             x_aiperf_content_length,
-            x_aiperf_signature,
+            request.headers.get("content-length"),
         )
         try:
             created = await index.stage_artifact(
-                ResultIdentity(namespace, job_id, run_id, record.object_uid),
+                ResultIdentity(namespace, job_id, run_id),
                 path,
                 request.stream(),
                 digest,
@@ -287,19 +175,11 @@ def create_app(
         x_aiperf_content_length: Annotated[
             str | None, Header(alias="X-AIPerf-Content-Length")
         ] = None,
-        x_aiperf_signature: Annotated[
-            str | None, Header(alias="X-AIPerf-Signature")
-        ] = None,
     ) -> Response:
-        record, digest, length = await upload_authority(
-            namespace,
-            job_id,
-            run_id,
-            "manifest",
-            "results-manifest.json",
+        digest, length = upload_metadata(
             x_aiperf_content_sha256,
             x_aiperf_content_length,
-            x_aiperf_signature,
+            request.headers.get("content-length"),
         )
         if length > MAX_MANIFEST_BYTES:
             raise HTTPException(status_code=413, detail="manifest exceeds upload limit")
@@ -310,7 +190,7 @@ def create_app(
                 raise HTTPException(
                     status_code=413, detail="manifest exceeds its declared length"
                 )
-        identity = ResultIdentity(namespace, job_id, run_id, record.object_uid)
+        identity = ResultIdentity(namespace, job_id, run_id)
         try:
             created = await asyncio.to_thread(
                 index.commit_manifest, identity, bytes(body), digest, length
@@ -323,9 +203,18 @@ def create_app(
             UploadTooLarge,
         ) as error:
             raise upload_error(error) from error
-        await authorities.mark_results_ready(
-            namespace, job_id, run_id, record.object_uid
-        )
+        if lifecycle is not None:
+            try:
+                await lifecycle.mark_results_ready(namespace, job_id, run_id)
+            except Exception:
+                _LOGGER.exception(
+                    "durable results committed but lifecycle update failed",
+                    extra={
+                        "namespace": namespace,
+                        "job_id": job_id,
+                        "run_id": run_id,
+                    },
+                )
         return Response(status_code=201 if created else 200)
 
     return app

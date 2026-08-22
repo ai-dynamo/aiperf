@@ -10,13 +10,14 @@ import errno
 import hashlib
 import json
 import os
+import re
 import secrets
 import stat
 import threading
 import time
 from collections.abc import AsyncIterable, Callable, Iterator
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO
 
@@ -28,6 +29,7 @@ MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 MAX_MANIFEST_BYTES = 1024 * 1024
 _IDENTITY_NAME = ".aiperf-result-identity.json"
 _MANIFEST_NAME = "results-manifest.json"
+_DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _MANIFEST_VALIDATOR = Draft202012Validator(_schema("results-manifest.schema.json"))
 _DIR_FLAGS = (
     os.O_RDONLY
@@ -66,20 +68,14 @@ class ResultIdentity:
     namespace: str
     job_id: str
     run_id: str
-    object_uid: str
 
     def __post_init__(self) -> None:
-        for label, value, maximum in (
-            ("namespace", self.namespace, 253),
-            ("job ID", self.job_id, 253),
-            ("run ID", self.run_id, 512),
-            ("object UID", self.object_uid, 128),
+        for label, value in (
+            ("namespace", self.namespace),
+            ("job ID", self.job_id),
+            ("run ID", self.run_id),
         ):
-            if (
-                not value
-                or len(value.encode()) > maximum
-                or any(ord(character) < 32 or ord(character) == 127 for character in value)
-            ):
+            if not _DNS_LABEL.fullmatch(value):
                 raise UploadInvalid(f"{label} is invalid")
 
 
@@ -117,7 +113,6 @@ class StorageLimits:
 class RunRecord:
     """One indexed identity and its readiness-gated manifest."""
 
-    status: dict[str, Any] = field(default_factory=dict)
     manifest: dict[str, Any] | None = None
 
 
@@ -185,13 +180,14 @@ class ResultsIndex:
         try:
             self._staging_fd = self._ensure_dir(self._root_fd, ".staging")
             self._published_fd = self._ensure_dir(self._root_fd, "runs")
-            self._tombstone_fd = self._ensure_dir(self._root_fd, ".expired")
+            with suppress(FileNotFoundError):
+                self._remove_tree(self._root_fd, ".expired")
         except BaseException:
             os.close(self._root_fd)
             raise
 
     def __del__(self) -> None:
-        for name in ("_tombstone_fd", "_published_fd", "_staging_fd", "_root_fd"):
+        for name in ("_published_fd", "_staging_fd", "_root_fd"):
             descriptor = getattr(self, name, None)
             if isinstance(descriptor, int):
                 with suppress(OSError):
@@ -242,7 +238,6 @@ class ResultsIndex:
             identity.namespace,
             identity.job_id,
             identity.run_id,
-            identity.object_uid,
         ):
             encoded = value.encode()
             message.extend(len(encoded).to_bytes(8, "big"))
@@ -317,7 +312,6 @@ class ResultsIndex:
                 "namespace": identity.namespace,
                 "jobId": identity.job_id,
                 "runId": identity.run_id,
-                "objectUid": identity.object_uid,
                 "created": created,
             },
             sort_keys=True,
@@ -329,19 +323,12 @@ class ResultsIndex:
             document = json.loads(
                 self._read_file(run_fd, _IDENTITY_NAME, MAX_MANIFEST_BYTES)
             )
-            if set(document) != {
-                "namespace",
-                "jobId",
-                "runId",
-                "objectUid",
-                "created",
-            }:
+            if set(document) != {"namespace", "jobId", "runId", "created"}:
                 raise ValueError
             identity = ResultIdentity(
                 document["namespace"],
                 document["jobId"],
                 document["runId"],
-                document["objectUid"],
             )
             created = float(document["created"])
             if not 0 <= created < float("inf"):
@@ -349,30 +336,6 @@ class ResultsIndex:
             return identity, created
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise UploadInvalid("stored result identity is invalid") from error
-
-    def _is_expired_locked(self, identity: ResultIdentity) -> bool:
-        key = self._key(identity)
-        try:
-            body = self._read_file(self._tombstone_fd, key, MAX_MANIFEST_BYTES)
-        except FileNotFoundError:
-            return False
-        try:
-            document = json.loads(body)
-            stored = ResultIdentity(
-                document["namespace"],
-                document["jobId"],
-                document["runId"],
-                document["objectUid"],
-            )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            raise UploadConflict("stored expiry tombstone is invalid") from error
-        if stored != identity:
-            raise UploadConflict("stored expiry tombstone identity is inconsistent")
-        return True
-
-    def _refuse_expired_locked(self, identity: ResultIdentity) -> None:
-        if self._is_expired_locked(identity):
-            raise ResultsExpired("completed results have expired")
 
     def _expire_published_if_due_locked(self, identity: ResultIdentity) -> None:
         key = self._key(identity)
@@ -389,43 +352,9 @@ class ResultsIndex:
             os.close(run_fd)
         if not is_expired:
             return
-        self._atomic_write(
-            self._tombstone_fd,
-            key,
-            self._identity_body(identity, self._now()),
-        )
         self._remove_tree(self._published_fd, key)
         self._runs.pop(identity, None)
         raise ResultsExpired("completed results have expired")
-
-    def release_identity(self, identity: ResultIdentity) -> bool:
-        """Purge one exact identity after its Kubernetes authority is deleted."""
-        with self._lock:
-            key = self._key(identity)
-            if self._active.get(key):
-                raise UploadConflict("result upload is still in progress")
-            removed = self._runs.pop(identity, None) is not None
-            for parent_fd, label in (
-                (self._staging_fd, "staging"),
-                (self._published_fd, "published"),
-            ):
-                try:
-                    run_fd = self._open_dir(parent_fd, key)
-                except FileNotFoundError:
-                    continue
-                try:
-                    stored, _ = self._read_identity(run_fd)
-                    if stored != identity:
-                        raise UploadConflict(f"{label} identity is inconsistent")
-                finally:
-                    os.close(run_fd)
-                self._remove_tree(parent_fd, key)
-                removed = True
-            if self._is_expired_locked(identity):
-                os.unlink(key, dir_fd=self._tombstone_fd)
-                os.fsync(self._tombstone_fd)
-                removed = True
-            return removed
 
     def _artifact_parent(
         self, run_fd: int, parts: tuple[str, ...], *, create: bool
@@ -564,11 +493,6 @@ class ResultsIndex:
             finally:
                 os.close(run_fd)
             if is_expired:
-                self._atomic_write(
-                    self._tombstone_fd,
-                    key,
-                    self._identity_body(identity, self._now()),
-                )
                 self._remove_tree(self._published_fd, key)
             else:
                 usage[key] = sum(files.values())
@@ -576,31 +500,29 @@ class ResultsIndex:
             self._runs.pop(identity, None)
         return len(usage), sum(usage.values())
 
-    def update_status(self, identity: ResultIdentity, status: dict[str, Any]) -> None:
-        """Store status for one complete identity."""
-        self._runs.setdefault(identity, RunRecord()).status = status
-
     def publish_manifest(
         self, identity: ResultIdentity, manifest: dict[str, Any]
     ) -> None:
         """Publish one validated manifest for one complete identity."""
-        if not isinstance(manifest.get("artifacts"), list) or manifest.get(
-            "runId"
-        ) != identity.run_id:
+        if (
+            not isinstance(manifest.get("artifacts"), list)
+            or manifest.get("runId") != identity.run_id
+        ):
             raise ValueError("results manifest does not match its complete identity")
         self._runs.setdefault(identity, RunRecord()).manifest = manifest
 
     def ready_manifest(self, identity: ResultIdentity) -> dict[str, Any] | None:
         """Return one complete identity's ready manifest."""
         with self._lock:
-            self._refuse_expired_locked(identity)
             self._expire_published_if_due_locked(identity)
             record = self._runs.get(identity)
             return record.manifest if record else None
 
     def _manifest_at(self, run_fd: int, identity: ResultIdentity) -> dict[str, Any]:
         try:
-            manifest = json.loads(self._read_file(run_fd, _MANIFEST_NAME, MAX_MANIFEST_BYTES))
+            manifest = json.loads(
+                self._read_file(run_fd, _MANIFEST_NAME, MAX_MANIFEST_BYTES)
+            )
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise UploadInvalid("stored manifest is invalid") from error
         if not self._is_ready_manifest(identity, manifest):
@@ -614,7 +536,6 @@ class ResultsIndex:
         digest: str,
         length: int,
     ) -> bool | None:
-        self._refuse_expired_locked(identity)
         self._expire_published_if_due_locked(identity)
         try:
             run_fd = self._open_dir(self._published_fd, self._key(identity))
@@ -662,7 +583,6 @@ class ResultsIndex:
             raise UploadInvalid("artifact digest is not canonical SHA-256")
         key = self._key(identity)
         with self._lock:
-            self._refuse_expired_locked(identity)
             published = self._published_status(
                 identity, parts, declared_sha256, declared_length
             )
@@ -689,7 +609,9 @@ class ResultsIndex:
             finally:
                 os.close(run_fd)
             try:
-                if self._matches(parent_fd, parts[-1], declared_sha256, declared_length):
+                if self._matches(
+                    parent_fd, parts[-1], declared_sha256, declared_length
+                ):
                     os.close(parent_fd)
                     return None
                 try:
@@ -697,15 +619,23 @@ class ResultsIndex:
                 except FileNotFoundError:
                     pass
                 else:
-                    raise UploadConflict("artifact path already contains different bytes")
+                    raise UploadConflict(
+                        "artifact path already contains different bytes"
+                    )
                 artifacts, run_bytes = usage[key]
                 reserved_run = self._reserved.get(key, 0)
                 reserved_total = sum(self._reserved.values())
                 if artifacts >= self._limits.max_artifacts_per_run:
                     raise UploadTooLarge("staging artifact quota is exhausted")
-                if run_bytes + reserved_run + declared_length > self._limits.max_run_bytes:
+                if (
+                    run_bytes + reserved_run + declared_length
+                    > self._limits.max_run_bytes
+                ):
                     raise UploadTooLarge("staging run byte quota is exhausted")
-                if stored_bytes + reserved_total + declared_length > self._limits.max_staging_bytes:
+                if (
+                    stored_bytes + reserved_total + declared_length
+                    > self._limits.max_staging_bytes
+                ):
                     raise UploadTooLarge("global staging byte quota is exhausted")
                 temporary = f".upload-{secrets.token_hex(16)}"
                 flags = (
@@ -794,7 +724,9 @@ class ResultsIndex:
                     upload.declared_digest,
                     upload.declared_length,
                 ):
-                    raise UploadConflict("artifact path contains different bytes") from None
+                    raise UploadConflict(
+                        "artifact path contains different bytes"
+                    ) from None
                 created = False
             os.fsync(upload.parent_fd)
             return created
@@ -842,9 +774,7 @@ class ResultsIndex:
             raise UploadTooLarge("manifest bytes exceed the run limit")
         return declared
 
-    def _verify_set(
-        self, run_fd: int, declared: dict[str, tuple[str, int]]
-    ) -> None:
+    def _verify_set(self, run_fd: int, declared: dict[str, tuple[str, int]]) -> None:
         actual, temporary_count, _ = self._walk(run_fd)
         if temporary_count:
             raise UploadConflict("result upload is still in progress")
@@ -855,7 +785,9 @@ class ResultsIndex:
             parent_fd = self._artifact_parent(run_fd, parts, create=False)
             try:
                 if not self._matches(parent_fd, parts[-1], digest, length):
-                    raise UploadInvalid(f"stored artifact does not match manifest: {name}")
+                    raise UploadInvalid(
+                        f"stored artifact does not match manifest: {name}"
+                    )
             finally:
                 os.close(parent_fd)
 
@@ -887,7 +819,6 @@ class ResultsIndex:
         key = self._key(identity)
 
         with self._lock:
-            self._refuse_expired_locked(identity)
             self._expire_published_if_due_locked(identity)
             if self._active.get(key):
                 raise UploadConflict("result upload is still in progress")
@@ -919,7 +850,9 @@ class ResultsIndex:
             try:
                 staging_fd = self._open_dir(self._staging_fd, key)
             except FileNotFoundError as error:
-                raise UploadInvalid("no staged artifacts exist for this identity") from error
+                raise UploadInvalid(
+                    "no staged artifacts exist for this identity"
+                ) from error
             try:
                 stored, _ = self._read_identity(staging_fd)
                 if stored != identity:
@@ -997,14 +930,25 @@ class ResultsIndex:
             os.close(descriptor)
             raise
 
-    def stats(self) -> dict[str, int]:
-        """Return result counts without exposing identities or content."""
-        return {
-            "runs": len(self._runs),
-            "readyRuns": sum(
-                record.manifest is not None for record in self._runs.values()
-            ),
-        }
+    def stats(self) -> dict[str, int | float]:
+        """Return bounded storage usage and configured hard limits."""
+        with self._lock:
+            staging_runs, staging_bytes, _ = self._usage_locked()
+            published_runs, published_bytes = self._published_usage_locked()
+            return {
+                "stagingRuns": staging_runs,
+                "stagingBytes": staging_bytes,
+                "publishedRuns": published_runs,
+                "publishedBytes": published_bytes,
+                "maxStagingRuns": self._limits.max_staging_runs,
+                "maxStagingBytes": self._limits.max_staging_bytes,
+                "maxRunBytes": self._limits.max_run_bytes,
+                "maxArtifactsPerRun": self._limits.max_artifacts_per_run,
+                "stagingTtlSeconds": self._limits.staging_ttl_seconds,
+                "maxPublishedRuns": self._limits.max_published_runs,
+                "maxPublishedBytes": self._limits.max_published_bytes,
+                "publishedTtlSeconds": self._limits.published_ttl_seconds,
+            }
 
     def rebuild(self) -> None:
         """Rebuild readiness using only descriptor-confined trusted identities."""

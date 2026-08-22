@@ -11,7 +11,6 @@ class OperatorSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_OPERATOR_")
 
-    index_rebuild_token: str = ""
     artifact_root: str = "/var/lib/aiperf/results"
     api_host: str = "0.0.0.0"
     api_port: int = 8080

@@ -4,7 +4,7 @@
 //! `aiperf results-sidecar`, the controller pod's durable upload companion.
 //!
 //! The server exposes only health. Results are validated beneath a retained
-//! no-follow root and uploaded to the authenticated durable operator API.
+//! no-follow root and uploaded to the durable operator API.
 //!
 //! HTTP contract:
 //! - `GET /healthz` -> `{"status":"ok"}`
@@ -12,9 +12,8 @@
 //! Env: `AIPERF_RESULTS_DIR` (default `/results`) and
 //! `AIPERF_RESULTS_SIDECAR_PORT` (default `9091`). Kubernetes also supplies
 //! `AIPERF_RESULTS_UPLOAD_URL`, `AIPERF_NAMESPACE`, `AIPERF_JOB_ID`,
-//! `AIPERF_RUN_ID`, `AIPERF_JOB_UID`, and `AIPERF_ROLE_BOOTSTRAP_FILE`; after a
-//! signed durable upload is acknowledged, the regular sidecar exits so its Job
-//! can finish.
+//! and `AIPERF_RUN_ID`; after a durable upload is acknowledged, the regular
+//! sidecar exits so its Job can finish.
 
 #[cfg(unix)]
 use std::ffi::{CString, OsStr};
@@ -32,9 +31,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
-use base64::Engine as _;
 use bytes::Bytes;
-use ed25519_dalek::{Signer, SigningKey};
 use futures::TryStreamExt;
 use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
 use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue};
@@ -53,9 +50,6 @@ use url::Url;
 const RESULTS_MANIFEST_NAME: &str = "results-manifest.json";
 const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
-const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
-const UPLOAD_KEY_DOMAIN: &[u8] = b"AIPERF-RESULTS-UPLOAD-KEY\x01";
-const UPLOAD_SIGNATURE_DOMAIN: &[u8] = b"AIPERF-RESULTS-UPLOAD-SIGNATURE\x01";
 const MANIFEST_WAIT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const UPLOAD_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 const UPLOAD_RETRY_DEADLINE: Duration = Duration::from_secs(10 * 60);
@@ -211,42 +205,11 @@ fn open_regular_at(parent: &File, name: &OsStr) -> std::io::Result<File> {
     }
 }
 
-#[cfg(unix)]
-fn open_regular_path(path: &Path) -> anyhow::Result<File> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    let mut components = absolute.components().peekable();
-    let mut directory = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW)
-        .open("/")?;
-    while let Some(component) = components.next() {
-        match component {
-            Component::RootDir => continue,
-            Component::Normal(name) if components.peek().is_none() => {
-                return open_regular_at(&directory, name).map_err(Into::into);
-            }
-            Component::Normal(name) => directory = open_directory_at(&directory, name)?,
-            _ => anyhow::bail!("private bootstrap path must be canonical"),
-        }
-    }
-    anyhow::bail!("private bootstrap path has no leaf")
-}
-
-#[cfg(not(unix))]
-fn open_regular_path(_path: &Path) -> anyhow::Result<File> {
-    anyhow::bail!("private bootstrap requires POSIX no-follow descriptors")
-}
-
 #[derive(Clone)]
 struct UploadIdentity {
     namespace: String,
     job_id: String,
     run_id: String,
-    object_uid: String,
 }
 
 #[derive(Clone, Copy)]
@@ -273,7 +236,6 @@ impl Default for UploadPolicy {
 struct UploadConfig {
     base_url: Url,
     identity: UploadIdentity,
-    signing_key: SigningKey,
     policy: UploadPolicy,
 }
 
@@ -300,21 +262,10 @@ impl UploadConfig {
             namespace: required_env("AIPERF_NAMESPACE")?,
             job_id: required_env("AIPERF_JOB_ID")?,
             run_id: required_env("AIPERF_RUN_ID")?,
-            object_uid: required_env("AIPERF_JOB_UID")?,
         };
-        let bootstrap_path = PathBuf::from(required_env("AIPERF_ROLE_BOOTSTRAP_FILE")?);
-        let bootstrap = read_private_bootstrap(&bootstrap_path)?;
-        let signing_key = derive_upload_signing_key(
-            &bootstrap,
-            &identity.namespace,
-            &identity.job_id,
-            &identity.run_id,
-            &identity.object_uid,
-        );
         Ok(Some(Self {
             base_url,
             identity,
-            signing_key,
             policy: UploadPolicy::default(),
         }))
     }
@@ -448,97 +399,6 @@ fn required_env(name: &str) -> anyhow::Result<String> {
         .ok()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("{name} is required for durable results upload"))
-}
-
-fn read_private_bootstrap(path: &Path) -> anyhow::Result<Vec<u8>> {
-    let mut file = open_regular_path(path).context("results upload bootstrap is unavailable")?;
-    let metadata = file
-        .metadata()
-        .context("results upload bootstrap metadata is unavailable")?;
-    ensure!(
-        metadata.is_file(),
-        "results upload bootstrap is not regular"
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        ensure!(
-            metadata.permissions().mode() & 0o7777 == 0o600,
-            "results upload bootstrap is not private"
-        );
-    }
-    ensure!(
-        metadata.len() <= MAX_BOOTSTRAP_BYTES,
-        "results upload bootstrap is oversized"
-    );
-    let mut bootstrap = Vec::new();
-    file.by_ref()
-        .take(MAX_BOOTSTRAP_BYTES + 1)
-        .read_to_end(&mut bootstrap)
-        .context("results upload bootstrap is unreadable")?;
-    ensure!(
-        !bootstrap.is_empty() && bootstrap.len() as u64 <= MAX_BOOTSTRAP_BYTES,
-        "results upload bootstrap is empty or oversized"
-    );
-    Ok(bootstrap)
-}
-
-fn framed(domain: &[u8], fields: &[&[u8]]) -> Vec<u8> {
-    let mut message = Vec::with_capacity(
-        domain.len() + fields.iter().map(|field| 8 + field.len()).sum::<usize>(),
-    );
-    message.extend_from_slice(domain);
-    for field in fields {
-        message.extend_from_slice(&(field.len() as u64).to_be_bytes());
-        message.extend_from_slice(field);
-    }
-    message
-}
-
-fn derive_upload_signing_key(
-    bootstrap: &[u8],
-    namespace: &str,
-    job_id: &str,
-    run_id: &str,
-    object_uid: &str,
-) -> SigningKey {
-    let key_material = framed(
-        UPLOAD_KEY_DOMAIN,
-        &[
-            namespace.as_bytes(),
-            job_id.as_bytes(),
-            run_id.as_bytes(),
-            object_uid.as_bytes(),
-            bootstrap,
-        ],
-    );
-    let seed: [u8; 32] = Sha256::digest(key_material).into();
-    SigningKey::from_bytes(&seed)
-}
-
-fn sign_upload(
-    signing_key: &SigningKey,
-    identity: &UploadIdentity,
-    kind: &str,
-    path: &str,
-    digest: &str,
-    length: u64,
-) -> String {
-    let length = length.to_string();
-    let message = framed(
-        UPLOAD_SIGNATURE_DOMAIN,
-        &[
-            identity.namespace.as_bytes(),
-            identity.job_id.as_bytes(),
-            identity.run_id.as_bytes(),
-            identity.object_uid.as_bytes(),
-            kind.as_bytes(),
-            path.as_bytes(),
-            digest.as_bytes(),
-            length.as_bytes(),
-        ],
-    );
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signing_key.sign(&message).to_bytes())
 }
 
 enum UploadBody {
@@ -718,7 +578,7 @@ async fn upload_until_ack(
     for attempt in 1..=config.policy.max_attempts {
         let outcome = tokio::time::timeout(
             config.policy.attempt_timeout,
-            send_upload(client, results_root, config, upload),
+            send_upload(client, results_root, upload),
         )
         .await;
         match outcome {
@@ -758,7 +618,6 @@ async fn upload_until_ack(
 async fn send_upload(
     client: &Client<HttpConnector, ResponseBody>,
     results_root: &ResultsRoot,
-    config: &UploadConfig,
     upload: &UploadRequest,
 ) -> anyhow::Result<StatusCode> {
     let body = match &upload.body {
@@ -775,20 +634,11 @@ async fn send_upload(
         }
         UploadBody::Bytes(bytes) => full_body(bytes.clone()),
     };
-    let signature = sign_upload(
-        &config.signing_key,
-        &config.identity,
-        upload.kind,
-        &upload.path,
-        &upload.digest,
-        upload.length,
-    );
     let request = Request::builder()
         .method(upload.method.clone())
         .uri(upload.uri.clone())
         .header("x-aiperf-content-sha256", &upload.digest)
         .header("x-aiperf-content-length", upload.length)
-        .header("x-aiperf-signature", signature)
         .header(CONTENT_LENGTH, upload.length)
         .body(body)
         .context("failed to build results upload request")?;
@@ -953,35 +803,93 @@ mod tests {
     }
 
     #[test]
-    fn upload_authority_matches_the_operator_golden_contract() {
-        let signing_key = derive_upload_signing_key(
-            b"private sidecar bootstrap",
-            "bench",
-            "job-1",
-            "run-1",
-            "9d2f3e2a-1111-4222-8333-abcdefabcdef",
-        );
-        assert_eq!(
-            base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .encode(signing_key.verifying_key().to_bytes()),
-            "8uFXJpCIj094psVHjvxpu5_YA6Ruivm9sb8z4GNRlTo"
-        );
-        assert_eq!(
-            sign_upload(
-                &signing_key,
-                &UploadIdentity {
-                    namespace: "bench".to_string(),
-                    job_id: "job-1".to_string(),
-                    run_id: "run-1".to_string(),
-                    object_uid: "9d2f3e2a-1111-4222-8333-abcdefabcdef".to_string(),
-                },
-                "artifact",
-                "summary.json",
-                "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-                2,
-            ),
-            "FywHe55FNtgNfyb8KjEVXfxqsGYnRM2RiZk9mSRIRW9kP78zGr9YckvfwTzwu7JbedO37u6GPTbNmEu-DagECg"
-        );
+    fn upload_configuration_does_not_require_uid_or_bootstrap() {
+        static ENVIRONMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENVIRONMENT.lock().expect("environment lock");
+        let names = [
+            "AIPERF_RESULTS_UPLOAD_URL",
+            "AIPERF_NAMESPACE",
+            "AIPERF_JOB_ID",
+            "AIPERF_RUN_ID",
+            "AIPERF_JOB_UID",
+            "AIPERF_ROLE_BOOTSTRAP_FILE",
+        ];
+        let previous = names.map(|name| (name, std::env::var_os(name)));
+        unsafe {
+            std::env::set_var("AIPERF_RESULTS_UPLOAD_URL", "http://operator.test:8080");
+            std::env::set_var("AIPERF_NAMESPACE", "bench");
+            std::env::set_var("AIPERF_JOB_ID", "job-1");
+            std::env::set_var("AIPERF_RUN_ID", "run-1");
+            std::env::remove_var("AIPERF_JOB_UID");
+            std::env::remove_var("AIPERF_ROLE_BOOTSTRAP_FILE");
+        }
+
+        let config = UploadConfig::from_env().expect("configuration without result credentials");
+
+        for (name, value) in previous {
+            unsafe {
+                if let Some(value) = value {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
+            }
+        }
+        let config = config.expect("configured upload");
+        assert_eq!(config.identity.namespace, "bench");
+        assert_eq!(config.identity.job_id, "job-1");
+        assert_eq!(config.identity.run_id, "run-1");
+    }
+
+    #[tokio::test]
+    async fn upload_request_has_integrity_metadata_but_no_signature() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("connection");
+            let service = service_fn(|request| async move {
+                assert_eq!(
+                    request.headers()["x-aiperf-content-sha256"],
+                    "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+                );
+                assert_eq!(request.headers()["x-aiperf-content-length"], "2");
+                assert!(request.headers().get("x-aiperf-signature").is_none());
+                Ok::<_, std::convert::Infallible>(
+                    Response::builder()
+                        .status(StatusCode::CREATED)
+                        .body(Full::new(Bytes::new()))
+                        .expect("response"),
+                )
+            });
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await
+                .expect("serve connection");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = ResultsRoot::open(directory.path()).expect("results root");
+        let config = UploadConfig {
+            base_url: Url::parse(&format!("http://{address}")).expect("URL"),
+            identity: UploadIdentity {
+                namespace: "bench".to_string(),
+                job_id: "job-1".to_string(),
+                run_id: "run-1".to_string(),
+            },
+            policy: UploadPolicy::default(),
+        };
+        let request = manifest_upload_request(&config, b"{}".to_vec()).expect("request");
+        let client: Client<_, ResponseBody> =
+            Client::builder(TokioExecutor::new()).build(HttpConnector::new());
+
+        let status = send_upload(&client, &root, &request)
+            .await
+            .expect("upload response");
+
+        drop(client);
+        server.await.expect("server task");
+        assert_eq!(status, StatusCode::CREATED);
     }
 
     #[tokio::test]
@@ -1017,9 +925,7 @@ mod tests {
                 namespace: "bench".to_string(),
                 job_id: "job-1".to_string(),
                 run_id: "run-1".to_string(),
-                object_uid: "9d2f3e2a-1111-4222-8333-abcdefabcdef".to_string(),
             },
-            signing_key: SigningKey::from_bytes(&[7; 32]),
             policy: UploadPolicy {
                 manifest_wait_timeout: Duration::from_millis(20),
                 ..UploadPolicy::default()
@@ -1077,9 +983,7 @@ mod tests {
                 namespace: "bench".to_string(),
                 job_id: "job-1".to_string(),
                 run_id: "run-1".to_string(),
-                object_uid: "9d2f3e2a-1111-4222-8333-abcdefabcdef".to_string(),
             },
-            signing_key: SigningKey::from_bytes(&[7; 32]),
             policy: UploadPolicy {
                 manifest_wait_timeout: Duration::from_secs(1),
                 attempt_timeout: Duration::from_secs(1),
@@ -1134,9 +1038,7 @@ mod tests {
                 namespace: "bench".to_string(),
                 job_id: "job-1".to_string(),
                 run_id: "run-1".to_string(),
-                object_uid: "9d2f3e2a-1111-4222-8333-abcdefabcdef".to_string(),
             },
-            signing_key: SigningKey::from_bytes(&[7; 32]),
             policy: UploadPolicy {
                 manifest_wait_timeout: Duration::from_secs(1),
                 attempt_timeout: Duration::from_secs(1),
@@ -1155,23 +1057,6 @@ mod tests {
 
         server.abort();
         assert!(error.to_string().contains("exhausted its retry budget"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn private_bootstrap_refuses_a_symlinked_ancestor() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
-
-        let directory = tempfile::tempdir().expect("tempdir");
-        let outside = tempfile::tempdir().expect("outside");
-        let bootstrap = outside.path().join("bootstrap");
-        std::fs::write(&bootstrap, b"private role material").expect("bootstrap");
-        std::fs::set_permissions(&bootstrap, std::fs::Permissions::from_mode(0o600))
-            .expect("permissions");
-        symlink(outside.path(), directory.path().join("role")).expect("symlink");
-
-        read_private_bootstrap(&directory.path().join("role/bootstrap"))
-            .expect_err("a bootstrap ancestor symlink must fail closed");
     }
 
     #[cfg(unix)]

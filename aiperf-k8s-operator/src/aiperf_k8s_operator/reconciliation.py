@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from typing import Any
@@ -26,7 +25,7 @@ def _controller_coordinate(address: str) -> str:
 def _container(
     role: RoleEnvelope,
     envelope: ControllerEnvelope,
-    bootstrap: BootstrapReference | CellBootstrapReference,
+    bootstrap: BootstrapReference | CellBootstrapReference | None,
     results_upload_base_url: str,
     object_uid: str,
     cell_id: int | None = None,
@@ -34,8 +33,11 @@ def _container(
     """Project one immutable role without interpreting its command, argv, or image."""
     environment: dict[str, Any] = dict(role.environment)
     environment["AIPERF_CELL_LAUNCHER"] = "k8s"
-    environment["AIPERF_ROLE_BOOTSTRAP_FILE"] = bootstrap.mount_path
+    if bootstrap is not None:
+        environment["AIPERF_ROLE_BOOTSTRAP_FILE"] = bootstrap.mount_path
     if role.name == "controller":
+        if bootstrap is None:
+            raise ValueError("controller projection requires a bootstrap")
         environment["AIPERF_JOB_ID"] = envelope.job_id
         environment["AIPERF_JOB_UID"] = object_uid
         environment["AIPERF_NAMESPACE"] = envelope.namespace
@@ -43,8 +45,8 @@ def _container(
         environment["AIPERF_CELL_COUNT"] = str(envelope.cells)
         environment["AIPERF_CONTROLLER_BOOTSTRAP_FILE"] = bootstrap.mount_path
     elif role.name == "cell":
-        if cell_id is None:
-            raise ValueError("cell projection requires a cell id")
+        if cell_id is None or bootstrap is None:
+            raise ValueError("cell projection requires an id and bootstrap")
         environment["AIPERF_CELL_COUNT"] = str(envelope.cells)
         environment["AIPERF_CELL_CONTROLLER_ADDR"] = _controller_coordinate(
             envelope.controller_address
@@ -52,29 +54,25 @@ def _container(
         environment["AIPERF_CELL_ID"] = str(cell_id)
     else:
         environment["AIPERF_JOB_ID"] = envelope.job_id
-        environment["AIPERF_JOB_UID"] = object_uid
         environment["AIPERF_NAMESPACE"] = envelope.namespace
         environment["AIPERF_RESULTS_DIR"] = envelope.artifact_root
         environment["AIPERF_RESULTS_UPLOAD_URL"] = results_upload_base_url
         environment["AIPERF_RUN_ID"] = envelope.run_id
     volume_mounts = [
-        {
-            "name": f"bootstrap-{bootstrap_name(bootstrap)}",
-            "mountPath": bootstrap.mount_path,
-            "subPath": "bootstrap",
-            "readOnly": True,
-        },
-        {"name": "config", "mountPath": "/etc/aiperf/config", "readOnly": True},
+        {"name": "config", "mountPath": "/etc/aiperf/config", "readOnly": True}
     ]
+    if bootstrap is not None:
+        volume_mounts.insert(
+            0,
+            {
+                "name": f"bootstrap-{bootstrap_name(bootstrap)}",
+                "mountPath": bootstrap.mount_path,
+                "subPath": "bootstrap",
+                "readOnly": True,
+            },
+        )
     if role.name in {"controller", "results-sidecar"}:
         volume_mounts.append({"name": "results", "mountPath": envelope.artifact_root})
-        volume_mounts.append(
-            {
-                "name": "authority-gate",
-                "mountPath": "/var/run/aiperf/authority",
-                "readOnly": True,
-            }
-        )
     if role.name == "controller":
         volume_mounts.append(
             {
@@ -153,13 +151,6 @@ def _volumes(
                         ],
                     },
                 },
-                {
-                    "name": "authority-gate",
-                    "configMap": {
-                        "name": authority_name(envelope, object_uid),
-                        "optional": False,
-                    },
-                },
             ]
         )
     return volumes
@@ -184,19 +175,9 @@ def _incarnation_suffix(envelope: ControllerEnvelope, object_uid: str) -> str:
     return hashlib.sha256(identity).hexdigest()[:16]
 
 
-def authority_name(envelope: ControllerEnvelope, object_uid: str) -> str:
-    """Return the deterministic immutable authority ConfigMap name."""
-    return f"aiperf-results-authority-{_incarnation_suffix(envelope, object_uid)}"
-
-
 def config_snapshot_name(envelope: ControllerEnvelope, object_uid: str) -> str:
     """Return the deterministic immutable configuration snapshot name."""
     return f"aiperf-config-{_incarnation_suffix(envelope, object_uid)}"
-
-
-def results_read_secret_name(envelope: ControllerEnvelope, object_uid: str) -> str:
-    """Return the deterministic dedicated results-read Secret name."""
-    return f"aiperf-results-read-{_incarnation_suffix(envelope, object_uid)}"
 
 
 def owner_reference(envelope: ControllerEnvelope, object_uid: str) -> dict[str, Any]:
@@ -210,7 +191,7 @@ def owner_reference(envelope: ControllerEnvelope, object_uid: str) -> dict[str, 
     }
 
 
-def _authority_labels(
+def _resource_labels(
     envelope: ControllerEnvelope, object_uid: str, role: str
 ) -> dict[str, str]:
     labels = {
@@ -221,7 +202,7 @@ def _authority_labels(
         "aiperf.nvidia.com/role": role,
     }
     if any(not _is_valid_label_value(value) for value in labels.values()):
-        raise ValueError("AIPerfJob authority identity is not a Kubernetes label value")
+        raise ValueError("AIPerfJob resource identity is not a Kubernetes label value")
     return labels
 
 
@@ -236,55 +217,8 @@ def _is_valid_label_value(value: str) -> bool:
     )
 
 
-def _authority_annotations(envelope: ControllerEnvelope) -> dict[str, str]:
+def _envelope_annotations(envelope: ControllerEnvelope) -> dict[str, str]:
     return {"aiperf.nvidia.com/envelope-sha256": envelope_sha256(envelope)}
-
-
-def build_results_read_secret(
-    envelope: ControllerEnvelope, object_uid: str, raw_token: bytes
-) -> dict[str, Any]:
-    """Build one immutable, object-incarnation-bound read capability Secret."""
-    if len(raw_token) != 32:
-        raise ValueError("results-read capability must contain exactly 32 bytes")
-    return {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": results_read_secret_name(envelope, object_uid),
-            "namespace": envelope.namespace,
-            "ownerReferences": [owner_reference(envelope, object_uid)],
-            "labels": _authority_labels(envelope, object_uid, "results-read"),
-            "annotations": _authority_annotations(envelope),
-        },
-        "immutable": True,
-        "type": "Opaque",
-        "data": {"token": base64.b64encode(raw_token).decode("ascii")},
-    }
-
-
-def build_results_authority(
-    envelope: ControllerEnvelope,
-    object_uid: str,
-    upload_public_key: str,
-    read_token_sha256: str,
-) -> dict[str, Any]:
-    """Build one immutable atomic verifier record for the accepted workload."""
-    return {
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": {
-            "name": authority_name(envelope, object_uid),
-            "namespace": envelope.namespace,
-            "ownerReferences": [owner_reference(envelope, object_uid)],
-            "labels": _authority_labels(envelope, object_uid, "results-authority"),
-            "annotations": _authority_annotations(envelope),
-        },
-        "immutable": True,
-        "data": {
-            "uploadPublicKey": upload_public_key,
-            "readTokenSha256": read_token_sha256,
-        },
-    }
 
 
 def build_config_snapshot(
@@ -323,9 +257,9 @@ def build_config_snapshot(
             "name": config_snapshot_name(envelope, object_uid),
             "namespace": envelope.namespace,
             "ownerReferences": [owner_reference(envelope, object_uid)],
-            "labels": _authority_labels(envelope, object_uid, "config-snapshot"),
+            "labels": _resource_labels(envelope, object_uid, "config-snapshot"),
             "annotations": {
-                **_authority_annotations(envelope),
+                **_envelope_annotations(envelope),
                 "aiperf.nvidia.com/content-sha256": actual_digest,
             },
         },
@@ -401,7 +335,6 @@ def build_jobset(
     sidecar = _role_by_name(envelope, "results-sidecar")
     cell = _role_by_name(envelope, "cell")
     controller_bootstrap = _role_bootstrap(controller)
-    sidecar_bootstrap = _role_bootstrap(sidecar)
     common = {
         "restartPolicy": "Never",
         "serviceAccountName": workload_name(envelope),
@@ -436,13 +369,13 @@ def build_jobset(
                         _container(
                             sidecar,
                             envelope,
-                            sidecar_bootstrap,
+                            None,
                             results_upload_base_url,
                             object_uid,
                         ),
                     ],
                     _volumes(
-                        [controller_bootstrap, sidecar_bootstrap],
+                        [controller_bootstrap],
                         envelope,
                         object_uid,
                         has_results=True,

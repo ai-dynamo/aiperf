@@ -61,7 +61,7 @@ pub fn jobs_path(namespace: &str) -> String {
 /// Bootstrap material path selected on the command line for one workload identity.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BootstrapMaterialTarget {
-    /// One non-cell workload role.
+    /// The controller workload role.
     Role(NativeK8sRole),
     /// One numbered cellular worker.
     Cell(u32),
@@ -94,7 +94,6 @@ pub fn material_paths(
         })?;
         let target = match role {
             "controller" => BootstrapMaterialTarget::Role(NativeK8sRole::Controller),
-            "results-sidecar" => BootstrapMaterialTarget::Role(NativeK8sRole::ResultsSidecar),
             cell if let Some(cell_id) = cell.strip_prefix("cell-") => {
                 let cell_id = cell_id.parse().map_err(|_| {
                     KubeError::Decode(format!("--bootstrap-material has invalid cell id {cell}"))
@@ -132,8 +131,11 @@ fn prepare_bootstrap_secrets(
     let expected = envelope
         .roles
         .iter()
-        .filter(|role| role.name != NativeK8sRole::Cell)
-        .map(|role| BootstrapMaterialTarget::Role(role.name))
+        .filter_map(|role| {
+            role.bootstrap
+                .as_ref()
+                .map(|_| BootstrapMaterialTarget::Role(role.name))
+        })
         .chain(
             envelope
                 .cell_bootstraps
@@ -149,29 +151,22 @@ fn prepare_bootstrap_secrets(
     }
     let mut prepared = Vec::with_capacity(expected.len());
     for role in &envelope.roles {
-        if role.name == NativeK8sRole::Cell {
-            continue;
-        }
         let Some(bootstrap) = &role.bootstrap else {
             continue;
         };
         let path = material
             .get(&BootstrapMaterialTarget::Role(role.name))
             .ok_or_else(|| anyhow::anyhow!("missing bootstrap material for {:?}", role.name))?;
-        let role_name = match role.name {
-            NativeK8sRole::Controller => "controller",
-            NativeK8sRole::ResultsSidecar => "results-sidecar",
-            NativeK8sRole::Cell => {
-                anyhow::bail!("cell roles must use per-cell bootstrap references")
-            }
-        };
+        if role.name != NativeK8sRole::Controller {
+            anyhow::bail!("only the controller role may carry a role bootstrap")
+        }
         let result = create_bootstrap_secret(
             client,
             envelope,
             path,
             &bootstrap.secret_name,
             &bootstrap.sha256,
-            role_name,
+            "controller",
         );
         match result {
             Ok(was_created) => prepared.push(PreparedBootstrapSecret {
@@ -789,14 +784,14 @@ mod tests {
     #[test]
     fn transactional_submission_binds_every_bootstrap_to_the_created_cr() {
         let transaction = transaction_fixture();
-        for _ in 0..3 {
+        for _ in 0..2 {
             transaction.transport.push_response(201, Vec::new());
         }
         transaction.transport.push_response(
             201,
             br#"{"metadata":{"name":"job-1","namespace":"bench","uid":"4f78fcbe-9aae-4cc9-ae19-204231b21575"}}"#.to_vec(),
         );
-        for _ in 0..3 {
+        for _ in 0..2 {
             transaction.transport.push_response(200, Vec::new());
         }
 
@@ -809,10 +804,10 @@ mod tests {
 
         assert_eq!(status, 201);
         let requests = transaction.transport.requests.lock().expect("requests");
-        assert_eq!(requests.len(), 7);
-        assert_eq!(requests[3].method, "POST");
-        assert_eq!(requests[3].path, jobs_path("bench"));
-        for request in &requests[4..] {
+        assert_eq!(requests.len(), 5);
+        assert_eq!(requests[2].method, "POST");
+        assert_eq!(requests[2].path, jobs_path("bench"));
+        for request in &requests[3..] {
             assert_eq!(request.method, "PATCH");
             let patch: Value = serde_json::from_slice(&request.body).expect("owner patch");
             assert_eq!(
@@ -831,13 +826,13 @@ mod tests {
     #[test]
     fn transactional_submission_rolls_back_new_secrets_when_cr_is_rejected() {
         let transaction = transaction_fixture();
-        for _ in 0..3 {
+        for _ in 0..2 {
             transaction.transport.push_response(201, Vec::new());
         }
         transaction
             .transport
             .push_response(422, b"invalid CR".to_vec());
-        for _ in 0..3 {
+        for _ in 0..2 {
             transaction.transport.push_response(200, Vec::new());
         }
 
@@ -850,14 +845,14 @@ mod tests {
 
         assert!(error.to_string().contains("HTTP 422"));
         let requests = transaction.transport.requests.lock().expect("requests");
-        assert_eq!(requests.len(), 7);
+        assert_eq!(requests.len(), 5);
         assert!(
-            requests[4..]
+            requests[3..]
                 .iter()
                 .all(|request| request.method == "DELETE")
         );
         assert!(
-            requests[4..]
+            requests[3..]
                 .iter()
                 .all(|request| request.path.contains("/secrets/bootstrap-"))
         );
@@ -866,7 +861,7 @@ mod tests {
     #[test]
     fn transactional_submission_removes_cr_and_secrets_when_owner_binding_fails() {
         let transaction = transaction_fixture();
-        for _ in 0..3 {
+        for _ in 0..2 {
             transaction.transport.push_response(201, Vec::new());
         }
         transaction.transport.push_response(
@@ -877,7 +872,7 @@ mod tests {
             .transport
             .push_response(500, b"patch failed".to_vec());
         transaction.transport.push_response(200, Vec::new());
-        for _ in 0..3 {
+        for _ in 0..2 {
             transaction.transport.push_response(200, Vec::new());
         }
 
@@ -890,10 +885,10 @@ mod tests {
 
         assert!(error.to_string().contains("owner reference"));
         let requests = transaction.transport.requests.lock().expect("requests");
-        assert_eq!(requests[5].method, "DELETE");
-        assert_eq!(requests[5].path, format!("{}/job-1", jobs_path("bench")));
+        assert_eq!(requests[4].method, "DELETE");
+        assert_eq!(requests[4].path, format!("{}/job-1", jobs_path("bench")));
         assert!(
-            requests[6..]
+            requests[5..]
                 .iter()
                 .all(|request| request.method == "DELETE")
         );

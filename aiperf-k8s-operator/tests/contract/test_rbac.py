@@ -36,7 +36,7 @@ def test_operator_secret_access_is_limited_to_reconciled_capability_lifecycle(
         {
             "apiGroups": [""],
             "resources": ["secrets"],
-            "verbs": ["create", "delete", "get"],
+            "verbs": ["delete", "get"],
         }
     ]
     assert cluster_role["rules"] == [
@@ -58,7 +58,7 @@ def test_operator_secret_access_is_limited_to_reconciled_capability_lifecycle(
         {
             "apiGroups": [""],
             "resources": ["secrets"],
-            "verbs": ["create", "delete", "get"],
+            "verbs": ["delete", "get"],
         },
         {
             "apiGroups": [""],

@@ -65,8 +65,8 @@ async def test_published_storage_identity_is_namespace_job_and_run(
     index = ResultsIndex(tmp_path)
     identity_type = getattr(results, "ResultIdentity", None)
     assert identity_type is not None
-    first = identity_type("team-a", "job-a", "shared-run", "uid-a")
-    second = identity_type("team-b", "job-b", "shared-run", "uid-b")
+    first = identity_type("team-a", "job-a", "shared-run")
+    second = identity_type("team-b", "job-b", "shared-run")
     await publish(index, first, "answer.bin", b"first")
     await publish(index, second, "answer.bin", b"second")
 
@@ -76,22 +76,19 @@ async def test_published_storage_identity_is_namespace_job_and_run(
     assert index.open_artifact(second, "answer.bin").read() == b"second"
 
 
-async def test_recreated_object_uid_cannot_read_or_adopt_previous_results(
+async def test_published_triple_survives_restart_and_rebuild(
     tmp_path: Path,
 ) -> None:
     index = ResultsIndex(tmp_path)
-    previous = results.ResultIdentity(
-        "bench", "job-1", "shared-run", "11111111-1111-4111-8111-111111111111"
-    )
-    replacement = results.ResultIdentity(
-        "bench", "job-1", "shared-run", "22222222-2222-4222-8222-222222222222"
-    )
+    identity = results.ResultIdentity("bench", "job-1", "shared-run")
 
-    await publish(index, previous, "answer.bin", b"previous")
-    await publish(index, replacement, "answer.bin", b"replacement")
+    await publish(index, identity, "answer.bin", b"published")
+    del index
+    restarted = ResultsIndex(tmp_path)
+    restarted.rebuild()
 
-    assert index.open_artifact(previous, "answer.bin").read() == b"previous"
-    assert index.open_artifact(replacement, "answer.bin").read() == b"replacement"
+    assert restarted.ready_manifest(identity)["runId"] == "shared-run"
+    assert restarted.open_artifact(identity, "answer.bin").read() == b"published"
 
 
 async def test_replayed_artifact_after_publish_never_recreates_staging(
@@ -100,7 +97,7 @@ async def test_replayed_artifact_after_publish_never_recreates_staging(
     index = ResultsIndex(tmp_path)
     identity_type = getattr(results, "ResultIdentity", None)
     assert identity_type is not None
-    identity = identity_type("bench", "job-1", "run-1", "uid-1")
+    identity = identity_type("bench", "job-1", "run-1")
     body = b"published"
     await publish(index, identity, "answer.bin", body)
 
@@ -143,8 +140,8 @@ async def test_staging_admission_is_bounded_and_expired_runs_are_collected(
     index = ResultsIndex(tmp_path, limits=limits, now=lambda: now[0])
     identity_type = getattr(results, "ResultIdentity", None)
     assert identity_type is not None
-    first = identity_type("bench", "job-1", "run-1", "uid-1")
-    second = identity_type("bench", "job-2", "run-2", "uid-2")
+    first = identity_type("bench", "job-1", "run-1")
+    second = identity_type("bench", "job-2", "run-2")
     assert await index.stage_artifact(
         first, "a.bin", chunks(b"12345678"), hashlib.sha256(b"12345678").hexdigest(), 8
     )
@@ -172,8 +169,8 @@ async def test_restart_orphan_temporary_bytes_remain_inside_global_quota(
         staging_ttl_seconds=60,
     )
     index = ResultsIndex(tmp_path, limits=limits)
-    first = results.ResultIdentity("bench", "job-1", "run-1", "uid-1")
-    second = results.ResultIdentity("bench", "job-2", "run-2", "uid-2")
+    first = results.ResultIdentity("bench", "job-1", "run-1")
+    second = results.ResultIdentity("bench", "job-2", "run-2")
     assert await index.stage_artifact(
         first, "a.bin", chunks(b"x"), hashlib.sha256(b"x").hexdigest(), 1
     )
@@ -201,8 +198,8 @@ async def test_published_run_quota_is_bounded_and_expired_runs_are_collected(
         published_ttl_seconds=10,
     )
     index = ResultsIndex(tmp_path, limits=limits, now=lambda: now[0])
-    first = results.ResultIdentity("bench", "job-1", "run-1", "uid-1")
-    second = results.ResultIdentity("bench", "job-2", "run-2", "uid-2")
+    first = results.ResultIdentity("bench", "job-1", "run-1")
+    second = results.ResultIdentity("bench", "job-2", "run-2")
     await publish(index, first, "a.bin", b"12345678")
     body = b"y"
     assert await index.stage_artifact(
@@ -225,16 +222,13 @@ async def test_published_run_quota_is_bounded_and_expired_runs_are_collected(
         hashlib.sha256(document).hexdigest(),
         len(document),
     )
-    with pytest.raises(results.ResultsExpired):
-        index.ready_manifest(first)
+    assert index.ready_manifest(first) is None
     assert index.ready_manifest(second) is not None
 
 
-async def test_expired_completed_identity_stays_gone_until_authority_release(
+async def test_expiry_removes_published_bytes_without_tombstones(
     tmp_path: Path,
 ) -> None:
-    expired_type = getattr(results, "ResultsExpired", None)
-    assert expired_type is not None
     now = [100.0]
     limits = results.StorageLimits(
         max_staging_runs=2,
@@ -247,8 +241,8 @@ async def test_expired_completed_identity_stays_gone_until_authority_release(
         published_ttl_seconds=10,
     )
     index = ResultsIndex(tmp_path, limits=limits, now=lambda: now[0])
-    expired = results.ResultIdentity("bench", "job-1", "run-1", "uid-old")
-    current = results.ResultIdentity("bench", "job-2", "run-2", "uid-current")
+    expired = results.ResultIdentity("bench", "job-1", "run-1")
+    current = results.ResultIdentity("bench", "job-2", "run-2")
     await publish(index, expired, "a.bin", b"expired")
 
     now[0] = 111.0
@@ -256,18 +250,7 @@ async def test_expired_completed_identity_stays_gone_until_authority_release(
 
     restarted = ResultsIndex(tmp_path, limits=limits, now=lambda: now[0])
     restarted.rebuild()
-    with pytest.raises(expired_type):
-        restarted.ready_manifest(expired)
-    with pytest.raises(expired_type):
-        await restarted.stage_artifact(
-            expired,
-            "a.bin",
-            chunks(b"expired"),
-            hashlib.sha256(b"expired").hexdigest(),
-            len(b"expired"),
-        )
-
-    assert restarted.release_identity(expired)
+    assert restarted.ready_manifest(expired) is None
     assert await restarted.stage_artifact(
         expired,
         "a.bin",
@@ -275,22 +258,4 @@ async def test_expired_completed_identity_stays_gone_until_authority_release(
         hashlib.sha256(b"expired").hexdigest(),
         len(b"expired"),
     )
-
-
-async def test_authority_release_before_expiry_purges_exact_published_identity(
-    tmp_path: Path,
-) -> None:
-    now = [100.0]
-    limits = results.StorageLimits(published_ttl_seconds=10)
-    identity = results.ResultIdentity("bench", "job-1", "run-1", "uid-deleted")
-    index = ResultsIndex(tmp_path, limits=limits, now=lambda: now[0])
-    await publish(index, identity, "answer.bin", b"published")
-
-    assert index.release_identity(identity)
-    now[0] = 111.0
-
-    restarted = ResultsIndex(tmp_path, limits=limits, now=lambda: now[0])
-    restarted.rebuild()
-    assert restarted.ready_manifest(identity) is None
-    assert list((tmp_path / "runs").iterdir()) == []
-    assert list((tmp_path / ".expired").iterdir()) == []
+    assert not (tmp_path / ".expired").exists()

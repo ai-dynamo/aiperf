@@ -15,7 +15,6 @@ import pytest
 from aiperf_k8s_operator.contract import validate_bootstrap_metadata, validate_envelope
 from aiperf_k8s_operator.main import reconcile_job
 from aiperf_k8s_operator.reconciliation import build_jobset, validate_references
-from aiperf_k8s_operator.upload_auth import derive_upload_public_key
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / "contracts" / "native-k8s" / "v1" / "fixtures"
@@ -170,7 +169,7 @@ def test_envelope_projects_exact_two_jobsets() -> None:
             "aiperf.nvidia.com/role": "jobset",
         },
         "annotations": {
-            "aiperf.nvidia.com/sha256": "dd9b855e5140f53f4fbdb05bfe8dd56ecc0ef46d210016216f884026b268f206"
+            "aiperf.nvidia.com/sha256": "23b3b5b200304cfd8fcbeba285ac8745c0d3792f3b3bd0e73a8e44f9c3d3de1b"
         },
     }
     jobs = jobset["spec"]["replicatedJobs"]
@@ -194,14 +193,17 @@ def test_envelope_projects_exact_two_jobsets() -> None:
     roles = {role.name: role for role in envelope.roles}
     for pod in [controller_pod, *cell_pods]:
         assert pod["securityContext"] == {"runAsUser": 0}
-    for container in controller_pod["containers"]:
-        role = roles[container["name"]]
-        assert container["volumeMounts"][0] == {
-            "name": f"bootstrap-{role.name}",
-            "mountPath": role.bootstrap.mount_path,
-            "subPath": "bootstrap",
-            "readOnly": True,
-        }
+    controller = controller_pod["containers"][0]
+    assert controller["volumeMounts"][0] == {
+        "name": "bootstrap-controller",
+        "mountPath": roles["controller"].bootstrap.mount_path,
+        "subPath": "bootstrap",
+        "readOnly": True,
+    }
+    sidecar = controller_pod["containers"][1]
+    assert all(
+        not mount["name"].startswith("bootstrap-") for mount in sidecar["volumeMounts"]
+    )
 
     controller_environment = {
         entry["name"]: entry["value"]
@@ -271,7 +273,7 @@ def test_jobset_projects_reporting_identity_and_one_shared_results_volume() -> N
     )
     assert controller_pod["automountServiceAccountToken"] is False
     assert cell_pod["automountServiceAccountToken"] is False
-    assert controller_pod["volumes"][-3:] == [
+    assert controller_pod["volumes"][-2:] == [
         {"name": "results", "emptyDir": {}},
         {
             "name": "controller-kube-api",
@@ -293,13 +295,6 @@ def test_jobset_projects_reporting_identity_and_one_shared_results_volume() -> N
                 ],
             },
         },
-        {
-            "name": "authority-gate",
-            "configMap": {
-                "name": reconciliation.authority_name(envelope, OBJECT_UID),
-                "optional": False,
-            },
-        },
     ]
     for container in (controller, sidecar):
         assert {mount["name"]: mount for mount in container["volumeMounts"]}[
@@ -312,10 +307,8 @@ def test_jobset_projects_reporting_identity_and_one_shared_results_volume() -> N
     assert controller_environment["AIPERF_RUN_ID"] == "run-1"
     assert controller_environment["AIPERF_JOB_UID"] == OBJECT_UID
     assert {mount["name"] for mount in controller["volumeMounts"]} >= {
-        "controller-kube-api",
-        "authority-gate",
+        "controller-kube-api"
     }
-    assert {mount["name"] for mount in sidecar["volumeMounts"]} >= {"authority-gate"}
     assert "controller-kube-api" not in {
         mount["name"] for mount in sidecar["volumeMounts"]
     }
@@ -324,9 +317,7 @@ def test_jobset_projects_reporting_identity_and_one_shared_results_volume() -> N
     assert sidecar_environment == {
         "AIPERF_CELL_LAUNCHER": "k8s",
         "AIPERF_JOB_ID": "job-1",
-        "AIPERF_JOB_UID": OBJECT_UID,
         "AIPERF_NAMESPACE": "bench",
-        "AIPERF_ROLE_BOOTSTRAP_FILE": "/bootstrap",
         "AIPERF_RUN_ID": "run-1",
         "AIPERF_RESULTS_DIR": "/results",
         "AIPERF_RESULTS_UPLOAD_URL": "http://operator.system.svc:8080",
@@ -373,61 +364,6 @@ def test_workload_identity_is_per_run_and_can_patch_only_status() -> None:
         assert resource["metadata"]["ownerReferences"] == [
             reconciliation.owner_reference(envelope, OBJECT_UID)
         ]
-
-
-def test_results_authorities_are_immutable_and_bound_to_the_cr_incarnation() -> None:
-    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
-    raw_read_token = bytes(range(32))
-    read_secret = reconciliation.build_results_read_secret(
-        envelope, OBJECT_UID, raw_read_token
-    )
-    authority = reconciliation.build_results_authority(
-        envelope,
-        OBJECT_UID,
-        upload_public_key="upload-public-key",
-        read_token_sha256=(
-            "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
-        ),
-    )
-
-    assert read_secret["metadata"]["name"] == "aiperf-results-read-76698a922acf3f34"
-    assert read_secret["immutable"] is True
-    assert read_secret["type"] == "Opaque"
-    assert read_secret["data"] == {
-        "token": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
-    }
-    assert authority["metadata"]["name"] == (
-        "aiperf-results-authority-76698a922acf3f34"
-    )
-    assert authority["immutable"] is True
-    assert authority["data"] == {
-        "uploadPublicKey": "upload-public-key",
-        "readTokenSha256": (
-            "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
-        ),
-    }
-    for resource, role in (
-        (read_secret, "results-read"),
-        (authority, "results-authority"),
-    ):
-        assert resource["metadata"]["ownerReferences"] == [
-            reconciliation.owner_reference(envelope, OBJECT_UID)
-        ]
-        assert resource["metadata"]["labels"] == {
-            "aiperf.nvidia.com/namespace": "bench",
-            "aiperf.nvidia.com/job-id": "job-1",
-            "aiperf.nvidia.com/run-id": "run-1",
-            "aiperf.nvidia.com/object-uid": OBJECT_UID,
-            "aiperf.nvidia.com/role": role,
-        }
-        assert resource["metadata"]["annotations"] == {
-            "aiperf.nvidia.com/envelope-sha256": reconciliation.envelope_sha256(
-                envelope
-            )
-        }
-        assert all(
-            len(value) <= 63 for value in resource["metadata"]["labels"].values()
-        )
 
 
 def test_config_snapshot_binds_verified_content_to_the_cr_incarnation() -> None:
@@ -913,7 +849,7 @@ async def test_create_handler_rejects_cross_object_identity_before_api_access(
 
 
 @pytest.mark.asyncio
-async def test_create_handler_publishes_authorities_only_after_accepted_revalidation(
+async def test_create_handler_revalidates_references_without_results_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from kubernetes_asyncio import client as kubernetes_client
@@ -952,23 +888,14 @@ async def test_create_handler_publishes_authorities_only_after_accepted_revalida
                 data={"bootstrap": base64.b64encode(bootstrap_data[name]).decode()},
             )
 
-        async def create_namespaced_secret(
-            self, namespace: str, body: dict[str, Any]
-        ) -> None:
-            events.append("read-capability")
-            self.read_capability = copy.deepcopy(body)
-
         async def create_namespaced_config_map(
             self, namespace: str, body: dict[str, Any]
         ) -> None:
-            if body["metadata"]["name"] == reconciliation.config_snapshot_name(
+            assert body["metadata"]["name"] == reconciliation.config_snapshot_name(
                 envelope, OBJECT_UID
-            ):
-                events.append("config-snapshot")
-                self.config_snapshot = copy.deepcopy(body)
-            else:
-                events.append("authority")
-                self.authority = copy.deepcopy(body)
+            )
+            events.append("config-snapshot")
+            self.config_snapshot = copy.deepcopy(body)
 
         async def read_namespaced_config_map(
             self, name: str, namespace: str
@@ -981,13 +908,13 @@ async def test_create_handler_publishes_authorities_only_after_accepted_revalida
                     "metadata": {"name": name, "namespace": namespace},
                     "data": config_data,
                 }
-            raise AssertionError("new authority ConfigMap must not be read")
+            raise AssertionError("only the source ConfigMap may be read")
 
     class FakeObjects:
         status: dict[str, Any] | None = None
 
         async def patch_namespaced_custom_object(self, **_: Any) -> None:
-            raise AssertionError("authority must not use mutable CR metadata")
+            raise AssertionError("reconciliation must not patch mutable CR metadata")
 
         async def patch_namespaced_custom_object_status(self, **kwargs: Any) -> None:
             events.append(f"status:{kwargs['body']['status']['phase']}")
@@ -1037,40 +964,21 @@ async def test_create_handler_publishes_authorities_only_after_accepted_revalida
         patch=status_patch,
     )
 
-    sidecar = next(role for role in envelope.roles if role.name == "results-sidecar")
-    expected = derive_upload_public_key(
-        bootstrap_data[sidecar.bootstrap.secret_name],
-        envelope.namespace,
-        envelope.job_id,
-        envelope.run_id,
-        OBJECT_UID,
-    )
-    assert events.index("read-capability") < events.index("jobset")
     assert events.index("cr-status") < events.index("status:Pending")
     assert events.index("status:Pending") < events.index("jobset")
     assert events.index("config-source") < events.index("config-snapshot")
     assert events.index("config-snapshot") < events.index("jobset")
     assert events.index("jobset") < events.index("cr-revalidation")
-    assert events.index("cr-revalidation") < events.index("authority")
-    assert events[-1] == "authority"
+    assert events[-1].startswith("bootstrap:")
     assert {
         event.removeprefix("bootstrap:")
         for event in events
         if event.startswith("bootstrap:")
     } == set(identities)
     assert all(events.count(f"bootstrap:{name}") == 2 for name in identities)
-    assert core.authority["data"]["uploadPublicKey"] == expected
-    assert (
-        core.authority["data"]["readTokenSha256"]
-        == hashlib.sha256(
-            base64.b64decode(core.read_capability["data"]["token"])
-        ).hexdigest()
-    )
+    assert "read-capability" not in events
+    assert "authority" not in events
     assert api_client.was_closed
-    assert all(
-        base64.b64encode(private).decode() not in repr(core.authority)
-        for private in bootstrap_data.values()
-    )
     assert result is None
     assert status_patch == {}
 

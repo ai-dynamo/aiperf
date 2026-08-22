@@ -9,7 +9,6 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::Request;
-use hyper::header::{HeaderName, HeaderValue};
 
 use super::auth::{KubeAuthOptions, KubeCredentials};
 use super::error::KubeError;
@@ -27,7 +26,6 @@ pub const AIPERF_PLURAL: &str = "aiperfjobs";
 /// Largest accepted newline-delimited Kubernetes watch record.
 pub const MAX_WATCH_RECORD_BYTES: usize = 1024 * 1024;
 const WATCH_CHANNEL_CAPACITY: usize = 32;
-const RESULTS_PROXY_TOKEN_HEADER: &str = "x-aiperf-results-token";
 
 /// Maximum accepted body of one bounded Kubernetes API response.
 pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -49,8 +47,6 @@ pub struct KubeRequest {
     pub deadline: Duration,
     /// Maximum bytes the response collector may retain.
     pub response_limit: usize,
-    /// Sensitive application header forwarded through the fixed Kubernetes API connection.
-    pub forward_headers: Vec<(HeaderName, HeaderValue)>,
 }
 
 /// One bounded Kubernetes API response.
@@ -267,7 +263,6 @@ impl KubeClient {
                 body: Vec::new(),
                 deadline: self.watch_deadline,
                 response_limit: MAX_RESPONSE_BYTES,
-                forward_headers: Vec::new(),
             },
         )
     }
@@ -303,38 +298,10 @@ impl KubeClient {
         body: Vec<u8>,
         response_limit: usize,
     ) -> Result<KubeResponse, KubeError> {
-        self.execute_with_response_limit_and_headers(
-            method,
-            path,
-            content_type,
-            body,
-            response_limit,
-            Vec::new(),
-        )
-    }
-
-    /// Submit a bounded request with the dedicated results capability header.
-    pub fn execute_with_response_limit_and_headers(
-        &self,
-        method: &str,
-        path: &str,
-        content_type: &str,
-        body: Vec<u8>,
-        response_limit: usize,
-        mut forward_headers: Vec<(HeaderName, HeaderValue)>,
-    ) -> Result<KubeResponse, KubeError> {
         if response_limit == 0 {
             return Err(KubeError::Transport(
                 "Kubernetes response limit must be positive".to_string(),
             ));
-        }
-        for (name, value) in &mut forward_headers {
-            if name.as_str() != RESULTS_PROXY_TOKEN_HEADER {
-                return Err(KubeError::Transport(format!(
-                    "forwarded header {name} is reserved or unsupported"
-                )));
-            }
-            value.set_sensitive(true);
         }
         self.transport.send(
             &self.credentials,
@@ -345,7 +312,6 @@ impl KubeClient {
                 body,
                 deadline: self.request_deadline,
                 response_limit,
-                forward_headers,
             },
         )
     }
@@ -721,9 +687,6 @@ async fn open_response(
     if let Some(token) = &credentials.token {
         builder = builder.header("authorization", format!("Bearer {token}"));
     }
-    for (name, value) in request.forward_headers {
-        builder = builder.header(name, value);
-    }
     let response = sender
         .send_request(
             builder
@@ -740,7 +703,6 @@ async fn open_response(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
     use std::thread::sleep;
 
     use hyper::body::Frame;
@@ -765,85 +727,6 @@ mod tests {
         assert_eq!(credentials.http_authority(), "127.0.0.1:6443");
         credentials.host = "kubernetes.default.svc".to_string();
         assert_eq!(credentials.http_authority(), "kubernetes.default.svc:6443");
-    }
-
-    #[test]
-    fn forwarded_result_header_is_sensitive_and_cannot_replace_kubernetes_authorization() {
-        struct CaptureTransport(Mutex<Option<KubeRequest>>);
-        impl KubeTransport for CaptureTransport {
-            fn send(
-                &self,
-                _credentials: &KubeCredentials,
-                request: KubeRequest,
-            ) -> Result<KubeResponse, KubeError> {
-                *self.0.lock().expect("capture lock") = Some(request);
-                Ok(KubeResponse {
-                    status: 200,
-                    body: Vec::new(),
-                })
-            }
-
-            fn watch(
-                &self,
-                _credentials: &KubeCredentials,
-                _request: KubeRequest,
-            ) -> Result<KubeWatch, KubeError> {
-                Err(KubeError::Transport("watch not used".to_string()))
-            }
-        }
-
-        let transport = Arc::new(CaptureTransport(Mutex::new(None)));
-        let client = KubeClient::with_transport(
-            KubeCredentials {
-                host: "127.0.0.1".to_string(),
-                port: 6443,
-                server_name: "localhost".to_string(),
-                token: Some("kubernetes-token".to_string()),
-                client_certificate_pem: None,
-                client_key_pem: None,
-                ca_pem: None,
-                insecure_skip_tls_verify: true,
-            },
-            transport.clone(),
-        );
-        let header = (
-            hyper::header::HeaderName::from_static("x-aiperf-results-token"),
-            hyper::header::HeaderValue::from_static("results-capability"),
-        );
-
-        client
-            .execute_with_response_limit_and_headers(
-                "GET",
-                "/service/proxy/api/results",
-                "",
-                Vec::new(),
-                1,
-                vec![header],
-            )
-            .expect("request");
-        let request = transport
-            .0
-            .lock()
-            .expect("capture lock")
-            .take()
-            .expect("captured request");
-        assert_eq!(request.forward_headers.len(), 1);
-        assert!(request.forward_headers[0].1.is_sensitive());
-
-        let error = client
-            .execute_with_response_limit_and_headers(
-                "GET",
-                "/service/proxy/api/results",
-                "",
-                Vec::new(),
-                1,
-                vec![(
-                    hyper::header::AUTHORIZATION,
-                    hyper::header::HeaderValue::from_static("Bearer attacker"),
-                )],
-            )
-            .expect_err("forwarded headers cannot replace Kubernetes authentication");
-        assert!(error.to_string().contains("reserved"));
     }
 
     #[test]

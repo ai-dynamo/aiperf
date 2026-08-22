@@ -11,7 +11,6 @@ from typing import Any
 
 import aiperf_k8s_operator.main as operator_main
 import pytest
-from aiperf_k8s_operator.api import RunAuthorities
 from aiperf_k8s_operator.contract import validate_envelope
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -58,11 +57,7 @@ async def test_create_persists_pending_before_workload_creation(
             }
 
     async def fake_references(*_: Any) -> operator_main.ReferenceMaterial:
-        return operator_main.ReferenceMaterial({}, b"sidecar-bootstrap")
-
-    async def fake_read_token(*_: Any) -> bytes:
-        events.append("read-capability")
-        return bytes(range(32))
+        return operator_main.ReferenceMaterial({})
 
     async def fake_snapshot(*_: Any) -> None:
         events.append("config-snapshot")
@@ -78,9 +73,6 @@ async def test_create_persists_pending_before_workload_creation(
             "jobSet": envelope.job_id,
         }
 
-    async def fake_authority(*_: Any) -> None:
-        events.append("authority")
-
     objects = FakeObjects()
     monkeypatch.setattr(operator_main.client, "ApiClient", _FakeApiClient)
     monkeypatch.setattr(operator_main.client, "CoreV1Api", lambda _: object())
@@ -91,11 +83,8 @@ async def test_create_persists_pending_before_workload_creation(
     monkeypatch.setattr(operator_main, "_reference_metadata", fake_references)
     monkeypatch.setattr(operator_main, "validate_references", lambda *_: None)
     monkeypatch.setattr(operator_main, "_ensure_config_snapshot", fake_snapshot)
-    monkeypatch.setattr(operator_main, "_ensure_results_read_token", fake_read_token)
     monkeypatch.setattr(operator_main, "ensure_workload_identity", fake_identity)
     monkeypatch.setattr(operator_main, "reconcile_job", fake_reconcile)
-    monkeypatch.setattr(operator_main, "_ensure_results_authority", fake_authority)
-    monkeypatch.setattr(operator_main, "derive_upload_public_key", lambda *_: "public")
 
     deferred_patch: dict[str, Any] = {}
     await operator_main.create_job(
@@ -135,19 +124,14 @@ async def test_result_publication_requires_publishing_results_phase(
             self.status_patches.append(kwargs["body"])
 
     objects = FakeObjects()
-    provider = operator_main.KubernetesUploadVerifiers(objects, object(), object())
-
-    async def authorities(*_: Any) -> RunAuthorities:
-        return RunAuthorities(OBJECT_UID, "public", "0" * 64)
-
-    monkeypatch.setattr(provider, "authorities", authorities)
+    provider = operator_main.KubernetesResultsLifecycle(objects)
 
     with pytest.raises(ValueError, match="PublishingResults"):
-        await provider.mark_results_ready("bench", "job-1", "run-1", OBJECT_UID)
+        await provider.mark_results_ready("bench", "job-1", "run-1")
     assert objects.status_patches == []
 
     phase = "PublishingResults"
-    await provider.mark_results_ready("bench", "job-1", "run-1", OBJECT_UID)
+    await provider.mark_results_ready("bench", "job-1", "run-1")
     assert objects.status_patches == [
         {
             "metadata": {"uid": OBJECT_UID},

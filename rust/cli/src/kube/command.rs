@@ -5,10 +5,6 @@
 use std::io::Write;
 use std::time::Duration;
 
-use base64::Engine as _;
-use hyper::header::{HeaderName, HeaderValue};
-use sha2::{Digest, Sha256};
-
 use super::auth::KubeAuthOptions;
 use super::client::{KubeClient, KubeWatch, KubeWatchPoll};
 use super::error::KubeError;
@@ -25,7 +21,6 @@ const MAX_WATCH_RECONNECTS: u32 = 5;
 const RESULTS_API_PORT: u16 = 8080;
 const DEFAULT_OPERATOR_NAMESPACE: &str = "aiperf-system";
 const DEFAULT_OPERATOR_SERVICE: &str = "aiperf-k8s-operator";
-const RESULTS_PROXY_TOKEN_HEADER: &str = "x-aiperf-results-token";
 
 const COMMANDS: &[&str] = &[
     "init",
@@ -114,21 +109,16 @@ fn report_document(
 struct OperatorFetcher<'client> {
     client: &'client KubeClient,
     prefix: String,
-    capability: HeaderValue,
 }
 
 impl ArtifactFetcher for OperatorFetcher<'_> {
     fn fetch(&self, path: &str) -> Result<Vec<u8>, KubeError> {
-        let response = self.client.execute_with_response_limit_and_headers(
+        let response = self.client.execute_with_response_limit(
             "GET",
             &format!("{}/artifacts/{}", self.prefix, encode_relative_path(path)),
             "",
             Vec::new(),
             MAX_ARTIFACT_BYTES as usize,
-            vec![(
-                HeaderName::from_static(RESULTS_PROXY_TOKEN_HEADER),
-                self.capability.clone(),
-            )],
         )?;
         if !response.is_success() {
             return Err(KubeError::Transport(format!(
@@ -147,24 +137,19 @@ fn download_results(
     name: &str,
     args: &[String],
 ) -> anyhow::Result<i32> {
-    let (operator_prefix, run_id, capability) =
-        operator_results_location(client, namespace, name, args)?;
+    let (operator_prefix, run_id) = operator_results_location(args)?;
     let prefix = format!(
         "{operator_prefix}/api/results/{}/{}/{}",
         encode_segment(namespace),
         encode_segment(name),
         encode_segment(&run_id)
     );
-    let response = client.execute_with_response_limit_and_headers(
+    let response = client.execute_with_response_limit(
         "GET",
         &format!("{prefix}/manifest"),
         "",
         Vec::new(),
         super::client::MAX_RESPONSE_BYTES,
-        vec![(
-            HeaderName::from_static(RESULTS_PROXY_TOKEN_HEADER),
-            capability.clone(),
-        )],
     )?;
     if !response.is_success() {
         anyhow::bail!(
@@ -176,11 +161,7 @@ fn download_results(
     if manifest.run_id != run_id {
         anyhow::bail!("operator results manifest does not match the AIPerfJob run");
     }
-    let fetcher = OperatorFetcher {
-        client,
-        prefix,
-        capability,
-    };
+    let fetcher = OperatorFetcher { client, prefix };
     let destination = flag_value(args, "--output-directory")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("aiperf-results").join(&manifest.run_id));
@@ -193,159 +174,10 @@ fn download_results(
     Ok(0)
 }
 
-fn operator_results_location(
-    client: &KubeClient,
-    namespace: &str,
-    name: &str,
-    args: &[String],
-) -> anyhow::Result<(String, String, HeaderValue)> {
+fn operator_results_location(args: &[String]) -> anyhow::Result<(String, String)> {
     let trusted_run_id = trusted_run_id(args)?;
-    let response = client.execute(
-        "GET",
-        &format!("{}/{name}", jobs_path(namespace)),
-        "",
-        Vec::new(),
-    )?;
-    if !response.is_success() {
-        anyhow::bail!(
-            "AIPerfJob is unavailable while resolving durable results: HTTP {}",
-            response.status
-        );
-    }
-    let resource: serde_json::Value = serde_json::from_slice(&response.body)
-        .map_err(|error| anyhow::anyhow!("AIPerfJob response is invalid: {error}"))?;
-    if resource
-        .pointer("/metadata/name")
-        .and_then(|value| value.as_str())
-        != Some(name)
-        || resource
-            .pointer("/metadata/namespace")
-            .and_then(|value| value.as_str())
-            != Some(namespace)
-    {
-        anyhow::bail!("AIPerfJob response identity does not match the requested object");
-    }
-    let run_id = resource
-        .pointer("/spec/envelope/runId")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("AIPerfJob omits its run identity"))?;
-    if run_id != trusted_run_id {
-        anyhow::bail!("AIPerfJob run identity does not match trusted --run-id");
-    }
-    let object_uid = resource
-        .pointer("/metadata/uid")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("AIPerfJob omits its object UID"))?;
-    let secret_name = results_read_secret_name(namespace, name, &trusted_run_id, object_uid);
-    let response = client.execute(
-        "GET",
-        &format!(
-            "/api/v1/namespaces/{}/secrets/{}",
-            encode_segment(namespace),
-            secret_name
-        ),
-        "",
-        Vec::new(),
-    )?;
-    if !response.is_success() {
-        anyhow::bail!(
-            "dedicated results-read Secret is unavailable: HTTP {}",
-            response.status
-        );
-    }
-    let capability = validate_results_read_secret(
-        &response.body,
-        namespace,
-        name,
-        &trusted_run_id,
-        object_uid,
-        &secret_name,
-    )?;
     let service = operator_service_proxy(args)?;
-    Ok((service, trusted_run_id, capability))
-}
-
-fn results_read_secret_name(namespace: &str, job_id: &str, run_id: &str, uid: &str) -> String {
-    let mut hasher = Sha256::new();
-    for (index, field) in [namespace, job_id, run_id, uid].into_iter().enumerate() {
-        if index != 0 {
-            hasher.update([0]);
-        }
-        hasher.update(field.as_bytes());
-    }
-    let digest = format!("{:x}", hasher.finalize());
-    format!("aiperf-results-read-{}", &digest[..16])
-}
-
-fn validate_results_read_secret(
-    body: &[u8],
-    namespace: &str,
-    job_id: &str,
-    run_id: &str,
-    object_uid: &str,
-    secret_name: &str,
-) -> anyhow::Result<HeaderValue> {
-    let secret: serde_json::Value = serde_json::from_slice(body)
-        .map_err(|error| anyhow::anyhow!("results-read Secret response is invalid: {error}"))?;
-    let metadata = &secret["metadata"];
-    let labels = metadata["labels"]
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("results-read Secret has invalid labels"))?;
-    let annotations = metadata["annotations"]
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("results-read Secret has invalid annotations"))?;
-    let owners = metadata["ownerReferences"]
-        .as_array()
-        .filter(|owners| owners.len() == 1)
-        .ok_or_else(|| anyhow::anyhow!("results-read Secret has invalid ownership"))?;
-    let owner = &owners[0];
-    let owner_fields = owner
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("results-read Secret has invalid ownership"))?;
-    let envelope_digest = annotations["aiperf.nvidia.com/envelope-sha256"]
-        .as_str()
-        .filter(|value| {
-            value.len() == 64
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        });
-    if secret["immutable"] != true
-        || secret["type"] != "Opaque"
-        || metadata["name"] != secret_name
-        || metadata["namespace"] != namespace
-        || labels.len() != 5
-        || annotations.len() != 1
-        || labels["aiperf.nvidia.com/namespace"] != namespace
-        || labels["aiperf.nvidia.com/job-id"] != job_id
-        || labels["aiperf.nvidia.com/run-id"] != run_id
-        || labels["aiperf.nvidia.com/object-uid"] != object_uid
-        || labels["aiperf.nvidia.com/role"] != "results-read"
-        || envelope_digest.is_none()
-        || owner["apiVersion"] != "aiperf.nvidia.com/v1alpha1"
-        || owner["kind"] != "AIPerfJob"
-        || owner["name"] != job_id
-        || owner["uid"] != object_uid
-        || owner["controller"] != true
-        || owner_fields.len() != 5
-        || secret["data"].as_object().map(|data| data.len()) != Some(1)
-    {
-        anyhow::bail!("results-read Secret does not match the requested AIPerfJob incarnation");
-    }
-    let encoded = secret["data"]["token"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("results-read Secret omits its token"))?;
-    let raw = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|error| anyhow::anyhow!("results-read Secret token is invalid: {error}"))?;
-    if raw.len() != 32 || base64::engine::general_purpose::STANDARD.encode(&raw) != encoded {
-        anyhow::bail!("results-read Secret token is not canonical");
-    }
-    let capability = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
-    HeaderValue::from_str(&capability)
-        .map_err(|error| anyhow::anyhow!("results-read capability is invalid: {error}"))
+    Ok((service, trusted_run_id))
 }
 
 fn operator_service_proxy(args: &[String]) -> anyhow::Result<String> {
@@ -855,60 +687,6 @@ mod tests {
     }
 
     #[test]
-    fn results_read_secret_is_bound_to_the_exact_object_incarnation() {
-        let uid = "9d2f3e2a-1111-4222-8333-abcdefabcdef";
-        let name = results_read_secret_name("bench", "job-1", "run-1", uid);
-        assert_eq!(name, "aiperf-results-read-2c134b9daf5fe6db");
-        let mut secret = serde_json::json!({
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "immutable": true,
-            "type": "Opaque",
-            "metadata": {
-                "name": name,
-                "namespace": "bench",
-                "labels": {
-                    "aiperf.nvidia.com/namespace": "bench",
-                    "aiperf.nvidia.com/job-id": "job-1",
-                    "aiperf.nvidia.com/run-id": "run-1",
-                    "aiperf.nvidia.com/object-uid": uid,
-                    "aiperf.nvidia.com/role": "results-read",
-                },
-                "annotations": {"aiperf.nvidia.com/envelope-sha256": "a".repeat(64)},
-                "ownerReferences": [{
-                    "apiVersion": "aiperf.nvidia.com/v1alpha1",
-                    "kind": "AIPerfJob",
-                    "name": "job-1",
-                    "uid": uid,
-                    "controller": true,
-                }],
-            },
-            "data": {
-                "token": "cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI=",
-            },
-        });
-        let body = serde_json::to_vec(&secret).expect("Secret JSON");
-        let capability = validate_results_read_secret(&body, "bench", "job-1", "run-1", uid, &name)
-            .expect("valid Secret");
-        assert_eq!(
-            capability.as_bytes(),
-            b"cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI"
-        );
-
-        secret["metadata"]["labels"]["aiperf.nvidia.com/namespace"] = "other".into();
-        let tampered = serde_json::to_vec(&secret).expect("Secret JSON");
-        assert!(
-            validate_results_read_secret(&tampered, "bench", "job-1", "run-1", uid, &name).is_err()
-        );
-        secret["metadata"]["labels"]["aiperf.nvidia.com/namespace"] = "bench".into();
-        secret["metadata"]["ownerReferences"][0]["uid"] = "different".into();
-        let tampered = serde_json::to_vec(&secret).expect("Secret JSON");
-        assert!(
-            validate_results_read_secret(&tampered, "bench", "job-1", "run-1", uid, &name).is_err()
-        );
-    }
-
-    #[test]
     fn dashboard_refuses_instead_of_accepting_and_dropping_clients() {
         let error = run(&["dashboard".to_string(), "job-1".to_string()])
             .expect_err("dashboard has no upstream implementation");
@@ -1034,9 +812,12 @@ mod tests {
 
     #[test]
     fn watch_reconnects_and_emits_events_after_the_first_stream_ends() {
-        let first = b"{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"10\"}}}\n".to_vec();
+        let first =
+            b"{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"10\"}}}\n"
+                .to_vec();
         let second =
-            b"{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"11\"}}}\n".to_vec();
+            b"{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"11\"}}}\n"
+                .to_vec();
         let transport = Arc::new(WatchTransport {
             watches: Mutex::new(vec![
                 super::super::client::KubeWatch::events_for_test(vec![second.clone()]),
@@ -1089,9 +870,12 @@ mod tests {
 
     #[test]
     fn expired_watch_relists_before_reconnecting_from_a_fresh_version() {
-        let first = b"{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"42\"}}}\n".to_vec();
+        let first =
+            b"{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"42\"}}}\n"
+                .to_vec();
         let after_relist =
-            b"{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"101\"}}}\n".to_vec();
+            b"{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"101\"}}}\n"
+                .to_vec();
         let transport = Arc::new(WatchTransport {
             watches: Mutex::new(vec![
                 super::super::client::KubeWatch::events_for_test(vec![after_relist.clone()]),
@@ -1168,7 +952,6 @@ mod tests {
         let transport = Arc::new(CompletedResultsTransport {
             manifest,
             artifact: payload.clone(),
-            resource_run_id: "run-1",
             requests: Mutex::new(Vec::new()),
         });
         let client = KubeClient::with_transport(test_credentials(), transport.clone());
@@ -1199,7 +982,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_job_results_use_the_authenticated_persistent_operator_service() {
+    fn completed_job_results_use_only_the_persistent_operator_service_proxy() {
         let payload = b"{}".to_vec();
         let digest = format!("{:x}", Sha256::digest(&payload));
         let manifest = format!(
@@ -1210,7 +993,6 @@ mod tests {
         let transport = Arc::new(CompletedResultsTransport {
             manifest,
             artifact: payload,
-            resource_run_id: "run-1",
             requests: Mutex::new(Vec::new()),
         });
         let client = KubeClient::with_transport(test_credentials(), transport.clone());
@@ -1230,60 +1012,14 @@ mod tests {
             b"{}"
         );
         let requests = transport.requests.lock().expect("requests");
-        assert!(requests.iter().any(|request| {
-            request.path == "/api/v1/namespaces/bench/secrets/aiperf-results-read-2c134b9daf5fe6db"
-        }));
-        assert!(requests.iter().any(|request| {
-            request.path
-                == "/api/v1/namespaces/aiperf-system/services/aiperf-k8s-operator:8080/proxy/api/results/bench/job-1/run-1/manifest"
-                && request.forward_headers.iter().any(|(name, value)| {
-                    name == "x-aiperf-results-token"
-                        && value.as_bytes()
-                            == b"cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI"
-                })
-        }));
-        assert!(requests.iter().any(|request| {
-            request.path
-                == "/api/v1/namespaces/aiperf-system/services/aiperf-k8s-operator:8080/proxy/api/results/bench/job-1/run-1/artifacts/nested/summary.json"
-                && request.response_limit == MAX_ARTIFACT_BYTES as usize
-                && request.forward_headers.iter().any(|(name, _)| {
-                    name == "x-aiperf-results-token"
-                })
-        }));
-        assert!(
-            !requests
-                .iter()
-                .any(|request| request.path.contains("attacker"))
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0].path,
+            "/api/v1/namespaces/aiperf-system/services/aiperf-k8s-operator:8080/proxy/api/results/bench/job-1/run-1/manifest"
         );
-    }
-
-    #[test]
-    fn durable_results_refuse_a_mutated_resource_run_id_before_fetch() {
-        let transport = Arc::new(CompletedResultsTransport {
-            manifest: Vec::new(),
-            artifact: Vec::new(),
-            resource_run_id: "run-2",
-            requests: Mutex::new(Vec::new()),
-        });
-        let client = KubeClient::with_transport(test_credentials(), transport.clone());
-        let directory = tempfile::tempdir().expect("tempdir");
-        let args = vec![
-            "results".to_string(),
-            "job-1".to_string(),
-            "--run-id=run-1".to_string(),
-            "--output-directory".to_string(),
-            directory.path().display().to_string(),
-        ];
-
-        let error = download_results(&client, "bench", "job-1", &args)
-            .expect_err("mutated run identity must be refused");
-
-        assert!(error.to_string().contains("run identity"));
-        let requests = transport.requests.lock().expect("requests");
-        assert!(
-            !requests
-                .iter()
-                .any(|request| request.path.contains("/runs/"))
+        assert_eq!(
+            requests[1].path,
+            "/api/v1/namespaces/aiperf-system/services/aiperf-k8s-operator:8080/proxy/api/results/bench/job-1/run-1/artifacts/nested/summary.json"
         );
     }
 
@@ -1303,7 +1039,6 @@ mod tests {
     struct CompletedResultsTransport {
         manifest: Vec<u8>,
         artifact: Vec<u8>,
-        resource_run_id: &'static str,
         requests: Mutex<Vec<KubeRequest>>,
     }
 
@@ -1401,24 +1136,7 @@ mod tests {
                 .lock()
                 .map_err(|_| KubeError::Transport("requests lock poisoned".to_string()))?
                 .push(request.clone());
-            let (status, body) = if request.path.ends_with("/aiperfjobs/job-1") {
-                (
-                    200,
-                    format!(
-                        r#"{{"metadata":{{"name":"job-1","namespace":"bench","uid":"9d2f3e2a-1111-4222-8333-abcdefabcdef","annotations":{{"aiperf.nvidia.com/results-api-url":"http://evil.attacker.svc:8080"}}}},"spec":{{"envelope":{{"runId":"{}"}}}}}}"#,
-                        self.resource_run_id
-                    )
-                    .into_bytes(),
-                )
-            } else if request
-                .path
-                .ends_with("/secrets/aiperf-results-read-2c134b9daf5fe6db")
-            {
-                (
-                    200,
-                    br#"{"apiVersion":"v1","kind":"Secret","immutable":true,"type":"Opaque","metadata":{"name":"aiperf-results-read-2c134b9daf5fe6db","namespace":"bench","labels":{"aiperf.nvidia.com/namespace":"bench","aiperf.nvidia.com/job-id":"job-1","aiperf.nvidia.com/run-id":"run-1","aiperf.nvidia.com/object-uid":"9d2f3e2a-1111-4222-8333-abcdefabcdef","aiperf.nvidia.com/role":"results-read"},"annotations":{"aiperf.nvidia.com/envelope-sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ownerReferences":[{"apiVersion":"aiperf.nvidia.com/v1alpha1","kind":"AIPerfJob","name":"job-1","uid":"9d2f3e2a-1111-4222-8333-abcdefabcdef","controller":true}]},"data":{"token":"cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI="}}"#.to_vec(),
-                )
-            } else if request
+            let (status, body) = if request
                 .path
                 .ends_with("/api/results/bench/job-1/run-1/manifest")
             {

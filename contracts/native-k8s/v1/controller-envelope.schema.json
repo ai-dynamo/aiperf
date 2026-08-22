@@ -48,7 +48,7 @@
       "required": ["secretName", "role", "mountPath", "sha256"],
       "properties": {
         "secretName": { "type": "string", "minLength": 1 },
-        "role": { "enum": ["controller", "cell", "results-sidecar"] },
+        "role": { "enum": ["controller", "cell"] },
         "mountPath": { "type": "string", "pattern": "^/" },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
@@ -79,7 +79,7 @@
       "allOf": [
         { "if": { "properties": { "name": { "const": "controller" } } }, "then": { "required": ["bootstrap"], "properties": { "bootstrap": { "properties": { "role": { "const": "controller" } } } } } },
         { "if": { "properties": { "name": { "const": "cell" } } }, "then": { "not": { "required": ["bootstrap"] } } },
-        { "if": { "properties": { "name": { "const": "results-sidecar" } } }, "then": { "required": ["bootstrap"], "properties": { "bootstrap": { "properties": { "role": { "const": "results-sidecar" } } } } } }
+        { "if": { "properties": { "name": { "const": "results-sidecar" } } }, "then": { "not": { "required": ["bootstrap"] } } }
       ]
     }
   }

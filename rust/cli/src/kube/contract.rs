@@ -64,7 +64,7 @@ pub struct RoleEnvelope {
     pub argv: Vec<String>,
     /// Fixed process environment.
     pub environment: std::collections::BTreeMap<String, String>,
-    /// Reference-only bootstrap mount for non-cell roles.
+    /// Reference-only bootstrap mount for the controller role.
     pub bootstrap: Option<BootstrapReference>,
 }
 
@@ -166,24 +166,22 @@ pub fn validate_envelope(value: Value) -> Result<ControllerEnvelope, KubeError> 
         ));
     }
     for role in &envelope.roles {
-        if role.name == NativeK8sRole::Cell && role.bootstrap.is_some() {
-            return Err(KubeError::ContractValidation(
-                "cell bootstrap must be specified by cellBootstraps".to_string(),
-            ));
-        }
-        let Some(bootstrap) = &role.bootstrap else {
-            if role.name == NativeK8sRole::Cell {
-                continue;
+        if role.name == NativeK8sRole::Controller {
+            let Some(bootstrap) = &role.bootstrap else {
+                return Err(KubeError::ContractValidation(
+                    "controller role has no bootstrap reference".to_string(),
+                ));
+            };
+            if bootstrap.role != NativeK8sRole::Controller {
+                return Err(KubeError::ContractValidation(format!(
+                    "bootstrap role for {:?} does not match workload role {:?}",
+                    bootstrap.role, role.name
+                )));
             }
+        } else if role.bootstrap.is_some() {
             return Err(KubeError::ContractValidation(format!(
-                "non-cell role {:?} has no bootstrap reference",
+                "workload role {:?} must not carry a role bootstrap",
                 role.name
-            )));
-        };
-        if role.name != bootstrap.role {
-            return Err(KubeError::ContractValidation(format!(
-                "bootstrap role for {:?} does not match workload role {:?}",
-                bootstrap.role, role.name
             )));
         }
     }

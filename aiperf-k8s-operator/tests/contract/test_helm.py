@@ -82,6 +82,7 @@ def test_fresh_chart_renders_jobset_prerequisite_and_durable_results_service() -
     ]
 
     service = one(resources, "Service", "aiperf-k8s-operator")
+    assert service["spec"].get("type", "ClusterIP") == "ClusterIP"
     assert service["spec"]["selector"] == {
         "app.kubernetes.io/name": "aiperf-k8s-operator",
         "app.kubernetes.io/instance": "operator",
@@ -89,6 +90,7 @@ def test_fresh_chart_renders_jobset_prerequisite_and_durable_results_service() -
     assert service["spec"]["ports"] == [
         {"name": "http", "port": 8080, "targetPort": "http"}
     ]
+    assert not any(resource.get("kind") == "Ingress" for resource in resources)
     claim = one(resources, "PersistentVolumeClaim", "operator-results")
     assert claim["spec"]["accessModes"] == ["ReadWriteOnce"]
 
@@ -103,9 +105,9 @@ def test_fresh_chart_renders_jobset_prerequisite_and_durable_results_service() -
     assert spec_schema["x-kubernetes-validations"] == [
         {"rule": "self == oldSelf", "message": "AIPerfJob spec is immutable"}
     ]
-    status_schema = aiperfjob_crd["spec"]["versions"][0]["schema"][
-        "openAPIV3Schema"
-    ]["properties"]["status"]
+    status_schema = aiperfjob_crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"][
+        "properties"
+    ]["status"]
     assert status_schema["additionalProperties"] is False
     assert status_schema["required"] == ["phase", "runId", "jobSet"]
     assert status_schema["properties"]["phase"]["enum"] == [
@@ -149,7 +151,7 @@ def test_operator_rbac_can_provision_only_required_namespaced_workload_identity(
     }
     assert selected[("serviceaccounts",)] == ("create", "delete", "get")
     assert selected[("roles", "rolebindings")] == ("create", "delete", "get")
-    assert selected[("secrets",)] == ("create", "delete", "get")
+    assert selected[("secrets",)] == ("delete", "get")
     assert selected[("configmaps",)] == ("create", "delete", "get")
 
 

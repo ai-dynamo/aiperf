@@ -16,7 +16,7 @@ rules:
   verbs: ["create", "delete", "get", "list", "watch"]
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["create", "delete", "get"]
+  verbs: ["delete", "get"]
 - apiGroups: [""]
   resources: ["configmaps"]
   verbs: ["create", "delete", "get"]

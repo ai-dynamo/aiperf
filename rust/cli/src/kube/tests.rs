@@ -134,7 +134,7 @@ fn refuses_role_mismatched_bootstrap() {
 #[test]
 fn refuses_duplicate_bootstrap_secret_names() {
     let mut envelope = fixture("valid-one-cell-envelope.json");
-    envelope["roles"][2]["bootstrap"]["secretName"] =
+    envelope["cellBootstraps"][0]["secretName"] =
         envelope["roles"][0]["bootstrap"]["secretName"].clone();
     assert!(matches!(
         validate_envelope(envelope),
