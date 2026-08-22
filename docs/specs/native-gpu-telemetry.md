@@ -52,8 +52,8 @@ URL-optional representation) so `dcgm` alone serializes a required URL and
 local selections serialize no URL. The strict protocol-v2
 `GpuTelemetrySourceSpec` in `engine/sidecar_input.rs` gains URL-less `Nvml` and
 `AmdSmi` variants. The config projection maps the three collector IDs directly
-to `Dcgm { url }`, `Nvml`, or `AmdSmi`; it must not use
-`GpuTelemetrySourceSpec::Python`.
+to `Dcgm { url }`, `Nvml`, or `AmdSmi`; it must not route through a Python
+telemetry worker.
 
 ### Source lifecycle and isolation
 
