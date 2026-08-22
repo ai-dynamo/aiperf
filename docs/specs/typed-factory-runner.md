@@ -82,16 +82,46 @@ Rust implementation choice, not a requirement of a typed run model.
 Every component config the runner selects becomes a typed field on the one model,
 following the shape `phases`/`datasets` already have:
 
-- `transport` — the **config payload** becomes typed per built-in
-  (`HttpTransportConfig`, `GrpcTransportConfig`, `DryRunConfig`, and under their
-  features the `dynosim_offline`/`dynosim_online` configs). The **discriminant
-  stays an open, normalized `RegistryId` string**, decoded by a plain derive and
-  dispatched by `match id.as_str()` with a plugin-tail default arm — see §3,
-  which is authoritative on this point. An earlier draft of this record made
-  `transport` a closed `#[serde(tag = "type")]` enum; the 2026-07-26 empirical
-  serde test retired that encoding, and no closed transport enum is proposed
-  here. Feature gating applies to the built-in `match` arms, not to enum
-  variants.
+- `transport` — **this field already exists and is already typed.**
+  `BenchmarkConfig.transport: Option<Transport>` (`config/model/config.rs:75`)
+  where `Transport` (`config/model/transport.rs:18`) is a **closed**
+  `#[serde(tag = "type", rename_all = "snake_case")]` enum with variants `Http`,
+  `Grpc`, `DynosimOffline(DynosimConfig)`, `DynosimOnline(DynosimConfig)`,
+  `DryRun(DryRunConfig)`, `Websocket(WebSocketTransportConfig)`. Nothing needs to
+  be introduced here. Two consequences the earlier drafts of this record missed:
+
+  - **`Http` and `Grpc` are unit variants** — they carry no config payload at
+    all. "Introduce typed built-in configs" is therefore *vacuous* for the two
+    transports §5 names as its verification vehicle; the only transports with a
+    payload to type are dynosim, dry_run, and websocket, and those are already
+    typed too.
+  - **The projection is pure loss.** `into_authored` (`protocol_v2.rs:369-371`)
+    takes this typed enum, calls `serde_json::to_value(&cfg.transport)`, and
+    feeds the result to `component_from_inline` to manufacture a
+    `NamedRunnerComponentSpecV2 { id, config: Box<RawValue> }` that a factory then
+    re-decodes. Typed → `Value` → `RawValue` → typed. Deleting the projection
+    means reading `cfg.transport` and matching it; there is no decode to design.
+
+  This forces a fork §5 must choose before step 1, because `Transport` is
+  **closed** and therefore cannot express a plugin transport:
+
+  - **(A) Keep `Transport` closed.** An exhaustive `match` on the enum is the
+    honest dispatch, no `RegistryId` string and no plugin tail are involved for
+    this field, and §3's apparatus does not apply to it. Cost: plugin transports
+    remain inexpressible in an authored config — which is already true today.
+  - **(B) Open `Transport` to a plugin tail.** Then it becomes something like
+    `TransportSpec { id: RegistryId, config: TransportConfig }` with a
+    `Plugin(Box<RawValue>)` arm. This is a **change to the authored config wire**
+    and to `Inputs`/`resolve` in `aiperf-cli`, not a removal of an internal
+    projection, and it is materially larger than anything §5 scopes.
+
+  **This record selects (A).** Opening the transport set is a separate change
+  with its own authoring-surface and Config-v2 schema consequences; it is not a
+  prerequisite for deleting `AuthoredRunSpecV2`, and bundling it would make an
+  already-delicate migration unshippable. §3's open-`RegistryId` design remains
+  correct for the *runner component seam* it was written about — a different
+  layer, and the one being deleted — but it is **not** the design of
+  `BenchmarkConfig.transport`.
 - Workload kind stays **emergent**, computed by the existing
   `config::model::workload_kind(&BenchmarkConfig)` from dataset + phase shape —
   never a wire field. `workload_kind()` is already a total, IO-free function over
@@ -159,7 +189,15 @@ this record conflated:
   `Value`-shuffling) and it is cheap: a built-in config is one
   `#[derive(Deserialize)] #[serde(deny_unknown_fields)]` struct.
 
-A component on the wire is `{ "type": <RegistryId>, "config": { … } }` — the
+**Scope of this section.** Everything below describes the *runner component
+seam* — `NamedRunnerComponentSpecV2 { id, config }`, the structure §5 step 4
+deletes — and any future genuinely-open component category. It is **not** the
+design of `BenchmarkConfig.transport`, which is already the closed typed
+`Transport` enum (see §1) and which this record does not open. Where the two
+appeared to conflict in earlier drafts, §1 governs the config model and this
+section governs the seam.
+
+A seam component on the wire is `{ "type": <RegistryId>, "config": { … } }` — the
 config nested under its own key, which is the shape
 `NamedRunnerComponentSpecV2 { id, config }` already emits today (an earlier draft
 of this record described the built-in fields as flat; they are not). Decoding is
@@ -265,12 +303,19 @@ One transport family at a time, byte-exact against the mock server at each step:
 
 1. Introduce typed built-in configs decoded per id (`match id.as_str()`)
    alongside the existing `RawValue` path; `into_authored` populates them from the
-   typed `cfg` (no behavior change). The discriminant is `RegistryId`; no enum for
-   the tag.
-2. Move `native_execution` selection to the id `match` for built-ins. Two
-   obligations the audit surfaced: (a) the registry resolves not just config but
+   typed `cfg` (no behavior change). **Corrected (round 3):** for transports there
+   is nothing to introduce — `cfg.transport` is already the closed typed
+   `Transport` enum, and `Http`/`Grpc` are unit variants with no payload. Step 1
+   for the transport family is therefore *not* "add typed configs" but "add a
+   consumer that reads `cfg.transport` directly", run alongside the existing
+   projection, and assert the two produce identical bindings. Dispatch is an
+   exhaustive `match` on `Transport`, not `match id.as_str()`; the `RegistryId`
+   string and the plugin tail belong to the seam in §3, not to this field.
+2. Move `native_execution` selection to the exhaustive `Transport` match for
+   built-ins. Three obligations the audits surfaced: (a) the registry resolves not
+   just config but
    the transport's **`NativeTransportExecution` binding** (`resolve_native_execution`
-   → `transport_factory(id).native_execution(...)`), so the built-in `match` arms
+   → `transport_factory(id).native_execution(...)`), so the match arms
    must supply those bindings directly or every workload's prepare/`validate_run`
    breaks with "transport not registered"; (b) `--capabilities` builds its catalog
    from registered factory **descriptors**, so built-ins must still contribute
@@ -285,8 +330,10 @@ One transport family at a time, byte-exact against the mock server at each step:
    native-graph path, which the http + grpc **profile** e2e suites do not
    exercise; it needs its own verification, or built-ins must keep contributing a
    registry entry for descriptor lookup even after selection leaves the registry.
-   Keep the `id → factory` lookup for the plugin tail; only built-ins leave it.
-   Verify with the http + grpc e2e suites **and** the native-graph eval path.
+   Keep the `id → factory` lookup for the §3 seam; only `cfg.transport` selection
+   leaves it. Verify with the http + grpc e2e suites **and** the native-graph eval
+   path. Note that http and grpc alone do **not** exercise a payload-bearing
+   transport arm, so dry_run (`rust/dry-run-tests`) must be in the same gate.
 3. Repeat for the workload seam; collapse `ScheduledWorkloadConfigV2` /
    `GraphWorkloadConfigV2` into typed-optional fields — all **five** graph-only
    fields, including the `recorded_agent_default` derivation and the
