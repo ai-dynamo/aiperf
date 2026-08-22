@@ -221,6 +221,11 @@ fn redact_url(endpoint_url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::RealClock;
+    use crate::transport::http::config::ClientConfig;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::task::LocalSet;
 
     #[test]
     fn endpoint_normalization_and_redaction_are_artifact_safe() {
@@ -232,5 +237,43 @@ mod tests {
             redact_url("http://user:secret@host:9400/metrics"),
             "http://host:9400/metrics"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn continuous_scrapes_retain_identical_successful_bodies() {
+        LocalSet::new()
+            .run_until(async {
+                let body = "DCGM_FI_DEV_POWER_USAGE{gpu=\"0\",UUID=\"GPU-a\",modelName=\"H100\"} 250\n";
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                let server = tokio::task::spawn_local(async move {
+                    for _ in 0..2 {
+                        let (mut stream, _) = listener.accept().await.unwrap();
+                        let mut request = [0_u8; 1024];
+                        let _ = stream.read(&mut request).await.unwrap();
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        stream.write_all(response.as_bytes()).await.unwrap();
+                        stream.shutdown().await.unwrap();
+                    }
+                });
+                let clock: Rc<dyn Clock> = RealClock::new();
+                let transport = Rc::new(HttpTransport::new(clock.clone(), ClientConfig::default()));
+                let source = DcgmTelemetrySource::new(
+                    clock,
+                    transport,
+                    format!("http://{address}"),
+                );
+
+                let first = source.scrape(GpuScrapeMode::Continuous).await.unwrap();
+                let second = source.scrape(GpuScrapeMode::Continuous).await.unwrap();
+
+                assert_eq!(first.unwrap().records.len(), 1);
+                assert_eq!(second.unwrap().records.len(), 1);
+                server.await.unwrap();
+            })
+            .await;
     }
 }
