@@ -66,6 +66,9 @@ type PowerInfoFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiPowerInfo) -
 type EnergyCountFn = unsafe extern "C" fn(ProcessorHandle, *mut u64, *mut f32, *mut u64) -> u32;
 type ActivityFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiEngineUsage) -> u32;
 type VramUsageFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiVramUsage) -> u32;
+type TemperatureFn = unsafe extern "C" fn(ProcessorHandle, u32, u32, *mut i64) -> u32;
+type EccCountFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiErrorCount) -> u32;
+type GpuMetricsFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiGpuMetrics) -> u32;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -112,6 +115,23 @@ struct AmdsmiVramUsage {
     vram_total: u32,
     vram_used: u32,
     reserved: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct AmdsmiErrorCount {
+    correctable_count: u64,
+    uncorrectable_count: u64,
+    deferred_count: u64,
+    reserved: [u64; 5],
+}
+
+#[repr(C, align(8))]
+struct AmdsmiGpuMetrics {
+    common_header: [u8; 4],
+    _prefix: [u8; 64],
+    throttle_status: u32,
+    _remaining: [u8; 4472],
 }
 
 struct AmdSmiWorker {
@@ -304,7 +324,49 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
         .ok()
         .is_some_and(|function| unsafe { function(device, &mut vram) } == AMDSMI_SUCCESS)
     {
-        insert_finite(&mut metrics, "amd_vram_used", vram.vram_used as f64 * 1e-3);
+        insert_finite(&mut metrics, "amd_memory_used", vram.vram_used as f64 * 1e-3);
+    }
+    let mut temperature = 0_i64;
+    let temperature_result = unsafe { library.get::<TemperatureFn>(b"amdsmi_get_temp_metric\0") }
+        .ok()
+        .and_then(|function| {
+            [1_u32, 2_u32]
+                .into_iter()
+                .find_map(|sensor| {
+                    (unsafe { function(device, sensor, 0, &mut temperature) } == AMDSMI_SUCCESS)
+                        .then_some(temperature)
+                })
+        });
+    if let Some(value) = temperature_result.filter(|value| *value != i64::MAX) {
+        let value = value as f64;
+        insert_finite(
+            &mut metrics,
+            "amd_temperature",
+            if value > 200.0 { value * 1e-3 } else { value },
+        );
+    }
+    let mut ecc: AmdsmiErrorCount = unsafe { std::mem::zeroed() };
+    if unsafe { library.get::<EccCountFn>(b"amdsmi_get_gpu_total_ecc_count\0") }
+        .ok()
+        .is_some_and(|function| unsafe { function(device, &mut ecc) } == AMDSMI_SUCCESS)
+        && ecc.uncorrectable_count != u64::MAX
+    {
+        insert_finite(
+            &mut metrics,
+            "amd_ecc_uncorrectable",
+            ecc.uncorrectable_count as f64,
+        );
+    }
+    let mut gpu_metrics: AmdsmiGpuMetrics = unsafe { std::mem::zeroed() };
+    if unsafe { library.get::<GpuMetricsFn>(b"amdsmi_get_gpu_metrics_info\0") }
+        .ok()
+        .is_some_and(|function| unsafe { function(device, &mut gpu_metrics) } == AMDSMI_SUCCESS)
+        && gpu_metrics.throttle_status != u32::MAX
+    {
+        metrics.insert(
+            "amd_throttle_status".to_string(),
+            if gpu_metrics.throttle_status != 0 { 1.0 } else { 0.0 },
+        );
     }
     let mut energy = 0_u64;
     let mut resolution = 0_f32;
