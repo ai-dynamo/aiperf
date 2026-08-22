@@ -40,18 +40,6 @@ Expand a sweep config and print the resulting variations.
 
 Validate an AIPerf config file.
 
-### [`graph validate`](#aiperf-graph-validate)
-
-Validate one resolved Graph-IR input without executing it.
-
-### [`graph explain`](#aiperf-graph-explain)
-
-Explain every resolved Graph-IR program without executing it.
-
-### [`graph visualize`](#aiperf-graph-visualize)
-
-Render one resolved Graph-IR topology as Markdown or Mermaid without executing it.
-
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -305,57 +293,6 @@ Loads the config through the same pipeline as `aiperf profile`, surfacing fatal 
 #### `--config-file` `<str>` _(Required)_
 
 Path to an AIPerf YAML config to validate.
-
-<hr/>
-
-## `aiperf graph validate`
-
-```text
-aiperf graph validate <PATH> --graph-format <FORMAT>
-  [--tokenizer <NAME_OR_LOCAL_PATH>] [--endpoint-type <TYPE>]
-  [--source-format <FORMAT>] [--seed <U64>] [--pace arrival]
-  [--output-format text|json]
-```
-
-Lower a local graph source once and report structural, scheduler, bundle, adapter-warning, and optional arrival-pacing findings. `--graph-format` is required and accepts the stock built-in formats: `dag_jsonl`, `conditional_graph`, `weka_trace`, `dynamo_trace`, `aiperf_trace`, `agent_recording`, and `otlp_genai`. Defaults are `--tokenizer builtin`, `--endpoint-type chat`, `--seed 0`, and `--output-format text`. `--endpoint-type` is passed only to the selected adapter for request-profile compatibility; it never resolves or contacts an endpoint. `--source-format` is unset by default and selects the imported-session source discriminator only for `agent_recording` input.
-
-`text` prints stable issue codes and a summary. `json` writes only an `aiperf.graph.validate.v1` document to stdout: `{schema_version, source, format, root_count, node_count, issues, summary}`. Each issue is `{code, severity, trace_id, phase, location, message, context}` and `summary` is `{errors, warnings}`. Fatal JSON output remains parseable as `aiperf.graph.error.v1`: `{schema_version, operation, code, message, source}`.
-
-| Exit | Graph-command behavior |
-|---:|---|
-| 0 | `validate` has no error-severity issue; `explain` completed after lowering, including best-effort invalid-graph reports; or `visualize` rendered successfully. Warnings do not fail validation. |
-| 1 | `validate` found one or more error-severity issues, or `visualize` found any bundle, profiling, or warmup validation error before rendering without `--no-validate`. |
-| 2 | Argument, local-source, tokenizer, decode/lowering, trace-selection, or output failure. |
-
-<hr/>
-
-## `aiperf graph explain`
-
-```text
-aiperf graph explain <PATH> --graph-format <FORMAT>
-  [--tokenizer <NAME_OR_LOCAL_PATH>] [--endpoint-type <TYPE>]
-  [--source-format <FORMAT>] [--seed <U64>]
-  [--output-format text|json]
-```
-
-Lower once and describe every retained resolved program, including profiling and present warmup plans, topology, validation findings, and illustrative readiness waves. Defaults are `builtin`, `chat`, seed `0`, and text output. Explanation is best-effort after a successful lowering: validation facts are reported and unavailable readiness analysis carries a typed reason, while exit status remains `0`.
-
-`json` writes an `aiperf.graph.explain.v1` document with `{schema_version, input, programs}`. `input` carries safe source/format/count facts and adapter warnings; each program carries its trace/driver/presence facts and profiling/warmup plan reports. A plan report contains `{summary, topology, issues, readiness_waves, readiness_unavailable}`. The report excludes payload/content values such as prompt bodies, initial-state values, replay outputs, segment bytes, tool-request bodies, and environment values. It exposes resolved topology/request-shape metadata including identifiers, node kinds, channels and gates, edges and timing, streaming, model override, maximum tokens, and environment/replay presence flags.
-
-<hr/>
-
-## `aiperf graph visualize`
-
-```text
-aiperf graph visualize <PATH> --graph-format <FORMAT>
-  [--tokenizer <NAME_OR_LOCAL_PATH>] [--endpoint-type <TYPE>]
-  [--source-format <FORMAT>] [--seed <U64>] [--trace <TRACE_ID>]
-  [--output <PATH>] [--output-format markdown|mermaid] [--no-validate]
-```
-
-Render the first retained profiling trace by default, or the exact `--trace` match. Defaults are `builtin`, `chat`, seed `0`, and Markdown output. `--endpoint-type` is adapter-only compatibility input; `--source-format` is an optional `agent_recording` imported-session discriminator. Any bundle, profiling, or warmup validation error suppresses rendering and returns `1`; `--no-validate` permits best-effort rendering after successful lowering. Missing traces and all fatal failures return `2`.
-
-Without `--output`, rendering goes to stdout. With `--output`, stdout stays empty and the rendered bytes are written in the destination directory: Unix replaces a regular existing file atomically; non-Unix rejects an existing destination. A directory or non-regular target is rejected. Mermaid is raw deterministic `flowchart LR` text with one trailing newline; Markdown embeds that Mermaid plus selected resolved-plan facts and has one trailing newline.
 
 <hr/>
 
