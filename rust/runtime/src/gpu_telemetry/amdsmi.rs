@@ -233,15 +233,11 @@ impl VendorWorker for AmdSmiWorker {
         let mut records = Vec::with_capacity(self.devices.len());
         for (index, &device_address) in self.devices.iter().enumerate() {
             let device = device_address as ProcessorHandle;
-            let metadata = metadata(&self.library, device, index);
-            let metrics = metrics(&self.library, device);
-            if !metrics.is_empty() {
-                records.push(GpuTelemetryRecord {
-                    timestamp_ns,
-                    endpoint_url: AMDSMI_ENDPOINT_URL.to_string(),
-                    metadata,
-                    metrics,
-                });
+            if let Some(record) = record_from_observation(
+                timestamp_ns,
+                observe_device(&self.library, device, index),
+            ) {
+                records.push(record);
             }
         }
         Ok(records)
@@ -298,26 +294,151 @@ fn enumerate_processors(
     Ok(processors)
 }
 
-fn metadata(library: &Library, device: ProcessorHandle, index: usize) -> GpuMetadata {
+struct AmdSmiDeviceObservation {
+    index: usize,
+    gpu_uuid: Option<String>,
+    gpu_model_name: Option<String>,
+    bdf: Option<AmdsmiBdf>,
+    power_candidates: Option<[u64; 3]>,
+    activity: Option<(u32, u32, u32)>,
+    vram_used_mib: Option<u32>,
+    temperature: Option<i64>,
+    ecc_uncorrectable: Option<u64>,
+    throttle_status: Option<(u32, u64)>,
+    energy: Option<(u64, f32)>,
+}
+
+fn observe_device(
+    library: &Library,
+    device: ProcessorHandle,
+    index: usize,
+) -> AmdSmiDeviceObservation {
     let mut uuid = [0_i8; AMDSMI_UUID_LENGTH as usize];
     let mut uuid_length = AMDSMI_UUID_LENGTH;
     let gpu_uuid = unsafe { library.get::<UuidFn>(b"amdsmi_get_gpu_device_uuid\0") }
         .ok()
         .filter(|function| unsafe { function(device, &mut uuid_length, uuid.as_mut_ptr()) } == AMDSMI_SUCCESS)
-        .and_then(|_| c_string(&uuid))
-        .unwrap_or_else(|| format!("GPU-{index}"));
+        .and_then(|_| c_string(&uuid));
     let mut asic: AmdsmiAsicInfo = unsafe { std::mem::zeroed() };
     let gpu_model_name = unsafe { library.get::<AsicInfoFn>(b"amdsmi_get_gpu_asic_info\0") }
         .ok()
         .filter(|function| unsafe { function(device, &mut asic) } == AMDSMI_SUCCESS)
-        .and_then(|_| c_string(&asic.market_name))
-        .unwrap_or_else(|| "Unknown".to_string());
+        .and_then(|_| c_string(&asic.market_name));
     let mut bdf = AmdsmiBdf { as_uint: 0 };
-    let pci_bus_id = unsafe { library.get::<BdfFn>(b"amdsmi_get_gpu_device_bdf\0") }
+    let bdf = unsafe { library.get::<BdfFn>(b"amdsmi_get_gpu_device_bdf\0") }
         .ok()
         .filter(|function| unsafe { function(device, &mut bdf) } == AMDSMI_SUCCESS)
-        .map(|_| pci_bus_id(bdf));
-    metadata_from_parts(index, gpu_uuid, gpu_model_name, pci_bus_id)
+        .map(|_| bdf);
+    let mut power: AmdsmiPowerInfo = unsafe { std::mem::zeroed() };
+    let power_candidates = unsafe { library.get::<PowerInfoFn>(b"amdsmi_get_power_info\0") }
+        .ok()
+        .filter(|function| unsafe { function(device, &mut power) } == AMDSMI_SUCCESS)
+        .map(|_| [power.socket_power, power.current_socket_power as u64, power.average_socket_power as u64]);
+    let mut activity: AmdsmiEngineUsage = unsafe { std::mem::zeroed() };
+    let activity = unsafe { library.get::<ActivityFn>(b"amdsmi_get_gpu_activity\0") }
+        .ok()
+        .filter(|function| unsafe { function(device, &mut activity) } == AMDSMI_SUCCESS)
+        .map(|_| (activity.gfx_activity, activity.umc_activity, activity.mm_activity));
+    let mut vram: AmdsmiVramUsage = unsafe { std::mem::zeroed() };
+    let vram_used_mib = unsafe { library.get::<VramUsageFn>(b"amdsmi_get_gpu_vram_usage\0") }
+        .ok()
+        .filter(|function| unsafe { function(device, &mut vram) } == AMDSMI_SUCCESS)
+        .map(|_| vram.vram_used);
+    let mut temperature = 0_i64;
+    let temperature = unsafe { library.get::<TemperatureFn>(b"amdsmi_get_temp_metric\0") }
+        .ok()
+        .filter(|function| unsafe { function(device, 1, 0, &mut temperature) } == AMDSMI_SUCCESS)
+        .map(|_| temperature);
+    let mut ecc: AmdsmiErrorCount = unsafe { std::mem::zeroed() };
+    let ecc_uncorrectable = unsafe { library.get::<EccCountFn>(b"amdsmi_get_gpu_total_ecc_count\0") }
+        .ok()
+        .filter(|function| unsafe { function(device, &mut ecc) } == AMDSMI_SUCCESS)
+        .map(|_| ecc.uncorrectable_count);
+    let mut gpu_metrics: AmdsmiGpuMetrics = unsafe { std::mem::zeroed() };
+    let throttle_status = unsafe { library.get::<GpuMetricsFn>(b"amdsmi_get_gpu_metrics_info\0") }
+        .ok()
+        .filter(|function| unsafe { function(device, &mut gpu_metrics) } == AMDSMI_SUCCESS)
+        .map(|_| (gpu_metrics.throttle_status, gpu_metrics.independent_throttle_status));
+    let mut energy = 0_u64;
+    let mut resolution = 0_f32;
+    let mut timestamp = 0_u64;
+    let energy = unsafe { library.get::<EnergyCountFn>(b"amdsmi_get_energy_count\0") }
+        .ok()
+        .filter(|function| unsafe { function(device, &mut energy, &mut resolution, &mut timestamp) } == AMDSMI_SUCCESS)
+        .map(|_| (energy, resolution));
+    AmdSmiDeviceObservation {
+        index,
+        gpu_uuid,
+        gpu_model_name,
+        bdf,
+        power_candidates,
+        activity,
+        vram_used_mib,
+        temperature,
+        ecc_uncorrectable,
+        throttle_status,
+        energy,
+    }
+}
+
+fn record_from_observation(
+    timestamp_ns: i64,
+    observation: AmdSmiDeviceObservation,
+) -> Option<GpuTelemetryRecord> {
+    let mut metrics = BTreeMap::new();
+    insert_finite(
+        &mut metrics,
+        "amd_power",
+        observation.power_candidates.and_then(|values| {
+            values.into_iter().find(|value| *value > 0 && *value < u32::MAX as u64).map(|value| value as f64)
+        }),
+    );
+    if let Some((gfx, umc, mm)) = observation.activity {
+        insert_finite(&mut metrics, "amd_gfx_activity", valid_u32(gfx).map(f64::from));
+        insert_finite(&mut metrics, "amd_umc_activity", valid_u32(umc).map(f64::from));
+        insert_finite(&mut metrics, "amd_mm_activity", valid_u32(mm).map(f64::from));
+    }
+    insert_finite(
+        &mut metrics,
+        "amd_memory_used",
+        observation.vram_used_mib.and_then(valid_u32).map(mebibytes_to_gigabytes),
+    );
+    insert_finite(
+        &mut metrics,
+        "amd_temperature",
+        observation.temperature.filter(|value| *value != i64::MAX).map(|value| {
+            let value = value as f64;
+            if value > 200.0 { value * 1e-3 } else { value }
+        }),
+    );
+    insert_finite(
+        &mut metrics,
+        "amd_ecc_uncorrectable",
+        observation.ecc_uncorrectable.filter(|value| *value != u64::MAX).map(|value| value as f64),
+    );
+    insert_finite(
+        &mut metrics,
+        "amd_throttle_status",
+        observation.throttle_status
+            .filter(|(status, independent)| *status != u32::MAX && *independent != u64::MAX)
+            .map(|(status, independent)| f64::from(is_throttled(status, independent))),
+    );
+    insert_finite(
+        &mut metrics,
+        "amd_energy_consumption",
+        observation.energy.map(|(count, resolution)| energy_count_to_megajoules(count, resolution)),
+    );
+    (!metrics.is_empty()).then_some(GpuTelemetryRecord {
+        timestamp_ns,
+        endpoint_url: AMDSMI_ENDPOINT_URL.to_string(),
+        metadata: metadata_from_parts(
+            observation.index,
+            observation.gpu_uuid.unwrap_or_else(|| format!("GPU-unknown-{}", observation.index)),
+            observation.gpu_model_name.unwrap_or_else(|| "Unknown GPU".to_string()),
+            observation.bdf.map(pci_bus_id),
+        ),
+        metrics,
+    })
 }
 
 fn metadata_from_parts(
@@ -349,6 +470,10 @@ fn pci_bus_id(bdf: AmdsmiBdf) -> String {
     )
 }
 
+fn valid_u32(value: u32) -> Option<u32> {
+    (value != u32::MAX).then_some(value)
+}
+
 fn mebibytes_to_gigabytes(value: u32) -> f64 {
     bytes_to_gigabytes(value as u64 * 1_048_576)
 }
@@ -365,109 +490,10 @@ fn is_throttled(status: u32, independent_status: u64) -> bool {
     status != 0 || independent_status != 0
 }
 
-fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> {
-    let mut metrics = BTreeMap::new();
-    let mut power: AmdsmiPowerInfo = unsafe { std::mem::zeroed() };
-    if unsafe { library.get::<PowerInfoFn>(b"amdsmi_get_power_info\0") }
-        .ok()
-        .is_some_and(|function| unsafe { function(device, &mut power) } == AMDSMI_SUCCESS)
-    {
-        let value = [
-            power.socket_power as f64,
-            power.current_socket_power as f64,
-            power.average_socket_power as f64,
-        ]
-        .into_iter()
-        .find(|value| *value > 0.0 && *value < u32::MAX as f64);
-        if let Some(value) = value {
-            metrics.insert("amd_power".to_string(), value);
-        }
+fn insert_finite(metrics: &mut BTreeMap<String, f64>, name: &str, value: Option<f64>) {
+    if let Some(value) = value.filter(|value| value.is_finite() && *value < u32::MAX as f64) {
+        metrics.insert(name.to_string(), value);
     }
-    let mut activity: AmdsmiEngineUsage = unsafe { std::mem::zeroed() };
-    if unsafe { library.get::<ActivityFn>(b"amdsmi_get_gpu_activity\0") }
-        .ok()
-        .is_some_and(|function| unsafe { function(device, &mut activity) } == AMDSMI_SUCCESS)
-    {
-        insert_finite(
-            &mut metrics,
-            "amd_gfx_activity",
-            activity.gfx_activity as f64,
-        );
-        insert_finite(
-            &mut metrics,
-            "amd_umc_activity",
-            activity.umc_activity as f64,
-        );
-        insert_finite(&mut metrics, "amd_mm_activity", activity.mm_activity as f64);
-    }
-    let mut vram: AmdsmiVramUsage = unsafe { std::mem::zeroed() };
-    if unsafe { library.get::<VramUsageFn>(b"amdsmi_get_gpu_vram_usage\0") }
-        .ok()
-        .is_some_and(|function| unsafe { function(device, &mut vram) } == AMDSMI_SUCCESS)
-    {
-        insert_finite(
-            &mut metrics,
-            "amd_memory_used",
-            mebibytes_to_gigabytes(vram.vram_used),
-        );
-    }
-    let mut temperature = 0_i64;
-    let temperature_result = unsafe { library.get::<TemperatureFn>(b"amdsmi_get_temp_metric\0") }
-        .ok()
-        .and_then(|function| {
-            (unsafe { function(device, 1, 0, &mut temperature) } == AMDSMI_SUCCESS)
-                .then_some(temperature)
-        });
-    if let Some(value) = temperature_result.filter(|value| *value != i64::MAX) {
-        let value = value as f64;
-        insert_finite(
-            &mut metrics,
-            "amd_temperature",
-            if value > 200.0 { value * 1e-3 } else { value },
-        );
-    }
-    let mut ecc: AmdsmiErrorCount = unsafe { std::mem::zeroed() };
-    if unsafe { library.get::<EccCountFn>(b"amdsmi_get_gpu_total_ecc_count\0") }
-        .ok()
-        .is_some_and(|function| unsafe { function(device, &mut ecc) } == AMDSMI_SUCCESS)
-        && ecc.uncorrectable_count != u64::MAX
-    {
-        insert_finite(
-            &mut metrics,
-            "amd_ecc_uncorrectable",
-            ecc.uncorrectable_count as f64,
-        );
-    }
-    let mut gpu_metrics: AmdsmiGpuMetrics = unsafe { std::mem::zeroed() };
-    if unsafe { library.get::<GpuMetricsFn>(b"amdsmi_get_gpu_metrics_info\0") }
-        .ok()
-        .is_some_and(|function| unsafe { function(device, &mut gpu_metrics) } == AMDSMI_SUCCESS)
-        && gpu_metrics.throttle_status != u32::MAX
-        && gpu_metrics.independent_throttle_status != u64::MAX
-    {
-        metrics.insert(
-            "amd_throttle_status".to_string(),
-            if is_throttled(
-                gpu_metrics.throttle_status,
-                gpu_metrics.independent_throttle_status,
-            ) {
-                1.0
-            } else {
-                0.0
-            },
-        );
-    }
-    let mut energy = 0_u64;
-    let mut resolution = 0_f32;
-    let mut timestamp = 0_u64;
-    if unsafe { library.get::<EnergyCountFn>(b"amdsmi_get_energy_count\0") }.ok().is_some_and(|function| unsafe { function(device, &mut energy, &mut resolution, &mut timestamp) } == AMDSMI_SUCCESS) {
-        insert_finite(
-            &mut metrics,
-            "amd_energy_consumption",
-            energy_count_to_megajoules(energy, resolution),
-        );
-    }
-    metrics
 }
 
 fn c_string(value: &[c_char]) -> Option<String> {
@@ -476,12 +502,6 @@ fn c_string(value: &[c_char]) -> Option<String> {
     std::str::from_utf8(&bytes[..end])
         .ok()
         .map(ToOwned::to_owned)
-}
-
-fn insert_finite(metrics: &mut BTreeMap<String, f64>, name: &str, value: f64) {
-    if value.is_finite() && value < u32::MAX as f64 {
-        metrics.insert(name.to_string(), value);
-    }
 }
 
 fn status(result: u32, operation: &str) -> Result<(), GpuTelemetryError> {
@@ -552,34 +572,11 @@ mod tests {
                 bdf: Some(AmdsmiBdf {
                     as_uint: (0x41_u64 << 8),
                 }),
-                power: Some(AmdsmiPowerInfo {
-                    socket_power: 300,
-                    current_socket_power: 0,
-                    average_socket_power: 0,
-                    gfx_voltage: 0,
-                    soc_voltage: 0,
-                    mem_voltage: 0,
-                    power_limit: 0,
-                    reserved: [0; 18],
-                }),
-                activity: Some(AmdsmiEngineUsage {
-                    gfx_activity: 70,
-                    umc_activity: 30,
-                    mm_activity: u32::MAX,
-                    reserved: [0; 13],
-                }),
-                vram_usage: Some(AmdsmiVramUsage {
-                    vram_total: 0,
-                    vram_used: 15_259,
-                    reserved: [0; 2],
-                }),
+                power_candidates: Some([300, 0, 0]),
+                activity: Some((70, 30, u32::MAX)),
+                vram_used_mib: Some(15_360),
                 temperature: Some(72),
-                ecc: Some(AmdsmiErrorCount {
-                    correctable_count: 0,
-                    uncorrectable_count: 3,
-                    deferred_count: 0,
-                    reserved: [0; 5],
-                }),
+                ecc_uncorrectable: Some(3),
                 throttle_status: Some((0, 1)),
                 energy: Some((2_000_000, 2.0)),
             },

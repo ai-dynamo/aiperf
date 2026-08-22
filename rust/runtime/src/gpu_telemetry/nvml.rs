@@ -83,15 +83,8 @@ impl VendorWorker for NvmlWorker {
                     continue;
                 }
             };
-            let metadata = device_metadata(&device, index);
-            let metrics = device_metrics(nvml, &device);
-            if !metrics.is_empty() {
-                records.push(GpuTelemetryRecord {
-                    timestamp_ns,
-                    endpoint_url: NVML_ENDPOINT_URL.to_string(),
-                    metadata,
-                    metrics,
-                });
+            if let Some(record) = record_from_observation(timestamp_ns, observe_device(nvml, &device, index)) {
+                records.push(record);
             }
         }
         Ok(records)
@@ -105,13 +98,136 @@ impl VendorWorker for NvmlWorker {
     }
 }
 
-fn device_metadata(device: &nvml_wrapper::Device<'_>, index: u32) -> GpuMetadata {
-    metadata_from_parts(
+struct NvmlDeviceObservation {
+    index: u32,
+    gpu_uuid: Option<String>,
+    gpu_model_name: Option<String>,
+    pci_bus_id: Option<String>,
+    power_millwatts: Option<u32>,
+    energy_millijoules: Option<u64>,
+    utilization: Option<(u32, u32)>,
+    memory_used_bytes: Option<u64>,
+    temperature_celsius: Option<u32>,
+    encoder_utilization: Option<u32>,
+    decoder_utilization: Option<u32>,
+    sm_utilization: Option<Vec<u32>>,
+    jpg_utilization: Option<u32>,
+    power_violation_nanoseconds: Option<u64>,
+}
+
+fn observe_device(
+    nvml: &Nvml,
+    device: &nvml_wrapper::Device<'_>,
+    index: u32,
+) -> NvmlDeviceObservation {
+    NvmlDeviceObservation {
         index,
-        device.uuid().unwrap_or_else(|_| format!("GPU-{index}")),
-        device.name().unwrap_or_else(|_| "Unknown".to_string()),
-        device.pci_info().ok().map(|pci| pci.bus_id),
-    )
+        gpu_uuid: device.uuid().ok(),
+        gpu_model_name: device.name().ok(),
+        pci_bus_id: device.pci_info().ok().map(|pci| pci.bus_id),
+        power_millwatts: device.power_usage().ok(),
+        energy_millijoules: device.total_energy_consumption().ok(),
+        utilization: device
+            .utilization_rates()
+            .ok()
+            .map(|value| (value.gpu, value.memory)),
+        memory_used_bytes: device.memory_info().ok().map(|value| value.used),
+        temperature_celsius: device.temperature(TemperatureSensor::Gpu).ok(),
+        encoder_utilization: device.encoder_utilization().ok().map(|value| value.utilization),
+        decoder_utilization: device.decoder_utilization().ok().map(|value| value.utilization),
+        sm_utilization: device
+            .process_utilization_stats(None)
+            .ok()
+            .map(|samples| samples.into_iter().map(|sample| sample.sm_util).collect()),
+        jpg_utilization: jpg_utilization(nvml, device),
+        power_violation_nanoseconds: device
+            .violation_status(PerformancePolicy::Power)
+            .ok()
+            .map(|value| value.violation_time),
+    }
+}
+
+fn record_from_observation(
+    timestamp_ns: i64,
+    observation: NvmlDeviceObservation,
+) -> Option<GpuTelemetryRecord> {
+    let mut metrics = BTreeMap::new();
+    insert_finite(
+        &mut metrics,
+        "nvidia_power_usage",
+        observation.power_millwatts.map(milliwatts_to_watts),
+    );
+    insert_finite(
+        &mut metrics,
+        "nvidia_energy_consumption",
+        observation.energy_millijoules.map(millijoules_to_megajoules),
+    );
+    if let Some((gpu, memory)) = observation.utilization {
+        insert_finite(&mut metrics, "nvidia_gpu_utilization", Some(gpu as f64));
+        insert_finite(
+            &mut metrics,
+            "nvidia_memory_utilization",
+            Some(memory as f64),
+        );
+    }
+    insert_finite(
+        &mut metrics,
+        "nvidia_memory_used",
+        observation.memory_used_bytes.map(bytes_to_gigabytes),
+    );
+    insert_finite(
+        &mut metrics,
+        "nvidia_temperature",
+        observation.temperature_celsius.map(f64::from),
+    );
+    insert_finite(
+        &mut metrics,
+        "nvidia_encoder_utilization",
+        observation.encoder_utilization.map(f64::from),
+    );
+    insert_finite(
+        &mut metrics,
+        "nvidia_decoder_utilization",
+        observation.decoder_utilization.map(f64::from),
+    );
+    insert_finite(
+        &mut metrics,
+        "nvidia_sm_utilization",
+        observation.sm_utilization.map(|samples| {
+            samples
+                .into_iter()
+                .map(f64::from)
+                .sum::<f64>()
+                .min(100.0)
+        }),
+    );
+    insert_finite(
+        &mut metrics,
+        "nvidia_jpg_utilization",
+        observation.jpg_utilization.map(f64::from),
+    );
+    insert_finite(
+        &mut metrics,
+        "nvidia_power_violation",
+        observation
+            .power_violation_nanoseconds
+            .map(nanoseconds_to_microseconds),
+    );
+    (!metrics.is_empty()).then_some(GpuTelemetryRecord {
+        timestamp_ns,
+        endpoint_url: NVML_ENDPOINT_URL.to_string(),
+        metadata: metadata_from_parts(
+            observation.index,
+            observation
+                .gpu_uuid
+                .unwrap_or_else(|| format!("GPU-unknown-{}", observation.index)),
+            observation
+                .gpu_model_name
+                .unwrap_or_else(|| "Unknown GPU".to_string()),
+            observation.pci_bus_id,
+        ),
+        metrics,
+    })
 }
 
 fn metadata_from_parts(
@@ -133,77 +249,6 @@ fn metadata_from_parts(
     }
 }
 
-fn device_metrics(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> BTreeMap<String, f64> {
-    let mut metrics = BTreeMap::new();
-    insert_result(
-        &mut metrics,
-        "nvidia_power_usage",
-        device.power_usage().map(milliwatts_to_watts),
-    );
-    insert_result(
-        &mut metrics,
-        "nvidia_energy_consumption",
-        device
-            .total_energy_consumption()
-            .map(millijoules_to_megajoules),
-    );
-    insert_result(
-        &mut metrics,
-        "nvidia_gpu_utilization",
-        device.utilization_rates().map(|value| value.gpu as f64),
-    );
-    insert_result(
-        &mut metrics,
-        "nvidia_memory_utilization",
-        device.utilization_rates().map(|value| value.memory as f64),
-    );
-    insert_result(
-        &mut metrics,
-        "nvidia_memory_used",
-        device
-            .memory_info()
-            .map(|value| bytes_to_gigabytes(value.used)),
-    );
-    insert_result(
-        &mut metrics,
-        "nvidia_temperature",
-        device.temperature(TemperatureSensor::Gpu).map(f64::from),
-    );
-    insert_result(
-        &mut metrics,
-        "nvidia_encoder_utilization",
-        device
-            .encoder_utilization()
-            .map(|value| value.utilization as f64),
-    );
-    insert_result(
-        &mut metrics,
-        "nvidia_decoder_utilization",
-        device
-            .decoder_utilization()
-            .map(|value| value.utilization as f64),
-    );
-    if let Ok(samples) = device.process_utilization_stats(None) {
-        let sm_utilization = samples
-            .iter()
-            .map(|sample| sample.sm_util as f64)
-            .sum::<f64>()
-            .min(100.0);
-        metrics.insert("nvidia_sm_utilization".to_string(), sm_utilization);
-    }
-    if let Some(utilization) = jpg_utilization(nvml, device) {
-        metrics.insert("nvidia_jpg_utilization".to_string(), utilization);
-    }
-    insert_result(
-        &mut metrics,
-        "nvidia_power_violation",
-        device
-            .violation_status(PerformancePolicy::Power)
-            .map(|value| value.violation_time as f64 * 1e-3),
-    );
-    metrics
-}
-
 fn milliwatts_to_watts(value: u32) -> f64 {
     value as f64 * 1e-3
 }
@@ -216,6 +261,10 @@ fn bytes_to_gigabytes(value: u64) -> f64 {
     value as f64 * 1e-9
 }
 
+fn nanoseconds_to_microseconds(value: u64) -> f64 {
+    value as f64 * 1e-3
+}
+
 fn jpg_utilization(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<f64> {
     let symbol = nvml.lib().nvmlDeviceGetJpgUtilization.as_ref().ok()?;
     let mut utilization = 0_u32;
@@ -224,18 +273,12 @@ fn jpg_utilization(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<f64
     // has the exact `nvmlDeviceGetJpgUtilization` signature, and both output
     // pointers reference initialized writable local storage for this call.
     let status = unsafe { symbol(device.handle(), &mut utilization, &mut sampling_period_us) };
-    (status == nvmlReturn_enum_NVML_SUCCESS).then_some(utilization as f64)
+    (status == nvmlReturn_enum_NVML_SUCCESS).then_some(utilization)
 }
 
-fn insert_result(
-    metrics: &mut BTreeMap<String, f64>,
-    name: &str,
-    result: Result<f64, nvml_wrapper::error::NvmlError>,
-) {
-    if let Ok(value) = result {
-        if value.is_finite() {
-            metrics.insert(name.to_string(), value);
-        }
+fn insert_finite(metrics: &mut BTreeMap<String, f64>, name: &str, value: Option<f64>) {
+    if let Some(value) = value.filter(|value| value.is_finite()) {
+        metrics.insert(name.to_string(), value);
     }
 }
 
