@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use super::auth::KubeAuthOptions;
 use super::client::{AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, KubeClient};
+use super::submission::{envelope_paths, jobs_path, load_envelope, submit_profile, submit_sweep};
 
 const COMMANDS: &[&str] = &[
     "init",
@@ -38,18 +39,31 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     }
     if matches!(command, "init" | "generate") {
         println!(
-            "native Kubernetes {command}: write a Config v2 document, then submit it with `aiperf kube profile`"
+            "native Kubernetes {command}: provide a strict native-k8s/v1 envelope with --envelope"
         );
         return Ok(0);
     }
+    if matches!(command, "profile" | "sweep" | "validate") {
+        return envelope_command(command, &args[1..]);
+    }
     let client = KubeClient::from_options(&KubeAuthOptions::default())?;
-    let collection = format!("/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/{AIPERF_PLURAL}");
+    let namespace = namespace(args)?;
+    let collection = jobs_path(namespace);
     match command {
         "preflight" => report_status(command, client.request("GET", "/version", "", Vec::new())?),
-        "list" | "index" => {
-            report_status(command, client.request("GET", &collection, "", Vec::new())?)
-        }
-        "show" | "debug" | "results" | "dashboard" | "validate" => {
+        "list" => report_status(command, client.request("GET", &collection, "", Vec::new())?),
+        "index" => report_status(
+            command,
+            client.request(
+                "GET",
+                &format!(
+                    "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/aiperfjobindexes"
+                ),
+                "",
+                Vec::new(),
+            )?,
+        ),
+        "show" | "debug" | "results" | "dashboard" => {
             let name = required_name(args)?;
             report_status(
                 command,
@@ -57,11 +71,51 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             )
         }
         "watch" | "attach" | "logs" => watch_once(&client, &format!("{collection}?watch=true")),
-        "profile" | "sweep" => anyhow::bail!(
-            "native Kubernetes {command} requires a projected native-k8s/v1 envelope; submit through the Config v2 projection"
-        ),
         _ => unreachable!(),
     }
+}
+
+fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
+    let paths = envelope_paths(args)?;
+    let envelopes = paths
+        .into_iter()
+        .map(load_envelope)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if command == "validate" {
+        if envelopes.len() != 1 {
+            anyhow::bail!("native Kubernetes validate accepts exactly one --envelope");
+        }
+        println!("native Kubernetes validate: native-k8s/v1 envelope is valid");
+        return Ok(0);
+    }
+    let client = KubeClient::from_options(&KubeAuthOptions::default())?;
+    let status = match command {
+        "profile" => {
+            if envelopes.len() != 1 {
+                anyhow::bail!("native Kubernetes profile accepts exactly one --envelope");
+            }
+            submit_profile(&client, &envelopes[0])?
+        }
+        "sweep" => submit_sweep(&client, &envelopes)?,
+        _ => unreachable!(),
+    };
+    report_status(command, status)
+}
+
+fn namespace(args: &[String]) -> anyhow::Result<&str> {
+    let mut arguments = args.iter();
+    while let Some(argument) = arguments.next() {
+        if let Some(namespace) = argument.strip_prefix("--namespace=") {
+            return Ok(namespace);
+        }
+        if argument == "--namespace" {
+            return arguments
+                .next()
+                .map(String::as_str)
+                .ok_or_else(|| anyhow::anyhow!("--namespace requires a value"));
+        }
+    }
+    Ok("default")
 }
 
 fn required_name(args: &[String]) -> anyhow::Result<&str> {
@@ -103,6 +157,27 @@ mod tests {
         assert_eq!(COMMANDS.len(), 15);
         assert!(commands.contains("profile"));
         assert!(commands.contains("dashboard"));
+    }
+
+    #[test]
+    fn namespace_defaults_and_parses_both_forms() {
+        assert_eq!(
+            namespace(&["list".to_string()]).expect("default"),
+            "default"
+        );
+        assert_eq!(
+            namespace(&["list".to_string(), "--namespace=bench".to_string()]).expect("equals"),
+            "bench"
+        );
+        assert_eq!(
+            namespace(&[
+                "list".to_string(),
+                "--namespace".to_string(),
+                "bench".to_string(),
+            ])
+            .expect("separate"),
+            "bench"
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod command;
 pub mod contract;
 pub mod error;
 pub mod manifest;
+pub mod submission;
 
 #[cfg(test)]
 mod tests;
