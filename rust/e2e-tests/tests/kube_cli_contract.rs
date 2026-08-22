@@ -98,7 +98,7 @@ fn kind_chart_installs_the_standalone_operator() {
             "upgrade",
             "--install",
             "aiperf-operator",
-            "../../aiperf-k8s-operator/chart",
+            "../../deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator",
             "--namespace",
             "aiperf-system",
             "--create-namespace",
