@@ -53,8 +53,9 @@ fn report_completion(reporter: &crate::k8s::CrReporter, artifact_dir: &std::path
             tracing::warn!(error = %e, path = %native_v2.display(), "native-v2.json unreadable; skipping snapshot")
         }
     }
-    if let Err(e) = crate::k8s::write_ready_marker(artifact_dir, false) {
-        tracing::warn!(error = %e, "failed to write the results-ready marker");
+    let run_id = std::env::var("AIPERF_RUN_ID").unwrap_or_else(|_| "unknown".to_string());
+    if let Err(e) = crate::k8s::publish_results(artifact_dir, &run_id, false) {
+        tracing::warn!(error = %e, "failed to publish the results manifest");
     }
     reporter.signal_complete();
 }

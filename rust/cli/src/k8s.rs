@@ -7,8 +7,10 @@
 //! no-op off-cluster and API failures never fail a benchmark.
 
 use std::path::{Path, PathBuf};
+use std::io::Write;
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::kube::auth::in_cluster_credentials;
 use crate::kube::client::{
@@ -97,12 +99,71 @@ pub fn complete_body() -> Value { json!({ "metadata": { "annotations": { BENCHMA
 /// Path of the private compatibility marker under `base_dir`.
 pub fn ready_marker_path(base_dir: &Path) -> PathBuf { base_dir.join(READY_MARKER_NAME) }
 
-/// Write the legacy marker after artifact publication and before completion reporting.
+/// Atomically publish the public native-k8s/v1 results manifest, then compatibility marker.
+pub fn publish_results(base_dir: &Path, run_id: &str, was_cancelled: bool) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(base_dir)?;
+    let artifacts = collect_artifacts(base_dir)?;
+    let manifest = json!({
+        "contractVersion": "native-k8s/v1",
+        "runId": run_id,
+        "ready": true,
+        "wasCancelled": was_cancelled,
+        "artifactRoot": base_dir,
+        "artifacts": artifacts,
+    });
+    let manifest_path = base_dir.join("results-manifest.json");
+    write_atomic_json(&manifest_path, &manifest)?;
+    write_ready_marker(base_dir, was_cancelled)?;
+    Ok(manifest_path)
+}
+
+fn collect_artifacts(base_dir: &Path) -> std::io::Result<Vec<Value>> {
+    let mut out = Vec::new();
+    let mut stack = vec![base_dir.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let kind = entry.file_type()?;
+            if kind.is_dir() { stack.push(path); continue; }
+            if !kind.is_file() { continue; }
+            let relative = path.strip_prefix(base_dir).map_err(std::io::Error::other)?;
+            let name = relative.to_string_lossy().replace('\\', "/");
+            if name == READY_MARKER_NAME || name == "results-manifest.json" { continue; }
+            let bytes = std::fs::read(&path)?;
+            out.push(json!({"path": name, "sha256": format!("{:x}", Sha256::digest(&bytes)), "bytes": bytes.len(), "contentType": content_type(&path)}));
+        }
+    }
+    out.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
+    Ok(out)
+}
+
+fn write_atomic_json(path: &Path, value: &Value) -> std::io::Result<()> {
+    let temporary = path.with_extension("tmp");
+    let bytes = serde_json::to_vec(value).map_err(std::io::Error::other)?;
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    std::fs::rename(&temporary, path)?;
+    std::fs::File::open(path.parent().unwrap_or(Path::new(".")))?.sync_all()
+}
+
+fn content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("json") => "application/json",
+        Some("jsonl") => "application/x-ndjson",
+        Some("csv") => "text/csv",
+        Some("parquet") => "application/vnd.apache.parquet",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Write the legacy marker only after the public manifest has been fsynced.
 pub fn write_ready_marker(base_dir: &Path, was_cancelled: bool) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(base_dir)?;
     let marker = ready_marker_path(base_dir);
     let body = json!({ "ready": true, "was_cancelled": was_cancelled });
-    std::fs::write(&marker, serde_json::to_vec(&body).map_err(std::io::Error::other)?)?;
+    write_atomic_json(&marker, &body)?;
     Ok(marker)
 }
 
