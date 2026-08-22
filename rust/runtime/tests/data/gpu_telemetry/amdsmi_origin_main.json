@@ -1,0 +1,23 @@
+[
+  {
+    "device": "amd0",
+    "gpu_index": 0,
+    "gpu_model_name": "MI300X",
+    "gpu_uuid": "GPU-amd",
+    "hostname": "localhost",
+    "pci_bus_id": "0000:41:00.0",
+    "platform": "amd",
+    "telemetry_data": {
+      "amd_ecc_uncorrectable": 3.0,
+      "amd_energy_consumption": 4e-06,
+      "amd_gfx_activity": 70.0,
+      "amd_memory_used": 16.0,
+      "amd_power": 300.0,
+      "amd_temperature": 72.0,
+      "amd_throttle_status": 1.0,
+      "amd_umc_activity": 30.0
+    },
+    "telemetry_source_url": "amdsmi://localhost",
+    "timestamp_ns": 123
+  }
+]
