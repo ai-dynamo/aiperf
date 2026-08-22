@@ -73,8 +73,9 @@ impl KubeAuthOptions {
         let mut config = KubeConfig::default();
         for path in &paths {
             let source = std::fs::read_to_string(path)?;
-            let next: KubeConfig = serde_yaml::from_str(&source)
+            let mut next: KubeConfig = serde_yaml::from_str(&source)
                 .map_err(|error| KubeError::Decode(format!("{}: {error}", path.display())))?;
+            next.set_source(path);
             config.merge(next);
         }
         config.resolve(self, &paths[0])
@@ -127,6 +128,12 @@ struct KubeConfig {
 }
 
 impl KubeConfig {
+    fn set_source(&mut self, path: &Path) {
+        let source = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        for cluster in &mut self.clusters { cluster.source = Some(source.clone()); }
+        for user in &mut self.users { user.source = Some(source.clone()); }
+    }
+
     fn merge(&mut self, next: Self) {
         if self.current_context.is_none() { self.current_context = next.current_context; }
         for cluster in next.clusters { if !self.clusters.iter().any(|entry| entry.name == cluster.name) { self.clusters.push(cluster); } }
@@ -154,20 +161,24 @@ impl KubeConfig {
         if cluster.cluster.insecure_skip_tls_verify.unwrap_or(false) && !options.insecure_skip_tls_verify {
             return Err(KubeError::Authentication("kubeconfig requests insecure TLS but --insecure-skip-tls-verify was not supplied".to_string()));
         }
-        let token = resolve_token(&user.user, path)?;
+        let token = resolve_token(&user.user, user.source.as_deref().unwrap_or(path))?;
         let client_certificate_pem = resolve_pem(
             user.user.client_certificate_data.as_deref(),
             user.user.client_certificate.as_deref(),
-            path,
+            user.source.as_deref().unwrap_or(path),
         )?;
-        let client_key_pem = resolve_pem(user.user.client_key_data.as_deref(), user.user.client_key.as_deref(), path)?;
+        let client_key_pem = resolve_pem(
+            user.user.client_key_data.as_deref(),
+            user.user.client_key.as_deref(),
+            user.source.as_deref().unwrap_or(path),
+        )?;
         if token.is_none() && (client_certificate_pem.is_none() || client_key_pem.is_none()) {
             return Err(KubeError::Authentication("kubeconfig user has no bearer token, exec credential, or client cert/key pair".to_string()));
         }
         let ca_pem = resolve_pem(
             cluster.cluster.certificate_authority_data.as_deref(),
             cluster.cluster.certificate_authority.as_deref(),
-            path,
+            cluster.source.as_deref().unwrap_or(path),
         )?;
         Ok(KubeCredentials {
             server_name: host.clone(),
@@ -231,11 +242,11 @@ fn resolve_pem(data: Option<&str>, file: Option<&str>, config_path: &Path) -> Re
 }
 
 #[derive(Deserialize)]
-struct NamedCluster { name: String, cluster: Cluster }
+struct NamedCluster { name: String, cluster: Cluster, #[serde(skip)] source: Option<PathBuf> }
 #[derive(Deserialize)]
 struct NamedContext { name: String, context: Context }
 #[derive(Deserialize)]
-struct NamedUser { name: String, user: User }
+struct NamedUser { name: String, user: User, #[serde(skip)] source: Option<PathBuf> }
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct Cluster { server: String, certificate_authority: Option<String>, certificate_authority_data: Option<String>, insecure_skip_tls_verify: Option<bool> }
