@@ -61,6 +61,7 @@ type ShutdownFn = unsafe extern "C" fn() -> u32;
 type SocketHandlesFn = unsafe extern "C" fn(*mut u32, *mut SocketHandle) -> u32;
 type ProcessorHandlesFn = unsafe extern "C" fn(SocketHandle, *mut u32, *mut ProcessorHandle) -> u32;
 type UuidFn = unsafe extern "C" fn(ProcessorHandle, *mut u32, *mut c_char) -> u32;
+type BdfFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiBdf) -> u32;
 type AsicInfoFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiAsicInfo) -> u32;
 type PowerInfoFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiPowerInfo) -> u32;
 type EnergyCountFn = unsafe extern "C" fn(ProcessorHandle, *mut u64, *mut f32, *mut u64) -> u32;
@@ -69,6 +70,12 @@ type VramUsageFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiVramUsage) -
 type TemperatureFn = unsafe extern "C" fn(ProcessorHandle, u32, u32, *mut i64) -> u32;
 type EccCountFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiErrorCount) -> u32;
 type GpuMetricsFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiGpuMetrics) -> u32;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct AmdsmiBdf {
+    as_uint: u64,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -131,7 +138,9 @@ struct AmdsmiGpuMetrics {
     common_header: [u8; 4],
     _prefix: [u8; 64],
     throttle_status: u32,
-    _remaining: [u8; 4472],
+    _to_independent_throttle_status: [u8; 40],
+    independent_throttle_status: u64,
+    _remaining: [u8; 4424],
 }
 
 struct AmdSmiWorker {
@@ -271,13 +280,24 @@ fn metadata(library: &Library, device: ProcessorHandle, index: usize) -> GpuMeta
         .filter(|function| unsafe { function(device, &mut asic) } == AMDSMI_SUCCESS)
         .and_then(|_| c_string(&asic.market_name))
         .unwrap_or_else(|| "Unknown".to_string());
+    let mut bdf = AmdsmiBdf { as_uint: 0 };
+    let pci_bus_id = unsafe { library.get::<BdfFn>(b"amdsmi_get_gpu_device_bdf\0") }
+        .ok()
+        .filter(|function| unsafe { function(device, &mut bdf) } == AMDSMI_SUCCESS)
+        .map(|_| format!(
+            "{:04x}:{:02x}:{:02x}.{}",
+            bdf.as_uint >> 16,
+            (bdf.as_uint >> 8) & 0xff,
+            (bdf.as_uint >> 3) & 0x1f,
+            bdf.as_uint & 0x7,
+        ));
     GpuMetadata {
         gpu_index: index.min(i32::MAX as usize) as i32,
         gpu_uuid,
         gpu_model_name,
-        pci_bus_id: None,
-        device: None,
-        hostname: None,
+        pci_bus_id,
+        device: Some(format!("amd{index}")),
+        hostname: Some("localhost".to_string()),
         namespace: None,
         pod_name: None,
         platform: AMD_GPU_TELEMETRY_PLATFORM.to_string(),
@@ -327,17 +347,15 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
         insert_finite(
             &mut metrics,
             "amd_memory_used",
-            vram.vram_used as f64 * 1e-3,
+            vram.vram_used as f64 * 1.048_576e-3,
         );
     }
     let mut temperature = 0_i64;
     let temperature_result = unsafe { library.get::<TemperatureFn>(b"amdsmi_get_temp_metric\0") }
         .ok()
         .and_then(|function| {
-            [1_u32, 2_u32].into_iter().find_map(|sensor| {
-                (unsafe { function(device, sensor, 0, &mut temperature) } == AMDSMI_SUCCESS)
-                    .then_some(temperature)
-            })
+            (unsafe { function(device, 1, 0, &mut temperature) } == AMDSMI_SUCCESS)
+                .then_some(temperature)
         });
     if let Some(value) = temperature_result.filter(|value| *value != i64::MAX) {
         let value = value as f64;
@@ -364,10 +382,11 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
         .ok()
         .is_some_and(|function| unsafe { function(device, &mut gpu_metrics) } == AMDSMI_SUCCESS)
         && gpu_metrics.throttle_status != u32::MAX
+        && gpu_metrics.independent_throttle_status != u64::MAX
     {
         metrics.insert(
             "amd_throttle_status".to_string(),
-            if gpu_metrics.throttle_status != 0 {
+            if gpu_metrics.throttle_status != 0 || gpu_metrics.independent_throttle_status != 0 {
                 1.0
             } else {
                 0.0
