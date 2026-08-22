@@ -131,6 +131,7 @@ hyper = { version = "1.10", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 jmespath = "0.4"
 minijinja = { version = "2.21", features = ["json"] }
+nvml-wrapper = { version = "0.12.1", default-features = false }
 num-bigint = "0.4.8"
 # Self-describing binary serde format for wire-shipped cellular records-shard
 # partitions and heartbeats: preserves NaN/`+inf` sentinels (JSON cannot) and

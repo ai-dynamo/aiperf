@@ -20,6 +20,7 @@ use crate::gpu_telemetry::{
     DcgmPrometheusDecoder, DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind,
     GpuPhaseBoundary, GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord,
     GpuTelemetrySummary, PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
+    nvml::NvmlTelemetrySource,
 };
 use crate::metrics_core::Unit;
 use crate::phase_runtime::ScheduledPhaseSidecar;
@@ -141,12 +142,12 @@ impl GpuTelemetryRun {
                     };
                     collectors.push(Rc::new(GpuTelemetryCollector::new(source)));
                 }
-                // The local collectors have no source implementation in this
-                // build. Selecting one fails the run rather than falling back to
-                // a different collector and reporting its numbers instead.
-                GpuTelemetrySourceSpec::Nvml {} => anyhow::bail!(
-                    "gpuTelemetry.collector \"pynvml\" has no native source in this build"
-                ),
+                GpuTelemetrySourceSpec::Nvml {} => match NvmlTelemetrySource::spawn(clock.clone()).await {
+                    Ok(source) => collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source)))),
+                    Err(error) => {
+                        tracing::warn!(error = %error, collector = "pynvml", "GPU telemetry skipped unavailable native source")
+                    }
+                },
                 GpuTelemetrySourceSpec::AmdSmi {} => anyhow::bail!(
                     "gpuTelemetry.collector \"amdsmi\" has no native source in this build"
                 ),

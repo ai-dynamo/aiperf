@@ -11,6 +11,7 @@ pub mod collector;
 pub mod custom_metrics;
 pub mod fields;
 pub mod model;
+pub mod nvml;
 pub mod parser;
 pub mod python_source;
 pub mod source;
