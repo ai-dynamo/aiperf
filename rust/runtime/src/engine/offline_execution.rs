@@ -1568,8 +1568,10 @@ impl OfflineGraphEventSink for OfflineGraphRunnerEventSink {
     }
 
     fn record(&self, record: OfflineGraphRequestRecord) -> Result<()> {
+        let trace_id = record.trace_id.clone();
         self.events
             .emit(GraphExecutionEvent::Record {
+                trace_id,
                 record: Box::new(CapturedRecord {
                     uuid: record.uuid,
                     x_correlation_id: record.trace_id,

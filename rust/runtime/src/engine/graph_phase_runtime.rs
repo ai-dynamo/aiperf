@@ -998,27 +998,27 @@ impl GraphPhaseProgress {
         outcome.admitted = outcome.admitted.saturating_add(1);
     }
 
-    fn record(&self, record: &CapturedRecord) {
+    fn record(&self, trace_id: &str, record: &CapturedRecord) {
         let (completes_session, released_at_first_token) = {
             let mut traces = self.traces.borrow_mut();
-            let Some(trace) = traces.get_mut(&record.x_correlation_id) else {
+            let Some(trace) = traces.get_mut(trace_id) else {
                 self.failures.record(format!(
                     "graph trace {:?} emitted a node record before admission or after completion",
-                    record.x_correlation_id
+                    trace_id
                 ));
                 return;
             };
             if trace.returned_uuids.contains(&record.uuid) {
                 self.failures.record(format!(
                     "graph trace {:?} emitted duplicate terminal record for request {}",
-                    record.x_correlation_id, record.uuid
+                    trace_id, record.uuid
                 ));
                 return;
             }
             if trace.returned_nodes >= trace.expected_nodes {
                 self.failures.record(format!(
                     "graph trace {:?} emitted more than {} node records",
-                    record.x_correlation_id, trace.expected_nodes
+                    trace_id, trace.expected_nodes
                 ));
                 return;
             }
@@ -1027,7 +1027,7 @@ impl GraphPhaseProgress {
             if released_at_first_token != metadata_has_first_token {
                 self.failures.record(format!(
                     "graph trace {:?} request {} first-token event/record mismatch: event={} record={}",
-                    record.x_correlation_id,
+                    trace_id,
                     record.uuid,
                     released_at_first_token,
                     metadata_has_first_token
@@ -1042,7 +1042,7 @@ impl GraphPhaseProgress {
         };
         // Non-cancelled warmup errors abort the run before profiling.
         if record.ingest.errored && !record.ingest.canceled {
-            self.note_warmup_failure(&record.x_correlation_id);
+            self.note_warmup_failure(trace_id);
         }
         self.sink.record_returned(PhaseReturn {
             completes_session,
@@ -1463,11 +1463,15 @@ fn ingest_graph_execution_event(
         GraphExecutionEvent::FirstToken { trace_id, uuid } => {
             progress.first_token(&trace_id, uuid);
         }
-        GraphExecutionEvent::Record { record, node_id } => {
+        GraphExecutionEvent::Record {
+            trace_id,
+            record,
+            node_id,
+        } => {
             if let Some(sampler) = sampler {
                 sampler.borrow_mut().on_record(&record.ingest);
             }
-            progress.record(&record);
+            progress.record(&trace_id, &record);
             // Attribute a non-cancelled terminal node return to its lane's
             // executed-node/return-wall ledgers. Cancelled returns are excluded
             // (see `observe_lane_return`); backends without a node id (offline
@@ -1475,7 +1479,7 @@ fn ingest_graph_execution_event(
             if let Some(node_id) = node_id.as_deref()
                 && !record.ingest.canceled
             {
-                progress.observe_lane_return(&record.x_correlation_id, node_id);
+                progress.observe_lane_return(&trace_id, node_id);
             }
             captured.borrow_mut().push(*record);
         }
@@ -2793,7 +2797,85 @@ fn profiling_resolve_pass0_lanes(
 struct LaneResumeGraphTraceSource {
     prefix: Vec<LaneResumePlan>,
     next_prefix: Cell<usize>,
-    recycle: Rc<dyn GraphTraceSource>,
+    recycle: Option<Rc<dyn GraphTraceSource>>,
+}
+
+impl LaneResumeGraphTraceSource {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        mut prefix: Vec<LaneResumePlan>,
+        recycle_plans: Vec<GraphTracePlan>,
+        session_limit: Option<u64>,
+        request_limit: Option<u64>,
+        trace_instances: GraphTraceInstanceSequence,
+        start_ordinal: u64,
+        t_star: TStarWindow,
+        partition: Option<ModuloCellPartition>,
+    ) -> Result<Self> {
+        // Request-bounded sources are not cell-partitioned. Match the recycle
+        // selection below when assigning prefix ordinals to the global session
+        // budget so every cell subtracts the same aggregate prefix range.
+        let session_partition = partition
+            .filter(|partition| partition.cell_count() > 1 && request_limit.is_none())
+            .unwrap_or_else(ModuloCellPartition::direct);
+        let cell_id = u64::from(session_partition.cell_id());
+        let cell_count = u64::from(session_partition.cell_count());
+        let mut accepted = 0usize;
+        let mut admitted_requests = 0u64;
+        let mut prefix_exhausted_budget = false;
+        for (index, entry) in prefix.iter().enumerate() {
+            let local_ordinal = u64::try_from(index).context("resume prefix exceeds u64")?;
+            let global_ordinal = local_ordinal
+                .checked_mul(cell_count)
+                .and_then(|ordinal| ordinal.checked_add(cell_id))
+                .ok_or_else(|| anyhow!("resume prefix global ordinal exceeds u64"))?;
+            if session_limit.is_some_and(|limit| global_ordinal >= limit) {
+                prefix_exhausted_budget = true;
+                break;
+            }
+            let requests = u64::try_from(entry.plan.graph.llm_node_count())
+                .context("resume prefix static node count exceeds u64")?;
+            let next_requests = admitted_requests
+                .checked_add(requests)
+                .ok_or_else(|| anyhow!("resume prefix admitted static node count exceeds u64"))?;
+            if request_limit.is_some_and(|limit| next_requests > limit) {
+                prefix_exhausted_budget = true;
+                break;
+            }
+            admitted_requests = next_requests;
+            accepted += 1;
+        }
+        prefix.truncate(accepted);
+
+        let aggregate_prefix_sessions = u64::try_from(prefix.len())
+            .context("resume prefix count exceeds u64")?
+            .checked_mul(cell_count)
+            .ok_or_else(|| anyhow!("aggregate resume prefix count exceeds u64"))?;
+        let remaining_sessions =
+            session_limit.map(|limit| limit.saturating_sub(aggregate_prefix_sessions));
+        let remaining_requests = request_limit.map(|limit| limit.saturating_sub(admitted_requests));
+        let has_recycle_budget = !prefix_exhausted_budget
+            && remaining_sessions != Some(0)
+            && remaining_requests != Some(0);
+        let recycle = has_recycle_budget
+            .then(|| {
+                build_graph_trace_source_for_partition(
+                    recycle_plans,
+                    remaining_sessions,
+                    remaining_requests,
+                    trace_instances,
+                    start_ordinal,
+                    t_star,
+                    partition,
+                )
+            })
+            .transpose()?;
+        Ok(Self {
+            prefix,
+            next_prefix: Cell::new(0),
+            recycle,
+        })
+    }
 }
 
 impl GraphTraceSource for LaneResumeGraphTraceSource {
@@ -2811,28 +2893,31 @@ impl GraphTraceSource for LaneResumeGraphTraceSource {
             };
             return Ok(Some(GraphTraceProgram::static_graph(plan)));
         }
-        self.recycle.next_trace()
+        match &self.recycle {
+            Some(recycle) => recycle.next_trace(),
+            None => Ok(None),
+        }
     }
 }
 
-/// Build the cell-aware trace source for one phase.
-fn build_graph_program_source(
+fn build_graph_program_source_for_partition(
     programs: Vec<GraphTraceProgram>,
     session_limit: Option<u64>,
     request_limit: Option<u64>,
     trace_instances: GraphTraceInstanceSequence,
     start_ordinal: u64,
     t_star: TStarWindow,
+    partition: Option<ModuloCellPartition>,
 ) -> Result<Rc<dyn GraphTraceSource>> {
     // Pressure and profiling resolve template order from the same sampling draw.
-    Ok(match ModuloCellPartition::from_env() {
+    Ok(match partition {
         Some(partition) if partition.cell_count() > 1 && request_limit.is_none() => {
             tracing::debug!(
                 cell_id = partition.cell_id(),
                 cell_count = partition.cell_count(),
                 "graph phase using partitioned trace source for cell"
             );
-            // Partitioned sources serve request-unbounded runs without a resume cursor.
+            // Keep the resumed cursor in the partitioned global ordinal space.
             Rc::new(
                 PartitionedGraphTraceSource::new(
                     programs,
@@ -2840,6 +2925,7 @@ fn build_graph_program_source(
                     partition.cell_id(),
                     partition.cell_count(),
                 )?
+                .starting_at(start_ordinal)
                 .with_sampling(t_star.recycle_draw()),
             )
         }
@@ -2854,6 +2940,26 @@ fn build_graph_program_source(
             .with_sampling(t_star.recycle_draw()),
         ),
     })
+}
+
+/// Build the cell-aware trace source for one phase.
+fn build_graph_program_source(
+    programs: Vec<GraphTraceProgram>,
+    session_limit: Option<u64>,
+    request_limit: Option<u64>,
+    trace_instances: GraphTraceInstanceSequence,
+    start_ordinal: u64,
+    t_star: TStarWindow,
+) -> Result<Rc<dyn GraphTraceSource>> {
+    build_graph_program_source_for_partition(
+        programs,
+        session_limit,
+        request_limit,
+        trace_instances,
+        start_ordinal,
+        t_star,
+        ModuloCellPartition::from_env(),
+    )
 }
 
 /// Build the cell-aware trace source for one phase.
@@ -2875,6 +2981,30 @@ fn build_graph_trace_source(
         trace_instances,
         start_ordinal,
         t_star,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_graph_trace_source_for_partition(
+    plans: Vec<GraphTracePlan>,
+    session_limit: Option<u64>,
+    request_limit: Option<u64>,
+    trace_instances: GraphTraceInstanceSequence,
+    start_ordinal: u64,
+    t_star: TStarWindow,
+    partition: Option<ModuloCellPartition>,
+) -> Result<Rc<dyn GraphTraceSource>> {
+    build_graph_program_source_for_partition(
+        plans
+            .into_iter()
+            .map(GraphTraceProgram::static_graph)
+            .collect(),
+        session_limit,
+        request_limit,
+        trace_instances,
+        start_ordinal,
+        t_star,
+        partition,
     )
 }
 
@@ -2944,19 +3074,16 @@ fn rebuild_resume_workload(
     } else {
         0
     };
-    let recycle = build_graph_trace_source(
+    let source: Rc<dyn GraphTraceSource> = Rc::new(LaneResumeGraphTraceSource::new(
+        prefix,
         resume.original_plans.as_ref().clone(),
         resume.session_limit,
         resume.request_limit,
         resume.trace_instances.clone(),
         start_ordinal,
         resume.t_star,
-    )?;
-    let source: Rc<dyn GraphTraceSource> = Rc::new(LaneResumeGraphTraceSource {
-        prefix,
-        next_prefix: Cell::new(0),
-        recycle,
-    });
+        ModuloCellPartition::from_env(),
+    )?);
     assemble_graph_workload(
         resume.clock.clone(),
         source,
@@ -3201,6 +3328,7 @@ mod tests {
         async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
             let trace_id = program.profiling.trace.id.clone();
             self.events.emit(GraphExecutionEvent::Record {
+                trace_id: trace_id.clone(),
                 record: Box::new(graph_phase_record(&trace_id, false, false)),
                 node_id: Some("n_0".into()),
             })?;
@@ -3825,7 +3953,10 @@ mod tests {
             node_count: 3,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("trace-cancelled", false, false));
+        progress.record(
+            "trace-cancelled",
+            &graph_phase_record("trace-cancelled", false, false),
+        );
         progress.complete(
             "trace-cancelled",
             3,
@@ -3876,7 +4007,10 @@ mod tests {
             node_count: 2,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("trace-failed", false, false));
+        progress.record(
+            "trace-failed",
+            &graph_phase_record("trace-failed", false, false),
+        );
         progress.complete(
             "trace-failed",
             2,
@@ -3943,6 +4077,7 @@ mod tests {
             &progress,
             None,
             GraphExecutionEvent::Record {
+                trace_id: "trace-adaptive".into(),
                 record: Box::new(record),
                 node_id: None,
             },
@@ -4105,8 +4240,8 @@ mod tests {
             arrival_ns: 0,
         });
         let record = graph_phase_record("trace-duplicate-terminal", false, false);
-        progress.record(&record);
-        progress.record(&record);
+        progress.record("trace-duplicate-terminal", &record);
+        progress.record("trace-duplicate-terminal", &record);
 
         assert_eq!(sink.returned.borrow().len(), 1);
         assert_eq!(
@@ -4129,7 +4264,7 @@ mod tests {
         });
         let mut record = graph_phase_record("trace-token-mismatch", false, false);
         record.ingest.first_token_ns = Some(5);
-        progress.record(&record);
+        progress.record("trace-token-mismatch", &record);
 
         assert_eq!(
             *sink.returned.borrow(),
@@ -4158,7 +4293,7 @@ mod tests {
             arrival_ns: 0,
         });
         let record = graph_phase_record("trace-late-token", false, false);
-        progress.record(&record);
+        progress.record("trace-late-token", &record);
         progress.first_token("trace-late-token", record.uuid);
 
         assert_eq!(sink.first_tokens.get(), 0);
@@ -4218,7 +4353,10 @@ mod tests {
             node_count: 1,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("warmup-fail", true, false));
+        progress.record(
+            "warmup-fail",
+            &graph_phase_record("warmup-fail", true, false),
+        );
         assert_eq!(*ledger.borrow(), vec!["warmup-fail".to_owned()]);
     }
 
@@ -4252,7 +4390,10 @@ mod tests {
             node_count: 1,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("warmup-cancelled", true, true));
+        progress.record(
+            "warmup-cancelled",
+            &graph_phase_record("warmup-cancelled", true, true),
+        );
         assert!(ledger.borrow().is_empty());
         let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
         let failures = Rc::new(GraphPhaseFailures::default());
@@ -4291,7 +4432,10 @@ mod tests {
             node_count: 1,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("profiling-fail", true, false));
+        progress.record(
+            "profiling-fail",
+            &graph_phase_record("profiling-fail", true, false),
+        );
         assert!(ledger.borrow().is_empty());
     }
 
@@ -4374,6 +4518,7 @@ mod tests {
                 &progress,
                 None,
                 GraphExecutionEvent::Record {
+                    trace_id: "tmpl-a::inst-a".into(),
                     record: Box::new(record),
                     node_id: Some(node_id.to_owned()),
                 },
@@ -4425,12 +4570,61 @@ mod tests {
             &progress,
             None,
             GraphExecutionEvent::Record {
+                trace_id: "tmpl-a::inst-a".into(),
                 record: Box::new(graph_phase_record("tmpl-a::inst-a", false, false)),
                 node_id: None,
             },
         );
         assert!(lanes.executed_node_ids(0).is_empty());
         assert!(lanes.return_wall_us(0).is_empty());
+    }
+
+    #[test]
+    fn graph_record_correlation_does_not_replace_execution_trace_identity() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
+        let clock = Rc::new(crate::clock::SimClock::new());
+        let lanes = Rc::new(GraphLaneLedger::default());
+        lanes.register_lane(0, lane_identity("tmpl-a", "tmpl-a::inst-a", 0.0));
+        let progress = GraphPhaseProgress::new(
+            sink,
+            failures.clone(),
+            outcome,
+            clock,
+            lanes.clone(),
+            false,
+            Rc::new(RefCell::new(Vec::new())),
+        );
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "tmpl-a::inst-a".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        let supplement = Rc::new(RefCell::new(GraphPhaseSupplement::new()));
+        ingest_graph_execution_event(
+            &captured,
+            &supplement,
+            None,
+            &progress,
+            None,
+            GraphExecutionEvent::Record {
+                trace_id: "tmpl-a::inst-a".into(),
+                record: Box::new(graph_phase_record("tmpl-a::inst-a:node-a", false, false)),
+                node_id: Some("node-a".into()),
+            },
+        );
+
+        assert!(failures.first().is_none());
+        assert_eq!(
+            lanes.executed_node_ids(0),
+            BTreeSet::from(["node-a".to_owned()])
+        );
+        assert_eq!(
+            captured.borrow()[0].x_correlation_id,
+            "tmpl-a::inst-a:node-a"
+        );
     }
 
     #[test]
@@ -5730,8 +5924,69 @@ mod tests {
         assert_eq!(prefix_foreign[0].resume_instance_id, None);
     }
 
+    fn lane_resume_source(
+        prefix: Vec<LaneResumePlan>,
+        session_limit: Option<u64>,
+        request_limit: Option<u64>,
+        partition: ModuloCellPartition,
+    ) -> LaneResumeGraphTraceSource {
+        lane_resume_source_with_recycle(
+            prefix,
+            vec![pressure_one_node_plan("t")],
+            session_limit,
+            request_limit,
+            0,
+            partition,
+        )
+    }
+
+    fn lane_resume_source_with_recycle(
+        prefix: Vec<LaneResumePlan>,
+        recycle_plans: Vec<GraphTracePlan>,
+        session_limit: Option<u64>,
+        request_limit: Option<u64>,
+        start_ordinal: u64,
+        partition: ModuloCellPartition,
+    ) -> LaneResumeGraphTraceSource {
+        LaneResumeGraphTraceSource::new(
+            prefix,
+            recycle_plans,
+            session_limit,
+            request_limit,
+            GraphTraceInstanceSequence::default(),
+            start_ordinal,
+            TStarWindow::default(),
+            Some(partition),
+        )
+        .unwrap()
+    }
+
+    fn drawn_trace_ids(source: &LaneResumeGraphTraceSource) -> Vec<String> {
+        std::iter::from_fn(|| {
+            source
+                .next_trace()
+                .unwrap()
+                .map(|plan| plan.profiling.trace.id)
+        })
+        .collect()
+    }
+
     #[test]
-    fn lane_resume_source_dispatches_prefix_then_recycle() {
+    fn lane_resume_source_truncates_prefix_at_session_budget() {
+        let prefix = (0..3)
+            .map(|lane| LaneResumePlan {
+                lane,
+                plan: pressure_one_node_plan("t"),
+                resume_instance_id: Some(format!("t::warmup-{lane}")),
+            })
+            .collect();
+        let source = lane_resume_source(prefix, Some(2), None, ModuloCellPartition::direct());
+
+        assert_eq!(drawn_trace_ids(&source), vec!["t::warmup-0", "t::warmup-1"]);
+    }
+
+    #[test]
+    fn lane_resume_source_counts_prefix_and_recycle_against_one_session_budget() {
         let prefix = vec![
             LaneResumePlan {
                 lane: 0,
@@ -5744,35 +5999,78 @@ mod tests {
                 resume_instance_id: None,
             },
         ];
-        let recycle = build_graph_trace_source(
-            vec![pressure_one_node_plan("t")],
-            Some(2),
-            None,
-            GraphTraceInstanceSequence::default(),
-            0,
-            TStarWindow::default(),
-        )
-        .unwrap();
-        let source = LaneResumeGraphTraceSource {
-            prefix,
-            next_prefix: Cell::new(0),
-            recycle,
-        };
-        let drawn: Vec<String> = std::iter::from_fn(|| {
-            source
-                .next_trace()
-                .unwrap()
-                .map(|plan| plan.profiling.trace.id)
-        })
-        .collect();
+        let source = lane_resume_source(prefix, Some(4), None, ModuloCellPartition::direct());
         assert_eq!(
-            drawn,
+            drawn_trace_ids(&source),
             vec![
                 "t::resume-lane-0".to_owned(),
                 "t::resume-lane-1".to_owned(),
                 "t::instance-0".to_owned(),
                 "t::instance-1".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn lane_resume_source_stops_before_an_over_budget_prefix_trace() {
+        let prefix = vec![
+            LaneResumePlan {
+                lane: 0,
+                plan: pressure_one_node_plan("one"),
+                resume_instance_id: None,
+            },
+            LaneResumePlan {
+                lane: 1,
+                plan: tstar_chain_plan().remove(0),
+                resume_instance_id: None,
+            },
+        ];
+        let source = lane_resume_source(prefix, None, Some(2), ModuloCellPartition::direct());
+
+        assert_eq!(drawn_trace_ids(&source), vec!["one::resume-lane-0"]);
+    }
+
+    #[test]
+    fn lane_resume_source_preserves_cursor_across_global_cellular_session_budget() {
+        let make_prefix = || {
+            vec![LaneResumePlan {
+                lane: 0,
+                plan: pressure_one_node_plan("prefix"),
+                resume_instance_id: None,
+            }]
+        };
+        let recycle = || {
+            vec![
+                pressure_one_node_plan("a"),
+                pressure_one_node_plan("b"),
+                pressure_one_node_plan("c"),
+            ]
+        };
+        let handoff_cursor = 5;
+        let cell_0 = lane_resume_source_with_recycle(
+            make_prefix(),
+            recycle(),
+            Some(5),
+            None,
+            handoff_cursor,
+            ModuloCellPartition::new(0, 2).unwrap(),
+        );
+        let cell_1 = lane_resume_source_with_recycle(
+            make_prefix(),
+            recycle(),
+            Some(5),
+            None,
+            handoff_cursor,
+            ModuloCellPartition::new(1, 2).unwrap(),
+        );
+
+        assert_eq!(
+            drawn_trace_ids(&cell_0),
+            vec!["prefix::resume-lane-0", "a::instance-6"]
+        );
+        assert_eq!(
+            drawn_trace_ids(&cell_1),
+            vec!["prefix::resume-lane-0", "c::instance-5", "b::instance-7"]
         );
     }
 
@@ -5790,29 +6088,9 @@ mod tests {
                 resume_instance_id: Some("t::inst-1".to_owned()),
             },
         ];
-        let recycle = build_graph_trace_source(
-            vec![pressure_one_node_plan("t")],
-            Some(2),
-            None,
-            GraphTraceInstanceSequence::default(),
-            0,
-            TStarWindow::default(),
-        )
-        .unwrap();
-        let source = LaneResumeGraphTraceSource {
-            prefix,
-            next_prefix: Cell::new(0),
-            recycle,
-        };
-        let drawn: Vec<String> = std::iter::from_fn(|| {
-            source
-                .next_trace()
-                .unwrap()
-                .map(|plan| plan.profiling.trace.id)
-        })
-        .collect();
+        let source = lane_resume_source(prefix, Some(4), None, ModuloCellPartition::direct());
         assert_eq!(
-            drawn,
+            drawn_trace_ids(&source),
             vec![
                 "t::inst-0".to_owned(),
                 "t::inst-1".to_owned(),

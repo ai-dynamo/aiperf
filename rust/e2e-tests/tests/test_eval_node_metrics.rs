@@ -145,9 +145,16 @@ fn write_native_graph_task(task: &Path, endpoint: &str) {
     fs::write(
         task.join("task.toml"),
         r#"schema_version = "1.1"
+artifacts = ["/work/evidence.txt"]
 
 [task]
 name = "example/eval-node-metrics"
+
+[environment]
+network = "no-network"
+
+[agent]
+network = "no-network"
 
 [native_graph]
 profile = "native_graph"
@@ -161,7 +168,7 @@ adapter_manifest = "adapters.toml"
         .expect("write instruction");
     fs::write(
         task.join("environment/Dockerfile"),
-        "FROM alpine:3.20\nRUN mkdir -p /work /logs/verifier && chmod 0777 /work /logs/verifier\n",
+        "FROM alpine:3.20\nRUN mkdir -p /work /logs/verifier && printf evidence > /work/evidence.txt && chmod 0777 /work /logs/verifier\n",
     )
     .expect("write Dockerfile");
     fs::write(
@@ -182,7 +189,7 @@ adapter_manifest = "adapters.toml"
   },
   "nodes": [
     {"id": "first-model", "kind": "model", "binding": "primary", "inputs": ["prompt"], "output": "first", "streaming": true, "max_tokens": 4},
-    {"id": "second-model", "kind": "model", "binding": "primary", "inputs": ["prompt"], "output": "second", "streaming": true, "max_tokens": 4}
+    {"id": "second-model", "kind": "model", "binding": "primary", "inputs": ["first"], "output": "second", "streaming": true, "max_tokens": 4}
   ],
   "edges": [
     {"source": "START", "target": "first-model"},

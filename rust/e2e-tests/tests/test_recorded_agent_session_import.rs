@@ -195,13 +195,21 @@ fn assert_successful_import(
             .all(|record| record["status"] == 200 && record["error"].is_null()),
         "raw records={raw_records:#?}"
     );
-    assert!(
-        raw_records.iter().all(|record| {
-            record["metadata"]["x_correlation_id"] == expected_execution_trace_id
-                && record["metadata"]["conversation_id"] == expected_execution_trace_id
-        }),
-        "raw record trace identities diverged: {raw_records:#?}"
-    );
+    for (index, record) in raw_records.iter().enumerate() {
+        let expected_node_correlation = format!("{expected_execution_trace_id}:llm_{index}");
+        assert_eq!(
+            record["metadata"]["x_correlation_id"], expected_node_correlation,
+            "raw record {index} lost its graph node identity: {record:#?}"
+        );
+        assert_eq!(
+            record["metadata"]["conversation_id"], expected_execution_trace_id,
+            "raw record {index} lost its root execution identity: {record:#?}"
+        );
+        assert_eq!(
+            record["request_headers"]["X-Correlation-ID"], expected_execution_trace_id,
+            "raw record {index} sent a non-root scheduling identity: {record:#?}"
+        );
+    }
     assert_raw_records_timing_and_data(
         &raw_records,
         &TunedExpectations::new(TTFT_MS, ITL_MS, OUTPUT_TOKENS as usize).tol_ms(40.0, 2.0),

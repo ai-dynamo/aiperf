@@ -349,6 +349,13 @@ pub fn lower_native_graph(
             schema_version
         )));
     }
+    let produced_channels = source_nodes
+        .iter()
+        .map(|node| match node {
+            NativeGraphSourceNode::Model { output, .. }
+            | NativeGraphSourceNode::Tool { output, .. } => output.clone(),
+        })
+        .collect::<BTreeSet<_>>();
     let mut nodes = BTreeMap::new();
     let mut facts = Vec::with_capacity(source_nodes.len());
     for source_node in source_nodes {
@@ -389,14 +396,7 @@ pub fn lower_native_graph(
                 ExecutableGraphNode::Llm(LlmNode {
                     output,
                     streaming,
-                    inputs: inputs
-                        .iter()
-                        .cloned()
-                        .map(|channel| ChannelRequirement {
-                            channel,
-                            count: Default::default(),
-                        })
-                        .collect(),
+                    inputs: lower_input_requirements(&inputs, &initial_state, &produced_channels),
                     min_start_delay_us: None,
                     max_tokens: max_tokens.or_else(|| {
                         binding_spec
@@ -1261,4 +1261,43 @@ struct NativeGraphEdgeDto {
 
 fn default_streaming() -> bool {
     true
+}
+
+fn lower_input_requirements(
+    inputs: &[String],
+    initial_state: &BTreeMap<String, Value>,
+    produced_channels: &BTreeSet<String>,
+) -> Vec<ChannelRequirement> {
+    inputs
+        .iter()
+        .filter(|channel| {
+            !initial_state.contains_key(channel.as_str())
+                || produced_channels.contains(channel.as_str())
+        })
+        .cloned()
+        .map(|channel| ChannelRequirement {
+            channel,
+            count: Default::default(),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_state_only_input_is_spliced_without_a_producer_wait() {
+        let inputs = vec!["prompt".to_owned(), "reply".to_owned()];
+        let initial_state = BTreeMap::from([
+            ("prompt".to_owned(), Value::Null),
+            ("reply".to_owned(), Value::Null),
+        ]);
+        let produced_channels = BTreeSet::from(["reply".to_owned()]);
+
+        let requirements = lower_input_requirements(&inputs, &initial_state, &produced_channels);
+
+        assert_eq!(requirements.len(), 1);
+        assert_eq!(requirements[0].channel, "reply");
+    }
 }

@@ -874,7 +874,7 @@ class TestDeriveRunMeta:
     """Cover the EPOCH_RE-gated branch in ``_derive_run_meta``.
 
     Operator layout is ``<base>/<ns>/<name>/<epoch>``; an epoch-shaped leaf
-    (matched by ``aiperf.operator.results_layout.EPOCH_RE``) means the parent
+    means the parent
     is the AIPerfJob name. A non-epoch leaf is treated as a local-CLI run.
     """
 

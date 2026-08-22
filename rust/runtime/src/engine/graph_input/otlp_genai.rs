@@ -858,9 +858,7 @@ mod tests {
             end_time_unix_nano: None,
             attributes: BTreeMap::from([(
                 "gen_ai.output.messages".to_owned(),
-                Value::String(
-                    r#"[{\"role\":\"assistant\",\"content\":\"completed\"},42]"#.to_owned(),
-                ),
+                Value::String(r#"[{"role":"assistant","content":"completed"},42]"#.to_owned()),
             )]),
             is_streaming: false,
         };

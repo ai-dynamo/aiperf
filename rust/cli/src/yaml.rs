@@ -2457,6 +2457,7 @@ impl Benchmark {
             steady_state: false,
             steady_state_fraction: None,
             steady_state_hybrid: false,
+            random_pool_image_batch_size: None,
             image_spec,
             audio_spec,
             video_spec,

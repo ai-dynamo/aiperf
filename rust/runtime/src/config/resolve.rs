@@ -477,6 +477,8 @@ pub struct Inputs {
     pub steady_state_fraction: Option<f64>,
     /// Hybrid steady-state latency mode (full-run latency, windowed throughput).
     pub steady_state_hybrid: bool,
+    /// Explicit image batch size for file-backed `random_pool` inputs.
+    pub random_pool_image_batch_size: Option<u32>,
     /// Synthetic image spec (present when any image flag is set).
     pub image_spec: Option<ImageSpec>,
     /// Synthetic audio spec.
@@ -1059,6 +1061,14 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                     .custom_dataset_type
                     .as_deref()
                     .unwrap_or("single_turn");
+                if format == "random_pool"
+                    && let Some(batch_size) = inputs.random_pool_image_batch_size
+                {
+                    o.insert(
+                        "image_batch_size".to_string(),
+                        serde_json::json!(batch_size),
+                    );
+                }
                 match format {
                     "mooncake_trace" => {
                         o.insert("block_size".to_string(), serde_json::json!(512));

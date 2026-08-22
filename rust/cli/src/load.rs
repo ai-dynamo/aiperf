@@ -605,6 +605,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         steady_state: flags.steady_state.unwrap_or(false),
         steady_state_fraction: flags.steady_state_fraction,
         steady_state_hybrid: flags.steady_state_hybrid.unwrap_or(false),
+        random_pool_image_batch_size: flags.image_batch_size,
         image_spec: build_image_spec(flags),
         audio_spec: build_audio_spec(flags),
         video_spec: build_video_spec(flags),
@@ -1688,6 +1689,31 @@ mod tests {
             assert_eq!(
                 value["cfg"]["datasets"][0]["synthesis"]["corpus"],
                 serde_json::Value::Null
+            );
+        });
+    }
+
+    #[test]
+    fn image_batch_size_projects_file_random_pool_options() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                "image-pool.jsonl",
+                "--custom-dataset-type",
+                "random_pool",
+                "--image-batch-size",
+                "4",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            assert_eq!(
+                value["cfg"]["datasets"][0]["options"]["image_batch_size"],
+                serde_json::json!(4)
             );
         });
     }

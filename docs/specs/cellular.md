@@ -59,6 +59,60 @@ local-subprocess-over-velo from k8s-pod launch. Without the feature, `cells = 1`
 is byte-unchanged and `cells > 1` fails closed; the loopback transport serves
 single-host runs.
 
+### Cross-host session trust
+
+Deployment addressing and application identity are separate. The configured
+controller coordinate and Velo `_hello` supply an unauthenticated routing fact,
+not application admission. `_hello` can install a transport peer before AIPerf
+has accepted that peer; AIPerf neither authenticates `_hello` nor claims to
+prevent that Velo peer-table insertion. Cell-originated admission handlers
+decode no request DTO and install no AIPerf route or state until their
+authenticated frame is accepted.
+
+Each process receives fixed binary role material for one run and one role. A
+deployment controller and each remote cell read separate regular, no-follow
+files with exact `0600` permissions. For same-host children, the controller
+mints the roster in memory, drains each non-cloneable role entry once, and sends
+it over a launcher-owned pipe at an inherited file descriptor; environment and
+argv contain only the non-secret descriptor number, never key bytes or bootstrap
+JSON. Acquisition atomically installs one opaque, process-owned
+`CellSecurityContext`; later Velo registration and control clients borrow that
+same context rather than rereading or cloning private role material. The
+cross-host HTTP artifact uploader instead uses the exact bearer authorized by
+that registration over the pinned-TLS artifact channel; it does not borrow the
+context or use `AuthenticatedFrame` for each upload.
+
+Cell registration signs the run nonce, exact role, cell peer bytes, artifact
+capability digest, and the controller binding. That binding covers the exact
+Velo instance bytes, the messenger worker-address bytes published by `_hello`,
+and the resolved TCP/UDS dial target. The controller's reply attestation covers
+the same binding, the exact encoded registration frame, and the exact reply
+payload. Registration and reply validation therefore bind the application
+session to the connection that was actually dialed without treating `_hello`
+itself as authenticated.
+
+After registration, every controller-side Velo admission handler accepts a
+bounded `AuthenticatedFrame`. Its signature transcript binds protocol version,
+run nonce, role, purpose, process session nonce, per-purpose sequence, peer-info
+digest, and payload digest. Controller-owned fixed role slots keep a 64-sequence
+replay window per purpose plus fixed rejection counters; malformed, oversized,
+wrong-role, wrong-session, invalid-signature, and replay traffic is rejected as
+one bounded `AdmissionRejected` class without per-frame logging.
+Controller-to-cell dataset/phaser pushes follow routes established by authenticated
+subscriptions, but their individual payloads are not per-push authenticated
+frames. Adding that direction to the frame protocol is a separate follow-up.
+These controls protect their stated application boundaries, not transport
+confidentiality.
+
+Registration is transactional across the application ledger, artifact bearer
+authorization, reverse-route installation, and start barrier. Planning and
+reply attestation finish before the last fallible route installation; commit is
+then infallible and exact retries return the cached reply bytes. RAII rollback
+returns incomplete slots and artifact reservations to vacant without publishing
+partial admission state. Hierarchical aggregation remains refused before source
+acquisition, scratch creation, transport bind, or launch because controller-
+planned role security for every tree edge is not implemented.
+
 ### Fidelity guards
 
 Byte-parity is exact only for a seeded `concurrency` phase with no approximating
@@ -93,13 +147,14 @@ coordinator `finalize_run` provenance or the grouped error-message list.
 - A scale-adaptive fidelity ladder (exact/byte-parity default → bounded sketch →
   external streaming sink). Hierarchical tree-merge is unavailable and refused
   before cellular startup; counts/sums/rates remain exact in supported modes.
-- Cross-host beyond loopback, gRPC/offline cell wiring, and graph weighted-sampling
-  plus static-node `request_limit` partition.
+- Additional cross-host launcher integrations beyond Kubernetes and SLURM,
+  gRPC/offline cell wiring, and graph weighted-sampling plus static-node
+  `request_limit` partition.
 
 ## Source anchors
 
 - `rust/runtime/src/cellular/` (`issuance.rs`, `partition.rs`, `shard.rs`,
   `heartbeat.rs`, `sketch.rs`, `transport/`, and the forward-plane `broadcast.rs`,
   `phaser.rs`, `dispatch_state.rs`, `dataset_session.rs`).
-- `rust/runtime/src/engine/{cellular_cell.rs,cellular_controller.rs,cellular_aggregator.rs,cell_launcher.rs,heartbeat_lane.rs,record_lane.rs}`.
+- `rust/runtime/src/engine/{cellular_bootstrap.rs,cellular_registration.rs,cellular_cell.rs,cellular_controller.rs,cellular_aggregator.rs,cell_launcher.rs,heartbeat_lane.rs,record_lane.rs}`.
 - `rust/e2e-tests/tests/{test_cellular.rs,test_graph_cellular.rs,test_grpc_cellular.rs,test_cellular_multiturn.rs}`.

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aiperf.nvidia.com/contracts/native-k8s/v1/results-manifest.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "runId", "ready", "wasCancelled", "artifactRoot", "artifacts"],
+  "properties": {
+    "contractVersion": { "const": "native-k8s/v1" },
+    "runId": { "type": "string", "minLength": 1 },
+    "ready": { "const": true },
+    "wasCancelled": { "type": "boolean" },
+    "artifactRoot": { "type": "string", "minLength": 1 },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "bytes", "contentType"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "not": { "pattern": "(^/|(^|/)\\.\\.(/|$))" } },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "contentType": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

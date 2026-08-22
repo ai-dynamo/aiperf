@@ -355,10 +355,10 @@ const CONTROLLER_LISTENER_FD: i32 = 3;
 const ARTIFACT_LISTENER_FD: i32 = 4;
 const SCRATCH_HOLD_FD: i32 = 5;
 
-static CROSS_HOST_FIXTURE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static CELLULAR_PROCESS_FIXTURE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
-async fn cross_host_fixture_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    CROSS_HOST_FIXTURE_LOCK
+async fn cellular_process_fixture_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    CELLULAR_PROCESS_FIXTURE_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await
@@ -1219,7 +1219,7 @@ fn inherited_descriptor_remap_handles_source_target_collisions() {
 fn inherit_listener(_command: &mut Command, _source_fd: i32, _target_fd: i32) {}
 #[tokio::test]
 async fn test_cross_host_cellular_security_uses_dynamic_listeners_and_cleans_up() {
-    let _fixture_lock = cross_host_fixture_lock().await;
+    let _fixture_lock = cellular_process_fixture_lock().await;
     if cfg!(target_os = "macos") {
         return;
     }
@@ -1246,7 +1246,7 @@ async fn test_cross_host_cellular_security_uses_dynamic_listeners_and_cleans_up(
 
 #[tokio::test]
 async fn test_cross_host_wrong_controller_role_key_rejects_before_dataset_dispatch() {
-    let _fixture_lock = cross_host_fixture_lock().await;
+    let _fixture_lock = cellular_process_fixture_lock().await;
     let mut fixture = CrossHostCellularFixture::new().await;
     fixture.spawn_controller_with_roles(true);
     let role = fs::read_to_string(fixture.temporary.path().join("roles"))
@@ -1275,7 +1275,7 @@ async fn test_cross_host_wrong_controller_role_key_rejects_before_dataset_dispat
 
 #[tokio::test]
 async fn test_cross_host_missing_role_material_fails_before_velo_dial() {
-    let _fixture_lock = cross_host_fixture_lock().await;
+    let _fixture_lock = cellular_process_fixture_lock().await;
     let mut fixture = CrossHostCellularFixture::new().await;
     fixture.spawn_one_cell(0, &fixture.temporary.path().join("missing.security"));
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -1293,7 +1293,7 @@ async fn test_cross_host_missing_role_material_fails_before_velo_dial() {
 
 #[tokio::test]
 async fn test_cross_host_duplicate_registration_does_not_start_controller_state() {
-    let _fixture_lock = cross_host_fixture_lock().await;
+    let _fixture_lock = cellular_process_fixture_lock().await;
     let mut fixture = CrossHostCellularFixture::new().await;
     fixture.spawn_controller();
     let role = fs::read_to_string(fixture.temporary.path().join("roles"))
@@ -1327,6 +1327,7 @@ async fn test_cross_host_duplicate_registration_does_not_start_controller_state(
 
 #[tokio::test]
 async fn test_cellular_imported_session_exact_set_shipping_matches_single_cell_raw_records() {
+    let _fixture_lock = cellular_process_fixture_lock().await;
     if cfg!(target_os = "macos") {
         return;
     }
