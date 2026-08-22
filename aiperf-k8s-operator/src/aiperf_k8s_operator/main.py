@@ -77,17 +77,21 @@ async def _reference_metadata(
             "metadata": {
                 "name": metadata.name,
                 "namespace": metadata.namespace,
-                "labels": metadata.labels,
-                "annotations": metadata.annotations,
+                "labels": metadata.labels or {},
+                "annotations": metadata.annotations or {},
             },
         }
     return metadata_by_name
 
 
 @kopf.on.create(GROUP, VERSION, PLURAL)
-async def create_job(spec: dict[str, Any], **_: Any) -> dict[str, Any]:
+async def create_job(
+    spec: dict[str, Any], name: str, namespace: str, **_: Any
+) -> dict[str, Any]:
     """Validate a submitted envelope and create its immutable JobSet."""
     envelope = validate_envelope(spec["envelope"])
+    if envelope.job_id != name or envelope.namespace != namespace:
+        raise ValueError("AIPerfJob metadata does not match envelope identity")
     metadata_by_name = await _reference_metadata(envelope, client.CoreV1Api())
     status = await reconcile_job(envelope, client.CustomObjectsApi(), metadata_by_name)
     return {"status": status}

@@ -326,6 +326,28 @@ async def test_reconcile_rejects_conflicting_jobset_identity(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_name", "event_namespace"),
+    [("other-job", "bench"), ("job-1", "other-namespace")],
+)
+async def test_create_handler_rejects_cross_object_identity_before_api_access(
+    monkeypatch: pytest.MonkeyPatch, event_name: str, event_namespace: str
+) -> None:
+    def forbidden_api() -> None:
+        raise AssertionError("identity mismatch reached Kubernetes API access")
+
+    monkeypatch.setattr(operator_main.client, "CoreV1Api", forbidden_api)
+    monkeypatch.setattr(operator_main.client, "CustomObjectsApi", forbidden_api)
+
+    with pytest.raises(ValueError, match="AIPerfJob metadata does not match envelope"):
+        await operator_main.create_job(
+            {"envelope": fixture("valid-one-cell-envelope.json")},
+            name=event_name,
+            namespace=event_namespace,
+        )
+
+
+@pytest.mark.asyncio
 async def test_create_handler_loads_each_secret_reference_before_reconcile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -361,8 +383,57 @@ async def test_create_handler_loads_each_secret_reference_before_reconcile(
     monkeypatch.setattr(operator_main.client, "CustomObjectsApi", FakeJobSets)
 
     result = await operator_main.create_job(
-        {"envelope": fixture("valid-one-cell-envelope.json")}
+        {"envelope": fixture("valid-one-cell-envelope.json")},
+        name=envelope.job_id,
+        namespace=envelope.namespace,
     )
 
     assert result["status"]["runId"] == envelope.run_id
     assert set(secrets.names) == set(metadata)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("missing_field", "message"),
+    [("labels", "role label"), ("annotations", "digest annotation")],
+)
+async def test_create_handler_rejects_absent_secret_metadata_maps(
+    monkeypatch: pytest.MonkeyPatch, missing_field: str, message: str
+) -> None:
+    from kubernetes_asyncio import client as kubernetes_client
+
+    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    identities = reference_metadata(envelope)
+
+    class FakeSecrets:
+        async def read_namespaced_secret(
+            self, name: str, namespace: str
+        ) -> kubernetes_client.V1Secret:
+            metadata = identities[name]["metadata"]
+            values = {
+                "labels": metadata["labels"],
+                "annotations": metadata["annotations"],
+            }
+            values[missing_field] = None
+            return kubernetes_client.V1Secret(
+                immutable=True,
+                metadata=kubernetes_client.V1ObjectMeta(
+                    name=name,
+                    namespace=namespace,
+                    **values,
+                ),
+            )
+
+    class FakeJobSets:
+        async def create_namespaced_custom_object(self, **_: object) -> None:
+            raise AssertionError("invalid Secret metadata reached JobSet creation")
+
+    monkeypatch.setattr(operator_main.client, "CoreV1Api", FakeSecrets)
+    monkeypatch.setattr(operator_main.client, "CustomObjectsApi", FakeJobSets)
+
+    with pytest.raises(ValueError, match=message):
+        await operator_main.create_job(
+            {"envelope": fixture("valid-one-cell-envelope.json")},
+            name=envelope.job_id,
+            namespace=envelope.namespace,
+        )

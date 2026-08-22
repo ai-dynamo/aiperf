@@ -25,11 +25,11 @@ environment, cell-count, controller-address, artifact/config references, and
 bootstrap references. The CLI rejects unknown contract versions, capabilities,
 roles, and fields before a JobSet can exist.
 
-Bootstrap validation is reference-only across the Rust/operator boundary. Rust
-creates immutable role-specific Secret material and records its name, role,
-mount path, and digest in the envelope. The operator validates declared name,
-role label, immutable flag, and digest annotation only. It must not read, list,
-hash, log, or otherwise access Secret data.
+Rust creates immutable role-specific Secret material and records its name, role,
+mount path, and digest in the envelope. For each source-bound envelope reference,
+the operator performs an exact-name Secret `GET` and validates only its immutable
+identity metadata. Kubernetes returns the complete Secret because RBAC cannot
+authorize metadata-only reads; the operator does not inspect or log `.data`.
 
 ## Cluster prerequisites
 
@@ -40,11 +40,11 @@ and any requested Kueue queue. The CLI reports authorization, TLS, quota,
 namespace, and admission prerequisites before it submits a run.
 
 The chart installs operator RBAC for reconciliation and workload RBAC for
-controller completion/progress reporting. The operator has only `get` access to
-Secrets because Kubernetes cannot authorize metadata-only Secret reads; it
-extracts reference metadata without accessing `.data` and has no Secret
-list/watch/create/update/delete permission. See [RBAC and Security](rbac-security.md)
-for the complete authority split.
+controller completion/progress reporting. Its ClusterRole grants cluster-wide
+Secret `get` because one operator reconciles source-bound AIPerfJobs across
+benchmark namespaces and their Secret names are dynamic. The operator has no
+Secret list/watch/create/update/patch/delete permission. See
+[RBAC and Security](rbac-security.md) for the complete authority split.
 
 ## Results preflight
 

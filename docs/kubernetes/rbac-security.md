@@ -51,10 +51,14 @@ flowchart TB
 ```
 
 The native CLI creates role-specific immutable bootstrap Secrets before it
-submits an envelope. The operator materializes only the envelope's named
-references: it must not receive Secret `get`, `list`, `watch`, or data-reading
-permissions, and it validates only reference metadata. Benchmark pods read
-only their mounted role material and patch their own status.
+submits an envelope. The operator's ClusterRole grants cluster-wide Secret
+`get` because one operator reconciles AIPerfJobs across namespaces and their
+Secret names are dynamic. Kubernetes returns each complete Secret, including
+its data, but the operator performs only exact-name reads after binding the
+event name and namespace to the envelope; it copies only identity metadata and
+does not inspect or log `.data`. It has no Secret
+list/watch/create/update/patch/delete permission. Benchmark pods read only
+their mounted role material and patch their own status.
 
 ## Operator ClusterRole catalog
 
@@ -75,7 +79,7 @@ speculatively.
 | `apps` | `deployments` | `get, list, watch` | Preflight checks for the JobSet controller and Kueue controller | `clusterrole.yaml:45-47` |
 | `""` (core) | `serviceaccounts` | `get, list, watch, create` | Preflight verifies custom SA; sweep handler creates a per-sweep SA | `clusterrole.yaml:55-57` |
 | `""` (core) | `resourcequotas` | `get, list, watch` | Validate namespace capacity before materializing a submitted envelope | `clusterrole.yaml` |
-| `""` (core) | `secrets` | *none* | Bootstrap Secret data is Rust-created and never readable by the operator | `contracts/native-k8s/v1/` |
+| `""` (core) | `secrets` | `get` | Validate each dynamically named bootstrap Secret's immutable name, namespace, run, role, and digest identity before JobSet creation | `clusterrole.yaml:21-23` |
 | `networking.k8s.io` | `networkpolicies` | `get, list, watch` | Preflight checks whether the benchmark namespace has a restrictive NetworkPolicy | `clusterrole.yaml:63-65` |
 | `""` (core) | `configmaps` | `create, delete, get, list, patch, update, watch` | Store benchmark configuration ConfigMap consumed by every benchmark pod | `clusterrole.yaml:68-70` |
 | `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:73-75` |

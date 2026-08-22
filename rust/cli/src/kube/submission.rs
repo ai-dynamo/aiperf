@@ -304,6 +304,19 @@ fn validate_existing_bootstrap_secret(
             "existing bootstrap Secret {secret_name} identity does not match the submitted run"
         );
     }
+    let encoded = existing["data"]["bootstrap"].as_str().ok_or_else(|| {
+        anyhow::anyhow!("existing bootstrap Secret {secret_name} has no bootstrap bytes")
+    })?;
+    let bytes = BASE64.decode(encoded).map_err(|error| {
+        anyhow::anyhow!(
+            "existing bootstrap Secret {secret_name} has invalid bootstrap encoding: {error}"
+        )
+    })?;
+    if format!("{:x}", Sha256::digest(bytes)) != expected_digest {
+        anyhow::bail!(
+            "existing bootstrap Secret {secret_name} bootstrap bytes do not match the submitted digest"
+        );
+    }
     Ok(())
 }
 
@@ -535,6 +548,29 @@ mod tests {
     }
 
     #[test]
+    fn secret_conflict_rejects_forged_digest_metadata_for_wrong_bytes() {
+        let test = secret_conflict_fixture();
+        let mut forged = test.identity.clone();
+        forged["data"]["bootstrap"] = BASE64.encode(b"substituted bootstrap").into();
+        test.transport.push_response(409, Vec::new());
+        test.transport.push_response(
+            200,
+            serde_json::to_vec(&forged).expect("forged Secret JSON"),
+        );
+
+        let error = create_bootstrap_secret(
+            &test.client,
+            &test.envelope,
+            &test.material,
+            "bootstrap-controller",
+            &test.digest,
+            "controller",
+        )
+        .expect_err("matching metadata must not hide substituted Secret bytes");
+        assert!(error.to_string().contains("bootstrap bytes do not match"));
+    }
+
+    #[test]
     fn job_collection_is_namespace_scoped() {
         assert_eq!(
             jobs_path("bench"),
@@ -571,6 +607,7 @@ mod tests {
                 },
                 "annotations": {"aiperf.nvidia.com/sha256": digest},
             },
+            "data": {"bootstrap": BASE64.encode(b"controller bootstrap")},
         });
         let transport = Arc::new(ConflictTransport::default());
         let client = KubeClient::with_transport(test_credentials(), transport.clone());

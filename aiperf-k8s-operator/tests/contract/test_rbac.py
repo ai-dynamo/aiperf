@@ -17,9 +17,10 @@ RBAC = ROOT / "deploy" / "aiperf-k8s-operator"
         RBAC / "helm" / "aiperf-k8s-operator" / "templates" / "clusterrole.yaml",
     ],
 )
-def test_operator_can_only_get_named_secret_references(manifest: Path) -> None:
+def test_operator_secret_access_is_cluster_scoped_get_only(manifest: Path) -> None:
     source = manifest.read_text().replace("{{ .Release.Name }}", "aiperf-operator")
     cluster_role = yaml.safe_load(source)
+    assert cluster_role["kind"] == "ClusterRole"
     secret_rules = [
         rule
         for rule in cluster_role["rules"]
