@@ -45,6 +45,8 @@ pub struct KubeRequest {
 pub trait KubeTransport: Send + Sync {
     /// Send a bounded request and return its HTTP status.
     fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError>;
+    /// Open one bounded watch request. Callers own reconnect policy.
+    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError>;
 }
 
 /// Kubernetes API client with finite request and watch deadlines.
@@ -63,11 +65,6 @@ impl KubeClient {
 
     /// Create a client from already-resolved credentials.
     pub fn from_credentials(credentials: KubeCredentials) -> Result<Self, KubeError> {
-        if credentials.insecure_skip_tls_verify {
-            return Err(KubeError::Tls(
-                "insecure TLS requires the explicit native insecure transport, which is unavailable in native-k8s/v1".to_string(),
-            ));
-        }
         Ok(Self::with_transport(credentials, Arc::new(HyperKubeTransport)))
     }
 
@@ -97,6 +94,13 @@ impl KubeClient {
     /// Return the configured watch deadline.
     pub fn watch_deadline(&self) -> Duration { self.watch_deadline }
 
+    /// Open one bounded watch request. Reconnect policy remains at the caller.
+    pub fn watch(&self, path: &str) -> Result<u16, KubeError> {
+        self.transport.watch(&self.credentials, KubeRequest {
+            method: "GET".to_string(), path: path.to_string(), content_type: String::new(), body: Vec::new(), deadline: self.watch_deadline,
+        })
+    }
+
     /// Submit a JSON merge patch using the shared authenticated transport.
     pub fn merge_patch(&self, path: &str, body: &serde_json::Value) -> Result<u16, KubeError> {
         let body = serde_json::to_vec(body).map_err(|error| KubeError::Decode(error.to_string()))?;
@@ -112,40 +116,107 @@ impl KubeClient {
 
 struct HyperKubeTransport;
 
+#[derive(Debug)]
+struct InsecureVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![rustls::SignatureScheme::ECDSA_NISTP256_SHA256, rustls::SignatureScheme::ECDSA_NISTP384_SHA384, rustls::SignatureScheme::ED25519, rustls::SignatureScheme::RSA_PSS_SHA256, rustls::SignatureScheme::RSA_PSS_SHA384, rustls::SignatureScheme::RSA_PSS_SHA512]
+    }
+}
+
 impl KubeTransport for HyperKubeTransport {
-    fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| KubeError::Transport(error.to_string()))?;
-        runtime.block_on(async {
-            tokio::time::timeout(request.deadline, send_request(credentials, request))
-                .await
-                .map_err(|_| KubeError::Transport("Kubernetes API request timed out".to_string()))?
-        })
+    fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> { send_bounded(credentials, request) }
+    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> { send_bounded(credentials, request) }
+}
+
+fn send_bounded(credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
+        .map_err(|error| KubeError::Transport(error.to_string()))?;
+    runtime.block_on(async {
+        tokio::time::timeout(request.deadline, send_request(credentials, request)).await
+            .map_err(|_| KubeError::Transport("Kubernetes API request timed out".to_string()))?
+    })
+}
+
+fn client_auth(credentials: &KubeCredentials) -> Result<Option<(Vec<rustls::pki_types::CertificateDer<'static>>, rustls::pki_types::PrivateKeyDer<'static>)>, KubeError> {
+    match (&credentials.client_certificate_pem, &credentials.client_key_pem) {
+        (None, None) => Ok(None),
+        (Some(certificate), Some(key)) => {
+            let mut certificate = certificate.as_slice();
+            let certificates = rustls_pemfile::certs(&mut certificate).collect::<Result<Vec<_>, _>>()
+                .map_err(|error| KubeError::Tls(format!("failed to parse Kubernetes client certificate: {error}")))?;
+            if certificates.is_empty() { return Err(KubeError::Tls("Kubernetes client certificate contains no certificates".to_string())); }
+            let mut key = key.as_slice();
+            let key = rustls_pemfile::private_key(&mut key)
+                .map_err(|error| KubeError::Tls(format!("failed to parse Kubernetes client key: {error}")))?
+                .ok_or_else(|| KubeError::Tls("Kubernetes client key contains no private key".to_string()))?;
+            Ok(Some((certificates, key)))
+        }
+        _ => Err(KubeError::Authentication("Kubernetes client certificate and key must be configured together".to_string())),
     }
 }
 
 async fn send_request(credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
-    let mut ca_pem = credentials.ca_pem.as_deref().ok_or_else(|| {
-        KubeError::Tls("Kubernetes API credentials omitted a certificate authority".to_string())
-    })?;
-    let mut roots = rustls::RootCertStore::empty();
-    let certs = rustls_pemfile::certs(&mut ca_pem)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| KubeError::Tls(format!("failed to parse Kubernetes CA PEM: {error}")))?;
-    if certs.is_empty() {
-        return Err(KubeError::Tls("Kubernetes CA PEM contains no certificates".to_string()));
-    }
-    for certificate in certs {
-        roots.add(certificate).map_err(|error| KubeError::Tls(format!("failed to add Kubernetes CA: {error}")))?;
-    }
+    let client_auth = client_auth(credentials)?;
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|error| KubeError::Tls(format!("rustls provider initialization failed: {error}")))?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let config = if credentials.insecure_skip_tls_verify {
+        let builder = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|error| KubeError::Tls(format!("rustls provider initialization failed: {error}")))?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(InsecureVerifier));
+        match client_auth {
+            Some((certificates, key)) => builder.with_client_auth_cert(certificates, key)
+                .map_err(|error| KubeError::Tls(format!("invalid Kubernetes client certificate: {error}")))?,
+            None => builder.with_no_client_auth(),
+        }
+    } else {
+        let mut ca_pem = credentials.ca_pem.as_deref().ok_or_else(|| KubeError::Tls("Kubernetes API credentials omitted a certificate authority".to_string()))?;
+        let mut roots = rustls::RootCertStore::empty();
+        let certificates = rustls_pemfile::certs(&mut ca_pem).collect::<Result<Vec<_>, _>>()
+            .map_err(|error| KubeError::Tls(format!("failed to parse Kubernetes CA PEM: {error}")))?;
+        if certificates.is_empty() { return Err(KubeError::Tls("Kubernetes CA PEM contains no certificates".to_string())); }
+        for certificate in certificates { roots.add(certificate).map_err(|error| KubeError::Tls(format!("failed to add Kubernetes CA: {error}")))?; }
+        let builder = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|error| KubeError::Tls(format!("rustls provider initialization failed: {error}")))?
+            .with_root_certificates(roots);
+        match client_auth {
+            Some((certificates, key)) => builder.with_client_auth_cert(certificates, key)
+                .map_err(|error| KubeError::Tls(format!("invalid Kubernetes client certificate: {error}")))?,
+            None => builder.with_no_client_auth(),
+        }
+    };
     let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
     let tcp = tokio::net::TcpStream::connect((credentials.host.as_str(), credentials.port))
         .await

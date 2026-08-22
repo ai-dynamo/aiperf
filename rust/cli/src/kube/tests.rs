@@ -26,6 +26,13 @@ fn accepts_runnable_envelopes() {
 }
 
 #[test]
+fn refuses_role_mismatched_bootstrap() {
+    let mut envelope = fixture("valid-one-cell-envelope.json");
+    envelope["roles"][0]["bootstrap"]["role"] = Value::String("cell".to_string());
+    assert!(matches!(validate_envelope(envelope), Err(KubeError::ContractValidation(_))));
+}
+
+#[test]
 fn refuses_non_v1_and_unknown_role_or_field() {
     assert!(matches!(validate_envelope(fixture("invalid-version-envelope.json")), Err(KubeError::UnsupportedContractVersion(_))));
     assert!(matches!(validate_envelope(fixture("aggregator-envelope.json")), Err(KubeError::ContractValidation(_))));
@@ -102,4 +109,5 @@ impl KubeTransport for RecordingTransport {
         *self.request.lock().map_err(|_| KubeError::Transport("recording lock poisoned".to_string()))? = Some(request);
         Ok(200)
     }
+    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> { self.send(credentials, request) }
 }

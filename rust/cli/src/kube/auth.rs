@@ -67,13 +67,27 @@ impl KubeAuthOptions {
         })
     }
 
-    /// Resolve a kubeconfig into API credentials.
+    /// Resolve all selected kubeconfig entries into API credentials.
     pub fn resolve(&self) -> Result<KubeCredentials, KubeError> {
-        let path = self.kubeconfig_path()?;
-        let source = std::fs::read_to_string(&path)?;
-        let config: KubeConfig = serde_yaml::from_str(&source)
-            .map_err(|error| KubeError::Decode(format!("{}: {error}", path.display())))?;
-        config.resolve(self, &path)
+        let paths = self.kubeconfig_paths()?;
+        let mut config = KubeConfig::default();
+        for path in &paths {
+            let source = std::fs::read_to_string(path)?;
+            let next: KubeConfig = serde_yaml::from_str(&source)
+                .map_err(|error| KubeError::Decode(format!("{}: {error}", path.display())))?;
+            config.merge(next);
+        }
+        config.resolve(self, &paths[0])
+    }
+
+    /// Return every selected kubeconfig entry in Kubernetes precedence order.
+    pub fn kubeconfig_paths(&self) -> Result<Vec<PathBuf>, KubeError> {
+        if let Some(path) = &self.kubeconfig { return Ok(vec![path.clone()]); }
+        if let Some(paths) = std::env::var_os("KUBECONFIG") {
+            let paths: Vec<_> = std::env::split_paths(&paths).filter(|path| !path.as_os_str().is_empty()).collect();
+            if !paths.is_empty() { return Ok(paths); }
+        }
+        Ok(vec![self.kubeconfig_path()?])
     }
 }
 
@@ -100,7 +114,7 @@ pub fn in_cluster_credentials(
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct KubeConfig {
     current_context: Option<String>,
@@ -113,6 +127,13 @@ struct KubeConfig {
 }
 
 impl KubeConfig {
+    fn merge(&mut self, next: Self) {
+        if self.current_context.is_none() { self.current_context = next.current_context; }
+        for cluster in next.clusters { if !self.clusters.iter().any(|entry| entry.name == cluster.name) { self.clusters.push(cluster); } }
+        for context in next.contexts { if !self.contexts.iter().any(|entry| entry.name == context.name) { self.contexts.push(context); } }
+        for user in next.users { if !self.users.iter().any(|entry| entry.name == user.name) { self.users.push(user); } }
+    }
+
     fn resolve(&self, options: &KubeAuthOptions, path: &Path) -> Result<KubeCredentials, KubeError> {
         let context_name = options.context.as_deref().or(self.current_context.as_deref()).ok_or_else(|| {
             KubeError::Authentication("kubeconfig has no selected context".to_string())
@@ -130,7 +151,10 @@ impl KubeConfig {
             KubeError::Authentication("Kubernetes API server must use https".to_string())
         })?;
         let (host, port) = split_host_port(endpoint)?;
-        let token = resolve_token(&user.user)?;
+        if cluster.cluster.insecure_skip_tls_verify.unwrap_or(false) && !options.insecure_skip_tls_verify {
+            return Err(KubeError::Authentication("kubeconfig requests insecure TLS but --insecure-skip-tls-verify was not supplied".to_string()));
+        }
+        let token = resolve_token(&user.user, path)?;
         let client_certificate_pem = resolve_pem(
             user.user.client_certificate_data.as_deref(),
             user.user.client_certificate.as_deref(),
@@ -153,7 +177,7 @@ impl KubeConfig {
             client_certificate_pem,
             client_key_pem,
             ca_pem,
-            insecure_skip_tls_verify: options.insecure_skip_tls_verify || cluster.cluster.insecure_skip_tls_verify.unwrap_or(false),
+            insecure_skip_tls_verify: options.insecure_skip_tls_verify,
         })
     }
 }
@@ -169,11 +193,11 @@ fn split_host_port(endpoint: &str) -> Result<(String, u16), KubeError> {
     }
 }
 
-fn resolve_token(user: &User) -> Result<Option<String>, KubeError> {
-    if let Some(token) = &user.token {
-        return Ok(Some(token.clone()));
-    }
+fn resolve_token(user: &User, config_path: &Path) -> Result<Option<String>, KubeError> {
+    if let Some(token) = &user.token { return Ok(Some(token.clone())); }
     if let Some(path) = &user.token_file {
+        let candidate = Path::new(path);
+        let path = if candidate.is_absolute() { candidate.to_path_buf() } else { config_path.parent().unwrap_or(Path::new(".")).join(candidate) };
         return Ok(Some(std::fs::read_to_string(path)?.trim().to_string()));
     }
     user.exec.as_ref().map(run_exec_credential).transpose()

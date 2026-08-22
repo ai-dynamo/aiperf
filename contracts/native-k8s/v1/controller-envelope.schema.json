@@ -54,7 +54,12 @@
         "argv": { "type": "array", "items": { "type": "string" } },
         "environment": { "type": "object", "additionalProperties": { "type": "string" } },
         "bootstrap": { "$ref": "#/$defs/bootstrap" }
-      }
+      },
+      "allOf": [
+        { "if": { "properties": { "name": { "const": "controller" } } }, "then": { "properties": { "bootstrap": { "properties": { "role": { "const": "controller" } } } } } },
+        { "if": { "properties": { "name": { "const": "cell" } } }, "then": { "properties": { "bootstrap": { "properties": { "role": { "const": "cell" } } } } } },
+        { "if": { "properties": { "name": { "const": "results-sidecar" } } }, "then": { "properties": { "bootstrap": { "properties": { "role": { "const": "results-sidecar" } } } } } }
+      ]
     }
   }
 }

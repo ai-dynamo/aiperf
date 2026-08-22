@@ -107,7 +107,17 @@ pub struct ImageCapabilities {
 pub fn validate_envelope(value: Value) -> Result<ControllerEnvelope, KubeError> {
     require_supported_version(&value)?;
     validate_schema(include_str!("../../../../contracts/native-k8s/v1/controller-envelope.schema.json"), &value)?;
-    serde_json::from_value(value).map_err(|error| KubeError::Decode(error.to_string()))
+    let envelope = serde_json::from_value::<ControllerEnvelope>(value)
+        .map_err(|error| KubeError::Decode(error.to_string()))?;
+    for role in &envelope.roles {
+        if role.name != role.bootstrap.role {
+            return Err(KubeError::ContractValidation(format!(
+                "bootstrap role for {:?} does not match workload role {:?}",
+                role.bootstrap.role, role.name
+            )));
+        }
+    }
+    Ok(envelope)
 }
 
 /// Decode and validate image capabilities against an envelope's immutable digest.
