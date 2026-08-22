@@ -106,11 +106,24 @@ impl VendorWorker for NvmlWorker {
 }
 
 fn device_metadata(device: &nvml_wrapper::Device<'_>, index: u32) -> GpuMetadata {
-    let pci_bus_id = device.pci_info().ok().map(|pci| pci.bus_id);
+    metadata_from_parts(
+        index,
+        device.uuid().unwrap_or_else(|_| format!("GPU-{index}")),
+        device.name().unwrap_or_else(|_| "Unknown".to_string()),
+        device.pci_info().ok().map(|pci| pci.bus_id),
+    )
+}
+
+fn metadata_from_parts(
+    index: u32,
+    gpu_uuid: String,
+    gpu_model_name: String,
+    pci_bus_id: Option<String>,
+) -> GpuMetadata {
     GpuMetadata {
         gpu_index: index.min(i32::MAX as u32) as i32,
-        gpu_uuid: device.uuid().unwrap_or_else(|_| format!("GPU-{index}")),
-        gpu_model_name: device.name().unwrap_or_else(|_| "Unknown".to_string()),
+        gpu_uuid,
+        gpu_model_name,
         pci_bus_id,
         device: Some(format!("nvidia{index}")),
         hostname: Some("localhost".to_string()),
@@ -125,14 +138,14 @@ fn device_metrics(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> BTreeMap<St
     insert_result(
         &mut metrics,
         "nvidia_power_usage",
-        device.power_usage().map(|value| value as f64 * 1e-3),
+        device.power_usage().map(milliwatts_to_watts),
     );
     insert_result(
         &mut metrics,
         "nvidia_energy_consumption",
         device
             .total_energy_consumption()
-            .map(|value| value as f64 * 1e-9),
+            .map(millijoules_to_megajoules),
     );
     insert_result(
         &mut metrics,
@@ -147,7 +160,7 @@ fn device_metrics(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> BTreeMap<St
     insert_result(
         &mut metrics,
         "nvidia_memory_used",
-        device.memory_info().map(|value| value.used as f64 * 1e-9),
+        device.memory_info().map(|value| bytes_to_gigabytes(value.used)),
     );
     insert_result(
         &mut metrics,
@@ -189,6 +202,18 @@ fn device_metrics(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> BTreeMap<St
     metrics
 }
 
+fn milliwatts_to_watts(value: u32) -> f64 {
+    value as f64 * 1e-3
+}
+
+fn millijoules_to_megajoules(value: u64) -> f64 {
+    value as f64 * 1e-9
+}
+
+fn bytes_to_gigabytes(value: u64) -> f64 {
+    value as f64 * 1e-9
+}
+
 fn jpg_utilization(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<f64> {
     let symbol = nvml.lib().nvmlDeviceGetJpgUtilization.as_ref().ok()?;
     let mut utilization = 0_u32;
@@ -214,4 +239,39 @@ fn insert_result(
 
 fn nvml_error(error: nvml_wrapper::error::NvmlError) -> GpuTelemetryError {
     GpuTelemetryError::Worker(format!("NVML: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn origin_main_fixture_units_and_identity_use_production_normalizers() {
+        let fixture = serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../tests/data/gpu_telemetry/nvml_origin_main.json"
+        ))
+        .unwrap();
+        let fixture = fixture.as_array().unwrap().first().unwrap();
+        let metrics = &fixture["telemetry_data"];
+        assert_eq!(milliwatts_to_watts(250_000), metrics["nvidia_power_usage"]);
+        assert_eq!(
+            millijoules_to_megajoules(3_000_000),
+            metrics["nvidia_energy_consumption"]
+        );
+        assert_eq!(bytes_to_gigabytes(12_000_000_000), metrics["nvidia_memory_used"]);
+        let metadata = metadata_from_parts(
+            0,
+            "GPU-nvml".to_string(),
+            "H100".to_string(),
+            Some("0000:01:00.0".to_string()),
+        );
+        assert_eq!(metadata.gpu_uuid, fixture["gpu_uuid"].as_str().unwrap());
+        assert_eq!(
+            metadata.gpu_model_name,
+            fixture["gpu_model_name"].as_str().unwrap()
+        );
+        assert_eq!(metadata.pci_bus_id.as_deref(), fixture["pci_bus_id"].as_str());
+        assert_eq!(metadata.device.as_deref(), fixture["device"].as_str());
+        assert_eq!(metadata.hostname.as_deref(), fixture["hostname"].as_str());
+    }
 }
