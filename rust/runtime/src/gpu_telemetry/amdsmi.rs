@@ -633,6 +633,53 @@ mod tests {
     }
 
     #[test]
+    fn throttle_uses_each_supported_status_independently() {
+        let primary_unsupported = record_from_observation(
+            1,
+            AmdSmiDeviceObservation {
+                index: 0,
+                gpu_uuid: None,
+                gpu_model_name: None,
+                bdf: None,
+                power_candidates: None,
+                activity: None,
+                vram_used_mib: None,
+                temperature: None,
+                ecc_uncorrectable: None,
+                throttle_status: Some((u32::MAX, 1)),
+                energy: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            primary_unsupported.metrics.get("amd_throttle_status"),
+            Some(&1.0)
+        );
+
+        let independent_unsupported = record_from_observation(
+            1,
+            AmdSmiDeviceObservation {
+                index: 0,
+                gpu_uuid: None,
+                gpu_model_name: None,
+                bdf: None,
+                power_candidates: None,
+                activity: None,
+                vram_used_mib: None,
+                temperature: None,
+                ecc_uncorrectable: None,
+                throttle_status: Some((0, u64::MAX)),
+                energy: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            independent_unsupported.metrics.get("amd_throttle_status"),
+            Some(&0.0)
+        );
+    }
+
+    #[test]
     fn formats_bdf_from_the_documented_bit_layout() {
         let bdf = AmdsmiBdf {
             as_uint: (0x1234_u64 << 16) | (0xab_u64 << 8) | (0x1c_u64 << 3) | 0x5,
