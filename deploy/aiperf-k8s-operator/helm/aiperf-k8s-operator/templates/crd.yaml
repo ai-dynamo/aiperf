@@ -1,1 +1,0 @@
-{{- .Files.Get "../../../crds/aiperfjobs.aiperf.nvidia.com.yaml" }}
