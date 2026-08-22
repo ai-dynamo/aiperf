@@ -353,18 +353,6 @@ impl GpuTelemetrySidecar {
         })
     }
 
-    /// Build the default DCGM sidecar (the enabled-by-default path); `extra` are
-    /// custom DCGM URLs appended after the defaults (deduped). `metrics_file` is
-    /// the optional custom DCGM metrics CSV path (`--gpu-telemetry <file>.csv`).
-    pub fn default_dcgm(extra: &[String], metrics_file: Option<&str>) -> Self {
-        Self {
-            collection_interval_ns: COLLECTION_INTERVAL_NS,
-            request_timeout_ns: REACHABILITY_TIMEOUT_NS,
-            records_path: "gpu_telemetry_export.jsonl".to_string(),
-            sources: Self::dcgm_sources(extra),
-            metrics_file: metrics_file.map(str::to_string),
-        }
-    }
 
     /// The default DCGM endpoints followed by any authored `extra`, normalized
     /// to `/metrics` and deduplicated in first-seen order.
