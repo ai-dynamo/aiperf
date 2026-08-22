@@ -190,6 +190,8 @@ struct GpuTelemetryState {
     boundary: RefCell<Option<GpuPhaseBoundary>>,
     phase_start_ns: Cell<Option<i64>>,
     phase_end_ns: Cell<Option<i64>>,
+    opening_scrape_ns: Cell<Option<i64>>,
+    closing_scrape_ns: Cell<Option<i64>>,
     stop: Rc<Notify>,
     task: RefCell<Option<JoinHandle<()>>>,
     started: Cell<bool>,
@@ -215,6 +217,8 @@ impl GpuTelemetrySidecar {
                 boundary: RefCell::new(None),
                 phase_start_ns: Cell::new(None),
                 phase_end_ns: Cell::new(None),
+                opening_scrape_ns: Cell::new(None),
+                closing_scrape_ns: Cell::new(None),
                 stop: Rc::new(Notify::new()),
                 task: RefCell::new(None),
                 started: Cell::new(false),
@@ -292,9 +296,15 @@ impl GpuTelemetryState {
 
         let mut active = Vec::new();
         let mut snapshots = Vec::new();
+        let mut opening_scrape_ns = None;
         for collector in &self.candidates {
             match collector.collect_boundary().await {
                 Ok((scrape, snapshot)) => {
+                    opening_scrape_ns = Some(
+                        opening_scrape_ns.map_or(scrape.timestamp_ns, |current: i64| {
+                            current.min(scrape.timestamp_ns)
+                        }),
+                    );
                     GpuTelemetryCollector::ingest_scrape(
                         &scrape,
                         &mut self.accumulator.borrow_mut(),
@@ -311,6 +321,7 @@ impl GpuTelemetryState {
         }
         *self.active.borrow_mut() = active;
         *self.start_snapshots.borrow_mut() = snapshots;
+        self.opening_scrape_ns.set(opening_scrape_ns);
         if self.active.borrow().is_empty() {
             return Ok(());
         }
@@ -368,9 +379,15 @@ impl GpuTelemetryState {
 
         let collectors = self.active.borrow().clone();
         let mut end_snapshots = Vec::new();
+        let mut closing_scrape_ns = None;
         for collector in collectors {
             match collector.collect_boundary().await {
                 Ok((scrape, snapshot)) => {
+                    closing_scrape_ns = Some(
+                        closing_scrape_ns.map_or(scrape.timestamp_ns, |current: i64| {
+                            current.max(scrape.timestamp_ns)
+                        }),
+                    );
                     GpuTelemetryCollector::ingest_scrape(
                         &scrape,
                         &mut self.accumulator.borrow_mut(),
@@ -385,6 +402,7 @@ impl GpuTelemetryState {
             }
         }
 
+        self.closing_scrape_ns.set(closing_scrape_ns);
         self.shutdown_sources().await;
 
         let start_snapshots = self.start_snapshots.borrow();
@@ -400,7 +418,13 @@ impl GpuTelemetryState {
             combine_snapshots(&start_snapshots, start_ns),
             combine_snapshots(&end_snapshots, end_ns),
         ) {
-            let boundary = GpuPhaseBoundary::new(start, end)?;
+            let mut boundary = GpuPhaseBoundary::new(start, end)?;
+            if let (Some(opening), Some(closing)) = (
+                self.opening_scrape_ns.get(),
+                self.closing_scrape_ns.get(),
+            ) {
+                boundary = boundary.with_gauge_window(opening, closing);
+            }
             self.accumulator
                 .borrow_mut()
                 .set_phase_boundary(boundary.clone());

@@ -45,6 +45,8 @@ pub struct GpuPhaseBoundary {
     pub start: GpuBoundarySnapshot,
     /// Counter values forced at phase end.
     pub end: GpuBoundarySnapshot,
+    gauge_start_ns: i64,
+    gauge_end_ns: i64,
 }
 
 impl GpuPhaseBoundary {
@@ -59,7 +61,21 @@ impl GpuPhaseBoundary {
                 end_ns: end.timestamp_ns,
             });
         }
-        Ok(Self { start, end })
+        let gauge_start_ns = start.timestamp_ns;
+        let gauge_end_ns = end.timestamp_ns;
+        Ok(Self {
+            start,
+            end,
+            gauge_start_ns,
+            gauge_end_ns,
+        })
+    }
+
+    /// Widens gauge inclusion to successful source-boundary scrape times.
+    pub(crate) fn with_gauge_window(mut self, start_scrape_ns: i64, end_scrape_ns: i64) -> Self {
+        self.gauge_start_ns = self.gauge_start_ns.min(start_scrape_ns);
+        self.gauge_end_ns = self.gauge_end_ns.max(end_scrape_ns);
+        self
     }
 
     /// Exact authoritative phase duration in seconds.
@@ -363,8 +379,8 @@ impl GpuTelemetryAccumulator {
             .samples
             .iter()
             .filter(|sample| {
-                sample.timestamp_ns >= boundary.start.timestamp_ns
-                    && sample.timestamp_ns <= boundary.end.timestamp_ns
+                sample.timestamp_ns >= boundary.gauge_start_ns
+                    && sample.timestamp_ns <= boundary.gauge_end_ns
             })
             .filter_map(|sample| sample.metrics.get(&spec.name).copied())
             .filter(|value| value.is_finite())
