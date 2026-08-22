@@ -623,6 +623,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn jpg_utilization_is_registered_for_summary_output() {
+        assert!(
+            GpuTelemetryAccumulator::new()
+                .metric_specs
+                .contains_key("nvidia_jpg_utilization")
+        );
+    }
+
     fn custom_spec(name: &str, unit: Unit) -> RuntimeGpuMetricSpec {
         RuntimeGpuMetricSpec {
             name: name.to_string(),

@@ -45,7 +45,9 @@ impl GpuTelemetryCollector {
             .source
             .scrape(GpuScrapeMode::Boundary)
             .await?
-            .expect("boundary sources must not suppress duplicate bodies");
+            .ok_or_else(|| {
+                GpuTelemetryError::Protocol("boundary scrape returned no body".to_string())
+            })?;
         let boundary = GpuBoundarySnapshot::from_scrape(&scrape);
         Ok((scrape, boundary))
     }
@@ -100,6 +102,22 @@ mod tests {
         calls: Cell<usize>,
     }
 
+    struct BoundaryNoneSource;
+
+    #[async_trait(?Send)]
+    impl GpuTelemetrySource for BoundaryNoneSource {
+        fn endpoint_url(&self) -> &str {
+            "mock://boundary-none"
+        }
+
+        async fn scrape(
+            &self,
+            _mode: GpuScrapeMode,
+        ) -> Result<Option<GpuScrape>, GpuTelemetryError> {
+            Ok(None)
+        }
+    }
+
     #[async_trait(?Send)]
     impl GpuTelemetrySource for MockSource {
         fn endpoint_url(&self) -> &str {
@@ -138,6 +156,15 @@ mod tests {
                 records: vec![record],
             }))
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn boundary_none_is_a_typed_error_not_a_panic() {
+        let collector = GpuTelemetryCollector::new(Rc::new(BoundaryNoneSource));
+        assert!(matches!(
+            collector.collect_boundary().await,
+            Err(GpuTelemetryError::Protocol(_))
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]

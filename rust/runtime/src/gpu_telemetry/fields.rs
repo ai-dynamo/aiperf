@@ -160,6 +160,14 @@ pub const DCGM_METRICS: &[GpuMetricSpec] = &[
         kind: GpuMetricKind::Gauge,
     },
     GpuMetricSpec {
+        source_field: "DCGM_FI_DEV_JPG_UTIL",
+        name: "nvidia_jpg_utilization",
+        header: "NVIDIA JPEG Utilization",
+        unit: Unit::Percent,
+        scale: 1.0,
+        kind: GpuMetricKind::Gauge,
+    },
+    GpuMetricSpec {
         source_field: "DCGM_FI_PROF_SM_ACTIVE",
         name: "nvidia_sm_utilization",
         header: "NVIDIA SM Utilization",
@@ -286,6 +294,24 @@ pub fn metric_spec(name: &str) -> Option<&'static GpuMetricSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jpg_utilization_has_static_dcgm_registration() {
+        assert_eq!(
+            dcgm_metric_spec("DCGM_FI_DEV_JPG_UTIL")
+                .map(|spec| (spec.name, spec.unit, spec.scale, spec.kind)),
+            Some((
+                "nvidia_jpg_utilization",
+                Unit::Percent,
+                1.0,
+                GpuMetricKind::Gauge,
+            ))
+        );
+        assert_eq!(
+            metric_spec("nvidia_jpg_utilization").map(|spec| spec.unit),
+            Some(Unit::Percent)
+        );
+    }
 
     #[test]
     fn dcgm_scale_table_retains_source_units() {

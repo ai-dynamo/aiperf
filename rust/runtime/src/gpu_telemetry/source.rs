@@ -39,6 +39,8 @@ pub enum GpuTelemetryError {
     HttpStatus(u16),
     /// Successful response did not carry a text body.
     MissingBody,
+    /// A telemetry source violated the scrape contract.
+    Protocol(String),
     /// Supervised Python source violated its process or wire contract.
     Worker(String),
     /// Prometheus exposition was malformed.
@@ -69,6 +71,9 @@ impl Display for GpuTelemetryError {
             Self::MissingBody => {
                 formatter.write_str("GPU telemetry endpoint returned no text body")
             }
+            Self::Protocol(message) => {
+                write!(formatter, "GPU telemetry source violated its contract: {message}")
+            }
             Self::Worker(message) => write!(formatter, "GPU telemetry worker failed: {message}"),
             Self::Parse { line, message } => {
                 write!(formatter, "invalid DCGM metrics at line {line}: {message}")
@@ -89,7 +94,11 @@ pub trait GpuTelemetrySource {
     /// Credential-free source identifier used in reports.
     fn endpoint_url(&self) -> &str;
 
-    /// Collects one scrape, returning `None` only for a duplicate cadence body.
+    /// Collects one scrape.
+    ///
+    /// Only the DCGM HTTP source may return `None`, and only when a continuous
+    /// scrape repeats its preceding response body. Boundary scrapes and all
+    /// other source implementations must return a scrape or a typed error.
     async fn scrape(&self, mode: GpuScrapeMode) -> Result<Option<GpuScrape>, GpuTelemetryError>;
 
     /// Releases source-owned process or device resources.
