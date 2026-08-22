@@ -5,22 +5,27 @@
 use std::io::Write;
 use std::time::Duration;
 
+use base64::Engine as _;
+use hyper::header::{HeaderName, HeaderValue};
+use sha2::{Digest, Sha256};
+
 use super::auth::KubeAuthOptions;
-use super::client::{AIPERF_GROUP, AIPERF_VERSION, KubeClient};
-use super::dashboard::LoopbackForwarder;
+use super::client::{KubeClient, KubeWatch, KubeWatchPoll};
 use super::error::KubeError;
 use super::render::{OutputFormat, render};
 use super::results::{ArtifactFetcher, MAX_ARTIFACT_BYTES, download, parse_manifest};
 use super::submission::{
-    create_bootstrap_secrets, envelope_paths, jobs_path, load_envelope, material_paths,
-    submit_profile, submit_sweep, validate_sweep_material_compatibility,
+    envelope_paths, jobs_path, load_envelope, material_paths, submit_profile_transactionally,
+    validate_image_capability_document,
 };
 
 /// Maximum bounded reconnects a streaming command performs before failing.
 const MAX_WATCH_RECONNECTS: u32 = 5;
 
-/// Port the controller pod's results sidecar serves on.
-const RESULTS_SIDECAR_PORT: u16 = 9091;
+const RESULTS_API_PORT: u16 = 8080;
+const DEFAULT_OPERATOR_NAMESPACE: &str = "aiperf-system";
+const DEFAULT_OPERATOR_SERVICE: &str = "aiperf-k8s-operator";
+const RESULTS_PROXY_TOKEN_HEADER: &str = "x-aiperf-results-token";
 
 const COMMANDS: &[&str] = &[
     "init",
@@ -53,10 +58,20 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     }
     if matches!(command, "init" | "generate") {
         anyhow::bail!(
-            "native Kubernetes {command} is unavailable; use a strict native-k8s/v1 envelope with profile or sweep"
+            "native Kubernetes {command} is unavailable; use a strict native-k8s/v1 envelope with profile"
         );
     }
-    if matches!(command, "profile" | "sweep" | "validate") {
+    if matches!(command, "sweep" | "index") {
+        anyhow::bail!(
+            "native Kubernetes {command} is unavailable: the shipped operator supports only AIPerfJob"
+        );
+    }
+    if command == "dashboard" {
+        anyhow::bail!(
+            "native Kubernetes dashboard is unavailable: no dashboard upstream is implemented"
+        );
+    }
+    if matches!(command, "profile" | "validate") {
         return envelope_command(command, &args[1..]);
     }
     let client = KubeClient::from_options(&auth_options(args)?)?;
@@ -66,22 +81,13 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     match command {
         "preflight" => report_status(command, client.request("GET", "/version", "", Vec::new())?),
         "list" => report_document(command, format, &client, &collection),
-        "index" => report_document(
-            command,
-            format,
-            &client,
-            &format!(
-                "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/aiperfjobindexes"
-            ),
-        ),
         "show" | "debug" => {
             let name = required_name(args)?;
             report_document(command, format, &client, &format!("{collection}/{name}"))
         }
         "results" => download_results(&client, namespace, required_name(args)?, args),
-        "dashboard" => serve_dashboard(namespace, required_name(args)?, args),
         "logs" => stream_logs(&client, namespace, required_name(args)?),
-        "watch" | "attach" => stream_events(&client, &format!("{collection}?watch=true")),
+        "watch" | "attach" => stream_events(&client, &collection),
         _ => unreachable!(),
     }
 }
@@ -104,24 +110,29 @@ fn report_document(
     Ok(0)
 }
 
-/// Bounded artifact transfer through the API server's pod proxy subresource.
-struct ProxyFetcher<'client> {
+/// Bounded artifact transfer through the operator Service proxy after Job completion.
+struct OperatorFetcher<'client> {
     client: &'client KubeClient,
     prefix: String,
+    capability: HeaderValue,
 }
 
-impl ArtifactFetcher for ProxyFetcher<'_> {
+impl ArtifactFetcher for OperatorFetcher<'_> {
     fn fetch(&self, path: &str) -> Result<Vec<u8>, KubeError> {
-        let response = self.client.execute_with_response_limit(
+        let response = self.client.execute_with_response_limit_and_headers(
             "GET",
-            &format!("{}/files/{path}", self.prefix),
+            &format!("{}/artifacts/{}", self.prefix, encode_relative_path(path)),
             "",
             Vec::new(),
             MAX_ARTIFACT_BYTES as usize,
+            vec![(
+                HeaderName::from_static(RESULTS_PROXY_TOKEN_HEADER),
+                self.capability.clone(),
+            )],
         )?;
         if !response.is_success() {
             return Err(KubeError::Transport(format!(
-                "results sidecar returned HTTP {} for {path}",
+                "operator results API returned HTTP {} for {path}",
                 response.status
             )));
         }
@@ -136,19 +147,43 @@ fn download_results(
     name: &str,
     args: &[String],
 ) -> anyhow::Result<i32> {
+    let (operator_prefix, run_id, capability) =
+        operator_results_location(client, namespace, name, args)?;
     let prefix = format!(
-        "/api/v1/namespaces/{namespace}/pods/{name}-controller-0-0:{RESULTS_SIDECAR_PORT}/proxy/api/results"
+        "{operator_prefix}/api/results/{}/{}/{}",
+        encode_segment(namespace),
+        encode_segment(name),
+        encode_segment(&run_id)
     );
-    let response = client.execute("GET", &format!("{prefix}/manifest"), "", Vec::new())?;
+    let response = client.execute_with_response_limit_and_headers(
+        "GET",
+        &format!("{prefix}/manifest"),
+        "",
+        Vec::new(),
+        super::client::MAX_RESPONSE_BYTES,
+        vec![(
+            HeaderName::from_static(RESULTS_PROXY_TOKEN_HEADER),
+            capability.clone(),
+        )],
+    )?;
     if !response.is_success() {
-        anyhow::bail!("results manifest is unavailable: HTTP {}", response.status);
+        anyhow::bail!(
+            "results manifest is unavailable from the durable operator API: HTTP {}",
+            response.status
+        );
     }
     let manifest = parse_manifest(&response.body)?;
+    if manifest.run_id != run_id {
+        anyhow::bail!("operator results manifest does not match the AIPerfJob run");
+    }
+    let fetcher = OperatorFetcher {
+        client,
+        prefix,
+        capability,
+    };
     let destination = flag_value(args, "--output-directory")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("aiperf-results").join(&manifest.run_id));
-    std::fs::create_dir_all(&destination)?;
-    let fetcher = ProxyFetcher { client, prefix };
     let written = download(&manifest, &fetcher, &destination)?;
     println!(
         "native Kubernetes results: verified {} artifacts into {}",
@@ -158,34 +193,332 @@ fn download_results(
     Ok(0)
 }
 
-/// Bind a loopback-only dashboard listener without spawning any external tool.
-fn serve_dashboard(namespace: &str, name: &str, args: &[String]) -> anyhow::Result<i32> {
-    let port = match flag_value(args, "--port") {
-        Some(port) => port
-            .parse::<u16>()
-            .map_err(|error| anyhow::anyhow!("--port must be a TCP port: {error}"))?,
-        None => 0,
-    };
-    let forwarder = LoopbackForwarder::bind(port)?;
-    println!(
-        "native Kubernetes dashboard: {namespace}/{name} available on http://{}",
-        forwarder.local_address()?
-    );
-    forwarder.serve_until_cancelled(|| false)?;
-    Ok(0)
+fn operator_results_location(
+    client: &KubeClient,
+    namespace: &str,
+    name: &str,
+    args: &[String],
+) -> anyhow::Result<(String, String, HeaderValue)> {
+    let trusted_run_id = trusted_run_id(args)?;
+    let response = client.execute(
+        "GET",
+        &format!("{}/{name}", jobs_path(namespace)),
+        "",
+        Vec::new(),
+    )?;
+    if !response.is_success() {
+        anyhow::bail!(
+            "AIPerfJob is unavailable while resolving durable results: HTTP {}",
+            response.status
+        );
+    }
+    let resource: serde_json::Value = serde_json::from_slice(&response.body)
+        .map_err(|error| anyhow::anyhow!("AIPerfJob response is invalid: {error}"))?;
+    if resource
+        .pointer("/metadata/name")
+        .and_then(|value| value.as_str())
+        != Some(name)
+        || resource
+            .pointer("/metadata/namespace")
+            .and_then(|value| value.as_str())
+            != Some(namespace)
+    {
+        anyhow::bail!("AIPerfJob response identity does not match the requested object");
+    }
+    let run_id = resource
+        .pointer("/spec/envelope/runId")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("AIPerfJob omits its run identity"))?;
+    if run_id != trusted_run_id {
+        anyhow::bail!("AIPerfJob run identity does not match trusted --run-id");
+    }
+    let object_uid = resource
+        .pointer("/metadata/uid")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("AIPerfJob omits its object UID"))?;
+    let secret_name = results_read_secret_name(namespace, name, &trusted_run_id, object_uid);
+    let response = client.execute(
+        "GET",
+        &format!(
+            "/api/v1/namespaces/{}/secrets/{}",
+            encode_segment(namespace),
+            secret_name
+        ),
+        "",
+        Vec::new(),
+    )?;
+    if !response.is_success() {
+        anyhow::bail!(
+            "dedicated results-read Secret is unavailable: HTTP {}",
+            response.status
+        );
+    }
+    let capability = validate_results_read_secret(
+        &response.body,
+        namespace,
+        name,
+        &trusted_run_id,
+        object_uid,
+        &secret_name,
+    )?;
+    let service = operator_service_proxy(args)?;
+    Ok((service, trusted_run_id, capability))
+}
+
+fn results_read_secret_name(namespace: &str, job_id: &str, run_id: &str, uid: &str) -> String {
+    let mut hasher = Sha256::new();
+    for (index, field) in [namespace, job_id, run_id, uid].into_iter().enumerate() {
+        if index != 0 {
+            hasher.update([0]);
+        }
+        hasher.update(field.as_bytes());
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    format!("aiperf-results-read-{}", &digest[..16])
+}
+
+fn validate_results_read_secret(
+    body: &[u8],
+    namespace: &str,
+    job_id: &str,
+    run_id: &str,
+    object_uid: &str,
+    secret_name: &str,
+) -> anyhow::Result<HeaderValue> {
+    let secret: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|error| anyhow::anyhow!("results-read Secret response is invalid: {error}"))?;
+    let metadata = &secret["metadata"];
+    let labels = metadata["labels"]
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("results-read Secret has invalid labels"))?;
+    let annotations = metadata["annotations"]
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("results-read Secret has invalid annotations"))?;
+    let owners = metadata["ownerReferences"]
+        .as_array()
+        .filter(|owners| owners.len() == 1)
+        .ok_or_else(|| anyhow::anyhow!("results-read Secret has invalid ownership"))?;
+    let owner = &owners[0];
+    let owner_fields = owner
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("results-read Secret has invalid ownership"))?;
+    let envelope_digest = annotations["aiperf.nvidia.com/envelope-sha256"]
+        .as_str()
+        .filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        });
+    if secret["immutable"] != true
+        || secret["type"] != "Opaque"
+        || metadata["name"] != secret_name
+        || metadata["namespace"] != namespace
+        || labels.len() != 5
+        || annotations.len() != 1
+        || labels["aiperf.nvidia.com/namespace"] != namespace
+        || labels["aiperf.nvidia.com/job-id"] != job_id
+        || labels["aiperf.nvidia.com/run-id"] != run_id
+        || labels["aiperf.nvidia.com/object-uid"] != object_uid
+        || labels["aiperf.nvidia.com/role"] != "results-read"
+        || envelope_digest.is_none()
+        || owner["apiVersion"] != "aiperf.nvidia.com/v1alpha1"
+        || owner["kind"] != "AIPerfJob"
+        || owner["name"] != job_id
+        || owner["uid"] != object_uid
+        || owner["controller"] != true
+        || owner_fields.len() != 5
+        || secret["data"].as_object().map(|data| data.len()) != Some(1)
+    {
+        anyhow::bail!("results-read Secret does not match the requested AIPerfJob incarnation");
+    }
+    let encoded = secret["data"]["token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("results-read Secret omits its token"))?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| anyhow::anyhow!("results-read Secret token is invalid: {error}"))?;
+    if raw.len() != 32 || base64::engine::general_purpose::STANDARD.encode(&raw) != encoded {
+        anyhow::bail!("results-read Secret token is not canonical");
+    }
+    let capability = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+    HeaderValue::from_str(&capability)
+        .map_err(|error| anyhow::anyhow!("results-read capability is invalid: {error}"))
+}
+
+fn operator_service_proxy(args: &[String]) -> anyhow::Result<String> {
+    let namespace = flag_value(args, "--operator-namespace")
+        .unwrap_or_else(|| DEFAULT_OPERATOR_NAMESPACE.to_string());
+    let service = flag_value(args, "--operator-service")
+        .unwrap_or_else(|| DEFAULT_OPERATOR_SERVICE.to_string());
+    if !is_dns_label(&namespace) || !is_dns_label(&service) {
+        anyhow::bail!("operator namespace and service must be DNS labels");
+    }
+    Ok(format!(
+        "/api/v1/namespaces/{namespace}/services/{service}:{RESULTS_API_PORT}/proxy"
+    ))
+}
+
+fn is_dns_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 63
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+}
+
+fn encode_segment(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+fn encode_relative_path(value: &str) -> String {
+    value
+        .split('/')
+        .map(encode_segment)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Stream container logs byte for byte without reframing or re-encoding them.
 fn stream_logs(client: &KubeClient, namespace: &str, name: &str) -> anyhow::Result<i32> {
-    let watch = client.watch(&format!(
-        "/api/v1/namespaces/{namespace}/pods/{name}-controller-0-0/log?follow=true"
-    ))?;
     let mut stdout = std::io::stdout().lock();
-    while let Some(record) = watch.next(client.watch_deadline())? {
-        stdout.write_all(&record)?;
+    stream_logs_to(client, namespace, name, &mut stdout)
+}
+
+fn stream_logs_to(
+    client: &KubeClient,
+    namespace: &str,
+    name: &str,
+    output: &mut impl Write,
+) -> anyhow::Result<i32> {
+    let pod = controller_pod_name(client, namespace, name)?;
+    let watch = client.watch(&format!(
+        "/api/v1/namespaces/{}/pods/{}/log?container=controller&follow=true",
+        encode_segment(namespace),
+        encode_segment(&pod),
+    ))?;
+    loop {
+        match watch.poll(client.watch_deadline())? {
+            KubeWatchPoll::Record(record) => output.write_all(&record)?,
+            KubeWatchPoll::Idle => anyhow::bail!("Kubernetes log stream timed out"),
+            KubeWatchPoll::Closed => break,
+        }
     }
-    stdout.flush()?;
+    output.flush()?;
     Ok(0)
+}
+
+fn controller_pod_name(
+    client: &KubeClient,
+    namespace: &str,
+    job_id: &str,
+) -> anyhow::Result<String> {
+    let jobset = client.execute(
+        "GET",
+        &format!(
+            "/apis/jobset.x-k8s.io/v1alpha2/namespaces/{}/jobsets/{}",
+            encode_segment(namespace),
+            encode_segment(job_id),
+        ),
+        "",
+        Vec::new(),
+    )?;
+    if !jobset.is_success() {
+        anyhow::bail!(
+            "JobSet is unavailable while resolving logs: HTTP {}",
+            jobset.status
+        );
+    }
+    let jobset: serde_json::Value = serde_json::from_slice(&jobset.body)
+        .map_err(|error| anyhow::anyhow!("JobSet response is invalid: {error}"))?;
+    let jobset_uid = jobset
+        .pointer("/metadata/uid")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("JobSet response omits its object UID"))?;
+    if jobset
+        .pointer("/metadata/name")
+        .and_then(|value| value.as_str())
+        != Some(job_id)
+        || jobset
+            .pointer("/metadata/namespace")
+            .and_then(|value| value.as_str())
+            != Some(namespace)
+    {
+        anyhow::bail!("JobSet response identity does not match the requested object");
+    }
+    let selector = encode_segment(&format!(
+        "jobset.sigs.k8s.io/jobset-name={job_id},jobset.sigs.k8s.io/replicatedjob-name=controller"
+    ));
+    let pods = client.execute(
+        "GET",
+        &format!(
+            "/api/v1/namespaces/{}/pods?labelSelector={selector}",
+            encode_segment(namespace)
+        ),
+        "",
+        Vec::new(),
+    )?;
+    if !pods.is_success() {
+        anyhow::bail!("controller Pod lookup returned HTTP {}", pods.status);
+    }
+    let pods: serde_json::Value = serde_json::from_slice(&pods.body)
+        .map_err(|error| anyhow::anyhow!("controller Pod list is invalid: {error}"))?;
+    let items = pods["items"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("controller Pod list omits items"))?;
+    items
+        .iter()
+        .filter_map(|pod| controller_pod_candidate(pod, namespace, job_id, jobset_uid))
+        .max()
+        .map(|(_, _, _, name)| name)
+        .ok_or_else(|| anyhow::anyhow!("no controller Pod belongs to the current JobSet"))
+}
+
+fn controller_pod_candidate(
+    pod: &serde_json::Value,
+    namespace: &str,
+    job_id: &str,
+    jobset_uid: &str,
+) -> Option<(bool, u8, String, String)> {
+    let metadata = pod.get("metadata")?;
+    let labels = metadata.get("labels")?;
+    let name = metadata.get("name")?.as_str()?;
+    if metadata.get("namespace")?.as_str()? != namespace
+        || labels.get("jobset.sigs.k8s.io/jobset-name")?.as_str()? != job_id
+        || labels.get("jobset.sigs.k8s.io/jobset-uid")?.as_str()? != jobset_uid
+        || labels
+            .get("jobset.sigs.k8s.io/replicatedjob-name")?
+            .as_str()?
+            != "controller"
+    {
+        return None;
+    }
+    let is_live = metadata.get("deletionTimestamp").is_none();
+    let phase_rank = match pod
+        .pointer("/status/phase")
+        .and_then(|value| value.as_str())
+    {
+        Some("Running") => 3,
+        Some("Succeeded" | "Failed") => 2,
+        Some("Pending") => 1,
+        _ => 0,
+    };
+    let created = metadata
+        .get("creationTimestamp")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    Some((is_live, phase_rank, created.to_string(), name.to_string()))
 }
 
 /// Follow a watch with bounded reconnects so one closed stream is not fatal.
@@ -196,25 +529,86 @@ fn stream_events(client: &KubeClient, path: &str) -> anyhow::Result<i32> {
 
 fn stream_events_to(
     client: &KubeClient,
-    path: &str,
+    collection: &str,
     output: &mut impl Write,
 ) -> anyhow::Result<i32> {
     let mut reconnects = 0;
+    let mut resource_version = None;
     loop {
-        match watch_once(client, path, output) {
-            Ok(()) => return Ok(0),
-            Err(error) if reconnects < MAX_WATCH_RECONNECTS => {
-                reconnects += 1;
-                tracing::debug!(
-                    error = %error,
-                    reconnects,
-                    component = "kube-watch",
-                    "reopening bounded Kubernetes watch"
-                );
+        let path = watch_path(collection, resource_version.as_deref());
+        let watch = match client.watch(&path) {
+            Ok(watch) => watch,
+            Err(error) => {
+                reconnect_or_fail(&mut reconnects, anyhow::Error::new(error))?;
+                continue;
             }
-            Err(error) => return Err(error),
+        };
+        match watch_once(
+            &watch,
+            client.watch_deadline(),
+            output,
+            &mut resource_version,
+        )? {
+            WatchEnd::Closed => reconnect_or_fail(
+                &mut reconnects,
+                anyhow::anyhow!("Kubernetes watch response reached EOF"),
+            )?,
+            WatchEnd::Idle => reconnect_or_fail(
+                &mut reconnects,
+                anyhow::anyhow!("Kubernetes watch timed out without an event"),
+            )?,
+            WatchEnd::Transport(error) => {
+                reconnect_or_fail(&mut reconnects, anyhow::Error::new(error))?
+            }
+            WatchEnd::Expired => {
+                resource_version = Some(relist_resource_version(client, collection)?);
+                reconnect_or_fail(
+                    &mut reconnects,
+                    anyhow::anyhow!("Kubernetes watch resource version expired"),
+                )?;
+            }
         }
     }
+}
+
+fn reconnect_or_fail(reconnects: &mut u32, error: anyhow::Error) -> anyhow::Result<()> {
+    if *reconnects >= MAX_WATCH_RECONNECTS {
+        return Err(error);
+    }
+    *reconnects += 1;
+    tracing::debug!(
+        error = %error,
+        reconnects = *reconnects,
+        component = "kube-watch",
+        "reopening bounded Kubernetes watch"
+    );
+    Ok(())
+}
+
+fn watch_path(collection: &str, resource_version: Option<&str>) -> String {
+    let mut path = format!("{collection}?watch=true&allowWatchBookmarks=true");
+    if let Some(resource_version) = resource_version {
+        path.push_str("&resourceVersion=");
+        path.push_str(&encode_segment(resource_version));
+    }
+    path
+}
+
+fn relist_resource_version(client: &KubeClient, collection: &str) -> anyhow::Result<String> {
+    let response = client.execute("GET", collection, "", Vec::new())?;
+    if !response.is_success() {
+        anyhow::bail!(
+            "Kubernetes relist after expired watch returned HTTP {}",
+            response.status
+        );
+    }
+    let list: serde_json::Value = serde_json::from_slice(&response.body)
+        .map_err(|error| anyhow::anyhow!("Kubernetes relist response is invalid: {error}"))?;
+    list.pointer("/metadata/resourceVersion")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("Kubernetes relist omits metadata.resourceVersion"))
 }
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
@@ -237,33 +631,25 @@ fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
         .into_iter()
         .map(load_envelope)
         .collect::<anyhow::Result<Vec<_>>>()?;
+    if envelopes.len() != 1 {
+        anyhow::bail!("native Kubernetes {command} accepts exactly one --envelope");
+    }
+    let capability_path = flag_value(args, "--image-capabilities").ok_or_else(|| {
+        anyhow::anyhow!(
+            "native Kubernetes {command} requires --image-capabilities <native-k8s/v1.json>"
+        )
+    })?;
+    validate_image_capability_document(
+        std::path::Path::new(&capability_path),
+        &envelopes[0].image_digest,
+    )?;
     if command == "validate" {
-        if envelopes.len() != 1 {
-            anyhow::bail!("native Kubernetes validate accepts exactly one --envelope");
-        }
         println!("native Kubernetes validate: native-k8s/v1 envelope is valid");
         return Ok(0);
     }
-    // Bootstrap material is created before submission so no role ever starts
-    // without its Secret, and the envelope keeps only reference metadata.
     let material = material_paths(args)?;
-    if command == "sweep" {
-        validate_sweep_material_compatibility(&envelopes)?;
-    }
     let client = KubeClient::from_options(&auth_options(args)?)?;
-    for envelope in &envelopes {
-        create_bootstrap_secrets(&client, envelope, &material)?;
-    }
-    let status = match command {
-        "profile" => {
-            if envelopes.len() != 1 {
-                anyhow::bail!("native Kubernetes profile accepts exactly one --envelope");
-            }
-            submit_profile(&client, &envelopes[0])?
-        }
-        "sweep" => submit_sweep(&client, &envelopes)?,
-        _ => unreachable!(),
-    };
+    let status = submit_profile_transactionally(&client, &envelopes[0], &material)?;
     report_status(command, status)
 }
 
@@ -300,23 +686,45 @@ fn namespace(args: &[String]) -> anyhow::Result<&str> {
     let mut arguments = args.iter();
     while let Some(argument) = arguments.next() {
         if let Some(namespace) = argument.strip_prefix("--namespace=") {
-            return Ok(namespace);
+            if is_dns_label(namespace) {
+                return Ok(namespace);
+            }
+            anyhow::bail!("--namespace must be a DNS label");
         }
         if argument == "--namespace" {
-            return arguments
+            let namespace = arguments
                 .next()
                 .map(String::as_str)
-                .ok_or_else(|| anyhow::anyhow!("--namespace requires a value"));
+                .ok_or_else(|| anyhow::anyhow!("--namespace requires a value"))?;
+            if is_dns_label(namespace) {
+                return Ok(namespace);
+            }
+            anyhow::bail!("--namespace must be a DNS label");
         }
     }
     Ok("default")
 }
 
 fn required_name(args: &[String]) -> anyhow::Result<&str> {
-    args.get(1)
+    let name = args
+        .get(1)
         .map(String::as_str)
         .filter(|name| !name.starts_with('-'))
-        .ok_or_else(|| anyhow::anyhow!("command requires an AIPerfJob name"))
+        .ok_or_else(|| anyhow::anyhow!("command requires an AIPerfJob name"))?;
+    if !is_dns_label(name) {
+        anyhow::bail!("AIPerfJob name must be a DNS label");
+    }
+    Ok(name)
+}
+
+fn trusted_run_id(args: &[String]) -> anyhow::Result<String> {
+    let run_id = flag_value(args, "--run-id").ok_or_else(|| {
+        anyhow::anyhow!("durable results require the submitted envelope's trusted --run-id")
+    })?;
+    if !is_dns_label(&run_id) {
+        anyhow::bail!("--run-id must be a DNS label");
+    }
+    Ok(run_id)
 }
 
 fn report_status(command: &str, status: u16) -> anyhow::Result<i32> {
@@ -327,18 +735,66 @@ fn report_status(command: &str, status: u16) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-fn watch_once(client: &KubeClient, path: &str, output: &mut impl Write) -> anyhow::Result<()> {
-    let watch = client.watch(path)?;
+enum WatchEnd {
+    Closed,
+    Idle,
+    Expired,
+    Transport(KubeError),
+}
+
+fn watch_once(
+    watch: &KubeWatch,
+    timeout: Duration,
+    output: &mut impl Write,
+    resource_version: &mut Option<String>,
+) -> anyhow::Result<WatchEnd> {
     loop {
-        match watch.next(Duration::from_secs(30))? {
-            Some(event) => output.write_all(&event)?,
-            None => anyhow::bail!("Kubernetes watch timed out without an event"),
+        let record = match watch.poll(timeout) {
+            Ok(KubeWatchPoll::Record(record)) => record,
+            Ok(KubeWatchPoll::Idle) => return Ok(WatchEnd::Idle),
+            Ok(KubeWatchPoll::Closed) => return Ok(WatchEnd::Closed),
+            Err(error) => return Ok(WatchEnd::Transport(error)),
+        };
+        let event: serde_json::Value = serde_json::from_slice(&record)
+            .map_err(|error| anyhow::anyhow!("Kubernetes watch event is invalid: {error}"))?;
+        let event_type = event["type"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Kubernetes watch event omits its type"))?;
+        if event_type == "ERROR" {
+            let object = &event["object"];
+            let code = object["code"].as_u64();
+            if code == Some(410) {
+                return Ok(WatchEnd::Expired);
+            }
+            let reason = object["reason"].as_str().unwrap_or("Unknown");
+            let message = object["message"].as_str().unwrap_or("no message");
+            anyhow::bail!(
+                "Kubernetes watch ERROR {} {reason}: {message}",
+                code.map_or_else(|| "without code".to_string(), |value| value.to_string())
+            );
+        }
+        if !matches!(event_type, "ADDED" | "MODIFIED" | "DELETED" | "BOOKMARK") {
+            anyhow::bail!("Kubernetes watch event has unsupported type {event_type}");
+        }
+        let next_version = event
+            .pointer("/object/metadata/resourceVersion")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Kubernetes watch event omits metadata.resourceVersion")
+            })?;
+        *resource_version = Some(next_version.to_string());
+        if event_type != "BOOKMARK" {
+            output.write_all(&record)?;
         }
     }
 }
 
 fn help() -> anyhow::Result<i32> {
     println!("aiperf kube <{}>", COMMANDS.join("|"));
+    println!(
+        "aiperf kube results <job> [--run-id <id>] [--operator-service <name>] [--operator-namespace <namespace>]"
+    );
     Ok(0)
 }
 
@@ -352,12 +808,144 @@ mod tests {
     use crate::kube::auth::KubeCredentials;
     use crate::kube::client::{KubeRequest, KubeResponse, KubeTransport, MAX_RESPONSE_BYTES};
 
+    const FIXTURES: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../contracts/native-k8s/v1/fixtures/"
+    );
+
     #[test]
     fn help_lists_the_complete_native_surface() {
         let commands = COMMANDS.join(" ");
         assert_eq!(COMMANDS.len(), 15);
         assert!(commands.contains("profile"));
         assert!(commands.contains("dashboard"));
+    }
+
+    #[test]
+    fn commands_without_shipped_custom_resources_refuse_before_cluster_access() {
+        for command in ["sweep", "index"] {
+            let error = run(&[command.to_string()]).expect_err("unsupported command");
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "native Kubernetes {command} is unavailable: the shipped operator supports only AIPerfJob"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn durable_results_location_uses_only_trusted_local_service_identity() {
+        assert_eq!(
+            operator_service_proxy(&[]).expect("default service identity"),
+            "/api/v1/namespaces/aiperf-system/services/aiperf-k8s-operator:8080/proxy"
+        );
+        assert_eq!(
+            operator_service_proxy(&[
+                "--operator-service=operator".to_string(),
+                "--operator-namespace".to_string(),
+                "control-plane".to_string(),
+            ])
+            .expect("configured service identity"),
+            "/api/v1/namespaces/control-plane/services/operator:8080/proxy"
+        );
+        assert!(
+            operator_service_proxy(&["--operator-service=operator.attacker".to_string()]).is_err()
+        );
+    }
+
+    #[test]
+    fn results_read_secret_is_bound_to_the_exact_object_incarnation() {
+        let uid = "9d2f3e2a-1111-4222-8333-abcdefabcdef";
+        let name = results_read_secret_name("bench", "job-1", "run-1", uid);
+        assert_eq!(name, "aiperf-results-read-2c134b9daf5fe6db");
+        let mut secret = serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "immutable": true,
+            "type": "Opaque",
+            "metadata": {
+                "name": name,
+                "namespace": "bench",
+                "labels": {
+                    "aiperf.nvidia.com/namespace": "bench",
+                    "aiperf.nvidia.com/job-id": "job-1",
+                    "aiperf.nvidia.com/run-id": "run-1",
+                    "aiperf.nvidia.com/object-uid": uid,
+                    "aiperf.nvidia.com/role": "results-read",
+                },
+                "annotations": {"aiperf.nvidia.com/envelope-sha256": "a".repeat(64)},
+                "ownerReferences": [{
+                    "apiVersion": "aiperf.nvidia.com/v1alpha1",
+                    "kind": "AIPerfJob",
+                    "name": "job-1",
+                    "uid": uid,
+                    "controller": true,
+                }],
+            },
+            "data": {
+                "token": "cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI=",
+            },
+        });
+        let body = serde_json::to_vec(&secret).expect("Secret JSON");
+        let capability = validate_results_read_secret(&body, "bench", "job-1", "run-1", uid, &name)
+            .expect("valid Secret");
+        assert_eq!(
+            capability.as_bytes(),
+            b"cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI"
+        );
+
+        secret["metadata"]["labels"]["aiperf.nvidia.com/namespace"] = "other".into();
+        let tampered = serde_json::to_vec(&secret).expect("Secret JSON");
+        assert!(
+            validate_results_read_secret(&tampered, "bench", "job-1", "run-1", uid, &name).is_err()
+        );
+        secret["metadata"]["labels"]["aiperf.nvidia.com/namespace"] = "bench".into();
+        secret["metadata"]["ownerReferences"][0]["uid"] = "different".into();
+        let tampered = serde_json::to_vec(&secret).expect("Secret JSON");
+        assert!(
+            validate_results_read_secret(&tampered, "bench", "job-1", "run-1", uid, &name).is_err()
+        );
+    }
+
+    #[test]
+    fn dashboard_refuses_instead_of_accepting_and_dropping_clients() {
+        let error = run(&["dashboard".to_string(), "job-1".to_string()])
+            .expect_err("dashboard has no upstream implementation");
+        assert_eq!(
+            error.to_string(),
+            "native Kubernetes dashboard is unavailable: no dashboard upstream is implemented"
+        );
+    }
+
+    #[test]
+    fn validate_applies_the_selected_image_capability_document() {
+        let error = run(&[
+            "validate".to_string(),
+            "--envelope".to_string(),
+            format!("{FIXTURES}valid-one-cell-envelope.json"),
+            "--image-capabilities".to_string(),
+            format!("{FIXTURES}missing-cellular-capability.json"),
+        ])
+        .expect_err("missing cellular support must fail validation");
+        assert!(
+            error.to_string().contains("image capability document"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn profile_requires_image_capabilities_before_cluster_access() {
+        let error = run(&[
+            "profile".to_string(),
+            "--envelope".to_string(),
+            format!("{FIXTURES}valid-one-cell-envelope.json"),
+        ])
+        .expect_err("capability document is mandatory");
+        assert_eq!(
+            error.to_string(),
+            "native Kubernetes profile requires --image-capabilities <native-k8s/v1.json>"
+        );
     }
 
     #[test]
@@ -422,22 +1010,150 @@ mod tests {
             required_name(&["show".to_string(), "job-1".to_string()]).expect("name"),
             "job-1"
         );
+        assert!(required_name(&["show".to_string(), "../other".to_string()]).is_err());
+    }
+
+    #[test]
+    fn command_identity_flags_use_the_envelope_dns_syntax() {
+        assert!(
+            namespace(&[
+                "list".to_string(),
+                "--namespace=NOT_A_NAMESPACE".to_string()
+            ])
+            .is_err()
+        );
+        assert!(
+            trusted_run_id(&[
+                "results".to_string(),
+                "job-1".to_string(),
+                "--run-id=run/other".to_string()
+            ])
+            .is_err()
+        );
     }
 
     #[test]
     fn watch_reconnects_and_emits_events_after_the_first_stream_ends() {
+        let first = b"{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"10\"}}}\n".to_vec();
+        let second =
+            b"{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"11\"}}}\n".to_vec();
         let transport = Arc::new(WatchTransport {
             watches: Mutex::new(vec![
-                super::super::client::KubeWatch::events_for_test(vec![b"second\n".to_vec()]),
-                super::super::client::KubeWatch::events_for_test(vec![b"first\n".to_vec()]),
+                super::super::client::KubeWatch::events_for_test(vec![second.clone()]),
+                super::super::client::KubeWatch::events_for_test(vec![first.clone()]),
             ]),
+            watch_paths: Mutex::new(Vec::new()),
+            list_response: None,
+            requests: Mutex::new(Vec::new()),
         });
-        let client = KubeClient::with_transport(test_credentials(), transport);
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
         let mut output = Vec::new();
 
         let error = stream_events_to(&client, "/watch", &mut output).expect_err("streams end");
         assert!(error.to_string().contains("watch streams exhausted"));
-        assert_eq!(output, b"first\nsecond\n");
+        assert_eq!(output, [first, second].concat());
+        let paths = transport.watch_paths.lock().expect("watch paths");
+        assert_eq!(paths[0], "/watch?watch=true&allowWatchBookmarks=true");
+        assert_eq!(
+            paths[1],
+            "/watch?watch=true&allowWatchBookmarks=true&resourceVersion=10"
+        );
+        assert!(
+            paths[2..]
+                .iter()
+                .all(|path| path.ends_with("resourceVersion=11"))
+        );
+    }
+
+    #[test]
+    fn watch_surfaces_kubernetes_error_events_without_emitting_them() {
+        let transport = Arc::new(WatchTransport {
+            watches: Mutex::new(vec![
+                super::super::client::KubeWatch::events_for_test(vec![
+                    b"{\"type\":\"ERROR\",\"object\":{\"code\":403,\"reason\":\"Forbidden\",\"message\":\"denied\"}}\n"
+                        .to_vec(),
+                ]),
+            ]),
+            watch_paths: Mutex::new(Vec::new()),
+            list_response: None,
+            requests: Mutex::new(Vec::new()),
+        });
+        let client = KubeClient::with_transport(test_credentials(), transport);
+        let mut output = Vec::new();
+
+        let error = stream_events_to(&client, "/watch", &mut output)
+            .expect_err("Kubernetes ERROR event is terminal");
+        assert!(error.to_string().contains("Forbidden"), "{error:#}");
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn expired_watch_relists_before_reconnecting_from_a_fresh_version() {
+        let first = b"{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"resourceVersion\":\"42\"}}}\n".to_vec();
+        let after_relist =
+            b"{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"resourceVersion\":\"101\"}}}\n".to_vec();
+        let transport = Arc::new(WatchTransport {
+            watches: Mutex::new(vec![
+                super::super::client::KubeWatch::events_for_test(vec![after_relist.clone()]),
+                super::super::client::KubeWatch::events_for_test(vec![
+                    b"{\"type\":\"ERROR\",\"object\":{\"code\":410,\"reason\":\"Expired\",\"message\":\"too old\"}}\n"
+                        .to_vec(),
+                ]),
+                super::super::client::KubeWatch::events_for_test(vec![first.clone()]),
+            ]),
+            watch_paths: Mutex::new(Vec::new()),
+            list_response: Some(
+                br#"{"metadata":{"resourceVersion":"100"},"items":[]}"#.to_vec(),
+            ),
+            requests: Mutex::new(Vec::new()),
+        });
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        let mut output = Vec::new();
+
+        let error = stream_events_to(&client, "/watch", &mut output).expect_err("streams end");
+        assert!(error.to_string().contains("watch streams exhausted"));
+        assert_eq!(output, [first, after_relist].concat());
+        assert_eq!(
+            transport.requests.lock().expect("list requests")[0].path,
+            "/watch"
+        );
+        assert!(
+            transport
+                .watch_paths
+                .lock()
+                .expect("watch paths")
+                .iter()
+                .any(|path| path.ends_with("resourceVersion=100"))
+        );
+    }
+
+    #[test]
+    fn logs_discovers_the_current_controller_pod_before_following() {
+        let transport = Arc::new(PodLogTransport {
+            requests: Mutex::new(Vec::new()),
+            log_paths: Mutex::new(Vec::new()),
+        });
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        let mut output = Vec::new();
+
+        stream_logs_to(&client, "bench", "job-1", &mut output).expect("controller logs");
+
+        assert_eq!(output, b"controller output\n");
+        let requests = transport.requests.lock().expect("pod lookup requests");
+        assert!(requests[0].path.ends_with("/jobsets/job-1"));
+        assert!(requests[1].path.contains("/pods?labelSelector="));
+        assert!(
+            requests[1]
+                .path
+                .contains("jobset.sigs.k8s.io%2Fjobset-name%3Djob-1")
+        );
+        assert_eq!(
+            *transport.log_paths.lock().expect("log paths"),
+            vec![
+                "/api/v1/namespaces/bench/pods/job-1-controller-0-0-random/log?container=controller&follow=true"
+                    .to_string()
+            ]
+        );
     }
 
     #[test]
@@ -449,9 +1165,10 @@ mod tests {
             payload.len()
         )
         .into_bytes();
-        let transport = Arc::new(ResultsTransport {
+        let transport = Arc::new(CompletedResultsTransport {
             manifest,
             artifact: payload.clone(),
+            resource_run_id: "run-1",
             requests: Mutex::new(Vec::new()),
         });
         let client = KubeClient::with_transport(test_credentials(), transport.clone());
@@ -459,6 +1176,7 @@ mod tests {
         let args = vec![
             "results".to_string(),
             "job-1".to_string(),
+            "--run-id=run-1".to_string(),
             "--output-directory".to_string(),
             directory.path().display().to_string(),
         ];
@@ -475,9 +1193,98 @@ mod tests {
                 .any(|request| request.path.ends_with("/manifest"))
         );
         assert!(requests.iter().any(|request| {
-            request.path.ends_with("/files/large.bin")
+            request.path.ends_with("/artifacts/large.bin")
                 && request.response_limit == MAX_ARTIFACT_BYTES as usize
         }));
+    }
+
+    #[test]
+    fn completed_job_results_use_the_authenticated_persistent_operator_service() {
+        let payload = b"{}".to_vec();
+        let digest = format!("{:x}", Sha256::digest(&payload));
+        let manifest = format!(
+            r#"{{"contractVersion":"native-k8s/v1","runId":"run-1","ready":true,"wasCancelled":false,"artifactRoot":"/results","artifacts":[{{"path":"nested/summary.json","sha256":"{digest}","bytes":{},"contentType":"application/json"}}]}}"#,
+            payload.len()
+        )
+        .into_bytes();
+        let transport = Arc::new(CompletedResultsTransport {
+            manifest,
+            artifact: payload,
+            resource_run_id: "run-1",
+            requests: Mutex::new(Vec::new()),
+        });
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        let directory = tempfile::tempdir().expect("tempdir");
+        let args = vec![
+            "results".to_string(),
+            "job-1".to_string(),
+            "--run-id=run-1".to_string(),
+            "--output-directory".to_string(),
+            directory.path().display().to_string(),
+        ];
+
+        download_results(&client, "bench", "job-1", &args).expect("persisted results download");
+
+        assert_eq!(
+            std::fs::read(directory.path().join("nested/summary.json")).expect("artifact"),
+            b"{}"
+        );
+        let requests = transport.requests.lock().expect("requests");
+        assert!(requests.iter().any(|request| {
+            request.path == "/api/v1/namespaces/bench/secrets/aiperf-results-read-2c134b9daf5fe6db"
+        }));
+        assert!(requests.iter().any(|request| {
+            request.path
+                == "/api/v1/namespaces/aiperf-system/services/aiperf-k8s-operator:8080/proxy/api/results/bench/job-1/run-1/manifest"
+                && request.forward_headers.iter().any(|(name, value)| {
+                    name == "x-aiperf-results-token"
+                        && value.as_bytes()
+                            == b"cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI"
+                })
+        }));
+        assert!(requests.iter().any(|request| {
+            request.path
+                == "/api/v1/namespaces/aiperf-system/services/aiperf-k8s-operator:8080/proxy/api/results/bench/job-1/run-1/artifacts/nested/summary.json"
+                && request.response_limit == MAX_ARTIFACT_BYTES as usize
+                && request.forward_headers.iter().any(|(name, _)| {
+                    name == "x-aiperf-results-token"
+                })
+        }));
+        assert!(
+            !requests
+                .iter()
+                .any(|request| request.path.contains("attacker"))
+        );
+    }
+
+    #[test]
+    fn durable_results_refuse_a_mutated_resource_run_id_before_fetch() {
+        let transport = Arc::new(CompletedResultsTransport {
+            manifest: Vec::new(),
+            artifact: Vec::new(),
+            resource_run_id: "run-2",
+            requests: Mutex::new(Vec::new()),
+        });
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        let directory = tempfile::tempdir().expect("tempdir");
+        let args = vec![
+            "results".to_string(),
+            "job-1".to_string(),
+            "--run-id=run-1".to_string(),
+            "--output-directory".to_string(),
+            directory.path().display().to_string(),
+        ];
+
+        let error = download_results(&client, "bench", "job-1", &args)
+            .expect_err("mutated run identity must be refused");
+
+        assert!(error.to_string().contains("run identity"));
+        let requests = transport.requests.lock().expect("requests");
+        assert!(
+            !requests
+                .iter()
+                .any(|request| request.path.contains("/runs/"))
+        );
     }
 
     fn test_credentials() -> KubeCredentials {
@@ -493,30 +1300,50 @@ mod tests {
         }
     }
 
-    struct ResultsTransport {
+    struct CompletedResultsTransport {
         manifest: Vec<u8>,
         artifact: Vec<u8>,
+        resource_run_id: &'static str,
         requests: Mutex<Vec<KubeRequest>>,
     }
 
     struct WatchTransport {
         watches: Mutex<Vec<super::super::client::KubeWatch>>,
+        watch_paths: Mutex<Vec<String>>,
+        list_response: Option<Vec<u8>>,
+        requests: Mutex<Vec<KubeRequest>>,
+    }
+
+    struct PodLogTransport {
+        requests: Mutex<Vec<KubeRequest>>,
+        log_paths: Mutex<Vec<String>>,
     }
 
     impl KubeTransport for WatchTransport {
         fn send(
             &self,
             _credentials: &KubeCredentials,
-            _request: KubeRequest,
+            request: KubeRequest,
         ) -> Result<KubeResponse, KubeError> {
-            Err(KubeError::Transport("request not used".to_string()))
+            self.requests
+                .lock()
+                .map_err(|_| KubeError::Transport("list requests lock poisoned".to_string()))?
+                .push(request);
+            self.list_response
+                .clone()
+                .map(|body| KubeResponse { status: 200, body })
+                .ok_or_else(|| KubeError::Transport("request not used".to_string()))
         }
 
         fn watch(
             &self,
             _credentials: &KubeCredentials,
-            _request: KubeRequest,
+            request: KubeRequest,
         ) -> Result<super::super::client::KubeWatch, KubeError> {
+            self.watch_paths
+                .lock()
+                .map_err(|_| KubeError::Transport("watch paths lock poisoned".to_string()))?
+                .push(request.path);
             self.watches
                 .lock()
                 .map_err(|_| KubeError::Transport("watches lock poisoned".to_string()))?
@@ -525,30 +1352,92 @@ mod tests {
         }
     }
 
-    impl KubeTransport for ResultsTransport {
+    impl KubeTransport for PodLogTransport {
         fn send(
             &self,
             _credentials: &KubeCredentials,
             request: KubeRequest,
         ) -> Result<KubeResponse, KubeError> {
-            let response = if request.path.ends_with("/manifest") {
-                self.manifest.clone()
-            } else if request.path.ends_with("/files/large.bin") {
-                self.artifact.clone()
+            let body = if request.path.ends_with("/jobsets/job-1") {
+                br#"{"metadata":{"name":"job-1","namespace":"bench","uid":"jobset-uid"}}"#.to_vec()
+            } else if request.path.contains("/pods?labelSelector=") {
+                br#"{"items":[{"metadata":{"name":"old-guessed-name","namespace":"bench","creationTimestamp":"2026-01-01T00:00:00Z","labels":{"jobset.sigs.k8s.io/jobset-name":"job-1","jobset.sigs.k8s.io/jobset-uid":"old-uid","jobset.sigs.k8s.io/replicatedjob-name":"controller"}},"status":{"phase":"Running"}},{"metadata":{"name":"job-1-controller-0-0-random","namespace":"bench","creationTimestamp":"2026-01-02T00:00:00Z","labels":{"jobset.sigs.k8s.io/jobset-name":"job-1","jobset.sigs.k8s.io/jobset-uid":"jobset-uid","jobset.sigs.k8s.io/replicatedjob-name":"controller"}},"status":{"phase":"Running"}}]}"#
+                    .to_vec()
+            } else {
+                return Err(KubeError::Transport(format!(
+                    "unexpected pod lookup {}",
+                    request.path
+                )));
+            };
+            self.requests
+                .lock()
+                .map_err(|_| KubeError::Transport("pod requests lock poisoned".to_string()))?
+                .push(request);
+            Ok(KubeResponse { status: 200, body })
+        }
+
+        fn watch(
+            &self,
+            _credentials: &KubeCredentials,
+            request: KubeRequest,
+        ) -> Result<super::super::client::KubeWatch, KubeError> {
+            self.log_paths
+                .lock()
+                .map_err(|_| KubeError::Transport("log paths lock poisoned".to_string()))?
+                .push(request.path);
+            Ok(super::super::client::KubeWatch::events_for_test(vec![
+                b"controller output\n".to_vec(),
+            ]))
+        }
+    }
+
+    impl KubeTransport for CompletedResultsTransport {
+        fn send(
+            &self,
+            _credentials: &KubeCredentials,
+            request: KubeRequest,
+        ) -> Result<KubeResponse, KubeError> {
+            self.requests
+                .lock()
+                .map_err(|_| KubeError::Transport("requests lock poisoned".to_string()))?
+                .push(request.clone());
+            let (status, body) = if request.path.ends_with("/aiperfjobs/job-1") {
+                (
+                    200,
+                    format!(
+                        r#"{{"metadata":{{"name":"job-1","namespace":"bench","uid":"9d2f3e2a-1111-4222-8333-abcdefabcdef","annotations":{{"aiperf.nvidia.com/results-api-url":"http://evil.attacker.svc:8080"}}}},"spec":{{"envelope":{{"runId":"{}"}}}}}}"#,
+                        self.resource_run_id
+                    )
+                    .into_bytes(),
+                )
+            } else if request
+                .path
+                .ends_with("/secrets/aiperf-results-read-2c134b9daf5fe6db")
+            {
+                (
+                    200,
+                    br#"{"apiVersion":"v1","kind":"Secret","immutable":true,"type":"Opaque","metadata":{"name":"aiperf-results-read-2c134b9daf5fe6db","namespace":"bench","labels":{"aiperf.nvidia.com/namespace":"bench","aiperf.nvidia.com/job-id":"job-1","aiperf.nvidia.com/run-id":"run-1","aiperf.nvidia.com/object-uid":"9d2f3e2a-1111-4222-8333-abcdefabcdef","aiperf.nvidia.com/role":"results-read"},"annotations":{"aiperf.nvidia.com/envelope-sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ownerReferences":[{"apiVersion":"aiperf.nvidia.com/v1alpha1","kind":"AIPerfJob","name":"job-1","uid":"9d2f3e2a-1111-4222-8333-abcdefabcdef","controller":true}]},"data":{"token":"cnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnI="}}"#.to_vec(),
+                )
+            } else if request
+                .path
+                .ends_with("/api/results/bench/job-1/run-1/manifest")
+            {
+                (200, self.manifest.clone())
+            } else if request
+                .path
+                .ends_with("/api/results/bench/job-1/run-1/artifacts/nested/summary.json")
+                || request
+                    .path
+                    .ends_with("/api/results/bench/job-1/run-1/artifacts/large.bin")
+            {
+                (200, self.artifact.clone())
             } else {
                 return Err(KubeError::Transport(format!(
                     "unexpected path {}",
                     request.path
                 )));
             };
-            self.requests
-                .lock()
-                .map_err(|_| KubeError::Transport("requests lock poisoned".to_string()))?
-                .push(request);
-            Ok(KubeResponse {
-                status: 200,
-                body: response,
-            })
+            Ok(KubeResponse { status, body })
         }
 
         fn watch(

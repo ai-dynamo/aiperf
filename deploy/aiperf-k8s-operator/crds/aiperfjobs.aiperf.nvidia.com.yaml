@@ -27,10 +27,43 @@ spec:
             type: object
             additionalProperties: false
             required: [envelope]
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: AIPerfJob spec is immutable
             properties:
               envelope:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
           status:
             type: object
-            x-kubernetes-preserve-unknown-fields: true
+            additionalProperties: false
+            required: [phase, runId, jobSet]
+            properties:
+              phase:
+                type: string
+                enum: [Pending, PublishingResults, Completed, Failed]
+              resultsReady:
+                type: boolean
+              runId:
+                type: string
+                minLength: 1
+              jobSet:
+                type: string
+                minLength: 1
+              phases:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              snapshot:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            x-kubernetes-validations:
+            - rule: "!has(oldSelf.runId) || self.runId == oldSelf.runId"
+              message: status runId is immutable
+            - rule: "!has(oldSelf.jobSet) || self.jobSet == oldSelf.jobSet"
+              message: status jobSet is immutable
+            - rule: "!has(oldSelf.resultsReady) || !oldSelf.resultsReady || (has(self.resultsReady) && self.resultsReady)"
+              message: resultsReady cannot return to false
+            - rule: "(!has(self.resultsReady) || !self.resultsReady || self.phase == 'Completed') && (self.phase != 'Completed' || (has(self.resultsReady) && self.resultsReady))"
+              message: Completed and resultsReady must be published together
+            - rule: "!has(oldSelf.phase) || self.phase == oldSelf.phase || (oldSelf.phase == 'Pending' && self.phase in ['PublishingResults', 'Failed']) || (oldSelf.phase == 'PublishingResults' && self.phase in ['Completed', 'Failed'])"
+              message: status phase transition is not allowed

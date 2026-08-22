@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 import json
+from importlib import resources
 from ipaddress import IPv6Address
-from pathlib import Path
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
@@ -15,7 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CONTRACT_VERSION = "native-k8s/v1"
 _ROLES = frozenset({"controller", "cell", "results-sidecar"})
-_CONTRACT_ROOT = Path(__file__).resolve().parents[3] / "contracts" / "native-k8s" / "v1"
+_CONTRACT_PACKAGE = "aiperf_k8s_operator.contracts.v1"
+_DNS_LABEL = r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+_ARTIFACT_ROOT = r"^/results(?:/[A-Za-z0-9_-][A-Za-z0-9._-]{0,62})*$"
 
 
 def _is_valid_controller_coordinate(address: str) -> bool:
@@ -50,7 +52,8 @@ class ConfigReference(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str = Field(min_length=1)
+    name: str = Field(pattern=_DNS_LABEL)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class BootstrapReference(BaseModel):
@@ -107,12 +110,22 @@ class ControllerEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     contract_version: Literal[CONTRACT_VERSION] = Field(alias="contractVersion")
-    run_id: str = Field(alias="runId", min_length=1)
-    namespace: str = Field(min_length=1)
-    job_id: str = Field(alias="jobId", min_length=1)
+    run_id: str = Field(alias="runId", pattern=_DNS_LABEL)
+    namespace: str = Field(pattern=_DNS_LABEL)
+    job_id: str = Field(alias="jobId", pattern=_DNS_LABEL)
     image_digest: str = Field(alias="imageDigest", pattern=r"^sha256:[0-9a-f]{64}$")
+    image_reference: str = Field(
+        alias="imageReference",
+        pattern=(
+            r"^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?"
+            r"(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+"
+            r"@sha256:[0-9a-f]{64}$"
+        ),
+    )
     cells: int = Field(ge=1)
-    artifact_root: str = Field(alias="artifactRoot", min_length=1)
+    artifact_root: str = Field(
+        alias="artifactRoot", pattern=_ARTIFACT_ROOT, max_length=1024
+    )
     config_ref: ConfigReference = Field(alias="configRef")
     controller_address: str = Field(alias="controllerAddress", min_length=1)
     roles: list[RoleEnvelope]
@@ -121,6 +134,9 @@ class ControllerEnvelope(BaseModel):
     @model_validator(mode="after")
     def requires_exact_v1_roles(self) -> ControllerEnvelope:
         """Make aggregator/hierarchical roles impossible in the v1 operator."""
+        reference_digest = self.image_reference.rsplit("@", maxsplit=1)[-1]
+        if reference_digest != self.image_digest:
+            raise ValueError("imageReference digest must equal imageDigest")
         if not _is_valid_controller_coordinate(self.controller_address):
             raise ValueError(
                 "controllerAddress must be tcp://HOST:PORT or tcp://[IPv6]:PORT"
@@ -149,7 +165,11 @@ class ControllerEnvelope(BaseModel):
 
 
 def _schema(name: str) -> dict[str, Any]:
-    with (_CONTRACT_ROOT / name).open(encoding="utf-8") as source:
+    with (
+        resources.files(_CONTRACT_PACKAGE)
+        .joinpath(name)
+        .open(encoding="utf-8") as source
+    ):
         return json.load(source)
 
 

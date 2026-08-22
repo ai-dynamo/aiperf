@@ -26,6 +26,8 @@ pub struct ControllerEnvelope {
     pub job_id: String,
     /// Immutable benchmark-image digest.
     pub image_digest: String,
+    /// Pullable immutable registry reference whose digest equals `image_digest`.
+    pub image_reference: String,
     /// Number of cellular workers.
     pub cells: u32,
     /// Controller-visible artifact root.
@@ -46,6 +48,8 @@ pub struct ControllerEnvelope {
 pub struct NamedReference {
     /// Object name in the submitted namespace.
     pub name: String,
+    /// SHA-256 digest of the complete referenced ConfigMap content.
+    pub sha256: String,
 }
 
 /// A fixed workload role and its process material.
@@ -136,6 +140,26 @@ pub fn validate_envelope(value: Value) -> Result<ControllerEnvelope, KubeError> 
     )?;
     let envelope = serde_json::from_value::<ControllerEnvelope>(value)
         .map_err(|error| KubeError::Decode(error.to_string()))?;
+    let reference_digest = envelope
+        .image_reference
+        .rsplit_once('@')
+        .map(|(_, digest)| digest)
+        .unwrap_or_default();
+    if reference_digest != envelope.image_digest {
+        return Err(KubeError::ContractValidation(
+            "imageReference digest must equal imageDigest".to_string(),
+        ));
+    }
+    if !is_dns_label(&envelope.namespace)
+        || !is_dns_label(&envelope.job_id)
+        || !is_dns_label(&envelope.run_id)
+        || !is_valid_artifact_root(&envelope.artifact_root)
+    {
+        return Err(KubeError::ContractValidation(
+            "namespace, jobId, runId, or artifactRoot is not canonical native-k8s/v1 syntax"
+                .to_string(),
+        ));
+    }
     if !is_valid_controller_coordinate(&envelope.controller_address) {
         return Err(KubeError::ContractValidation(
             "controllerAddress must be tcp://HOST:PORT or tcp://[IPv6]:PORT".to_string(),
@@ -194,6 +218,47 @@ pub fn validate_envelope(value: Value) -> Result<ControllerEnvelope, KubeError> 
         }
     }
     Ok(envelope)
+}
+
+fn is_dns_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 63
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+}
+
+fn is_valid_artifact_root(value: &str) -> bool {
+    if value.len() > 1024 {
+        return false;
+    }
+    let Some(remainder) = value.strip_prefix("/results") else {
+        return false;
+    };
+    if remainder.is_empty() {
+        return true;
+    }
+    remainder.strip_prefix('/').is_some_and(|relative| {
+        !relative.is_empty()
+            && relative.split('/').all(|segment| {
+                !segment.is_empty()
+                    && segment.len() <= 63
+                    && segment.bytes().enumerate().all(|(index, byte)| {
+                        byte.is_ascii_alphanumeric()
+                            || byte == b'_'
+                            || byte == b'-'
+                            || (index > 0 && byte == b'.')
+                    })
+            })
+    })
 }
 
 fn is_valid_controller_coordinate(address: &str) -> bool {

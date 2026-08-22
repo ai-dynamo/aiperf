@@ -17,8 +17,13 @@ RBAC = ROOT / "deploy" / "aiperf-k8s-operator"
         RBAC / "helm" / "aiperf-k8s-operator" / "templates" / "clusterrole.yaml",
     ],
 )
-def test_operator_secret_access_is_cluster_scoped_get_only(manifest: Path) -> None:
+def test_operator_secret_access_is_limited_to_reconciled_capability_lifecycle(
+    manifest: Path,
+) -> None:
     source = manifest.read_text().replace("{{ .Release.Name }}", "aiperf-operator")
+    source = "\n".join(
+        line for line in source.splitlines() if not line.startswith("{{-")
+    )
     cluster_role = yaml.safe_load(source)
     assert cluster_role["kind"] == "ClusterRole"
     secret_rules = [
@@ -28,5 +33,46 @@ def test_operator_secret_access_is_cluster_scoped_get_only(manifest: Path) -> No
     ]
 
     assert secret_rules == [
-        {"apiGroups": [""], "resources": ["secrets"], "verbs": ["get"]}
+        {
+            "apiGroups": [""],
+            "resources": ["secrets"],
+            "verbs": ["create", "delete", "get"],
+        }
+    ]
+    assert cluster_role["rules"] == [
+        {
+            "apiGroups": ["aiperf.nvidia.com"],
+            "resources": ["aiperfjobs"],
+            "verbs": ["get", "list", "watch", "patch"],
+        },
+        {
+            "apiGroups": ["aiperf.nvidia.com"],
+            "resources": ["aiperfjobs/status"],
+            "verbs": ["patch"],
+        },
+        {
+            "apiGroups": ["jobset.x-k8s.io"],
+            "resources": ["jobsets"],
+            "verbs": ["create", "delete", "get", "list", "watch"],
+        },
+        {
+            "apiGroups": [""],
+            "resources": ["secrets"],
+            "verbs": ["create", "delete", "get"],
+        },
+        {
+            "apiGroups": [""],
+            "resources": ["configmaps"],
+            "verbs": ["create", "delete", "get"],
+        },
+        {
+            "apiGroups": [""],
+            "resources": ["serviceaccounts"],
+            "verbs": ["create", "delete", "get"],
+        },
+        {
+            "apiGroups": ["rbac.authorization.k8s.io"],
+            "resources": ["roles", "rolebindings"],
+            "verbs": ["create", "delete", "get"],
+        },
     ]

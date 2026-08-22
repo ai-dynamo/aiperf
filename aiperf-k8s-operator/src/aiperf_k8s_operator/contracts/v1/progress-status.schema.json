@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aiperf.nvidia.com/contracts/native-k8s/v1/progress-status.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "runId", "phase"],
+  "properties": {
+    "contractVersion": { "const": "native-k8s/v1" },
+    "runId": { "type": "string", "minLength": 1 },
+    "phase": { "type": "string", "minLength": 1 },
+    "requestsCompleted": { "type": "integer", "minimum": 0 },
+    "requestsTotal": { "type": "integer", "minimum": 0 },
+    "message": { "type": "string" }
+  }
+}

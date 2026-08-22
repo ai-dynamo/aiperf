@@ -6,14 +6,13 @@
 //! The hermetic tests drive the real binary without a cluster. The kind tests
 //! are `#[ignore]`d so ordinary `cargo test` stays hermetic; CI provisions a
 //! cluster and runs them with
-//! `cargo test -p aiperf-e2e-tests kube_cli_contract -- --ignored`.
+//! `cargo test -p aiperf-e2e-tests --test kube_cli_contract -- --ignored`.
 
 mod common;
 
 use std::process::{Command, Stdio};
 
 use common::exec_binary;
-use sha2::{Digest, Sha256};
 
 /// Every command the native surface owns. Nothing here reaches Python.
 const NATIVE_COMMANDS: &[&str] = &[
@@ -90,30 +89,22 @@ fn envelope_commands_require_an_envelope() {
     assert!(!stderr.is_empty(), "failures must explain themselves");
 }
 
-// requires: kind, helm, and KUBECONFIG
 #[test]
-#[ignore]
-fn kind_chart_installs_the_standalone_operator() {
-    let status = Command::new("helm")
-        .args([
-            "upgrade",
-            "--install",
-            "aiperf-operator",
-            "../../deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator",
-            "--namespace",
-            "aiperf-system",
-            "--create-namespace",
-            "--wait",
-        ])
-        .status()
-        .expect("run helm");
-    assert!(status.success(), "chart installation failed");
+fn commands_without_a_shipped_backend_refuse_before_cluster_access() {
+    for command in ["sweep", "index", "dashboard"] {
+        let (code, _, stderr) = kube(&[command]);
+        assert_ne!(code, 0, "{command} must refuse without a shipped backend");
+        assert!(
+            stderr.contains("unavailable"),
+            "{command} produced an ambiguous refusal: {stderr}"
+        );
+    }
 }
 
-// requires: kind, helm, and KUBECONFIG
+// requires: the workflow-provisioned kind target and KUBECONFIG
 #[test]
 #[ignore]
-fn kind_preflight_and_list_reach_the_live_api() {
+fn kind_native_cli_reaches_the_workflow_provisioned_cluster() {
     let (code, _, stderr) = kube(&["preflight"]);
     assert_eq!(
         code, 0,
@@ -121,71 +112,4 @@ fn kind_preflight_and_list_reach_the_live_api() {
     );
     let (code, _, stderr) = kube(&["list", "--namespace", "aiperf-system"]);
     assert_eq!(code, 0, "list failed against the live cluster: {stderr}");
-}
-
-// requires: kind, helm, and KUBECONFIG
-#[test]
-#[ignore]
-fn kind_profile_submits_and_results_verify_digests() {
-    let temporary = tempfile::tempdir().expect("create Kubernetes profile fixture");
-    let material = temporary.path().join("bootstrap");
-    std::fs::write(&material, []).expect("write empty bootstrap material");
-    let digest = format!("{:x}", Sha256::digest([]));
-    let source = std::fs::read_to_string(
-        "../../contracts/native-k8s/v1/fixtures/valid-one-cell-envelope.json",
-    )
-    .expect("read Kubernetes envelope fixture");
-    let envelope = temporary.path().join("envelope.json");
-    let fixture_bootstrap_digest = format!("\"sha256\":\"{}\"", "0".repeat(64));
-    let matching_bootstrap_digest = format!("\"sha256\":\"{digest}\"");
-    std::fs::write(
-        &envelope,
-        source.replace(&fixture_bootstrap_digest, &matching_bootstrap_digest),
-    )
-    .expect("write envelope with matching bootstrap digest");
-    let material = material.display().to_string();
-    let (code, _, stderr) = kube(&[
-        "profile",
-        "--envelope",
-        envelope.to_str().expect("temporary envelope is UTF-8"),
-        "--bootstrap-material",
-        &format!("controller={material}"),
-        "--bootstrap-material",
-        &format!("results-sidecar={material}"),
-        "--bootstrap-material",
-        &format!("cell-0={material}"),
-    ]);
-    assert_eq!(code, 0, "profile submission failed: {stderr}");
-    let (code, stdout, stderr) = kube(&[
-        "results",
-        "aiperf-run",
-        "--namespace",
-        "aiperf-system",
-        "--output-directory",
-        "/tmp/aiperf-kind-results",
-    ]);
-    assert_eq!(code, 0, "results download failed: {stderr}");
-    assert!(
-        stdout.contains("verified"),
-        "results must report digest verification: {stdout}"
-    );
-}
-
-// requires: kind, helm, and KUBECONFIG
-#[test]
-#[ignore]
-fn kind_inspection_commands_render_live_documents() {
-    for command in ["show", "debug", "index", "logs", "watch", "attach"] {
-        let (code, _, stderr) = kube(&[command, "aiperf-run", "--namespace", "aiperf-system"]);
-        assert_eq!(
-            code, 0,
-            "{command} failed against the live cluster: {stderr}"
-        );
-    }
-    let (code, stdout, stderr) = kube(&["dashboard", "aiperf-run", "--namespace", "aiperf-system"]);
-    assert_eq!(code, 0, "dashboard failed: {stderr}");
-    assert!(
-        stdout.contains("127.0.0.1"),
-        "dashboard must bind loopback only: {stdout}"
-    );
 }

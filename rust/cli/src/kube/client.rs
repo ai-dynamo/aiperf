@@ -9,6 +9,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::Request;
+use hyper::header::{HeaderName, HeaderValue};
 
 use super::auth::{KubeAuthOptions, KubeCredentials};
 use super::error::KubeError;
@@ -25,6 +26,8 @@ pub const AIPERF_VERSION: &str = "v1alpha1";
 pub const AIPERF_PLURAL: &str = "aiperfjobs";
 /// Largest accepted newline-delimited Kubernetes watch record.
 pub const MAX_WATCH_RECORD_BYTES: usize = 1024 * 1024;
+const WATCH_CHANNEL_CAPACITY: usize = 32;
+const RESULTS_PROXY_TOKEN_HEADER: &str = "x-aiperf-results-token";
 
 /// Maximum accepted body of one bounded Kubernetes API response.
 pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -46,6 +49,8 @@ pub struct KubeRequest {
     pub deadline: Duration,
     /// Maximum bytes the response collector may retain.
     pub response_limit: usize,
+    /// Sensitive application header forwarded through the fixed Kubernetes API connection.
+    pub forward_headers: Vec<(HeaderName, HeaderValue)>,
 }
 
 /// One bounded Kubernetes API response.
@@ -66,36 +71,104 @@ impl KubeResponse {
 
 /// Bounded stream of Kubernetes watch events. Dropping it cancels its receiver.
 pub struct KubeWatch {
-    receiver: std::sync::mpsc::Receiver<Result<Vec<u8>, KubeError>>,
+    receiver: std::sync::mpsc::Receiver<WatchMessage>,
 }
+
+/// One bounded receive outcome from a Kubernetes watch stream.
+#[derive(Debug, Eq, PartialEq)]
+pub enum KubeWatchPoll {
+    /// One complete newline-delimited response record.
+    Record(Vec<u8>),
+    /// No record arrived within the caller's local receive budget.
+    Idle,
+    /// The HTTP response reached clean EOF and can be reconnected.
+    Closed,
+}
+
+type WatchMessage = (
+    Result<Vec<u8>, KubeError>,
+    tokio::sync::OwnedSemaphorePermit,
+);
 
 impl KubeWatch {
     #[cfg(test)]
     pub(super) fn closed_for_test() -> Self {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let (sender, receiver) = std::sync::mpsc::channel::<WatchMessage>();
         drop(sender);
         Self { receiver }
     }
 
     #[cfg(test)]
     pub(crate) fn events_for_test(events: Vec<Vec<u8>>) -> Self {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(events.len().max(1));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let capacity = Arc::new(tokio::sync::Semaphore::new(events.len().max(1)));
         for event in events {
-            sender.send(Ok(event)).expect("test receiver is open");
+            let permit = Arc::clone(&capacity)
+                .try_acquire_owned()
+                .expect("test channel has one permit per event");
+            sender
+                .send((Ok(event), permit))
+                .expect("test receiver is open");
         }
         drop(sender);
         Self { receiver }
     }
 
+    /// Distinguish a record, local idle timeout, and clean response EOF.
+    pub fn poll(&self, timeout: Duration) -> Result<KubeWatchPoll, KubeError> {
+        match self.receiver.recv_timeout(timeout) {
+            Ok((event, _permit)) => event.map(KubeWatchPoll::Record),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(KubeWatchPoll::Idle),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(KubeWatchPoll::Closed),
+        }
+    }
+
     /// Wait no longer than `timeout` for the next raw watch event.
     pub fn next(&self, timeout: Duration) -> Result<Option<Vec<u8>>, KubeError> {
-        match self.receiver.recv_timeout(timeout) {
-            Ok(event) => event.map(Some),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(KubeError::Transport(
+        match self.poll(timeout)? {
+            KubeWatchPoll::Record(record) => Ok(Some(record)),
+            KubeWatchPoll::Idle => Ok(None),
+            KubeWatchPoll::Closed => Err(KubeError::Transport(
                 "Kubernetes watch stream closed".to_string(),
             )),
         }
+    }
+}
+
+struct WatchSender {
+    sender: std::sync::mpsc::Sender<WatchMessage>,
+    capacity: Arc<tokio::sync::Semaphore>,
+}
+
+impl WatchSender {
+    fn bounded(capacity: usize) -> (Self, KubeWatch) {
+        // A permit is acquired before enqueue, so the underlying channel can
+        // never retain more than `capacity` messages.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        (
+            Self {
+                sender,
+                capacity: Arc::new(tokio::sync::Semaphore::new(capacity)),
+            },
+            KubeWatch { receiver },
+        )
+    }
+
+    async fn send(&self, event: Result<Vec<u8>, KubeError>) -> Result<(), KubeError> {
+        let permit = Arc::clone(&self.capacity)
+            .acquire_owned()
+            .await
+            .map_err(|_| KubeError::Transport("Kubernetes watch queue closed".to_string()))?;
+        self.sender
+            .send((event, permit))
+            .map_err(|_| KubeError::Transport("Kubernetes watch receiver closed".to_string()))
+    }
+
+    fn try_send(&self, event: Result<Vec<u8>, KubeError>) {
+        let Ok(permit) = Arc::clone(&self.capacity).try_acquire_owned() else {
+            return;
+        };
+        let _ = self.sender.send((event, permit));
     }
 }
 
@@ -121,6 +194,16 @@ pub struct KubeClient {
     transport: Arc<dyn KubeTransport>,
     request_deadline: Duration,
     watch_deadline: Duration,
+}
+
+impl KubeCredentials {
+    fn http_authority(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
 }
 
 impl KubeClient {
@@ -184,6 +267,7 @@ impl KubeClient {
                 body: Vec::new(),
                 deadline: self.watch_deadline,
                 response_limit: MAX_RESPONSE_BYTES,
+                forward_headers: Vec::new(),
             },
         )
     }
@@ -219,10 +303,38 @@ impl KubeClient {
         body: Vec<u8>,
         response_limit: usize,
     ) -> Result<KubeResponse, KubeError> {
+        self.execute_with_response_limit_and_headers(
+            method,
+            path,
+            content_type,
+            body,
+            response_limit,
+            Vec::new(),
+        )
+    }
+
+    /// Submit a bounded request with the dedicated results capability header.
+    pub fn execute_with_response_limit_and_headers(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+        response_limit: usize,
+        mut forward_headers: Vec<(HeaderName, HeaderValue)>,
+    ) -> Result<KubeResponse, KubeError> {
         if response_limit == 0 {
             return Err(KubeError::Transport(
                 "Kubernetes response limit must be positive".to_string(),
             ));
+        }
+        for (name, value) in &mut forward_headers {
+            if name.as_str() != RESULTS_PROXY_TOKEN_HEADER {
+                return Err(KubeError::Transport(format!(
+                    "forwarded header {name} is reserved or unsupported"
+                )));
+            }
+            value.set_sensitive(true);
         }
         self.transport.send(
             &self.credentials,
@@ -233,6 +345,7 @@ impl KubeClient {
                 body,
                 deadline: self.request_deadline,
                 response_limit,
+                forward_headers,
             },
         )
     }
@@ -246,6 +359,19 @@ impl KubeClient {
 }
 
 struct HyperKubeTransport;
+
+async fn run_watch_until_deadline<F>(deadline: Duration, sender: &WatchSender, stream: F)
+where
+    F: std::future::Future<Output = Result<(), KubeError>>,
+{
+    let result = tokio::time::timeout(deadline, stream)
+        .await
+        .map_err(|_| KubeError::Transport("Kubernetes watch timed out".to_string()))
+        .and_then(std::convert::identity);
+    if let Err(error) = result {
+        let _ = sender.send(Err(error)).await;
+    }
+}
 
 #[derive(Debug)]
 struct InsecureVerifier;
@@ -307,32 +433,25 @@ impl KubeTransport for HyperKubeTransport {
         request: KubeRequest,
     ) -> Result<KubeWatch, KubeError> {
         let credentials = credentials.clone();
-        let (sender, receiver) = std::sync::mpsc::sync_channel(32);
+        let (sender, watch) = WatchSender::bounded(WATCH_CHANNEL_CAPACITY);
         std::thread::Builder::new()
             .name("aiperf-k8s-watch".to_string())
             .spawn(move || {
-                let result = tokio::runtime::Builder::new_current_thread()
+                let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .map_err(|error| KubeError::Transport(error.to_string()))
-                    .and_then(|runtime| {
-                        runtime.block_on(async {
-                            tokio::time::timeout(
-                                request.deadline,
-                                stream_watch(&credentials, request, &sender),
-                            )
-                            .await
-                            .map_err(|_| {
-                                KubeError::Transport("Kubernetes watch timed out".to_string())
-                            })?
-                        })
-                    });
-                if let Err(error) = result {
-                    let _ = sender.try_send(Err(error));
+                    .map_err(|error| KubeError::Transport(error.to_string()));
+                match runtime {
+                    Ok(runtime) => runtime.block_on(run_watch_until_deadline(
+                        request.deadline,
+                        &sender,
+                        stream_watch(&credentials, request, &sender),
+                    )),
+                    Err(error) => sender.try_send(Err(error)),
                 }
             })
             .map_err(KubeError::Io)?;
-        Ok(KubeWatch { receiver })
+        Ok(watch)
     }
 }
 
@@ -404,8 +523,7 @@ async fn send_request(
     let status = response.status().as_u16();
     // Bodies are read frame by frame so an unbounded API response cannot exhaust memory.
     let mut body = Vec::new();
-    while let Some(frame) = response.body_mut().frame().await {
-        let frame = frame.map_err(|error| KubeError::Transport(error.to_string()))?;
+    while let Some(frame) = response.next_frame().await? {
         if let Ok(data) = frame.into_data() {
             if body.len() + data.len() > response_limit {
                 return Err(KubeError::Transport(format!(
@@ -422,7 +540,7 @@ async fn send_request(
 async fn stream_watch(
     credentials: &KubeCredentials,
     request: KubeRequest,
-    sender: &std::sync::mpsc::SyncSender<Result<Vec<u8>, KubeError>>,
+    sender: &WatchSender,
 ) -> Result<(), KubeError> {
     let mut response = open_response(credentials, request).await?;
     if !response.status().is_success() {
@@ -432,8 +550,7 @@ async fn stream_watch(
         )));
     }
     let mut pending = Vec::new();
-    while let Some(frame) = response.body_mut().frame().await {
-        let frame = frame.map_err(|error| KubeError::Transport(error.to_string()))?;
+    while let Some(frame) = response.next_frame().await? {
         if let Ok(data) = frame.into_data() {
             pending.extend_from_slice(&data);
             if pending.len() > MAX_WATCH_RECORD_BYTES {
@@ -443,24 +560,83 @@ async fn stream_watch(
             }
             while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                 let record: Vec<_> = pending.drain(..=newline).collect();
-                sender.send(Ok(record)).map_err(|_| {
-                    KubeError::Transport("Kubernetes watch receiver closed".to_string())
-                })?;
+                sender.send(Ok(record)).await?;
             }
         }
     }
     if !pending.is_empty() {
-        sender
-            .send(Ok(pending))
-            .map_err(|_| KubeError::Transport("Kubernetes watch receiver closed".to_string()))?;
+        sender.send(Ok(pending)).await?;
     }
     Ok(())
+}
+
+#[derive(Debug)]
+enum ResponseProgress {
+    ConnectionClosed,
+    Frame(Option<hyper::body::Frame<Bytes>>),
+}
+
+async fn next_response_progress<F>(
+    connection: &mut tokio::task::JoinHandle<Result<(), KubeError>>,
+    frame: F,
+) -> Result<ResponseProgress, KubeError>
+where
+    F: std::future::Future<Output = Option<Result<hyper::body::Frame<Bytes>, hyper::Error>>>,
+{
+    tokio::select! {
+        biased;
+        result = connection => match result {
+            Ok(Ok(())) => Ok(ResponseProgress::ConnectionClosed),
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(KubeError::Transport(format!(
+                "Kubernetes HTTP connection monitor closed: {error}"
+            ))),
+        },
+        frame = frame => frame
+            .transpose()
+            .map(ResponseProgress::Frame)
+            .map_err(|error| KubeError::Transport(error.to_string())),
+    }
+}
+
+struct OpenResponse {
+    response: hyper::Response<hyper::body::Incoming>,
+    connection: Option<tokio::task::JoinHandle<Result<(), KubeError>>>,
+}
+
+impl OpenResponse {
+    fn status(&self) -> hyper::StatusCode {
+        self.response.status()
+    }
+
+    async fn next_frame(&mut self) -> Result<Option<hyper::body::Frame<Bytes>>, KubeError> {
+        loop {
+            let progress = match self.connection.as_mut() {
+                Some(connection) => {
+                    next_response_progress(connection, self.response.body_mut().frame()).await?
+                }
+                None => {
+                    return self
+                        .response
+                        .body_mut()
+                        .frame()
+                        .await
+                        .transpose()
+                        .map_err(|error| KubeError::Transport(error.to_string()));
+                }
+            };
+            match progress {
+                ResponseProgress::ConnectionClosed => self.connection = None,
+                ResponseProgress::Frame(frame) => return Ok(frame),
+            }
+        }
+    }
 }
 
 async fn open_response(
     credentials: &KubeCredentials,
     request: KubeRequest,
-) -> Result<hyper::Response<hyper::body::Incoming>, KubeError> {
+) -> Result<OpenResponse, KubeError> {
     let client_auth = client_auth(credentials)?;
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let config =
@@ -531,24 +707,208 @@ async fn open_response(
         hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls))
             .await
             .map_err(|error| KubeError::Transport(error.to_string()))?;
-    tokio::spawn(async move {
-        let _ = connection.await;
+    let connection = tokio::spawn(async move {
+        connection.await.map_err(|error| {
+            KubeError::Transport(format!("Kubernetes HTTP connection failed: {error}"))
+        })
     });
     let mut builder = Request::builder()
         .method(request.method.as_str())
         .uri(request.path)
-        .header("host", format!("{}:{}", credentials.host, credentials.port))
+        .header("host", credentials.http_authority())
         .header("content-type", request.content_type)
         .header("accept", "application/json");
     if let Some(token) = &credentials.token {
         builder = builder.header("authorization", format!("Bearer {token}"));
     }
-    sender
+    for (name, value) in request.forward_headers {
+        builder = builder.header(name, value);
+    }
+    let response = sender
         .send_request(
             builder
                 .body(Full::<Bytes>::new(Bytes::from(request.body)))
                 .map_err(|error| KubeError::Transport(error.to_string()))?,
         )
         .await
-        .map_err(|error| KubeError::Transport(error.to_string()))
+        .map_err(|error| KubeError::Transport(error.to_string()))?;
+    Ok(OpenResponse {
+        response,
+        connection: Some(connection),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+    use std::thread::sleep;
+
+    use hyper::body::Frame;
+
+    use super::*;
+
+    #[test]
+    fn http_authority_brackets_only_ipv6_hosts() {
+        let mut credentials = KubeCredentials {
+            host: "::1".to_string(),
+            port: 6443,
+            server_name: "::1".to_string(),
+            token: None,
+            client_certificate_pem: None,
+            client_key_pem: None,
+            ca_pem: None,
+            insecure_skip_tls_verify: true,
+        };
+
+        assert_eq!(credentials.http_authority(), "[::1]:6443");
+        credentials.host = "127.0.0.1".to_string();
+        assert_eq!(credentials.http_authority(), "127.0.0.1:6443");
+        credentials.host = "kubernetes.default.svc".to_string();
+        assert_eq!(credentials.http_authority(), "kubernetes.default.svc:6443");
+    }
+
+    #[test]
+    fn forwarded_result_header_is_sensitive_and_cannot_replace_kubernetes_authorization() {
+        struct CaptureTransport(Mutex<Option<KubeRequest>>);
+        impl KubeTransport for CaptureTransport {
+            fn send(
+                &self,
+                _credentials: &KubeCredentials,
+                request: KubeRequest,
+            ) -> Result<KubeResponse, KubeError> {
+                *self.0.lock().expect("capture lock") = Some(request);
+                Ok(KubeResponse {
+                    status: 200,
+                    body: Vec::new(),
+                })
+            }
+
+            fn watch(
+                &self,
+                _credentials: &KubeCredentials,
+                _request: KubeRequest,
+            ) -> Result<KubeWatch, KubeError> {
+                Err(KubeError::Transport("watch not used".to_string()))
+            }
+        }
+
+        let transport = Arc::new(CaptureTransport(Mutex::new(None)));
+        let client = KubeClient::with_transport(
+            KubeCredentials {
+                host: "127.0.0.1".to_string(),
+                port: 6443,
+                server_name: "localhost".to_string(),
+                token: Some("kubernetes-token".to_string()),
+                client_certificate_pem: None,
+                client_key_pem: None,
+                ca_pem: None,
+                insecure_skip_tls_verify: true,
+            },
+            transport.clone(),
+        );
+        let header = (
+            hyper::header::HeaderName::from_static("x-aiperf-results-token"),
+            hyper::header::HeaderValue::from_static("results-capability"),
+        );
+
+        client
+            .execute_with_response_limit_and_headers(
+                "GET",
+                "/service/proxy/api/results",
+                "",
+                Vec::new(),
+                1,
+                vec![header],
+            )
+            .expect("request");
+        let request = transport
+            .0
+            .lock()
+            .expect("capture lock")
+            .take()
+            .expect("captured request");
+        assert_eq!(request.forward_headers.len(), 1);
+        assert!(request.forward_headers[0].1.is_sensitive());
+
+        let error = client
+            .execute_with_response_limit_and_headers(
+                "GET",
+                "/service/proxy/api/results",
+                "",
+                Vec::new(),
+                1,
+                vec![(
+                    hyper::header::AUTHORIZATION,
+                    hyper::header::HeaderValue::from_static("Bearer attacker"),
+                )],
+            )
+            .expect_err("forwarded headers cannot replace Kubernetes authentication");
+        assert!(error.to_string().contains("reserved"));
+    }
+
+    #[test]
+    fn full_watch_channel_does_not_block_the_watch_deadline() {
+        let (sender, watch) = WatchSender::bounded(WATCH_CHANNEL_CAPACITY);
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let producer = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build test runtime");
+            runtime.block_on(run_watch_until_deadline(
+                Duration::from_millis(50),
+                &sender,
+                async {
+                    started_sender.send(()).expect("test remains active");
+                    for index in 0..WATCH_CHANNEL_CAPACITY * 2 {
+                        sender.send(Ok(index.to_string().into_bytes())).await?;
+                    }
+                    std::future::pending().await
+                },
+            ));
+        });
+
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("watch producer starts");
+        sleep(Duration::from_millis(100));
+        for expected in 0..WATCH_CHANNEL_CAPACITY {
+            let record = watch
+                .next(Duration::from_secs(1))
+                .expect("buffered watch record")
+                .expect("record is available");
+            assert_eq!(record, expected.to_string().as_bytes());
+            if expected == 0 {
+                sleep(Duration::from_millis(50));
+            }
+        }
+        let error = watch
+            .next(Duration::from_secs(1))
+            .expect_err("deadline must precede records that did not fit the bounded channel");
+        assert!(error.to_string().contains("watch timed out"), "{error}");
+        producer.join().expect("watch producer exits");
+    }
+
+    #[test]
+    fn terminal_connection_error_reaches_the_response_reader() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime");
+        let error = runtime
+            .block_on(async {
+                let mut connection = tokio::spawn(async {
+                    Err(KubeError::Transport(
+                        "terminal connection failure".to_string(),
+                    ))
+                });
+                next_response_progress(
+                    &mut connection,
+                    std::future::pending::<Option<Result<Frame<Bytes>, hyper::Error>>>(),
+                )
+                .await
+            })
+            .expect_err("terminal connection error must interrupt a pending body");
+        assert!(error.to_string().contains("terminal connection failure"));
+    }
 }

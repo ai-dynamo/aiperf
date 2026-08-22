@@ -3,11 +3,21 @@
 
 //! Ready-manifest-only result downloads with bounded SHA-256 verification.
 //!
-//! Downloads consume the producer manifest served by `aiperf results-sidecar`.
+//! Downloads consume the authenticated durable manifest served by the operator.
 //! An artifact is written only after its bytes match the manifest length and
 //! digest, so a truncated or substituted transfer never lands on disk.
 
 use std::collections::HashSet;
+#[cfg(unix)]
+use std::ffi::{CString, OsStr};
+#[cfg(unix)]
+use std::fs::File;
+#[cfg(unix)]
+use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
@@ -19,7 +29,7 @@ use super::error::KubeError;
 /// Largest accepted single artifact transfer.
 pub const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Producer manifest published by the controller pod's results sidecar.
+/// Producer manifest durably published through the operator API.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResultsManifest {
@@ -117,6 +127,15 @@ pub fn download(
     fetcher: &dyn ArtifactFetcher,
     destination: &Path,
 ) -> Result<Vec<PathBuf>, KubeError> {
+    #[cfg(not(unix))]
+    {
+        let _ = (manifest, fetcher, destination);
+        return Err(KubeError::ContractValidation(
+            "secure result downloads require POSIX no-follow descriptors".to_string(),
+        ));
+    }
+    #[cfg(unix)]
+    let root = open_or_create_directory_path(destination)?;
     let mut written = Vec::with_capacity(manifest.artifacts.len());
     for artifact in &manifest.artifacts {
         let bytes = fetcher.fetch(&artifact.path)?;
@@ -124,14 +143,176 @@ pub fn download(
         let relative = safe_relative(&artifact.path).ok_or_else(|| {
             KubeError::ContractValidation(format!("unsafe artifact path {}", artifact.path))
         })?;
-        let target = destination.join(relative);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&target, &bytes)?;
+        #[cfg(unix)]
+        write_beneath(&root, &relative, &bytes)?;
+        let target = destination.join(&relative);
         written.push(target);
     }
     Ok(written)
+}
+
+#[cfg(unix)]
+fn component_name(name: &OsStr) -> std::io::Result<CString> {
+    CString::new(name.as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "result path component contains NUL",
+        )
+    })
+}
+
+#[cfg(unix)]
+fn open_directory_at(parent: &File, name: &OsStr, create: bool) -> std::io::Result<File> {
+    let name = component_name(name)?;
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+    let mut descriptor = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
+    if descriptor < 0
+        && create
+        && std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound
+    {
+        if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(error);
+            }
+        } else {
+            parent.sync_all()?;
+        }
+        descriptor = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
+    }
+    if descriptor < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let directory = unsafe { File::from_raw_fd(descriptor) };
+    if !directory.metadata()?.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "result path component is not a directory",
+        ));
+    }
+    directory.sync_all()?;
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn open_or_create_directory_path(path: &Path) -> std::io::Result<File> {
+    let mut directory = File::open(if path.is_absolute() {
+        Path::new("/")
+    } else {
+        Path::new(".")
+    })?;
+    for component in path.components() {
+        match component {
+            Component::RootDir | Component::CurDir => continue,
+            Component::Normal(name) => directory = open_directory_at(&directory, name, true)?,
+            Component::ParentDir | Component::Prefix(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "result destination is not canonical",
+                ));
+            }
+        }
+    }
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn open_regular_at(parent: &File, name: &OsStr) -> std::io::Result<File> {
+    let name = component_name(name)?;
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        )
+    };
+    if descriptor < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let file = unsafe { File::from_raw_fd(descriptor) };
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "result destination is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn write_beneath(root: &File, relative: &Path, body: &[u8]) -> std::io::Result<()> {
+    let mut components = relative.components().peekable();
+    let mut directory = root.try_clone()?;
+    let leaf = loop {
+        let Some(component) = components.next() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "result artifact path is empty",
+            ));
+        };
+        let Component::Normal(name) = component else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "result artifact path is not canonical",
+            ));
+        };
+        if components.peek().is_none() {
+            break name;
+        }
+        directory = open_directory_at(&directory, name, true)?;
+    };
+    let temporary = format!(".aiperf-download-{}", uuid::Uuid::new_v4());
+    let temporary_name = component_name(OsStr::new(&temporary))?;
+    let descriptor = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            temporary_name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            0o600,
+        )
+    };
+    if descriptor < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut temporary_file = unsafe { File::from_raw_fd(descriptor) };
+    let result = (|| {
+        temporary_file.write_all(body)?;
+        temporary_file.sync_all()?;
+        let leaf_name = component_name(leaf)?;
+        if unsafe {
+            libc::linkat(
+                directory.as_raw_fd(),
+                temporary_name.as_ptr(),
+                directory.as_raw_fd(),
+                leaf_name.as_ptr(),
+                0,
+            )
+        } != 0
+        {
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(error);
+            }
+            let mut existing = open_regular_at(&directory, leaf)?;
+            let mut existing_bytes = Vec::new();
+            std::io::Read::by_ref(&mut existing)
+                .take(MAX_ARTIFACT_BYTES + 1)
+                .read_to_end(&mut existing_bytes)?;
+            if existing_bytes != body {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "result destination already contains different bytes",
+                ));
+            }
+        }
+        directory.sync_all()
+    })();
+    let unlink_result =
+        unsafe { libc::unlinkat(directory.as_raw_fd(), temporary_name.as_ptr(), 0) };
+    if unlink_result == 0 {
+        directory.sync_all()?;
+    }
+    result
 }
 
 /// Confirm transferred bytes match the producer's declared length and digest.
@@ -235,5 +416,48 @@ mod tests {
         .expect_err("digest mismatch must fail");
         assert!(matches!(error, KubeError::ContractValidation(_)));
         assert!(!destination.path().join("profile.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_refuses_an_ancestor_symlink_without_writing_outside_root() {
+        use std::os::unix::fs::symlink;
+
+        let payload = b"private service-account token".to_vec();
+        let digest = format!("{:x}", Sha256::digest(&payload));
+        let manifest = parse_manifest(
+            format!(
+                r#"{{"contractVersion":"native-k8s/v1","runId":"run-1","ready":true,"wasCancelled":false,"artifactRoot":"/results","artifacts":[{{"path":"nested/token","sha256":"{digest}","bytes":{},"contentType":"application/octet-stream"}}]}}"#,
+                payload.len()
+            )
+            .as_bytes(),
+        )
+        .expect("manifest");
+        let destination = tempfile::tempdir().expect("destination");
+        let outside = tempfile::tempdir().expect("outside");
+        symlink(outside.path(), destination.path().join("nested")).expect("symlink");
+
+        download(&manifest, &StaticFetcher(payload), destination.path())
+            .expect_err("an ancestor symlink must fail closed");
+        assert!(!outside.path().join("token").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_refuses_a_leaf_symlink_without_overwriting_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let payload = b"new bytes".to_vec();
+        let digest = format!("{:x}", Sha256::digest(&payload));
+        let manifest =
+            parse_manifest(&manifest_json(&digest, payload.len() as u64)).expect("manifest");
+        let destination = tempfile::tempdir().expect("destination");
+        let outside = tempfile::NamedTempFile::new().expect("outside");
+        std::fs::write(outside.path(), b"keep me").expect("seed outside");
+        symlink(outside.path(), destination.path().join("profile.json")).expect("symlink");
+
+        download(&manifest, &StaticFetcher(payload), destination.path())
+            .expect_err("a leaf symlink must fail closed");
+        assert_eq!(std::fs::read(outside.path()).expect("outside"), b"keep me");
     }
 }

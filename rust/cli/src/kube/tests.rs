@@ -42,6 +42,86 @@ fn accepts_runnable_envelopes() {
 }
 
 #[test]
+fn requires_a_digest_qualified_remote_image_reference() {
+    let mut bare_digest = fixture("valid-one-cell-envelope.json");
+    bare_digest["imageReference"] = bare_digest["imageDigest"].clone();
+    assert!(matches!(
+        validate_envelope(bare_digest),
+        Err(KubeError::ContractValidation(_))
+    ));
+
+    let mut mismatch = fixture("valid-one-cell-envelope.json");
+    mismatch["imageReference"] = Value::String(format!(
+        "registry.example.com/aiperf/runner@sha256:{}",
+        "1".repeat(64)
+    ));
+    assert!(matches!(
+        validate_envelope(mismatch),
+        Err(KubeError::ContractValidation(message))
+            if message == "imageReference digest must equal imageDigest"
+    ));
+
+    let mut valid = fixture("valid-one-cell-envelope.json");
+    valid["imageReference"] = Value::String(format!(
+        "registry.example.com/aiperf/runner@{}",
+        valid["imageDigest"].as_str().expect("fixture digest")
+    ));
+    assert_eq!(
+        validate_envelope(valid)
+            .expect("digest-qualified image reference")
+            .image_reference,
+        format!(
+            "registry.example.com/aiperf/runner@sha256:{}",
+            "0".repeat(64)
+        )
+    );
+}
+
+#[test]
+fn refuses_noncanonical_kubernetes_identity_and_artifact_roots() {
+    for (field, invalid) in [
+        ("namespace", "NOT_A_NAMESPACE"),
+        (
+            "namespace",
+            "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        ),
+        ("jobId", "../other"),
+        ("jobId", "job.with.dot"),
+        ("runId", "run/other"),
+        (
+            "runId",
+            "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        ),
+        ("artifactRoot", "/results/../secrets"),
+        ("artifactRoot", "/etc"),
+        ("artifactRoot", "/results//nested"),
+    ] {
+        let mut envelope = fixture("valid-one-cell-envelope.json");
+        envelope[field] = Value::String(invalid.to_string());
+        assert!(
+            matches!(
+                validate_envelope(envelope),
+                Err(KubeError::ContractValidation(_))
+            ),
+            "{field} accepted {invalid:?}"
+        );
+    }
+}
+
+#[test]
+fn requires_a_config_content_digest() {
+    let mut envelope = fixture("valid-one-cell-envelope.json");
+    envelope["configRef"]
+        .as_object_mut()
+        .expect("configRef object")
+        .remove("sha256");
+    assert!(matches!(
+        validate_envelope(envelope),
+        Err(KubeError::ContractValidation(_))
+    ));
+}
+
+#[test]
 fn refuses_role_mismatched_bootstrap() {
     let mut envelope = fixture("valid-one-cell-envelope.json");
     envelope["roles"][0]["bootstrap"]["role"] = Value::String("cell".to_string());
@@ -215,8 +295,8 @@ fn defaults_and_overrides_keep_deadlines_finite() {
 fn watch_disconnect_is_not_reported_as_idle() {
     let watch = KubeWatch::closed_for_test();
     assert!(matches!(
-        watch.next(Duration::ZERO),
-        Err(KubeError::Transport(_))
+        watch.poll(Duration::ZERO),
+        Ok(super::client::KubeWatchPoll::Closed)
     ));
 }
 

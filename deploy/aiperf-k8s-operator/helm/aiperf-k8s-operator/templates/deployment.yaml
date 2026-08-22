@@ -4,11 +4,17 @@ metadata:
   name: {{ .Release.Name }}
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
-    matchLabels: {app.kubernetes.io/name: aiperf-k8s-operator}
+    matchLabels:
+      app.kubernetes.io/name: aiperf-k8s-operator
+      app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
-      labels: {app.kubernetes.io/name: aiperf-k8s-operator}
+      labels:
+        app.kubernetes.io/name: aiperf-k8s-operator
+        app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       containers:
@@ -16,4 +22,28 @@ spec:
         image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         args: ["aiperf-k8s-operator"]
-        ports: [{name: http, containerPort: 8080}]
+        env:
+        - name: AIPERF_K8S_OPERATOR_ARTIFACT_ROOT
+          value: /var/lib/aiperf/results
+        - name: AIPERF_K8S_OPERATOR_API_PORT
+          value: {{ .Values.api.port | quote }}
+        - name: AIPERF_K8S_OPERATOR_RESULTS_UPLOAD_BASE_URL
+          value: http://{{ .Values.api.serviceName }}.{{ .Release.Namespace }}.svc:{{ .Values.api.port }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.api.port }}
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+        volumeMounts:
+        - name: results
+          mountPath: /var/lib/aiperf/results
+      volumes:
+      - name: results
+        persistentVolumeClaim:
+          claimName: {{ .Release.Name }}-results

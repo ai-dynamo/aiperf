@@ -8,84 +8,75 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::kube::auth::in_cluster_credentials;
-use crate::kube::client::{
-    AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, BENCHMARK_COMPLETE_ANNOTATION, KubeClient,
-};
+use crate::kube::client::{AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, KubeClient};
 
 const READY_MARKER_NAME: &str = ".aiperf_results_ready.json";
 const SA_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 const SA_CA_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 
-/// The owning AIPerfJob identity plus shared Kubernetes client.
+/// The owning AIPerfJob identity plus rotating Kubernetes credentials.
 pub struct InClusterConfig {
-    client: KubeClient,
+    host: String,
+    port: u16,
+    token_path: PathBuf,
+    ca_path: PathBuf,
     namespace: String,
     job_id: String,
+    object_uid: String,
+    #[cfg(test)]
+    transport: Option<Arc<dyn crate::kube::client::KubeTransport>>,
 }
 
 impl InClusterConfig {
     /// Load service-account credentials from the ambient pod environment.
     pub fn load() -> Option<Self> {
         let job_id = non_empty_env("AIPERF_JOB_ID")?;
+        let object_uid = non_empty_env("AIPERF_JOB_UID")?;
         let namespace = non_empty_env("AIPERF_NAMESPACE")?;
         let host = non_empty_env("KUBERNETES_SERVICE_HOST")?;
         let port = std::env::var("KUBERNETES_SERVICE_PORT")
             .ok()
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(443);
-        let credentials =
-            in_cluster_credentials(host, port, Path::new(SA_TOKEN_PATH), Path::new(SA_CA_PATH))
-                .ok()?;
-        let client = KubeClient::from_credentials(credentials).ok()?;
-        Some(Self {
-            client,
-            namespace,
-            job_id,
-        })
-    }
-
-    #[cfg(test)]
-    fn from_parts(
-        host: String,
-        port: u16,
-        token: String,
-        ca_pem: Vec<u8>,
-        namespace: String,
-        job_id: String,
-    ) -> Self {
-        let credentials = crate::kube::auth::KubeCredentials {
-            server_name: host.clone(),
+        let config = Self {
             host,
             port,
-            token: Some(token),
-            client_certificate_pem: None,
-            client_key_pem: None,
-            ca_pem: Some(ca_pem),
-            insecure_skip_tls_verify: false,
-        };
-        let client = KubeClient::from_credentials(credentials).expect("test credentials are valid");
-        Self {
-            client,
+            token_path: PathBuf::from(SA_TOKEN_PATH),
+            ca_path: PathBuf::from(SA_CA_PATH),
             namespace,
             job_id,
+            object_uid,
+            #[cfg(test)]
+            transport: None,
+        };
+        config.client().ok()?;
+        Some(config)
+    }
+
+    fn client(&self) -> Result<KubeClient, crate::kube::error::KubeError> {
+        let credentials = in_cluster_credentials(
+            self.host.clone(),
+            self.port,
+            &self.token_path,
+            &self.ca_path,
+        )?;
+        #[cfg(test)]
+        if let Some(transport) = &self.transport {
+            return Ok(KubeClient::with_transport(credentials, transport.clone()));
         }
+        KubeClient::from_credentials(credentials)
     }
 
     fn status_path(&self) -> String {
         format!(
             "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{}/{AIPERF_PLURAL}/{}/status",
-            self.namespace, self.job_id
-        )
-    }
-
-    fn object_path(&self) -> String {
-        format!(
-            "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{}/{AIPERF_PLURAL}/{}",
             self.namespace, self.job_id
         )
     }
@@ -128,9 +119,9 @@ pub fn snapshot_body(snapshot: Value) -> Value {
     json!({ "status": { "snapshot": snapshot } })
 }
 
-/// Build the completion-annotation merge patch.
+/// Build the terminal status merge patch.
 pub fn complete_body() -> Value {
-    json!({ "metadata": { "annotations": { BENCHMARK_COMPLETE_ANNOTATION: "true" } } })
+    json!({ "status": { "phase": "PublishingResults" } })
 }
 
 /// Path of the private compatibility marker under `base_dir`.
@@ -239,19 +230,18 @@ impl CrReporter {
             self.send(config, &config.status_path(), body);
         }
     }
-    /// Merge-patch the CR object. This is deliberately best effort.
-    pub fn patch_object(&self, body: &Value) {
-        if let Some(config) = &self.config {
-            self.send(config, &config.object_path(), body);
-        }
-    }
     /// Mark benchmark completion after the caller publishes final results.
     pub fn signal_complete(&self) {
-        self.patch_object(&complete_body());
+        self.patch_status(&complete_body());
     }
 
     fn send(&self, config: &InClusterConfig, path: &str, body: &Value) {
-        match config.client.merge_patch(path, body) {
+        let mut bound_body = body.clone();
+        bound_body["metadata"] = json!({"uid": config.object_uid});
+        let response = config
+            .client()
+            .and_then(|client| client.merge_patch(path, &bound_body));
+        match response {
             Ok(status) if (200..300).contains(&status) => {
                 tracing::debug!(path, status, "patched AIPerfJob CR")
             }
@@ -270,22 +260,20 @@ mod tests {
     use crate::kube::client::{KubeRequest, KubeTransport, KubeWatch};
 
     #[test]
-    fn status_and_object_paths() {
-        let config = InClusterConfig::from_parts(
-            "10.0.0.1".to_string(),
-            6443,
-            "tok".to_string(),
-            Vec::new(),
-            "bench-ns".to_string(),
-            "job-42".to_string(),
-        );
+    fn status_path_is_the_only_workload_reporting_target() {
+        let config = InClusterConfig {
+            host: "10.0.0.1".to_string(),
+            port: 6443,
+            token_path: PathBuf::new(),
+            ca_path: PathBuf::new(),
+            namespace: "bench-ns".to_string(),
+            job_id: "job-42".to_string(),
+            object_uid: "uid-42".to_string(),
+            transport: None,
+        };
         assert_eq!(
             config.status_path(),
             "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench-ns/aiperfjobs/job-42/status"
-        );
-        assert_eq!(
-            config.object_path(),
-            "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench-ns/aiperfjobs/job-42"
         );
     }
 
@@ -311,23 +299,21 @@ mod tests {
     #[test]
     fn reporter_constructs_status_and_completion_requests() {
         let requests = Arc::new(Mutex::new(Vec::new()));
-        let credentials = KubeCredentials {
-            host: "api".to_string(),
-            port: 443,
-            server_name: "api".to_string(),
-            token: Some("token".to_string()),
-            client_certificate_pem: None,
-            client_key_pem: None,
-            ca_pem: None,
-            insecure_skip_tls_verify: true,
-        };
-        let client =
-            KubeClient::with_transport(credentials, Arc::new(RecordingTransport(requests.clone())));
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let token_path = directory.path().join("token");
+        let ca_path = directory.path().join("ca.crt");
+        std::fs::write(&token_path, "token").expect("test token");
+        std::fs::write(&ca_path, []).expect("test CA");
         let reporter = CrReporter {
             config: Some(InClusterConfig {
-                client,
+                host: "api".to_string(),
+                port: 443,
+                token_path,
+                ca_path,
                 namespace: "bench".to_string(),
                 job_id: "job".to_string(),
+                object_uid: "uid-1".to_string(),
+                transport: Some(Arc::new(RecordingTransport(requests.clone()))),
             }),
         };
         reporter.patch_status(&progress_body("profiling", 2, Some(4), None, None));
@@ -339,11 +325,60 @@ mod tests {
         );
         assert_eq!(
             requests[1].path,
-            "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench/aiperfjobs/job"
+            "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench/aiperfjobs/job/status"
         );
         assert_eq!(
-            requests[1].body,
-            serde_json::to_vec(&complete_body()).expect("completion JSON")
+            serde_json::from_slice::<Value>(&requests[0].body).expect("progress JSON"),
+            json!({
+                "metadata": {"uid": "uid-1"},
+                "status": {"phases": {"profiling": {"requestsCompleted": 2, "requestsTotal": 4, "requestsProgressPercent": 50.0}}}
+            })
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&requests[1].body).expect("completion JSON"),
+            json!({
+                "metadata": {"uid": "uid-1"},
+                "status": {"phase": "PublishingResults"}
+            })
+        );
+    }
+
+    #[test]
+    fn reporter_reloads_a_rotated_projected_token_for_each_patch() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let token_path = directory.path().join("token");
+        let ca_path = directory.path().join("ca.crt");
+        std::fs::write(&token_path, "token-1\n").expect("initial token");
+        std::fs::write(&ca_path, []).expect("test CA");
+        let tokens = Arc::new(Mutex::new(Vec::new()));
+        let reporter = CrReporter {
+            config: Some(InClusterConfig {
+                host: "api".to_string(),
+                port: 443,
+                token_path,
+                ca_path,
+                namespace: "bench".to_string(),
+                job_id: "job".to_string(),
+                object_uid: "uid-1".to_string(),
+                transport: Some(Arc::new(TokenRecordingTransport(tokens.clone()))),
+            }),
+        };
+
+        reporter.patch_status(&snapshot_body(json!({"step": 1})));
+        std::fs::write(
+            &reporter
+                .config
+                .as_ref()
+                .expect("active reporter")
+                .token_path,
+            "token-2\n",
+        )
+        .expect("rotated token");
+        reporter.patch_status(&snapshot_body(json!({"step": 2})));
+
+        assert_eq!(
+            *tokens.lock().expect("token recording lock"),
+            vec!["token-1".to_string(), "token-2".to_string()]
         );
     }
 
@@ -355,6 +390,33 @@ mod tests {
             request: KubeRequest,
         ) -> Result<crate::kube::client::KubeResponse, crate::kube::error::KubeError> {
             self.0.lock().expect("recording lock").push(request);
+            Ok(crate::kube::client::KubeResponse {
+                status: 200,
+                body: Vec::new(),
+            })
+        }
+        fn watch(
+            &self,
+            _credentials: &KubeCredentials,
+            _request: KubeRequest,
+        ) -> Result<KubeWatch, crate::kube::error::KubeError> {
+            Err(crate::kube::error::KubeError::Transport(
+                "watch is unavailable in reporter test".to_string(),
+            ))
+        }
+    }
+
+    struct TokenRecordingTransport(Arc<Mutex<Vec<String>>>);
+    impl KubeTransport for TokenRecordingTransport {
+        fn send(
+            &self,
+            credentials: &KubeCredentials,
+            _request: KubeRequest,
+        ) -> Result<crate::kube::client::KubeResponse, crate::kube::error::KubeError> {
+            self.0
+                .lock()
+                .expect("token recording lock")
+                .push(credentials.token.clone().expect("bearer token"));
             Ok(crate::kube::client::KubeResponse {
                 status: 200,
                 body: Vec::new(),

@@ -28,19 +28,23 @@ release requires a separately approved `native-k8s/v2` contract. The native
 
 ## Ownership split
 
-`aiperf-cli` owns user authentication, configuration projection, image
-capability validation, submitted envelopes, bootstrap-secret creation,
+`aiperf-cli` owns user authentication, configuration projection, selected image
+capability-document validation, submitted envelopes, bootstrap-secret creation,
 AIPerfJob submission, native workload argv, and user-facing results rendering.
 It creates immutable named bootstrap Secrets and emits only their name, role,
-mount path, and SHA-256 digest into the envelope. The public `kube` dispatch
+mount path, and SHA-256 digest into the envelope. Submission creates the CR,
+binds every Secret to the returned CR UID, and compensates by removing newly
+created resources when admission or owner binding fails. The public `kube` dispatch
 routes to `kube::command::run`; no command delegates to Python.
 
 `aiperf-k8s-operator` is an independent Python distribution. It owns JobSet
-reconciliation, retry and recovery, result indexing, a cluster-local API, and
-its dashboard. It does not import `aiperf.*`, parse benchmark configuration,
-construct native argv, mint bootstrap material, or read, list, hash, or log
-Secret data. It validates only declared Secret reference metadata: name, role
-label, immutability, and digest annotation.
+reconciliation, retry and recovery, durable result indexing, and a
+cluster-local API. It does not import `aiperf.*`, parse benchmark configuration,
+construct native argv, or mint bootstrap material. It validates every declared
+Secret reference's name, role label, immutability, digest annotation, and exact
+non-blocking CR owner reference. It
+reads only the results-sidecar bootstrap bytes, verifies their declared digest,
+derives an object-UID-bound upload public key, and retains no private material.
 
 The cross-boundary schema directory is `contracts/native-k8s/v1/`. Consumers
 reject unknown contract versions, unknown required capabilities, malformed
@@ -48,54 +52,88 @@ envelopes, and image capability mismatches before a JobSet is created. A
 producer may add optional fields. Controller status reporting is best-effort
 after a valid controller envelope starts.
 
-A v1 controller envelope carries the run and CR identity, image digest, cell
-count, config and artifact references, controller address, and complete
-per-role command, argv, environment, and bootstrap references. The operator
-materializes those values; it never derives a container image, replica count,
-or argv.
+A v1 controller envelope carries the run and CR identity, a pullable immutable
+image reference and its matching identity digest, cell count, config and
+artifact references, controller address, and complete per-role command, argv,
+environment, and bootstrap references. The operator projects the exact image
+reference and never derives a container image, replica count, or argv.
+Identity fields are bounded DNS labels, the artifact root is a canonical
+`/results` descendant, and the configuration reference includes a content
+digest. The operator verifies the complete source ConfigMap maps, creates an
+immutable per-incarnation snapshot, and mounts only that snapshot.
+
+The AIPerfJob spec is immutable after creation. The operator provisions one
+deterministically named ServiceAccount, Role, and RoleBinding per accepted run.
+The controller can patch only its exact AIPerfJob status subresource; cell pods
+disable service-account token automounting. The chart installs the pinned
+JobSet dependency on a fresh cluster.
 
 ## Native command surface
 
-`aiperf kube` exposes fifteen native commands: `init`, `validate`, `profile`,
+`aiperf kube` recognizes fifteen native command names: `init`, `validate`, `profile`,
 `sweep`, `generate`, `attach`, `list`, `logs`, `results`, `show`, `debug`,
 `watch`, `preflight`, `dashboard`, and `index`. Kubernetes access flows through
 one `KubeClient`/`KubeTransport` seam with finite request and watch deadlines,
 a bounded response body, and bounded newline-delimited watch records. Watch
 streams reconnect a bounded number of times. Log streaming preserves bytes
-without reframing. `dashboard` forwards in process on loopback only and rejects
-non-loopback peers before any payload; no command spawns `kubectl`.
+without reframing. `validate` and `profile` require an explicit
+`--image-capabilities` document bound to the envelope's image digest. `sweep`
+and `index` refuse because v1 ships no corresponding custom resources;
+`dashboard` refuses because no dashboard upstream is implemented. No command
+spawns `kubectl`.
 
 ## Results contract
 
 The results contract is `results-manifest.json`. It is atomically written and
 fsynced after artifacts commit, before the private
 `.aiperf_results_ready.json` compatibility marker and the controller completion
-report. The native results sidecar gates, lists, and serves the manifest and
-only manifest-declared artifacts; the compatibility marker is not a network
-API. `aiperf kube results` accepts only a ready manifest, refuses traversing or
+report. The native results sidecar exposes health only; neither the manifest nor
+artifacts are published from the workload pod. The compatibility marker is not
+a network API. The controller and regular sidecar share one writable results
+`emptyDir`. Through retained no-follow descriptors, the sidecar validates and
+uploads only the exact manifest-declared set. Its signatures bind namespace,
+job, run, current AIPerfJob object UID, kind, path, digest, and length. The
+operator stages artifacts on its PVC and atomically publishes only an exact
+manifest-declared set; bounded staging and published-run quotas plus expiry
+keep incomplete and retained state finite. Incomplete state stays unreadable.
+A durable manifest acknowledgement ends the sidecar; missing manifests or an
+exhausted retry budget fail it, allowing the Job to become terminal rather than
+hang while completed results remain available from the operator Service.
+
+`aiperf kube results` accepts only a ready manifest, refuses traversing or
 duplicate paths and malformed digests, and verifies each artifact's SHA-256
-before writing it, so a substituted transfer never lands on disk.
+before writing it through retained no-follow destination descriptors. Retrieval
+requires a trusted `--run-id`, refuses a mismatched namespace/job/run/UID, and
+selects only the local `--operator-service`/`--operator-namespace` identity
+before using the Kubernetes Service proxy; workload annotations cannot redirect
+it. Under the caller's Kubernetes authority, the CLI retrieves and validates
+the exact immutable, owner-referenced results-read Secret. It forwards that
+distinct capability in a sensitive application header while retaining the
+Kubernetes bearer for API-server authentication; role bootstrap material is
+never used for reads. The operator API accepts no unauthenticated result reads
+and verifies the capability against the immutable authority ConfigMap. The
+default chart Service is `aiperf-k8s-operator` on port 8080. Default uploads use
+cluster-local HTTP, which provides no transport confidentiality beyond
+signature-based authentication and integrity.
 
 ## Verification
 
-- `cargo fmt --check` and `cargo clippy --all-targets` are clean for this
-  surface.
-- `cargo test -p aiperf-cli --lib`: 193 passed, 0 failed, including 30
-  `kube::` tests.
-- `cargo test -p aiperf-e2e-tests --test kube_cli_contract`: 16 passed, 0
-  failed, 4 ignored. The ignored tests require kind, Helm, and `KUBECONFIG`,
-  and run in the `native-cli-kind` CI job with `-- --ignored`.
-- `pytest -n auto aiperf-k8s-operator/tests/unit aiperf-k8s-operator/tests/contract`:
-  9 passed, covering exact two-JobSet projection, metadata-only Secret
-  validation, absence of `aiperf.*` imports, and manifest-gated artifact
-  serving.
-- `tools/check_agent_files_sync.py` and `tools/check_docs_current.py` exit
-  zero.
+The hermetic Rust contract is exercised with
+`cargo test -p aiperf-cli --lib kube` and
+`cargo test -p aiperf-e2e-tests --test kube_cli_contract`. Operator unit and
+contract behavior is exercised with
+`pytest aiperf-k8s-operator/tests/unit aiperf-k8s-operator/tests/contract`.
+
+The operator integration test is environment-gated: with neither
+`KUBECONFIG` nor `AIPERF_K8S_INTEGRATION` it reports a skip. The kind CI job
+installs the chart with Helm `--wait`, then runs the test against the live API.
+The test requires an available operator Deployment, an established AIPerfJob
+CRD, and no invented AIPerf custom-resource kinds.
 
 ## Source anchors
 
 - `rust/cli/src/kube/` — native command surface, client seam, contract DTOs,
-  submission, rendering, results, and loopback forwarding.
+  submission, rendering, and results.
 - `rust/cli/src/k8s.rs` — native in-cluster status and completion reporting.
 - `rust/cli/src/cellular_role.rs` — native role selection and refusal behavior.
 - `rust/cli/src/results_sidecar.rs` — native artifact serving seam.

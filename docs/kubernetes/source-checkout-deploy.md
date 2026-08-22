@@ -4,390 +4,274 @@
 sidebar-title: Source Checkout Deployment
 ---
 
-# Deploy from a Source Checkout to a Real Kubernetes Cluster
+# Deploy a Native Kubernetes Envelope from a Source Checkout
 
-This guide starts from an AIPerf source checkout and deploys that code to a real Kubernetes cluster. It builds a container image, pushes it to a registry, installs or upgrades the AIPerf operator with Helm, then runs a benchmark against a real inference endpoint.
-
-This guide does **not** use the mock server path. Use it when you have a real OpenAI-compatible endpoint already running, or when you want to deploy a real Dynamo/vLLM endpoint first.
+This guide covers the Kubernetes interface that the native `aiperf` binary
+actually ships: validate one authored `native-k8s/v1` envelope, create its
+role-specific bootstrap Secrets, and submit one `AIPerfJob`. The native command
+does not translate profile flags or Config v2 into a Kubernetes envelope;
+`aiperf kube init` and `generate` currently refuse. Prepare the envelope,
+image-capability document, and opaque role bootstrap files before following the
+submission steps below.
 
 ## Prerequisites
 
 You need:
 
-- An AIPerf source checkout.
-- `kubectl` configured for the target cluster.
-- Helm v3.
-- Docker or another container builder that can build and push OCI images.
-- Registry credentials for the image repository you will use.
-- Permission to install CRDs, create the operator namespace, create benchmark namespaces, and create JobSet workloads.
-- JobSet installed on the cluster. If it is not installed, install it before the AIPerf operator.
-- A real OpenAI-compatible inference endpoint reachable from benchmark pods, or permission to deploy one.
+- an AIPerf source checkout and its development environment;
+- `kubectl` and Helm v3 configured for the target cluster;
+- permission to install CRDs and cluster-scoped operator RBAC;
+- a default StorageClass, or an explicit StorageClass for the results PVC;
+- a registry reference that every benchmark node can pull; and
+- one valid native security bootstrap file for the controller, results
+  sidecar, and every cell named by the envelope.
 
-Check the cluster first:
+The submitted benchmark image must be available by immutable digest reference.
+The current envelope has no image-pull-secret field, so a private benchmark
+registry must be available through node-level registry credentials or a
+credential provider.
 
-```bash
-kubectl cluster-info
-kubectl get nodes
-kubectl api-resources | grep -i jobset
-```
-
-For GPU benchmarks, verify GPU resources are allocatable:
-
-```bash
-kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu
-```
-
-## 1. Set up the checkout
-
-Install the local development environment from the checkout:
+Set up and inspect the checkout:
 
 ```bash
 make first-time-setup
-```
-
-Use the local CLI through `uv run` until the package is installed somewhere else:
-
-```bash
-uv run aiperf --help
 uv run aiperf kube --help
+kubectl cluster-info
+kubectl get storageclass
 ```
 
-Pick a tag that identifies the exact checkout you are deploying:
+## 1. Build and publish the two images
+
+The benchmark image and Python operator image are separate artifacts. Build and
+push the benchmark image from the repository root, then record the digest
+reference returned by the registry:
 
 ```bash
-export AIPERF_TAG="$(git rev-parse --short HEAD)"
+export BENCHMARK_TAG="$(git rev-parse --short HEAD)"
+export BENCHMARK_REPOSITORY="ghcr.io/<org>/aiperf"
+
+docker build -t "${BENCHMARK_REPOSITORY}:${BENCHMARK_TAG}" .
+docker push "${BENCHMARK_REPOSITORY}:${BENCHMARK_TAG}"
+
+export BENCHMARK_DIGEST="sha256:<64-lowercase-hex-digest>"
+export BENCHMARK_IMAGE_REFERENCE="${BENCHMARK_REPOSITORY}@${BENCHMARK_DIGEST}"
 ```
 
-## 2. Build and push the AIPerf image
+`imageReference` in the envelope must be a lowercase
+`registry/repository@sha256:<64hex>` reference. Its digest suffix must equal the
+separate `imageDigest` value exactly. Tags and bare `sha256:...` values are
+rejected, and the operator projects the accepted `imageReference` byte for byte
+into every workload container.
 
-The benchmark image contains the native `aiperf` binary. The independently packaged operator has its own image; configure it through the operator chart separately from the submitted benchmark image.
-
-### NGC-style registry
-
-Use this shape for an NGC organization or private NVIDIA registry namespace:
+Build and push the independently packaged operator:
 
 ```bash
-export AIPERF_IMAGE="nvcr.io/<org>/aiperf:${AIPERF_TAG}"
+export OPERATOR_REPOSITORY="ghcr.io/<org>/aiperf-k8s-operator"
+export OPERATOR_TAG="${BENCHMARK_TAG}"
 
-docker build -t "${AIPERF_IMAGE}" .
-docker push "${AIPERF_IMAGE}"
+docker build \
+  -f aiperf-k8s-operator/Dockerfile \
+  -t "${OPERATOR_REPOSITORY}:${OPERATOR_TAG}" \
+  aiperf-k8s-operator
+docker push "${OPERATOR_REPOSITORY}:${OPERATOR_TAG}"
 ```
 
-### GitHub Container Registry
+## 2. Install the operator
 
-Use this shape for GHCR:
-
-```bash
-export AIPERF_IMAGE="ghcr.io/<org>/aiperf:${AIPERF_TAG}"
-
-docker build -t "${AIPERF_IMAGE}" .
-docker push "${AIPERF_IMAGE}"
-```
-
-If your cluster nodes use a different architecture than the build host, build for the cluster platform:
+Install the chart and its pinned JobSet dependency. The chart creates the
+operator Service and durable results PVC, but it does not create benchmark
+namespaces or choose a benchmark image.
 
 ```bash
-docker buildx build \
-  --platform linux/amd64 \
-  -t "${AIPERF_IMAGE}" \
-  --push \
-  .
-```
-
-## 3. Create an image pull secret if the registry is private
-
-Skip this section if every node can pull the image without a secret.
-
-Create the operator namespace first:
-
-```bash
-kubectl create namespace aiperf-system --dry-run=client -o yaml | kubectl apply -f -
-```
-
-For NGC-style registries:
-
-```bash
-kubectl create secret docker-registry aiperf-registry \
-  --namespace aiperf-system \
-  --docker-server=nvcr.io \
-  --docker-username='$oauthtoken' \
-  --docker-password="${NGC_API_KEY}"
-```
-
-For GHCR:
-
-```bash
-kubectl create secret docker-registry aiperf-registry \
-  --namespace aiperf-system \
-  --docker-server=ghcr.io \
-  --docker-username="${GITHUB_USER}" \
-  --docker-password="${GITHUB_TOKEN}"
-```
-
-The Helm install below references this secret for the operator. Benchmark jobs also need pull access in their namespace. The chart creates the default benchmark namespace `aiperf-benchmarks`, but Kubernetes secrets are namespace-scoped, so create the same pull secret there too if you use the default namespace:
-
-```bash
-kubectl create namespace aiperf-benchmarks --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl create secret docker-registry aiperf-registry \
-  --namespace aiperf-benchmarks \
-  --docker-server=<registry-host> \
-  --docker-username=<username> \
-  --docker-password=<token>
-```
-
-## 4. Install or upgrade the AIPerf operator
-
-The operator is a separate Python distribution and image. Select its image
-independently from the native benchmark image built above:
-
-```bash
-export AIPERF_OPERATOR_IMAGE="ghcr.io/<org>/aiperf-k8s-operator:<version>"
-```
-
-Install the operator:
-
-```bash
-helm upgrade --install aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
+helm upgrade --install aiperf-operator \
+  deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --create-namespace \
-  --set image.repository="${AIPERF_OPERATOR_IMAGE%:*}" \
-  --set image.tag="${AIPERF_OPERATOR_IMAGE##*:}" \
+  --set image.repository="${OPERATOR_REPOSITORY}" \
+  --set image.tag="${OPERATOR_TAG}" \
   --set image.pullPolicy=IfNotPresent
-```
 
-If the operator image is private, configure its pull secret separately. The
-native `aiperf kube` submitter carries the benchmark image digest in each
-submitted envelope; the operator chart never supplies a default benchmark
-image or makes benchmark pods inherit its own image.
-
-Wait for the operator and results server:
-
-```bash
-kubectl rollout status deploy/aiperf-operator -n aiperf-system --timeout=180s
-kubectl get pods -n aiperf-system
-```
-
-Run Helm tests if the cluster can pull the chart's test image:
-
-```bash
-helm test aiperf-operator -n aiperf-system
-```
-
-## 5. Run against an existing real endpoint
-
-Use this path when your inference server is already deployed in the cluster or reachable from the cluster network.
-
-Set the endpoint and model:
-
-```bash
-export MODEL="Qwen/Qwen3-0.6B"
-export ENDPOINT_URL="http://vllm.default.svc.cluster.local:8000/v1"
-```
-
-Run cluster-side preflight checks:
-
-```bash
-uv run aiperf kube preflight \
-  --image "${AIPERF_IMAGE}" \
-  --endpoint-url "${ENDPOINT_URL}" \
-  --workers 8
-```
-
-Submit a benchmark:
-
-```bash
-uv run aiperf kube profile \
-  --model "${MODEL}" \
-  --url "${ENDPOINT_URL}" \
-  --image "${AIPERF_IMAGE}" \
-  --workers-max 8 \
-  --request-count 1000 \
-  --concurrency 50 \
-  --streaming
-```
-
-For private benchmark images, pass the pull secret name when submitting jobs:
-
-```bash
-uv run aiperf kube profile \
-  --model "${MODEL}" \
-  --url "${ENDPOINT_URL}" \
-  --image "${AIPERF_IMAGE}" \
-  --image-pull-secrets aiperf-registry \
-  --workers-max 8 \
-  --request-count 1000 \
-  --concurrency 50 \
-  --streaming
-```
-
-For repeatable runs, put the benchmark configuration in YAML and pass `--config benchmark.yaml`; see [End-to-End Workflow](workflow.md) for the `init` -> `validate` -> `preflight` -> `profile` sequence.
-
-## 6. Optional: deploy a real Dynamo/vLLM endpoint first
-
-Skip this section if you already have a real endpoint.
-
-Install the Dynamo platform chart if your cluster does not already have it:
-
-```bash
-helm upgrade --install dynamo-platform \
-  oci://nvcr.io/nvidia/ai-dynamo/dynamo-platform \
-  --version 1.1.0 \
-  --namespace dynamo-system \
-  --create-namespace \
-  --set dynamo-operator.webhook.enabled=false \
-  --set grove.enabled=false \
-  --set kai-scheduler.enabled=false
-```
-
-Deploy an aggregated Dynamo vLLM server by applying a `DynamoGraphDeployment` manifest such as the aggregated vLLM example in [Getting Started on Kubernetes](getting-started.md#step-2-deploy-a-dynamo-inference-server):
-
-```bash
-kubectl create namespace dynamo-server --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -f dynamo-server.yaml
-```
-
-Wait for the frontend and worker pods to become ready:
-
-```bash
-kubectl get pods -n dynamo-server -w
-```
-
-Use the Dynamo service URL as the benchmark endpoint:
-
-```bash
-export ENDPOINT_URL="http://dynamo-agg-frontend.dynamo-server.svc:8000/v1"
-
-uv run aiperf kube preflight \
-  --image "${AIPERF_IMAGE}" \
-  --endpoint-url "${ENDPOINT_URL}" \
-  --workers 8
-
-uv run aiperf kube profile \
-  --model "${MODEL}" \
-  --url "${ENDPOINT_URL}" \
-  --image "${AIPERF_IMAGE}" \
-  --workers-max 8 \
-  --request-count 1000 \
-  --concurrency 50 \
-  --streaming
-```
-
-The `dev/kube.py deploy-dynamo` helper is intentionally scoped to AIPerf's local Kind/Minikube workflow and should not be used as the generic real-cluster path.
-
-## 7. Monitor and retrieve results
-
-Watch progress:
-
-```bash
-uv run aiperf kube watch
-```
-
-Reattach to a detached run:
-
-```bash
-uv run aiperf kube attach
-```
-
-Download results:
-
-```bash
-uv run aiperf kube results --output ./aiperf-results
-```
-
-Port-forward the results server and dashboard:
-
-```bash
-kubectl port-forward -n aiperf-system svc/aiperf-operator 8081:8081
-```
-
-Then open `http://localhost:8081`.
-
-## 8. Upgrade after source changes
-
-After changing source code, repeat the build and push with a new immutable tag:
-
-```bash
-export AIPERF_TAG="$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
-export AIPERF_IMAGE="nvcr.io/<org>/aiperf:${AIPERF_TAG}"
-
-docker build -t "${AIPERF_IMAGE}" .
-docker push "${AIPERF_IMAGE}"
-
-export AIPERF_IMAGE_REPOSITORY="${AIPERF_IMAGE%:*}"
-export AIPERF_IMAGE_TAG="${AIPERF_IMAGE##*:}"
-
-helm upgrade aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
+kubectl rollout status \
+  deployment/aiperf-operator \
   --namespace aiperf-system \
-  --reuse-values \
-  --set image.repository="${AIPERF_IMAGE_REPOSITORY}" \
-  --set image.tag="${AIPERF_IMAGE_TAG}"
+  --timeout=180s
+kubectl get pods \
+  --namespace aiperf-system \
+  --selector app.kubernetes.io/instance=aiperf-operator
 ```
 
-Wait for the new operator pod before submitting new jobs:
+Set `persistence.storageClass`, `persistence.size`, or
+`persistence.accessModes` during the first install when the defaults do not
+match the cluster. The Deployment uses a `Recreate` rollout so two operator
+pods never contend for the default ReadWriteOnce volume.
+
+## 3. Prepare the authored inputs
+
+Create the namespace and the ConfigMap named by the envelope's `configRef`:
 
 ```bash
-kubectl rollout status deploy/aiperf-operator -n aiperf-system --timeout=180s
+export BENCHMARK_NAMESPACE="bench"
+kubectl create namespace "${BENCHMARK_NAMESPACE}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl create configmap config-1 \
+  --namespace "${BENCHMARK_NAMESPACE}" \
+  --from-file=benchmark.yaml \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Compute the digest authored as `configRef.sha256` from the same complete maps.
+For the single `benchmark.yaml` key above:
+
+```bash
+CONFIG_SHA256=$(jq -S -c -j -n --rawfile benchmark benchmark.yaml \
+  '{binaryData:{},data:{"benchmark.yaml":$benchmark}}' \
+  | sha256sum | cut -d' ' -f1)
+```
+
+The operator verifies this canonical content and creates an immutable
+per-incarnation snapshot. Workload pods mount the snapshot rather than
+`config-1`, so later source replacement cannot affect the run.
+
+Author `controller-envelope.json` against
+`contracts/native-k8s/v1/controller-envelope.schema.json`. The checked-in
+`contracts/native-k8s/v1/fixtures/valid-one-cell-envelope.json` shows the
+shape, but its placeholder digests and bootstrap bytes are not deployment
+credentials. A deployable envelope must contain:
+
+- the exact namespace, AIPerfJob name, and unique run ID;
+- `imageDigest` and the matching digest-qualified `imageReference`;
+- the fixed `controller`, `cell`, and `results-sidecar` commands, argv, and
+  environment;
+- one bootstrap reference for the controller and results sidecar;
+- one numbered `cellBootstraps` reference per cell; and
+- the SHA-256 digest of each corresponding local bootstrap file; and
+- the complete ConfigMap content digest in `configRef.sha256`.
+
+The bootstrap files are opaque security material produced with the envelope.
+Do not substitute random bytes, reuse them between runs, add them to the
+envelope, or commit them to source control. For a one-cell envelope, set local
+paths for all three identities:
+
+```bash
+export CONTROLLER_BOOTSTRAP=/secure/run-1/controller.bootstrap
+export SIDECAR_BOOTSTRAP=/secure/run-1/results-sidecar.bootstrap
+export CELL_0_BOOTSTRAP=/secure/run-1/cell-0.bootstrap
+```
+
+Create `image-capabilities.json` from inspection of that exact benchmark image:
+
+```json
+{
+  "contractVersion": "native-k8s/v1",
+  "imageDigest": "sha256:<same-64-lowercase-hex-digest>",
+  "cellular": true,
+  "resultsSidecar": true,
+  "hierarchicalAggregation": false
+}
+```
+
+## 4. Validate, preflight, and submit
+
+Validation is local and creates no Kubernetes objects:
+
+```bash
+uv run aiperf kube validate \
+  --envelope controller-envelope.json \
+  --image-capabilities image-capabilities.json
+```
+
+Check authenticated Kubernetes API reachability separately:
+
+```bash
+uv run aiperf kube preflight \
+  --namespace "${BENCHMARK_NAMESPACE}"
+```
+
+Submit the envelope and the exact local bootstrap files. Repeat
+`--bootstrap-material cell-N=...` for every declared cell:
+
+```bash
+uv run aiperf kube profile \
+  --envelope controller-envelope.json \
+  --image-capabilities image-capabilities.json \
+  --bootstrap-material "controller=${CONTROLLER_BOOTSTRAP}" \
+  --bootstrap-material "results-sidecar=${SIDECAR_BOOTSTRAP}" \
+  --bootstrap-material "cell-0=${CELL_0_BOOTSTRAP}"
+```
+
+Use `--kubeconfig <path>` and `--context <name>` on any command when the
+defaults are not the desired cluster. The namespace for submission comes from
+the envelope; a separate `--namespace` flag does not override it. The CLI
+creates every immutable bootstrap Secret, creates the `AIPerfJob`, and then
+binds each Secret to the returned object UID. A failed admission removes newly
+created Secrets; a failed owner-binding step removes the CR and newly created
+Secrets. The operator refuses JobSet creation until every binding is present
+and exact.
+
+## 5. Observe the run and retrieve results
+
+Use the envelope's `jobId`, namespace, and trusted `runId`:
+
+```bash
+uv run aiperf kube list --namespace "${BENCHMARK_NAMESPACE}"
+uv run aiperf kube show job-1 --namespace "${BENCHMARK_NAMESPACE}"
+uv run aiperf kube watch --namespace "${BENCHMARK_NAMESPACE}"
+uv run aiperf kube logs job-1 --namespace "${BENCHMARK_NAMESPACE}"
+
+uv run aiperf kube results job-1 \
+  --namespace "${BENCHMARK_NAMESPACE}" \
+  --run-id run-1 \
+  --output-directory ./aiperf-results/run-1
+```
+
+The CLI retrieves the durable result through the locally selected Kubernetes
+Service proxy and uses the per-incarnation results-read capability. If the
+chart was installed with a nondefault release namespace or API Service name, add
+`--operator-namespace <namespace>` and `--operator-service <name>`.
+
+For API health diagnostics:
+
+```bash
+kubectl port-forward \
+  --namespace aiperf-system \
+  service/aiperf-k8s-operator 8080:8080
+curl --fail http://127.0.0.1:8080/healthz
 ```
 
 ## Troubleshooting
 
+### The envelope is rejected before cluster access
+
+Run `aiperf kube validate` and fix the first contract error. Common causes are
+a missing `imageReference`, a tag or bare digest used as the reference, a
+reference digest that differs from `imageDigest`, a capability-document digest
+mismatch, duplicate bootstrap Secret names, or a missing cell bootstrap.
+
 ### ImagePullBackOff
 
-Check the failing pod and events:
+Inspect the JobSet pods and events:
 
 ```bash
-kubectl describe pod -n aiperf-system -l app.kubernetes.io/name=aiperf-operator
-uv run aiperf kube debug
+kubectl get pods --namespace "${BENCHMARK_NAMESPACE}"
+kubectl describe pod --namespace "${BENCHMARK_NAMESPACE}" <pod-name>
 ```
 
-Common fixes:
+Confirm that `imageReference` exists in the registry by that exact digest and
+that the node can authenticate to the registry. Changing or preloading a tag
+does not satisfy an envelope that names a different immutable digest.
 
-- Confirm the image was pushed with the exact tag used by Helm or `aiperf kube profile`.
-- Create the pull secret in both `aiperf-system` and the benchmark namespace.
-- Pass `--image-pull-secrets aiperf-registry` to `aiperf kube profile` for private benchmark images.
-- Use `--set image.pullPolicy=Always` while testing mutable tags; prefer immutable tags for normal use.
+### Submission receives 403
 
-### Operator is running but jobs use an old image
+The chart's ClusterRole is intentionally narrow but cluster-wide because the
+operator reconciles user-selected namespaces. Confirm the installed release
+has the expected ClusterRoleBinding and that admission policy permits the
+operator to create JobSets, per-run ServiceAccounts/Roles/RoleBindings, and
+immutable Secrets/ConfigMaps in the target namespace. The chart has no
+`benchmarkRbacNamespaces` value.
 
-The operator image and default benchmark image come from the Helm release. Check the rendered CRD default:
+## Related documentation
 
-```bash
-kubectl get crd aiperfjobs.aiperf.nvidia.com \
-  -o jsonpath='{.spec.versions[?(@.name=="v1alpha1")].schema.openAPIV3Schema.properties.spec.properties.image.default}{"\n"}'
-```
-
-If you set `defaults.image`, it overrides the benchmark image independently of `image.repository` and `image.tag`.
-
-### Endpoint check fails
-
-Verify the endpoint from inside the cluster:
-
-```bash
-kubectl run curl-check \
-  --rm -it \
-  --restart=Never \
-  --image=curlimages/curl:latest \
-  -- curl -sf "${ENDPOINT_URL}/models"
-```
-
-If the server is still starting and you intentionally want the benchmark to wait until worker runtime, set `skipEndpointCheck: true` in the AIPerfJob YAML. Do not use this to hide a wrong service name or namespace.
-
-### RBAC or namespace errors
-
-The Helm chart creates benchmark RBAC for `benchmarkNamespace.name` and any namespaces listed in `benchmarkRbacNamespaces`. If you run jobs in a different namespace, either install the chart with that namespace configured or add the namespace to `benchmarkRbacNamespaces`:
-
-```bash
-helm upgrade aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
-  --namespace aiperf-system \
-  --reuse-values \
-  --set 'benchmarkRbacNamespaces[0]=team-a-benchmarks'
-```
-
-## Related Documentation
-
-- [Getting Started on Kubernetes](getting-started.md) -- First benchmark walkthrough and Dynamo manifest examples.
-- [End-to-End Workflow](workflow.md) -- Full `init` -> `validate` -> `preflight` -> `profile` -> `results` lifecycle.
-- [Production Deployments](production.md) -- CI/CD, Kueue, private registries, multi-tenancy, and operations patterns.
-- [Kubernetes Configuration Reference](configuration.md) -- CRD fields, Helm values, and AIPerfJob configuration.
-- [Monitoring and Troubleshooting](monitoring.md) -- Watch, debug, logs, and common failure modes.
+- [Preflight Checks](preflight.md)
+- [RBAC and Security](rbac-security.md)
+- [Results Sidecars](sidecars.md)
+- [Native Kubernetes control-plane isolation](../specs/kubernetes-control-plane-isolation.md)

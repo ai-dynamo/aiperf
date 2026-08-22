@@ -1,9 +1,9 @@
 name: AIPerf Kubernetes Operator
 on:
   pull_request:
-    paths: ["aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**", "rust/cli/src/kube/**", "rust/e2e-tests/tests/kube_cli_contract.rs"]
+    paths: [".github/workflows/aiperf-k8s-operator.yml", "aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**", "rust/cli/src/kube/**", "rust/cli/src/results_sidecar.rs", "rust/e2e-tests/tests/kube_cli_contract.rs"]
   push:
-    paths: ["aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**", "rust/cli/src/kube/**", "rust/e2e-tests/tests/kube_cli_contract.rs"]
+    paths: [".github/workflows/aiperf-k8s-operator.yml", "aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**", "rust/cli/src/kube/**", "rust/cli/src/results_sidecar.rs", "rust/e2e-tests/tests/kube_cli_contract.rs"]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -18,16 +18,34 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: helm/kind-action@v1
-    - run: helm install aiperf-k8s deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator
+      with:
+        cluster_name: aiperf-k8s-operator
+    - run: docker build --tag aiperf-k8s-operator:ci ./aiperf-k8s-operator
+    - run: kind load docker-image aiperf-k8s-operator:ci --name aiperf-k8s-operator
+    - run: >-
+        helm install aiperf-k8s deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator
+        --namespace aiperf-system --create-namespace --wait --timeout 2m
+        --set image.repository=aiperf-k8s-operator --set image.tag=ci
+        --set image.pullPolicy=Never
     - run: python -m pip install -e './aiperf-k8s-operator[test]'
-    - run: pytest -n auto aiperf-k8s-operator/tests/integration --run-integration
+    - run: pytest -n auto aiperf-k8s-operator/tests/integration
+      env:
+        AIPERF_K8S_INTEGRATION: "1"
   native-cli-kind:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - uses: helm/kind-action@v1
+      with:
+        cluster_name: aiperf-k8s-operator
     - uses: dtolnay/rust-toolchain@stable
-    - run: helm install aiperf-k8s deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator
+    - run: docker build --tag aiperf-k8s-operator:ci ./aiperf-k8s-operator
+    - run: kind load docker-image aiperf-k8s-operator:ci --name aiperf-k8s-operator
+    - run: >-
+        helm install aiperf-k8s deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator
+        --namespace aiperf-system --create-namespace --wait --timeout 2m
+        --set image.repository=aiperf-k8s-operator --set image.tag=ci
+        --set image.pullPolicy=Never
     - run: cargo build --release -p aiperf-cli
       working-directory: rust
     # The ignored kind tests drive the real binary against the provisioned cluster.

@@ -9,3 +9,13 @@ serviceAccount:
   name: aiperf-k8s-operator
 rbac:
   create: true
+jobset:
+  enabled: true
+api:
+  port: 8080
+  serviceName: aiperf-k8s-operator
+persistence:
+  size: 10Gi
+  accessModes:
+  - ReadWriteOnce
+  storageClass: ""

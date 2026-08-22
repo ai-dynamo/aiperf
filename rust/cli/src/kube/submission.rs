@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::client::{AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, KubeClient};
-use super::contract::{ControllerEnvelope, NativeK8sRole, validate_envelope};
+use super::contract::{
+    ControllerEnvelope, NativeK8sRole, validate_envelope, validate_image_capabilities,
+};
 use super::error::KubeError;
 use super::manifest;
 
@@ -30,6 +32,25 @@ pub fn load_envelope(path: &Path) -> anyhow::Result<ControllerEnvelope> {
         )
     })?;
     validate_envelope(value).map_err(anyhow::Error::from)
+}
+
+/// Read and validate a capability document against the exact submitted image digest.
+pub fn validate_image_capability_document(path: &Path, image_digest: &str) -> anyhow::Result<()> {
+    let source = std::fs::read(path).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to read image capability document {}: {error}",
+            path.display()
+        )
+    })?;
+    let value: Value = serde_json::from_slice(&source).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to decode image capability document {}: {error}",
+            path.display()
+        )
+    })?;
+    validate_image_capabilities(value, image_digest)
+        .map(|_| ())
+        .map_err(|error| anyhow::anyhow!("image capability document is invalid: {error}"))
 }
 
 /// Return the API path for a namespace-owned AIPerfJob collection.
@@ -98,15 +119,16 @@ pub fn material_paths(
     Ok(selected)
 }
 
-/// Create one immutable Secret per workload identity after proving the envelope digest.
-///
-/// Material never leaves this call as plaintext in a CR, JobSet, or log; the
-/// envelope keeps only the reference metadata the operator is allowed to see.
-pub fn create_bootstrap_secrets(
+struct PreparedBootstrapSecret {
+    name: String,
+    was_created: bool,
+}
+
+fn prepare_bootstrap_secrets(
     client: &KubeClient,
     envelope: &ControllerEnvelope,
     material: &BTreeMap<BootstrapMaterialTarget, PathBuf>,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<Vec<PreparedBootstrapSecret>> {
     let expected = envelope
         .roles
         .iter()
@@ -125,7 +147,7 @@ pub fn create_bootstrap_secrets(
             "--bootstrap-material must provide exactly one path for every workload identity"
         );
     }
-    let mut created = 0;
+    let mut prepared = Vec::with_capacity(expected.len());
     for role in &envelope.roles {
         if role.name == NativeK8sRole::Cell {
             continue;
@@ -143,15 +165,23 @@ pub fn create_bootstrap_secrets(
                 anyhow::bail!("cell roles must use per-cell bootstrap references")
             }
         };
-        create_bootstrap_secret(
+        let result = create_bootstrap_secret(
             client,
             envelope,
             path,
             &bootstrap.secret_name,
             &bootstrap.sha256,
             role_name,
-        )?;
-        created += 1;
+        );
+        match result {
+            Ok(was_created) => prepared.push(PreparedBootstrapSecret {
+                name: bootstrap.secret_name.clone(),
+                was_created,
+            }),
+            Err(error) => {
+                return Err(with_bootstrap_rollback(client, envelope, &prepared, error));
+            }
+        }
     }
     for bootstrap in &envelope.cell_bootstraps {
         let path = material
@@ -159,59 +189,25 @@ pub fn create_bootstrap_secrets(
             .ok_or_else(|| {
                 anyhow::anyhow!("missing bootstrap material for cell {}", bootstrap.cell_id)
             })?;
-        create_bootstrap_secret(
+        let result = create_bootstrap_secret(
             client,
             envelope,
             path,
             &bootstrap.secret_name,
             &bootstrap.sha256,
             "cell",
-        )?;
-        created += 1;
-    }
-    Ok(created)
-}
-
-/// Refuse a sweep whose envelopes cannot share one CLI material selection.
-pub fn validate_sweep_material_compatibility(
-    envelopes: &[ControllerEnvelope],
-) -> anyhow::Result<()> {
-    let Some(first) = envelopes.first() else {
-        return Ok(());
-    };
-    let expected = bootstrap_material_digests(first);
-    if envelopes[1..]
-        .iter()
-        .any(|envelope| bootstrap_material_digests(envelope) != expected)
-    {
-        anyhow::bail!(
-            "native Kubernetes sweep envelopes must require identical bootstrap material targets and digests"
         );
-    }
-    Ok(())
-}
-
-fn bootstrap_material_digests(
-    envelope: &ControllerEnvelope,
-) -> BTreeMap<BootstrapMaterialTarget, &str> {
-    let mut digests = BTreeMap::new();
-    for role in &envelope.roles {
-        if role.name != NativeK8sRole::Cell {
-            if let Some(bootstrap) = &role.bootstrap {
-                digests.insert(
-                    BootstrapMaterialTarget::Role(role.name),
-                    bootstrap.sha256.as_str(),
-                );
+        match result {
+            Ok(was_created) => prepared.push(PreparedBootstrapSecret {
+                name: bootstrap.secret_name.clone(),
+                was_created,
+            }),
+            Err(error) => {
+                return Err(with_bootstrap_rollback(client, envelope, &prepared, error));
             }
         }
     }
-    for bootstrap in &envelope.cell_bootstraps {
-        digests.insert(
-            BootstrapMaterialTarget::Cell(bootstrap.cell_id),
-            bootstrap.sha256.as_str(),
-        );
-    }
-    digests
+    Ok(prepared)
 }
 
 fn create_bootstrap_secret(
@@ -221,7 +217,7 @@ fn create_bootstrap_secret(
     secret_name: &str,
     expected_digest: &str,
     role: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let bytes = std::fs::read(path).map_err(|error| {
         anyhow::anyhow!(
             "failed to read bootstrap material {}: {error}",
@@ -258,13 +254,15 @@ fn create_bootstrap_secret(
     )?;
     if status == 409 {
         validate_existing_bootstrap_secret(client, envelope, secret_name, expected_digest, role)?;
+        Ok(false)
     } else if !(200..300).contains(&status) {
         anyhow::bail!(
             "bootstrap Secret {} creation returned HTTP {status}",
             secret_name
         );
+    } else {
+        Ok(true)
     }
-    Ok(())
 }
 
 fn validate_existing_bootstrap_secret(
@@ -293,12 +291,16 @@ fn validate_existing_bootstrap_secret(
         anyhow::anyhow!("failed to decode existing bootstrap Secret {secret_name}: {error}")
     })?;
     let metadata = &existing["metadata"];
+    let has_owner = metadata["ownerReferences"]
+        .as_array()
+        .is_some_and(|owners| !owners.is_empty());
     if existing["immutable"] != true
         || metadata["name"] != secret_name
         || metadata["namespace"] != envelope.namespace
         || metadata["labels"]["aiperf.nvidia.com/run-id"] != envelope.run_id
         || metadata["labels"]["aiperf.nvidia.com/role"] != role
         || metadata["annotations"]["aiperf.nvidia.com/sha256"] != expected_digest
+        || has_owner
     {
         anyhow::bail!(
             "existing bootstrap Secret {secret_name} identity does not match the submitted run"
@@ -320,52 +322,269 @@ fn validate_existing_bootstrap_secret(
     Ok(())
 }
 
-/// Submit one immutable envelope projection as an AIPerfJob.
-pub fn submit_profile(client: &KubeClient, envelope: &ControllerEnvelope) -> anyhow::Result<u16> {
-    let body = manifest::project(envelope).map_err(anyhow::Error::from)?;
-    let body = serde_json::to_vec(&body).map_err(|error| {
-        anyhow::anyhow!("failed to serialize native Kubernetes profile: {error}")
-    })?;
-    client
-        .request(
-            "POST",
-            &jobs_path(&envelope.namespace),
-            "application/json",
-            body,
-        )
+/// Create, submit, and owner-bind one workload as a compensating transaction.
+pub fn submit_profile_transactionally(
+    client: &KubeClient,
+    envelope: &ControllerEnvelope,
+    material: &BTreeMap<BootstrapMaterialTarget, PathBuf>,
+) -> anyhow::Result<u16> {
+    let prepared = prepare_bootstrap_secrets(client, envelope, material)?;
+    let body = match manifest::project(envelope)
         .map_err(anyhow::Error::from)
+        .and_then(|body| {
+            serde_json::to_vec(&body).map_err(|error| {
+                anyhow::anyhow!("failed to serialize native Kubernetes profile: {error}")
+            })
+        }) {
+        Ok(body) => body,
+        Err(error) => {
+            return Err(with_bootstrap_rollback(client, envelope, &prepared, error));
+        }
+    };
+    let response = match client.execute(
+        "POST",
+        &jobs_path(&envelope.namespace),
+        "application/json",
+        body,
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            return Err(rollback_submission(
+                client,
+                envelope,
+                &prepared,
+                0,
+                anyhow::Error::from(error),
+            ));
+        }
+    };
+    if !response.is_success() {
+        return Err(with_bootstrap_rollback(
+            client,
+            envelope,
+            &prepared,
+            anyhow::anyhow!("AIPerfJob creation returned HTTP {}", response.status),
+        ));
+    }
+    let resource: Value = serde_json::from_slice(&response.body).map_err(|error| {
+        rollback_submission(
+            client,
+            envelope,
+            &prepared,
+            0,
+            anyhow::anyhow!("created AIPerfJob response is invalid: {error}"),
+        )
+    })?;
+    let metadata = resource.get("metadata").and_then(Value::as_object);
+    let object_uid = metadata
+        .and_then(|metadata| metadata.get("uid"))
+        .and_then(Value::as_str)
+        .filter(|uid| !uid.is_empty());
+    let Some(object_uid) = object_uid else {
+        return Err(rollback_submission(
+            client,
+            envelope,
+            &prepared,
+            0,
+            anyhow::anyhow!("created AIPerfJob response omits its UID"),
+        ));
+    };
+    if metadata
+        .and_then(|metadata| metadata.get("name"))
+        .and_then(Value::as_str)
+        != Some(envelope.job_id.as_str())
+        || metadata
+            .and_then(|metadata| metadata.get("namespace"))
+            .and_then(Value::as_str)
+            != Some(envelope.namespace.as_str())
+    {
+        return Err(rollback_submission(
+            client,
+            envelope,
+            &prepared,
+            0,
+            anyhow::anyhow!("created AIPerfJob response identity does not match the submission"),
+        ));
+    }
+    let owner = json!([{
+        "apiVersion": format!("{AIPERF_GROUP}/{AIPERF_VERSION}"),
+        "kind": "AIPerfJob",
+        "name": envelope.job_id,
+        "uid": object_uid,
+        "controller": true,
+    }]);
+    let patch = match serde_json::to_vec(&json!({"metadata": {"ownerReferences": owner}})) {
+        Ok(patch) => patch,
+        Err(error) => {
+            return Err(rollback_submission(
+                client,
+                envelope,
+                &prepared,
+                0,
+                anyhow::anyhow!("failed to encode bootstrap owner reference: {error}"),
+            ));
+        }
+    };
+    for (index, secret) in prepared.iter().enumerate() {
+        let response = match client.execute(
+            "PATCH",
+            &format!(
+                "/api/v1/namespaces/{}/secrets/{}",
+                envelope.namespace, secret.name
+            ),
+            "application/merge-patch+json",
+            patch.clone(),
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                return Err(rollback_submission(
+                    client,
+                    envelope,
+                    &prepared,
+                    index,
+                    anyhow::Error::from(error),
+                ));
+            }
+        };
+        if !response.is_success() {
+            return Err(rollback_submission(
+                client,
+                envelope,
+                &prepared,
+                index,
+                anyhow::anyhow!(
+                    "bootstrap Secret {} owner reference returned HTTP {}",
+                    secret.name,
+                    response.status
+                ),
+            ));
+        }
+    }
+    Ok(response.status)
 }
 
-/// Submit a native sweep that references only independently validated envelopes.
-pub fn submit_sweep(client: &KubeClient, envelopes: &[ControllerEnvelope]) -> anyhow::Result<u16> {
-    let first = envelopes.first().ok_or_else(|| {
-        anyhow::anyhow!("native Kubernetes sweep requires at least one --envelope")
-    })?;
-    if envelopes
-        .iter()
-        .any(|envelope| envelope.namespace != first.namespace)
-    {
-        anyhow::bail!("native Kubernetes sweep envelopes must use one namespace");
+fn rollback_submission(
+    client: &KubeClient,
+    envelope: &ControllerEnvelope,
+    prepared: &[PreparedBootstrapSecret],
+    bound_count: usize,
+    primary: anyhow::Error,
+) -> anyhow::Error {
+    let unbind_error = rollback_existing_owner_bindings(
+        client,
+        envelope,
+        &prepared[..bound_count.min(prepared.len())],
+    )
+    .err();
+    let cr_response = client.execute(
+        "DELETE",
+        &format!("{}/{}", jobs_path(&envelope.namespace), envelope.job_id),
+        "application/json",
+        Vec::new(),
+    );
+    let cr_error = match cr_response {
+        Ok(response) if response.is_success() || response.status == 404 => None,
+        Ok(response) => Some(format!(
+            "AIPerfJob cleanup returned HTTP {}",
+            response.status
+        )),
+        Err(error) => Some(format!("AIPerfJob cleanup failed: {error}")),
+    };
+    let bootstrap_error = rollback_bootstrap_secrets(client, envelope, prepared).err();
+    let mut failures = Vec::new();
+    if let Some(error) = unbind_error {
+        failures.push(format!("{error:#}"));
     }
-    let body = json!({
-        "apiVersion": format!("{AIPERF_GROUP}/{AIPERF_VERSION}"),
-        "kind": "AIPerfSweep",
-        "metadata": {"name": format!("{}-sweep", first.job_id), "namespace": first.namespace},
-        "spec": {"contractVersion": super::contract::CONTRACT_VERSION, "envelopes": envelopes},
-    });
-    let body = serde_json::to_vec(&body)
-        .map_err(|error| anyhow::anyhow!("failed to serialize native Kubernetes sweep: {error}"))?;
-    client
-        .request(
-            "POST",
+    if let Some(error) = cr_error {
+        failures.push(error);
+    }
+    if let Some(error) = bootstrap_error {
+        failures.push(format!("{error:#}"));
+    }
+    if failures.is_empty() {
+        primary
+    } else {
+        anyhow::anyhow!("{primary}; rollback failed: {}", failures.join("; "))
+    }
+}
+
+fn rollback_existing_owner_bindings(
+    client: &KubeClient,
+    envelope: &ControllerEnvelope,
+    bound: &[PreparedBootstrapSecret],
+) -> anyhow::Result<()> {
+    let patch = serde_json::to_vec(&json!({"metadata": {"ownerReferences": []}}))
+        .map_err(|error| anyhow::anyhow!("failed to encode owner rollback: {error}"))?;
+    let mut failures = Vec::new();
+    for secret in bound.iter().filter(|secret| !secret.was_created) {
+        match client.execute(
+            "PATCH",
             &format!(
-                "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{}/aiperfsweeps",
-                first.namespace
+                "/api/v1/namespaces/{}/secrets/{}",
+                envelope.namespace, secret.name
+            ),
+            "application/merge-patch+json",
+            patch.clone(),
+        ) {
+            Ok(response) if response.is_success() => {}
+            Ok(response) => failures.push(format!(
+                "Secret {} owner rollback returned HTTP {}",
+                secret.name, response.status
+            )),
+            Err(error) => failures.push(format!(
+                "Secret {} owner rollback failed: {error}",
+                secret.name
+            )),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(failures.join("; "))
+    }
+}
+
+fn with_bootstrap_rollback(
+    client: &KubeClient,
+    envelope: &ControllerEnvelope,
+    prepared: &[PreparedBootstrapSecret],
+    primary: anyhow::Error,
+) -> anyhow::Error {
+    match rollback_bootstrap_secrets(client, envelope, prepared) {
+        Ok(()) => primary,
+        Err(error) => anyhow::anyhow!("{primary}; bootstrap rollback failed: {error:#}"),
+    }
+}
+
+fn rollback_bootstrap_secrets(
+    client: &KubeClient,
+    envelope: &ControllerEnvelope,
+    prepared: &[PreparedBootstrapSecret],
+) -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+    for secret in prepared.iter().filter(|secret| secret.was_created) {
+        match client.execute(
+            "DELETE",
+            &format!(
+                "/api/v1/namespaces/{}/secrets/{}",
+                envelope.namespace, secret.name
             ),
             "application/json",
-            body,
-        )
-        .map_err(anyhow::Error::from)
+            Vec::new(),
+        ) {
+            Ok(response) if response.is_success() || response.status == 404 => {}
+            Ok(response) => failures.push(format!(
+                "Secret {} cleanup returned HTTP {}",
+                secret.name, response.status
+            )),
+            Err(error) => failures.push(format!("Secret {} cleanup failed: {error}", secret.name)),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(failures.join("; "))
+    }
 }
 
 /// Extract every repeatable `--envelope <path>` or `--envelope=<path>` argument.
@@ -384,7 +603,7 @@ pub fn envelope_paths(args: &[String]) -> Result<Vec<&Path>, KubeError> {
     }
     if paths.is_empty() {
         return Err(KubeError::ContractValidation(
-            "native Kubernetes profile and sweep require --envelope <native-k8s/v1.json>"
+            "native Kubernetes profile and validate require --envelope <native-k8s/v1.json>"
                 .to_string(),
         ));
     }
@@ -447,16 +666,6 @@ mod tests {
         );
         assert!(material_paths(&["--bootstrap-material=cell=/x".to_string()]).is_err());
         assert!(material_paths(&["--bootstrap-material=aggregator=/x".to_string()]).is_err());
-    }
-
-    #[test]
-    fn sweep_requires_one_compatible_bootstrap_material_set() {
-        let one_cell = fixture("valid-one-cell-envelope.json");
-        let multi_cell = fixture("valid-multi-cell-envelope.json");
-        assert!(
-            validate_sweep_material_compatibility(&[one_cell.clone(), one_cell.clone(),]).is_ok()
-        );
-        assert!(validate_sweep_material_compatibility(&[one_cell, multi_cell]).is_err());
     }
 
     #[test]
@@ -548,6 +757,149 @@ mod tests {
     }
 
     #[test]
+    fn secret_conflict_rejects_material_owned_by_another_cr() {
+        let test = secret_conflict_fixture();
+        let mut existing = test.identity.clone();
+        existing["metadata"]["ownerReferences"] = json!([{
+            "apiVersion": "aiperf.nvidia.com/v1alpha1",
+            "kind": "AIPerfJob",
+            "name": "old-job",
+            "uid": "old-incarnation",
+            "controller": true,
+        }]);
+        test.transport.push_response(409, Vec::new());
+        test.transport.push_response(
+            200,
+            serde_json::to_vec(&existing).expect("existing Secret JSON"),
+        );
+
+        let error = create_bootstrap_secret(
+            &test.client,
+            &test.envelope,
+            &test.material,
+            "bootstrap-controller",
+            &test.digest,
+            "controller",
+        )
+        .expect_err("another CR's Secret must not be rebound");
+
+        assert!(error.to_string().contains("identity does not match"));
+    }
+
+    #[test]
+    fn transactional_submission_binds_every_bootstrap_to_the_created_cr() {
+        let transaction = transaction_fixture();
+        for _ in 0..3 {
+            transaction.transport.push_response(201, Vec::new());
+        }
+        transaction.transport.push_response(
+            201,
+            br#"{"metadata":{"name":"job-1","namespace":"bench","uid":"4f78fcbe-9aae-4cc9-ae19-204231b21575"}}"#.to_vec(),
+        );
+        for _ in 0..3 {
+            transaction.transport.push_response(200, Vec::new());
+        }
+
+        let status = submit_profile_transactionally(
+            &transaction.client,
+            &transaction.envelope,
+            &transaction.material,
+        )
+        .expect("transactional submission");
+
+        assert_eq!(status, 201);
+        let requests = transaction.transport.requests.lock().expect("requests");
+        assert_eq!(requests.len(), 7);
+        assert_eq!(requests[3].method, "POST");
+        assert_eq!(requests[3].path, jobs_path("bench"));
+        for request in &requests[4..] {
+            assert_eq!(request.method, "PATCH");
+            let patch: Value = serde_json::from_slice(&request.body).expect("owner patch");
+            assert_eq!(
+                patch,
+                json!({"metadata": {"ownerReferences": [{
+                    "apiVersion": "aiperf.nvidia.com/v1alpha1",
+                    "kind": "AIPerfJob",
+                    "name": "job-1",
+                    "uid": "4f78fcbe-9aae-4cc9-ae19-204231b21575",
+                    "controller": true,
+                }]}})
+            );
+        }
+    }
+
+    #[test]
+    fn transactional_submission_rolls_back_new_secrets_when_cr_is_rejected() {
+        let transaction = transaction_fixture();
+        for _ in 0..3 {
+            transaction.transport.push_response(201, Vec::new());
+        }
+        transaction
+            .transport
+            .push_response(422, b"invalid CR".to_vec());
+        for _ in 0..3 {
+            transaction.transport.push_response(200, Vec::new());
+        }
+
+        let error = submit_profile_transactionally(
+            &transaction.client,
+            &transaction.envelope,
+            &transaction.material,
+        )
+        .expect_err("rejected CR must fail the transaction");
+
+        assert!(error.to_string().contains("HTTP 422"));
+        let requests = transaction.transport.requests.lock().expect("requests");
+        assert_eq!(requests.len(), 7);
+        assert!(
+            requests[4..]
+                .iter()
+                .all(|request| request.method == "DELETE")
+        );
+        assert!(
+            requests[4..]
+                .iter()
+                .all(|request| request.path.contains("/secrets/bootstrap-"))
+        );
+    }
+
+    #[test]
+    fn transactional_submission_removes_cr_and_secrets_when_owner_binding_fails() {
+        let transaction = transaction_fixture();
+        for _ in 0..3 {
+            transaction.transport.push_response(201, Vec::new());
+        }
+        transaction.transport.push_response(
+            201,
+            br#"{"metadata":{"name":"job-1","namespace":"bench","uid":"4f78fcbe-9aae-4cc9-ae19-204231b21575"}}"#.to_vec(),
+        );
+        transaction
+            .transport
+            .push_response(500, b"patch failed".to_vec());
+        transaction.transport.push_response(200, Vec::new());
+        for _ in 0..3 {
+            transaction.transport.push_response(200, Vec::new());
+        }
+
+        let error = submit_profile_transactionally(
+            &transaction.client,
+            &transaction.envelope,
+            &transaction.material,
+        )
+        .expect_err("failed owner binding must roll back the CR");
+
+        assert!(error.to_string().contains("owner reference"));
+        let requests = transaction.transport.requests.lock().expect("requests");
+        assert_eq!(requests[5].method, "DELETE");
+        assert_eq!(requests[5].path, format!("{}/job-1", jobs_path("bench")));
+        assert!(
+            requests[6..]
+                .iter()
+                .all(|request| request.method == "DELETE")
+        );
+    }
+
+    #[test]
     fn secret_conflict_rejects_forged_digest_metadata_for_wrong_bytes() {
         let test = secret_conflict_fixture();
         let mut forged = test.identity.clone();
@@ -586,6 +938,45 @@ mod tests {
         digest: String,
         identity: Value,
         _directory: tempfile::TempDir,
+    }
+
+    struct TransactionFixture {
+        client: KubeClient,
+        transport: Arc<ConflictTransport>,
+        envelope: ControllerEnvelope,
+        material: BTreeMap<BootstrapMaterialTarget, PathBuf>,
+        _directory: tempfile::TempDir,
+    }
+
+    fn transaction_fixture() -> TransactionFixture {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let bytes = b"transaction bootstrap";
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        let mut envelope = fixture("valid-one-cell-envelope.json");
+        let mut material = BTreeMap::new();
+        for role in &mut envelope.roles {
+            if let Some(bootstrap) = &mut role.bootstrap {
+                bootstrap.sha256.clone_from(&digest);
+                let path = directory.path().join(format!("{:?}", role.name));
+                std::fs::write(&path, bytes).expect("bootstrap material");
+                material.insert(BootstrapMaterialTarget::Role(role.name), path);
+            }
+        }
+        for bootstrap in &mut envelope.cell_bootstraps {
+            bootstrap.sha256.clone_from(&digest);
+            let path = directory.path().join(format!("cell-{}", bootstrap.cell_id));
+            std::fs::write(&path, bytes).expect("cell bootstrap material");
+            material.insert(BootstrapMaterialTarget::Cell(bootstrap.cell_id), path);
+        }
+        let transport = Arc::new(ConflictTransport::default());
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        TransactionFixture {
+            client,
+            transport,
+            envelope,
+            material,
+            _directory: directory,
+        }
     }
 
     fn secret_conflict_fixture() -> SecretConflictFixture {
