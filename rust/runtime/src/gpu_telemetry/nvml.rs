@@ -196,13 +196,7 @@ fn jpg_utilization(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<f64
     // SAFETY: `device` was resolved from `nvml`, the dynamically loaded symbol
     // has the exact `nvmlDeviceGetJpgUtilization` signature, and both output
     // pointers reference initialized writable local storage for this call.
-    let status = unsafe {
-        symbol(
-            device.handle(),
-            &mut utilization,
-            &mut sampling_period_us,
-        )
-    };
+    let status = unsafe { symbol(device.handle(), &mut utilization, &mut sampling_period_us) };
     (status == nvmlReturn_enum_NVML_SUCCESS).then_some(utilization as f64)
 }
 
