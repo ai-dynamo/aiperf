@@ -528,7 +528,10 @@ mod tests {
             metadata.gpu_model_name,
             fixture["gpu_model_name"].as_str().unwrap()
         );
-        assert_eq!(metadata.pci_bus_id.as_deref(), fixture["pci_bus_id"].as_str());
+        assert_eq!(
+            metadata.pci_bus_id.as_deref(),
+            fixture["pci_bus_id"].as_str()
+        );
         assert_eq!(metadata.device.as_deref(), fixture["device"].as_str());
         assert_eq!(metadata.hostname.as_deref(), fixture["hostname"].as_str());
     }

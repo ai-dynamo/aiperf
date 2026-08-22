@@ -160,7 +160,9 @@ fn device_metrics(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> BTreeMap<St
     insert_result(
         &mut metrics,
         "nvidia_memory_used",
-        device.memory_info().map(|value| bytes_to_gigabytes(value.used)),
+        device
+            .memory_info()
+            .map(|value| bytes_to_gigabytes(value.used)),
     );
     insert_result(
         &mut metrics,
@@ -276,7 +278,10 @@ mod tests {
             metadata.gpu_model_name,
             fixture["gpu_model_name"].as_str().unwrap()
         );
-        assert_eq!(metadata.pci_bus_id.as_deref(), fixture["pci_bus_id"].as_str());
+        assert_eq!(
+            metadata.pci_bus_id.as_deref(),
+            fixture["pci_bus_id"].as_str()
+        );
         assert_eq!(metadata.device.as_deref(), fixture["device"].as_str());
         assert_eq!(metadata.hostname.as_deref(), fixture["hostname"].as_str());
     }
