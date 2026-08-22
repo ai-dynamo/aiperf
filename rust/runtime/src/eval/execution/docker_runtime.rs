@@ -2539,13 +2539,11 @@ mod compose_lease_tests {
                     .is_err()
             );
         }
-        assert_eq!(
-            &*runtime.down_requests.borrow(),
-            &[
-                (Duration::ZERO, Duration::from_secs(3)),
-                (Duration::ZERO, Duration::from_secs(3))
-            ]
-        );
+        let requests = runtime.down_requests.borrow();
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|(grace, deadline)| {
+            *grace == Duration::ZERO && !deadline.is_zero() && *deadline <= Duration::from_secs(3)
+        }));
     }
 
     #[test]

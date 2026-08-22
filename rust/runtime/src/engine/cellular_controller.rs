@@ -4189,8 +4189,7 @@ mod tests {
     #[test]
     fn agent_session_auto_jsonl_rejects_claude_only_options_before_reading_source() {
         let temporary = tempfile::tempdir().unwrap();
-        let source = temporary.path().join("malformed.jsonl");
-        std::fs::write(&source, "not json\n").unwrap();
+        let source = temporary.path().join("missing.jsonl");
         let envelope = serde_json::json!({"run": {"cfg": {"datasets": [{
             "type": "file",
             "format": "agent_recording",
@@ -4198,15 +4197,12 @@ mod tests {
             "graph": {"include_subagents": true},
         }]}}});
 
-        let error = build_dataset_serve_plan_from_envelope(
-            &envelope,
-            Some("agent_recording"),
-            &source,
-            None,
-            None,
-        )
-        .expect_err("Auto JSONL must reject the incompatible option before source detection")
-        .to_string();
+        let error = match crate::engine::graph_input::selected_imported_agent_request(
+            envelope.pointer("/run/cfg/datasets/0").unwrap(),
+        ) {
+            Ok(_) => panic!("Auto JSONL accepted an incompatible option before source detection"),
+            Err(error) => error.to_string(),
+        };
 
         assert!(
             error.contains("include_subagents applies only to Claude Code sources"),

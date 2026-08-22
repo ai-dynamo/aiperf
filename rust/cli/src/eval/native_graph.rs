@@ -34,7 +34,7 @@ use anyhow::Context as _;
 use serde::Serialize;
 use tokio::task::LocalSet;
 
-use super::SandboxFlag;
+use super::{DEFAULT_SANDBOX_IMAGE, SandboxFlag};
 
 const MAX_MODEL_RUNTIME_BYTES: u64 = 1024 * 1024;
 const NATIVE_GRAPH_SCHEDULER: &str = "local";
@@ -259,9 +259,9 @@ fn run_resolved_native_graph_suite(
         .as_deref()
         .map(EvalNodeRecordArtifact::open)
         .transpose()?;
-    let image = options.image.unwrap_or_else(|| {
-        "sha256:0000000000000000000000000000000000000000000000000000000000".to_owned()
-    });
+    let image = options
+        .image
+        .unwrap_or_else(|| DEFAULT_SANDBOX_IMAGE.to_owned());
     let recipe = HarborSandboxRecipe::for_standard_task(image, options.workdir)?;
     let dist_id = current_distribution_id()
         .context("deriving native graph distribution identity from the current binary")?;
@@ -323,9 +323,9 @@ fn run_resolved_external_suite(
     application: &Application,
     prepared_driver: PreparedExternalDriverCapability,
 ) -> anyhow::Result<i32> {
-    let image = options.image.unwrap_or_else(|| {
-        "sha256:0000000000000000000000000000000000000000000000000000000000".to_owned()
-    });
+    let image = options
+        .image
+        .unwrap_or_else(|| DEFAULT_SANDBOX_IMAGE.to_owned());
     let recipe = HarborSandboxRecipe::for_standard_task(image, options.workdir)?;
     let scheduler = select_native_graph_scheduler(
         application.product_registry(),

@@ -58,12 +58,51 @@ LLMS = "llms.txt"
 _SPEC_MD = re.compile(r"^docs/specs/.+\.md$")
 _CRATE_MANIFEST = re.compile(r"^rust/[^/]+/Cargo\.toml$")
 
+SECURITY_DOC_REQUIREMENTS = {
+    "docs/specs/cellular.md": (
+        "unauthenticated routing fact, not application admission",
+        "fixed binary role material",
+        "inherited file descriptor",
+        "controller-to-cell dataset/phaser pushes",
+        "not per-push authenticated frames",
+        "exact bearer authorized by that registration over the pinned-tls artifact channel",
+        "before source acquisition, scratch creation, transport bind, or launch",
+    ),
+    "docs/specs/slurm-native.md": (
+        "fixed binary role material",
+        "application admission",
+        "controller-to-cell dataset/phaser pushes are not per-push authenticated frames",
+        "exact bearer over pinned tls",
+    ),
+    "AGENTS.md": (
+        "unauthenticated routing fact, not application admission",
+        "fixed binary role material",
+        "controller-to-cell dataset/phaser pushes",
+        "not per-push authenticated frames",
+        "exact bearer over pinned tls",
+    ),
+    "llms.txt": (
+        "unauthenticated routing fact, not application admission",
+        "fixed binary role material",
+        "controller-to-cell dataset/phaser pushes",
+        "not per-push authenticated frames",
+        "exact bearer over pinned tls",
+    ),
+}
+
+SECURITY_DOC_STALE_PHRASES = (
+    "no forged identities",
+    "private bootstrap json",
+    "private bootstrap env",
+    "authenticate before velo peer registration",
+    "every aiperf handler",
+    "every velo application handler",
+)
+
 
 def _run(cmd: list[str]) -> str:
     try:
-        return subprocess.run(
-            cmd, capture_output=True, text=True, check=True
-        ).stdout
+        return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         sys.stderr.write(f"check-docs-current: git failed: {' '.join(cmd)}\n{exc}\n")
         raise SystemExit(2) from exc
@@ -87,6 +126,12 @@ def changed(base: str | None) -> list[tuple[str, str]]:
         else:
             rows.append((status[0], parts[-1]))
     return rows
+
+
+def checked_text(path: str, base: str | None) -> str:
+    """Read a document from the same Git tree that `changed` inspects."""
+    revision = f"HEAD:{path}" if base else f":{path}"
+    return " ".join(_run(["git", "show", revision]).lower().split())
 
 
 def main() -> int:
@@ -116,6 +161,26 @@ def main() -> int:
     crate_addremove = any(s in ("A", "D") for s, _ in crate_rows)
 
     problems: list[str] = []
+
+    security_docs: dict[str, str] = {}
+    for path, required in SECURITY_DOC_REQUIREMENTS.items():
+        text = checked_text(path, args.base)
+        security_docs[path] = text
+        missing = [phrase for phrase in required if phrase not in text]
+        if missing:
+            problems.append(
+                f"{path} is missing cellular session-security current truth: "
+                + ", ".join(repr(phrase) for phrase in missing)
+                + "."
+            )
+    for path, text in security_docs.items():
+        stale = [phrase for phrase in SECURITY_DOC_STALE_PHRASES if phrase in text]
+        if stale:
+            problems.append(
+                f"{path} contains stale cellular security claims: "
+                + ", ".join(repr(phrase) for phrase in stale)
+                + "."
+            )
 
     if spec_touched and SPECS_INDEX not in paths:
         touched = ", ".join(sorted(p for _, p in spec_rows))

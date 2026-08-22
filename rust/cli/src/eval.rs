@@ -78,6 +78,8 @@ struct EvalFlags {
 }
 
 const MAX_LIFECYCLE_REQUEST_BYTES: u64 = 1024 * 1024;
+const DEFAULT_SANDBOX_IMAGE: &str =
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
 /// User-facing verifier sandbox topology.
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -299,9 +301,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         None if use_docker && !imported.package.is_standard_directory() => {
             anyhow::bail!("--image is required for a legacy package with separate verification")
         }
-        None if use_docker => {
-            "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_owned()
-        }
+        None if use_docker => DEFAULT_SANDBOX_IMAGE.to_owned(),
         None => anyhow::bail!("--image is required for the local sandbox backend"),
     };
     let recipe = if imported.package.is_standard_directory() {

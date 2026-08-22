@@ -536,8 +536,12 @@ Execution and scheduling:
   cell processes plus cross-host session trust: `_hello` is an unauthenticated
   routing fact, not application admission; one-shot fixed binary role material
   installs one process security context; exact connection/reply attestation,
-  sequenced payload-bound frames, transactional registration, and early
-  hierarchy refusal protect AIPerf effects without claiming transport confidentiality.
+  sequenced payload-bound cell-originated admission, transactional registration,
+  and early hierarchy refusal protect their stated AIPerf effects without
+  claiming transport confidentiality. Controller-to-cell dataset/phaser pushes
+  are not per-push authenticated frames, while HTTP artifact bytes use an exact
+  bearer over pinned TLS; per-push controller-stream authentication is a separate
+  follow-up.
 - [`docs/specs/velo-hub.md`](docs/specs/velo-hub.md) — the per-experiment control-plane hub
   (`aiperf_runtime::hub`, `cellular` feature): a plugin trait whose plugins each
   contribute an HTTP router and velo handlers backed by one shared handler

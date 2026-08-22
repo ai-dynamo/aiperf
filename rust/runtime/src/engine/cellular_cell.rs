@@ -591,8 +591,8 @@ pub(crate) fn rewrite_cell_dataset_paths(
 ///   cell (the controller-local path is directly readable) or an operator on a
 ///   shared filesystem with HTTP shipping disabled (the path is shared too).
 ///
-/// The download runs on a dedicated thread and runtime, isolated from the caller's
-/// runtime.
+/// The blocking download runs on a dedicated thread and runtime rather than entering
+/// the caller's runtime.
 #[cfg(feature = "cellular")]
 pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<DownloadedCellEnvelope> {
     use anyhow::Context;
@@ -600,15 +600,15 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Downlo
     if ModuloCellPartition::from_env().is_none() {
         return Ok(DownloadedCellEnvelope::unchanged(envelope_bytes)); // not a cell (single-process path)
     }
-    let mut envelope: serde_json::Value = serde_json::from_slice(&envelope_bytes)
+    let envelope: serde_json::Value = serde_json::from_slice(&envelope_bytes)
         .context("parsing cell envelope for dataset download")?;
-    let Some(source_path) = cellular_file_dataset_path(&envelope) else {
+    if cellular_file_dataset_path(&envelope).is_none() {
         // synthetic / inline-records / public — nothing to ship. A `file`/`path` graph
         // trace (dag_jsonl / weka_trace / dynamo_trace) IS shipped (the predicate is
         // format-blind), whether its path is a single file, a directory of shards, or a
         // segmented-prefix — the controller's manifest carries the whole file set.
         return Ok(DownloadedCellEnvelope::unchanged(envelope_bytes));
-    };
+    }
     let Some(_authority) = cell_artifact_authority() else {
         // Same-host cell, or shared-FS with shipping disabled: the controller-local
         // path is directly readable, so leave the envelope pointing at it.
@@ -616,36 +616,49 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Downlo
     };
     let client = installed_artifact_channel()
         .context("cell has artifact authority but no authenticated artifact channel")?;
+    download_cell_dataset_from_channel(envelope, client)
+}
+
+#[cfg(feature = "cellular")]
+fn download_cell_dataset_from_channel(
+    mut envelope: serde_json::Value,
+    client: &ArtifactChannelClient,
+) -> Result<DownloadedCellEnvelope> {
+    use anyhow::Context;
+
     // The controller cannot know this cell's on-disk layout, so it publishes a
     // manifest describing the trace file set (single file, directory of shards, or
     // segmented-prefix). The cell fetches the manifest, streams every file over the
     // same HTTP+zstd plane, reconstructs the tree under a cell-local dir preserving
     // the (flat) relative names, and rewrites `datasets/0.path` to the local
     // file/dir/prefix stem — so the graph loader reads the reconstructed tree.
-    let _ = &source_path; // presence gated the ship; the controller owns the file set
     let landing_lease = remote_dataset_landing_lease()?;
     let dest_dir = landing_lease.path().to_path_buf();
-    let client = client;
-    let (local_path, local_replay_root) = std::thread::spawn(move || -> Result<_> {
-        use crate::engine::artifact_shipping::{
-            fetch_dataset_manifest, reconstruct_shipped_dataset,
-        };
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()?;
-        runtime.block_on(async move {
-            let manifest = fetch_dataset_manifest(client)
-                .await
-                .context("cell fetching dataset manifest from controller")?;
-            let has_local_replay_root = manifest_has_local_replay_root(&manifest);
-            let path = reconstruct_shipped_dataset(client, &manifest, &dest_dir)
-                .await
-                .context("cell reconstructing shipped dataset from controller")?;
-            Ok((path, has_local_replay_root.then_some(dest_dir)))
-        })
+    // The scope lets the transfer thread borrow the process-installed channel while
+    // the immediate join keeps transfer errors and panics synchronous with startup.
+    let (local_path, local_replay_root) = std::thread::scope(|scope| {
+        scope
+            .spawn(move || -> Result<_> {
+                use crate::engine::artifact_shipping::{
+                    fetch_dataset_manifest, reconstruct_shipped_dataset,
+                };
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(async move {
+                    let manifest = fetch_dataset_manifest(client)
+                        .await
+                        .context("cell fetching dataset manifest from controller")?;
+                    let has_local_replay_root = manifest_has_local_replay_root(&manifest);
+                    let path = reconstruct_shipped_dataset(client, &manifest, &dest_dir)
+                        .await
+                        .context("cell reconstructing shipped dataset from controller")?;
+                    Ok((path, has_local_replay_root.then_some(dest_dir)))
+                })
+            })
+            .join()
     })
-    .join()
     .map_err(|_| anyhow::anyhow!("cell dataset-download thread panicked"))??;
 
     // Rewrite the cell's envelope to compile from the landed cell-local copy.
@@ -1577,13 +1590,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn owned_cleanup_cell_dataset_landing_close_removes_directory() {
-        let _environment = CELL_ENV_LOCK.lock().await;
-        let environment = ScopedCellEnv::capture(&[
-            crate::cellular::partition::CELL_ID_ENV,
-            crate::cellular::partition::CELL_COUNT_ENV,
-            CELL_ARTIFACT_ADDR_ENV,
-            CELL_CONTROLLER_ADDR_ENV,
-        ]);
         let temporary = tempfile::tempdir().unwrap();
         let caller_source = temporary.path().join("session.jsonl");
         let original = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"original\"}]}}\n";
@@ -1630,6 +1636,18 @@ mod tests {
             )
             .await
             .unwrap();
+        let bearer = crate::engine::artifact_shipping::ArtifactBearer::from_test_bytes([1; 32]);
+        let registrar = server.registrar();
+        registrar
+            .prepare(0, bearer.digest_bytes())
+            .unwrap()
+            .commit();
+        let client = crate::engine::artifact_shipping::ArtifactChannelClient::new(
+            server.local_addr().to_string(),
+            registrar.server_config(),
+            bearer,
+        )
+        .unwrap();
         std::fs::write(
             &caller_source,
             b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"replacement\"}]}}\n",
@@ -1641,16 +1659,12 @@ mod tests {
         }}});
         rewrite_cell_dataset_paths(&mut envelope, &read_set.selected_path, Some(&read_set.root))
             .unwrap();
-        let encoded = serde_json::to_vec(&envelope).unwrap();
-        environment.set(crate::cellular::partition::CELL_ID_ENV, "0");
-        environment.set(crate::cellular::partition::CELL_COUNT_ENV, "1");
-        environment.set(CELL_ARTIFACT_ADDR_ENV, server.local_addr().to_string());
-        environment.remove(CELL_CONTROLLER_ADDR_ENV);
-        let downloaded =
-            tokio::task::spawn_blocking(move || download_cell_dataset_if_needed(encoded))
-                .await
-                .unwrap()
-                .unwrap();
+        let downloaded = tokio::task::spawn_blocking(move || {
+            download_cell_dataset_from_channel(envelope, &client)
+        })
+        .await
+        .unwrap()
+        .unwrap();
         let landing_path = downloaded.landing_path().unwrap().to_path_buf();
         #[cfg(unix)]
         assert_eq!(

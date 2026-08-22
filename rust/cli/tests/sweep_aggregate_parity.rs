@@ -8,6 +8,8 @@ use aiperf_cli::flags::ProfileFlags;
 use aiperf_cli::sweep::aggregate::{CellOutcome, finish};
 use aiperf_cli::sweep::artifact_dir::IterationOrder;
 
+mod common;
+
 fn repo_file(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../")
@@ -16,6 +18,10 @@ fn repo_file(rel: &str) -> PathBuf {
 
 #[test]
 fn single_trial_sweep_aggregate_matches_python() {
+    common::on_profile_flags_stack(single_trial_sweep_aggregate_matches_python_on_larger_stack);
+}
+
+fn single_trial_sweep_aggregate_matches_python_on_larger_stack() {
     let spec: serde_json::Value = serde_json::from_slice(
         &std::fs::read(repo_file("tools/parity/sweep_agg_spec.json")).unwrap(),
     )

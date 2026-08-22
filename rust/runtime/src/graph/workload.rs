@@ -213,7 +213,8 @@ impl GraphTraceSource for CyclingGraphTraceSource {
 ///
 /// One formula covers both partition modes the runtime needs:
 /// - **finite** (SharedIterations, e.g. `--num-conversations`): a `session_limit` bounds
-///   the global ordinal, so each cell stops once its interleave passes the shared cap;
+///   the global count from the selected start ordinal, so each cell stops once its
+///   interleave passes the shared interval;
 /// - **unbounded sampler-loop** (duration-driven GraphAgentic): `session_limit = None`
 ///   and a phase duration policy owns termination.
 ///
@@ -226,6 +227,8 @@ pub struct PartitionedGraphTraceSource {
     cell_id: u64,
     cell_count: u64,
     next_local: Cell<u64>,
+    /// First global ordinal retained from an earlier phase's corpus cursor.
+    start_ordinal: u64,
     /// Strategy-aware corpus-index remap keyed on the GLOBAL session ordinal.
     ///
     /// `Sequential` (the default) is `global_ordinal % len`. Under
@@ -241,9 +244,10 @@ pub struct PartitionedGraphTraceSource {
 impl PartitionedGraphTraceSource {
     /// Construct a partitioned cycle for cell `cell_id` of `cell_count`
     /// (`cell_count >= 1`, `cell_id < cell_count`). `session_limit` bounds the GLOBAL
-    /// session ordinal (the same cap a 1-cell run would use), or `None` for the
-    /// unbounded duration-driven case. `cell_count == 1` reproduces
-    /// [`CyclingGraphTraceSource`] exactly.
+    /// session count (the same cap a 1-cell run would use), or `None` for the
+    /// unbounded duration-driven case. With [`Self::starting_at`], the retained
+    /// interval is `[start_ordinal, start_ordinal + session_limit)`. At the default
+    /// start ordinal, `cell_count == 1` reproduces [`CyclingGraphTraceSource`] exactly.
     pub fn new(
         templates: Vec<GraphTraceProgram>,
         session_limit: Option<u64>,
@@ -271,8 +275,15 @@ impl PartitionedGraphTraceSource {
             cell_id: u64::from(cell_id),
             cell_count: u64::from(cell_count),
             next_local: Cell::new(0),
+            start_ordinal: 0,
             draw: PermutationDraw::sequential(),
         })
+    }
+
+    /// Resume the global interleave at `start_ordinal` without changing its budget.
+    pub fn starting_at(mut self, start_ordinal: u64) -> Self {
+        self.start_ordinal = start_ordinal;
+        self
     }
 
     /// Route the interleave template pick through a resolved strategy-aware draw.
@@ -292,16 +303,22 @@ impl PartitionedGraphTraceSource {
 impl GraphTraceSource for PartitionedGraphTraceSource {
     fn next_trace(&self) -> Result<Option<GraphTraceProgram>, GraphWorkloadError> {
         let local = self.next_local.get();
-        let global_ordinal = local
+        let first_offset = (self.cell_id + self.cell_count - self.start_ordinal % self.cell_count)
+            % self.cell_count;
+        let relative_ordinal = local
             .checked_mul(self.cell_count)
-            .and_then(|scaled| scaled.checked_add(self.cell_id))
+            .and_then(|scaled| scaled.checked_add(first_offset))
             .ok_or_else(|| GraphWorkloadError("graph partitioned ordinal exceeds u64".into()))?;
         if self
             .session_limit
-            .is_some_and(|limit| global_ordinal >= limit)
+            .is_some_and(|limit| relative_ordinal >= limit)
         {
             return Ok(None);
         }
+        let global_ordinal = self
+            .start_ordinal
+            .checked_add(relative_ordinal)
+            .ok_or_else(|| GraphWorkloadError("graph partitioned ordinal exceeds u64".into()))?;
         let template_index = self.draw.index(global_ordinal, self.templates.len());
         let mut plan = self.templates[template_index].clone();
         plan.profiling.trace.id = format!("{}::instance-{global_ordinal}", plan.profiling.trace.id);
