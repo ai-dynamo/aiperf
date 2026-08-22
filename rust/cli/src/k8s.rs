@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn reporter_constructs_status_and_completion_requests() {
         let requests = Arc::new(Mutex::new(Vec::new()));
-        let credentials = KubeCredentials { host: "api".to_string(), port: 443, server_name: "api".to_string(), token: Some("token".to_string(), client_certificate_pem: None, client_key_pem: None, ca_pem: None, insecure_skip_tls_verify: true };
+        let credentials = KubeCredentials { host: "api".to_string(), port: 443, server_name: "api".to_string(), token: Some("token".to_string()), client_certificate_pem: None, client_key_pem: None, ca_pem: None, insecure_skip_tls_verify: true };
         let client = KubeClient::with_transport(credentials, Arc::new(RecordingTransport(requests.clone())));
         let reporter = CrReporter { config: Some(InClusterConfig { client, namespace: "bench".to_string(), job_id: "job".to_string() }) };
         reporter.patch_status(&progress_body("profiling", 2, Some(4), None, None));
