@@ -18,6 +18,7 @@ const AMDSMI_ENDPOINT_URL: &str = "amdsmi://localhost";
 const AMDSMI_SUCCESS: u32 = 0;
 const AMDSMI_INIT_AMD_GPUS: u64 = 1 << 1;
 const AMDSMI_UUID_LENGTH: u32 = 38;
+const AMDSMI_SUPPORTED_LIBRARY_MAJOR: u32 = 26;
 
 /// Native local AMD telemetry source backed by the runtime-loaded AMD SMI library.
 pub(crate) struct AmdSmiTelemetrySource {
@@ -58,6 +59,7 @@ type SocketHandle = *mut c_void;
 type ProcessorHandle = *mut c_void;
 type InitFn = unsafe extern "C" fn(u64) -> u32;
 type ShutdownFn = unsafe extern "C" fn() -> u32;
+type VersionFn = unsafe extern "C" fn(*mut AmdsmiVersion) -> u32;
 type SocketHandlesFn = unsafe extern "C" fn(*mut u32, *mut SocketHandle) -> u32;
 type ProcessorHandlesFn = unsafe extern "C" fn(SocketHandle, *mut u32, *mut ProcessorHandle) -> u32;
 type UuidFn = unsafe extern "C" fn(ProcessorHandle, *mut u32, *mut c_char) -> u32;
@@ -70,6 +72,14 @@ type VramUsageFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiVramUsage) -
 type TemperatureFn = unsafe extern "C" fn(ProcessorHandle, u32, u32, *mut i64) -> u32;
 type EccCountFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiErrorCount) -> u32;
 type GpuMetricsFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiGpuMetrics) -> u32;
+
+#[repr(C)]
+struct AmdsmiVersion {
+    major: u32,
+    minor: u32,
+    release: u32,
+    build: *const c_char,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -156,6 +166,7 @@ impl AmdSmiWorker {
         let library = unsafe { Library::new("libamd_smi.so.26") }
             .or_else(|_| unsafe { Library::new("libamd_smi.so") })
             .map_err(|error| GpuTelemetryError::Worker(format!("loading AMD SMI: {error}")))?;
+        validate_library_abi(&library)?;
         Ok(Self {
             library,
             devices: Vec::new(),
@@ -190,6 +201,26 @@ impl AmdSmiWorker {
         }
         Ok(())
     }
+}
+
+fn validate_library_abi(library: &Library) -> Result<(), GpuTelemetryError> {
+    let version = unsafe { library.get::<VersionFn>(b"amdsmi_get_lib_version\0") }.map_err(
+        |error| GpuTelemetryError::Worker(format!("loading AMD SMI version query: {error}")),
+    )?;
+    let mut reported = std::mem::MaybeUninit::<AmdsmiVersion>::zeroed();
+    status(
+        unsafe { version(reported.as_mut_ptr()) },
+        "querying AMD SMI library version",
+    )?;
+    // The hand-written metrics declaration is verified against ROCm's 26.x ABI.
+    let reported = unsafe { reported.assume_init() };
+    if reported.major != AMDSMI_SUPPORTED_LIBRARY_MAJOR {
+        return Err(GpuTelemetryError::Worker(format!(
+            "unsupported AMD SMI ABI {}.{}.{}, expected major {AMDSMI_SUPPORTED_LIBRARY_MAJOR}",
+            reported.major, reported.minor, reported.release
+        )));
+    }
+    Ok(())
 }
 
 impl VendorWorker for AmdSmiWorker {

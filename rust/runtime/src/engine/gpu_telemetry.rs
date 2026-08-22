@@ -220,6 +220,7 @@ impl GpuTelemetryRun {
     /// Gracefully stop supervised sources when execution ends before a phase
     /// can own their normal `finish` barrier.
     pub(crate) async fn shutdown(&self) {
+        self.sidecar.state.stop_cadence().await;
         self.sidecar.state.shutdown_sources().await;
     }
 }
@@ -412,13 +413,7 @@ impl GpuTelemetryState {
         if self.finished.replace(true) {
             return Ok(());
         }
-        self.stop.notify_one();
-        let task = self.task.borrow_mut().take();
-        if let Some(task) = task
-            && let Err(error) = task.await
-        {
-            tracing::warn!(error = %error, "GPU telemetry cadence task failed");
-        }
+        self.stop_cadence().await;
 
         let collectors = self.active.borrow().clone();
         let mut end_snapshots = Vec::new();
@@ -461,6 +456,16 @@ impl GpuTelemetryState {
             *self.boundary.borrow_mut() = Some(boundary);
         }
         Ok(())
+    }
+
+    async fn stop_cadence(&self) {
+        self.stop.notify_one();
+        let task = self.task.borrow_mut().take();
+        if let Some(task) = task
+            && let Err(error) = task.await
+        {
+            tracing::warn!(error = %error, "GPU telemetry cadence task failed");
+        }
     }
 
     async fn shutdown_sources(&self) {
@@ -774,6 +779,35 @@ mod tests {
                         .sidecar_metrics()
                         .contains_key("amd_throttle_status")
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_stops_cadence_before_shutting_down_sources() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let source = Rc::new(FixtureSource {
+                    calls: Cell::new(0),
+                    shutdown_calls: Cell::new(0),
+                });
+                let sidecar = Rc::new(GpuTelemetrySidecar::new(
+                    Rc::new(SimClock::new()),
+                    1_000_000,
+                    vec![Rc::new(GpuTelemetryCollector::new(source.clone()))],
+                    GpuTelemetryAccumulator::new(),
+                ));
+                let run = GpuTelemetryRun {
+                    sidecar: sidecar.clone(),
+                };
+
+                sidecar.start().await.unwrap();
+                tokio::task::yield_now().await;
+                run.shutdown().await;
+
+                assert!(sidecar.state.task.borrow().is_none());
+                assert_eq!(source.shutdown_calls.get(), 1);
             })
             .await;
     }
