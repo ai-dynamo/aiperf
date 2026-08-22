@@ -416,11 +416,13 @@ impl BenchmarkRunWireV2 {
             workload_config["planned_replay_traces"] =
                 serde_json::to_value(&self.planned_replay_traces)
                     .map_err(|error| anyhow!("run.planned_replay_traces: {error}"))?;
-            if matches!(
-                cfg.weka_semantics.as_deref(),
-                Some("legacy") | Some("agentx")
-            ) && let Some(cap) = cfg.system_idle_gap_cap_seconds
-            {
+            // Both weka arms consume the cap: `lower_legacy_agentic` threads it
+            // into every `PhaseSpec::AgenticReplay`, and `lower_graph` puts it on
+            // `NativeGraphDatasetPlan` where `TraceExecutor::cap_system_idle_wait_us`
+            // applies it. Gating the projection on legacy/agentx made the flag a
+            // silent no-op under graph-ir even though `resolve.rs` validates it and
+            // its own rejection message names graph-ir as a supported mode.
+            if let Some(cap) = cfg.system_idle_gap_cap_seconds {
                 workload_config["system_idle_gap_cap_seconds"] = serde_json::json!(cap);
             }
         }
