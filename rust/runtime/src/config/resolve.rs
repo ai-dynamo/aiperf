@@ -1760,6 +1760,21 @@ fn apply_scenario_synthesis(
             .map(serde_json::Value::Number)
             .ok_or_else(|| anyhow::anyhow!("scenario synthesis value must be finite, got {v}"))
     };
+    // A scenario that locks none of the synthesis-bearing knobs contributes
+    // nothing here, and materializing the block anyway is not inert: the direct
+    // `agent_recording` graph input (`RecordedAgentDatasetInput`,
+    // `engine/graph_input.rs`) is `deny_unknown_fields` and has no `synthesis`
+    // field, so an injected block fails decode outright. That makes
+    // `--scenario recorded-agent-default` (whose four synthesis fields are all
+    // `None`) unrunnable on the graph-ir arm. Only overlay when the scenario
+    // actually locks something, or the user authored `--synthesis-*` themselves.
+    let scenario_locks_synthesis = spec.default_trajectory_start_min_ratio.is_some()
+        || spec.default_trajectory_start_max_ratio.is_some()
+        || spec.trace_idle_gap_cap_seconds.is_some()
+        || spec.require_cache_bust.is_some();
+    if !scenario_locks_synthesis && inputs.synthesis.is_none() {
+        return Ok(());
+    }
     let mut m = match inputs.synthesis.take() {
         Some(serde_json::Value::Object(existing)) => existing,
         _ => {
