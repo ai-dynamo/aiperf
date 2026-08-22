@@ -493,6 +493,42 @@ fn status(result: u32, operation: &str) -> Result<(), GpuTelemetryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct FixtureRecord {
+        timestamp_ns: i64,
+        telemetry_source_url: String,
+        gpu_index: i32,
+        gpu_uuid: String,
+        gpu_model_name: String,
+        pci_bus_id: Option<String>,
+        device: Option<String>,
+        hostname: Option<String>,
+        platform: String,
+        telemetry_data: BTreeMap<String, f64>,
+    }
+
+    impl FixtureRecord {
+        fn into_record(self) -> GpuTelemetryRecord {
+            GpuTelemetryRecord {
+                timestamp_ns: self.timestamp_ns,
+                endpoint_url: self.telemetry_source_url,
+                metadata: GpuMetadata {
+                    gpu_index: self.gpu_index,
+                    gpu_uuid: self.gpu_uuid,
+                    gpu_model_name: self.gpu_model_name,
+                    pci_bus_id: self.pci_bus_id,
+                    device: self.device,
+                    hostname: self.hostname,
+                    namespace: None,
+                    pod_name: None,
+                    platform: self.platform,
+                },
+                metrics: self.telemetry_data,
+            }
+        }
+    }
 
     #[test]
     fn normalizes_vram_mib_like_origin_main_bytes() {
@@ -500,40 +536,55 @@ mod tests {
     }
 
     #[test]
-    fn origin_main_fixture_units_and_identity_use_production_normalizers() {
-        let fixture = serde_json::from_str::<serde_json::Value>(include_str!(
+    fn origin_main_fixture_assembles_complete_native_amdsmi_record() {
+        let fixture = serde_json::from_str::<Vec<FixtureRecord>>(include_str!(
             "../../tests/data/gpu_telemetry/amdsmi_origin_main.json"
         ))
+        .unwrap()
+        .pop()
         .unwrap();
-        let fixture = fixture.as_array().unwrap().first().unwrap();
-        let metrics = &fixture["telemetry_data"];
-        assert_eq!(
-            bytes_to_gigabytes(16_000_000_000),
-            metrics["amd_memory_used"].as_f64().unwrap()
+        let actual = record_from_observation(
+            fixture.timestamp_ns,
+            AmdSmiDeviceObservation {
+                index: 0,
+                gpu_uuid: Some("GPU-amd".to_string()),
+                gpu_model_name: Some("MI300X".to_string()),
+                bdf: Some(AmdsmiBdf {
+                    as_uint: (0x41_u64 << 8),
+                }),
+                power: Some(AmdsmiPowerInfo {
+                    socket_power: 300,
+                    current_socket_power: 0,
+                    average_socket_power: 0,
+                    gfx_voltage: 0,
+                    soc_voltage: 0,
+                    mem_voltage: 0,
+                    power_limit: 0,
+                    reserved: [0; 18],
+                }),
+                activity: Some(AmdsmiEngineUsage {
+                    gfx_activity: 70,
+                    umc_activity: 30,
+                    mm_activity: u32::MAX,
+                    reserved: [0; 13],
+                }),
+                vram_usage: Some(AmdsmiVramUsage {
+                    vram_total: 0,
+                    vram_used: 15_259,
+                    reserved: [0; 2],
+                }),
+                temperature: Some(72),
+                ecc: Some(AmdsmiErrorCount {
+                    correctable_count: 0,
+                    uncorrectable_count: 3,
+                    deferred_count: 0,
+                    reserved: [0; 5],
+                }),
+                throttle_status: Some((0, 1)),
+                energy: Some((2_000_000, 2.0)),
+            },
         );
-        assert_eq!(
-            energy_count_to_megajoules(2_000_000, 2.0),
-            metrics["amd_energy_consumption"].as_f64().unwrap()
-        );
-        assert!(is_throttled(0, 2));
-        assert_eq!(metrics["amd_throttle_status"].as_f64(), Some(1.0));
-        let metadata = metadata_from_parts(
-            0,
-            "GPU-amd".to_string(),
-            "MI300X".to_string(),
-            Some("0000:41:00.0".to_string()),
-        );
-        assert_eq!(metadata.gpu_uuid, fixture["gpu_uuid"].as_str().unwrap());
-        assert_eq!(
-            metadata.gpu_model_name,
-            fixture["gpu_model_name"].as_str().unwrap()
-        );
-        assert_eq!(
-            metadata.pci_bus_id.as_deref(),
-            fixture["pci_bus_id"].as_str()
-        );
-        assert_eq!(metadata.device.as_deref(), fixture["device"].as_str());
-        assert_eq!(metadata.hostname.as_deref(), fixture["hostname"].as_str());
+        assert_eq!(actual, Some(fixture.into_record()));
     }
 
     #[test]

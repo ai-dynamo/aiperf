@@ -246,43 +246,70 @@ fn nvml_error(error: nvml_wrapper::error::NvmlError) -> GpuTelemetryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct FixtureRecord {
+        timestamp_ns: i64,
+        telemetry_source_url: String,
+        gpu_index: i32,
+        gpu_uuid: String,
+        gpu_model_name: String,
+        pci_bus_id: Option<String>,
+        device: Option<String>,
+        hostname: Option<String>,
+        platform: String,
+        telemetry_data: BTreeMap<String, f64>,
+    }
+
+    impl FixtureRecord {
+        fn into_record(self) -> GpuTelemetryRecord {
+            GpuTelemetryRecord {
+                timestamp_ns: self.timestamp_ns,
+                endpoint_url: self.telemetry_source_url,
+                metadata: GpuMetadata {
+                    gpu_index: self.gpu_index,
+                    gpu_uuid: self.gpu_uuid,
+                    gpu_model_name: self.gpu_model_name,
+                    pci_bus_id: self.pci_bus_id,
+                    device: self.device,
+                    hostname: self.hostname,
+                    namespace: None,
+                    pod_name: None,
+                    platform: self.platform,
+                },
+                metrics: self.telemetry_data,
+            }
+        }
+    }
 
     #[test]
-    fn origin_main_fixture_units_and_identity_use_production_normalizers() {
-        let fixture = serde_json::from_str::<serde_json::Value>(include_str!(
+    fn origin_main_fixture_assembles_complete_native_nvml_record() {
+        let fixture = serde_json::from_str::<Vec<FixtureRecord>>(include_str!(
             "../../tests/data/gpu_telemetry/nvml_origin_main.json"
         ))
+        .unwrap()
+        .pop()
         .unwrap();
-        let fixture = fixture.as_array().unwrap().first().unwrap();
-        let metrics = &fixture["telemetry_data"];
-        assert_eq!(
-            milliwatts_to_watts(250_000),
-            metrics["nvidia_power_usage"].as_f64().unwrap()
+        let actual = record_from_observation(
+            fixture.timestamp_ns,
+            NvmlDeviceObservation {
+                index: 0,
+                gpu_uuid: Some("GPU-nvml".to_string()),
+                gpu_model_name: Some("H100".to_string()),
+                pci_bus_id: Some("0000:01:00.0".to_string()),
+                power_millwatts: Some(250_000),
+                energy_millijoules: Some(3_000_000),
+                utilization: Some((80, 40)),
+                memory_used_bytes: Some(12_000_000_000),
+                temperature_celsius: Some(65),
+                encoder_utilization: Some(34),
+                decoder_utilization: Some(12),
+                sm_utilization: Some(vec![25]),
+                jpg_utilization: Some(56),
+                power_violation_nanoseconds: Some(4_000),
+            },
         );
-        assert_eq!(
-            millijoules_to_megajoules(3_000_000),
-            metrics["nvidia_energy_consumption"].as_f64().unwrap()
-        );
-        assert_eq!(
-            bytes_to_gigabytes(12_000_000_000),
-            metrics["nvidia_memory_used"].as_f64().unwrap()
-        );
-        let metadata = metadata_from_parts(
-            0,
-            "GPU-nvml".to_string(),
-            "H100".to_string(),
-            Some("0000:01:00.0".to_string()),
-        );
-        assert_eq!(metadata.gpu_uuid, fixture["gpu_uuid"].as_str().unwrap());
-        assert_eq!(
-            metadata.gpu_model_name,
-            fixture["gpu_model_name"].as_str().unwrap()
-        );
-        assert_eq!(
-            metadata.pci_bus_id.as_deref(),
-            fixture["pci_bus_id"].as_str()
-        );
-        assert_eq!(metadata.device.as_deref(), fixture["device"].as_str());
-        assert_eq!(metadata.hostname.as_deref(), fixture["hostname"].as_str());
+        assert_eq!(actual, Some(fixture.into_record()));
     }
 }
