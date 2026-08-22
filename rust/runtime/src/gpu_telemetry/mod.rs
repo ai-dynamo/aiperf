@@ -7,6 +7,7 @@
 //! exact counter snapshots, gauge accumulation, and GPU efficiency rollups.
 
 pub mod accumulator;
+pub mod amdsmi;
 pub mod collector;
 pub mod custom_metrics;
 pub mod fields;

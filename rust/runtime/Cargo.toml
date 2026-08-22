@@ -130,6 +130,7 @@ http-body-util = "0.1"
 hyper = { version = "1.10", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 jmespath = "0.4"
+libloading = "0.8"
 minijinja = { version = "2.21", features = ["json"] }
 nvml-wrapper = { version = "0.12.1", default-features = false }
 nvml-wrapper-sys = "0.9.1"
