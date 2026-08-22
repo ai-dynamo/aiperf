@@ -46,6 +46,27 @@ use aiperf_mock_server::{AppState, build_router};
 
 /// Offline tokenizer fixture used unless a test selects another tokenizer.
 pub const DEFAULT_MODEL: &str = "openai/gpt-oss-120b";
+
+/// Overrides [`DEFAULT_MODEL`] with a local tokenizer directory.
+///
+/// `DEFAULT_MODEL` is a repository id, and resolving one always calls the Hub's
+/// model-info endpoint before consulting the cache
+/// (`dataset/hf_hub.rs::download_blocking` runs `repo.info()` unconditionally),
+/// so `HF_HUB_OFFLINE=1` and a warm cache do not make it offline. On a host that
+/// can only egress through an authenticated forward proxy the Rust client
+/// rejects, that call fails and every tokenizer-bearing test in this suite fails
+/// with it — for a reason that has nothing to do with what the test asserts.
+/// A path short-circuits in `resolve_builtin_or_local` before any IO, so this
+/// variable pins a locally-materialized snapshot directory instead.
+const TOKENIZER_ENV: &str = "AIPERF_E2E_TOKENIZER";
+
+/// The tokenizer this suite passes when a test does not choose its own.
+pub fn default_tokenizer() -> String {
+    match std::env::var(TOKENIZER_ENV) {
+        Ok(value) if !value.is_empty() => value,
+        _ => DEFAULT_MODEL.to_string(),
+    }
+}
 pub const DEFAULT_CONCURRENCY: u32 = 2;
 pub const DEFAULT_REQUEST_COUNT: u32 = 10;
 
@@ -316,7 +337,7 @@ impl AIPerfHarness {
         // An explicit tokenizer always takes precedence over the harness default.
         if !args.iter().any(|a| a == "--tokenizer") {
             args.push("--tokenizer".to_string());
-            args.push(DEFAULT_MODEL.to_string());
+            args.push(default_tokenizer());
         }
         self.exec(args, secs)
     }
@@ -331,7 +352,7 @@ impl AIPerfHarness {
         args.push(self.artifact_path().display().to_string());
         if !args.iter().any(|a| a == "--tokenizer") {
             args.push("--tokenizer".to_string());
-            args.push(DEFAULT_MODEL.to_string());
+            args.push(default_tokenizer());
         }
         self.exec_env(args, DEFAULT_TIMEOUT_SECS, extra_env)
     }
