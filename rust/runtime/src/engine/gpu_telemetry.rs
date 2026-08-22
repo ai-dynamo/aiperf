@@ -19,8 +19,8 @@ use crate::clock::Clock;
 use crate::gpu_telemetry::{
     DcgmPrometheusDecoder, DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind,
     GpuPhaseBoundary, GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord,
-    GpuTelemetrySummary, PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
-    amdsmi::AmdSmiTelemetrySource, nvml::NvmlTelemetrySource,
+    GpuTelemetrySummary, RuntimeGpuMetricSpec, amdsmi::AmdSmiTelemetrySource,
+    nvml::NvmlTelemetrySource,
 };
 use crate::metrics_core::Unit;
 use crate::phase_runtime::ScheduledPhaseSidecar;
@@ -61,32 +61,6 @@ impl GpuTelemetryRun {
                 // The local collectors are URL-less by construction, so there is
                 // nothing to check beyond their strict decode.
                 GpuTelemetrySourceSpec::Nvml {} | GpuTelemetrySourceSpec::AmdSmi {} => {}
-                GpuTelemetrySourceSpec::Python {
-                    collector,
-                    url,
-                    python_executable,
-                    worker_module,
-                    ..
-                } => {
-                    ensure!(
-                        !collector.trim().is_empty(),
-                        "Python GPU telemetry collector cannot be empty"
-                    );
-                    if let Some(url) = url {
-                        ensure!(
-                            !url.trim().is_empty(),
-                            "Python GPU telemetry URL cannot be empty"
-                        );
-                    }
-                    ensure!(
-                        python_executable.is_absolute(),
-                        "GPU telemetry python_executable must be absolute"
-                    );
-                    ensure!(
-                        !worker_module.trim().is_empty(),
-                        "GPU telemetry worker_module cannot be empty"
-                    );
-                }
             }
         }
 
@@ -160,30 +134,6 @@ impl GpuTelemetryRun {
                         }
                         Err(error) => {
                             tracing::warn!(error = %error, collector = "amdsmi", "GPU telemetry skipped unavailable native source")
-                        }
-                    }
-                }
-                GpuTelemetrySourceSpec::Python {
-                    collector,
-                    url,
-                    metrics_file,
-                    python_executable,
-                    worker_module,
-                } => {
-                    let config = PythonGpuTelemetryConfig {
-                        python_executable: python_executable.clone(),
-                        worker_module: worker_module.clone(),
-                        collector: collector.clone(),
-                        url: url.clone(),
-                        metrics_file: metrics_file.clone(),
-                        request_timeout_seconds: spec.request_timeout_ns as f64 / 1_000_000_000.0,
-                    };
-                    match PythonGpuTelemetrySource::spawn(clock.clone(), config).await {
-                        Ok(source) => {
-                            collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source))))
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "GPU telemetry skipped unavailable Python source")
                         }
                     }
                 }

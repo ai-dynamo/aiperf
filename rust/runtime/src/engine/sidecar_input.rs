@@ -221,21 +221,6 @@ pub enum GpuTelemetrySourceSpec {
     /// In-process AMD SMI collection on the local host. Braced-empty for the
     /// same strict-decode reason as [`GpuTelemetrySourceSpec::Nvml`].
     AmdSmi {},
-    /// Collector or user extension supervised as a worker process.
-    Python {
-        /// Registered Config-v2 collector name.
-        collector: String,
-        /// Optional remote endpoint used by the DCGM collector.
-        #[serde(default)]
-        url: Option<String>,
-        /// Optional custom DCGM metrics definition.
-        #[serde(default)]
-        metrics_file: Option<PathBuf>,
-        /// Absolute interpreter used to launch the worker.
-        python_executable: PathBuf,
-        /// Importable strict-stdio worker module.
-        worker_module: String,
-    },
 }
 
 /// One Config-v2 custom GPU signal exposed in native-v2 output.
@@ -544,23 +529,6 @@ impl SidecarInputAdapter for GpuTelemetryInputAdapter {
                 // Local collectors carry no configuration to validate; their
                 // strict URL-less decode is the whole contract.
                 GpuTelemetrySourceSpec::Nvml {} | GpuTelemetrySourceSpec::AmdSmi {} => {}
-                GpuTelemetrySourceSpec::Python {
-                    collector,
-                    url,
-                    python_executable,
-                    worker_module,
-                    ..
-                } => {
-                    ensure_nonempty(collector, "Python collector")?;
-                    if let Some(url) = url {
-                        ensure_nonempty(url, "Python collector url")?;
-                    }
-                    ensure!(
-                        python_executable.is_absolute(),
-                        "python_executable must be absolute"
-                    );
-                    ensure_nonempty(worker_module, "worker_module")?;
-                }
             }
         }
         for metric in &spec.custom_metrics {

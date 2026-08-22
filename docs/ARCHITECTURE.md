@@ -603,7 +603,7 @@ Every source/decoder/parser is a Clock-injected trait; all feed the shared `Side
 series into the native report. Continuous scrapes dedup identical bodies → gauge distributions;
 boundary scrapes bypass dedup → exact reset-clamped counter/histogram deltas.
 
-- **`gpu_telemetry`** — DCGM-first `GpuTelemetrySource` (HTTP) or supervised Python source;
+- **`gpu_telemetry`** — DCGM-first `GpuTelemetrySource` (HTTP), native NVML, or native AMD SMI;
   `DcgmPrometheusDecoder` applies exact per-field scaling (`DCGM_METRICS` table); per-GPU series;
   energy/power/efficiency joins (`TotalGpuEnergy`, `OutputTokensPerJoule`, `EnergyPerUser`).
 - **`network_latency`** — fresh-TCP-connect RTT calibration with DNS resolution/fallback,

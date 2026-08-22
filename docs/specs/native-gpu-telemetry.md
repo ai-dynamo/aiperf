@@ -17,10 +17,9 @@ collectors.
 
 The native runtime owns GPU telemetry cadence, authoritative profiling boundary
 snapshots, accumulation, JSONL output, and the report join. DCGM Exporter
-Prometheus scraping, native NVML, and native AMD SMI are public collector
-selections. The lower-level source seam can also supervise the established
-Python collectors for extension compatibility, but native YAML lowers `pynvml`
-and `amdsmi` to their local native sources.
+Prometheus scraping, native NVML, and native AMD SMI are the public collector
+selections. Native YAML lowers `pynvml` and `amdsmi` to their local native
+sources; the native runtime does not launch Python collector workers.
 
 `DCGM_METRICS` and `AMD_METRICS` define the registered normalized metric names,
 units, and counter-versus-gauge behavior. Their `scale` values apply only when
@@ -159,7 +158,7 @@ when an AMD ROCm host is available.
 
 ## Source anchors
 
-- `rust/runtime/src/gpu_telemetry/{source.rs,collector.rs,model.rs,fields.rs,accumulator.rs,python_source.rs}`.
+- `rust/runtime/src/gpu_telemetry/{source.rs,collector.rs,model.rs,fields.rs,accumulator.rs,nvml.rs,amdsmi.rs,vendor_worker.rs}`.
 - `rust/runtime/src/engine/{gpu_telemetry.rs,sidecar_input.rs}`.
 - `rust/runtime/src/config/model/telemetry.rs` and `rust/cli/src/yaml.rs`.
 - `rust/e2e-tests/tests/{test_gpu_telemetry.rs,test_dcgm_faker.rs}`.

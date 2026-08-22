@@ -14,7 +14,6 @@ pub mod fields;
 pub mod model;
 pub mod nvml;
 pub mod parser;
-pub mod python_source;
 pub mod source;
 mod vendor_worker;
 
@@ -36,7 +35,4 @@ pub use model::{
     GpuTelemetryRecord, NVIDIA_GPU_TELEMETRY_PLATFORM, UNKNOWN_GPU_TELEMETRY_PLATFORM,
 };
 pub use parser::{DcgmPrometheusDecoder, GpuTelemetryDecoder};
-pub use python_source::{
-    PYTHON_GPU_TELEMETRY_PROTOCOL_VERSION, PythonGpuTelemetryConfig, PythonGpuTelemetrySource,
-};
 pub use source::{DcgmTelemetrySource, GpuScrapeMode, GpuTelemetryError, GpuTelemetrySource};

@@ -15,9 +15,10 @@ and network latency. These producers feed values into the IO-free metrics seam
 
 Three modules plus their Clock-paced runner sidecars:
 
-- `aiperf_runtime::gpu_telemetry` — DCGM and Python GPU sources, exact
-  phase-boundary counters, cadence gauges, and performance/accuracy
-  energy/power/efficiency joins. Custom GPU metric bindings are supported.
+- `aiperf_runtime::gpu_telemetry` — DCGM, native NVML, and native AMD SMI GPU
+  sources, exact phase-boundary counters, cadence gauges, and performance/
+  accuracy energy/power/efficiency joins. Custom GPU metric bindings are
+  supported.
 - `aiperf_runtime::server_metrics` — owns a self-contained Prometheus/OpenMetrics
   text parser with Prometheus fallback and auto-disable, a vLLM/SGLang metric
   atlas, and histogram estimation.
@@ -31,8 +32,9 @@ finished once per cell on the main thread (see
 
 ## Source anchors
 
-- `rust/runtime/src/gpu_telemetry/` (`source.rs`, `python_source.rs`,
-  `accumulator.rs`, `parser.rs`, `custom_metrics.rs`, `fields.rs`).
+- `rust/runtime/src/gpu_telemetry/` (`source.rs`, `nvml.rs`, `amdsmi.rs`,
+  `vendor_worker.rs`, `accumulator.rs`, `parser.rs`, `custom_metrics.rs`,
+  `fields.rs`).
 - `rust/runtime/src/server_metrics/` (`parser.rs`, `prom_text.rs`, `atlas.rs`,
   `histogram.rs`, `accumulator.rs`).
 - `rust/runtime/src/network_latency/` (`probe.rs`, `accumulator.rs`).
