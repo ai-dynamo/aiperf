@@ -17,7 +17,7 @@ mod tests {
     use std::io::Read;
     use std::net::TcpListener as StdTcpListener;
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use bytes::Bytes;
@@ -53,6 +53,9 @@ mod tests {
     const FIXED_OSL: usize = 6;
     const MOCK_TTFT_MS: u64 = 8;
     const MOCK_ITL_MS: u64 = 2;
+    // These wall-clock characterizations each launch several worker runtimes. Running
+    // them together measures harness contention rather than dispatch pacing.
+    static PACING_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// Fixed-latency OpenAI-compatible SSE server.
     ///
@@ -674,6 +677,9 @@ mod tests {
     /// merged-timeline proof shape the concurrency test uses server-side.
     #[test]
     fn global_dispatch_paces_true_aggregate_rate_not_workers_times_too_fast() {
+        let _pacing_test = PACING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         const WORKERS: usize = 4;
         const RATE_PER_SEC: f64 = 200.0; // 5ms base interval.
         const REQUESTS: u64 = 40; // 10 per thread at W=4.
@@ -1097,6 +1103,9 @@ mod tests {
     /// let issuance run `W ×` too fast.
     #[test]
     fn global_push_paces_true_aggregate_rate() {
+        let _pacing_test = PACING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         const WORKERS: usize = 4;
         const RATE_PER_SEC: f64 = 200.0;
         const REQUESTS: u64 = 40;
@@ -1264,6 +1273,9 @@ mod tests {
     /// fast.
     #[test]
     fn global_hop_paces_true_aggregate_rate() {
+        let _pacing_test = PACING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         const WORKERS: usize = 4;
         const RATE_PER_SEC: f64 = 200.0;
         const REQUESTS: u64 = 40;
