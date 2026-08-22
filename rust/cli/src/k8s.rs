@@ -353,9 +353,12 @@ mod tests {
             &self,
             _credentials: &KubeCredentials,
             request: KubeRequest,
-        ) -> Result<u16, crate::kube::error::KubeError> {
+        ) -> Result<crate::kube::client::KubeResponse, crate::kube::error::KubeError> {
             self.0.lock().expect("recording lock").push(request);
-            Ok(200)
+            Ok(crate::kube::client::KubeResponse {
+                status: 200,
+                body: Vec::new(),
+            })
         }
         fn watch(
             &self,
