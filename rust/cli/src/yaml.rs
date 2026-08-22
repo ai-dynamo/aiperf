@@ -167,6 +167,16 @@ fn apply_cli_overrides(
     if let Some(prefix) = flags.profile_export_prefix.clone() {
         inputs.profile_export_prefix = Some(prefix);
     }
+    // `Inputs::weka_semantics` is built as `None` on this path so the scenario
+    // derives it (`resolve_weka_semantics`); `--weka-semantics` is its only
+    // explicit override and has to be overlaid here to exist at all. Without
+    // this, a config-authored `benchmark.scenario` whose timing mode is
+    // `agentic_replay` always resolves to `legacy`, and legacy lowering requires
+    // a `hugging_face` dataset source -- so `scenario: recorded-agent-default`
+    // over a file dataset is unreachable from a config file.
+    if let Some(semantics) = flags.weka_semantics.clone() {
+        inputs.weka_semantics = Some(semantics);
+    }
     if let Some(v) = flags.max_context_length {
         inputs.max_context_length = Some(v);
     }
