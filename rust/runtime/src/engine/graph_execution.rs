@@ -2224,7 +2224,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
             })?;
         let record = CapturedRecord {
             uuid,
-            x_correlation_id: self.trace_id.clone(),
+            x_correlation_id: ingest.correlation_id.clone(),
             output: CapturedModelOutput::from_parts(
                 &outcome.response_text,
                 outcome.model_response.content.as_deref(),
