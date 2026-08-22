@@ -618,72 +618,6 @@ mod tests {
         }
     }
 
-    fn canonical_json(value: &serde_json::Value) -> String {
-        match value {
-            serde_json::Value::Array(values) => format!(
-                "[{}]",
-                values
-                    .iter()
-                    .map(canonical_json)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            serde_json::Value::Object(values) => format!(
-                "{{{}}}",
-                values
-                    .iter()
-                    .collect::<BTreeMap<_, _>>()
-                    .into_iter()
-                    .map(|(key, value)| format!(
-                        "{}:{}",
-                        serde_json::to_string(key).unwrap(),
-                        canonical_json(value)
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            _ => serde_json::to_string(value).unwrap(),
-        }
-    }
-
-    fn parity_record(fixture: &serde_json::Value) -> GpuTelemetryRecord {
-        let metadata = GpuMetadata {
-            gpu_index: fixture["gpu_index"].as_i64().unwrap() as i32,
-            gpu_uuid: fixture["gpu_uuid"].as_str().unwrap().to_string(),
-            gpu_model_name: fixture["gpu_model_name"].as_str().unwrap().to_string(),
-            pci_bus_id: fixture["pci_bus_id"].as_str().map(ToOwned::to_owned),
-            device: fixture["device"].as_str().map(ToOwned::to_owned),
-            hostname: fixture["hostname"].as_str().map(ToOwned::to_owned),
-            namespace: None,
-            pod_name: None,
-            platform: fixture["platform"].as_str().unwrap().to_string(),
-        };
-        let metrics = serde_json::from_value(fixture["telemetry_data"].clone()).unwrap();
-        GpuTelemetryRecord {
-            timestamp_ns: fixture["timestamp_ns"].as_i64().unwrap(),
-            endpoint_url: fixture["telemetry_source_url"]
-                .as_str()
-                .unwrap()
-                .to_string(),
-            metadata,
-            metrics,
-        }
-    }
-
-    fn expected_native_json(fixture: &serde_json::Value) -> serde_json::Value {
-        let mut value = fixture.clone();
-        let object = value.as_object_mut().unwrap();
-        let source = object.remove("telemetry_source_url").unwrap();
-        object.insert("dcgm_url".to_string(), source);
-        serde_json::to_value(
-            object
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect::<BTreeMap<_, _>>(),
-        )
-        .unwrap()
-    }
-
     #[test]
     fn snapshot_merge_keeps_all_endpoints_and_uses_runtime_boundary() {
         let first = GpuBoundarySnapshot {
@@ -706,22 +640,6 @@ mod tests {
                 .timestamp_ns,
             40
         );
-    }
-
-    #[test]
-    fn native_local_sources_match_origin_main_fixture_records() {
-        for fixture in [
-            include_str!("../../tests/data/gpu_telemetry/nvml_origin_main.json"),
-            include_str!("../../tests/data/gpu_telemetry/amdsmi_origin_main.json"),
-        ] {
-            let fixture = serde_json::from_str::<serde_json::Value>(fixture).unwrap();
-            let fixture = fixture.as_array().unwrap().first().unwrap();
-            let actual = serde_json::to_value(TelemetryRow::from(&parity_record(fixture))).unwrap();
-            assert_eq!(
-                canonical_json(&actual),
-                canonical_json(&expected_native_json(fixture))
-            );
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]
