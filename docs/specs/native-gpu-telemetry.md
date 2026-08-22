@@ -9,9 +9,9 @@ SPDX-License-Identifier: Apache-2.0
 
 Add explicit, local Rust collectors for NVIDIA NVML and AMD SMI without moving
 GPU telemetry ownership out of the native runtime. The collectors preserve the
-established GPU telemetry record, metric, phase-boundary, and reporting seams;
-they replace only the process-local vendor API acquisition that currently lives
-behind Python collectors.
+existing record, metric, phase-boundary, and reporting seams; they replace only
+the process-local vendor API acquisition that currently lives behind Python
+collectors.
 
 ## Built
 
@@ -22,122 +22,132 @@ seam can also supervise a Python worker, which retains the established Python
 `pynvml` and `amdsmi` collectors, but native YAML does not lower either local
 collector today.
 
-`DCGM_METRICS` and `AMD_METRICS` define the normalized vendor metric names,
-units, scales, and counter-versus-gauge behavior. The accumulator consumes
-`GpuScrape` records independently of their source. Consequently, a local
-collector must produce the same normalized records and must not introduce a
-parallel metrics or exporter path.
+`DCGM_METRICS` and `AMD_METRICS` define the registered normalized metric names,
+units, and counter-versus-gauge behavior. Their `scale` values apply only when
+the DCGM Prometheus decoder converts exporter values; the accumulator consumes
+already-normalized `GpuScrape` records and never applies them. A local source
+therefore owns vendor-unit conversion and must not introduce a parallel metrics
+or exporter path.
 
 ## Future requirements
 
-### Explicit collector selection
+### Explicit configuration and protocol shape
 
-`gpuTelemetry.collector` gains two native local values:
+The stable `gpuTelemetry.collector` vocabulary is `dcgm`, `pynvml`, and
+`amdsmi`, matching origin/main. `pynvml` means the native Rust NVML collector;
+it does not select or require a Python process. `dcgm` remains the default.
+Selection is explicit: the runtime never falls back between DCGM, NVML, and AMD
+SMI.
 
-- `nvml` — NVIDIA Management Library on the process host.
-- `amdsmi` — AMD System Management Interface on the process host.
+`pynvml` and `amdsmi` are local-only YAML selections and reject `urls`. The
+existing `--gpu-telemetry <url-or-csv>` surface remains DCGM-only in this slice;
+it does not select a collector. Native YAML must additionally plumb its
+otherwise-unset `metrics_file` field so that a local selection can reject a
+custom DCGM CSV before execution. A later dedicated collector CLI flag is out
+of scope.
 
-`dcgm` remains the default and keeps its existing HTTP URL behavior. Selection
-is explicit: the runtime never falls back from `dcgm` to `nvml`, from `nvml` to
-`dcgm`, or between vendors. A native local collector rejects configured DCGM
-URLs and a custom DCGM metrics CSV, because neither has a defined local-vendor
-meaning. `mode: summary` remains the only native mode.
+The lowered `GpuSource` is reshaped into a tagged enum (or equivalent
+URL-optional representation) so `dcgm` alone serializes a required URL and
+local selections serialize no URL. The strict protocol-v2
+`GpuTelemetrySourceSpec` in `engine/sidecar_input.rs` gains URL-less `Nvml` and
+`AmdSmi` variants. The config projection maps the three collector IDs directly
+to `Dcgm { url }`, `Nvml`, or `AmdSmi`; it must not use
+`GpuTelemetrySourceSpec::Python`.
 
-The protocol-v2 GPU telemetry source union gains `Nvml` and `AmdSmi` variants.
-The config projection emits exactly one of those variants for the corresponding
-collector name; it emits `Dcgm { url }` only for `dcgm`. The ordinary native
-configuration path must construct these variants directly, not route them
-through `GpuTelemetrySourceSpec::Python`.
-
-### Source lifecycle
+### Source lifecycle and isolation
 
 `NvmlTelemetrySource` and `AmdSmiTelemetrySource` implement
-`GpuTelemetrySource` in `aiperf_runtime::gpu_telemetry`. Each initializes its
-vendor library once while `GpuTelemetryRun::new` constructs the source, retains
-stable GPU handles plus metadata, emits one `GpuScrape` per cadence or boundary,
-and releases vendor resources from `shutdown`.
+`GpuTelemetrySource` in `aiperf_runtime::gpu_telemetry`. Each retains immutable
+device identity (index plus metadata), emits one `GpuScrape` per cadence or
+boundary, and releases the library from `shutdown`.
 
-The implementation uses runtime-loaded Rust wrappers:
+Vendor FFI is not run on the phase runner's current-thread `LocalSet`. Each
+source owns a dedicated blocking worker thread that initializes its library,
+performs all enumeration and FFI calls, and shuts it down. The `!Send` source
+forwards bounded scrape/shutdown requests and awaits bounded replies; it never
+calls synchronous vendor FFI itself. This keeps the co-located `workers == 1`
+request issuer responsive while preserving Rust-owned `Clock` cadence and phase
+barriers. Thread startup, request, response, and shutdown failures surface as
+`GpuTelemetryError`.
 
-- `nvml-wrapper` for `libnvidia-ml.so.1`.
-- `amdsmi` for `libamd_smi.so*`.
+NVML uses `nvml-wrapper` for its dynamically loaded base API and a narrow,
+versioned raw `nvml-wrapper-sys` call where the safe wrapper lacks a required
+function (currently JPEG utilization). NVML devices are re-resolved by retained
+index inside the worker for each scrape; no self-referential `Device<'nvml>` or
+GPM sample is stored.
 
-Neither library is a link-time requirement of the `aiperf` binary. A missing
-library, failed initialization, or no discoverable GPUs marks the selected
-source unavailable. The telemetry sidecar logs the structured source error and
-continues the benchmark with that source inactive, matching current unavailable
-source behavior. It does not select a replacement collector.
+AMD SMI uses direct, dynamically loaded `libamd_smi.so*` FFI based on
+`amdsmi-sys` bindings (or an equivalent generated binding that exposes the
+complete required AMD SMI API). The current high-level `amdsmi` 0.1.0 crate is
+not sufficient: it lacks temperature, ECC, throttle, BDF, and the raw
+power-information variants needed here. Neither selected vendor library is a
+link-time requirement of `aiperf`.
 
-Vendor calls remain wholly in the phase sidecar and never in scheduling,
-transport, request, token, or metric hot paths. `GpuTelemetrySource::scrape`
-uses the sidecar's existing serialized cadence; no per-GPU task, unbounded
-channel, or shared request-path lock is introduced.
+A missing library, initialization failure, or no devices makes the selected
+source unavailable. `GpuTelemetryRun::new` logs the construction failure with
+`collector` and `error`; a source that later fails its opening or closing
+boundary scrape is logged by the sidecar with `source` and `error`. Neither
+case selects a replacement collector or changes benchmark execution.
 
-### Canonical records and metric parity
+### Canonical records, identity, and metrics
 
-Both local sources populate `GpuMetadata` with the established platform,
-index, UUID, model, and PCI/BDF identity when their vendor APIs expose those
-values. A missing optional identity field remains absent; a per-device metadata
-failure must not discard metrics obtainable from that device.
+Local NVML records use `pynvml://localhost`; AMD SMI records use
+`amdsmi://localhost`, matching origin/main identifiers. These values remain the
+`GpuSeriesKey` source identity. The JSONL schema continues to write that value
+under its historical `dcgm_url` key for compatibility; the key name does not
+imply that every source is DCGM.
 
-NVML writes the existing normalized NVIDIA fields: power in W, cumulative
-energy in MJ, GPU and memory utilization in percent, used memory in GB,
-temperature in Celsius, encoder and decoder utilization in percent, SM
-utilization when supported, and power-violation duration in microseconds. It
-also adds `nvidia_jpg_utilization` to the native static field table so the
-already-normalized Python-origin field is accumulated natively. Unsupported
-NVML functions leave only the affected field absent.
+Both sources populate platform, index, UUID, model, and PCI/BDF identity when
+available. Missing optional identity fields remain absent; a metadata failure
+must not discard independently obtainable metrics.
 
-AMD SMI writes the existing normalized AMD fields: power in W, cumulative
-energy in MJ, GFX/UMC/MM activity in percent, VRAM used in GB, temperature in
-Celsius, uncorrectable ECC count, and throttle status. The collector normalizes
-AMD SMI's version- and GPU-dependent power and temperature representations at
-the source boundary. Unsupported values and vendor sentinel values remain
-absent; they are never coerced to zero.
+NVML emits already-normalized values: mW to W (`1e-3`), mJ to MJ (`1e-9`),
+bytes to GB (`1e-9`), GPU/memory/encoder/decoder/JPEG utilization in percent,
+temperature in Celsius, SM utilization in percent, and violation nanoseconds
+to microseconds (`1e-3`). It emits the established NVIDIA power, energy, GPU
+and memory utilization, used memory, temperature, encoder, decoder, SM, JPEG,
+and power-violation fields. `nvidia_jpg_utilization` is added to the static
+registered field table. Unsupported functions leave only that field absent.
+XID remains DCGM-only.
 
-Energy, ECC, XID, and power-violation fields remain counters and therefore use
-only exact opening and closing phase snapshots. All other fields remain cadence
-gauges. The existing accumulator alone derives run-level total power, total
-energy, output tokens per joule, and energy per user. Per-GPU JSONL and report
-schemas do not encode collector-specific payloads or raw vendor structs.
+AMD SMI emits already-normalized values: power in W; energy accumulator times
+its resolution in microjoules to MJ (`1e-12`); activity in percent; VRAM bytes
+to GB (`1e-9`); and temperature in Celsius. It uses the raw power-information
+fields in precedence order `socket_power`, `current_socket_power`, then
+`average_socket_power`; accepts AMD SMI's documented version/GPU temperature
+representations at the source boundary; and emits GFX/UMC/MM activity,
+uncorrectable ECC, and throttle status where supported. Vendor sentinel values
+and unsupported fields remain absent, never zero.
 
-### Failure behavior and observability
+Energy, ECC, power violation, and DCGM XID are counters. Every boundary scrape
+must return `Ok(Some(GpuScrape))`, including an empty-record scrape, because
+boundary collection constructs exact counter snapshots. `Ok(None)` is reserved
+only for duplicate continuous DCGM bodies. All other fields are cadence gauges.
+The existing accumulator alone derives total power, total energy, output tokens
+per joule, and energy per user.
 
-Collector selection errors are fail-closed at configuration projection:
-unknown collector IDs, local collectors with URLs, and local collectors with a
-DCGM custom-metrics file are rejected before execution. After a valid local
-source is selected, source initialization and individual vendor API failures
-are non-fatal telemetry availability failures. They are emitted with `tracing`
-fields identifying the collector and vendor error; request execution continues.
+### Validation and verification
 
-A scrape that yields no records is valid. One failing metric or device must not
-suppress a healthy metric or device. A source shutdown error is logged and must
-not mask an already-determined benchmark outcome.
+Unknown collector IDs, local collectors with URLs, local collectors with a
+custom DCGM metrics file, malformed lowered local source variants, and an
+invalid mode fail closed before execution. A valid source's construction,
+per-device, per-metric, cadence, boundary, or shutdown failure is a telemetry
+availability failure: log it structurally and continue request execution. One
+failing metric or device must not suppress healthy devices or metrics.
 
-### Verification
-
-Unit coverage uses injected vendor API facades, not a local GPU, driver,
-network socket, subprocess, or environment-specific library path. It proves:
-
-- config projection and rejection of invalid local-collector combinations;
-- one-time initialization, handle metadata, and shutdown;
-- conversion and absence semantics for every normalized field;
-- exact counter deltas across profiling boundaries and gauge-window summaries;
-- partial device and per-metric failures; and
-- source-unavailable behavior with no fallback.
-
-Product integration coverage keeps the existing deterministic DCGM exporter
-test and adds protocol-level native-source fixture tests that feed the real
-sidecar/accumulator path. Hardware validation runs separately on an NVIDIA host
-with NVML and an AMD ROCm host with AMD SMI; it verifies records and the
-normalized report fields, but is not a unit-test prerequisite.
+Unit tests inject a vendor-worker facade; they do not require a GPU, driver,
+socket, subprocess, or host library. Coverage proves configuration projection;
+local-source serialization; worker-thread lifecycle; identity; per-field
+normalization and absence semantics; boundary `Some(empty)` behavior; counter
+deltas; gauge summaries; partial failures; JPEG raw-FFI behavior; and no
+fallback. Product tests feed fixture sources through the real sidecar and
+accumulator. Separate hardware validation on NVIDIA/NVML and AMD/ROCm hosts
+verifies the normalized JSONL and report fields.
 
 ## Source anchors
 
-- `rust/runtime/src/gpu_telemetry/{source.rs,collector.rs,model.rs,fields.rs,accumulator.rs}`.
-- `rust/runtime/src/engine/gpu_telemetry.rs`.
-- `rust/runtime/src/engine/{protocol.rs,sidecar_input.rs}`.
-- `rust/runtime/src/config/model/telemetry.rs` and `rust/cli/src/{load.rs,yaml.rs,flags.rs}`.
-- `rust/e2e-tests/tests/test_gpu_telemetry.rs` and
-  `rust/e2e-tests/tests/test_dcgm_faker.rs`.
-- `origin/main:src/aiperf/{config/gpu_telemetry.py,gpu_telemetry/pynvml_collector.py,gpu_telemetry/amdsmi_collector.py,gpu_telemetry/constants.py}`.
+- `rust/runtime/src/gpu_telemetry/{source.rs,collector.rs,model.rs,fields.rs,accumulator.rs,python_source.rs}`.
+- `rust/runtime/src/engine/{gpu_telemetry.rs,sidecar_input.rs}`.
+- `rust/runtime/src/config/model/telemetry.rs` and `rust/cli/src/yaml.rs`.
+- `rust/e2e-tests/tests/{test_gpu_telemetry.rs,test_dcgm_faker.rs}`.
+- `origin/main:src/aiperf/{config/gpu_telemetry.py,plugin/plugins.yaml,gpu_telemetry/pynvml_collector.py,gpu_telemetry/amdsmi_collector.py,gpu_telemetry/constants.py}`.
