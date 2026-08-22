@@ -83,6 +83,9 @@ impl VendorWorker for NvmlWorker {
         Ok(())
     }
 
+}
+
+impl NvmlWorker {
     fn gpm_sm_utilization(
         gpm_samples: &mut BTreeMap<u32, (usize, usize)>,
         nvml: &Nvml,
@@ -120,7 +123,9 @@ impl VendorWorker for NvmlWorker {
         std::mem::swap(previous, current);
         sm_utilization
     }
+}
 
+impl VendorWorker for NvmlWorker {
     fn scrape(&mut self, timestamp_ns: i64) -> Result<Vec<GpuTelemetryRecord>, GpuTelemetryError> {
         let (gpm_samples, nvml) = (
             &mut self.gpm_samples,
