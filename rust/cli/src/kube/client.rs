@@ -25,6 +25,9 @@ pub const AIPERF_VERSION: &str = "v1alpha1";
 pub const AIPERF_PLURAL: &str = "aiperfjobs";
 /// Largest accepted newline-delimited Kubernetes watch record.
 pub const MAX_WATCH_RECORD_BYTES: usize = 1024 * 1024;
+
+/// Maximum accepted body of one bounded Kubernetes API response.
+pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 /// Annotation written after results publication completes.
 pub const BENCHMARK_COMPLETE_ANNOTATION: &str = "aiperf.nvidia.com/benchmark-complete";
 
@@ -41,6 +44,22 @@ pub struct KubeRequest {
     pub body: Vec<u8>,
     /// Deadline for the entire request.
     pub deadline: Duration,
+}
+
+/// One bounded Kubernetes API response.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KubeResponse {
+    /// HTTP status of the completed request.
+    pub status: u16,
+    /// Response body truncated at [`MAX_RESPONSE_BYTES`].
+    pub body: Vec<u8>,
+}
+
+impl KubeResponse {
+    /// Return whether the response carries a 2xx status.
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
 }
 
 /// Bounded stream of Kubernetes watch events. Dropping it cancels its receiver.
@@ -70,8 +89,12 @@ impl KubeWatch {
 
 /// Injectable synchronous boundary around the HTTP/TLS implementation.
 pub trait KubeTransport: Send + Sync {
-    /// Send a bounded request and return its HTTP status.
-    fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError>;
+    /// Send a bounded request and return its status with a bounded body.
+    fn send(
+        &self,
+        credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<KubeResponse, KubeError>;
     /// Open a bounded stream of Kubernetes watch events. Callers own reconnect policy.
     fn watch(
         &self,
@@ -152,7 +175,7 @@ impl KubeClient {
         )
     }
 
-    /// Submit one bounded JSON API request through the shared authenticated transport.
+    /// Submit one bounded JSON API request and return only its HTTP status.
     pub fn request(
         &self,
         method: &str,
@@ -160,6 +183,17 @@ impl KubeClient {
         content_type: &str,
         body: Vec<u8>,
     ) -> Result<u16, KubeError> {
+        Ok(self.execute(method, path, content_type, body)?.status)
+    }
+
+    /// Submit one bounded JSON API request and retain its bounded response body.
+    pub fn execute(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<KubeResponse, KubeError> {
         self.transport.send(
             &self.credentials,
             KubeRequest {
@@ -228,7 +262,11 @@ impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
 }
 
 impl KubeTransport for HyperKubeTransport {
-    fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
+    fn send(
+        &self,
+        credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<KubeResponse, KubeError> {
         send_bounded(credentials, request)
     }
 
@@ -267,7 +305,10 @@ impl KubeTransport for HyperKubeTransport {
     }
 }
 
-fn send_bounded(credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
+fn send_bounded(
+    credentials: &KubeCredentials,
+    request: KubeRequest,
+) -> Result<KubeResponse, KubeError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -326,11 +367,23 @@ fn client_auth(
 async fn send_request(
     credentials: &KubeCredentials,
     request: KubeRequest,
-) -> Result<u16, KubeError> {
-    let response = open_response(credentials, request).await?;
+) -> Result<KubeResponse, KubeError> {
+    let mut response = open_response(credentials, request).await?;
     let status = response.status().as_u16();
-    let _ = response.into_body().collect().await;
-    Ok(status)
+    // Bodies are read frame by frame so an unbounded API response cannot exhaust memory.
+    let mut body = Vec::new();
+    while let Some(frame) = response.body_mut().frame().await {
+        let frame = frame.map_err(|error| KubeError::Transport(error.to_string()))?;
+        if let Ok(data) = frame.into_data() {
+            if body.len() + data.len() > MAX_RESPONSE_BYTES {
+                return Err(KubeError::Transport(format!(
+                    "Kubernetes API response exceeds {MAX_RESPONSE_BYTES} bytes",
+                )));
+            }
+            body.extend_from_slice(&data);
+        }
+    }
+    Ok(KubeResponse { status, body })
 }
 
 async fn stream_watch(

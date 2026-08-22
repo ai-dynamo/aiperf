@@ -234,13 +234,20 @@ struct RecordingTransport {
     request: Mutex<Option<KubeRequest>>,
 }
 impl KubeTransport for RecordingTransport {
-    fn send(&self, _credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
+    fn send(
+        &self,
+        _credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<super::client::KubeResponse, KubeError> {
         *self
             .request
             .lock()
             .map_err(|_| KubeError::Transport("recording lock poisoned".to_string()))? =
             Some(request);
-        Ok(200)
+        Ok(super::client::KubeResponse {
+            status: 200,
+            body: br#"{"items":[]}"#.to_vec(),
+        })
     }
     fn watch(
         &self,
