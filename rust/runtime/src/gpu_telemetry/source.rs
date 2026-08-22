@@ -3,11 +3,10 @@
 
 //! Clock-injected telemetry-source seam and DCGM HTTP implementation.
 //!
-//! Fetch deduplication and typed response metadata, along with DCGM's
-//! fetch/decode flow, are implemented here. Forced boundary scrapes
-//! deliberately bypass dedup so unchanged counters still form an exact snapshot.
+//! Typed response metadata and DCGM's fetch/decode flow are implemented here.
+//! Every successful scrape is retained so cadence observations remain complete
+//! when the exporter body is stable between exporter updates.
 
-use std::cell::RefCell;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::rc::Rc;
 
@@ -24,9 +23,9 @@ use crate::gpu_telemetry::parser::{DcgmPrometheusDecoder, GpuTelemetryDecoder};
 /// Whether a scrape is cadence-driven or a mandatory phase barrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuScrapeMode {
-    /// Cadence scrape; an identical body may be skipped.
+    /// Cadence scrape.
     Continuous,
-    /// Synchronous phase-boundary scrape; never skipped as a duplicate.
+    /// Synchronous phase-boundary scrape.
     Boundary,
 }
 
@@ -99,9 +98,9 @@ pub trait GpuTelemetrySource {
 
     /// Collects one scrape.
     ///
-    /// Only the DCGM HTTP source may return `None`, and only when a continuous
-    /// scrape repeats its preceding response body. Boundary scrapes and all
-    /// other source implementations must return a scrape or a typed error.
+    /// Sources return a scrape or a typed error. `None` remains reserved for
+    /// compatibility with optional source implementations and is not emitted by
+    /// the native DCGM, NVML, or AMD SMI sources.
     async fn scrape(&self, mode: GpuScrapeMode) -> Result<Option<GpuScrape>, GpuTelemetryError>;
 
     /// Releases source-owned process or device resources.
@@ -117,7 +116,6 @@ pub struct DcgmTelemetrySource {
     request: RequestConfig,
     display_url: String,
     decoder: Rc<dyn GpuTelemetryDecoder>,
-    last_body: RefCell<Option<String>>,
 }
 
 impl DcgmTelemetrySource {
@@ -150,7 +148,6 @@ impl DcgmTelemetrySource {
             request: RequestConfig::new(endpoint_url),
             display_url,
             decoder,
-            last_body: RefCell::new(None),
         }
     }
 }
@@ -161,7 +158,7 @@ impl GpuTelemetrySource for DcgmTelemetrySource {
         &self.display_url
     }
 
-    async fn scrape(&self, mode: GpuScrapeMode) -> Result<Option<GpuScrape>, GpuTelemetryError> {
+    async fn scrape(&self, _mode: GpuScrapeMode) -> Result<Option<GpuScrape>, GpuTelemetryError> {
         let record = self.transport.get(&self.request).await;
         if let Some(error) = record.error {
             return Err(GpuTelemetryError::Transport(error.message));
@@ -178,23 +175,9 @@ impl GpuTelemetrySource for DcgmTelemetrySource {
                 Response::Sse(_) => None,
             })
             .ok_or(GpuTelemetryError::MissingBody)?;
-        let duplicate = self
-            .last_body
-            .borrow()
-            .as_ref()
-            .is_some_and(|last| last == &body);
-        if duplicate && mode == GpuScrapeMode::Continuous {
-            // A duplicate cadence body carries no new counters; skip decode
-            // without cloning or re-storing the identical body already held.
-            return Ok(None);
-        }
         let timestamp_ns = self.clock.now_ns();
-        // Store the fetched body first, then decode it by reference so the
-        // cadence path never clones the full Prometheus exposition.
-        let mut last_body = self.last_body.borrow_mut();
-        let body: &str = last_body.insert(body);
         self.decoder
-            .decode(&self.display_url, timestamp_ns, body)
+            .decode(&self.display_url, timestamp_ns, &body)
             .map(Some)
     }
 }
