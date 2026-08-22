@@ -23,7 +23,15 @@ confines the opaque config seam to the one place extensibility requires it (the
 plugin tail), rather than applying `RawValue` uniformly to built-ins and
 first-party fields that have no extensibility reason to be opaque.
 
-This record is forward-looking. It describes work that is **not built**.
+**Status (contest O8, proven).** This record is *partly* built, not
+forward-looking. Implementation lives on `ajc/typed-factory-runner-v2`:
+`b7619602fb` already ships §5 step 3's DTO collapse as the unified
+`WorkloadConfigV2` (`engine/registry.rs:876`, `:883`), and step 1's typed
+`cfg.transport` consumer is `transport_component`
+(`engine/protocol_v2.rs`), pinned against the projection it replaces by
+`transport_component_matches_inline_projection`. Steps 2 and 4 are not built.
+Read every "will" below as "will, where not already noted as landed" — an
+implementer who treats the whole record as unstarted will redo step 3.
 
 **Scope premise: the Rust tree is greenfield.** There is no released native
 protocol-v2 stdin contract and no external consumer of it to preserve. The
@@ -182,8 +190,23 @@ round 4 rather than left as an appended footnote).
 
 `AuthoredRunSpecV2`, `into_authored`, and `NamedRunnerComponentSpecV2` are
 **deleted**. The child composition root (`coordinator.rs`) drives the engine
-against `&BenchmarkConfig` and its typed `resolved` facts, exactly as the Python
-services read `cfg`.
+against **`&BenchmarkRun`**, reading authored sections through `run.cfg` and
+run-level facts off `run` itself, exactly as the Python services read `cfg` out
+of the run they were handed.
+
+**Corrected (contest O4, proven).** Earlier drafts of this record said
+"`&BenchmarkConfig`" here and again in §5 step 4, while the port list two
+paragraphs below places `benchmark_id`, `artifact_dir`, `planned_replay_traces`,
+`trial`, `variation`, `resolved`, and `variables` on `BenchmarkRun`. Those are
+run-level facts with no `BenchmarkConfig` home at all (`config/model/run.rs:17-48`
+vs `config/model/config.rs`), so the two statements could not both hold: an engine
+handed `&BenchmarkConfig` cannot see `validate()`'s `benchmark_id`/`artifact_dir`
+checks, cannot reach `planned_replay_traces`, and cannot resolve the export stem
+derivation's inputs. **`BenchmarkRun` is the runner vocabulary throughout this
+record** — that is what §2's title says and what the port list requires.
+`BenchmarkConfig` remains the *authored* vocabulary reached as `run.cfg`, which is
+what §1's typed component unions live on. Any remaining "point the engine at
+`BenchmarkConfig`" phrasing is an error against this paragraph.
 
 The bare arm is re-typed from `BenchmarkRunWireV2` to `BenchmarkRun` and
 `BenchmarkRunWireV2` is **deleted**. Because the tree is greenfield (see Purpose),
@@ -464,6 +487,32 @@ One transport family at a time, byte-exact against the mock server at each step:
    introduce is a standing duty to keep the match arms and the registry in
    correspondence, and the compiler enforces only the match side — a factory
    registered under an id with no arm fails at run time, not at build time.
+
+   **Corrected (contest O3, proven): the correspondence is not one-to-one in a
+   lean build.** `Transport` is a plain `#[serde(tag = "type")]` enum with **no**
+   `#[cfg]` on any variant (`config/model/transport.rs:16-49`), so all six always
+   deserialize. Their factories do not always register: the registrations are
+   feature-gated throughout `registry.rs` (`:758`, `:776`, `:795`, `:838`,
+   `:1484`, `:1494`, `:1566`, `:1598`, `:2142`, `:2190`, `:2212`) — `Grpc` behind
+   `grpc`, `Websocket` behind its feature, `DynosimOffline`/`DynosimOnline` behind
+   `dynosim`. The verified correspondence quoted above holds only for a build with
+   every feature on. A lean build therefore has variants that decode and select an
+   id nothing registered, and today's failure for that case is a registry lookup
+   miss at run time.
+
+   This is not a reason to reject step 2 — it is a reason step 2 improves on the
+   status quo, provided it is written to. The exhaustive match must carry
+   **explicit feature-gated rejection arms**, not a silent fallthrough: each of
+   the four gated variants gets a `#[cfg(not(feature = "…"))]` arm returning a
+   named error ("transport `grpc` selected but this binary was built without the
+   `grpc` feature"), so the diagnostic names the build rather than the registry.
+   Step 2's gate gains a lean-build compile check —
+   `cargo check -p aiperf-cli --no-default-features` plus the feature-bearing
+   builds already in CLAUDE.md — because a match written against the full feature
+   set is exactly the code that fails to compile, or silently falls through, when
+   features are subtracted. Obligation (d)'s "one-to-one correspondence" claim is
+   restated as: one-to-one **per compiled feature set**, with the uncompiled
+   remainder converted from a run-time lookup miss into a build-named refusal.
 3. Repeat for the workload seam; collapse `ScheduledWorkloadConfigV2` /
    `GraphWorkloadConfigV2` into typed-optional fields — all **five** graph-only
    fields, including the `recorded_agent_default` derivation and the
@@ -480,7 +529,9 @@ One transport family at a time, byte-exact against the mock server at each step:
    and `run.identity.random_seed`, and passes `run` on to `build_common_plan` —
    further step-4 repoint surface. Verify graph + scheduled e2e.
 4. Delete `AuthoredRunSpecV2`, `into_authored`, `NamedRunnerComponentSpecV2`, and
-   `BenchmarkRunWireV2`; point `coordinator.rs` at `BenchmarkConfig`. The tree is
+   `BenchmarkRunWireV2`; point `coordinator.rs` at **`BenchmarkRun`** (per O4 —
+   *not* `BenchmarkConfig`, which cannot carry the run-level facts this same step
+   ports). The tree is
    greenfield, so the bare stdin arm is simply re-typed to `BenchmarkRun` — but
    only *after* §2's port list lands on `BenchmarkRun`:
    `#[serde(deny_unknown_fields)]`, an inherent `validate()` carrying
@@ -578,6 +629,22 @@ One transport family at a time, byte-exact against the mock server at each step:
    migration must pick one deliberately rather than inherit whichever it happens
    to touch first.
 
+   **Selected (contest O5, proven): preserve `into_authored`'s algorithm**
+   (`protocol_v2.rs:496-501` plus `sidecars_present` at `:432-443`) verbatim as an
+   inherent derivation on the typed model. "Pick one deliberately" was not itself a
+   decision, and the two candidates are not equivalent — the `Deserialize` impl's
+   naive `wire.resources.X.is_some()` form (`:661-667`) differs on **five** of five
+   entries, not just `sidecars`: it reports `models`/`endpoints`/`metrics`/
+   `artifacts` as *absent* whenever the corresponding `Option` is `None`, where
+   `into_authored` reports them present unconditionally. `into_authored` is the path
+   every AIPerf-authored run actually takes (`decode_execute_wire`'s authoring arm),
+   so it is the observed production behavior and the only one with e2e coverage;
+   adopting the `Deserialize` form would move four resources from Optional to
+   Forbidden/Required transitions in `validate_resource_requirements` for every run
+   that omits a section. The `Deserialize` impl disappears with
+   `AuthoredRunSpecV2` in this same step, so the divergence is closed by deletion
+   rather than reconciled.
+
 **Verification gates (executable; added contest round 4, which is when this
 section first had any).** Every step runs, from `rust/` with the project venv
 active:
@@ -623,6 +690,35 @@ mandatory at every step, not just the last. Beyond that shared floor:
   test_recorded_agent_cellular --test test_cellular_dataset_shipping`. A step-4
   change that has not run `test_graph_cellular` and `test_recorded_agent_cellular`
   is not verified, regardless of what else is green.
+
+  **Corrected (contest O6, proven): that gate exercises the repoint, not the port
+  list.** Every suite named above is an end-to-end profile run; none of them
+  asserts `deny_unknown_fields`, the cardinality tightening selected under O1, the
+  export-stem derivation from O2, `variation: Option<VariationSpec>`, or the
+  `resource_presence` algorithm selected under O5. A step-4 change could land all
+  five wrong and still be green, which is the same shape of hole this section was
+  written to close. Worse, the closest thing the tree has to such a test does not
+  run: `protocol_v2.rs:1304` declares `#[cfg(any())] mod tests` — an
+  always-false cfg that compiles the entire module out — and among its bodies is
+  `outer_contract_rejects_unknown_fields`, i.e. the one existing unknown-field
+  assertion has been silently disabled since `904cc07e2a`. Step 4 must therefore
+  add **named unit tests on `BenchmarkRun` itself**, in addition to the e2e gate:
+
+  - an unknown top-level field on a bare run payload is rejected (replacing the
+    disabled `outer_contract_rejects_unknown_fields`, on the typed model);
+  - `BenchmarkRun::validate()` rejects empty `benchmark_id`, empty `artifact_dir`,
+    and a two-dataset `cfg.datasets`, the last with a message naming the count
+    (O1's obligation);
+  - a run whose `artifacts.records_path` carries a custom stem names the
+    per-record, summary, and timeslice artifacts from that same stem (O2);
+  - `variation` round-trips as a typed `VariationSpec`, not an open `Value`;
+  - `resource_presence` for a config with `models`/`endpoints`/`metrics`/
+    `artifacts` absent and `sidecars: Some(Sidecars::default())` matches
+    `into_authored`'s classification — four `true` and `sidecars: false` (O5).
+
+  Re-enabling or deleting `#[cfg(any())] mod tests` is part of step 4, not
+  optional cleanup: leaving a disabled module next to the code it was written to
+  guard is how the gap recurs.
 
 Each step keeps the stdin accept path *structurally* intact — both arms of
 `decode_execute_wire` survive; the bare arm changes type. No step owes anything to
@@ -672,6 +768,32 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
   **not** close the set; it types built-in configs and confines the opaque seam to
   the open tail. This supersedes an earlier framing of this record that scoped
   dynamic plugins out — they are in scope, via the string id + `RawValue` tail.
+
+  **Corrected (contest O7, proven): as specified, the migration does not actually
+  leave a selectable tail, and this must be fixed in the design rather than
+  asserted away.** The claim above needs an authored object carrying
+  `{ RegistryId, RawValue }` to survive. It does not: §1 selects transports from
+  the closed `BenchmarkConfig.transport` enum and workloads from an exhaustive
+  match, §3 identifies `NamedRunnerComponentSpecV2` as the `{ RegistryId,
+  RawValue }` seam, and §5 step 4 deletes it. What remains after step 4 is a
+  registry that still *accepts* `register_transport` with any id (`registry.rs:530`)
+  and still resolves `transport_factory(id)` — but with no authored surface that
+  can name one, because `cfg.transport` is `#[serde(tag = "type")]` over six
+  variants and fails to decode on an unknown tag (the same reachability fact
+  recorded as step 2's obligation (d)).
+
+  So the honest current state is: **registry openness survives for id-addressed
+  *internal* consumers, and authored selection of a runtime-loaded plugin does
+  not exist either before or after this migration.** The non-goal is therefore
+  restated as a *requirement on the eventual plugin work*, not a property this
+  design delivers: whenever dynamic plugins land, `BenchmarkConfig.transport`
+  (and the workload selector) must grow an explicit open tail variant — e.g. a
+  `#[serde(other)]`-style `Plugin { id: RegistryId, config: Box<RawValue> }` arm —
+  and that arm is the thing that reconstitutes the deleted seam. Until such an
+  arm exists, no config can select a plugin, and this record must not be read as
+  evidence that one can. Adding that arm is out of scope here; recording that it
+  is *required*, and that its absence is a gap rather than a design property, is
+  in scope.
 - **"Zero `RawValue`" is a direction, not a literal end state.** Three residual
   `RawValue` uses are legitimate and stay: the plugin tail (the load-bearing one —
   a runtime-loaded plugin's config is opaque to the host by definition); the `dynosim` transport variant's nested Dynamo engine/router args
