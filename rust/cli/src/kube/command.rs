@@ -113,9 +113,12 @@ struct ProxyFetcher<'client> {
 
 impl ArtifactFetcher for ProxyFetcher<'_> {
     fn fetch(&self, path: &str) -> Result<Vec<u8>, KubeError> {
-        let response = self
-            .client
-            .execute("GET", &format!("{}/files/{path}", self.prefix), "", Vec::new())?;
+        let response = self.client.execute(
+            "GET",
+            &format!("{}/files/{path}", self.prefix),
+            "",
+            Vec::new(),
+        )?;
         if !response.is_success() {
             return Err(KubeError::Transport(format!(
                 "results sidecar returned HTTP {} for {path}",
@@ -138,10 +141,7 @@ fn download_results(
     );
     let response = client.execute("GET", &format!("{prefix}/manifest"), "", Vec::new())?;
     if !response.is_success() {
-        anyhow::bail!(
-            "results manifest is unavailable: HTTP {}",
-            response.status
-        );
+        anyhow::bail!("results manifest is unavailable: HTTP {}", response.status);
     }
     let manifest = parse_manifest(&response.body)?;
     let destination = flag_value(args, "--output-directory")

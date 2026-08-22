@@ -145,12 +145,14 @@ pub fn verify(artifact: &ManifestArtifact, bytes: &[u8]) -> Result<(), KubeError
         )));
     }
     let digest = Sha256::digest(bytes);
-    let digest = digest.iter().fold(String::with_capacity(64), |mut hex, byte| {
-        use std::fmt::Write;
-        // Writing into a String cannot fail; the result is discarded deliberately.
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    });
+    let digest = digest
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            use std::fmt::Write;
+            // Writing into a String cannot fail; the result is discarded deliberately.
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        });
     if digest != artifact.sha256 {
         return Err(KubeError::ContractValidation(format!(
             "artifact {} digest {digest} does not match the manifest",
@@ -205,8 +207,8 @@ mod tests {
     fn download_writes_only_digest_matched_artifacts() {
         let payload = b"{\"ok\":true}".to_vec();
         let digest = format!("{:x}", Sha256::digest(&payload));
-        let manifest = parse_manifest(&manifest_json(&digest, payload.len() as u64))
-            .expect("manifest");
+        let manifest =
+            parse_manifest(&manifest_json(&digest, payload.len() as u64)).expect("manifest");
         let destination = tempfile::tempdir().expect("tempdir");
         let written = download(
             &manifest,
@@ -222,8 +224,8 @@ mod tests {
     fn a_substituted_transfer_never_lands_on_disk() {
         let payload = b"{\"ok\":true}".to_vec();
         let digest = format!("{:x}", Sha256::digest(&payload));
-        let manifest = parse_manifest(&manifest_json(&digest, payload.len() as u64))
-            .expect("manifest");
+        let manifest =
+            parse_manifest(&manifest_json(&digest, payload.len() as u64)).expect("manifest");
         let destination = tempfile::tempdir().expect("tempdir");
         let error = download(
             &manifest,

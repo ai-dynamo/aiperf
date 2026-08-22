@@ -49,9 +49,7 @@ pub fn material_paths(args: &[String]) -> Result<BTreeMap<NativeK8sRole, PathBuf
                 arguments
                     .next()
                     .ok_or_else(|| {
-                        KubeError::Decode(
-                            "--bootstrap-material requires <role>=<path>".to_string(),
-                        )
+                        KubeError::Decode("--bootstrap-material requires <role>=<path>".to_string())
                     })?
                     .clone(),
             )
@@ -96,7 +94,10 @@ pub fn create_bootstrap_secrets(
             continue;
         };
         let bytes = std::fs::read(path).map_err(|error| {
-            anyhow::anyhow!("failed to read bootstrap material {}: {error}", path.display())
+            anyhow::anyhow!(
+                "failed to read bootstrap material {}: {error}",
+                path.display()
+            )
         })?;
         let digest = format!("{:x}", Sha256::digest(&bytes));
         if digest != role.bootstrap.sha256 {
@@ -233,7 +234,9 @@ mod tests {
         let selected = material_paths(&arguments).expect("material");
         assert_eq!(selected.len(), 2);
         assert_eq!(
-            selected.get(&NativeK8sRole::Controller).map(PathBuf::as_path),
+            selected
+                .get(&NativeK8sRole::Controller)
+                .map(PathBuf::as_path),
             Some(Path::new("/run/controller.bin"))
         );
         assert!(material_paths(&["--bootstrap-material=aggregator=/x".to_string()]).is_err());

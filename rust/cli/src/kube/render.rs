@@ -28,9 +28,7 @@ impl OutputFormat {
                 Some(
                     arguments
                         .next()
-                        .ok_or_else(|| {
-                            KubeError::Decode("--output requires a value".to_string())
-                        })?
+                        .ok_or_else(|| KubeError::Decode("--output requires a value".to_string()))?
                         .clone(),
                 )
             } else {
@@ -52,8 +50,9 @@ impl OutputFormat {
 
 /// Render one bounded API response body in the selected format.
 pub fn render(format: OutputFormat, body: &[u8]) -> Result<String, KubeError> {
-    let document: Value = serde_json::from_slice(body)
-        .map_err(|error| KubeError::Decode(format!("Kubernetes API response is not JSON: {error}")))?;
+    let document: Value = serde_json::from_slice(body).map_err(|error| {
+        KubeError::Decode(format!("Kubernetes API response is not JSON: {error}"))
+    })?;
     match format {
         OutputFormat::Json => serde_json::to_string_pretty(&document)
             .map_err(|error| KubeError::Decode(error.to_string())),
@@ -126,6 +125,9 @@ mod tests {
         let body = br#"{"metadata":{"name":"job-1"}}"#;
         let rendered = render(OutputFormat::Json, body).expect("render");
         let parsed: Value = serde_json::from_str(&rendered).expect("parse");
-        assert_eq!(parsed.pointer("/metadata/name").and_then(Value::as_str), Some("job-1"));
+        assert_eq!(
+            parsed.pointer("/metadata/name").and_then(Value::as_str),
+            Some("job-1")
+        );
     }
 }
