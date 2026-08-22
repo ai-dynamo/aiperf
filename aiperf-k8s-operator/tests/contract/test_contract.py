@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from aiperf_k8s_operator.contract import validate_bootstrap_metadata, validate_envelope
+from aiperf_k8s_operator.main import reconcile_job
 from aiperf_k8s_operator.reconciliation import build_jobset, validate_references
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -54,3 +55,21 @@ def test_metadata_validation_never_reads_secret_data() -> None:
     validate_references(envelope, metadata)
     with pytest.raises(ValueError, match="role label"):
         validate_bootstrap_metadata(envelope.roles[0].bootstrap, {"immutable": True, "metadata": {"name": envelope.roles[0].bootstrap.secret_name}})
+
+
+@pytest.mark.asyncio
+async def test_reconcile_creates_projected_jobset() -> None:
+    class FakeJobSets:
+        kwargs: dict[str, object]
+
+        async def create_namespaced_custom_object(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    jobsets = FakeJobSets()
+    status = await reconcile_job(envelope, jobsets)
+
+    assert status == {"phase": "Pending", "runId": envelope.run_id, "jobSet": envelope.job_id}
+    assert jobsets.kwargs["group"] == "jobset.x-k8s.io"
+    assert jobsets.kwargs["namespace"] == envelope.namespace
+    assert jobsets.kwargs["body"] == build_jobset(envelope)
