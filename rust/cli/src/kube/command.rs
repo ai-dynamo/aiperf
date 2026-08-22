@@ -13,7 +13,7 @@ use super::render::{OutputFormat, render};
 use super::results::{ArtifactFetcher, MAX_ARTIFACT_BYTES, download, parse_manifest};
 use super::submission::{
     create_bootstrap_secrets, envelope_paths, jobs_path, load_envelope, material_paths,
-    submit_profile, submit_sweep,
+    submit_profile, submit_sweep, validate_sweep_material_compatibility,
 };
 
 /// Maximum bounded reconnects a streaming command performs before failing.
@@ -244,10 +244,13 @@ fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
         println!("native Kubernetes validate: native-k8s/v1 envelope is valid");
         return Ok(0);
     }
-    let client = KubeClient::from_options(&auth_options(args)?)?;
     // Bootstrap material is created before submission so no role ever starts
     // without its Secret, and the envelope keeps only reference metadata.
     let material = material_paths(args)?;
+    if command == "sweep" {
+        validate_sweep_material_compatibility(&envelopes)?;
+    }
+    let client = KubeClient::from_options(&auth_options(args)?)?;
     for envelope in &envelopes {
         create_bootstrap_secrets(&client, envelope, &material)?;
     }

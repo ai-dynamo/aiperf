@@ -52,6 +52,32 @@ fn refuses_role_mismatched_bootstrap() {
 }
 
 #[test]
+fn refuses_duplicate_bootstrap_secret_names() {
+    let mut envelope = fixture("valid-one-cell-envelope.json");
+    envelope["roles"][2]["bootstrap"]["secretName"] =
+        envelope["roles"][0]["bootstrap"]["secretName"].clone();
+    assert!(matches!(
+        validate_envelope(envelope),
+        Err(KubeError::ContractValidation(message)) if message == "bootstrap Secret names must be unique"
+    ));
+}
+
+#[test]
+fn requires_an_unambiguous_controller_coordinate() {
+    let mut malformed = fixture("valid-one-cell-envelope.json");
+    malformed["controllerAddress"] = Value::String("controller:443:8443".to_string());
+    assert!(matches!(
+        validate_envelope(malformed),
+        Err(KubeError::ContractValidation(message))
+            if message == "controllerAddress must be tcp://HOST:PORT or tcp://[IPv6]:PORT"
+    ));
+
+    let mut ipv6 = fixture("valid-one-cell-envelope.json");
+    ipv6["controllerAddress"] = Value::String("tcp://[2001:db8::1]:443".to_string());
+    assert!(validate_envelope(ipv6).is_ok());
+}
+
+#[test]
 fn refuses_non_v1_and_unknown_role_or_field() {
     assert!(matches!(
         validate_envelope(fixture("invalid-version-envelope.json")),

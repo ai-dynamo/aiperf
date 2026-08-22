@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::net::Ipv6Addr;
 
 use super::error::KubeError;
 
@@ -35,6 +36,8 @@ pub struct ControllerEnvelope {
     pub controller_address: String,
     /// Fixed v1 workload roles.
     pub roles: Vec<RoleEnvelope>,
+    /// One immutable bootstrap reference for each cellular worker identity.
+    pub cell_bootstraps: Vec<CellBootstrapReference>,
 }
 
 /// A named Kubernetes object reference.
@@ -57,8 +60,8 @@ pub struct RoleEnvelope {
     pub argv: Vec<String>,
     /// Fixed process environment.
     pub environment: std::collections::BTreeMap<String, String>,
-    /// Reference-only bootstrap mount.
-    pub bootstrap: BootstrapReference,
+    /// Reference-only bootstrap mount for non-cell roles.
+    pub bootstrap: Option<BootstrapReference>,
 }
 
 /// Roles representable by `native-k8s/v1`.
@@ -87,6 +90,27 @@ pub struct BootstrapReference {
     pub sha256: String,
 }
 
+/// Reference to Rust-minted immutable bootstrap material for one cell identity.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellBootstrapReference {
+    /// Zero-based cellular worker identity.
+    pub cell_id: u32,
+    /// Immutable Secret name.
+    pub secret_name: String,
+    /// This reference always authorizes a cellular worker.
+    #[serde(default = "cell_bootstrap_role")]
+    pub role: NativeK8sRole,
+    /// Absolute container mount path.
+    pub mount_path: String,
+    /// SHA-256 digest of the private bootstrap bytes.
+    pub sha256: String,
+}
+
+fn cell_bootstrap_role() -> NativeK8sRole {
+    NativeK8sRole::Cell
+}
+
 /// Image features required by the projected envelope.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -112,15 +136,91 @@ pub fn validate_envelope(value: Value) -> Result<ControllerEnvelope, KubeError> 
     )?;
     let envelope = serde_json::from_value::<ControllerEnvelope>(value)
         .map_err(|error| KubeError::Decode(error.to_string()))?;
+    if !is_valid_controller_coordinate(&envelope.controller_address) {
+        return Err(KubeError::ContractValidation(
+            "controllerAddress must be tcp://HOST:PORT or tcp://[IPv6]:PORT".to_string(),
+        ));
+    }
     for role in &envelope.roles {
-        if role.name != role.bootstrap.role {
+        if role.name == NativeK8sRole::Cell && role.bootstrap.is_some() {
+            return Err(KubeError::ContractValidation(
+                "cell bootstrap must be specified by cellBootstraps".to_string(),
+            ));
+        }
+        let Some(bootstrap) = &role.bootstrap else {
+            if role.name == NativeK8sRole::Cell {
+                continue;
+            }
+            return Err(KubeError::ContractValidation(format!(
+                "non-cell role {:?} has no bootstrap reference",
+                role.name
+            )));
+        };
+        if role.name != bootstrap.role {
             return Err(KubeError::ContractValidation(format!(
                 "bootstrap role for {:?} does not match workload role {:?}",
-                role.bootstrap.role, role.name
+                bootstrap.role, role.name
             )));
         }
     }
+    if envelope.cell_bootstraps.len() != envelope.cells as usize
+        || envelope
+            .cell_bootstraps
+            .iter()
+            .enumerate()
+            .any(|(index, bootstrap)| {
+                bootstrap.cell_id != index as u32 || bootstrap.role != NativeK8sRole::Cell
+            })
+    {
+        return Err(KubeError::ContractValidation(
+            "cellBootstraps must contain each cell id exactly once".to_string(),
+        ));
+    }
+    let mut secret_names = std::collections::BTreeSet::new();
+    for role in &envelope.roles {
+        if let Some(bootstrap) = &role.bootstrap {
+            if !secret_names.insert(&bootstrap.secret_name) {
+                return Err(KubeError::ContractValidation(
+                    "bootstrap Secret names must be unique".to_string(),
+                ));
+            }
+        }
+    }
+    for bootstrap in &envelope.cell_bootstraps {
+        if !secret_names.insert(&bootstrap.secret_name) {
+            return Err(KubeError::ContractValidation(
+                "bootstrap Secret names must be unique".to_string(),
+            ));
+        }
+    }
     Ok(envelope)
+}
+
+fn is_valid_controller_coordinate(address: &str) -> bool {
+    let coordinate = match address.strip_prefix("tcp://") {
+        Some(coordinate) => coordinate,
+        None if address.contains("://") => return false,
+        None => address,
+    };
+    let (host, port, is_ipv6) = if let Some(remainder) = coordinate.strip_prefix('[') {
+        let Some((host, port)) = remainder.split_once("]:") else {
+            return false;
+        };
+        (host, port, true)
+    } else {
+        let Some((host, port)) = coordinate.rsplit_once(':') else {
+            return false;
+        };
+        (host, port, false)
+    };
+    let valid_host = if is_ipv6 {
+        host.parse::<Ipv6Addr>().is_ok()
+    } else {
+        !host.is_empty()
+            && !host.contains(['/', ':', '[', ']'])
+            && host.bytes().all(|byte| byte.is_ascii_graphic())
+    };
+    valid_host && port.parse::<u16>().ok().filter(|port| *port > 0).is_some()
 }
 
 /// Decode and validate image capabilities against an envelope's immutable digest.

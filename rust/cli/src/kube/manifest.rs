@@ -1,95 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Exact `native-k8s/v1` resource projection without operator-side derivation.
+//! Exact `native-k8s/v1` AIPerfJob envelope projection.
 
 use serde_json::{Value, json};
 
-use super::contract::{ControllerEnvelope, NativeK8sRole, RoleEnvelope};
+use super::contract::ControllerEnvelope;
 use super::error::KubeError;
 
-/// Project an accepted envelope into its AIPerfJob and exact controller/cell topology.
+/// Project an accepted envelope into the installed AIPerfJob resource.
 pub fn project(envelope: &ControllerEnvelope) -> Result<Value, KubeError> {
-    let controller = role(envelope, NativeK8sRole::Controller)?;
-    let cell = role(envelope, NativeK8sRole::Cell)?;
-    let sidecar = role(envelope, NativeK8sRole::ResultsSidecar)?;
     Ok(json!({
         "apiVersion": "aiperf.nvidia.com/v1alpha1",
         "kind": "AIPerfJob",
         "metadata": {"name": envelope.job_id, "namespace": envelope.namespace},
-        "spec": {
-            "envelope": envelope,
-            "jobSet": {
-                "apiVersion": "jobset.x-k8s.io/v1alpha2",
-                "kind": "JobSet",
-                "spec": {"replicatedJobs": [
-                    job("controller", 1, envelope, &[controller, sidecar]),
-                    job("cell", envelope.cells, envelope, &[cell]),
-                ]}
-            }
-        }
+        "spec": {"envelope": envelope}
     }))
-}
-
-fn role(envelope: &ControllerEnvelope, needle: NativeK8sRole) -> Result<&RoleEnvelope, KubeError> {
-    envelope
-        .roles
-        .iter()
-        .find(|role| role.name == needle)
-        .ok_or_else(|| {
-            KubeError::ContractValidation(format!("native-k8s/v1 envelope omits {needle:?} role"))
-        })
-}
-
-fn job(name: &str, replicas: u32, envelope: &ControllerEnvelope, roles: &[&RoleEnvelope]) -> Value {
-    json!({
-        "name": name,
-        "replicas": replicas,
-        "template": {"spec": {
-            "restartPolicy": "Never",
-            "serviceAccountName": "aiperf-workload",
-            "containers": roles.iter().map(|role| container(role, envelope)).collect::<Vec<_>>(),
-            "volumes": roles.iter().map(volume).chain(std::iter::once(json!({"name": "config", "configMap": {"name": envelope.config_ref.name}}))).collect::<Vec<_>>(),
-        }}
-    })
-}
-
-fn container(role: &RoleEnvelope, envelope: &ControllerEnvelope) -> Value {
-    let mut environment = role.environment.clone();
-    environment.insert("AIPERF_JOB_ID".to_string(), envelope.job_id.clone());
-    environment.insert("AIPERF_NAMESPACE".to_string(), envelope.namespace.clone());
-    environment.insert("AIPERF_CELL_LAUNCHER".to_string(), "k8s".to_string());
-    environment.insert("AIPERF_CELL_COUNT".to_string(), envelope.cells.to_string());
-    environment.insert(
-        "AIPERF_CONTROLLER_ADDRESS".to_string(),
-        envelope.controller_address.clone(),
-    );
-    environment.insert(
-        "AIPERF_ROLE_BOOTSTRAP_PATH".to_string(),
-        role.bootstrap.mount_path.clone(),
-    );
-    json!({
-        "name": role.name,
-        "image": envelope.image_digest,
-        "command": role.command,
-        "args": role.argv,
-        "env": environment.into_iter().map(|(name, value)| json!({"name": name, "value": value})).collect::<Vec<_>>(),
-        "volumeMounts": [
-            {"name": format!("bootstrap-{}", role_name(role.name)), "mountPath": role.bootstrap.mount_path, "readOnly": true},
-            {"name": "config", "mountPath": "/etc/aiperf/config", "readOnly": true},
-        ],
-    })
-}
-
-fn volume(role: &&RoleEnvelope) -> Value {
-    json!({"name": format!("bootstrap-{}", role_name(role.name)), "secret": {"secretName": role.bootstrap.secret_name}})
-}
-
-fn role_name(role: NativeK8sRole) -> &'static str {
-    match role {
-        NativeK8sRole::Controller => "controller",
-        NativeK8sRole::Cell => "cell",
-        NativeK8sRole::ResultsSidecar => "results-sidecar",
-    }
 }
 
 #[cfg(test)]
@@ -100,46 +25,45 @@ mod tests {
     use crate::kube::contract::validate_envelope;
 
     #[test]
-    fn projects_exact_three_native_roles_without_secret_bytes() {
+    fn projects_envelope_without_secret_bytes() {
         let input: Value = serde_json::from_str(include_str!(
             "../../../../contracts/native-k8s/v1/fixtures/valid-multi-cell-envelope.json"
         ))
         .expect("fixture");
         let projected = project(&validate_envelope(input).expect("envelope")).expect("projection");
-        let jobs = projected["spec"]["jobSet"]["spec"]["replicatedJobs"]
-            .as_array()
-            .expect("jobs");
-        assert_eq!(jobs.len(), 2);
-        assert_eq!(
-            jobs[0]["template"]["spec"]["containers"]
-                .as_array()
-                .expect("containers")
-                .len(),
-            2
-        );
-        assert_eq!(jobs[1]["replicas"], 4);
-        assert_eq!(
-            jobs[0]["template"]["spec"]["volumes"][2]["configMap"]["name"],
-            "config-2"
-        );
-        assert_eq!(
-            jobs[1]["template"]["spec"]["containers"][0]["env"]
-                .as_array()
-                .expect("environment")
-                .iter()
-                .find(|entry| entry["name"] == "AIPERF_CELL_COUNT")
-                .expect("cell count")["value"],
-            "4"
-        );
-        assert!(
-            serde_json::to_string(&projected)
-                .expect("JSON")
-                .contains("secretName")
-        );
+        assert_eq!(projected["spec"]["envelope"]["cells"], 4);
         assert!(
             !serde_json::to_string(&projected)
                 .expect("JSON")
                 .contains("private bootstrap")
+        );
+    }
+
+    #[test]
+    fn generated_aiperf_job_conforms_to_checked_in_crd() {
+        let input: Value = serde_json::from_str(include_str!(
+            "../../../../contracts/native-k8s/v1/fixtures/valid-one-cell-envelope.json"
+        ))
+        .expect("fixture");
+        let projected = project(&validate_envelope(input).expect("envelope")).expect("projection");
+        let crd: Value = serde_yaml::from_str(include_str!(
+            "../../../../deploy/aiperf-k8s-operator/crds/aiperfjobs.aiperf.nvidia.com.yaml"
+        ))
+        .expect("CRD YAML");
+        let schema = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"];
+        let validator = jsonschema::validator_for(schema).expect("CRD schema");
+
+        assert!(
+            validator.validate(&projected).is_ok(),
+            "generated AIPerfJob must conform to the installed CRD"
+        );
+        assert_eq!(
+            projected["spec"]
+                .as_object()
+                .expect("AIPerfJob spec")
+                .keys()
+                .collect::<Vec<_>>(),
+            ["envelope"]
         );
     }
 }

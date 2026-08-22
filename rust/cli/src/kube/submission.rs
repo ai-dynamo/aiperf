@@ -37,8 +37,19 @@ pub fn jobs_path(namespace: &str) -> String {
     format!("/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/{AIPERF_PLURAL}")
 }
 
-/// Bootstrap material path selected on the command line for one role.
-pub fn material_paths(args: &[String]) -> Result<BTreeMap<NativeK8sRole, PathBuf>, KubeError> {
+/// Bootstrap material path selected on the command line for one workload identity.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum BootstrapMaterialTarget {
+    /// One non-cell workload role.
+    Role(NativeK8sRole),
+    /// One numbered cellular worker.
+    Cell(u32),
+}
+
+/// Parse bootstrap material paths selected on the command line.
+pub fn material_paths(
+    args: &[String],
+) -> Result<BTreeMap<BootstrapMaterialTarget, PathBuf>, KubeError> {
     let mut selected = BTreeMap::new();
     let mut arguments = args.iter();
     while let Some(argument) = arguments.next() {
@@ -60,82 +71,198 @@ pub fn material_paths(args: &[String]) -> Result<BTreeMap<NativeK8sRole, PathBuf
         let (role, path) = value.split_once('=').ok_or_else(|| {
             KubeError::Decode(format!("--bootstrap-material {value} is not <role>=<path>"))
         })?;
-        let role = match role {
-            "controller" => NativeK8sRole::Controller,
-            "cell" => NativeK8sRole::Cell,
-            "results-sidecar" => NativeK8sRole::ResultsSidecar,
+        let target = match role {
+            "controller" => BootstrapMaterialTarget::Role(NativeK8sRole::Controller),
+            "results-sidecar" => BootstrapMaterialTarget::Role(NativeK8sRole::ResultsSidecar),
+            cell if let Some(cell_id) = cell.strip_prefix("cell-") => {
+                let cell_id = cell_id.parse().map_err(|_| {
+                    KubeError::Decode(format!("--bootstrap-material has invalid cell id {cell}"))
+                })?;
+                BootstrapMaterialTarget::Cell(cell_id)
+            }
             other => {
                 return Err(KubeError::Decode(format!(
-                    "--bootstrap-material names unknown role {other}"
+                    "--bootstrap-material names unknown role or cell identity {other}"
                 )));
             }
         };
-        if selected.insert(role, PathBuf::from(path)).is_some() {
+        if selected
+            .insert(target.clone(), PathBuf::from(path))
+            .is_some()
+        {
             return Err(KubeError::Decode(format!(
-                "--bootstrap-material repeats role {role:?}"
+                "--bootstrap-material repeats target {target:?}"
             )));
         }
     }
     Ok(selected)
 }
 
-/// Create one immutable Secret per role after proving the envelope digest.
+/// Create one immutable Secret per workload identity after proving the envelope digest.
 ///
 /// Material never leaves this call as plaintext in a CR, JobSet, or log; the
 /// envelope keeps only the reference metadata the operator is allowed to see.
 pub fn create_bootstrap_secrets(
     client: &KubeClient,
     envelope: &ControllerEnvelope,
-    material: &BTreeMap<NativeK8sRole, PathBuf>,
+    material: &BTreeMap<BootstrapMaterialTarget, PathBuf>,
 ) -> anyhow::Result<usize> {
+    let expected = envelope
+        .roles
+        .iter()
+        .filter(|role| role.name != NativeK8sRole::Cell)
+        .map(|role| BootstrapMaterialTarget::Role(role.name))
+        .chain(
+            envelope
+                .cell_bootstraps
+                .iter()
+                .map(|bootstrap| BootstrapMaterialTarget::Cell(bootstrap.cell_id)),
+        )
+        .collect::<std::collections::BTreeSet<_>>();
+    if material.len() != expected.len() || material.keys().any(|target| !expected.contains(target))
+    {
+        anyhow::bail!(
+            "--bootstrap-material must provide exactly one path for every workload identity"
+        );
+    }
     let mut created = 0;
     for role in &envelope.roles {
-        let Some(path) = material.get(&role.name) else {
+        if role.name == NativeK8sRole::Cell {
+            continue;
+        }
+        let Some(bootstrap) = &role.bootstrap else {
             continue;
         };
-        let bytes = std::fs::read(path).map_err(|error| {
-            anyhow::anyhow!(
-                "failed to read bootstrap material {}: {error}",
-                path.display()
-            )
-        })?;
-        let digest = format!("{:x}", Sha256::digest(&bytes));
-        if digest != role.bootstrap.sha256 {
-            anyhow::bail!(
-                "bootstrap material {} does not match the envelope digest for {:?}",
-                path.display(),
-                role.name
-            );
-        }
-        let body = json!({
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "type": "Opaque",
-            "immutable": true,
-            "metadata": {
-                "name": role.bootstrap.secret_name,
-                "namespace": envelope.namespace,
-                "labels": {"aiperf.nvidia.com/run-id": envelope.run_id},
-            },
-            "data": {"bootstrap": BASE64.encode(&bytes)},
-        });
-        let body = serde_json::to_vec(&body)
-            .map_err(|error| anyhow::anyhow!("failed to encode bootstrap Secret: {error}"))?;
-        let status = client.request(
-            "POST",
-            &format!("/api/v1/namespaces/{}/secrets", envelope.namespace),
-            "application/json",
-            body,
+        let path = material
+            .get(&BootstrapMaterialTarget::Role(role.name))
+            .ok_or_else(|| anyhow::anyhow!("missing bootstrap material for {:?}", role.name))?;
+        let role_name = match role.name {
+            NativeK8sRole::Controller => "controller",
+            NativeK8sRole::ResultsSidecar => "results-sidecar",
+            NativeK8sRole::Cell => {
+                anyhow::bail!("cell roles must use per-cell bootstrap references")
+            }
+        };
+        create_bootstrap_secret(
+            client,
+            envelope,
+            path,
+            &bootstrap.secret_name,
+            &bootstrap.sha256,
+            role_name,
         )?;
-        if !(200..300).contains(&status) && status != 409 {
-            anyhow::bail!(
-                "bootstrap Secret {} creation returned HTTP {status}",
-                role.bootstrap.secret_name
-            );
-        }
+        created += 1;
+    }
+    for bootstrap in &envelope.cell_bootstraps {
+        let path = material
+            .get(&BootstrapMaterialTarget::Cell(bootstrap.cell_id))
+            .ok_or_else(|| {
+                anyhow::anyhow!("missing bootstrap material for cell {}", bootstrap.cell_id)
+            })?;
+        create_bootstrap_secret(
+            client,
+            envelope,
+            path,
+            &bootstrap.secret_name,
+            &bootstrap.sha256,
+            "cell",
+        )?;
         created += 1;
     }
     Ok(created)
+}
+
+/// Refuse a sweep whose envelopes cannot share one CLI material selection.
+pub fn validate_sweep_material_compatibility(
+    envelopes: &[ControllerEnvelope],
+) -> anyhow::Result<()> {
+    let Some(first) = envelopes.first() else {
+        return Ok(());
+    };
+    let expected = bootstrap_material_digests(first);
+    if envelopes[1..]
+        .iter()
+        .any(|envelope| bootstrap_material_digests(envelope) != expected)
+    {
+        anyhow::bail!(
+            "native Kubernetes sweep envelopes must require identical bootstrap material targets and digests"
+        );
+    }
+    Ok(())
+}
+
+fn bootstrap_material_digests(
+    envelope: &ControllerEnvelope,
+) -> BTreeMap<BootstrapMaterialTarget, &str> {
+    let mut digests = BTreeMap::new();
+    for role in &envelope.roles {
+        if role.name != NativeK8sRole::Cell {
+            if let Some(bootstrap) = &role.bootstrap {
+                digests.insert(
+                    BootstrapMaterialTarget::Role(role.name),
+                    bootstrap.sha256.as_str(),
+                );
+            }
+        }
+    }
+    for bootstrap in &envelope.cell_bootstraps {
+        digests.insert(
+            BootstrapMaterialTarget::Cell(bootstrap.cell_id),
+            bootstrap.sha256.as_str(),
+        );
+    }
+    digests
+}
+
+fn create_bootstrap_secret(
+    client: &KubeClient,
+    envelope: &ControllerEnvelope,
+    path: &Path,
+    secret_name: &str,
+    expected_digest: &str,
+    role: &str,
+) -> anyhow::Result<()> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to read bootstrap material {}: {error}",
+            path.display()
+        )
+    })?;
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    if digest != expected_digest {
+        anyhow::bail!(
+            "bootstrap material {} does not match the envelope digest for {role}",
+            path.display()
+        );
+    }
+    let body = json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "type": "Opaque",
+        "immutable": true,
+        "metadata": {
+            "name": secret_name,
+            "namespace": envelope.namespace,
+            "labels": {"aiperf.nvidia.com/run-id": envelope.run_id, "aiperf.nvidia.com/role": role},
+            "annotations": {"aiperf.nvidia.com/sha256": expected_digest},
+        },
+        "data": {"bootstrap": BASE64.encode(&bytes)},
+    });
+    let body = serde_json::to_vec(&body)
+        .map_err(|error| anyhow::anyhow!("failed to encode bootstrap Secret: {error}"))?;
+    let status = client.request(
+        "POST",
+        &format!("/api/v1/namespaces/{}/secrets", envelope.namespace),
+        "application/json",
+        body,
+    )?;
+    if !(200..300).contains(&status) && status != 409 {
+        anyhow::bail!(
+            "bootstrap Secret {} creation returned HTTP {status}",
+            secret_name
+        );
+    }
+    Ok(())
 }
 
 /// Submit one immutable envelope projection as an AIPerfJob.
@@ -213,6 +340,17 @@ pub fn envelope_paths(args: &[String]) -> Result<Vec<&Path>, KubeError> {
 mod tests {
     use super::*;
 
+    const FIXTURES: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../contracts/native-k8s/v1/fixtures/"
+    );
+
+    fn fixture(name: &str) -> ControllerEnvelope {
+        let source = std::fs::read_to_string(format!("{FIXTURES}{name}")).expect("fixture read");
+        validate_envelope(serde_json::from_str(&source).expect("fixture JSON"))
+            .expect("fixture valid")
+    }
+
     #[test]
     fn envelope_arguments_preserve_repeatable_order() {
         let arguments = [
@@ -229,17 +367,35 @@ mod tests {
         let arguments = [
             "--bootstrap-material".to_string(),
             "controller=/run/controller.bin".to_string(),
-            "--bootstrap-material=cell=/run/cell.bin".to_string(),
+            "--bootstrap-material=cell-0=/run/cell-0.bin".to_string(),
+            "--bootstrap-material=cell-1=/run/cell-1.bin".to_string(),
         ];
         let selected = material_paths(&arguments).expect("material");
-        assert_eq!(selected.len(), 2);
+        assert_eq!(selected.len(), 3);
         assert_eq!(
             selected
-                .get(&NativeK8sRole::Controller)
+                .get(&BootstrapMaterialTarget::Role(NativeK8sRole::Controller))
                 .map(PathBuf::as_path),
             Some(Path::new("/run/controller.bin"))
         );
+        assert_eq!(
+            selected
+                .get(&BootstrapMaterialTarget::Cell(1))
+                .map(PathBuf::as_path),
+            Some(Path::new("/run/cell-1.bin"))
+        );
+        assert!(material_paths(&["--bootstrap-material=cell=/x".to_string()]).is_err());
         assert!(material_paths(&["--bootstrap-material=aggregator=/x".to_string()]).is_err());
+    }
+
+    #[test]
+    fn sweep_requires_one_compatible_bootstrap_material_set() {
+        let one_cell = fixture("valid-one-cell-envelope.json");
+        let multi_cell = fixture("valid-multi-cell-envelope.json");
+        assert!(
+            validate_sweep_material_compatibility(&[one_cell.clone(), one_cell.clone(),]).is_ok()
+        );
+        assert!(validate_sweep_material_compatibility(&[one_cell, multi_cell]).is_err());
     }
 
     #[test]

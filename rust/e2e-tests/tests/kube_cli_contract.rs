@@ -13,6 +13,7 @@ mod common;
 use std::process::{Command, Stdio};
 
 use common::exec_binary;
+use sha2::{Digest, Sha256};
 
 /// Every command the native surface owns. Nothing here reaches Python.
 const NATIVE_COMMANDS: &[&str] = &[
@@ -126,8 +127,34 @@ fn kind_preflight_and_list_reach_the_live_api() {
 #[test]
 #[ignore]
 fn kind_profile_submits_and_results_verify_digests() {
-    let envelope = "../../contracts/native-k8s/v1/fixtures/valid-one-cell-envelope.json";
-    let (code, _, stderr) = kube(&["profile", "--envelope", envelope]);
+    let temporary = tempfile::tempdir().expect("create Kubernetes profile fixture");
+    let material = temporary.path().join("bootstrap");
+    std::fs::write(&material, []).expect("write empty bootstrap material");
+    let digest = format!("{:x}", Sha256::digest([]));
+    let source = std::fs::read_to_string(
+        "../../contracts/native-k8s/v1/fixtures/valid-one-cell-envelope.json",
+    )
+    .expect("read Kubernetes envelope fixture");
+    let envelope = temporary.path().join("envelope.json");
+    let fixture_bootstrap_digest = format!("\"sha256\":\"{}\"", "0".repeat(64));
+    let matching_bootstrap_digest = format!("\"sha256\":\"{digest}\"");
+    std::fs::write(
+        &envelope,
+        source.replace(&fixture_bootstrap_digest, &matching_bootstrap_digest),
+    )
+    .expect("write envelope with matching bootstrap digest");
+    let material = material.display().to_string();
+    let (code, _, stderr) = kube(&[
+        "profile",
+        "--envelope",
+        envelope.to_str().expect("temporary envelope is UTF-8"),
+        "--bootstrap-material",
+        &format!("controller={material}"),
+        "--bootstrap-material",
+        &format!("results-sidecar={material}"),
+        "--bootstrap-material",
+        &format!("cell-0={material}"),
+    ]);
     assert_eq!(code, 0, "profile submission failed: {stderr}");
     let (code, stdout, stderr) = kube(&[
         "results",

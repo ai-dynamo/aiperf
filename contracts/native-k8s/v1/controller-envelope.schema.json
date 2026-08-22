@@ -3,7 +3,7 @@
   "$id": "https://aiperf.nvidia.com/contracts/native-k8s/v1/controller-envelope.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contractVersion", "runId", "namespace", "jobId", "imageDigest", "cells", "artifactRoot", "configRef", "controllerAddress", "roles"],
+  "required": ["contractVersion", "runId", "namespace", "jobId", "imageDigest", "cells", "artifactRoot", "configRef", "controllerAddress", "roles", "cellBootstraps"],
   "properties": {
     "contractVersion": { "const": "native-k8s/v1" },
     "runId": { "type": "string", "minLength": 1 },
@@ -24,6 +24,11 @@
         { "contains": { "properties": { "name": { "const": "cell" } }, "required": ["name"] } },
         { "contains": { "properties": { "name": { "const": "results-sidecar" } }, "required": ["name"] } }
       ]
+    },
+    "cellBootstraps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/cellBootstrap" }
     }
   },
   "$defs": {
@@ -44,10 +49,22 @@
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },
+    "cellBootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cellId", "secretName", "mountPath", "sha256"],
+      "properties": {
+        "cellId": { "type": "integer", "minimum": 0 },
+        "secretName": { "type": "string", "minLength": 1 },
+        "role": { "const": "cell" },
+        "mountPath": { "type": "string", "pattern": "^/" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
     "role": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "command", "argv", "environment", "bootstrap"],
+      "required": ["name", "command", "argv", "environment"],
       "properties": {
         "name": { "enum": ["controller", "cell", "results-sidecar"] },
         "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
@@ -56,9 +73,9 @@
         "bootstrap": { "$ref": "#/$defs/bootstrap" }
       },
       "allOf": [
-        { "if": { "properties": { "name": { "const": "controller" } } }, "then": { "properties": { "bootstrap": { "properties": { "role": { "const": "controller" } } } } } },
-        { "if": { "properties": { "name": { "const": "cell" } } }, "then": { "properties": { "bootstrap": { "properties": { "role": { "const": "cell" } } } } } },
-        { "if": { "properties": { "name": { "const": "results-sidecar" } } }, "then": { "properties": { "bootstrap": { "properties": { "role": { "const": "results-sidecar" } } } } } }
+        { "if": { "properties": { "name": { "const": "controller" } } }, "then": { "required": ["bootstrap"], "properties": { "bootstrap": { "properties": { "role": { "const": "controller" } } } } } },
+        { "if": { "properties": { "name": { "const": "cell" } } }, "then": { "not": { "required": ["bootstrap"] } } },
+        { "if": { "properties": { "name": { "const": "results-sidecar" } } }, "then": { "required": ["bootstrap"], "properties": { "bootstrap": { "properties": { "role": { "const": "results-sidecar" } } } } } }
       ]
     }
   }

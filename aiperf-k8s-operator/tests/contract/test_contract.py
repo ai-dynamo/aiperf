@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from aiperf_k8s_operator.contract import validate_bootstrap_metadata, validate_envelope
 from aiperf_k8s_operator.main import reconcile_job
 from aiperf_k8s_operator.reconciliation import build_jobset, validate_references
@@ -23,38 +22,171 @@ def fixture(name: str) -> dict[str, object]:
 def test_operator_sources_never_import_legacy_aiperf_package() -> None:
     for source in PACKAGE.glob("*.py"):
         tree = ast.parse(source.read_text(), filename=str(source))
-        imports = [node.names[0].name for node in ast.walk(tree) if isinstance(node, ast.Import)]
-        imports.extend(node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module)
-        assert not [name for name in imports if name == "aiperf" or name.startswith("aiperf.")], source
+        imports = [
+            node.names[0].name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+        ]
+        imports.extend(
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        )
+        assert not [
+            name for name in imports if name == "aiperf" or name.startswith("aiperf.")
+        ], source
 
 
 def test_envelope_projects_exact_two_jobsets() -> None:
     envelope = validate_envelope(fixture("valid-multi-cell-envelope.json"))
     jobset = build_jobset(envelope)
     jobs = jobset["spec"]["replicatedJobs"]
-    assert [job["name"] for job in jobs] == ["controller", "cell"]
-    assert jobs[0]["template"]["spec"]["containers"][1]["name"] == "results-sidecar"
-    assert jobs[1]["replicas"] == 4
-    assert all(container["image"] == envelope.image_digest for job in jobs for container in job["template"]["spec"]["containers"])
+    assert [job["name"] for job in jobs] == [
+        "controller",
+        "cell-0",
+        "cell-1",
+        "cell-2",
+        "cell-3",
+    ]
+    controller_pod = jobs[0]["template"]["spec"]["template"]["spec"]
+    cell_pods = [job["template"]["spec"]["template"]["spec"] for job in jobs[1:]]
+    assert controller_pod["containers"][1]["name"] == "results-sidecar"
+    assert all(job["replicas"] == 1 for job in jobs[1:])
+    assert all(
+        container["image"] == envelope.image_digest
+        for pod in [controller_pod, *cell_pods]
+        for container in pod["containers"]
+    )
+
+    roles = {role.name: role for role in envelope.roles}
+    for pod in [controller_pod, *cell_pods]:
+        assert pod["securityContext"] == {"runAsUser": 0}
+    for container in controller_pod["containers"]:
+        role = roles[container["name"]]
+        assert container["volumeMounts"][0] == {
+            "name": f"bootstrap-{role.name}",
+            "mountPath": role.bootstrap.mount_path,
+            "subPath": "bootstrap",
+            "readOnly": True,
+        }
+
+    controller_environment = {
+        entry["name"]: entry["value"]
+        for entry in controller_pod["containers"][0]["env"]
+    }
+    assert controller_environment["AIPERF_CELL_LAUNCHER"] == "k8s"
+    assert controller_environment["AIPERF_CELL_COUNT"] == str(envelope.cells)
+    assert (
+        controller_environment["AIPERF_CONTROLLER_BOOTSTRAP_FILE"]
+        == roles["controller"].bootstrap.mount_path
+    )
+
+    cell_bootstraps = {
+        reference.cell_id: reference for reference in envelope.cell_bootstraps
+    }
+    for cell_id, pod in enumerate(cell_pods):
+        bootstrap = cell_bootstraps[cell_id]
+        container = pod["containers"][0]
+        assert container["volumeMounts"][0] == {
+            "name": f"bootstrap-cell-{cell_id}",
+            "mountPath": bootstrap.mount_path,
+            "subPath": "bootstrap",
+            "readOnly": True,
+        }
+        environment = {entry["name"]: entry for entry in container["env"]}
+        assert (
+            environment["AIPERF_ROLE_BOOTSTRAP_FILE"]["value"] == bootstrap.mount_path
+        )
+        assert environment["AIPERF_CELL_LAUNCHER"]["value"] == "k8s"
+        assert environment["AIPERF_CELL_COUNT"]["value"] == str(envelope.cells)
+        assert (
+            environment["AIPERF_CELL_CONTROLLER_ADDR"]["value"]
+            == f"tcp://{envelope.controller_address}"
+        )
+        assert environment["AIPERF_CELL_ID"]["value"] == str(cell_id)
+        assert {
+            volume["name"]: volume["secret"]
+            for volume in pod["volumes"]
+            if "secret" in volume
+        }[f"bootstrap-cell-{cell_id}"] == {
+            "secretName": bootstrap.secret_name,
+            "defaultMode": 0o600,
+        }
 
 
 def test_metadata_validation_never_reads_secret_data() -> None:
     envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    bootstraps = [
+        *(
+            role.bootstrap
+            for role in envelope.roles
+            if role.name != "cell" and role.bootstrap is not None
+        ),
+        *envelope.cell_bootstraps,
+    ]
     metadata = {
-        role.bootstrap.secret_name: {
+        bootstrap.secret_name: {
             "immutable": True,
             "metadata": {
-                "name": role.bootstrap.secret_name,
-                "labels": {"aiperf.nvidia.com/role": role.name},
-                "annotations": {"aiperf.nvidia.com/sha256": role.bootstrap.sha256},
+                "name": bootstrap.secret_name,
+                "labels": {"aiperf.nvidia.com/role": bootstrap.role},
+                "annotations": {"aiperf.nvidia.com/sha256": bootstrap.sha256},
             },
             "data": {"must-not-be-read": "not-a-real-secret"},
         }
-        for role in envelope.roles
+        for bootstrap in bootstraps
     }
     validate_references(envelope, metadata)
     with pytest.raises(ValueError, match="role label"):
-        validate_bootstrap_metadata(envelope.roles[0].bootstrap, {"immutable": True, "metadata": {"name": envelope.roles[0].bootstrap.secret_name}})
+        validate_bootstrap_metadata(
+            envelope.roles[0].bootstrap,
+            {
+                "immutable": True,
+                "metadata": {"name": envelope.roles[0].bootstrap.secret_name},
+            },
+        )
+
+
+def test_envelope_rejects_duplicate_cell_bootstrap_secrets() -> None:
+    payload = fixture("valid-multi-cell-envelope.json")
+    payload["cellBootstraps"][1]["secretName"] = payload["cellBootstraps"][0][
+        "secretName"
+    ]
+
+    with pytest.raises(ValueError, match="bootstrap Secret names must be unique"):
+        validate_envelope(payload)
+
+
+def test_envelope_rejects_huge_cell_count_without_expanding_bootstraps() -> None:
+    payload = fixture("valid-one-cell-envelope.json")
+    payload["cells"] = 1_000_000_000
+
+    with pytest.raises(
+        ValueError, match="cellBootstraps must contain each cell id exactly once"
+    ):
+        validate_envelope(payload)
+
+
+def test_envelope_requires_an_unambiguous_controller_coordinate() -> None:
+    malformed = fixture("valid-one-cell-envelope.json")
+    malformed["controllerAddress"] = "controller:443:8443"
+    with pytest.raises(
+        ValueError,
+        match="controllerAddress must be tcp://HOST:PORT or tcp://\\[IPv6\\]:PORT",
+    ):
+        validate_envelope(malformed)
+
+    ipv6 = fixture("valid-one-cell-envelope.json")
+    ipv6["controllerAddress"] = "tcp://[2001:db8::1]:443"
+    envelope = validate_envelope(ipv6)
+    cell = build_jobset(envelope)["spec"]["replicatedJobs"][1]
+    environment = {
+        entry["name"]: entry["value"]
+        for entry in cell["template"]["spec"]["template"]["spec"]["containers"][0][
+            "env"
+        ]
+    }
+    assert environment["AIPERF_CELL_CONTROLLER_ADDR"] == "tcp://[2001:db8::1]:443"
 
 
 @pytest.mark.asyncio
@@ -69,7 +201,11 @@ async def test_reconcile_creates_projected_jobset() -> None:
     jobsets = FakeJobSets()
     status = await reconcile_job(envelope, jobsets)
 
-    assert status == {"phase": "Pending", "runId": envelope.run_id, "jobSet": envelope.job_id}
+    assert status == {
+        "phase": "Pending",
+        "runId": envelope.run_id,
+        "jobSet": envelope.job_id,
+    }
     assert jobsets.kwargs["group"] == "jobset.x-k8s.io"
     assert jobsets.kwargs["namespace"] == envelope.namespace
     assert jobsets.kwargs["body"] == build_jobset(envelope)
@@ -85,4 +221,8 @@ async def test_reconcile_is_idempotent_after_jobset_already_exists() -> None:
 
     envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
     status = await reconcile_job(envelope, ExistingJobSet())
-    assert status == {"phase": "Pending", "runId": envelope.run_id, "jobSet": envelope.job_id}
+    assert status == {
+        "phase": "Pending",
+        "runId": envelope.run_id,
+        "jobSet": envelope.job_id,
+    }
