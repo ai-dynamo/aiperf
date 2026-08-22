@@ -110,6 +110,8 @@ pub(crate) enum GraphExecutionEvent {
     },
     /// One node reached a transport terminal and has a complete native record.
     Record {
+        /// Unique root execution-instance identity used by phase accounting.
+        trace_id: String,
         /// Complete native metric record for the terminal node request.
         record: Box<CapturedRecord>,
         /// Static graph node id (e.g. `"n_1"`) this terminal record belongs to.
@@ -2267,6 +2269,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
         }
         if context.trace_subphase == TraceSubphase::Profiling {
             self.events.emit(GraphExecutionEvent::Record {
+                trace_id: self.trace_id.clone(),
                 record: Box::new(record),
                 node_id: Some(node_id.to_owned()),
             })?;
@@ -3554,6 +3557,7 @@ executable = "tools/adapter.sh"
         let expected_uuid = Uuid::from_u128(17);
 
         sink.emit(GraphExecutionEvent::Record {
+            trace_id: "trace-a".into(),
             record: Box::new(completed_evidence_record()),
             node_id: Some("node-a".into()),
         })

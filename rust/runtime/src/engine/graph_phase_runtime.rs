@@ -998,27 +998,27 @@ impl GraphPhaseProgress {
         outcome.admitted = outcome.admitted.saturating_add(1);
     }
 
-    fn record(&self, record: &CapturedRecord) {
+    fn record(&self, trace_id: &str, record: &CapturedRecord) {
         let (completes_session, released_at_first_token) = {
             let mut traces = self.traces.borrow_mut();
-            let Some(trace) = traces.get_mut(&record.x_correlation_id) else {
+            let Some(trace) = traces.get_mut(trace_id) else {
                 self.failures.record(format!(
                     "graph trace {:?} emitted a node record before admission or after completion",
-                    record.x_correlation_id
+                    trace_id
                 ));
                 return;
             };
             if trace.returned_uuids.contains(&record.uuid) {
                 self.failures.record(format!(
                     "graph trace {:?} emitted duplicate terminal record for request {}",
-                    record.x_correlation_id, record.uuid
+                    trace_id, record.uuid
                 ));
                 return;
             }
             if trace.returned_nodes >= trace.expected_nodes {
                 self.failures.record(format!(
                     "graph trace {:?} emitted more than {} node records",
-                    record.x_correlation_id, trace.expected_nodes
+                    trace_id, trace.expected_nodes
                 ));
                 return;
             }
@@ -1027,7 +1027,7 @@ impl GraphPhaseProgress {
             if released_at_first_token != metadata_has_first_token {
                 self.failures.record(format!(
                     "graph trace {:?} request {} first-token event/record mismatch: event={} record={}",
-                    record.x_correlation_id,
+                    trace_id,
                     record.uuid,
                     released_at_first_token,
                     metadata_has_first_token
@@ -1042,7 +1042,7 @@ impl GraphPhaseProgress {
         };
         // Non-cancelled warmup errors abort the run before profiling.
         if record.ingest.errored && !record.ingest.canceled {
-            self.note_warmup_failure(&record.x_correlation_id);
+            self.note_warmup_failure(trace_id);
         }
         self.sink.record_returned(PhaseReturn {
             completes_session,
@@ -1463,11 +1463,15 @@ fn ingest_graph_execution_event(
         GraphExecutionEvent::FirstToken { trace_id, uuid } => {
             progress.first_token(&trace_id, uuid);
         }
-        GraphExecutionEvent::Record { record, node_id } => {
+        GraphExecutionEvent::Record {
+            trace_id,
+            record,
+            node_id,
+        } => {
             if let Some(sampler) = sampler {
                 sampler.borrow_mut().on_record(&record.ingest);
             }
-            progress.record(&record);
+            progress.record(&trace_id, &record);
             // Attribute a non-cancelled terminal node return to its lane's
             // executed-node/return-wall ledgers. Cancelled returns are excluded
             // (see `observe_lane_return`); backends without a node id (offline
@@ -1475,7 +1479,7 @@ fn ingest_graph_execution_event(
             if let Some(node_id) = node_id.as_deref()
                 && !record.ingest.canceled
             {
-                progress.observe_lane_return(&record.x_correlation_id, node_id);
+                progress.observe_lane_return(&trace_id, node_id);
             }
             captured.borrow_mut().push(*record);
         }
@@ -3324,6 +3328,7 @@ mod tests {
         async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
             let trace_id = program.profiling.trace.id.clone();
             self.events.emit(GraphExecutionEvent::Record {
+                trace_id: trace_id.clone(),
                 record: Box::new(graph_phase_record(&trace_id, false, false)),
                 node_id: Some("n_0".into()),
             })?;
@@ -3948,7 +3953,10 @@ mod tests {
             node_count: 3,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("trace-cancelled", false, false));
+        progress.record(
+            "trace-cancelled",
+            &graph_phase_record("trace-cancelled", false, false),
+        );
         progress.complete(
             "trace-cancelled",
             3,
@@ -3999,7 +4007,10 @@ mod tests {
             node_count: 2,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("trace-failed", false, false));
+        progress.record(
+            "trace-failed",
+            &graph_phase_record("trace-failed", false, false),
+        );
         progress.complete(
             "trace-failed",
             2,
@@ -4066,6 +4077,7 @@ mod tests {
             &progress,
             None,
             GraphExecutionEvent::Record {
+                trace_id: "trace-adaptive".into(),
                 record: Box::new(record),
                 node_id: None,
             },
@@ -4228,8 +4240,8 @@ mod tests {
             arrival_ns: 0,
         });
         let record = graph_phase_record("trace-duplicate-terminal", false, false);
-        progress.record(&record);
-        progress.record(&record);
+        progress.record("trace-duplicate-terminal", &record);
+        progress.record("trace-duplicate-terminal", &record);
 
         assert_eq!(sink.returned.borrow().len(), 1);
         assert_eq!(
@@ -4252,7 +4264,7 @@ mod tests {
         });
         let mut record = graph_phase_record("trace-token-mismatch", false, false);
         record.ingest.first_token_ns = Some(5);
-        progress.record(&record);
+        progress.record("trace-token-mismatch", &record);
 
         assert_eq!(
             *sink.returned.borrow(),
@@ -4281,7 +4293,7 @@ mod tests {
             arrival_ns: 0,
         });
         let record = graph_phase_record("trace-late-token", false, false);
-        progress.record(&record);
+        progress.record("trace-late-token", &record);
         progress.first_token("trace-late-token", record.uuid);
 
         assert_eq!(sink.first_tokens.get(), 0);
@@ -4341,7 +4353,10 @@ mod tests {
             node_count: 1,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("warmup-fail", true, false));
+        progress.record(
+            "warmup-fail",
+            &graph_phase_record("warmup-fail", true, false),
+        );
         assert_eq!(*ledger.borrow(), vec!["warmup-fail".to_owned()]);
     }
 
@@ -4375,7 +4390,10 @@ mod tests {
             node_count: 1,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("warmup-cancelled", true, true));
+        progress.record(
+            "warmup-cancelled",
+            &graph_phase_record("warmup-cancelled", true, true),
+        );
         assert!(ledger.borrow().is_empty());
         let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
         let failures = Rc::new(GraphPhaseFailures::default());
@@ -4414,7 +4432,10 @@ mod tests {
             node_count: 1,
             arrival_ns: 0,
         });
-        progress.record(&graph_phase_record("profiling-fail", true, false));
+        progress.record(
+            "profiling-fail",
+            &graph_phase_record("profiling-fail", true, false),
+        );
         assert!(ledger.borrow().is_empty());
     }
 
@@ -4497,6 +4518,7 @@ mod tests {
                 &progress,
                 None,
                 GraphExecutionEvent::Record {
+                    trace_id: "tmpl-a::inst-a".into(),
                     record: Box::new(record),
                     node_id: Some(node_id.to_owned()),
                 },
@@ -4548,12 +4570,61 @@ mod tests {
             &progress,
             None,
             GraphExecutionEvent::Record {
+                trace_id: "tmpl-a::inst-a".into(),
                 record: Box::new(graph_phase_record("tmpl-a::inst-a", false, false)),
                 node_id: None,
             },
         );
         assert!(lanes.executed_node_ids(0).is_empty());
         assert!(lanes.return_wall_us(0).is_empty());
+    }
+
+    #[test]
+    fn graph_record_correlation_does_not_replace_execution_trace_identity() {
+        let sink = Rc::new(RecordingGraphPhaseProgressSink::default());
+        let failures = Rc::new(GraphPhaseFailures::default());
+        let outcome = Rc::new(RefCell::new(GraphWorkloadReport::default()));
+        let clock = Rc::new(crate::clock::SimClock::new());
+        let lanes = Rc::new(GraphLaneLedger::default());
+        lanes.register_lane(0, lane_identity("tmpl-a", "tmpl-a::inst-a", 0.0));
+        let progress = GraphPhaseProgress::new(
+            sink,
+            failures.clone(),
+            outcome,
+            clock,
+            lanes.clone(),
+            false,
+            Rc::new(RefCell::new(Vec::new())),
+        );
+        progress.admit(&TraceAdmissionInfo {
+            trace_id: "tmpl-a::inst-a".into(),
+            node_count: 1,
+            arrival_ns: 0,
+        });
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        let supplement = Rc::new(RefCell::new(GraphPhaseSupplement::new()));
+        ingest_graph_execution_event(
+            &captured,
+            &supplement,
+            None,
+            &progress,
+            None,
+            GraphExecutionEvent::Record {
+                trace_id: "tmpl-a::inst-a".into(),
+                record: Box::new(graph_phase_record("tmpl-a::inst-a:node-a", false, false)),
+                node_id: Some("node-a".into()),
+            },
+        );
+
+        assert!(failures.first().is_none());
+        assert_eq!(
+            lanes.executed_node_ids(0),
+            BTreeSet::from(["node-a".to_owned()])
+        );
+        assert_eq!(
+            captured.borrow()[0].x_correlation_id,
+            "tmpl-a::inst-a:node-a"
+        );
     }
 
     #[test]
