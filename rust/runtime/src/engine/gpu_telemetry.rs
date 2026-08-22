@@ -562,7 +562,11 @@ mod tests {
         match value {
             serde_json::Value::Array(values) => format!(
                 "[{}]",
-                values.iter().map(canonical_json).collect::<Vec<_>>().join(",")
+                values
+                    .iter()
+                    .map(canonical_json)
+                    .collect::<Vec<_>>()
+                    .join(",")
             ),
             serde_json::Value::Object(values) => format!(
                 "{{{}}}",
@@ -570,7 +574,11 @@ mod tests {
                     .iter()
                     .collect::<BTreeMap<_, _>>()
                     .into_iter()
-                    .map(|(key, value)| format!("{}:{}", serde_json::to_string(key).unwrap(), canonical_json(value)))
+                    .map(|(key, value)| format!(
+                        "{}:{}",
+                        serde_json::to_string(key).unwrap(),
+                        canonical_json(value)
+                    ))
                     .collect::<Vec<_>>()
                     .join(",")
             ),
@@ -593,7 +601,10 @@ mod tests {
         let metrics = serde_json::from_value(fixture["telemetry_data"].clone()).unwrap();
         GpuTelemetryRecord {
             timestamp_ns: fixture["timestamp_ns"].as_i64().unwrap(),
-            endpoint_url: fixture["telemetry_source_url"].as_str().unwrap().to_string(),
+            endpoint_url: fixture["telemetry_source_url"]
+                .as_str()
+                .unwrap()
+                .to_string(),
             metadata,
             metrics,
         }
@@ -646,7 +657,10 @@ mod tests {
             let fixture = serde_json::from_str::<serde_json::Value>(fixture).unwrap();
             let fixture = fixture.as_array().unwrap().first().unwrap();
             let actual = serde_json::to_value(TelemetryRow::from(&parity_record(fixture))).unwrap();
-            assert_eq!(canonical_json(&actual), canonical_json(&expected_native_json(fixture)));
+            assert_eq!(
+                canonical_json(&actual),
+                canonical_json(&expected_native_json(fixture))
+            );
         }
     }
 
