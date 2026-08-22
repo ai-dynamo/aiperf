@@ -934,7 +934,10 @@ mod tests {
                 config: &config,
             }])
             .unwrap_err();
-        assert!(format!("{error:#}").contains("unknown variant"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("unknown variant"),
+            "{error:#}"
+        );
     }
 
     #[test]
