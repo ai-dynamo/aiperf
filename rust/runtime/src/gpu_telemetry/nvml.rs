@@ -40,6 +40,7 @@ impl NvmlTelemetrySource {
                     Ok(Box::new(NvmlWorker {
                         nvml: None,
                         gpm_samples: BTreeMap::new(),
+                        process_utilization_timestamps: BTreeMap::new(),
                     }))
                 },
             )
@@ -68,6 +69,7 @@ impl crate::gpu_telemetry::source::GpuTelemetrySource for NvmlTelemetrySource {
 
 struct NvmlWorker {
     gpm_samples: BTreeMap<u32, (usize, usize)>,
+    process_utilization_timestamps: BTreeMap<u32, u64>,
     nvml: Option<Nvml>,
 }
 
@@ -135,8 +137,9 @@ impl VendorWorker for NvmlWorker {
     }
 
     fn scrape(&mut self, timestamp_ns: i64) -> Result<Vec<GpuTelemetryRecord>, GpuTelemetryError> {
-        let (gpm_samples, nvml) = (
+        let (gpm_samples, process_utilization_timestamps, nvml) = (
             &mut self.gpm_samples,
+            &mut self.process_utilization_timestamps,
             self.nvml.as_ref().ok_or_else(|| {
                 GpuTelemetryError::Worker("NVML scrape requested before initialization".to_string())
             })?,
@@ -154,7 +157,13 @@ impl VendorWorker for NvmlWorker {
             let gpm_sm_utilization = Self::gpm_sm_utilization(gpm_samples, nvml, &device, index);
             if let Some(record) = record_from_observation(
                 timestamp_ns,
-                observe_device(nvml, &device, index, gpm_sm_utilization),
+                observe_device(
+                    nvml,
+                    &device,
+                    index,
+                    gpm_sm_utilization,
+                    process_utilization_timestamps,
+                ),
             ) {
                 records.push(record);
             }
@@ -230,6 +239,7 @@ fn observe_device(
     device: &nvml_wrapper::Device<'_>,
     index: u32,
     gpm_sm_utilization: Option<f64>,
+    process_utilization_timestamps: &mut BTreeMap<u32, u64>,
 ) -> NvmlDeviceObservation {
     NvmlDeviceObservation {
         index,
@@ -253,16 +263,34 @@ fn observe_device(
             .ok()
             .map(|value| value.utilization),
         gpm_sm_utilization,
-        sm_utilization: device
-            .process_utilization_stats(None)
-            .ok()
-            .map(|samples| samples.into_iter().map(|sample| sample.sm_util).collect()),
+        sm_utilization: gpm_sm_utilization.is_none().then(|| {
+            process_sm_utilization(process_utilization_timestamps, index, |timestamp| {
+                device.process_utilization_stats(timestamp).map(|samples| {
+                    samples
+                        .into_iter()
+                        .map(|sample| (sample.timestamp, sample.sm_util))
+                        .collect()
+                })
+            })
+        }).flatten(),
         jpg_utilization: jpg_utilization(nvml, device),
         power_violation_nanoseconds: device
             .violation_status(PerformancePolicy::Power)
             .ok()
             .map(|value| value.violation_time),
     }
+}
+
+fn process_sm_utilization<E>(
+    timestamps: &mut BTreeMap<u32, u64>,
+    index: u32,
+    query: impl FnOnce(Option<u64>) -> Result<Vec<(u64, u32)>, E>,
+) -> Option<Vec<u32>> {
+    let samples = query(timestamps.get(&index).copied()).ok()?;
+    if let Some(timestamp) = samples.iter().map(|(timestamp, _)| *timestamp).max() {
+        timestamps.insert(index, timestamp);
+    }
+    Some(samples.into_iter().map(|(_, sm_utilization)| sm_utilization).collect())
 }
 
 fn record_from_observation(
