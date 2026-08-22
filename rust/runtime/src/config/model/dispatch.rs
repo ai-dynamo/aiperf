@@ -128,6 +128,7 @@ normalized_wire_enum!(DispatchMode {
     Sharded => "sharded",
     Global => "global",
     GlobalHop => "global-hop",
+    GlobalPush => "global-push",
 });
 
 /// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]

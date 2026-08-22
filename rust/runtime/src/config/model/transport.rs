@@ -44,6 +44,7 @@ impl Transport {
             Transport::DynosimOffline(_) => "dynosim_offline",
             Transport::DynosimOnline(_) => "dynosim_online",
             Transport::DryRun(_) => "dry_run",
+            Transport::Websocket(_) => "websocket",
         }
     }
 
