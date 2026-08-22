@@ -2797,6 +2797,7 @@ fn profiling_resolve_pass0_lanes(
 struct LaneResumeGraphTraceSource {
     prefix: Vec<LaneResumePlan>,
     next_prefix: Cell<usize>,
+    fallback_cell_id: Option<u32>,
     recycle: Option<Rc<dyn GraphTraceSource>>,
 }
 
@@ -2819,6 +2820,11 @@ impl LaneResumeGraphTraceSource {
         let session_partition = partition
             .filter(|partition| partition.cell_count() > 1 && request_limit.is_none())
             .unwrap_or_else(ModuloCellPartition::direct);
+        // Fallback identities remain cell-scoped even when a request budget
+        // selects the non-partitioned recycle source.
+        let fallback_cell_id = partition
+            .filter(|partition| partition.cell_count() > 1)
+            .map(|partition| partition.cell_id());
         let cell_id = u64::from(session_partition.cell_id());
         let cell_count = u64::from(session_partition.cell_count());
         let global_start_ordinal = local_start_ordinal
@@ -2877,6 +2883,7 @@ impl LaneResumeGraphTraceSource {
         Ok(Self {
             prefix,
             next_prefix: Cell::new(0),
+            fallback_cell_id,
             recycle,
         })
     }
@@ -2890,10 +2897,16 @@ impl GraphTraceSource for LaneResumeGraphTraceSource {
             let entry = &self.prefix[idx];
             let mut plan = entry.plan.clone();
             // Resume lanes reuse the pressure instance's id verbatim for marker
-            // continuity; every other lane keeps the per-lane-unique native id.
+            // continuity; every other lane keeps a cell/lane-unique native id.
             plan.trace.id = match &entry.resume_instance_id {
                 Some(instance_id) => instance_id.clone(),
-                None => format!("{}::resume-lane-{}", plan.trace.id, entry.lane),
+                None => match self.fallback_cell_id {
+                    Some(cell_id) => format!(
+                        "{}::resume-cell-{cell_id}-lane-{}",
+                        plan.trace.id, entry.lane
+                    ),
+                    None => format!("{}::resume-lane-{}", plan.trace.id, entry.lane),
+                },
             };
             return Ok(Some(GraphTraceProgram::static_graph(plan)));
         }
@@ -6035,6 +6048,36 @@ mod tests {
     }
 
     #[test]
+    fn lane_resume_source_fallback_ids_survive_cross_cell_fold() {
+        let source = |cell_id| {
+            lane_resume_source(
+                vec![LaneResumePlan {
+                    lane: 0,
+                    plan: pressure_one_node_plan("prefix"),
+                    resume_instance_id: None,
+                }],
+                Some(2),
+                None,
+                ModuloCellPartition::new(cell_id, 2).unwrap(),
+            )
+        };
+        let ids = [source(0), source(1)]
+            .iter()
+            .flat_map(drawn_trace_ids)
+            .collect::<Vec<_>>();
+        let folded_ids = ids.iter().collect::<BTreeSet<_>>();
+
+        assert_eq!(folded_ids.len(), 2);
+        assert_eq!(
+            ids,
+            vec![
+                "prefix::resume-cell-0-lane-0",
+                "prefix::resume-cell-1-lane-0",
+            ]
+        );
+    }
+
+    #[test]
     fn lane_resume_source_converts_local_cursor_to_global_cellular_ordinal() {
         let make_prefix = || {
             vec![LaneResumePlan {
@@ -6068,14 +6111,11 @@ mod tests {
             ModuloCellPartition::new(1, 2).unwrap(),
         );
 
-        assert_eq!(
-            drawn_trace_ids(&cell_0),
-            vec!["prefix::resume-lane-0", "b::instance-10", "a::instance-12",]
-        );
-        assert_eq!(
-            drawn_trace_ids(&cell_1),
-            vec!["prefix::resume-lane-0", "c::instance-11"]
-        );
+        let cell_0_ids = drawn_trace_ids(&cell_0);
+        let cell_1_ids = drawn_trace_ids(&cell_1);
+
+        assert_eq!(&cell_0_ids[1..], ["b::instance-10", "a::instance-12"]);
+        assert_eq!(&cell_1_ids[1..], ["c::instance-11"]);
     }
 
     #[test]
