@@ -461,10 +461,13 @@ Whole system:
   vocabulary, dataset/transport path selection, and the in-process
   linked-capability catalog.
 - [`docs/specs/config-model-unification.md`](docs/specs/config-model-unification.md)
-  — planned convergence of the Config-v2 front end onto one typed
+  — convergence of the Config-v2 front end onto one typed
   `BenchmarkConfig`/`BenchmarkRun` shared by the CLI producer and runtime consumer
-  (mirroring Python's `AIPerfConfig`→`build_benchmark_plan`→`BenchmarkRun`),
-  retiring the untyped projection seam and the per-workload `*WorkloadConfigV2` DTOs.
+  (mirroring Python's `AIPerfConfig`→`build_benchmark_plan`→`BenchmarkRun`): both
+  authoring surfaces normalize to `Inputs`, the `--execute` wire carries authoring,
+  and the runtime owns the single `resolve`. The untyped `BenchmarkConfigWireV2` is
+  retired; the per-workload `*WorkloadConfigV2` DTOs and the ported-but-uncalled
+  offline validators are the remaining work.
 - [`docs/specs/typed-factory-runner.md`](docs/specs/typed-factory-runner.md)
   — planned completion of config-model-unification: the runtime consumes the typed
   `BenchmarkRun` directly and selects a component by an open, normalized string id

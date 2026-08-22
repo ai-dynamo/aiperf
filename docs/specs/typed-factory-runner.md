@@ -35,9 +35,10 @@ takes `envelope.run.into_authored()` and runs the rest of the engine against
 - **`BenchmarkRunWireV2.cfg`** is the typed `BenchmarkConfig`, but
   `into_authored` re-serializes each section to `serde_json::Value`
   (`to_value(&cfg.runtime)`, `to_value(&cfg.phases)`, …), reshapes it, derives
-  `workload_id` (graph vs scheduled) from the dataset type, folds content-server
-  into sidecars, and hand-builds `json!` blobs for two strict per-workload DTOs
-  (`ScheduledWorkloadConfigV2`, `GraphWorkloadConfigV2`) that differ only in a
+  `workload_id` from the typed `workload_kind(&cfg)` classifier, folds
+  content-server into sidecars, and hand-builds `json!` blobs for three strict
+  per-workload DTOs (`ScheduledWorkloadConfigV2`, `GraphWorkloadConfigV2`,
+  `StaticAccuracyWorkloadConfigV2`); the first two differ only in a
   graph-only field.
 - **Components are open `RawValue`.** `NamedRunnerComponentSpecV2 { id:
   ComponentId, config: Box<RawValue> }` carries an opaque payload "strictly
