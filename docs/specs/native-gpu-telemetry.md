@@ -37,7 +37,9 @@ The stable `gpuTelemetry.collector` vocabulary is `dcgm`, `pynvml`, and
 `amdsmi`, matching origin/main. `pynvml` means the native Rust NVML collector;
 it does not select or require a Python process. `dcgm` remains the default.
 Selection is explicit: the runtime never falls back between DCGM, NVML, and AMD
-SMI.
+SMI. Native `pynvml` acceptance is independent of the Python collector's
+`nvidia-ml-py` package probe; YAML that must also run through the Python engine
+continues to require that Python package there.
 
 `pynvml` and `amdsmi` are local-only YAML selections and reject `urls`. The
 existing `--gpu-telemetry <url-or-csv>` surface remains DCGM-only in this slice;
@@ -76,12 +78,13 @@ function (currently JPEG utilization). NVML devices are re-resolved by retained
 index inside the worker for each scrape; no self-referential `Device<'nvml>` or
 GPM sample is stored.
 
-AMD SMI uses direct, dynamically loaded `libamd_smi.so*` FFI based on
-`amdsmi-sys` bindings (or an equivalent generated binding that exposes the
-complete required AMD SMI API). The current high-level `amdsmi` 0.1.0 crate is
-not sufficient: it lacks temperature, ECC, throttle, BDF, and the raw
-power-information variants needed here. Neither selected vendor library is a
-link-time requirement of `aiperf`.
+AMD SMI uses direct, dynamically loaded `libamd_smi.so*` FFI generated and
+verified from the target ROCm installation's AMD SMI headers before a dependency
+is selected. The current high-level `amdsmi` 0.1.0 crate is not sufficient: it
+lacks temperature, ECC, throttle, BDF, and the raw power-information variants
+needed here. The implementation may use a generated binding only after proving
+it exposes the complete required API; otherwise it owns the narrow required FFI
+surface. Neither selected vendor library is a link-time requirement of `aiperf`.
 
 A missing library, initialization failure, or no devices makes the selected
 source unavailable. `GpuTelemetryRun::new` logs the construction failure with
@@ -121,10 +124,12 @@ and unsupported fields remain absent, never zero.
 
 Energy, ECC, power violation, and DCGM XID are counters. Every boundary scrape
 must return `Ok(Some(GpuScrape))`, including an empty-record scrape, because
-boundary collection constructs exact counter snapshots. `Ok(None)` is reserved
-only for duplicate continuous DCGM bodies. All other fields are cadence gauges.
-The existing accumulator alone derives total power, total energy, output tokens
-per joule, and energy per user.
+boundary collection constructs exact counter snapshots. A violation returns a
+`GpuTelemetryError`; production boundary collection must not retain an
+`expect()` for this condition. `Ok(None)` is reserved only for duplicate
+continuous DCGM bodies. All other fields are cadence gauges. `mode: summary` is
+the only native display mode. The existing accumulator alone derives total
+power, total energy, output tokens per joule, and energy per user.
 
 ### Validation and verification
 
