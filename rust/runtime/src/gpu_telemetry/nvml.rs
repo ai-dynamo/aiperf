@@ -83,7 +83,9 @@ impl VendorWorker for NvmlWorker {
                     continue;
                 }
             };
-            if let Some(record) = record_from_observation(timestamp_ns, observe_device(nvml, &device, index)) {
+            if let Some(record) =
+                record_from_observation(timestamp_ns, observe_device(nvml, &device, index))
+            {
                 records.push(record);
             }
         }
@@ -133,8 +135,14 @@ fn observe_device(
             .map(|value| (value.gpu, value.memory)),
         memory_used_bytes: device.memory_info().ok().map(|value| value.used),
         temperature_celsius: device.temperature(TemperatureSensor::Gpu).ok(),
-        encoder_utilization: device.encoder_utilization().ok().map(|value| value.utilization),
-        decoder_utilization: device.decoder_utilization().ok().map(|value| value.utilization),
+        encoder_utilization: device
+            .encoder_utilization()
+            .ok()
+            .map(|value| value.utilization),
+        decoder_utilization: device
+            .decoder_utilization()
+            .ok()
+            .map(|value| value.utilization),
         sm_utilization: device
             .process_utilization_stats(None)
             .ok()
@@ -160,7 +168,9 @@ fn record_from_observation(
     insert_finite(
         &mut metrics,
         "nvidia_energy_consumption",
-        observation.energy_millijoules.map(millijoules_to_megajoules),
+        observation
+            .energy_millijoules
+            .map(millijoules_to_megajoules),
     );
     if let Some((gpu, memory)) = observation.utilization {
         insert_finite(&mut metrics, "nvidia_gpu_utilization", Some(gpu as f64));
@@ -193,13 +203,9 @@ fn record_from_observation(
     insert_finite(
         &mut metrics,
         "nvidia_sm_utilization",
-        observation.sm_utilization.map(|samples| {
-            samples
-                .into_iter()
-                .map(f64::from)
-                .sum::<f64>()
-                .min(100.0)
-        }),
+        observation
+            .sm_utilization
+            .map(|samples| samples.into_iter().map(f64::from).sum::<f64>().min(100.0)),
     );
     insert_finite(
         &mut metrics,
