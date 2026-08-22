@@ -221,6 +221,7 @@ dependencies = [
  "itoa",
  "jmespath",
  "libc",
+ "libloading 0.8.9",
  "mimalloc",
  "minijinja",
  "num-bigint",
