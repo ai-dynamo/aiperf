@@ -9,8 +9,8 @@ use std::rc::Rc;
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::{PerformancePolicy, TemperatureSensor};
 use nvml_wrapper_sys::bindings::{
-    NVML_GPM_METRICS_GET_VERSION, nvmlGpmMetricId_t_NVML_GPM_METRIC_SM_UTIL,
-    nvmlGpmMetricsGet_t, nvmlGpmSample_t, nvmlReturn_enum_NVML_SUCCESS,
+    NVML_GPM_METRICS_GET_VERSION, nvmlGpmMetricId_t_NVML_GPM_METRIC_SM_UTIL, nvmlGpmMetricsGet_t,
+    nvmlGpmSample_t, nvmlReturn_enum_NVML_SUCCESS,
 };
 
 use crate::clock::Clock;
@@ -82,7 +82,6 @@ impl NvmlWorker {
         self.nvml = Some(nvml);
         Ok(())
     }
-
 }
 
 impl NvmlWorker {
@@ -102,9 +101,8 @@ impl NvmlWorker {
                 return None;
             }
             let metrics_get = nvml.lib().nvmlGpmMetricsGet.as_ref().ok()?;
-            let mut request = unsafe {
-                std::mem::MaybeUninit::<nvmlGpmMetricsGet_t>::zeroed().assume_init()
-            };
+            let mut request =
+                unsafe { std::mem::MaybeUninit::<nvmlGpmMetricsGet_t>::zeroed().assume_init() };
             request.version = NVML_GPM_METRICS_GET_VERSION;
             request.numMetrics = 1;
             request.sample1 = *previous as nvmlGpmSample_t;
@@ -196,7 +194,10 @@ struct NvmlDeviceObservation {
     power_violation_nanoseconds: Option<u64>,
 }
 
-fn initialize_gpm_samples(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<(usize, usize)> {
+fn initialize_gpm_samples(
+    nvml: &Nvml,
+    device: &nvml_wrapper::Device<'_>,
+) -> Option<(usize, usize)> {
     device.gpm_support().ok().filter(|supported| *supported)?;
     let allocate = nvml.lib().nvmlGpmSampleAlloc.as_ref().ok()?;
     let free = nvml.lib().nvmlGpmSampleFree.as_ref().ok()?;
