@@ -680,7 +680,33 @@ mandatory at every step, not just the last. Beyond that shared floor:
   e2e target today — and both are silent losses, not decode errors. Step 3 must
   therefore *add* two before it may be called green: a graph run asserting
   `validate_canonical_recorded_agent_bundle` still rejects a non-canonical bundle,
-  and a `weka_semantics: legacy` run asserting the idle cap still applies.
+  and a run asserting the idle cap still applies.
+
+  **Both now exist, and writing them found two live defects** —
+  `recorded_agent_default_scenario_rejects_non_canonical_bundle`
+  (`e2e-tests/tests/test_recorded_agent_replay.rs`) and
+  `e2e-tests/tests/test_system_idle_gap_cap.rs`. Reaching either check required
+  fixing the path to it, which is the point of demanding an executable guard
+  rather than a named intent:
+
+  - `--weka-semantics` was dropped under `--config`. `yaml.rs` built
+    `Inputs::weka_semantics` as `None` and never overlaid the flag, so a
+    config-authored `scenario: recorded-agent-default` (timing mode
+    `agentic_replay`) always resolved to `legacy`, and legacy lowering requires a
+    `hugging_face` dataset source — making the scenario unreachable from a config
+    file over a file dataset.
+  - `apply_scenario_synthesis` materialized a synthesis block for *every* scenario
+    under graph-ir. `RecordedAgentDatasetInput` is `deny_unknown_fields` with no
+    `synthesis` field, so `recorded-agent-default` — whose four synthesis fields
+    are all `None` — failed to decode outright.
+  - The idle cap's own guard is written on the **graph-ir** arm, not `legacy` as an
+    earlier draft of this bullet said: `legacy` lowering needs a HuggingFace
+    download and so cannot run offline against the mock server. That change
+    exposed the third defect — `into_authored` attached
+    `system_idle_gap_cap_seconds` only under `weka_semantics` legacy/agentx, so
+    the flag was a silent no-op under graph-ir even though `resolve.rs` validates
+    it there, its rejection message names graph-ir as supported, and `lower_graph`
+    reads it into `NativeGraphDatasetPlan`.
 - **Step 4** (delete the projection; repoint `coordinator.rs`) — this step
   previously carried **no** gate at all, which is exactly how it could have
   shipped while dropping controller-authored `planned_replay_traces`. Its gate is
