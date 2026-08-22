@@ -116,7 +116,9 @@ struct AmdsmiVramUsage {
 
 struct AmdSmiWorker {
     library: Library,
-    devices: Vec<ProcessorHandle>,
+    // Opaque C handles never leave this dedicated worker thread. Store their
+    // address representation so the worker object itself remains movable into it.
+    devices: Vec<usize>,
     is_initialized: bool,
 }
 
@@ -143,7 +145,11 @@ impl AmdSmiWorker {
         self.is_initialized = true;
         let sockets = enumerate_sockets(&self.library)?;
         for socket in sockets {
-            self.devices.extend(enumerate_processors(&self.library, socket)?);
+            self.devices.extend(
+                enumerate_processors(&self.library, socket)?
+                    .into_iter()
+                    .map(|handle| handle as usize),
+            );
         }
         if self.devices.is_empty() {
             return Err(GpuTelemetryError::Worker(
@@ -161,7 +167,8 @@ impl VendorWorker for AmdSmiWorker {
 
     fn scrape(&mut self, timestamp_ns: i64) -> Result<Vec<GpuTelemetryRecord>, GpuTelemetryError> {
         let mut records = Vec::with_capacity(self.devices.len());
-        for (index, &device) in self.devices.iter().enumerate() {
+        for (index, &device_address) in self.devices.iter().enumerate() {
+            let device = device_address as ProcessorHandle;
             let metadata = metadata(&self.library, device, index);
             let metrics = metrics(&self.library, device);
             if !metrics.is_empty() {
