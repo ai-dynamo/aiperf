@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod client;
+pub mod command;
 pub mod contract;
 pub mod error;
 
