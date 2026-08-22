@@ -4,10 +4,12 @@
 //! Native Kubernetes contract, credential, and bounded client seams.
 
 pub mod auth;
+pub mod bootstrap;
 pub mod client;
 pub mod command;
 pub mod contract;
 pub mod error;
+pub mod manifest;
 
 #[cfg(test)]
 mod tests;
