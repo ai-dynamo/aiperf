@@ -5,17 +5,22 @@
 
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Condvar, Mutex as StdMutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{OwnedPermit, Sender, channel};
 
 use crate::clock::Clock;
 use crate::gpu_telemetry::model::{GpuScrape, GpuTelemetryRecord};
 use crate::gpu_telemetry::source::{GpuScrapeMode, GpuTelemetryError, GpuTelemetrySource};
 
 const CHANNEL_CAPACITY: usize = 1;
+const REAPER_CHANNEL_CAPACITY: usize = 64;
+const REAPER_POLL_INTERVAL: Duration = Duration::from_millis(1);
 const WORKER_THREAD_NAME: &str = "aiperf-gpu-vendor";
+const REAPER_THREAD_NAME: &str = "aiperf-gpu-reaper";
 
 /// Synchronous vendor API owned and invoked exclusively by one worker thread.
 pub(super) trait VendorWorker: Send + 'static {
@@ -25,37 +30,187 @@ pub(super) trait VendorWorker: Send + 'static {
 }
 
 type WorkerReply<T> = SyncSender<Result<T, GpuTelemetryError>>;
+type WorkerResult = Result<(), GpuTelemetryError>;
 
 enum WorkerCommand {
     Scrape {
         timestamp_ns: i64,
         reply: WorkerReply<Vec<GpuTelemetryRecord>>,
     },
-    Shutdown {
-        reply: WorkerReply<()>,
-    },
+    Shutdown,
+}
+
+#[derive(Default)]
+struct CompletionState {
+    result: Option<WorkerResult>,
+    is_abandoned: bool,
+    is_observed: bool,
+    is_abandoned_error_reported: bool,
+}
+
+#[derive(Default)]
+struct WorkerCompletion {
+    state: StdMutex<CompletionState>,
+    ready: Condvar,
+}
+
+impl WorkerCompletion {
+    fn finish(&self, result: WorkerResult) {
+        let mut state = lock_unpoisoned(&self.state);
+        state.result = Some(result);
+        let abandoned_error = abandoned_error_to_report(&mut state);
+        self.ready.notify_all();
+        drop(state);
+        if let Some(error) = abandoned_error {
+            tracing::error!(error = %error, component = "gpu_vendor_worker", "dropped GPU vendor source cleanup failed");
+        }
+    }
+
+    fn wait(&self) -> WorkerResult {
+        let mut state = lock_unpoisoned(&self.state);
+        loop {
+            if let Some(result) = &state.result {
+                return result.clone();
+            }
+            state = match self.ready.wait(state) {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+        }
+    }
+
+    fn observe(&self) {
+        lock_unpoisoned(&self.state).is_observed = true;
+    }
+
+    fn abandon(&self) {
+        let mut state = lock_unpoisoned(&self.state);
+        state.is_abandoned = true;
+        let abandoned_error = abandoned_error_to_report(&mut state);
+        drop(state);
+        if let Some(error) = abandoned_error {
+            tracing::error!(error = %error, component = "gpu_vendor_worker", "dropped GPU vendor source cleanup failed");
+        }
+    }
+}
+
+fn abandoned_error_to_report(state: &mut CompletionState) -> Option<GpuTelemetryError> {
+    if !state.is_abandoned || state.is_observed || state.is_abandoned_error_reported {
+        return None;
+    }
+    let error = state.result.as_ref()?.as_ref().err()?.clone();
+    state.is_abandoned_error_reported = true;
+    Some(error)
+}
+
+fn lock_unpoisoned<T>(mutex: &StdMutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+struct ReapRequest {
+    thread: JoinHandle<WorkerResult>,
+    completion: Arc<WorkerCompletion>,
+}
+
+struct WorkerReaper {
+    sender: Sender<ReapRequest>,
+    _thread: JoinHandle<()>,
+}
+
+static WORKER_REAPER: OnceLock<Result<WorkerReaper, GpuTelemetryError>> = OnceLock::new();
+
+fn worker_reaper() -> Result<&'static WorkerReaper, GpuTelemetryError> {
+    WORKER_REAPER
+        .get_or_init(|| {
+            let (sender, receiver) = channel(REAPER_CHANNEL_CAPACITY);
+            let reaper_thread = thread::Builder::new()
+                .name(REAPER_THREAD_NAME.to_string())
+                .spawn(move || run_reaper(receiver))
+                .map_err(|error| {
+                    GpuTelemetryError::Worker(format!(
+                        "spawning vendor worker reaper thread: {error}"
+                    ))
+                })?;
+            Ok(WorkerReaper {
+                sender,
+                _thread: reaper_thread,
+            })
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+async fn reserve_reaper_slot() -> Result<OwnedPermit<ReapRequest>, GpuTelemetryError> {
+    worker_reaper()?
+        .sender
+        .clone()
+        .reserve_owned()
+        .await
+        .map_err(|_| GpuTelemetryError::Worker("vendor worker reaper exited".to_string()))
+}
+
+fn run_reaper(mut receiver: tokio::sync::mpsc::Receiver<ReapRequest>) {
+    let mut workers: Vec<ReapRequest> = Vec::new();
+    loop {
+        if workers.is_empty() {
+            match receiver.blocking_recv() {
+                Some(worker) => workers.push(worker),
+                None => return,
+            }
+        }
+        while let Ok(worker) = receiver.try_recv() {
+            workers.push(worker);
+        }
+        let mut index = 0;
+        while index < workers.len() {
+            if workers[index].thread.is_finished() {
+                let worker = workers.swap_remove(index);
+                let result = worker.thread.join().unwrap_or_else(|_| {
+                    Err(GpuTelemetryError::Worker(
+                        "vendor worker thread panicked".to_string(),
+                    ))
+                });
+                worker.completion.finish(result);
+            } else {
+                index += 1;
+            }
+        }
+        if !workers.is_empty() {
+            thread::sleep(REAPER_POLL_INTERVAL);
+        }
+    }
+}
+
+enum WorkerLifecycle {
+    Running(SyncSender<WorkerCommand>),
+    ShutdownRequested,
 }
 
 struct WorkerState {
-    commands: Option<SyncSender<WorkerCommand>>,
-    thread: Option<JoinHandle<()>>,
-    is_shutdown: bool,
+    lifecycle: WorkerLifecycle,
+    completion: Arc<WorkerCompletion>,
 }
 
 /// GPU telemetry source that confines a synchronous vendor API to one OS thread.
 pub(super) struct VendorWorkerSource {
     clock: Rc<dyn Clock>,
     endpoint_url: String,
-    state: Mutex<WorkerState>,
+    state: StdMutex<WorkerState>,
 }
 
 impl VendorWorkerSource {
     /// Starts one vendor worker and returns only after initialization succeeds.
-    pub(super) async fn spawn(
+    pub(super) async fn spawn<F>(
         clock: Rc<dyn Clock>,
         endpoint_url: impl Into<String>,
-        worker: Box<dyn VendorWorker>,
-    ) -> Result<Self, GpuTelemetryError> {
+        factory: F,
+    ) -> Result<Self, GpuTelemetryError>
+    where
+        F: FnOnce() -> Result<Box<dyn VendorWorker>, GpuTelemetryError> + Send + 'static,
+    {
         let endpoint_url = endpoint_url.into();
         if endpoint_url.trim().is_empty() {
             return Err(GpuTelemetryError::Protocol(
@@ -63,57 +218,109 @@ impl VendorWorkerSource {
             ));
         }
 
+        // Reserve cleanup ownership before the vendor thread exists. Once spawn
+        // succeeds, the OS JoinHandle is handed to the reaper without an await.
+        let reaper_slot = reserve_reaper_slot().await?;
         let (commands, command_receiver) = sync_channel(CHANNEL_CAPACITY);
         let (startup_reply, startup_receiver) = sync_channel(CHANNEL_CAPACITY);
         let worker_thread = thread::Builder::new()
             .name(WORKER_THREAD_NAME.to_string())
-            .spawn(move || run_worker(worker, command_receiver, startup_reply))
+            .spawn(move || run_worker(factory, command_receiver, startup_reply))
             .map_err(|error| {
                 GpuTelemetryError::Worker(format!("spawning vendor worker thread: {error}"))
             })?;
+        let completion = Arc::new(WorkerCompletion::default());
+        reaper_slot.send(ReapRequest {
+            thread: worker_thread,
+            completion: completion.clone(),
+        });
 
-        let startup = receive_reply(startup_receiver, "initialization").await;
-        if let Err(error) = startup {
-            let join_result = join_worker(worker_thread).await;
-            return match join_result {
-                Ok(()) => Err(error),
-                Err(join_error) => Err(join_error),
-            };
-        }
-
-        Ok(Self {
+        let source = Self {
             clock,
             endpoint_url,
-            state: Mutex::new(WorkerState {
-                commands: Some(commands),
-                thread: Some(worker_thread),
-                is_shutdown: false,
+            state: StdMutex::new(WorkerState {
+                lifecycle: WorkerLifecycle::Running(commands),
+                completion,
             }),
-        })
+        };
+        if let Err(startup_error) = receive_reply(startup_receiver, "initialization").await {
+            let completion = source.request_shutdown_after_startup_failure();
+            let worker_result = wait_for_completion(completion).await;
+            return Err(merge_failures(
+                startup_error,
+                worker_result.err(),
+                "vendor initialization",
+            ));
+        }
+        Ok(source)
+    }
+
+    fn request_shutdown_after_startup_failure(&self) -> Arc<WorkerCompletion> {
+        let mut state = lock_unpoisoned(&self.state);
+        if let WorkerLifecycle::Running(commands) = &state.lifecycle {
+            let _ = commands.try_send(WorkerCommand::Shutdown);
+        }
+        state.lifecycle = WorkerLifecycle::ShutdownRequested;
+        state.completion.clone()
     }
 
     async fn scrape_records(
         &self,
         timestamp_ns: i64,
     ) -> Result<Vec<GpuTelemetryRecord>, GpuTelemetryError> {
-        let state = self.state.lock().await;
-        if state.is_shutdown {
-            return Err(GpuTelemetryError::Worker(
-                "vendor scrape attempted after shutdown".to_string(),
-            ));
-        }
-        let commands = state.commands.as_ref().ok_or_else(|| {
-            GpuTelemetryError::Worker("vendor command channel is unavailable".to_string())
-        })?;
+        let commands = {
+            let state = lock_unpoisoned(&self.state);
+            match &state.lifecycle {
+                WorkerLifecycle::Running(commands) => commands.clone(),
+                WorkerLifecycle::ShutdownRequested => {
+                    return Err(GpuTelemetryError::Worker(
+                        "vendor scrape attempted after shutdown".to_string(),
+                    ));
+                }
+            }
+        };
         let (reply, receiver) = sync_channel(CHANNEL_CAPACITY);
         try_send_command(
-            commands,
+            &commands,
             WorkerCommand::Scrape {
                 timestamp_ns,
                 reply,
             },
         )?;
         receive_reply(receiver, "scrape").await
+    }
+
+    fn begin_shutdown(&self) -> Result<Arc<WorkerCompletion>, GpuTelemetryError> {
+        let mut state = lock_unpoisoned(&self.state);
+        if let WorkerLifecycle::Running(commands) = &state.lifecycle {
+            match commands.try_send(WorkerCommand::Shutdown) {
+                Ok(()) | Err(TrySendError::Disconnected(_)) => {
+                    state.lifecycle = WorkerLifecycle::ShutdownRequested;
+                }
+                Err(TrySendError::Full(_)) => {
+                    return Err(GpuTelemetryError::Worker(
+                        "vendor command channel is full".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(state.completion.clone())
+    }
+}
+
+impl Drop for VendorWorkerSource {
+    fn drop(&mut self) {
+        let state = match self.state.get_mut() {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let WorkerLifecycle::Running(commands) = &state.lifecycle {
+            // If a scrape already occupies the bounded slot, dropping our
+            // sender still makes the worker shut itself down after that scrape.
+            let _ = commands.try_send(WorkerCommand::Shutdown);
+            state.lifecycle = WorkerLifecycle::ShutdownRequested;
+        }
+        state.completion.abandon();
     }
 }
 
@@ -148,56 +355,53 @@ impl GpuTelemetrySource for VendorWorkerSource {
     }
 
     async fn shutdown(&self) -> Result<(), GpuTelemetryError> {
-        let mut state = self.state.lock().await;
-        if state.is_shutdown {
-            return Ok(());
-        }
-        let commands = state.commands.as_ref().ok_or_else(|| {
-            GpuTelemetryError::Worker("vendor command channel is unavailable".to_string())
-        })?;
-        let (reply, receiver) = sync_channel(CHANNEL_CAPACITY);
-        match commands.try_send(WorkerCommand::Shutdown { reply }) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
-                return Err(GpuTelemetryError::Worker(
-                    "vendor command channel is full".to_string(),
-                ));
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                state.is_shutdown = true;
-                state.commands.take();
-                let worker_thread = state.thread.take();
-                if let Some(worker_thread) = worker_thread {
-                    let _ = join_worker(worker_thread).await;
-                }
-                return Err(GpuTelemetryError::Worker(
-                    "vendor command channel disconnected".to_string(),
-                ));
-            }
-        }
-        state.is_shutdown = true;
-        state.commands.take();
-        let worker_thread = state.thread.take().ok_or_else(|| {
-            GpuTelemetryError::Worker("vendor worker thread is unavailable".to_string())
-        })?;
-
-        let shutdown_result = receive_reply(receiver, "shutdown").await;
-        let join_result = join_worker(worker_thread).await;
-        shutdown_result.and(join_result)
+        let completion = self.begin_shutdown()?;
+        wait_for_completion(completion).await
     }
 }
 
-fn run_worker(
-    mut worker: Box<dyn VendorWorker>,
+fn run_worker<F>(
+    factory: F,
     commands: Receiver<WorkerCommand>,
     startup_reply: WorkerReply<()>,
-) {
-    let initialization = worker.initialize();
-    let is_initialized = initialization.is_ok();
-    if send_worker_reply(&startup_reply, initialization, "initialization").is_err()
-        || !is_initialized
-    {
-        return;
+) -> WorkerResult
+where
+    F: FnOnce() -> Result<Box<dyn VendorWorker>, GpuTelemetryError>,
+{
+    let mut worker = match factory() {
+        Ok(worker) => worker,
+        Err(error) => {
+            let reply_result =
+                send_worker_reply(&startup_reply, Err(error.clone()), "factory initialization");
+            return Err(merge_failures(
+                error,
+                reply_result.err(),
+                "reporting vendor factory failure",
+            ));
+        }
+    };
+
+    if let Err(initialize_error) = worker.initialize() {
+        let cleanup_error = worker.shutdown().err();
+        let failure = merge_failures(
+            initialize_error,
+            cleanup_error,
+            "vendor initialization cleanup",
+        );
+        let reply_result =
+            send_worker_reply(&startup_reply, Err(failure.clone()), "initialization");
+        return Err(merge_failures(
+            failure,
+            reply_result.err(),
+            "reporting vendor initialization failure",
+        ));
+    }
+    if let Err(reply_error) = send_worker_reply(&startup_reply, Ok(()), "initialization") {
+        return Err(merge_failures(
+            reply_error,
+            worker.shutdown().err(),
+            "vendor startup cancellation cleanup",
+        ));
     }
 
     while let Ok(command) = commands.recv() {
@@ -207,19 +411,32 @@ fn run_worker(
                 reply,
             } => {
                 let result = worker.scrape(timestamp_ns);
-                if send_worker_reply(&reply, result, "scrape").is_err() {
-                    let _ = worker.shutdown();
-                    return;
+                if let Err(reply_error) = send_worker_reply(&reply, result, "scrape") {
+                    return Err(merge_failures(
+                        reply_error,
+                        worker.shutdown().err(),
+                        "vendor scrape cancellation cleanup",
+                    ));
                 }
             }
-            WorkerCommand::Shutdown { reply } => {
-                let result = worker.shutdown();
-                let _ = send_worker_reply(&reply, result, "shutdown");
-                return;
-            }
+            WorkerCommand::Shutdown => return worker.shutdown(),
         }
     }
-    let _ = worker.shutdown();
+    worker.shutdown()
+}
+
+fn merge_failures(
+    primary: GpuTelemetryError,
+    secondary: Option<GpuTelemetryError>,
+    context: &str,
+) -> GpuTelemetryError {
+    match secondary {
+        None => primary,
+        Some(secondary) if secondary == primary => primary,
+        Some(secondary) => GpuTelemetryError::Worker(format!(
+            "{context} failed: {primary}; additional failure: {secondary}"
+        )),
+    }
 }
 
 fn try_send_command(
@@ -266,18 +483,23 @@ async fn receive_reply<T: Send + 'static>(
     })?
 }
 
-async fn join_worker(worker_thread: JoinHandle<()>) -> Result<(), GpuTelemetryError> {
-    tokio::task::spawn_blocking(move || worker_thread.join())
+async fn wait_for_completion(completion: Arc<WorkerCompletion>) -> Result<(), GpuTelemetryError> {
+    let waiter_completion = completion.clone();
+    let result = tokio::task::spawn_blocking(move || waiter_completion.wait())
         .await
-        .map_err(|error| GpuTelemetryError::Worker(format!("joining vendor worker: {error}")))?
-        .map_err(|_| GpuTelemetryError::Worker("vendor worker thread panicked".to_string()))
+        .map_err(|error| {
+            GpuTelemetryError::Worker(format!("waiting for vendor worker reaper: {error}"))
+        })?;
+    completion.observe();
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex as StdMutex};
+    use std::sync::mpsc::Receiver as StdReceiver;
     use std::thread::ThreadId;
+    use std::time::Duration;
 
     use crate::clock::SimClock;
     use crate::gpu_telemetry::model::{GpuMetadata, UNKNOWN_GPU_TELEMETRY_PLATFORM};
@@ -288,16 +510,22 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Action {
-        Initialize(ThreadId),
-        Scrape(i64, ThreadId),
-        Shutdown(ThreadId),
+        Construct(String, ThreadId),
+        Initialize(String, ThreadId),
+        Scrape(i64, String, ThreadId),
+        Shutdown(String, ThreadId),
+        Drop(String, ThreadId),
     }
 
     struct FakeVendor {
         actions: Arc<StdMutex<Vec<Action>>>,
         initialize_error: Option<GpuTelemetryError>,
+        shutdown_error: Option<GpuTelemetryError>,
         records: Vec<GpuTelemetryRecord>,
         panic_on_scrape: bool,
+        shutdown_started: Option<SyncSender<()>>,
+        shutdown_release: Option<Receiver<()>>,
+        drop_reply: Option<SyncSender<ThreadId>>,
     }
 
     impl FakeVendor {
@@ -305,8 +533,12 @@ mod tests {
             Self {
                 actions,
                 initialize_error: None,
+                shutdown_error: None,
                 records: Vec::new(),
                 panic_on_scrape: false,
+                shutdown_started: None,
+                shutdown_release: None,
+                drop_reply: None,
             }
         }
 
@@ -317,7 +549,10 @@ mod tests {
 
     impl VendorWorker for FakeVendor {
         fn initialize(&mut self) -> Result<(), GpuTelemetryError> {
-            self.record_action(Action::Initialize(thread::current().id()));
+            self.record_action(Action::Initialize(
+                current_thread_name(),
+                thread::current().id(),
+            ));
             if let Some(error) = &self.initialize_error {
                 return Err(error.clone());
             }
@@ -328,32 +563,88 @@ mod tests {
             &mut self,
             timestamp_ns: i64,
         ) -> Result<Vec<GpuTelemetryRecord>, GpuTelemetryError> {
-            self.record_action(Action::Scrape(timestamp_ns, thread::current().id()));
+            self.record_action(Action::Scrape(
+                timestamp_ns,
+                current_thread_name(),
+                thread::current().id(),
+            ));
             assert!(!self.panic_on_scrape, "injected worker panic");
             Ok(self.records.clone())
         }
 
         fn shutdown(&mut self) -> Result<(), GpuTelemetryError> {
-            self.record_action(Action::Shutdown(thread::current().id()));
-            Ok(())
+            self.record_action(Action::Shutdown(
+                current_thread_name(),
+                thread::current().id(),
+            ));
+            if let Some(started) = &self.shutdown_started {
+                let _ = started.try_send(());
+            }
+            if let Some(release) = &self.shutdown_release {
+                let _ = release.recv();
+            }
+            match &self.shutdown_error {
+                Some(error) => Err(error.clone()),
+                None => Ok(()),
+            }
         }
+    }
+
+    impl Drop for FakeVendor {
+        fn drop(&mut self) {
+            let thread_id = thread::current().id();
+            self.record_action(Action::Drop(current_thread_name(), thread_id));
+            if let Some(reply) = &self.drop_reply {
+                let _ = reply.try_send(thread_id);
+            }
+        }
+    }
+
+    fn current_thread_name() -> String {
+        thread::current().name().unwrap_or("unnamed").to_string()
     }
 
     fn clock() -> Rc<dyn Clock> {
         Rc::new(SimClock::new())
     }
 
+    fn fake_factory(
+        actions: Arc<StdMutex<Vec<Action>>>,
+        configure: impl FnOnce(&mut FakeVendor) + Send + 'static,
+    ) -> impl FnOnce() -> Result<Box<dyn VendorWorker>, GpuTelemetryError> + Send + 'static {
+        move || {
+            actions.lock().unwrap().push(Action::Construct(
+                current_thread_name(),
+                thread::current().id(),
+            ));
+            let mut worker = FakeVendor::healthy(actions);
+            configure(&mut worker);
+            Ok(Box::new(worker))
+        }
+    }
+
+    async fn receive_drop(receiver: StdReceiver<ThreadId>) -> ThreadId {
+        tokio::task::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(2)))
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    async fn receive_signal(receiver: StdReceiver<()>) {
+        tokio::task::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(2)))
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    async fn vendor_calls_run_on_owned_thread_and_empty_scrapes_are_some() {
+    async fn vendor_lifecycle_runs_on_one_named_worker_and_empty_scrapes_are_some() {
         let caller = thread::current().id();
         let actions = Arc::new(StdMutex::new(Vec::new()));
-        let source = VendorWorkerSource::spawn(
-            clock(),
-            ENDPOINT,
-            Box::new(FakeVendor::healthy(actions.clone())),
-        )
-        .await
-        .unwrap();
+        let source =
+            VendorWorkerSource::spawn(clock(), ENDPOINT, fake_factory(actions.clone(), |_| {}))
+                .await
+                .unwrap();
 
         let scrape = source
             .scrape(GpuScrapeMode::Continuous)
@@ -364,51 +655,100 @@ mod tests {
         source.shutdown().await.unwrap();
 
         let actions = actions.lock().unwrap();
-        assert_eq!(actions.len(), 3);
+        assert_eq!(actions.len(), 5);
         assert!(actions.iter().all(|action| match action {
-            Action::Initialize(thread) | Action::Scrape(_, thread) | Action::Shutdown(thread) => {
-                *thread != caller
-            }
+            Action::Construct(name, thread)
+            | Action::Initialize(name, thread)
+            | Action::Scrape(_, name, thread)
+            | Action::Shutdown(name, thread)
+            | Action::Drop(name, thread) => name == WORKER_THREAD_NAME && *thread != caller,
         }));
         let worker_threads = actions
             .iter()
             .map(|action| match action {
-                Action::Initialize(thread)
-                | Action::Scrape(_, thread)
-                | Action::Shutdown(thread) => *thread,
+                Action::Construct(_, thread)
+                | Action::Initialize(_, thread)
+                | Action::Scrape(_, _, thread)
+                | Action::Shutdown(_, thread)
+                | Action::Drop(_, thread) => *thread,
             })
             .collect::<Vec<_>>();
         assert!(worker_threads.windows(2).all(|pair| pair[0] == pair[1]));
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn failed_startup_is_returned_before_source_construction() {
+    async fn failed_initialization_runs_shutdown_and_drop_on_worker() {
         let actions = Arc::new(StdMutex::new(Vec::new()));
-        let mut worker = FakeVendor::healthy(actions.clone());
-        worker.initialize_error = Some(GpuTelemetryError::Worker("initialize failed".to_string()));
-        let result = VendorWorkerSource::spawn(clock(), ENDPOINT, Box::new(worker)).await;
+        let result = VendorWorkerSource::spawn(
+            clock(),
+            ENDPOINT,
+            fake_factory(actions.clone(), |worker| {
+                worker.initialize_error =
+                    Some(GpuTelemetryError::Worker("initialize failed".to_string()));
+            }),
+        )
+        .await;
         assert!(matches!(
             result,
             Err(GpuTelemetryError::Worker(message)) if message == "initialize failed"
         ));
-        assert_eq!(actions.lock().unwrap().len(), 1);
+        assert!(matches!(
+            actions.lock().unwrap().as_slice(),
+            [
+                Action::Construct(name_1, thread_1),
+                Action::Initialize(name_2, thread_2),
+                Action::Shutdown(name_3, thread_3),
+                Action::Drop(name_4, thread_4),
+            ] if [name_1, name_2, name_3, name_4]
+                .iter()
+                .all(|name| name.as_str() == WORKER_THREAD_NAME)
+                && thread_1 == thread_2
+                && thread_2 == thread_3
+                && thread_3 == thread_4
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn initialization_and_cleanup_failures_are_both_preserved() {
+        let actions = Arc::new(StdMutex::new(Vec::new()));
+        let result = VendorWorkerSource::spawn(
+            clock(),
+            ENDPOINT,
+            fake_factory(actions, |worker| {
+                worker.initialize_error =
+                    Some(GpuTelemetryError::Worker("initialize failed".to_string()));
+                worker.shutdown_error =
+                    Some(GpuTelemetryError::Worker("cleanup failed".to_string()));
+            }),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(GpuTelemetryError::Worker(message))
+                if message.contains("initialize failed") && message.contains("cleanup failed")
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn factory_runs_on_worker_and_factory_failure_is_typed() {
+        let caller = thread::current().id();
+        let result = VendorWorkerSource::spawn(clock(), ENDPOINT, move || {
+            assert_eq!(thread::current().name(), Some(WORKER_THREAD_NAME));
+            assert_ne!(thread::current().id(), caller);
+            Err(GpuTelemetryError::Worker("factory failed".to_string()))
+        })
+        .await;
+        assert!(matches!(
+            result,
+            Err(GpuTelemetryError::Worker(message)) if message == "factory failed"
+        ));
     }
 
     #[test]
     fn full_command_and_reply_channels_are_typed_errors() {
         let (commands, _receiver) = sync_channel(CHANNEL_CAPACITY);
-        let (first_reply, _first_receiver) = sync_channel(CHANNEL_CAPACITY);
-        commands
-            .try_send(WorkerCommand::Shutdown { reply: first_reply })
-            .unwrap();
-        let (second_reply, _second_receiver) = sync_channel(CHANNEL_CAPACITY);
-        let error = try_send_command(
-            &commands,
-            WorkerCommand::Shutdown {
-                reply: second_reply,
-            },
-        )
-        .unwrap_err();
+        commands.try_send(WorkerCommand::Shutdown).unwrap();
+        let error = try_send_command(&commands, WorkerCommand::Shutdown).unwrap_err();
         assert!(matches!(
             error,
             GpuTelemetryError::Worker(message) if message.contains("command channel is full")
@@ -424,31 +764,75 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn worker_exit_before_reply_is_typed() {
+    async fn worker_panic_is_reported_by_shutdown_and_repeated_shutdown() {
         let actions = Arc::new(StdMutex::new(Vec::new()));
-        let mut worker = FakeVendor::healthy(actions);
-        worker.panic_on_scrape = true;
-        let source = VendorWorkerSource::spawn(clock(), ENDPOINT, Box::new(worker))
-            .await
-            .unwrap();
-        let error = source.scrape(GpuScrapeMode::Continuous).await.unwrap_err();
+        let source = VendorWorkerSource::spawn(
+            clock(),
+            ENDPOINT,
+            fake_factory(actions, |worker| worker.panic_on_scrape = true),
+        )
+        .await
+        .unwrap();
+        let scrape_error = source.scrape(GpuScrapeMode::Continuous).await.unwrap_err();
         assert!(matches!(
-            error,
+            scrape_error,
             GpuTelemetryError::Worker(message) if message.contains("exited before the scrape reply")
         ));
-        assert!(source.shutdown().await.is_err());
+        for _ in 0..2 {
+            let shutdown_error = source.shutdown().await.unwrap_err();
+            assert!(matches!(
+                shutdown_error,
+                GpuTelemetryError::Worker(message) if message.contains("thread panicked")
+            ));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_shutdown_is_rejoined_by_repeated_shutdown() {
+        let actions = Arc::new(StdMutex::new(Vec::new()));
+        let (started_reply, started_receiver) = sync_channel(CHANNEL_CAPACITY);
+        let (release_reply, release_receiver) = sync_channel(CHANNEL_CAPACITY);
+        let source = VendorWorkerSource::spawn(
+            clock(),
+            ENDPOINT,
+            fake_factory(actions.clone(), move |worker| {
+                worker.shutdown_started = Some(started_reply);
+                worker.shutdown_release = Some(release_receiver);
+            }),
+        )
+        .await
+        .unwrap();
+
+        {
+            let shutdown = source.shutdown();
+            tokio::pin!(shutdown);
+            tokio::select! {
+                () = receive_signal(started_receiver) => {}
+                result = &mut shutdown => panic!("shutdown unexpectedly completed: {result:?}"),
+            }
+        }
+        release_reply.try_send(()).unwrap();
+        source.shutdown().await.unwrap();
+        source.shutdown().await.unwrap();
+
+        assert!(matches!(
+            actions.lock().unwrap().as_slice(),
+            [
+                Action::Construct(_, _),
+                Action::Initialize(_, _),
+                Action::Shutdown(_, _),
+                Action::Drop(_, _),
+            ]
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn shutdown_is_idempotent_and_ordered_after_boundary() {
         let actions = Arc::new(StdMutex::new(Vec::new()));
-        let source = VendorWorkerSource::spawn(
-            clock(),
-            ENDPOINT,
-            Box::new(FakeVendor::healthy(actions.clone())),
-        )
-        .await
-        .unwrap();
+        let source =
+            VendorWorkerSource::spawn(clock(), ENDPOINT, fake_factory(actions.clone(), |_| {}))
+                .await
+                .unwrap();
         source.scrape(GpuScrapeMode::Continuous).await.unwrap();
         source.scrape(GpuScrapeMode::Boundary).await.unwrap();
         source.shutdown().await.unwrap();
@@ -458,37 +842,95 @@ mod tests {
         assert!(matches!(
             actions.as_slice(),
             [
-                Action::Initialize(_),
-                Action::Scrape(0, _),
-                Action::Scrape(0, _),
-                Action::Shutdown(_),
+                Action::Construct(_, _),
+                Action::Initialize(_, _),
+                Action::Scrape(0, _, _),
+                Action::Scrape(0, _, _),
+                Action::Shutdown(_, _),
+                Action::Drop(_, _),
             ]
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_shutdown_preserves_shutdown_failure() {
+        let actions = Arc::new(StdMutex::new(Vec::new()));
+        let source = VendorWorkerSource::spawn(
+            clock(),
+            ENDPOINT,
+            fake_factory(actions, |worker| {
+                worker.shutdown_error =
+                    Some(GpuTelemetryError::Worker("shutdown failed".to_string()));
+            }),
+        )
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            assert!(matches!(
+                source.shutdown().await,
+                Err(GpuTelemetryError::Worker(message)) if message == "shutdown failed"
+            ));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn drop_requests_shutdown_and_reaper_joins_worker() {
+        let actions = Arc::new(StdMutex::new(Vec::new()));
+        let (drop_reply, drop_receiver) = sync_channel(CHANNEL_CAPACITY);
+        let source = VendorWorkerSource::spawn(
+            clock(),
+            ENDPOINT,
+            fake_factory(actions.clone(), move |worker| {
+                worker.drop_reply = Some(drop_reply);
+            }),
+        )
+        .await
+        .unwrap();
+        drop(source);
+        let dropped_on = receive_drop(drop_receiver).await;
+
+        let actions = actions.lock().unwrap();
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                Action::Construct(_, worker_thread),
+                Action::Initialize(_, initialize_thread),
+                Action::Shutdown(_, shutdown_thread),
+                Action::Drop(_, drop_thread),
+            ] if worker_thread == initialize_thread
+                && initialize_thread == shutdown_thread
+                && shutdown_thread == drop_thread
+                && *drop_thread == dropped_on
         ));
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn record_identity_and_timestamp_are_enforced() {
         let actions = Arc::new(StdMutex::new(Vec::new()));
-        let mut worker = FakeVendor::healthy(actions);
-        worker.records.push(GpuTelemetryRecord {
-            timestamp_ns: 1,
-            endpoint_url: "other://localhost".to_string(),
-            metadata: GpuMetadata {
-                gpu_index: 0,
-                gpu_uuid: "gpu-0".to_string(),
-                gpu_model_name: "fake".to_string(),
-                pci_bus_id: None,
-                device: None,
-                hostname: None,
-                namespace: None,
-                pod_name: None,
-                platform: UNKNOWN_GPU_TELEMETRY_PLATFORM.to_string(),
-            },
-            metrics: BTreeMap::new(),
-        });
-        let source = VendorWorkerSource::spawn(clock(), ENDPOINT, Box::new(worker))
-            .await
-            .unwrap();
+        let source = VendorWorkerSource::spawn(
+            clock(),
+            ENDPOINT,
+            fake_factory(actions, |worker| {
+                worker.records.push(GpuTelemetryRecord {
+                    timestamp_ns: 1,
+                    endpoint_url: "other://localhost".to_string(),
+                    metadata: GpuMetadata {
+                        gpu_index: 0,
+                        gpu_uuid: "gpu-0".to_string(),
+                        gpu_model_name: "fake".to_string(),
+                        pci_bus_id: None,
+                        device: None,
+                        hostname: None,
+                        namespace: None,
+                        pod_name: None,
+                        platform: UNKNOWN_GPU_TELEMETRY_PLATFORM.to_string(),
+                    },
+                    metrics: BTreeMap::new(),
+                });
+            }),
+        )
+        .await
+        .unwrap();
         let error = source.scrape(GpuScrapeMode::Boundary).await.unwrap_err();
         assert!(matches!(error, GpuTelemetryError::Protocol(_)));
         source.shutdown().await.unwrap();
