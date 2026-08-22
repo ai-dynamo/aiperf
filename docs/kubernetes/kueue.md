@@ -77,10 +77,9 @@ kubectl apply --server-side -f \
   https://github.com/kubernetes-sigs/kueue/releases/download/v0.10.1/manifests.yaml
 ```
 
-The `aiperf kube preflight` command verifies that the Kueue CRDs are
-present and that any referenced LocalQueue actually exists (see
-`src/aiperf/operator/preflight/_infra.py`). If Kueue is not installed, the
-check is marked `SKIP` and AIPerfJobs run without gang-scheduling.
+The native `aiperf kube preflight` command verifies that the Kueue CRDs are
+present and that any referenced LocalQueue exists. If Kueue is not installed,
+the check is marked `SKIP` and AIPerfJobs run without gang scheduling.
 
 ---
 
@@ -189,7 +188,7 @@ spec:
 ### 3. Namespace default via Helm
 
 The `aiperf-operator` Helm chart exposes a `kueue.defaultQueueName` value
-(see `deploy/helm/aiperf-operator/values.yaml`). When set, the chart
+(see `deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/values.yaml`). When set, the chart
 annotates the benchmark namespace with
 `kueue.x-k8s.io/default-queue-name`, and every AIPerfJob in that namespace
 is admitted through Kueue automatically — no per-job flag required.
@@ -201,7 +200,7 @@ kueue:
 ```
 
 The annotation is applied by
-`deploy/helm/aiperf-operator/templates/benchmark-namespace.yaml` when the
+`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/benchmark-namespace.yaml` when the
 chart creates the benchmark namespace.
 
 ---
@@ -222,20 +221,14 @@ flowchart LR
 
 Concretely:
 
-1. `src/aiperf/kubernetes/jobset.py` translates
-   `spec.scheduling.queueName` and `priorityClass` into JobSet labels
-   (`kueue.x-k8s.io/queue-name`, `kueue.x-k8s.io/priority-class`) via
-   `KueueLabels` in `src/aiperf/kubernetes/constants.py`.
-2. When a `queueName` is set, the JobSet is created with
-   `spec.suspend: true`. Kueue unsuspends it once the `Workload` it
-   generates has been admitted.
-3. `src/aiperf/operator/handlers/monitor.py::_handle_kueue_suspension`
-   watches the JobSet's `spec.suspend` field. While the JobSet is suspended
-   and carries a Kueue queue label, the operator surfaces the
-   `QUEUED` phase on the AIPerfJob status (see `Phase.QUEUED` in
-   `src/aiperf/operator/status.py`).
-4. Once Kueue admits the workload, the JobSet unsuspends, pods start, and
-   the monitor transitions the phase to `INITIALIZING` -> `RUNNING`.
+1. Native `aiperf kube` projects the requested queue and priority into the
+   versioned submitted envelope.
+2. The independent operator copies those already-resolved labels to a
+   suspended JobSet; it does not interpret benchmark configuration or derive
+   scheduling policy.
+3. Kueue unsuspends the JobSet once its Workload is admitted.
+4. The operator reflects `QUEUED`, initialization, and running lifecycle
+   state in the AIPerfJob status index.
 
 You can observe admission directly with `kubectl`:
 

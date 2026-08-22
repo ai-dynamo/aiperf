@@ -42,9 +42,6 @@ def _new_uuid() -> str:
     return str(uuid.uuid4())
 
 
-# Inlined from aiperf.kubernetes.sweep_models to keep aiperf.config free of
-# kubernetes imports. Identical surface; orchestrator/cluster code that needs
-# to share this type can re-import it from here.
 class FailurePolicy(BaseConfig):
     """Failure handling policy for the sweep."""
 

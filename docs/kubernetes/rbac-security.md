@@ -6,14 +6,12 @@ sidebar-title: RBAC and Security
 
 # RBAC and Security
 
-AIPerf separates cluster-wide operator authority from per-namespace benchmark
-authority. The operator Deployment runs under a ServiceAccount bound to a
-`ClusterRole` so a single operator replica can watch `AIPerfJob` custom
-resources across the cluster, create JobSets in benchmark namespaces, and
-manage leader-election Leases. Benchmark pods (controllers, workers, record
-processors) run under the `default` ServiceAccount of their namespace, bound
-to a namespace-scoped `Role` that grants only the verbs those pods need to
-discover peers, patch their JobSet status, and read the parent `AIPerfJob`.
+AIPerf separates cluster-wide reconciliation authority from native workload
+authority. The `aiperf-k8s-operator` Deployment runs under a ServiceAccount
+bound to a `ClusterRole` that watches `AIPerfJob` resources and reconciles the
+submitted native envelope into JobSets. Native controller and cell pods run
+under a namespace-scoped workload identity that grants only peer discovery and
+best-effort status reporting.
 
 The split lets cluster admins pre-provision the operator's cluster-wide
 RBAC once (under a security review), then hand developers a `Role` template
@@ -52,14 +50,16 @@ flowchart TB
     OperPod -->|watches AIPerfJob across| ClusterScope
 ```
 
-The operator owns JobSet/ConfigMap/Role creation in the benchmark namespace.
-Benchmark pods only read what the operator placed there and patch their own
-status.
+The native CLI creates role-specific immutable bootstrap Secrets before it
+submits an envelope. The operator materializes only the envelope's named
+references: it must not receive Secret `get`, `list`, `watch`, or data-reading
+permissions, and it validates only reference metadata. Benchmark pods read
+only their mounted role material and patch their own status.
 
 ## Operator ClusterRole catalog
 
 The operator's `ClusterRole` is rendered from
-`deploy/helm/aiperf-operator/templates/clusterrole.yaml`. Every rule exists
+`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/clusterrole.yaml`. Every rule exists
 to support a concrete operator responsibility; nothing is granted
 speculatively.
 
@@ -74,7 +74,8 @@ speculatively.
 | `batch` | `jobs` | `get, list, watch` | Monitor the Jobs that JobSet creates under the hood | `clusterrole.yaml:40-42` |
 | `apps` | `deployments` | `get, list, watch` | Preflight checks for the JobSet controller and Kueue controller | `clusterrole.yaml:45-47` |
 | `""` (core) | `serviceaccounts` | `get, list, watch, create` | Preflight verifies custom SA; sweep handler creates a per-sweep SA | `clusterrole.yaml:55-57` |
-| `""` (core) | `resourcequotas`, `secrets` | `get, list, watch` | Preflight inspects ResourceQuota headroom and referenced imagePullSecrets / env secrets | `clusterrole.yaml:58-60` |
+| `""` (core) | `resourcequotas` | `get, list, watch` | Validate namespace capacity before materializing a submitted envelope | `clusterrole.yaml` |
+| `""` (core) | `secrets` | *none* | Bootstrap Secret data is Rust-created and never readable by the operator | `contracts/native-k8s/v1/` |
 | `networking.k8s.io` | `networkpolicies` | `get, list, watch` | Preflight checks whether the benchmark namespace has a restrictive NetworkPolicy | `clusterrole.yaml:63-65` |
 | `""` (core) | `configmaps` | `create, delete, get, list, patch, update, watch` | Store benchmark configuration ConfigMap consumed by every benchmark pod | `clusterrole.yaml:68-70` |
 | `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:73-75` |
@@ -85,12 +86,12 @@ speculatively.
 | `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events and let benchmark pods read them for UI display | `clusterrole.yaml:98-100` |
 
 The binding
-(`deploy/helm/aiperf-operator/templates/clusterrolebinding.yaml:8-17`) connects
+(`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/clusterrolebinding.yaml:8-17`) connects
 this `ClusterRole` to the operator `ServiceAccount` in the release namespace.
 
 ## Benchmark-namespace Role catalog
 
-`deploy/helm/aiperf-operator/templates/benchmark-rbac.yaml` renders a `Role`
+`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/benchmark-rbac.yaml` renders a `Role`
 and a matching `RoleBinding` in every namespace where benchmark pods may
 run. By default this is both `default` and the configured
 `benchmarkNamespace.name` (default `aiperf-benchmarks`). The `RoleBinding`
@@ -117,7 +118,7 @@ pre-provisioned `ServiceAccount` and skip both the `ClusterRole` + `ClusterRoleB
 and the per-namespace `Role` + `RoleBinding`.
 
 ```bash
-helm install aiperf-operator ./deploy/helm/aiperf-operator \
+helm install aiperf-operator ./deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --set rbac.create=false \
   --set serviceAccount.create=false \
@@ -202,7 +203,7 @@ If you intend to run in a single fixed namespace only, you can trim those
 verbs from the admin-owned `ClusterRole` without functional regression.
 
 The helper
-`deploy/helm/aiperf-operator/templates/_helpers.tpl`'s
+`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/_helpers.tpl`'s
 `aiperf-operator.serviceAccountName` template resolves to `.Values.serviceAccount.name`
 when `serviceAccount.create` is false, so the operator Deployment will
 reference the pre-provisioned SA as expected.
@@ -238,7 +239,7 @@ This context is applied to:
 ### Overriding via `podTemplate.containerSecurityContext`
 
 The CRD schema at
-`deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml:837-840` exposes
+`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/crd-aiperfjob.yaml:837-840` exposes
 `spec.podTemplate.containerSecurityContext` as a free-form object. Keys
 supplied there merge on top of the base context. `capabilities` is merged
 shallowly (user keys update the drop/add lists); all other keys are replaced.
@@ -289,7 +290,7 @@ to bind IPC sockets on startup and pods will CrashLoopBackOff.
 ## NetworkPolicy expectations
 
 The chart ships an opt-in `NetworkPolicy` template for the operator pod
-itself (`deploy/helm/aiperf-operator/templates/networkpolicy.yaml`, enabled
+itself (`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/networkpolicy.yaml`, enabled
 via `networkPolicy.enabled=true`) — it restricts ingress to the health
 port 8080 and the results-server port (`resultsServer.port`, default
 8081) and permits egress to DNS (kube-system UDP/TCP 53), the Kubernetes
@@ -368,7 +369,7 @@ it down to the endpoint's `Service`/`Endpoints` selector or an
 
 ### Operator NetworkPolicy
 
-`deploy/helm/aiperf-operator/templates/networkpolicy.yaml` ships an opt-in
+`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/networkpolicy.yaml` ships an opt-in
 policy that locks down the **operator pod** (not the benchmark pods).
 Enable with `networkPolicy.enabled=true`. The rendered policy:
 
@@ -389,7 +390,7 @@ in the namespace are unaffected.
 
 ### Ingress
 
-`deploy/helm/aiperf-operator/templates/ingress.yaml` ships an opt-in
+`deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/ingress.yaml` ships an opt-in
 `Ingress` that exposes the operator's **results-server** (the `API_SERVICE`
 on `resultsServer.port`, default 8081) outside the cluster. Disabled by
 default — results are reachable via ClusterIP + `kubectl port-forward` or

@@ -60,7 +60,7 @@ export AIPERF_TAG="$(git rev-parse --short HEAD)"
 
 ## 2. Build and push the AIPerf image
 
-The same image is used by the operator containers and benchmark JobSet pods unless you explicitly override `defaults.image` in the Helm chart.
+The benchmark image contains the native `aiperf` binary. The independently packaged operator has its own image; configure it through the operator chart separately from the submitted benchmark image.
 
 ### NGC-style registry
 
@@ -138,37 +138,28 @@ kubectl create secret docker-registry aiperf-registry \
 
 ## 4. Install or upgrade the AIPerf operator
 
-Split the image into repository and tag for Helm:
+The operator is a separate Python distribution and image. Select its image
+independently from the native benchmark image built above:
 
 ```bash
-export AIPERF_IMAGE_REPOSITORY="${AIPERF_IMAGE%:*}"
-export AIPERF_IMAGE_TAG="${AIPERF_IMAGE##*:}"
+export AIPERF_OPERATOR_IMAGE="ghcr.io/<org>/aiperf-k8s-operator:<version>"
 ```
 
 Install the operator:
 
 ```bash
-helm upgrade --install aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade --install aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --create-namespace \
-  --set image.repository="${AIPERF_IMAGE_REPOSITORY}" \
-  --set image.tag="${AIPERF_IMAGE_TAG}" \
+  --set image.repository="${AIPERF_OPERATOR_IMAGE%:*}" \
+  --set image.tag="${AIPERF_OPERATOR_IMAGE##*:}" \
   --set image.pullPolicy=IfNotPresent
 ```
 
-If you created `aiperf-registry`, include it in the Helm release:
-
-```bash
-helm upgrade --install aiperf-operator deploy/helm/aiperf-operator \
-  --namespace aiperf-system \
-  --create-namespace \
-  --set image.repository="${AIPERF_IMAGE_REPOSITORY}" \
-  --set image.tag="${AIPERF_IMAGE_TAG}" \
-  --set image.pullPolicy=IfNotPresent \
-  --set 'imagePullSecrets[0].name=aiperf-registry'
-```
-
-The chart default for `defaults.image` is empty, which means AIPerfJob pods use `<image.repository>:<image.tag>`. Set `defaults.image` only when benchmark pods should run a different image from the operator.
+If the operator image is private, configure its pull secret separately. The
+native `aiperf kube` submitter carries the benchmark image digest in each
+submitted envelope; the operator chart never supplies a default benchmark
+image or makes benchmark pods inherit its own image.
 
 Wait for the operator and results server:
 
@@ -326,7 +317,7 @@ docker push "${AIPERF_IMAGE}"
 export AIPERF_IMAGE_REPOSITORY="${AIPERF_IMAGE%:*}"
 export AIPERF_IMAGE_TAG="${AIPERF_IMAGE##*:}"
 
-helm upgrade aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --reuse-values \
   --set image.repository="${AIPERF_IMAGE_REPOSITORY}" \
@@ -387,7 +378,7 @@ If the server is still starting and you intentionally want the benchmark to wait
 The Helm chart creates benchmark RBAC for `benchmarkNamespace.name` and any namespaces listed in `benchmarkRbacNamespaces`. If you run jobs in a different namespace, either install the chart with that namespace configured or add the namespace to `benchmarkRbacNamespaces`:
 
 ```bash
-helm upgrade aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade aiperf-operator deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator \
   --namespace aiperf-system \
   --reuse-values \
   --set 'benchmarkRbacNamespaces[0]=team-a-benchmarks'

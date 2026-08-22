@@ -28,6 +28,7 @@ pub mod graph;
 pub mod isotonic;
 pub mod jsonnum;
 pub mod k8s;
+pub mod kube;
 pub mod load;
 pub mod logging;
 pub mod metrics_list;

@@ -1,75 +1,56 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! In-cluster Kubernetes reporting for the native `aiperf controller` role.
+//! In-cluster AIPerfJob reporting and private result-readiness compatibility.
 //!
-//! The controller patches its `AIPerfJob` status and completion annotation with
-//! its service-account credentials. Reporting is a no-op off-cluster and API
-//! errors never fail a benchmark.
+//! Kubernetes authentication and TLS live in [`crate::kube`]. Reporting is a
+//! no-op off-cluster and API failures never fail a benchmark.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
-const AIPERF_GROUP: &str = "aiperf.nvidia.com";
-const AIPERF_VERSION: &str = "v1alpha1";
-const AIPERF_PLURAL: &str = "aiperfjobs";
-const BENCHMARK_COMPLETE_ANNOTATION: &str = "aiperf.nvidia.com/benchmark-complete";
+use crate::kube::auth::in_cluster_credentials;
+use crate::kube::client::{
+    AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, BENCHMARK_COMPLETE_ANNOTATION, KubeClient,
+};
+
 const READY_MARKER_NAME: &str = ".aiperf_results_ready.json";
-
-/// Standard in-cluster service-account mount (overridable in tests via
-/// [`InClusterConfig::from_parts`]).
 const SA_TOKEN_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 const SA_CA_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 
-/// The owning AIPerfJob identity + in-cluster API access for this controller pod.
+/// The owning AIPerfJob identity plus shared Kubernetes client.
 pub struct InClusterConfig {
-    /// `KUBERNETES_SERVICE_HOST`.
-    host: String,
-    /// `KUBERNETES_SERVICE_PORT` (default 443).
-    port: u16,
-    /// Service-account bearer token.
-    token: String,
-    /// Cluster CA certificate (PEM).
-    ca_pem: Vec<u8>,
-    /// `AIPERF_NAMESPACE` — the CR's namespace.
+    client: KubeClient,
     namespace: String,
-    /// `AIPERF_JOB_ID` — the AIPerfJob CR name.
     job_id: String,
 }
 
 impl InClusterConfig {
-    /// Load from the environment + service-account mount, or `None` off-cluster.
-    ///
-    /// Returns `None` (a no-op reporter) unless BOTH `AIPERF_JOB_ID` and
-    /// `AIPERF_NAMESPACE` are set (the operator sets them via
-    /// `jobset_helpers.build_cr_identity_env`) AND the in-cluster API env
-    /// (`KUBERNETES_SERVICE_HOST`) + service-account token/CA are present.
+    /// Load service-account credentials from the ambient pod environment.
     pub fn load() -> Option<Self> {
         let job_id = non_empty_env("AIPERF_JOB_ID")?;
         let namespace = non_empty_env("AIPERF_NAMESPACE")?;
         let host = non_empty_env("KUBERNETES_SERVICE_HOST")?;
         let port = std::env::var("KUBERNETES_SERVICE_PORT")
             .ok()
-            .and_then(|p| p.parse::<u16>().ok())
+            .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(443);
-        let token = std::fs::read_to_string(SA_TOKEN_PATH)
-            .ok()?
-            .trim()
-            .to_string();
-        let ca_pem = std::fs::read(SA_CA_PATH).ok()?;
+        let credentials =
+            in_cluster_credentials(host, port, Path::new(SA_TOKEN_PATH), Path::new(SA_CA_PATH))
+                .ok()?;
+        let client = KubeClient::from_credentials(credentials).ok()?;
         Some(Self {
-            host,
-            port,
-            token,
-            ca_pem,
+            client,
             namespace,
             job_id,
         })
     }
 
-    pub fn from_parts(
+    #[cfg(test)]
+    fn from_parts(
         host: String,
         port: u16,
         token: String,
@@ -77,11 +58,19 @@ impl InClusterConfig {
         namespace: String,
         job_id: String,
     ) -> Self {
-        Self {
+        let credentials = crate::kube::auth::KubeCredentials {
+            server_name: host.clone(),
             host,
             port,
-            token,
-            ca_pem,
+            token: Some(token),
+            client_certificate_pem: None,
+            client_key_pem: None,
+            ca_pem: Some(ca_pem),
+            insecure_skip_tls_verify: false,
+        };
+        let client = KubeClient::from_credentials(credentials).expect("test credentials are valid");
+        Self {
+            client,
             namespace,
             job_id,
         }
@@ -103,7 +92,9 @@ impl InClusterConfig {
 }
 
 fn non_empty_env(key: &str) -> Option<String> {
-    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
 /// Build a `.status.phases.<phase>` merge patch.
@@ -118,8 +109,8 @@ pub fn progress_body(
     if let Some(total) = requests_total {
         phase_stats["requestsTotal"] = json!(total);
         if total > 0 {
-            let pct = (1000.0 * requests_completed as f64 / total as f64).round() / 10.0;
-            phase_stats["requestsProgressPercent"] = json!(pct);
+            phase_stats["requestsProgressPercent"] =
+                json!((1000.0 * requests_completed as f64 / total as f64).round() / 10.0);
         }
     }
     if let Some(rps) = requests_per_second {
@@ -142,247 +133,248 @@ pub fn complete_body() -> Value {
     json!({ "metadata": { "annotations": { BENCHMARK_COMPLETE_ANNOTATION: "true" } } })
 }
 
-/// Path of the results-ready marker under `base_dir`.
+/// Path of the private compatibility marker under `base_dir`.
 pub fn ready_marker_path(base_dir: &Path) -> PathBuf {
     base_dir.join(READY_MARKER_NAME)
 }
 
-/// Write the marker after committing exports and before signaling completion.
+/// Atomically publish the public native-k8s/v1 results manifest, then compatibility marker.
+pub fn publish_results(
+    base_dir: &Path,
+    run_id: &str,
+    was_cancelled: bool,
+) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(base_dir)?;
+    let artifacts = collect_artifacts(base_dir)?;
+    let manifest = json!({
+        "contractVersion": "native-k8s/v1",
+        "runId": run_id,
+        "ready": true,
+        "wasCancelled": was_cancelled,
+        "artifactRoot": base_dir,
+        "artifacts": artifacts,
+    });
+    let manifest_path = base_dir.join("results-manifest.json");
+    write_atomic_json(&manifest_path, &manifest)?;
+    write_ready_marker(base_dir, was_cancelled)?;
+    Ok(manifest_path)
+}
+
+fn collect_artifacts(base_dir: &Path) -> std::io::Result<Vec<Value>> {
+    let mut out = Vec::new();
+    let mut stack = vec![base_dir.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !kind.is_file() {
+                continue;
+            }
+            let relative = path.strip_prefix(base_dir).map_err(std::io::Error::other)?;
+            let name = relative.to_string_lossy().replace('\\', "/");
+            if name == READY_MARKER_NAME || name == "results-manifest.json" {
+                continue;
+            }
+            let bytes = std::fs::read(&path)?;
+            out.push(json!({"path": name, "sha256": format!("{:x}", Sha256::digest(&bytes)), "bytes": bytes.len(), "contentType": content_type(&path)}));
+        }
+    }
+    out.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
+    Ok(out)
+}
+
+fn write_atomic_json(path: &Path, value: &Value) -> std::io::Result<()> {
+    let temporary = path.with_extension("tmp");
+    let bytes = serde_json::to_vec(value).map_err(std::io::Error::other)?;
+    let mut file = std::fs::File::create(&temporary)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    std::fs::rename(&temporary, path)?;
+    std::fs::File::open(path.parent().unwrap_or(Path::new(".")))?.sync_all()
+}
+
+fn content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("json") => "application/json",
+        Some("jsonl") => "application/x-ndjson",
+        Some("csv") => "text/csv",
+        Some("parquet") => "application/vnd.apache.parquet",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Write the legacy marker only after the public manifest has been fsynced.
 pub fn write_ready_marker(base_dir: &Path, was_cancelled: bool) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(base_dir)?;
     let marker = ready_marker_path(base_dir);
     let body = json!({ "ready": true, "was_cancelled": was_cancelled });
-    std::fs::write(&marker, serde_json::to_vec(&body).expect("marker json"))?;
+    write_atomic_json(&marker, &body)?;
     Ok(marker)
 }
 
-/// A best-effort in-cluster CR reporter. Off-cluster ([`InClusterConfig::load`]
-/// returned `None`) every method is a silent no-op.
+/// A best-effort in-cluster CR reporter.
 pub struct CrReporter {
     config: Option<InClusterConfig>,
 }
 
 impl CrReporter {
-    /// Build from the ambient environment; no-op off-cluster.
+    /// Build from ambient service-account credentials; inactive off-cluster.
     pub fn from_env() -> Self {
         Self {
             config: InClusterConfig::load(),
         }
     }
-
-    /// Whether this reporter will actually talk to a cluster.
+    /// Whether this reporter will talk to the Kubernetes API.
     pub fn active(&self) -> bool {
         self.config.is_some()
     }
-
-    /// Merge-patch the CR `.status` (progress or snapshot). No-op off-cluster.
+    /// Merge-patch the CR status. This is deliberately best effort.
     pub fn patch_status(&self, body: &Value) {
-        if let Some(cfg) = &self.config {
-            let path = cfg.status_path();
-            self.send(cfg, &path, body);
+        if let Some(config) = &self.config {
+            self.send(config, &config.status_path(), body);
         }
     }
-
-    /// Merge-patch the CR object (completion annotation). No-op off-cluster.
+    /// Merge-patch the CR object. This is deliberately best effort.
     pub fn patch_object(&self, body: &Value) {
-        if let Some(cfg) = &self.config {
-            let path = cfg.object_path();
-            self.send(cfg, &path, body);
+        if let Some(config) = &self.config {
+            self.send(config, &config.object_path(), body);
         }
     }
-
-    /// Set the completion annotation. The caller writes the ready marker first.
+    /// Mark benchmark completion after the caller publishes final results.
     pub fn signal_complete(&self) {
         self.patch_object(&complete_body());
     }
 
-    /// Send one merge-patch. Best-effort: logs and swallows transport/API errors
-    /// so a reporting hiccup never fails the benchmark.
-    fn send(&self, cfg: &InClusterConfig, path: &str, body: &Value) {
-        match send_merge_patch(cfg, path, body) {
+    fn send(&self, config: &InClusterConfig, path: &str, body: &Value) {
+        match config.client.merge_patch(path, body) {
             Ok(status) if (200..300).contains(&status) => {
-                tracing::debug!(path, status, "patched AIPerfJob CR");
+                tracing::debug!(path, status, "patched AIPerfJob CR")
             }
-            Ok(status) => {
-                tracing::warn!(path, status, "AIPerfJob CR patch returned non-2xx");
-            }
-            Err(error) => {
-                tracing::warn!(
-                    path,
-                    error = format!("{error:#}"),
-                    "AIPerfJob CR patch failed"
-                );
-            }
+            Ok(status) => tracing::warn!(path, status, "AIPerfJob CR patch returned non-2xx"),
+            Err(error) => tracing::warn!(path, error = %error, "AIPerfJob CR patch failed"),
         }
     }
-}
-
-/// Perform one `PATCH <path>` with `Content-Type: application/merge-patch+json`
-/// and the service-account bearer token, over TLS trusting the cluster CA.
-/// Runs a small current-thread runtime for the single request.
-fn send_merge_patch(cfg: &InClusterConfig, path: &str, body: &Value) -> anyhow::Result<u16> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    // Bound the whole request: connect + TLS handshake + response. Best-effort
-    // reporting must never HANG the controller — a black-holed/half-open API
-    // server (accepts the TCP connect but never responds) would otherwise wedge
-    // `report_completion` forever after a successful run and the pod never exits.
-    runtime.block_on(async {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            send_merge_patch_async(cfg, path, body),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!("k8s API PATCH timed out after 10s")),
-        }
-    })
-}
-
-async fn send_merge_patch_async(
-    cfg: &InClusterConfig,
-    path: &str,
-    body: &Value,
-) -> anyhow::Result<u16> {
-    use bytes::Bytes;
-    use http_body_util::{BodyExt, Full};
-    use hyper::Request;
-
-    let payload = serde_json::to_vec(body)?;
-
-    let mut roots = rustls::RootCertStore::empty();
-    let certs = rustls_pemfile::certs(&mut cfg.ca_pem.as_slice())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| anyhow::anyhow!("failed to parse cluster CA PEM: {e}"))?;
-    for cert in certs {
-        roots
-            .add(cert)
-            .map_err(|e| anyhow::anyhow!("failed to add cluster CA: {e}"))?;
-    }
-    // Pin aws-lc-rs because both linked providers make the process default ambiguous.
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let tls_config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|e| anyhow::anyhow!("rustls provider init failed: {e}"))?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
-
-    let tcp = tokio::net::TcpStream::connect((cfg.host.as_str(), cfg.port)).await?;
-    let dnsname = rustls::pki_types::ServerName::try_from(cfg.host.clone())
-        .map_err(|e| anyhow::anyhow!("invalid API server name {}: {e}", cfg.host))?;
-    let tls = connector.connect(dnsname, tcp).await?;
-    let (mut sender, conn) =
-        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls)).await?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
-
-    let req = Request::builder()
-        .method("PATCH")
-        .uri(path)
-        .header("host", format!("{}:{}", cfg.host, cfg.port))
-        .header("authorization", format!("Bearer {}", cfg.token))
-        .header("content-type", "application/merge-patch+json")
-        .header("accept", "application/json")
-        .body(Full::<Bytes>::new(Bytes::from(payload)))?;
-
-    let resp = sender.send_request(req).await?;
-    let status = resp.status().as_u16();
-    // Drain the body so the connection closes cleanly.
-    let _ = resp.into_body().collect().await;
-    Ok(status)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::{Arc, Mutex};
 
-    fn cfg() -> InClusterConfig {
-        InClusterConfig::from_parts(
+    use super::*;
+    use crate::kube::auth::KubeCredentials;
+    use crate::kube::client::{KubeRequest, KubeTransport, KubeWatch};
+
+    #[test]
+    fn status_and_object_paths() {
+        let config = InClusterConfig::from_parts(
             "10.0.0.1".to_string(),
             6443,
             "tok".to_string(),
             Vec::new(),
             "bench-ns".to_string(),
             "job-42".to_string(),
-        )
-    }
-
-    #[test]
-    fn status_and_object_paths() {
-        let c = cfg();
+        );
         assert_eq!(
-            c.status_path(),
+            config.status_path(),
             "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench-ns/aiperfjobs/job-42/status"
         );
         assert_eq!(
-            c.object_path(),
+            config.object_path(),
             "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench-ns/aiperfjobs/job-42"
         );
     }
 
     #[test]
     fn progress_body_shape_and_percent() {
-        let b = progress_body("profiling", 25, Some(100), Some(12.5), Some("Profiling"));
-        let p = &b["status"]["phases"]["profiling"];
-        assert_eq!(p["requestsCompleted"], 25);
-        assert_eq!(p["requestsTotal"], 100);
-        assert_eq!(p["requestsProgressPercent"], 25.0);
-        assert_eq!(p["requestsPerSecond"], 12.5);
-        assert_eq!(b["status"]["phase"], "Profiling");
-    }
-
-    #[test]
-    fn progress_body_rounds_to_one_decimal() {
-        // 1/3 -> 33.3 (round(33.333..., 1)).
-        let b = progress_body("profiling", 1, Some(3), None, None);
+        let body = progress_body("profiling", 25, Some(100), Some(12.5), Some("Profiling"));
         assert_eq!(
-            b["status"]["phases"]["profiling"]["requestsProgressPercent"],
-            33.3
+            body["status"]["phases"]["profiling"]["requestsProgressPercent"],
+            25.0
         );
-        assert!(b["status"].get("phase").is_none());
-    }
-
-    #[test]
-    fn progress_body_omits_percent_without_total() {
-        let b = progress_body("warmup", 5, None, None, None);
-        let p = &b["status"]["phases"]["warmup"];
-        assert_eq!(p["requestsCompleted"], 5);
-        assert!(p.get("requestsTotal").is_none());
-        assert!(p.get("requestsProgressPercent").is_none());
-    }
-
-    #[test]
-    fn snapshot_and_complete_bodies() {
-        let s = snapshot_body(json!({"ttft": {"avg": 20.0}}));
-        assert_eq!(s["status"]["snapshot"]["ttft"]["avg"], 20.0);
-        let c = complete_body();
-        assert_eq!(
-            c["metadata"]["annotations"]["aiperf.nvidia.com/benchmark-complete"],
-            "true"
-        );
+        assert_eq!(body["status"]["phase"], "Profiling");
     }
 
     #[test]
     fn ready_marker_writes_expected_json() {
-        let dir = std::env::temp_dir().join(format!("aiperf-k8s-marker-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let marker = write_ready_marker(&dir, false).unwrap();
-        assert_eq!(marker.file_name().unwrap(), ".aiperf_results_ready.json");
-        let v: Value = serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
-        assert_eq!(v["ready"], true);
-        assert_eq!(v["was_cancelled"], false);
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let marker = write_ready_marker(dir.path(), false).expect("marker write");
+        let value: Value = serde_json::from_slice(&std::fs::read(marker).expect("marker read"))
+            .expect("marker JSON");
+        assert_eq!(value["ready"], true);
+    }
+
+    #[test]
+    fn reporter_constructs_status_and_completion_requests() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let credentials = KubeCredentials {
+            host: "api".to_string(),
+            port: 443,
+            server_name: "api".to_string(),
+            token: Some("token".to_string()),
+            client_certificate_pem: None,
+            client_key_pem: None,
+            ca_pem: None,
+            insecure_skip_tls_verify: true,
+        };
+        let client =
+            KubeClient::with_transport(credentials, Arc::new(RecordingTransport(requests.clone())));
+        let reporter = CrReporter {
+            config: Some(InClusterConfig {
+                client,
+                namespace: "bench".to_string(),
+                job_id: "job".to_string(),
+            }),
+        };
+        reporter.patch_status(&progress_body("profiling", 2, Some(4), None, None));
+        reporter.signal_complete();
+        let requests = requests.lock().expect("recording lock");
+        assert_eq!(
+            requests[0].path,
+            "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench/aiperfjobs/job/status"
+        );
+        assert_eq!(
+            requests[1].path,
+            "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench/aiperfjobs/job"
+        );
+        assert_eq!(
+            requests[1].body,
+            serde_json::to_vec(&complete_body()).expect("completion JSON")
+        );
+    }
+
+    struct RecordingTransport(Arc<Mutex<Vec<KubeRequest>>>);
+    impl KubeTransport for RecordingTransport {
+        fn send(
+            &self,
+            _credentials: &KubeCredentials,
+            request: KubeRequest,
+        ) -> Result<crate::kube::client::KubeResponse, crate::kube::error::KubeError> {
+            self.0.lock().expect("recording lock").push(request);
+            Ok(crate::kube::client::KubeResponse {
+                status: 200,
+                body: Vec::new(),
+            })
+        }
+        fn watch(
+            &self,
+            _credentials: &KubeCredentials,
+            _request: KubeRequest,
+        ) -> Result<KubeWatch, crate::kube::error::KubeError> {
+            Err(crate::kube::error::KubeError::Transport(
+                "watch is unavailable in reporter test".to_string(),
+            ))
+        }
     }
 
     #[test]
     fn reporter_off_cluster_is_noop() {
         let reporter = CrReporter { config: None };
         assert!(!reporter.active());
-        reporter.patch_status(&progress_body("profiling", 1, Some(2), None, None));
         reporter.signal_complete();
     }
 }
