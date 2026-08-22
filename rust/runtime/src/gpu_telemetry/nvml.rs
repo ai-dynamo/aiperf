@@ -63,8 +63,8 @@ struct NvmlWorker {
     nvml: Option<Nvml>,
 }
 
-impl VendorWorker for NvmlWorker {
-    fn initialize(&mut self) -> Result<(), GpuTelemetryError> {
+impl NvmlWorker {
+    fn initialize_nvml(&mut self) -> Result<(), GpuTelemetryError> {
         let nvml = Nvml::init().map_err(nvml_error)?;
         let device_count = nvml.device_count().map_err(nvml_error)?;
         if device_count == 0 {
@@ -126,6 +126,10 @@ impl NvmlWorker {
 }
 
 impl VendorWorker for NvmlWorker {
+    fn initialize(&mut self) -> Result<(), GpuTelemetryError> {
+        self.initialize_nvml()
+    }
+
     fn scrape(&mut self, timestamp_ns: i64) -> Result<Vec<GpuTelemetryRecord>, GpuTelemetryError> {
         let (gpm_samples, nvml) = (
             &mut self.gpm_samples,
