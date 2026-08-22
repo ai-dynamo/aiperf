@@ -17,9 +17,10 @@
 //! injects the authority into each locally-launched cell, and the cells `GET
 //! /dataset/{name}` it back over real TCP + zstd.
 //!
-//! The controller logs `served dataset source over HTTP … content_encoding=zstd`
-//! for the transfer. The merged records must match the single-cell
-//! dataset-deterministic conversation set.
+//! The controller logs
+//! `served dataset source over TLS/authenticated transfer … content_encoding=zstd`
+//! for the transfer. The merged records must match the single-cell dataset-deterministic
+//! conversation set.
 
 mod common;
 use common::*;
@@ -122,7 +123,7 @@ fn aiperf_log(r: &RunResult) -> String {
 fn dataset_serve_observables(r: &RunResult) -> Vec<String> {
     aiperf_log(r)
         .lines()
-        .filter(|l| l.contains("served dataset source over HTTP"))
+        .filter(|l| l.contains("served dataset source over TLS/authenticated transfer"))
         .map(str::to_string)
         .collect()
 }

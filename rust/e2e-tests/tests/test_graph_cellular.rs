@@ -108,8 +108,9 @@ async fn test_graph_cellular() {
 /// seam (true multi-host k8s cannot run in-sandbox): the controller binds its artifact
 /// server on loopback, registers the single-file trace source, injects the authority into
 /// each locally-launched cell, and the cells `GET /dataset/{name}` it back over real TCP +
-/// zstd. The test explicitly raises the artifact target to `debug` and the controller logs `served dataset source over HTTP …
-/// content_encoding=zstd` for each transfer.
+/// zstd. The test explicitly raises the artifact target to `debug`, and the controller logs
+/// `served dataset source over TLS/authenticated transfer … content_encoding=zstd` for each
+/// transfer.
 #[tokio::test]
 async fn test_graph_cellular_single_file_dataset_shipping() {
     // Flaky on macOS CI like the other artifact e2es; skip there.
@@ -1033,9 +1034,10 @@ fn write_weka_dir_fixture(count: usize) -> (tempfile::TempDir, String) {
 
 /// A forced-HTTP `--cells N` graph run over a
 /// DIRECTORY multi-shard `weka_trace` must ship EVERY shard the loader reads over
-/// the HTTP+zstd plane (one `served dataset source over HTTP` per shard), each cell
-/// reconstructs the whole directory from the manifest, and the merged record SET
-/// matches a 1-cell run over the same directory.
+/// the HTTP+zstd plane (one
+/// `served dataset source over TLS/authenticated transfer` per shard), each cell reconstructs
+/// the whole directory from the manifest, and the merged record SET matches a 1-cell run over
+/// the same directory.
 ///
 /// The controller enumerates the shard set, serves it with a manifest, and cells
 /// rebuild the directory tree through the force-HTTP loopback seam.
@@ -1183,7 +1185,7 @@ fn aiperf_log(r: &RunResult) -> String {
 fn dataset_serve_observables(r: &RunResult) -> Vec<String> {
     aiperf_log(r)
         .lines()
-        .filter(|l| l.contains("served dataset source over HTTP"))
+        .filter(|l| l.contains("served dataset source over TLS/authenticated transfer"))
         .map(str::to_string)
         .collect()
 }
