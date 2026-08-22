@@ -3143,7 +3143,10 @@ mod tests {
         with("collector: amdsmi").expect("the native AMD SMI collector");
         let err = with("collector: amdsmi, urls: [http://x]")
             .expect_err("a local collector scrapes no URL");
-        assert!(err.to_string().contains("urls"), "should name the key: {err}");
+        assert!(
+            err.to_string().contains("urls"),
+            "should name the key: {err}"
+        );
         let err = with("collector: pynvml, metricsFile: fields.csv")
             .expect_err("a local collector reads no DCGM field CSV");
         assert!(

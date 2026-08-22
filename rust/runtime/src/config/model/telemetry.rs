@@ -353,7 +353,6 @@ impl GpuTelemetrySidecar {
         })
     }
 
-
     /// The default DCGM endpoints followed by any authored `extra`, normalized
     /// to `/metrics` and deduplicated in first-seen order.
     fn dcgm_sources(extra: &[String]) -> Vec<GpuSource> {
@@ -367,7 +366,9 @@ impl GpuTelemetrySidecar {
                 urls.push(n);
             }
         }
-        urls.into_iter().map(|url| GpuSource::Dcgm { url }).collect()
+        urls.into_iter()
+            .map(|url| GpuSource::Dcgm { url })
+            .collect()
     }
 }
 
