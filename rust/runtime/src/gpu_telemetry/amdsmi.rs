@@ -284,13 +284,15 @@ fn metadata(library: &Library, device: ProcessorHandle, index: usize) -> GpuMeta
     let pci_bus_id = unsafe { library.get::<BdfFn>(b"amdsmi_get_gpu_device_bdf\0") }
         .ok()
         .filter(|function| unsafe { function(device, &mut bdf) } == AMDSMI_SUCCESS)
-        .map(|_| format!(
-            "{:04x}:{:02x}:{:02x}.{}",
-            bdf.as_uint >> 16,
-            (bdf.as_uint >> 8) & 0xff,
-            (bdf.as_uint >> 3) & 0x1f,
-            bdf.as_uint & 0x7,
-        ));
+        .map(|_| {
+            format!(
+                "{:04x}:{:02x}:{:02x}.{}",
+                bdf.as_uint >> 16,
+                (bdf.as_uint >> 8) & 0xff,
+                (bdf.as_uint >> 3) & 0x1f,
+                bdf.as_uint & 0x7,
+            )
+        });
     GpuMetadata {
         gpu_index: index.min(i32::MAX as usize) as i32,
         gpu_uuid,
