@@ -82,9 +82,7 @@ impl NvmlWorker {
         self.nvml = Some(nvml);
         Ok(())
     }
-}
 
-impl NvmlWorker {
     fn gpm_sm_utilization(
         gpm_samples: &mut BTreeMap<u32, (usize, usize)>,
         nvml: &Nvml,
