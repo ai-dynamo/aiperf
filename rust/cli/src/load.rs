@@ -1691,6 +1691,31 @@ mod tests {
     }
 
     #[test]
+    fn image_batch_size_projects_file_random_pool_options() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                "image-pool.jsonl",
+                "--custom-dataset-type",
+                "random_pool",
+                "--image-batch-size",
+                "4",
+            ]);
+            let run = super::resolve(&flags).expect("resolve run");
+            let value = serde_json::to_value(&run).expect("serialize run");
+            assert_eq!(
+                value["cfg"]["datasets"][0]["options"]["image_batch_size"],
+                serde_json::json!(4)
+            );
+        });
+    }
+
+    #[test]
     fn prompt_corpus_flag_projects_public_dataset_prompts() {
         run_on_big_stack(|| {
             let flags = parse(&[
