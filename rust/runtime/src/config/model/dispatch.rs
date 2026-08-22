@@ -211,8 +211,7 @@ mod tests {
     #[test]
     fn dispatch_mode_accepts_normalized_spellings() {
         for spelling in ["global-hop", "global_hop", "GLOBAL-HOP", "  Global_Hop  "] {
-            let decoded: DispatchMode =
-                serde_json::from_str(&format!("\"{spelling}\"")).unwrap();
+            let decoded: DispatchMode = serde_json::from_str(&format!("\"{spelling}\"")).unwrap();
             assert_eq!(decoded, DispatchMode::GlobalHop, "{spelling}");
         }
     }
@@ -220,8 +219,7 @@ mod tests {
     #[test]
     fn hop_routing_normalizes_and_round_trips() {
         for spelling in ["round-robin", "round_robin", "ROUND-ROBIN"] {
-            let decoded: HopRouting =
-                serde_json::from_str(&format!("\"{spelling}\"")).unwrap();
+            let decoded: HopRouting = serde_json::from_str(&format!("\"{spelling}\"")).unwrap();
             assert_eq!(decoded, HopRouting::RoundRobin, "{spelling}");
         }
         assert_eq!(
