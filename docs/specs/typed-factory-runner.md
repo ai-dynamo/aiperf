@@ -159,15 +159,49 @@ following the shape `phases`/`datasets` already have:
 
 ### 2. `BenchmarkRun` is the sole runner vocabulary
 
-`EnvelopeV2 { run: BenchmarkRun, … }` is decoded with plain
-`serde_json::from_slice`; `deny_unknown_fields` on the typed model is the wire
-strictness. `BenchmarkRunWireV2`, `AuthoredRunSpecV2`, `into_authored`, and
-`NamedRunnerComponentSpecV2` are **deleted**. The child composition root
-(`coordinator.rs`) drives the engine against `&BenchmarkConfig` and its typed
-`resolved` facts, exactly as the Python services read `cfg`. `decode_execute_wire`
-reduces to decoding one `EnvelopeV2`; the dual authoring/bare-run accept path is
-subsumed because authoring `Inputs` already resolve to a `BenchmarkRun` before
-the boundary (config-model-unification step 4).
+`decode_execute_wire` (`protocol_v2.rs:191`) remains the stdin contract and keeps
+**both** arms: the `AuthoringWireV2` arm AIPerf itself writes and the bare
+resolved-run arm retained for external harnesses. What changes is the *type* of
+the bare arm. `EnvelopeV2` stays exactly what it is today — a struct constructed
+in-process at `cli/src/execute_mode.rs:477` *after* decode, never deserialized
+from stdin. **There is no `serde_json::from_slice::<EnvelopeV2>` in this design**;
+an earlier draft of this record required one, and it described a boundary that
+does not exist (corrected, contest round 2, and restated normatively here in
+round 4 rather than left as an appended footnote).
+
+`AuthoredRunSpecV2`, `into_authored`, and `NamedRunnerComponentSpecV2` are
+**deleted**. The child composition root (`coordinator.rs`) drives the engine
+against `&BenchmarkConfig` and its typed `resolved` facts, exactly as the Python
+services read `cfg`.
+
+Retyping the bare arm from `BenchmarkRunWireV2` to `BenchmarkRun` is **not**
+wire-compatible. The two types differ on every axis that matters (verified
+against the tree, contest round 4):
+
+| | `BenchmarkRunWireV2` (`protocol_v2.rs:293-329`) | `BenchmarkRun` (`config/model/run.rs:17-48`) |
+|---|---|---|
+| strictness | `#[serde(deny_unknown_fields)]` | none — unknown top-level fields accepted |
+| `resolved` | `serde_json::Value` (open) | typed `Resolved` |
+| `variation` | `Option<VariationSpec>` | `Option<serde_json::Value>` |
+| `trial` | `usize` | `u32` |
+| `variables` | `BTreeMap<String, Value>` | `serde_json::Map<String, Value>` |
+| `planned_replay_traces` | `BTreeSet<PlannedReplayTraceInstance>` | **absent** (see §5 step 4) |
+| outer validation | `validate_outer()` (`protocol_v2.rs:332-350`): non-empty `benchmark_id`, non-empty `artifact_dir`, exactly one dataset | **none** |
+
+Every row is a behavior change on that arm. Dropping `deny_unknown_fields`
+silently accepts typo'd top-level keys that hard-fail today; `Value` → `Resolved`
+tightens what previously round-tripped; `usize` → `u32` narrows; and losing
+`validate_outer` removes three checks with no replacement. The migration must
+therefore either **(a)** keep a thin `deny_unknown_fields` compatibility DTO for
+the bare arm that adapts into `BenchmarkRun` and carries `validate_outer` plus
+`planned_replay_traces`, or **(b)** declare an explicit, documented compatibility
+break on that arm. It may not assert both "delete `BenchmarkRunWireV2`" and
+"each step stays wire-compatible."
+
+**This record selects (a).** The bare arm keeps its strict DTO; what step 4
+deletes is the *projection* — `into_authored`, `AuthoredRunSpecV2`, and
+`NamedRunnerComponentSpecV2` — not the strict stdin decode. §5 step 4 is scoped
+accordingly.
 
 ### 3. Typed factory seam (string discriminant + typed config)
 
@@ -349,8 +383,12 @@ One transport family at a time, byte-exact against the mock server at each step:
    `lower_graph` takes `&AuthoredRunSpecV2` and reads `run.endpoints.identities()`
    and `run.identity.random_seed`, and passes `run` on to `build_common_plan` —
    further step-4 repoint surface. Verify graph + scheduled e2e.
-4. Delete `AuthoredRunSpecV2`, `into_authored`, `NamedRunnerComponentSpecV2`,
-   `BenchmarkRunWireV2`; point `coordinator.rs` at `BenchmarkConfig`. The
+4. Delete `AuthoredRunSpecV2`, `into_authored`, and `NamedRunnerComponentSpecV2`;
+   point `coordinator.rs` at `BenchmarkConfig`. Per §2's selection (a),
+   `BenchmarkRunWireV2` is **retained** — reduced to a thin `deny_unknown_fields`
+   compatibility DTO for the bare stdin arm that carries `validate_outer` and
+   `planned_replay_traces` and adapts into `BenchmarkRun`. It is the *projection*
+   that dies, not the strict decode. The
    protocol-v2 request/response module is reduced to the `EnvelopeV2` outer shape
    and the diagnostic/result types. **Corrected (contest round 2):** `into_authored`
    injects data that is **not** in `BenchmarkConfig`. `planned_replay_traces`
@@ -365,25 +403,131 @@ One transport family at a time, byte-exact against the mock server at each step:
    or cellular graph replay loses its trace expectation. Every *other* field is a
    copy or a pure derivation (`workload_kind`, `parse_dispatch_mode`,
    `worker_count` from `available_parallelism`).
-   The `validate_run` seam is also **not one body**: "consumes only `models.items`
-   and `sidecars.live_streaming`" holds for `online_execution.rs:105` alone.
-   `ws_execution.rs:151` additionally consumes `run.artifacts.trace` and five
-   sidecar fields (rejecting trace artifacts and all sidecars), and
-   `dry_run.rs:539` consumes `run.dispatch` and `run.workload.id.as_str()`
-   (rejecting sharded dispatch and graph workloads under virtual workers). Each
-   body repoints on its own terms.
-   Two further hazards remain: (a) today's projection performs **lossy endpoint/model
-   transforms** (rename `timeout` → `timeout_seconds`, drop `url_strategy`, retain
-   only `name`/`weight`) that the migration must reproduce or push into the
-   endpoint/model factories; (b) **`resource_presence`** is *not* a naive
-   `cfg.field.is_some()` map — `into_authored` hardcodes a present/absent
-   classification that drives `validate_resource_requirements`' Required/Optional/
-   **Forbidden** matrix, so the repoint must reconstruct that exact classification
-   explicitly or the Forbidden checks change behavior. A naive "just pass `cfg`"
-   would regress both.
+   The `validate_run` seam is also **not one body — and not even one trait**
+   (corrected again, contest round 4; the round-2 inventory was itself the same
+   single-call-site generalization it criticized). There are **two** traits:
+   `NativeTransportExecution::validate_run(&self, run, context)` (transport-level,
+   2-arg) and `WorkloadFactory::validate_run(&self, run, context, transport,
+   workload, transport_id)` (workload-level, 5-arg, `registry.rs:293`). The
+   verified inventory is seven-plus bodies:
+   - **Transport-level.** `online_execution.rs:105` (http) is the *only* body the
+     original "consumes only `models.items` and `sidecars.live_streaming`"
+     inventory described. `grpc_execution.rs:73` → `validate_grpc_run` (`:85`)
+     consumes `context.default_endpoint_profile()`, `context.endpoint_profiles()`,
+     and `profile.config.urls`, and rejects **all** sidecars.
+     `ws_execution.rs:151` consumes `run.artifacts.trace` and five sidecar fields
+     (rejecting trace artifacts and all sidecars). `dry_run.rs:539` consumes
+     `run.dispatch` and `run.workload.id.as_str()` (rejecting sharded dispatch and
+     graph workloads under virtual workers).
+   - **Workload-level.** `online_execution.rs:228` (scheduled) delegates to the
+     transport binding, or falls through the `dynosim_or_unsupported!` macro
+     (`online_execution.rs:135-151`) to
+     `offline_execution::dynosim_scheduled_validate_run` (`:887`, which requires
+     `workload.worker_count == 1`), then runs `validate_authored_tokenizer`.
+     `online_execution.rs:324` (graph) is the body that actually consumes
+     `run.sidecars.live_streaming`, at `:337` — round 2 mis-attributed that field
+     to the transport level. `online_execution.rs:447` (static accuracy) requires
+     `transport_id == "http"` and consumes `run.models.items.len()`.
+   Each body repoints on its own terms. A repoint audited against
+   `online_execution.rs:105` alone silently changes the gRPC, WebSocket, dry-run,
+   dynosim, graph, and static-accuracy rejection surfaces.
+   Two further hazards remain.
 
-Each step keeps the stdin protocol wire-compatible; only the internal projection
-is removed. **The boundary to hold fixed is not `EnvelopeV2`.** `EnvelopeV2`
+   **(a) Endpoint/model transforms — mostly no-ops, with one live exception**
+   (corrected, contest round 4; an earlier draft called all three "lossy
+   transforms the migration must reproduce", which overstated two of them).
+   `endpoint_profile` (`protocol_v2.rs:552-563`) renames `timeout` →
+   `timeout_seconds` and removes `url_strategy`; `models_from_config` (`:507-521`)
+   retains only `name`/`weight`. Against the typed model these are no-ops:
+   `Endpoint` (`config/model/endpoint.rs:117`) already stores `timeout_seconds`
+   (`:137`) and has neither a `timeout` nor a `url_strategy` field — `url_strategy`
+   exists only in the authoring layer (`cli/src/flags.rs:368`,
+   `cli/src/yaml.rs:898`, consumed and validated at `yaml.rs:1673`) and never
+   reaches `BenchmarkConfig` — and `ModelItem` (`config/model/models.rs:22`) has
+   only `name` and `weight`. For the **default** profile
+   (`serde_json::to_value(&cfg.endpoint)`, `protocol_v2.rs:446`) and for models,
+   the migration may simply drop these transforms.
+   They are **not** no-ops for the override profiles. `cfg.endpoint_profiles`
+   (`config/model/config.rs:118`) is an open
+   `serde_json::Map<String, serde_json::Value>`, not a typed section, and
+   `into_authored` feeds it through the same `endpoint_profile` at
+   `protocol_v2.rs:448-451`/`:547`. An authored override may therefore still carry
+   `timeout` and `url_strategy` keys, and the rename/removal is live for it. The
+   migration must keep the transform on that open map — or type `endpoint_profiles`
+   as a `BTreeMap<String, Endpoint>`, which is a larger change than this record
+   scopes.
+
+   **(b) `resource_presence` is not a naive `cfg.field.is_some()` map.** The exact
+   classification `into_authored` hardcodes (`protocol_v2.rs:496-501`) is
+   `models: true`, `endpoints: true`, `metrics: true`, `artifacts: true` —
+   *unconditionally*, regardless of whether the corresponding `Option` on
+   `BenchmarkConfig` is `None` — plus `sidecars: sidecars_present`, where
+   `sidecars_present` (`protocol_v2.rs:432-443`) is
+   `serde_json::to_value(&cfg.sidecars).as_object().is_some_and(|o| !o.is_empty())`.
+   That is emptiness of the *serialized object*, a categorically different
+   predicate from `Option::is_some`: every field of `Sidecars`
+   (`config/model/telemetry.rs:206-221`) carries
+   `skip_serializing_if = "Option::is_none"`, so `Some(Sidecars::default())`
+   serializes to `{}` and classifies as **absent**, while `cfg.sidecars.is_some()`
+   would call it present. That flip changes the Required/Optional/**Forbidden**
+   matrix in `validate_resource_requirements` — precisely the regression this
+   paragraph exists to prevent, and precisely what a naive "just pass `cfg`"
+   produces. Note also that the *other* construction path,
+   `AuthoredRunSpecV2::deserialize` (`protocol_v2.rs:661-667`), already uses the
+   naive `wire.resources.X.is_some()` form: the two paths disagree today, so the
+   migration must pick one deliberately rather than inherit whichever it happens
+   to touch first.
+
+**Verification gates (executable; added contest round 4, which is when this
+section first had any).** Every step runs, from `rust/` with the project venv
+active:
+
+```bash
+cargo fmt --check && cargo clippy --all-targets
+cargo test -p aiperf-runtime && cargo test -p aiperf-runtime --features engine
+```
+
+`cargo test -p aiperf-runtime` alone runs **zero** engine tests — the `engine`
+feature gates the entire projection this record changes — so both invocations are
+mandatory at every step, not just the last. Beyond that shared floor:
+
+- **Step 1** (a `cfg.transport` consumer running alongside the projection): a
+  temporary differential assertion that both paths produce identical bindings,
+  plus `cargo test -p aiperf-e2e-tests --test test_default_behavior --test
+  test_chat_endpoint --test test_completions_endpoint --test
+  test_kserve_grpc_endpoint`.
+- **Step 2** (selection moves to the exhaustive `Transport` match): the step-1
+  gate, plus `cargo test -p aiperf-dry-run-tests --test dry_run --test
+  virtual_workers` — the only payload-bearing built-in transport arm any suite
+  exercises, since `Http` and `Grpc` are unit variants — plus `cargo test -p
+  aiperf-e2e-tests --test test_websocket` for the `Websocket(WebSocketTransportConfig)`
+  arm, plus `cargo test -p aiperf-e2e-tests --test test_harbor_native_graph_rollout`
+  for obligation (c)'s `aiperf eval --model-runtime` path, which the profile
+  suites do not touch.
+- **Step 3** (workload seam; the five graph-only fields): the step-2 gate, plus
+  `cargo test -p aiperf-e2e-tests --test test_conditional_graph --test
+  test_flatgraph_parity --test test_ignore_trace_delays --test
+  test_recorded_agent_replay --test test_dag_full_topology`.
+  `test_ignore_trace_delays` is the named guard for `ignore_trace_delays`, but
+  `recorded_agent_default` and `system_idle_gap_cap_seconds` have **no** dedicated
+  e2e target today — and both are silent losses, not decode errors. Step 3 must
+  therefore *add* two before it may be called green: a graph run asserting
+  `validate_canonical_recorded_agent_bundle` still rejects a non-canonical bundle,
+  and a `weka_semantics: legacy` run asserting the idle cap still applies.
+- **Step 4** (delete the projection; repoint `coordinator.rs`) — this step
+  previously carried **no** gate at all, which is exactly how it could have
+  shipped while dropping controller-authored `planned_replay_traces`. Its gate is
+  the full step-3 gate, plus the cellular suites that exercise that field and the
+  bare-run stdin arm: `cargo test -p aiperf-e2e-tests --test test_cellular --test
+  test_graph_cellular --test test_grpc_cellular --test
+  test_recorded_agent_cellular --test test_cellular_dataset_shipping`. A step-4
+  change that has not run `test_graph_cellular` and `test_recorded_agent_cellular`
+  is not verified, regardless of what else is green.
+
+Each step keeps the stdin accept path intact — under §2's selection (a), the bare
+arm retains a strict `deny_unknown_fields` compatibility DTO and its
+`validate_outer` checks, so what is deleted is the internal projection, not the
+wire. **The boundary to hold fixed is not `EnvelopeV2`.** `EnvelopeV2`
 (`protocol_v2.rs:118`) is never deserialized from stdin — it is constructed
 in-process at `cli/src/execute_mode.rs:477` after decode, and its own doc comment
 says it is "reconstructed around the bare `BenchmarkRunWireV2` stdin payload".
@@ -392,11 +536,11 @@ accepts: an `AuthoringWireV2` (`{"authoring": <Inputs>, sweep_id, variation,
 trial}`, `protocol_v2.rs:155`) or a bare `BenchmarkRunWireV2`, discriminated by
 presence of the `authoring` key (`resolved_run_bytes`, `protocol_v2.rs:207`). The
 authoring arm is the one AIPerf itself writes; the bare-resolved-run arm is
-retained for external harnesses. Step 4's deletion of `BenchmarkRunWireV2`
-therefore *does* touch the stdin contract — the bare arm must either be re-typed
-to `BenchmarkRun` or dropped with a stated compatibility break. §2's
-"`EnvelopeV2 { run: BenchmarkRun, … }` is decoded with plain
-`serde_json::from_slice`" describes a boundary that does not exist today.
+retained for external harnesses. Deleting `BenchmarkRunWireV2` outright would therefore
+*have* touched the stdin contract, which is why §2 selects the compatibility-DTO
+option instead of the re-type-or-drop fork an earlier draft left open. §2 no longer claims
+otherwise; the `serde_json::from_slice::<EnvelopeV2>` requirement that stood in
+earlier drafts has been removed from §2 rather than merely footnoted here.
 
 ## Non-goals and trade-offs
 
@@ -413,7 +557,9 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
   (`RawValue`), so the coupling does not extend to the open tail.
 - **Not touched:** the `dispatch` seam (`Dispatchable`/`RequestSink`/
   `RequestObserver`), the `Clock` seam, the phase/scheduling runtime, metrics,
-  exporters' output logic, and the outer stdio `EnvelopeV2` contract. This change
+  exporters' output logic, and the stdio accept path (`decode_execute_wire`'s two
+  arms — `EnvelopeV2` is an in-process struct built after decode, not a wire
+  shape; see §2). This change
   is about *config decode and component selection*, not the hot path.
 - **Dynamic plugins are a planned future, and this design accommodates them.**
   AIPerf may grow runtime-loaded transports/workloads (WASM / subprocess /
@@ -438,7 +584,9 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
 - `rust/runtime/src/engine/protocol_v2.rs` — `BenchmarkRunWireV2`,
   `AuthoredRunSpecV2`, `into_authored`, `NamedRunnerComponentSpecV2`,
   `ScheduledWorkloadConfigV2`/`GraphWorkloadConfigV2` (the projection to delete);
-  `EnvelopeV2` (the outer shape to keep).
+  `BenchmarkRunWireV2` (**retained**, reduced to the bare stdin arm's strict
+  compatibility DTO — §2 selection (a));
+  `EnvelopeV2` (an in-process struct constructed after decode — not a wire shape).
 - `rust/runtime/src/engine/coordinator.rs` — `envelope.run.into_authored()`, the
   child composition root to repoint at `BenchmarkConfig`.
 - `rust/runtime/src/engine/registry.rs` — `TransportFactory`/`WorkloadFactory`,
