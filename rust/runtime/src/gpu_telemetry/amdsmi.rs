@@ -462,8 +462,7 @@ fn record_from_observation(
         "amd_throttle_status",
         observation
             .throttle_status
-            .filter(|(status, independent)| *status != u32::MAX && *independent != u64::MAX)
-            .map(|(status, independent)| f64::from(is_throttled(status, independent))),
+            .and_then(|(status, independent)| throttle_status_value(status, independent)),
     );
     insert_finite(
         &mut metrics,
@@ -536,6 +535,18 @@ fn energy_count_to_megajoules(count: u64, resolution: f32) -> f64 {
 
 fn is_throttled(status: u32, independent_status: u64) -> bool {
     status != 0 || independent_status != 0
+}
+
+fn throttle_status_value(status: u32, independent_status: u64) -> Option<f64> {
+    let status = (status != u32::MAX).then_some(status);
+    let independent_status = (independent_status != u64::MAX).then_some(independent_status);
+    match (status, independent_status) {
+        (None, None) => None,
+        (status, independent_status) => Some(f64::from(is_throttled(
+            status.unwrap_or(0),
+            independent_status.unwrap_or(0),
+        ))),
+    }
 }
 
 fn insert_finite(metrics: &mut BTreeMap<String, f64>, name: &str, value: Option<f64>) {
