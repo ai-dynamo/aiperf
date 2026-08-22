@@ -448,6 +448,7 @@ fn write_non_canonical_scenario_config(dir: &Path, url: &str) -> PathBuf {
         \x20     replay_root: {root}\n\
         \x20     execute_tools: true\n\
         \x20     emit_warmup: true\n\
+        \x20     pinch_image: aiperf-recorded-agent-pinchbench:v1\n\
         \x20 metadata:\n\
         \x20   hardware: unknown\n\
         \x20   endpoint_placement: remote\n\
@@ -484,7 +485,7 @@ async fn recorded_agent_default_scenario_rejects_non_canonical_bundle() {
     let temp = tempfile::tempdir().expect("temporary config directory");
     let config = write_non_canonical_scenario_config(temp.path(), &harness.mock.url);
     let result = harness.run(&format!(
-        "--config {} --graph-pinch-image aiperf-recorded-agent-pinchbench:v1",
+        "--config {}",
         config.display()
     ));
 
