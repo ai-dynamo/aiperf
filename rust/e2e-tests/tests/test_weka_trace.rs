@@ -11,9 +11,9 @@
 //! it only shows up in the rendered prompt bytes, which is what these tests read.
 //!
 //! Note the structural difference from the Python model this ports: the Rust loader
-//! flattens `WekaEntry::Subagent` into its parent chain, so a subagent shares the
-//! parent's `x_correlation_id` and emits no `parent_correlation_id`. Grouping is
-//! therefore by `(x_correlation_id, turn_index)`, not by parent/child linkage.
+//! flattens `WekaEntry::Subagent` into its parent chain, so every node shares the
+//! parent's conversation identity and emits no `parent_correlation_id`, while
+//! `x_correlation_id` retains the flattened node identity.
 
 mod common;
 use common::*;
@@ -247,15 +247,30 @@ async fn test_flattened_subagents_share_the_parent_hash_scope() {
         "the extended turn adds a fourth block, so it must be longer than the prefix"
     );
 
-    // Flattening, not parent/child linkage: one correlation id, no parent pointer.
+    // Flattening retains distinct node records inside one parent conversation,
+    // without introducing parent/child linkage.
+    let root = "scope_stress::instance-0";
     let corr: HashSet<String> = raw
         .iter()
         .map(|r| meta_str(r, "x_correlation_id"))
         .collect();
     assert_eq!(
-        corr.len(),
-        1,
-        "flattened subagents stay in the parent conversation; got ids {corr:?}"
+        corr,
+        HashSet::from([
+            format!("{root}:scope_stress:0"),
+            format!("{root}:agent_001:0"),
+            format!("{root}:agent_002:0"),
+            format!("{root}:scope_stress:1"),
+        ]),
+        "flattened records lost their node identities"
+    );
+    assert!(
+        raw.iter().all(|record| {
+            meta_str(record, "conversation_id") == root
+                && record["request_headers"]["X-Correlation-ID"] == root
+                && record["metadata"]["parent_correlation_id"].is_null()
+        }),
+        "flattened nodes escaped the parent conversation: {raw:#?}"
     );
 }
 
