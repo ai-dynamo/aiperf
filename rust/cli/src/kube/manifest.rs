@@ -62,12 +62,20 @@ fn container(role: &RoleEnvelope, envelope: &ControllerEnvelope) -> Value {
         "command": role.command,
         "args": role.argv,
         "env": environment.into_iter().map(|(name, value)| json!({"name": name, "value": value})).collect::<Vec<_>>(),
-        "volumeMounts": [{"name": format!("bootstrap-{}", role.name), "mountPath": role.bootstrap.mount_path, "readOnly": true}],
+        "volumeMounts": [{"name": format!("bootstrap-{}", role_name(role.name)), "mountPath": role.bootstrap.mount_path, "readOnly": true}],
     })
 }
 
 fn volume(role: &&RoleEnvelope) -> Value {
-    json!({"name": format!("bootstrap-{}", role.name), "secret": {"secretName": role.bootstrap.secret_name}})
+    json!({"name": format!("bootstrap-{}", role_name(role.name)), "secret": {"secretName": role.bootstrap.secret_name}})
+}
+
+fn role_name(role: NativeK8sRole) -> &'static str {
+    match role {
+        NativeK8sRole::Controller => "controller",
+        NativeK8sRole::Cell => "cell",
+        NativeK8sRole::ResultsSidecar => "results-sidecar",
+    }
 }
 
 #[cfg(test)]
