@@ -83,11 +83,6 @@ dependencies = [
   "uvloop>=0.22.1; platform_system != 'Windows'",
   "zstandard>=0.25.0",
   "crick~=0.0.8",
-  # Kubernetes operator control-plane (kopf handlers, async k8s client,
-  # SQLite results store). Imported by aiperf.operator / aiperf.kubernetes.
-  "kopf>=1.42.0",
-  "kubernetes_asyncio>=32.0,<33.0",
-  "aiosqlite>=0.19.0",
 ]
 
 # CLI Entrypoints

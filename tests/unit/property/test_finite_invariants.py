@@ -109,8 +109,6 @@ def _iter_aiperf_modules() -> list[str]:
     skip_prefixes = (
         # Heavy optional deps that fail to import on some envs.
         "aiperf.dataset.agentic_code_gen.reporting",
-        # K8s controller code: imports kopf at import time.
-        "aiperf.kubernetes",
         # Generated / autoflakey
         "aiperf.cli_commands._generated",
     )
