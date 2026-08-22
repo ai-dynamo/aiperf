@@ -290,9 +290,18 @@ One transport family at a time, byte-exact against the mock server at each step:
 3. Repeat for the workload seam; collapse `ScheduledWorkloadConfigV2` /
    `GraphWorkloadConfigV2` into typed-optional fields — all **five** graph-only
    fields, including the `recorded_agent_default` derivation and the
-   `weka_semantics`-conditional `system_idle_gap_cap_seconds` attachment, whose
-   conditionality is behavioral (`online_execution.rs:1251` branches on
-   `workload.recorded_agent_default`). Verify graph + scheduled e2e.
+   `weka_semantics`-conditional `system_idle_gap_cap_seconds` attachment. All
+   four graph-only fields that survive the DTO are consumed inside `lower_graph`
+   (`online_execution.rs:1215`), and dropping any is a **silent** behavior loss,
+   not a decode error: `workload.recorded_agent_default` gates
+   `validate_canonical_recorded_agent_bundle(&prepared.bundle)` (canonical-bundle
+   validation simply stops running if the flag is lost);
+   `workload.system_idle_gap_cap_seconds` and `workload.ignore_trace_delays` flow
+   into `NativeGraphDatasetPlan`; `workload.planned_replay_traces` is assigned to
+   `plan.planned_replay_traces` after `build_common_plan`. Note also that
+   `lower_graph` takes `&AuthoredRunSpecV2` and reads `run.endpoints.identities()`
+   and `run.identity.random_seed`, and passes `run` on to `build_common_plan` —
+   further step-4 repoint surface. Verify graph + scheduled e2e.
 4. Delete `AuthoredRunSpecV2`, `into_authored`, `NamedRunnerComponentSpecV2`,
    `BenchmarkRunWireV2`; point `coordinator.rs` at `BenchmarkConfig`. The
    protocol-v2 request/response module is reduced to the `EnvelopeV2` outer shape
