@@ -10,7 +10,10 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::sync::{Notify, mpsc::{OwnedPermit, Receiver as TokioReceiver, Sender, channel}};
+use tokio::sync::{
+    Notify,
+    mpsc::{OwnedPermit, Receiver as TokioReceiver, Sender, channel},
+};
 
 use crate::clock::Clock;
 use crate::gpu_telemetry::model::{GpuScrape, GpuTelemetryRecord};
