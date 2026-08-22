@@ -603,6 +603,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         steady_state: flags.steady_state.unwrap_or(false),
         steady_state_fraction: flags.steady_state_fraction,
         steady_state_hybrid: flags.steady_state_hybrid.unwrap_or(false),
+        random_pool_image_batch_size: flags.image_batch_size,
         image_spec: build_image_spec(flags),
         audio_spec: build_audio_spec(flags),
         video_spec: build_video_spec(flags),
