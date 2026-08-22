@@ -409,7 +409,8 @@ impl ServerMetricsSidecar {
 
 /// Normalize a scrape target to end with `/metrics`.
 ///
-/// Non-HTTP schemes are treated as bare hosts and prefixed with `http://`.
+/// gRPC transport schemes are translated to their HTTP(S) metrics endpoints;
+/// bare hosts are prefixed with `http://`.
 pub fn normalize_metrics_url(url: &str) -> String {
     let mut url = if let Some(endpoint) = url.strip_prefix("grpc://") {
         format!("http://{endpoint}")
