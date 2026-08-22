@@ -720,6 +720,33 @@ mod tests {
     }
 
     #[test]
+    fn gauge_window_includes_boundary_scrapes_without_changing_counter_duration() {
+        let mut accumulator = GpuTelemetryAccumulator::new();
+        let opening = record(5, 0, 10.0, 0.0);
+        let start = record(10, 0, 20.0, 1.0);
+        let end = record(20, 0, 30.0, 3.0);
+        let closing = record(25, 0, 40.0, 4.0);
+        for record in [&opening, &start, &end, &closing] {
+            accumulator.ingest_record(record);
+        }
+        let boundary = GpuPhaseBoundary::new(snapshot(10, &[start]), snapshot(20, &[end]))
+            .unwrap()
+            .with_gauge_window(5, 25);
+        let summary = accumulator.summarize_phase(&boundary, None, None);
+
+        let SidecarStats::Gauge(power) = &summary.sidecar_metrics()["nvidia_power_usage"].series[0].stats else {
+            panic!("expected power gauge")
+        };
+        assert_eq!(power.avg.as_f64(), Some(25.0));
+        let SidecarStats::Counter { rate, .. } = &summary.sidecar_metrics()
+            ["nvidia_energy_consumption"].series[0].stats
+        else {
+            panic!("expected energy counter")
+        };
+        assert_eq!(rate.and_then(|value| value.as_f64()), Some(200_000_000.0));
+    }
+
+    #[test]
     fn invalid_boundary_is_rejected_and_missing_concurrency_omits_energy_per_user() {
         let records = vec![record(10, 0, 100.0, 1.0)];
         assert!(matches!(
