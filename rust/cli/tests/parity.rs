@@ -271,6 +271,17 @@ fn ensure_fixture_inputs() {
 
 #[test]
 fn loader_reproduces_goldens() {
+    let worker = std::thread::Builder::new()
+        .name("parity-loader".to_owned())
+        .stack_size(4 * 1024 * 1024)
+        .spawn(loader_reproduces_goldens_on_larger_stack)
+        .expect("spawn parity loader worker");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn loader_reproduces_goldens_on_larger_stack() {
     ensure_fixture_inputs();
     for fixture in FIXTURES {
         let golden = load_golden(fixture);
