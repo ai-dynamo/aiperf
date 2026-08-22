@@ -129,7 +129,7 @@ struct KubeConfig {
 
 impl KubeConfig {
     fn set_source(&mut self, path: &Path) {
-        let source = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let source = path.to_path_buf();
         for cluster in &mut self.clusters { cluster.source = Some(source.clone()); }
         for user in &mut self.users { user.source = Some(source.clone()); }
     }

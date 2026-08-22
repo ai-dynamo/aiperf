@@ -175,7 +175,7 @@ impl KubeTransport for HyperKubeTransport {
 
     fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<KubeWatch, KubeError> {
         let credentials = credentials.clone();
-        let (sender, receiver) = std::sync::mpsc::channel();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(32);
         std::thread::Builder::new().name("aiperf-k8s-watch".to_string()).spawn(move || {
             let result = tokio::runtime::Builder::new_current_thread().enable_all().build()
                 .map_err(|error| KubeError::Transport(error.to_string()))
@@ -226,18 +226,24 @@ async fn send_request(credentials: &KubeCredentials, request: KubeRequest) -> Re
 async fn stream_watch(
     credentials: &KubeCredentials,
     request: KubeRequest,
-    sender: &std::sync::mpsc::Sender<Result<Vec<u8>, KubeError>>,
+    sender: &std::sync::mpsc::SyncSender<Result<Vec<u8>, KubeError>>,
 ) -> Result<(), KubeError> {
     let mut response = open_response(credentials, request).await?;
     if !response.status().is_success() {
         return Err(KubeError::Transport(format!("Kubernetes watch returned {}", response.status())));
     }
+    let mut pending = Vec::new();
     while let Some(frame) = response.body_mut().frame().await {
         let frame = frame.map_err(|error| KubeError::Transport(error.to_string()))?;
         if let Ok(data) = frame.into_data() {
-            if sender.send(Ok(data.to_vec())).is_err() { break; }
+            pending.extend_from_slice(&data);
+            while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+                let record: Vec<_> = pending.drain(..=newline).collect();
+                if sender.send(Ok(record)).is_err() { return Ok(()); }
+            }
         }
     }
+    if !pending.is_empty() && sender.send(Ok(pending)).is_err() { return Ok(()); }
     Ok(())
 }
 
