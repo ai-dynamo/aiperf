@@ -200,7 +200,8 @@ contest round 4):
 | `trial` | `usize` | `u32` |
 | `variables` | `BTreeMap<String, Value>` | `serde_json::Map<String, Value>` |
 | `planned_replay_traces` | `BTreeSet<PlannedReplayTraceInstance>` | **absent** (see §5 step 4) |
-| outer validation | `validate_outer()` (`protocol_v2.rs:332-350`): non-empty `benchmark_id`, non-empty `artifact_dir`, exactly one dataset | **none** |
+| outer validation | `validate_outer()` (`protocol_v2.rs:332-350`): non-empty `benchmark_id`, non-empty `artifact_dir`, **non-empty** `datasets` (see O1 — the message says "exactly one" but the `ensure!` only tests `!datasets.is_empty()`) | **none** |
+| export stem derivation | `into_authored` (`protocol_v2.rs:462-475`) rewrites `export.genai_perf.stem` and `export.timeslice.stem` from `artifacts.records_path` | **none** — `cfg.export` carries the undelivered authored value (see O2) |
 
 The table is therefore a **port list**, not a compatibility obligation. Each row
 is decided on merit:
@@ -210,10 +211,34 @@ is decided on merit:
   arc (§2's opening claim that "`deny_unknown_fields` on the typed model is the
   wire strictness" is only true once the attribute is actually there); dropping it
   would make the migration a strictness *regression* in the name of typing.
-- `validate_outer()` — **port it.** Its three checks (non-empty `benchmark_id`,
-  non-empty `artifact_dir`, exactly one dataset) have no equivalent on
-  `BenchmarkRun` and no other enforcement point. They become an inherent
-  `BenchmarkRun::validate()` called at the decode boundary.
+- `validate_outer()` — **port it, but read it before porting it.** Two of its
+  three checks are what they look like: non-empty `benchmark_id`, non-empty
+  `artifact_dir`. The third is not. **Corrected (contest O1, proven):** its
+  message reads `"run.cfg.datasets must contain exactly one dataset"`, but the
+  `ensure!` it guards tests only
+  `self.cfg.datasets.as_ref().is_some_and(|datasets| !datasets.is_empty())`
+  (`protocol_v2.rs:342-348`). A two-dataset run passes, and `into_authored` then
+  silently discards the tail — `cfg.datasets.and_then(|d| d.into_iter().next())`
+  at `protocol_v2.rs:359-362`. So an earlier draft of this record asked
+  `BenchmarkRun::validate()` to enforce a cardinality the code never enforced,
+  which would have been a **behavior change smuggled in under the word "port"**:
+  configs that run today would start failing to decode.
+
+  Both readings are defensible and the choice must be explicit, not incidental:
+
+  - **Port the check verbatim** (`!datasets.is_empty()`) and fix only the
+    misleading message. Zero behavior change; silent truncation survives.
+  - **Enforce real cardinality** (`datasets.len() == 1`). The tree is greenfield,
+    silently dropping an authored dataset is a bug not a feature, and the existing
+    message already documents the intended contract.
+
+  This record selects **enforce real cardinality**, on the greenfield premise —
+  but it is a behavior change and is recorded as one. It carries two obligations:
+  the step-4 test list gains a case asserting a two-dataset config is *rejected*
+  with a message naming the count, and the `ensure!` message stops lying. Neither
+  the current check nor `into_authored`'s `.next()` may be deleted before that
+  test exists, or the truncation moves from silent-and-tested-nowhere to
+  silent-and-unreachable.
 - `planned_replay_traces` — **port it**, as a run-level field on `BenchmarkRun`
   alongside `cfg`, not a `BenchmarkConfig` field, because it is controller-derived
   rather than authored (see §5 step 4 and O1).
@@ -224,6 +249,27 @@ is decided on merit:
   it as an open `Value` where the wire DTO had a typed `VariationSpec`, so
   re-typing `BenchmarkRun::variation` to `VariationSpec` is the correct direction
   and belongs in this change rather than being inherited as-is.
+
+- **Export stem derivation — port it. Added by contest O2 (proven).** The port
+  list above was drawn from `BenchmarkRunWireV2`'s *fields* and so missed a
+  behavior that lives only in `into_authored`'s **body**: at
+  `protocol_v2.rs:462-475` it reads `artifacts_spec.records_path`, strips a
+  `.jsonl` suffix from the file name, and — when the stem is non-empty —
+  overwrites `export_cfg.genai_perf.stem` with it and
+  `export_cfg.timeslice.stem` with `format!("{stem}_aiperf")`. This is the live
+  implementation of `--profile-export-prefix` / `artifacts.prefix` for the
+  summary and timeslice outputs; `cfg.export` itself never carries the derived
+  value. Pointing execution at typed `cfg.export` without reproducing this
+  cross-field transform does not fail — it silently reverts the summary and
+  timeslice files to the default `profile_export_aiperf.{json,csv}` and
+  `profile_export_aiperf_timeslices.*` names while per-record output stays under
+  the authored custom stem, i.e. one run emitting two different prefixes. It must
+  become an inherent derivation on the typed model (alongside
+  `BenchmarkRun::validate()`, applied at the same boundary), and step 4's test
+  list gains a case asserting that a run with a custom prefix names the
+  per-record, summary, **and** timeslice artifacts from the same stem. This entry
+  also generalizes: the remaining step-4 audit must walk `into_authored`'s body
+  for other field-to-field transforms, not just its struct definition.
 
 What step 4 deletes is both the *projection* (`into_authored`,
 `AuthoredRunSpecV2`, `NamedRunnerComponentSpecV2`) and the *wire DTO*
@@ -438,8 +484,10 @@ One transport family at a time, byte-exact against the mock server at each step:
    greenfield, so the bare stdin arm is simply re-typed to `BenchmarkRun` — but
    only *after* §2's port list lands on `BenchmarkRun`:
    `#[serde(deny_unknown_fields)]`, an inherent `validate()` carrying
-   `validate_outer`'s three checks, `planned_replay_traces` as a run-level field,
-   and `variation: Option<VariationSpec>`. Deleting the DTO before those land is
+   `validate_outer`'s three checks (with the dataset check tightened to real
+   cardinality per O1, and its message corrected), the export-stem derivation
+   from `artifacts.records_path` per O2, `planned_replay_traces` as a run-level
+   field, and `variation: Option<VariationSpec>`. Deleting the DTO before those land is
    the silent-regression path. The
    protocol-v2 request/response module is reduced to the `EnvelopeV2` outer shape
    and the diagnostic/result types. **Corrected (contest round 2):** `into_authored`
