@@ -225,6 +225,7 @@ dependencies = [
  "minijinja",
  "num-bigint",
  "nvml-wrapper",
+ "nvml-wrapper-sys",
  "opentelemetry-proto",
  "parking_lot",
  "parquet 58.3.0",
