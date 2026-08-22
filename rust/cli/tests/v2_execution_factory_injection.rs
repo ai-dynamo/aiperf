@@ -107,7 +107,7 @@ impl RequestExecutor for FailingOriginBackend {
         unreachable!("origin failure prevents dispatch")
     }
 
-    fn shutdown(&self) -> Result<()> {
+    async fn shutdown(&self) -> Result<()> {
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -117,7 +117,7 @@ impl RequestExecutor for FailingOriginBackend {
 impl TracePlacement for RecordingGraphBackend {
     async fn execute_trace(
         &self,
-        _plan: aiperf_runtime::graph::model::GraphTracePlan,
+        _plan: aiperf_runtime::graph::model::GraphTraceProgram,
     ) -> Result<(), TraceError> {
         self.traces.fetch_add(1, Ordering::SeqCst);
         Ok(())
