@@ -6,7 +6,15 @@
 //! Kubernetes authentication and TLS live in [`crate::kube`]. Reporting is a
 //! no-op off-cluster and API failures never fail a benchmark.
 
+#[cfg(unix)]
+use std::ffi::{CStr, CString, OsStr, OsString};
+#[cfg(unix)]
+use std::fs::File;
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+#[cfg(unix)]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -156,64 +164,270 @@ pub fn publish_results(
 }
 
 fn collect_artifacts(base_dir: &Path) -> std::io::Result<Vec<Value>> {
+    collect_artifacts_with_directory_opened(base_dir, |_| {})
+}
+
+#[cfg(unix)]
+fn collect_artifacts_with_directory_opened<F>(
+    base_dir: &Path,
+    mut directory_opened: F,
+) -> std::io::Result<Vec<Value>>
+where
+    F: FnMut(&Path),
+{
     let mut out = Vec::new();
-    let mut stack = vec![base_dir.to_path_buf()];
-    while let Some(directory) = stack.pop() {
-        for entry in std::fs::read_dir(directory)? {
-            let entry = entry?;
-            let path = entry.path();
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !kind.is_file() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("result artifact {} is not a regular file", path.display()),
-                ));
-            }
-            let relative = path.strip_prefix(base_dir).map_err(std::io::Error::other)?;
-            let name = relative.to_string_lossy().replace('\\', "/");
-            if name == READY_MARKER_NAME || name == "results-manifest.json" {
-                continue;
-            }
-            let mut file = open_regular_artifact(&path)?;
-            if file.metadata()?.len() > MAX_ARTIFACT_BYTES {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!(
-                        "result artifact {} exceeds {MAX_ARTIFACT_BYTES} bytes",
-                        path.display()
-                    ),
-                ));
-            }
-            let (sha256, bytes) = hash_artifact_reader(&mut file, MAX_ARTIFACT_BYTES)?;
-            out.push(json!({"path": name, "sha256": sha256, "bytes": bytes, "contentType": content_type(&path)}));
-        }
-    }
+    let root = open_artifact_directory_path(base_dir)?;
+    collect_artifacts_in_directory(&root, Path::new(""), &mut out, &mut directory_opened)?;
     out.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
     Ok(out)
 }
 
 #[cfg(unix)]
-fn open_regular_artifact(path: &Path) -> std::io::Result<std::fs::File> {
-    let file = std::fs::OpenOptions::new()
+fn collect_artifacts_in_directory<F>(
+    directory: &File,
+    relative_directory: &Path,
+    artifacts: &mut Vec<Value>,
+    directory_opened: &mut F,
+) -> std::io::Result<()>
+where
+    F: FnMut(&Path),
+{
+    for name in read_directory_names(directory)? {
+        let relative = relative_directory.join(&name);
+        match open_artifact_directory_at(directory, &name) {
+            Ok(child) => {
+                directory_opened(&relative);
+                collect_artifacts_in_directory(&child, &relative, artifacts, directory_opened)?;
+            }
+            Err(error) if error.raw_os_error() == Some(libc::ENOTDIR) => {
+                let mut file = open_regular_artifact_at(directory, &name, &relative)?;
+                let relative_name = relative.to_string_lossy().replace('\\', "/");
+                if relative_name == READY_MARKER_NAME || relative_name == "results-manifest.json" {
+                    continue;
+                }
+                if file.metadata()?.len() > MAX_ARTIFACT_BYTES {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "result artifact {} exceeds {MAX_ARTIFACT_BYTES} bytes",
+                            relative.display()
+                        ),
+                    ));
+                }
+                let (sha256, bytes) = hash_artifact_reader(&mut file, MAX_ARTIFACT_BYTES)?;
+                artifacts.push(json!({"path": relative_name, "sha256": sha256, "bytes": bytes, "contentType": content_type(&relative)}));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn open_artifact_directory_path(path: &Path) -> std::io::Result<File> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut directory = std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)?;
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open("/")?;
+    for component in absolute.components() {
+        match component {
+            std::path::Component::RootDir => continue,
+            std::path::Component::Normal(name) => {
+                directory = open_artifact_directory_at(&directory, name)?;
+            }
+            std::path::Component::CurDir => continue,
+            std::path::Component::ParentDir | std::path::Component::Prefix(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "artifact root is not canonical",
+                ));
+            }
+        }
+    }
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn component_name(name: &OsStr) -> std::io::Result<CString> {
+    CString::new(name.as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "artifact path component contains NUL",
+        )
+    })
+}
+
+#[cfg(unix)]
+fn open_artifact_directory_at(parent: &File, name: &OsStr) -> std::io::Result<File> {
+    let name = component_name(name)?;
+    // SAFETY: `parent` is an open directory descriptor and `name` is one
+    // NUL-terminated directory-entry component. O_NOFOLLOW prevents a rename
+    // race from redirecting this traversal through a symlink.
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: a successful `openat` creates one owned descriptor.
+    let directory = unsafe { File::from_raw_fd(descriptor) };
+    if directory.metadata()?.is_dir() {
+        Ok(directory)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "artifact path component is not a directory",
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn open_regular_artifact_at(parent: &File, name: &OsStr, relative: &Path) -> std::io::Result<File> {
+    let name = component_name(name)?;
+    // SAFETY: `parent` is an open directory descriptor and `name` is one
+    // NUL-terminated directory-entry component. O_NOFOLLOW confines the leaf
+    // to the retained parent directory.
+    let descriptor = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        )
+    };
+    if descriptor < 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(match error.raw_os_error() {
+            Some(libc::ELOOP | libc::ENOENT | libc::ENOTDIR | libc::ESTALE) => std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "result artifact {} changed or became a symlink",
+                    relative.display()
+                ),
+            ),
+            _ => error,
+        });
+    }
+    // SAFETY: a successful `openat` creates one owned descriptor.
+    let file = unsafe { File::from_raw_fd(descriptor) };
     if file.metadata()?.is_file() {
         Ok(file)
     } else {
         Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("result artifact {} is not a regular file", path.display()),
+            format!(
+                "result artifact {} is not a regular file",
+                relative.display()
+            ),
         ))
     }
 }
 
+#[cfg(unix)]
+struct DirectoryStream(*mut libc::DIR);
+
+#[cfg(unix)]
+impl DirectoryStream {
+    fn open(directory: &File) -> std::io::Result<Self> {
+        let descriptor = directory.try_clone()?.into_raw_fd();
+        // SAFETY: `descriptor` is an owned directory descriptor. On success,
+        // `fdopendir` takes ownership and this stream closes it on drop.
+        let stream = unsafe { libc::fdopendir(descriptor) };
+        if stream.is_null() {
+            let error = std::io::Error::last_os_error();
+            // SAFETY: on `fdopendir` failure the descriptor remains owned here.
+            drop(unsafe { File::from_raw_fd(descriptor) });
+            return Err(error);
+        }
+        Ok(Self(stream))
+    }
+
+    fn read_names(&mut self) -> std::io::Result<Vec<OsString>> {
+        let mut names = Vec::new();
+        loop {
+            set_errno(0);
+            // SAFETY: this stream owns a live `DIR*`; each entry is consumed
+            // before the next `readdir` call.
+            let entry = unsafe { libc::readdir(self.0) };
+            if entry.is_null() {
+                let error = current_errno();
+                if error == 0 {
+                    break;
+                }
+                return Err(std::io::Error::from_raw_os_error(error));
+            }
+            // SAFETY: POSIX provides a NUL-terminated `d_name` while this
+            // directory entry remains current.
+            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            names.push(OsString::from_vec(name.to_vec()));
+        }
+        Ok(names)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for DirectoryStream {
+    fn drop(&mut self) {
+        // SAFETY: this stream uniquely owns the descriptor held by `DIR*`.
+        let _ = unsafe { libc::closedir(self.0) };
+    }
+}
+
+#[cfg(unix)]
+fn read_directory_names(directory: &File) -> std::io::Result<Vec<OsString>> {
+    DirectoryStream::open(directory)?.read_names()
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn errno_pointer() -> *mut libc::c_int {
+    // SAFETY: libc exposes this thread's writable errno location on Linux.
+    unsafe { libc::__errno_location() }
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
+fn errno_pointer() -> *mut libc::c_int {
+    // SAFETY: libc exposes this thread's writable errno location on these targets.
+    unsafe { libc::__error() }
+}
+
+#[cfg(unix)]
+fn set_errno(value: libc::c_int) {
+    // SAFETY: `errno_pointer` returns this thread's writable errno cell.
+    unsafe { *errno_pointer() = value };
+}
+
+#[cfg(unix)]
+fn current_errno() -> libc::c_int {
+    // SAFETY: `errno_pointer` returns this thread's readable errno cell.
+    unsafe { *errno_pointer() }
+}
+
 #[cfg(not(unix))]
-fn open_regular_artifact(_path: &Path) -> std::io::Result<std::fs::File> {
+fn collect_artifacts_with_directory_opened<F>(
+    _base_dir: &Path,
+    _directory_opened: F,
+) -> std::io::Result<Vec<Value>>
+where
+    F: FnMut(&Path),
+{
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "result collection requires POSIX no-follow descriptors",
@@ -377,6 +591,42 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(!directory.path().join("results-manifest.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_artifact_directory_replacement_never_collects_through_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let nested = directory.path().join("nested");
+        std::fs::create_dir(&nested).expect("nested directory");
+        let inside = b"inside";
+        std::fs::write(nested.join("inside.json"), inside).expect("inside artifact");
+        let outside = tempfile::tempdir().expect("outside directory");
+        std::fs::write(outside.path().join("external.json"), b"external")
+            .expect("external artifact");
+
+        let artifacts = collect_artifacts_with_directory_opened(directory.path(), |relative| {
+            if relative == Path::new("nested") {
+                std::fs::rename(&nested, directory.path().join("nested-original"))
+                    .expect("replace nested directory");
+                symlink(outside.path(), &nested).expect("nested symlink");
+            }
+        })
+        .expect("retained nested descriptor remains confined");
+
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0]["path"], "nested/inside.json");
+        assert_eq!(
+            artifacts[0]["sha256"],
+            format!("{:x}", Sha256::digest(inside))
+        );
+        assert!(
+            artifacts
+                .iter()
+                .all(|artifact| artifact["path"] != "nested/external.json")
+        );
     }
 
     #[test]
