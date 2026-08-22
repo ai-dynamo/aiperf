@@ -25,6 +25,17 @@ first-party fields that have no extensibility reason to be opaque.
 
 This record is forward-looking. It describes work that is **not built**.
 
+**Scope premise: the Rust tree is greenfield.** There is no released native
+protocol-v2 stdin contract and no external consumer of it to preserve. The
+`--execute` boundary is written and read by the same binary, and the
+"bare resolved-run" arm exists because the code grew that way, not because a
+published contract requires it. Nothing in this record is constrained by wire
+compatibility, and no step needs a compatibility shim. Where a difference between
+today's shapes matters, it matters because a *behavior* would be lost — strictness,
+a validation check, a controller-derived field — and the migration must port that
+behavior forward on its own merits. "Byte-exact against the mock server" below is
+therefore an assertion about **observed run output**, never about stdin bytes.
+
 ## Built
 
 Today the child does not consume `BenchmarkConfig` directly. `coordinator.rs`
@@ -174,9 +185,12 @@ round 4 rather than left as an appended footnote).
 against `&BenchmarkConfig` and its typed `resolved` facts, exactly as the Python
 services read `cfg`.
 
-Retyping the bare arm from `BenchmarkRunWireV2` to `BenchmarkRun` is **not**
-wire-compatible. The two types differ on every axis that matters (verified
-against the tree, contest round 4):
+The bare arm is re-typed from `BenchmarkRunWireV2` to `BenchmarkRun` and
+`BenchmarkRunWireV2` is **deleted**. Because the tree is greenfield (see Purpose),
+this is not a compatibility question — but it is not a free rename either. The two
+types differ on every axis that matters, and each difference is a behavior that
+would silently vanish if the swap were done naively (verified against the tree,
+contest round 4):
 
 | | `BenchmarkRunWireV2` (`protocol_v2.rs:293-329`) | `BenchmarkRun` (`config/model/run.rs:17-48`) |
 |---|---|---|
@@ -188,20 +202,33 @@ against the tree, contest round 4):
 | `planned_replay_traces` | `BTreeSet<PlannedReplayTraceInstance>` | **absent** (see §5 step 4) |
 | outer validation | `validate_outer()` (`protocol_v2.rs:332-350`): non-empty `benchmark_id`, non-empty `artifact_dir`, exactly one dataset | **none** |
 
-Every row is a behavior change on that arm. Dropping `deny_unknown_fields`
-silently accepts typo'd top-level keys that hard-fail today; `Value` → `Resolved`
-tightens what previously round-tripped; `usize` → `u32` narrows; and losing
-`validate_outer` removes three checks with no replacement. The migration must
-therefore either **(a)** keep a thin `deny_unknown_fields` compatibility DTO for
-the bare arm that adapts into `BenchmarkRun` and carries `validate_outer` plus
-`planned_replay_traces`, or **(b)** declare an explicit, documented compatibility
-break on that arm. It may not assert both "delete `BenchmarkRunWireV2`" and
-"each step stays wire-compatible."
+The table is therefore a **port list**, not a compatibility obligation. Each row
+is decided on merit:
 
-**This record selects (a).** The bare arm keeps its strict DTO; what step 4
-deletes is the *projection* — `into_authored`, `AuthoredRunSpecV2`, and
-`NamedRunnerComponentSpecV2` — not the strict stdin decode. §5 step 4 is scoped
-accordingly.
+- `deny_unknown_fields` — **port it.** `BenchmarkRun` gains
+  `#[serde(deny_unknown_fields)]`. Strict decode is the stated goal of this whole
+  arc (§2's opening claim that "`deny_unknown_fields` on the typed model is the
+  wire strictness" is only true once the attribute is actually there); dropping it
+  would make the migration a strictness *regression* in the name of typing.
+- `validate_outer()` — **port it.** Its three checks (non-empty `benchmark_id`,
+  non-empty `artifact_dir`, exactly one dataset) have no equivalent on
+  `BenchmarkRun` and no other enforcement point. They become an inherent
+  `BenchmarkRun::validate()` called at the decode boundary.
+- `planned_replay_traces` — **port it**, as a run-level field on `BenchmarkRun`
+  alongside `cfg`, not a `BenchmarkConfig` field, because it is controller-derived
+  rather than authored (see §5 step 4 and O1).
+- `resolved: Value` → `Resolved`, `variation: VariationSpec` → `Value`,
+  `trial: usize` → `u32`, `variables: BTreeMap` → `serde_json::Map` — **accept
+  `BenchmarkRun`'s shapes.** These are the typed model winning, which is the
+  point. The one to check rather than assume is `variation`: `BenchmarkRun` holds
+  it as an open `Value` where the wire DTO had a typed `VariationSpec`, so
+  re-typing `BenchmarkRun::variation` to `VariationSpec` is the correct direction
+  and belongs in this change rather than being inherited as-is.
+
+What step 4 deletes is both the *projection* (`into_authored`,
+`AuthoredRunSpecV2`, `NamedRunnerComponentSpecV2`) and the *wire DTO*
+(`BenchmarkRunWireV2`), with the four ported behaviors above landing on
+`BenchmarkRun` first.
 
 ### 3. Typed factory seam (string discriminant + typed config)
 
@@ -383,12 +410,14 @@ One transport family at a time, byte-exact against the mock server at each step:
    `lower_graph` takes `&AuthoredRunSpecV2` and reads `run.endpoints.identities()`
    and `run.identity.random_seed`, and passes `run` on to `build_common_plan` —
    further step-4 repoint surface. Verify graph + scheduled e2e.
-4. Delete `AuthoredRunSpecV2`, `into_authored`, and `NamedRunnerComponentSpecV2`;
-   point `coordinator.rs` at `BenchmarkConfig`. Per §2's selection (a),
-   `BenchmarkRunWireV2` is **retained** — reduced to a thin `deny_unknown_fields`
-   compatibility DTO for the bare stdin arm that carries `validate_outer` and
-   `planned_replay_traces` and adapts into `BenchmarkRun`. It is the *projection*
-   that dies, not the strict decode. The
+4. Delete `AuthoredRunSpecV2`, `into_authored`, `NamedRunnerComponentSpecV2`, and
+   `BenchmarkRunWireV2`; point `coordinator.rs` at `BenchmarkConfig`. The tree is
+   greenfield, so the bare stdin arm is simply re-typed to `BenchmarkRun` — but
+   only *after* §2's port list lands on `BenchmarkRun`:
+   `#[serde(deny_unknown_fields)]`, an inherent `validate()` carrying
+   `validate_outer`'s three checks, `planned_replay_traces` as a run-level field,
+   and `variation: Option<VariationSpec>`. Deleting the DTO before those land is
+   the silent-regression path. The
    protocol-v2 request/response module is reduced to the `EnvelopeV2` outer shape
    and the diagnostic/result types. **Corrected (contest round 2):** `into_authored`
    injects data that is **not** in `BenchmarkConfig`. `planned_replay_traces`
@@ -524,10 +553,12 @@ mandatory at every step, not just the last. Beyond that shared floor:
   change that has not run `test_graph_cellular` and `test_recorded_agent_cellular`
   is not verified, regardless of what else is green.
 
-Each step keeps the stdin accept path intact — under §2's selection (a), the bare
-arm retains a strict `deny_unknown_fields` compatibility DTO and its
-`validate_outer` checks, so what is deleted is the internal projection, not the
-wire. **The boundary to hold fixed is not `EnvelopeV2`.** `EnvelopeV2`
+Each step keeps the stdin accept path *structurally* intact — both arms of
+`decode_execute_wire` survive; the bare arm changes type. No step owes anything to
+an external consumer (see Purpose: greenfield), so the property each step must
+hold is behavioral, not byte-level: strictness, validation, and controller-derived
+state carried forward per §2's port list, and identical observed run output
+against the mock server. **The boundary to hold fixed is not `EnvelopeV2`.** `EnvelopeV2`
 (`protocol_v2.rs:118`) is never deserialized from stdin — it is constructed
 in-process at `cli/src/execute_mode.rs:477` after decode, and its own doc comment
 says it is "reconstructed around the bare `BenchmarkRunWireV2` stdin payload".
@@ -536,9 +567,9 @@ accepts: an `AuthoringWireV2` (`{"authoring": <Inputs>, sweep_id, variation,
 trial}`, `protocol_v2.rs:155`) or a bare `BenchmarkRunWireV2`, discriminated by
 presence of the `authoring` key (`resolved_run_bytes`, `protocol_v2.rs:207`). The
 authoring arm is the one AIPerf itself writes; the bare-resolved-run arm is
-retained for external harnesses. Deleting `BenchmarkRunWireV2` outright would therefore
-*have* touched the stdin contract, which is why §2 selects the compatibility-DTO
-option instead of the re-type-or-drop fork an earlier draft left open. §2 no longer claims
+retained for external harnesses. Deleting `BenchmarkRunWireV2` therefore changes the
+bare arm's type. On a greenfield tree that is an ordinary refactor, not a
+compatibility break — the obligation it creates is §2's port list, not a shim. §2 no longer claims
 otherwise; the `serde_json::from_slice::<EnvelopeV2>` requirement that stood in
 earlier drafts has been removed from §2 rather than merely footnoted here.
 
@@ -584,8 +615,9 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
 - `rust/runtime/src/engine/protocol_v2.rs` — `BenchmarkRunWireV2`,
   `AuthoredRunSpecV2`, `into_authored`, `NamedRunnerComponentSpecV2`,
   `ScheduledWorkloadConfigV2`/`GraphWorkloadConfigV2` (the projection to delete);
-  `BenchmarkRunWireV2` (**retained**, reduced to the bare stdin arm's strict
-  compatibility DTO — §2 selection (a));
+  `BenchmarkRunWireV2` (also deleted; its `deny_unknown_fields`, `validate_outer`,
+  `planned_replay_traces`, and `VariationSpec` typing port onto `BenchmarkRun`
+  first — §2);
   `EnvelopeV2` (an in-process struct constructed after decode — not a wire shape).
 - `rust/runtime/src/engine/coordinator.rs` — `envelope.run.into_authored()`, the
   child composition root to repoint at `BenchmarkConfig`.
