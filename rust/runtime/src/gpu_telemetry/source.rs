@@ -72,7 +72,10 @@ impl Display for GpuTelemetryError {
                 formatter.write_str("GPU telemetry endpoint returned no text body")
             }
             Self::Protocol(message) => {
-                write!(formatter, "GPU telemetry source violated its contract: {message}")
+                write!(
+                    formatter,
+                    "GPU telemetry source violated its contract: {message}"
+                )
             }
             Self::Worker(message) => write!(formatter, "GPU telemetry worker failed: {message}"),
             Self::Parse { line, message } => {
