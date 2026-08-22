@@ -597,7 +597,10 @@ mod tests {
                         platform: AMD_GPU_TELEMETRY_PLATFORM.to_string(),
                     },
                     metrics: BTreeMap::from([
-                        ("amd_energy_consumption".to_string(), 1.0 + timestamp_ns as f64),
+                        (
+                            "amd_energy_consumption".to_string(),
+                            1.0 + timestamp_ns as f64,
+                        ),
                         ("amd_throttle_status".to_string(), 1.0),
                     ]),
                 }],
@@ -749,7 +752,10 @@ mod tests {
                     .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
                     .collect::<Vec<_>>();
                 assert_eq!(rows.len(), 3);
-                assert!(rows.iter().all(|row| row["dcgm_url"] == "amdsmi://localhost"));
+                assert!(
+                    rows.iter()
+                        .all(|row| row["dcgm_url"] == "amdsmi://localhost")
+                );
                 assert!(rows.iter().all(|row| row["platform"] == "amd"));
                 assert!(rows.iter().all(|row| {
                     row["telemetry_data"]["amd_energy_consumption"].is_number()
