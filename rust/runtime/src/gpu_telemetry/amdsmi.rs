@@ -633,7 +633,7 @@ mod tests {
                 }),
                 power_candidates: Some([300, 0, 0]),
                 activity: Some((70, 30, u32::MAX)),
-                vram_used_mib: Some(15_360),
+                memory_used_bytes: Some(16_000_000_000),
                 temperature: Some(72),
                 ecc_uncorrectable: Some(3),
                 throttle_status: Some((0, 1)),

@@ -165,7 +165,7 @@ def amdsmi_fixture() -> list[dict[str, object]]:
         "umc_activity": 30,
         "mm_activity": "N/A",
     }
-    vendor.amdsmi_get_gpu_memory_usage = lambda *_: 16_106_127_360
+    vendor.amdsmi_get_gpu_memory_usage = lambda *_: 16_000_000_000
     vendor.amdsmi_get_temp_metric = lambda *_: 72
     vendor.amdsmi_get_gpu_total_ecc_count = lambda _: {"uncorrectable_count": 3}
     vendor.amdsmi_get_gpu_metrics_info = lambda _: {
