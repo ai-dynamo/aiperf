@@ -6607,12 +6607,11 @@ mod tests {
 
             fn copy_archive(&self, _: &str, _: &str) -> Result<Box<dyn Read>, EvalExecutionError> {
                 let mut archive = tar::Builder::new(Vec::new());
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_size(0);
                 archive
-                    .append_link(
-                        &mut tar::Header::new_gnu(),
-                        "reward.json",
-                        "/verifier-controlled",
-                    )
+                    .append_link(&mut header, "reward.json", "/verifier-controlled")
                     .unwrap();
                 Ok(Box::new(io::Cursor::new(archive.into_inner().unwrap())))
             }
@@ -6631,7 +6630,8 @@ mod tests {
         .expect_err("reward symlinks must never be followed from a legacy archive");
 
         assert!(
-            matches!(error, EvalExecutionError::ArtifactCollection(message) if message.contains("regular file"))
+            matches!(error, EvalExecutionError::ArtifactCollection(ref message) if message.contains("regular file")),
+            "unexpected error: {error:?}"
         );
     }
 
@@ -7065,9 +7065,12 @@ mod tests {
         fn try_wait(&mut self) -> Result<DockerExecState, String> {
             let state = self.states.pop_front().unwrap_or(DockerExecState::Running);
             if state != DockerExecState::Running {
-                self.terminal_observed = true;
-                if let Some(time_ns) = self.advance_terminal_to {
-                    self.clock.advance_to(time_ns);
+                self.states.push_front(state.clone());
+                if !self.terminal_observed {
+                    self.terminal_observed = true;
+                    if let Some(time_ns) = self.advance_terminal_to {
+                        self.clock.advance_to(time_ns);
+                    }
                 }
             }
             Ok(state)
