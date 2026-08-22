@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::{PerformancePolicy, TemperatureSensor};
+use nvml_wrapper_sys::bindings::nvmlReturn_enum_NVML_SUCCESS;
 
 use crate::clock::Clock;
 use crate::gpu_telemetry::model::{GpuMetadata, GpuTelemetryRecord, NVIDIA_GPU_TELEMETRY_PLATFORM};
@@ -57,7 +58,14 @@ struct NvmlWorker {
 
 impl VendorWorker for NvmlWorker {
     fn initialize(&mut self) -> Result<(), GpuTelemetryError> {
-        self.nvml = Some(Nvml::init().map_err(nvml_error)?);
+        let nvml = Nvml::init().map_err(nvml_error)?;
+        let device_count = nvml.device_count().map_err(nvml_error)?;
+        self.nvml = Some(nvml);
+        if device_count == 0 {
+            return Err(GpuTelemetryError::Worker(
+                "NVML initialized but no NVIDIA devices are available".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -75,14 +83,8 @@ impl VendorWorker for NvmlWorker {
                     continue;
                 }
             };
-            let metadata = match device_metadata(&device, index) {
-                Ok(metadata) => metadata,
-                Err(error) => {
-                    tracing::debug!(error = %error, gpu_index = index, component = "gpu_nvml", "skipping NVML device with unavailable identity");
-                    continue;
-                }
-            };
-            let metrics = device_metrics(&device);
+            let metadata = device_metadata(&device, index);
+            let metrics = device_metrics(nvml, &device);
             if !metrics.is_empty() {
                 records.push(GpuTelemetryRecord {
                     timestamp_ns,
@@ -103,27 +105,22 @@ impl VendorWorker for NvmlWorker {
     }
 }
 
-fn device_metadata(
-    device: &nvml_wrapper::Device<'_>,
-    index: u32,
-) -> Result<GpuMetadata, GpuTelemetryError> {
+fn device_metadata(device: &nvml_wrapper::Device<'_>, index: u32) -> GpuMetadata {
     let pci_bus_id = device.pci_info().ok().map(|pci| pci.bus_id);
-    Ok(GpuMetadata {
-        gpu_index: i32::try_from(index).map_err(|_| {
-            GpuTelemetryError::Protocol(format!("NVML GPU index {index} exceeds i32"))
-        })?,
-        gpu_uuid: device.uuid().map_err(nvml_error)?,
-        gpu_model_name: device.name().map_err(nvml_error)?,
+    GpuMetadata {
+        gpu_index: index.min(i32::MAX as u32) as i32,
+        gpu_uuid: device.uuid().unwrap_or_else(|_| format!("GPU-{index}")),
+        gpu_model_name: device.name().unwrap_or_else(|_| "Unknown".to_string()),
         pci_bus_id,
         device: None,
         hostname: None,
         namespace: None,
         pod_name: None,
         platform: NVIDIA_GPU_TELEMETRY_PLATFORM.to_string(),
-    })
+    }
 }
 
-fn device_metrics(device: &nvml_wrapper::Device<'_>) -> BTreeMap<String, f64> {
+fn device_metrics(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> BTreeMap<String, f64> {
     let mut metrics = BTreeMap::new();
     insert_result(
         &mut metrics,
@@ -171,6 +168,17 @@ fn device_metrics(device: &nvml_wrapper::Device<'_>) -> BTreeMap<String, f64> {
             .decoder_utilization()
             .map(|value| value.utilization as f64),
     );
+    if let Ok(samples) = device.process_utilization_stats(None) {
+        let sm_utilization = samples
+            .iter()
+            .map(|sample| sample.sm_util as f64)
+            .sum::<f64>()
+            .min(100.0);
+        metrics.insert("nvidia_sm_utilization".to_string(), sm_utilization);
+    }
+    if let Some(utilization) = jpg_utilization(nvml, device) {
+        metrics.insert("nvidia_jpg_utilization".to_string(), utilization);
+    }
     insert_result(
         &mut metrics,
         "nvidia_power_violation",
@@ -179,6 +187,23 @@ fn device_metrics(device: &nvml_wrapper::Device<'_>) -> BTreeMap<String, f64> {
             .map(|value| value.violation_time as f64 * 1e-3),
     );
     metrics
+}
+
+fn jpg_utilization(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<f64> {
+    let symbol = nvml.lib().nvmlDeviceGetJpgUtilization.as_ref().ok()?;
+    let mut utilization = 0_u32;
+    let mut sampling_period_us = 0_u32;
+    // SAFETY: `device` was resolved from `nvml`, the dynamically loaded symbol
+    // has the exact `nvmlDeviceGetJpgUtilization` signature, and both output
+    // pointers reference initialized writable local storage for this call.
+    let status = unsafe {
+        symbol(
+            device.handle(),
+            &mut utilization,
+            &mut sampling_period_us,
+        )
+    };
+    (status == nvmlReturn_enum_NVML_SUCCESS).then_some(utilization as f64)
 }
 
 fn insert_result(
