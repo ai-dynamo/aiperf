@@ -8,7 +8,10 @@ use std::rc::Rc;
 
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::{PerformancePolicy, TemperatureSensor};
-use nvml_wrapper_sys::bindings::nvmlReturn_enum_NVML_SUCCESS;
+use nvml_wrapper_sys::bindings::{
+    NVML_GPM_METRICS_GET_VERSION, nvmlGpmMetricId_t_NVML_GPM_METRIC_SM_UTIL,
+    nvmlGpmMetricsGet_t, nvmlGpmSample_t, nvmlReturn_enum_NVML_SUCCESS,
+};
 
 use crate::clock::Clock;
 use crate::gpu_telemetry::model::{GpuMetadata, GpuTelemetryRecord, NVIDIA_GPU_TELEMETRY_PLATFORM};
@@ -27,7 +30,10 @@ impl NvmlTelemetrySource {
     pub(crate) async fn spawn(clock: Rc<dyn Clock>) -> Result<Self, GpuTelemetryError> {
         Ok(Self {
             worker: VendorWorkerSource::spawn(clock, NVML_ENDPOINT_URL, || {
-                Ok(Box::new(NvmlWorker { nvml: None }))
+                Ok(Box::new(NvmlWorker {
+                    nvml: None,
+                    gpm_samples: BTreeMap::new(),
+                }))
             })
             .await?,
         })
@@ -53,6 +59,7 @@ impl crate::gpu_telemetry::source::GpuTelemetrySource for NvmlTelemetrySource {
 }
 
 struct NvmlWorker {
+    gpm_samples: BTreeMap<u32, (usize, usize)>,
     nvml: Option<Nvml>,
 }
 
@@ -60,19 +67,67 @@ impl VendorWorker for NvmlWorker {
     fn initialize(&mut self) -> Result<(), GpuTelemetryError> {
         let nvml = Nvml::init().map_err(nvml_error)?;
         let device_count = nvml.device_count().map_err(nvml_error)?;
-        self.nvml = Some(nvml);
         if device_count == 0 {
             return Err(GpuTelemetryError::Worker(
                 "NVML initialized but no NVIDIA devices are available".to_string(),
             ));
         }
+        for index in 0..device_count {
+            if let Ok(device) = nvml.device_by_index(index)
+                && let Some(samples) = initialize_gpm_samples(&nvml, &device)
+            {
+                self.gpm_samples.insert(index, samples);
+            }
+        }
+        self.nvml = Some(nvml);
         Ok(())
     }
 
+    fn gpm_sm_utilization(
+        gpm_samples: &mut BTreeMap<u32, (usize, usize)>,
+        nvml: &Nvml,
+        device: &nvml_wrapper::Device<'_>,
+        index: u32,
+    ) -> Option<f64> {
+        let (previous, current) = gpm_samples.get_mut(&index)?;
+        let current_handle = *current as nvmlGpmSample_t;
+        let sm_utilization = (|| {
+            let get = nvml.lib().nvmlGpmSampleGet.as_ref().ok()?;
+            // SAFETY: `device` belongs to this loaded NVML instance and the
+            // worker owns `current_handle` for the duration of this call.
+            if unsafe { get(device.handle(), current_handle) } != nvmlReturn_enum_NVML_SUCCESS {
+                return None;
+            }
+            let metrics_get = nvml.lib().nvmlGpmMetricsGet.as_ref().ok()?;
+            let mut request = unsafe {
+                std::mem::MaybeUninit::<nvmlGpmMetricsGet_t>::zeroed().assume_init()
+            };
+            request.version = NVML_GPM_METRICS_GET_VERSION;
+            request.numMetrics = 1;
+            request.sample1 = *previous as nvmlGpmSample_t;
+            request.sample2 = current_handle;
+            request.metrics[0].metricId = nvmlGpmMetricId_t_NVML_GPM_METRIC_SM_UTIL;
+            // SAFETY: NVML owns the metric request ABI and all sample pointers
+            // were allocated by this worker from the same loaded library.
+            if unsafe { metrics_get(&mut request) } != nvmlReturn_enum_NVML_SUCCESS {
+                return None;
+            }
+            (request.metrics[0].nvmlReturn == nvmlReturn_enum_NVML_SUCCESS)
+                .then_some(request.metrics[0].value)
+        })();
+        // PyNVML rotates samples after each attempted GPM read, including a
+        // failed read, so the next interval always uses the latest buffer.
+        std::mem::swap(previous, current);
+        sm_utilization
+    }
+
     fn scrape(&mut self, timestamp_ns: i64) -> Result<Vec<GpuTelemetryRecord>, GpuTelemetryError> {
-        let nvml = self.nvml.as_ref().ok_or_else(|| {
-            GpuTelemetryError::Worker("NVML scrape requested before initialization".to_string())
-        })?;
+        let (gpm_samples, nvml) = (
+            &mut self.gpm_samples,
+            self.nvml.as_ref().ok_or_else(|| {
+                GpuTelemetryError::Worker("NVML scrape requested before initialization".to_string())
+            })?,
+        );
         let count = nvml.device_count().map_err(nvml_error)?;
         let mut records = Vec::with_capacity(count as usize);
         for index in 0..count {
@@ -83,9 +138,11 @@ impl VendorWorker for NvmlWorker {
                     continue;
                 }
             };
-            if let Some(record) =
-                record_from_observation(timestamp_ns, observe_device(nvml, &device, index))
-            {
+            let gpm_sm_utilization = Self::gpm_sm_utilization(gpm_samples, nvml, &device, index);
+            if let Some(record) = record_from_observation(
+                timestamp_ns,
+                observe_device(nvml, &device, index, gpm_sm_utilization),
+            ) {
                 records.push(record);
             }
         }
@@ -93,6 +150,18 @@ impl VendorWorker for NvmlWorker {
     }
 
     fn shutdown(&mut self) -> Result<(), GpuTelemetryError> {
+        let gpm_samples = std::mem::take(&mut self.gpm_samples);
+        if let Some(nvml) = self.nvml.as_ref()
+            && let Ok(free) = nvml.lib().nvmlGpmSampleFree.as_ref()
+        {
+            for (previous, current) in gpm_samples.into_values() {
+                // SAFETY: these pointers were allocated by this worker from
+                // this NVML instance and have not previously been freed.
+                let _ = unsafe { free(previous as nvmlGpmSample_t) };
+                // SAFETY: see the preceding free for the paired sample.
+                let _ = unsafe { free(current as nvmlGpmSample_t) };
+            }
+        }
         if let Some(nvml) = self.nvml.take() {
             nvml.shutdown().map_err(nvml_error)?;
         }
@@ -112,15 +181,39 @@ struct NvmlDeviceObservation {
     temperature_celsius: Option<u32>,
     encoder_utilization: Option<u32>,
     decoder_utilization: Option<u32>,
+    gpm_sm_utilization: Option<f64>,
     sm_utilization: Option<Vec<u32>>,
     jpg_utilization: Option<u32>,
     power_violation_nanoseconds: Option<u64>,
+}
+
+fn initialize_gpm_samples(nvml: &Nvml, device: &nvml_wrapper::Device<'_>) -> Option<(usize, usize)> {
+    device.gpm_support().ok().filter(|supported| *supported)?;
+    let allocate = nvml.lib().nvmlGpmSampleAlloc.as_ref().ok()?;
+    let free = nvml.lib().nvmlGpmSampleFree.as_ref().ok()?;
+    let sample_get = nvml.lib().nvmlGpmSampleGet.as_ref().ok()?;
+    let mut previous = std::ptr::null_mut();
+    let mut current = std::ptr::null_mut();
+    if unsafe { allocate(&mut previous) } != nvmlReturn_enum_NVML_SUCCESS
+        || unsafe { allocate(&mut current) } != nvmlReturn_enum_NVML_SUCCESS
+        || unsafe { sample_get(device.handle(), previous) } != nvmlReturn_enum_NVML_SUCCESS
+    {
+        if !previous.is_null() {
+            let _ = unsafe { free(previous) };
+        }
+        if !current.is_null() {
+            let _ = unsafe { free(current) };
+        }
+        return None;
+    }
+    Some((previous as usize, current as usize))
 }
 
 fn observe_device(
     nvml: &Nvml,
     device: &nvml_wrapper::Device<'_>,
     index: u32,
+    gpm_sm_utilization: Option<f64>,
 ) -> NvmlDeviceObservation {
     NvmlDeviceObservation {
         index,
@@ -143,6 +236,7 @@ fn observe_device(
             .decoder_utilization()
             .ok()
             .map(|value| value.utilization),
+        gpm_sm_utilization,
         sm_utilization: device
             .process_utilization_stats(None)
             .ok()
@@ -203,9 +297,11 @@ fn record_from_observation(
     insert_finite(
         &mut metrics,
         "nvidia_sm_utilization",
-        observation
-            .sm_utilization
-            .map(|samples| samples.into_iter().map(f64::from).sum::<f64>().min(100.0)),
+        observation.gpm_sm_utilization.or_else(|| {
+            observation
+                .sm_utilization
+                .map(|samples| samples.into_iter().map(f64::from).sum::<f64>().min(100.0))
+        }),
     );
     insert_finite(
         &mut metrics,
@@ -354,11 +450,66 @@ mod tests {
                 temperature_celsius: Some(65),
                 encoder_utilization: Some(34),
                 decoder_utilization: Some(12),
+                gpm_sm_utilization: None,
                 sm_utilization: Some(vec![25]),
                 jpg_utilization: Some(56),
                 power_violation_nanoseconds: Some(4_000),
             },
         );
         assert_eq!(actual, Some(fixture.into_record()));
+    }
+
+    #[test]
+    fn gpm_sm_utilization_precedes_process_fallback() {
+        let record = record_from_observation(
+            123,
+            NvmlDeviceObservation {
+                index: 0,
+                gpu_uuid: None,
+                gpu_model_name: None,
+                pci_bus_id: None,
+                power_millwatts: None,
+                energy_millijoules: None,
+                utilization: None,
+                memory_used_bytes: None,
+                temperature_celsius: None,
+                encoder_utilization: None,
+                decoder_utilization: None,
+                gpm_sm_utilization: Some(41.5),
+                sm_utilization: Some(vec![80, 40]),
+                jpg_utilization: None,
+                power_violation_nanoseconds: None,
+            },
+        )
+        .expect("GPM SM utilization produces a telemetry record");
+
+        assert_eq!(record.metrics["nvidia_sm_utilization"], 41.5);
+    }
+
+    #[test]
+    fn process_sm_utilization_is_used_without_gpm() {
+        let record = record_from_observation(
+            123,
+            NvmlDeviceObservation {
+                index: 0,
+                gpu_uuid: None,
+                gpu_model_name: None,
+                pci_bus_id: None,
+                power_millwatts: None,
+                energy_millijoules: None,
+                utilization: None,
+                memory_used_bytes: None,
+                temperature_celsius: None,
+                encoder_utilization: None,
+                decoder_utilization: None,
+                gpm_sm_utilization: None,
+                sm_utilization: Some(vec![80, 40]),
+                jpg_utilization: None,
+                power_violation_nanoseconds: None,
+            },
+        )
+        .expect("process SM utilization produces a telemetry record");
+
+        assert_eq!(record.metrics["nvidia_sm_utilization"], 100.0);
     }
 }
