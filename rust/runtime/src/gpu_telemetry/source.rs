@@ -41,7 +41,7 @@ pub enum GpuTelemetryError {
     MissingBody,
     /// A telemetry source violated the scrape contract.
     Protocol(String),
-    /// Supervised Python source violated its process or wire contract.
+    /// Dedicated source worker violated its process, thread, or wire contract.
     Worker(String),
     /// Prometheus exposition was malformed.
     Parse {

@@ -14,6 +14,7 @@ pub mod model;
 pub mod parser;
 pub mod python_source;
 pub mod source;
+mod vendor_worker;
 
 pub use accumulator::{
     GpuMergeError, GpuMetricRegistrationError, GpuPhaseBoundary, GpuTelemetryAccumulator,
