@@ -73,7 +73,11 @@ pub trait KubeTransport: Send + Sync {
     /// Send a bounded request and return its HTTP status.
     fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError>;
     /// Open a bounded stream of Kubernetes watch events. Callers own reconnect policy.
-    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<KubeWatch, KubeError>;
+    fn watch(
+        &self,
+        credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<KubeWatch, KubeError>;
 }
 
 /// Kubernetes API client with finite request and watch deadlines.
@@ -92,7 +96,10 @@ impl KubeClient {
 
     /// Create a client from already-resolved credentials.
     pub fn from_credentials(credentials: KubeCredentials) -> Result<Self, KubeError> {
-        Ok(Self::with_transport(credentials, Arc::new(HyperKubeTransport)))
+        Ok(Self::with_transport(
+            credentials,
+            Arc::new(HyperKubeTransport),
+        ))
     }
 
     /// Create a client with an injected transport for hermetic tests.
@@ -106,9 +113,15 @@ impl KubeClient {
     }
 
     /// Override finite deadlines for callers with a tighter lifecycle budget.
-    pub fn with_deadlines(mut self, request_deadline: Duration, watch_deadline: Duration) -> Result<Self, KubeError> {
+    pub fn with_deadlines(
+        mut self,
+        request_deadline: Duration,
+        watch_deadline: Duration,
+    ) -> Result<Self, KubeError> {
         if request_deadline.is_zero() || watch_deadline.is_zero() {
-            return Err(KubeError::Transport("Kubernetes deadlines must be finite and positive".to_string()));
+            return Err(KubeError::Transport(
+                "Kubernetes deadlines must be finite and positive".to_string(),
+            ));
         }
         self.request_deadline = request_deadline;
         self.watch_deadline = watch_deadline;
@@ -116,32 +129,53 @@ impl KubeClient {
     }
 
     /// Return the configured request deadline.
-    pub fn request_deadline(&self) -> Duration { self.request_deadline }
+    pub fn request_deadline(&self) -> Duration {
+        self.request_deadline
+    }
 
     /// Return the configured watch deadline.
-    pub fn watch_deadline(&self) -> Duration { self.watch_deadline }
+    pub fn watch_deadline(&self) -> Duration {
+        self.watch_deadline
+    }
 
     /// Open one bounded watch request. Reconnect policy remains at the caller.
     pub fn watch(&self, path: &str) -> Result<KubeWatch, KubeError> {
-        self.transport.watch(&self.credentials, KubeRequest {
-            method: "GET".to_string(), path: path.to_string(), content_type: String::new(), body: Vec::new(), deadline: self.watch_deadline,
-        })
+        self.transport.watch(
+            &self.credentials,
+            KubeRequest {
+                method: "GET".to_string(),
+                path: path.to_string(),
+                content_type: String::new(),
+                body: Vec::new(),
+                deadline: self.watch_deadline,
+            },
+        )
     }
 
     /// Submit one bounded JSON API request through the shared authenticated transport.
-    pub fn request(&self, method: &str, path: &str, content_type: &str, body: Vec<u8>) -> Result<u16, KubeError> {
-        self.transport.send(&self.credentials, KubeRequest {
-            method: method.to_string(),
-            path: path.to_string(),
-            content_type: content_type.to_string(),
-            body,
-            deadline: self.request_deadline,
-        })
+    pub fn request(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<u16, KubeError> {
+        self.transport.send(
+            &self.credentials,
+            KubeRequest {
+                method: method.to_string(),
+                path: path.to_string(),
+                content_type: content_type.to_string(),
+                body,
+                deadline: self.request_deadline,
+            },
+        )
     }
 
     /// Submit a JSON merge patch using the shared authenticated transport.
     pub fn merge_patch(&self, path: &str, body: &serde_json::Value) -> Result<u16, KubeError> {
-        let body = serde_json::to_vec(body).map_err(|error| KubeError::Decode(error.to_string()))?;
+        let body =
+            serde_json::to_vec(body).map_err(|error| KubeError::Decode(error.to_string()))?;
         self.request("PATCH", path, "application/merge-patch+json", body)
     }
 }
@@ -182,57 +216,117 @@ impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![rustls::SignatureScheme::ECDSA_NISTP256_SHA256, rustls::SignatureScheme::ECDSA_NISTP384_SHA384, rustls::SignatureScheme::ED25519, rustls::SignatureScheme::RSA_PSS_SHA256, rustls::SignatureScheme::RSA_PSS_SHA384, rustls::SignatureScheme::RSA_PSS_SHA512]
+        vec![
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+        ]
     }
 }
 
 impl KubeTransport for HyperKubeTransport {
-    fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> { send_bounded(credentials, request) }
+    fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
+        send_bounded(credentials, request)
+    }
 
-    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<KubeWatch, KubeError> {
+    fn watch(
+        &self,
+        credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<KubeWatch, KubeError> {
         let credentials = credentials.clone();
         let (sender, receiver) = std::sync::mpsc::sync_channel(32);
-        std::thread::Builder::new().name("aiperf-k8s-watch".to_string()).spawn(move || {
-            let result = tokio::runtime::Builder::new_current_thread().enable_all().build()
-                .map_err(|error| KubeError::Transport(error.to_string()))
-                .and_then(|runtime| runtime.block_on(async {
-                    tokio::time::timeout(request.deadline, stream_watch(&credentials, request, &sender)).await
-                        .map_err(|_| KubeError::Transport("Kubernetes watch timed out".to_string()))?
-                }));
-            if let Err(error) = result { let _ = sender.try_send(Err(error)); }
-        }).map_err(KubeError::Io)?;
+        std::thread::Builder::new()
+            .name("aiperf-k8s-watch".to_string())
+            .spawn(move || {
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| KubeError::Transport(error.to_string()))
+                    .and_then(|runtime| {
+                        runtime.block_on(async {
+                            tokio::time::timeout(
+                                request.deadline,
+                                stream_watch(&credentials, request, &sender),
+                            )
+                            .await
+                            .map_err(|_| {
+                                KubeError::Transport("Kubernetes watch timed out".to_string())
+                            })?
+                        })
+                    });
+                if let Err(error) = result {
+                    let _ = sender.try_send(Err(error));
+                }
+            })
+            .map_err(KubeError::Io)?;
         Ok(KubeWatch { receiver })
     }
 }
 
 fn send_bounded(credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
         .map_err(|error| KubeError::Transport(error.to_string()))?;
     runtime.block_on(async {
-        tokio::time::timeout(request.deadline, send_request(credentials, request)).await
+        tokio::time::timeout(request.deadline, send_request(credentials, request))
+            .await
             .map_err(|_| KubeError::Transport("Kubernetes API request timed out".to_string()))?
     })
 }
 
-fn client_auth(credentials: &KubeCredentials) -> Result<Option<(Vec<rustls::pki_types::CertificateDer<'static>>, rustls::pki_types::PrivateKeyDer<'static>)>, KubeError> {
-    match (&credentials.client_certificate_pem, &credentials.client_key_pem) {
+fn client_auth(
+    credentials: &KubeCredentials,
+) -> Result<
+    Option<(
+        Vec<rustls::pki_types::CertificateDer<'static>>,
+        rustls::pki_types::PrivateKeyDer<'static>,
+    )>,
+    KubeError,
+> {
+    match (
+        &credentials.client_certificate_pem,
+        &credentials.client_key_pem,
+    ) {
         (None, None) => Ok(None),
         (Some(certificate), Some(key)) => {
             let mut certificate = certificate.as_slice();
-            let certificates = rustls_pemfile::certs(&mut certificate).collect::<Result<Vec<_>, _>>()
-                .map_err(|error| KubeError::Tls(format!("failed to parse Kubernetes client certificate: {error}")))?;
-            if certificates.is_empty() { return Err(KubeError::Tls("Kubernetes client certificate contains no certificates".to_string())); }
+            let certificates = rustls_pemfile::certs(&mut certificate)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| {
+                    KubeError::Tls(format!(
+                        "failed to parse Kubernetes client certificate: {error}"
+                    ))
+                })?;
+            if certificates.is_empty() {
+                return Err(KubeError::Tls(
+                    "Kubernetes client certificate contains no certificates".to_string(),
+                ));
+            }
             let mut key = key.as_slice();
             let key = rustls_pemfile::private_key(&mut key)
-                .map_err(|error| KubeError::Tls(format!("failed to parse Kubernetes client key: {error}")))?
-                .ok_or_else(|| KubeError::Tls("Kubernetes client key contains no private key".to_string()))?;
+                .map_err(|error| {
+                    KubeError::Tls(format!("failed to parse Kubernetes client key: {error}"))
+                })?
+                .ok_or_else(|| {
+                    KubeError::Tls("Kubernetes client key contains no private key".to_string())
+                })?;
             Ok(Some((certificates, key)))
         }
-        _ => Err(KubeError::Authentication("Kubernetes client certificate and key must be configured together".to_string())),
+        _ => Err(KubeError::Authentication(
+            "Kubernetes client certificate and key must be configured together".to_string(),
+        )),
     }
 }
 
-async fn send_request(credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
+async fn send_request(
+    credentials: &KubeCredentials,
+    request: KubeRequest,
+) -> Result<u16, KubeError> {
     let response = open_response(credentials, request).await?;
     let status = response.status().as_u16();
     let _ = response.into_body().collect().await;
@@ -246,7 +340,10 @@ async fn stream_watch(
 ) -> Result<(), KubeError> {
     let mut response = open_response(credentials, request).await?;
     if !response.status().is_success() {
-        return Err(KubeError::Transport(format!("Kubernetes watch returned {}", response.status())));
+        return Err(KubeError::Transport(format!(
+            "Kubernetes watch returned {}",
+            response.status()
+        )));
     }
     let mut pending = Vec::new();
     while let Some(frame) = response.body_mut().frame().await {
@@ -260,11 +357,15 @@ async fn stream_watch(
             }
             while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                 let record: Vec<_> = pending.drain(..=newline).collect();
-                if sender.try_send(Ok(record)).is_err() { return Ok(()); }
+                if sender.try_send(Ok(record)).is_err() {
+                    return Ok(());
+                }
             }
         }
     }
-    if !pending.is_empty() && sender.send(Ok(pending)).is_err() { return Ok(()); }
+    if !pending.is_empty() && sender.send(Ok(pending)).is_err() {
+        return Ok(());
+    }
     Ok(())
 }
 
@@ -274,45 +375,77 @@ async fn open_response(
 ) -> Result<hyper::Response<hyper::body::Incoming>, KubeError> {
     let client_auth = client_auth(credentials)?;
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let config = if credentials.insecure_skip_tls_verify {
-        let builder = rustls::ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .map_err(|error| KubeError::Tls(format!("rustls provider initialization failed: {error}")))?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(InsecureVerifier));
-        match client_auth {
-            Some((certificates, key)) => builder.with_client_auth_cert(certificates, key)
-                .map_err(|error| KubeError::Tls(format!("invalid Kubernetes client certificate: {error}")))?,
-            None => builder.with_no_client_auth(),
-        }
-    } else {
-        let mut ca_pem = credentials.ca_pem.as_deref().ok_or_else(|| KubeError::Tls("Kubernetes API credentials omitted a certificate authority".to_string()))?;
-        let mut roots = rustls::RootCertStore::empty();
-        let certificates = rustls_pemfile::certs(&mut ca_pem).collect::<Result<Vec<_>, _>>()
-            .map_err(|error| KubeError::Tls(format!("failed to parse Kubernetes CA PEM: {error}")))?;
-        if certificates.is_empty() { return Err(KubeError::Tls("Kubernetes CA PEM contains no certificates".to_string())); }
-        for certificate in certificates { roots.add(certificate).map_err(|error| KubeError::Tls(format!("failed to add Kubernetes CA: {error}")))?; }
-        let builder = rustls::ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .map_err(|error| KubeError::Tls(format!("rustls provider initialization failed: {error}")))?
-            .with_root_certificates(roots);
-        match client_auth {
-            Some((certificates, key)) => builder.with_client_auth_cert(certificates, key)
-                .map_err(|error| KubeError::Tls(format!("invalid Kubernetes client certificate: {error}")))?,
-            None => builder.with_no_client_auth(),
-        }
-    };
+    let config =
+        if credentials.insecure_skip_tls_verify {
+            let builder = rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .map_err(|error| {
+                    KubeError::Tls(format!("rustls provider initialization failed: {error}"))
+                })?
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(InsecureVerifier));
+            match client_auth {
+                Some((certificates, key)) => builder
+                    .with_client_auth_cert(certificates, key)
+                    .map_err(|error| {
+                        KubeError::Tls(format!("invalid Kubernetes client certificate: {error}"))
+                    })?,
+                None => builder.with_no_client_auth(),
+            }
+        } else {
+            let mut ca_pem = credentials.ca_pem.as_deref().ok_or_else(|| {
+                KubeError::Tls(
+                    "Kubernetes API credentials omitted a certificate authority".to_string(),
+                )
+            })?;
+            let mut roots = rustls::RootCertStore::empty();
+            let certificates = rustls_pemfile::certs(&mut ca_pem)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| {
+                    KubeError::Tls(format!("failed to parse Kubernetes CA PEM: {error}"))
+                })?;
+            if certificates.is_empty() {
+                return Err(KubeError::Tls(
+                    "Kubernetes CA PEM contains no certificates".to_string(),
+                ));
+            }
+            for certificate in certificates {
+                roots.add(certificate).map_err(|error| {
+                    KubeError::Tls(format!("failed to add Kubernetes CA: {error}"))
+                })?;
+            }
+            let builder = rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .map_err(|error| {
+                    KubeError::Tls(format!("rustls provider initialization failed: {error}"))
+                })?
+                .with_root_certificates(roots);
+            match client_auth {
+                Some((certificates, key)) => builder
+                    .with_client_auth_cert(certificates, key)
+                    .map_err(|error| {
+                        KubeError::Tls(format!("invalid Kubernetes client certificate: {error}"))
+                    })?,
+                None => builder.with_no_client_auth(),
+            }
+        };
     let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
     let tcp = tokio::net::TcpStream::connect((credentials.host.as_str(), credentials.port))
         .await
         .map_err(|error| KubeError::Transport(error.to_string()))?;
     let server_name = rustls::pki_types::ServerName::try_from(credentials.server_name.clone())
         .map_err(|error| KubeError::Tls(format!("invalid Kubernetes server name: {error}")))?;
-    let tls = connector.connect(server_name, tcp).await.map_err(|error| KubeError::Tls(error.to_string()))?;
-    let (mut sender, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls))
+    let tls = connector
+        .connect(server_name, tcp)
         .await
-        .map_err(|error| KubeError::Transport(error.to_string()))?;
-    tokio::spawn(async move { let _ = connection.await; });
+        .map_err(|error| KubeError::Tls(error.to_string()))?;
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls))
+            .await
+            .map_err(|error| KubeError::Transport(error.to_string()))?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
     let mut builder = Request::builder()
         .method(request.method.as_str())
         .uri(request.path)
@@ -322,7 +455,12 @@ async fn open_response(
     if let Some(token) = &credentials.token {
         builder = builder.header("authorization", format!("Bearer {token}"));
     }
-    sender.send_request(builder.body(Full::<Bytes>::new(Bytes::from(request.body))).map_err(|error| KubeError::Transport(error.to_string()))?)
+    sender
+        .send_request(
+            builder
+                .body(Full::<Bytes>::new(Bytes::from(request.body)))
+                .map_err(|error| KubeError::Transport(error.to_string()))?,
+        )
         .await
         .map_err(|error| KubeError::Transport(error.to_string()))
 }

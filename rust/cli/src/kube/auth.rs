@@ -59,9 +59,13 @@ impl KubeAuthOptions {
         kubeconfig: Option<std::ffi::OsString>,
         home: Option<PathBuf>,
     ) -> Result<PathBuf, KubeError> {
-        if let Some(path) = explicit { return Ok(path.to_path_buf()); }
+        if let Some(path) = explicit {
+            return Ok(path.to_path_buf());
+        }
         if let Some(paths) = kubeconfig {
-            if let Some(path) = std::env::split_paths(&paths).next() { return Ok(path); }
+            if let Some(path) = std::env::split_paths(&paths).next() {
+                return Ok(path);
+            }
         }
         home.map(|home| home.join(".kube/config")).ok_or_else(|| {
             KubeError::Authentication("HOME is unset and no kubeconfig was selected".to_string())
@@ -84,10 +88,16 @@ impl KubeAuthOptions {
 
     /// Return every selected kubeconfig entry in Kubernetes precedence order.
     pub fn kubeconfig_paths(&self) -> Result<Vec<PathBuf>, KubeError> {
-        if let Some(path) = &self.kubeconfig { return Ok(vec![path.clone()]); }
+        if let Some(path) = &self.kubeconfig {
+            return Ok(vec![path.clone()]);
+        }
         if let Some(paths) = std::env::var_os("KUBECONFIG") {
-            let paths: Vec<_> = std::env::split_paths(&paths).filter(|path| !path.as_os_str().is_empty()).collect();
-            if !paths.is_empty() { return Ok(paths); }
+            let paths: Vec<_> = std::env::split_paths(&paths)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect();
+            if !paths.is_empty() {
+                return Ok(paths);
+            }
         }
         Ok(vec![self.kubeconfig_path()?])
     }
@@ -102,7 +112,9 @@ pub fn in_cluster_credentials(
 ) -> Result<KubeCredentials, KubeError> {
     let token = std::fs::read_to_string(token_path)?.trim().to_string();
     if token.is_empty() {
-        return Err(KubeError::Authentication("service-account token is empty".to_string()));
+        return Err(KubeError::Authentication(
+            "service-account token is empty".to_string(),
+        ));
     }
     Ok(KubeCredentials {
         server_name: host.clone(),
@@ -131,33 +143,84 @@ struct KubeConfig {
 impl KubeConfig {
     fn set_source(&mut self, path: &Path) {
         let source = path.to_path_buf();
-        for cluster in &mut self.clusters { cluster.source = Some(source.clone()); }
-        for user in &mut self.users { user.source = Some(source.clone()); }
+        for cluster in &mut self.clusters {
+            cluster.source = Some(source.clone());
+        }
+        for user in &mut self.users {
+            user.source = Some(source.clone());
+        }
     }
 
     fn merge(&mut self, next: Self) {
-        if self.current_context.is_none() { self.current_context = next.current_context; }
-        for cluster in next.clusters { if !self.clusters.iter().any(|entry| entry.name == cluster.name) { self.clusters.push(cluster); } }
-        for context in next.contexts { if !self.contexts.iter().any(|entry| entry.name == context.name) { self.contexts.push(context); } }
-        for user in next.users { if !self.users.iter().any(|entry| entry.name == user.name) { self.users.push(user); } }
+        if self.current_context.is_none() {
+            self.current_context = next.current_context;
+        }
+        for cluster in next.clusters {
+            if !self.clusters.iter().any(|entry| entry.name == cluster.name) {
+                self.clusters.push(cluster);
+            }
+        }
+        for context in next.contexts {
+            if !self.contexts.iter().any(|entry| entry.name == context.name) {
+                self.contexts.push(context);
+            }
+        }
+        for user in next.users {
+            if !self.users.iter().any(|entry| entry.name == user.name) {
+                self.users.push(user);
+            }
+        }
     }
 
-    fn resolve(&self, options: &KubeAuthOptions, path: &Path) -> Result<KubeCredentials, KubeError> {
-        let context_name = options.context.as_deref().or(self.current_context.as_deref()).ok_or_else(|| {
-            KubeError::Authentication("kubeconfig has no selected context".to_string())
-        })?;
-        let context = self.contexts.iter().find(|entry| entry.name == context_name).ok_or_else(|| {
-            KubeError::Authentication(format!("kubeconfig context {context_name} does not exist"))
-        })?;
-        let cluster = self.clusters.iter().find(|entry| entry.name == context.context.cluster).ok_or_else(|| {
-            KubeError::Authentication(format!("kubeconfig cluster {} does not exist", context.context.cluster))
-        })?;
-        let user = self.users.iter().find(|entry| entry.name == context.context.user).ok_or_else(|| {
-            KubeError::Authentication(format!("kubeconfig user {} does not exist", context.context.user))
-        })?;
+    fn resolve(
+        &self,
+        options: &KubeAuthOptions,
+        path: &Path,
+    ) -> Result<KubeCredentials, KubeError> {
+        let context_name = options
+            .context
+            .as_deref()
+            .or(self.current_context.as_deref())
+            .ok_or_else(|| {
+                KubeError::Authentication("kubeconfig has no selected context".to_string())
+            })?;
+        let context = self
+            .contexts
+            .iter()
+            .find(|entry| entry.name == context_name)
+            .ok_or_else(|| {
+                KubeError::Authentication(format!(
+                    "kubeconfig context {context_name} does not exist"
+                ))
+            })?;
+        let cluster = self
+            .clusters
+            .iter()
+            .find(|entry| entry.name == context.context.cluster)
+            .ok_or_else(|| {
+                KubeError::Authentication(format!(
+                    "kubeconfig cluster {} does not exist",
+                    context.context.cluster
+                ))
+            })?;
+        let user = self
+            .users
+            .iter()
+            .find(|entry| entry.name == context.context.user)
+            .ok_or_else(|| {
+                KubeError::Authentication(format!(
+                    "kubeconfig user {} does not exist",
+                    context.context.user
+                ))
+            })?;
         let (host, port) = split_host_port(&cluster.cluster.server)?;
-        if cluster.cluster.insecure_skip_tls_verify.unwrap_or(false) && !options.insecure_skip_tls_verify {
-            return Err(KubeError::Authentication("kubeconfig requests insecure TLS but --insecure-skip-tls-verify was not supplied".to_string()));
+        if cluster.cluster.insecure_skip_tls_verify.unwrap_or(false)
+            && !options.insecure_skip_tls_verify
+        {
+            return Err(KubeError::Authentication(
+                "kubeconfig requests insecure TLS but --insecure-skip-tls-verify was not supplied"
+                    .to_string(),
+            ));
         }
         let token = resolve_token(&user.user, user.source.as_deref().unwrap_or(path))?;
         let client_certificate_pem = resolve_pem(
@@ -171,7 +234,10 @@ impl KubeConfig {
             user.source.as_deref().unwrap_or(path),
         )?;
         if token.is_none() && (client_certificate_pem.is_none() || client_key_pem.is_none()) {
-            return Err(KubeError::Authentication("kubeconfig user has no bearer token, exec credential, or client cert/key pair".to_string()));
+            return Err(KubeError::Authentication(
+                "kubeconfig user has no bearer token, exec credential, or client cert/key pair"
+                    .to_string(),
+            ));
         }
         let ca_pem = resolve_pem(
             cluster.cluster.certificate_authority_data.as_deref(),
@@ -192,20 +258,43 @@ impl KubeConfig {
 }
 
 fn split_host_port(endpoint: &str) -> Result<(String, u16), KubeError> {
-    let url = Url::parse(endpoint)
-        .map_err(|error| KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}: {error}")))?;
-    if url.scheme() != "https" || url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
-        return Err(KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}")));
+    let url = Url::parse(endpoint).map_err(|error| {
+        KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}: {error}"))
+    })?;
+    if url.scheme() != "https"
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(KubeError::Authentication(format!(
+            "invalid Kubernetes API server {endpoint}"
+        )));
     }
-    let host = url.host_str().ok_or_else(|| KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}")))?;
-    Ok((host.trim_start_matches('[').trim_end_matches(']').to_string(), url.port().unwrap_or(443)))
+    let host = url.host_str().ok_or_else(|| {
+        KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}"))
+    })?;
+    Ok((
+        host.trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_string(),
+        url.port().unwrap_or(443),
+    ))
 }
 
 fn resolve_token(user: &User, config_path: &Path) -> Result<Option<String>, KubeError> {
-    if let Some(token) = &user.token { return Ok(Some(token.clone())); }
+    if let Some(token) = &user.token {
+        return Ok(Some(token.clone()));
+    }
     if let Some(path) = &user.token_file {
         let candidate = Path::new(path);
-        let path = if candidate.is_absolute() { candidate.to_path_buf() } else { config_path.parent().unwrap_or(Path::new(".")).join(candidate) };
+        let path = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            config_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join(candidate)
+        };
         return Ok(Some(std::fs::read_to_string(path)?.trim().to_string()));
     }
     user.exec.as_ref().map(run_exec_credential).transpose()
@@ -217,14 +306,23 @@ fn run_exec_credential(exec: &ExecCredential) -> Result<String, KubeError> {
         .output()
         .map_err(KubeError::Io)?;
     if !output.status.success() {
-        return Err(KubeError::Authentication(format!("exec credential command {} failed", exec.command)));
+        return Err(KubeError::Authentication(format!(
+            "exec credential command {} failed",
+            exec.command
+        )));
     }
     let credential: ExecCredentialResponse = serde_json::from_slice(&output.stdout)
         .map_err(|error| KubeError::Decode(format!("exec credential response: {error}")))?;
-    credential.status.token.ok_or_else(|| KubeError::Authentication("exec credential response omitted status.token".to_string()))
+    credential.status.token.ok_or_else(|| {
+        KubeError::Authentication("exec credential response omitted status.token".to_string())
+    })
 }
 
-fn resolve_pem(data: Option<&str>, file: Option<&str>, config_path: &Path) -> Result<Option<Vec<u8>>, KubeError> {
+fn resolve_pem(
+    data: Option<&str>,
+    file: Option<&str>,
+    config_path: &Path,
+) -> Result<Option<Vec<u8>>, KubeError> {
     if let Some(data) = data {
         return base64::engine::general_purpose::STANDARD
             .decode(data)
@@ -233,29 +331,74 @@ fn resolve_pem(data: Option<&str>, file: Option<&str>, config_path: &Path) -> Re
     }
     file.map(|file| {
         let candidate = Path::new(file);
-        let resolved = if candidate.is_absolute() { candidate.to_path_buf() } else { config_path.parent().unwrap_or(Path::new(".")).join(candidate) };
+        let resolved = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            config_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join(candidate)
+        };
         std::fs::read(resolved).map_err(KubeError::Io)
-    }).transpose()
+    })
+    .transpose()
 }
 
 #[derive(Deserialize)]
-struct NamedCluster { name: String, cluster: Cluster, #[serde(skip)] source: Option<PathBuf> }
+struct NamedCluster {
+    name: String,
+    cluster: Cluster,
+    #[serde(skip)]
+    source: Option<PathBuf>,
+}
 #[derive(Deserialize)]
-struct NamedContext { name: String, context: Context }
+struct NamedContext {
+    name: String,
+    context: Context,
+}
 #[derive(Deserialize)]
-struct NamedUser { name: String, user: User, #[serde(skip)] source: Option<PathBuf> }
+struct NamedUser {
+    name: String,
+    user: User,
+    #[serde(skip)]
+    source: Option<PathBuf>,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
-struct Cluster { server: String, certificate_authority: Option<String>, certificate_authority_data: Option<String>, insecure_skip_tls_verify: Option<bool> }
+struct Cluster {
+    server: String,
+    certificate_authority: Option<String>,
+    certificate_authority_data: Option<String>,
+    insecure_skip_tls_verify: Option<bool>,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
-struct Context { cluster: String, user: String }
+struct Context {
+    cluster: String,
+    user: String,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
-struct User { token: Option<String>, token_file: Option<String>, client_certificate: Option<String>, client_certificate_data: Option<String>, client_key: Option<String>, client_key_data: Option<String>, exec: Option<ExecCredential> }
+struct User {
+    token: Option<String>,
+    token_file: Option<String>,
+    client_certificate: Option<String>,
+    client_certificate_data: Option<String>,
+    client_key: Option<String>,
+    client_key_data: Option<String>,
+    exec: Option<ExecCredential>,
+}
 #[derive(Deserialize)]
-struct ExecCredential { command: String, #[serde(default)] args: Vec<String> }
+struct ExecCredential {
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+}
 #[derive(Deserialize)]
-struct ExecCredentialResponse { status: ExecCredentialStatus }
+struct ExecCredentialResponse {
+    status: ExecCredentialStatus,
+}
 #[derive(Deserialize)]
-struct ExecCredentialStatus { token: Option<String> }
+struct ExecCredentialStatus {
+    token: Option<String>,
+}

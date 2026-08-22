@@ -31,9 +31,13 @@ pub fn project(envelope: &ControllerEnvelope) -> Result<Value, KubeError> {
 }
 
 fn role(envelope: &ControllerEnvelope, needle: NativeK8sRole) -> Result<&RoleEnvelope, KubeError> {
-    envelope.roles.iter().find(|role| role.name == needle).ok_or_else(|| {
-        KubeError::ContractValidation(format!("native-k8s/v1 envelope omits {needle:?} role"))
-    })
+    envelope
+        .roles
+        .iter()
+        .find(|role| role.name == needle)
+        .ok_or_else(|| {
+            KubeError::ContractValidation(format!("native-k8s/v1 envelope omits {needle:?} role"))
+        })
 }
 
 fn job(name: &str, replicas: u32, envelope: &ControllerEnvelope, roles: &[&RoleEnvelope]) -> Value {
@@ -54,8 +58,14 @@ fn container(role: &RoleEnvelope, envelope: &ControllerEnvelope) -> Value {
     environment.insert("AIPERF_JOB_ID".to_string(), envelope.job_id.clone());
     environment.insert("AIPERF_NAMESPACE".to_string(), envelope.namespace.clone());
     environment.insert("AIPERF_CELL_LAUNCHER".to_string(), "k8s".to_string());
-    environment.insert("AIPERF_CONTROLLER_ADDRESS".to_string(), envelope.controller_address.clone());
-    environment.insert("AIPERF_ROLE_BOOTSTRAP_PATH".to_string(), role.bootstrap.mount_path.clone());
+    environment.insert(
+        "AIPERF_CONTROLLER_ADDRESS".to_string(),
+        envelope.controller_address.clone(),
+    );
+    environment.insert(
+        "AIPERF_ROLE_BOOTSTRAP_PATH".to_string(),
+        role.bootstrap.mount_path.clone(),
+    );
     json!({
         "name": role.name,
         "image": envelope.image_digest,
@@ -87,13 +97,32 @@ mod tests {
 
     #[test]
     fn projects_exact_three_native_roles_without_secret_bytes() {
-        let input: Value = serde_json::from_str(include_str!("../../../../contracts/native-k8s/v1/fixtures/valid-multi-cell-envelope.json")).expect("fixture");
+        let input: Value = serde_json::from_str(include_str!(
+            "../../../../contracts/native-k8s/v1/fixtures/valid-multi-cell-envelope.json"
+        ))
+        .expect("fixture");
         let projected = project(&validate_envelope(input).expect("envelope")).expect("projection");
-        let jobs = projected["spec"]["jobSet"]["spec"]["replicatedJobs"].as_array().expect("jobs");
+        let jobs = projected["spec"]["jobSet"]["spec"]["replicatedJobs"]
+            .as_array()
+            .expect("jobs");
         assert_eq!(jobs.len(), 2);
-        assert_eq!(jobs[0]["template"]["spec"]["containers"].as_array().expect("containers").len(), 2);
+        assert_eq!(
+            jobs[0]["template"]["spec"]["containers"]
+                .as_array()
+                .expect("containers")
+                .len(),
+            2
+        );
         assert_eq!(jobs[1]["replicas"], 4);
-        assert!(serde_json::to_string(&projected).expect("JSON").contains("secretName"));
-        assert!(!serde_json::to_string(&projected).expect("JSON").contains("private bootstrap"));
+        assert!(
+            serde_json::to_string(&projected)
+                .expect("JSON")
+                .contains("secretName")
+        );
+        assert!(
+            !serde_json::to_string(&projected)
+                .expect("JSON")
+                .contains("private bootstrap")
+        );
     }
 }

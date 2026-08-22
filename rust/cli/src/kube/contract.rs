@@ -106,7 +106,10 @@ pub struct ImageCapabilities {
 /// Decode and validate an envelope before it can cross the CLI/operator boundary.
 pub fn validate_envelope(value: Value) -> Result<ControllerEnvelope, KubeError> {
     require_supported_version(&value)?;
-    validate_schema(include_str!("../../../../contracts/native-k8s/v1/controller-envelope.schema.json"), &value)?;
+    validate_schema(
+        include_str!("../../../../contracts/native-k8s/v1/controller-envelope.schema.json"),
+        &value,
+    )?;
     let envelope = serde_json::from_value::<ControllerEnvelope>(value)
         .map_err(|error| KubeError::Decode(error.to_string()))?;
     for role in &envelope.roles {
@@ -126,7 +129,10 @@ pub fn validate_image_capabilities(
     image_digest: &str,
 ) -> Result<ImageCapabilities, KubeError> {
     require_supported_version(&value)?;
-    validate_schema(include_str!("../../../../contracts/native-k8s/v1/image-capabilities.schema.json"), &value)?;
+    validate_schema(
+        include_str!("../../../../contracts/native-k8s/v1/image-capabilities.schema.json"),
+        &value,
+    )?;
     let capabilities = serde_json::from_value::<ImageCapabilities>(value)
         .map_err(|error| KubeError::Decode(error.to_string()))?;
     if capabilities.image_digest != image_digest {

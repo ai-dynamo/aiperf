@@ -58,15 +58,27 @@ mod tests {
             b"private material",
         )
         .expect("bundle");
-        assert_eq!(std::fs::metadata(path).expect("metadata").permissions().mode() & 0o777, 0o600);
-        assert_eq!(reference.sha256, format!("{:x}", Sha256::digest(b"private material")));
-        assert!(create_bundle(
-            directory.path(),
-            "controller-bootstrap".to_string(),
-            NativeK8sRole::Controller,
-            "/run/aiperf/bootstrap".to_string(),
-            b"private material",
-        )
-        .is_err());
+        assert_eq!(
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            reference.sha256,
+            format!("{:x}", Sha256::digest(b"private material"))
+        );
+        assert!(
+            create_bundle(
+                directory.path(),
+                "controller-bootstrap".to_string(),
+                NativeK8sRole::Controller,
+                "/run/aiperf/bootstrap".to_string(),
+                b"private material",
+            )
+            .is_err()
+        );
     }
 }

@@ -23,8 +23,8 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use serde_json::json;
 
-use sha2::{Digest, Sha256};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 const RESULTS_MANIFEST_NAME: &str = "results-manifest.json";
 const READY_MARKER_NAME: &str = ".aiperf_results_ready.json";
@@ -109,14 +109,32 @@ struct ResultsManifest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ManifestArtifact { path: String, sha256: String, bytes: u64, content_type: String }
+struct ManifestArtifact {
+    path: String,
+    sha256: String,
+    bytes: u64,
+    content_type: String,
+}
 
 fn read_manifest(base_dir: &Path) -> Option<ResultsManifest> {
-    let manifest: ResultsManifest = serde_json::from_slice(&std::fs::read(base_dir.join(RESULTS_MANIFEST_NAME)).ok()?).ok()?;
-    if manifest.contract_version != "native-k8s/v1" || !manifest.ready || manifest.run_id.is_empty() || manifest.artifact_root.is_empty() || manifest.was_cancelled && manifest.artifacts.is_empty() { return None; }
+    let manifest: ResultsManifest =
+        serde_json::from_slice(&std::fs::read(base_dir.join(RESULTS_MANIFEST_NAME)).ok()?).ok()?;
+    if manifest.contract_version != "native-k8s/v1"
+        || !manifest.ready
+        || manifest.run_id.is_empty()
+        || manifest.artifact_root.is_empty()
+        || manifest.was_cancelled && manifest.artifacts.is_empty()
+    {
+        return None;
+    }
     let mut paths = std::collections::HashSet::new();
     for artifact in &manifest.artifacts {
-        if safe_relative(&artifact.path).is_none() || !paths.insert(&artifact.path) || artifact.sha256.len() != 64 { return None; }
+        if safe_relative(&artifact.path).is_none()
+            || !paths.insert(&artifact.path)
+            || artifact.sha256.len() != 64
+        {
+            return None;
+        }
     }
     Some(manifest)
 }
@@ -137,21 +155,41 @@ fn serve_file(base_dir: &Path, filename: &str) -> Response<Full<Bytes>> {
             &json!({"detail": format!("invalid filename {filename:?}: path traversal")}),
         );
     };
-    if rel.file_name().and_then(|n| n.to_str()) == Some(READY_MARKER_NAME) || rel.file_name().and_then(|n| n.to_str()) == Some(RESULTS_MANIFEST_NAME) {
-        return json_response(StatusCode::BAD_REQUEST, &json!({"detail": "reserved marker name"}));
+    if rel.file_name().and_then(|n| n.to_str()) == Some(READY_MARKER_NAME)
+        || rel.file_name().and_then(|n| n.to_str()) == Some(RESULTS_MANIFEST_NAME)
+    {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            &json!({"detail": "reserved marker name"}),
+        );
     }
     let Some(manifest) = read_manifest(base_dir) else {
-        return json_response(StatusCode::NOT_FOUND, &json!({"detail": "results manifest is not ready"}));
+        return json_response(
+            StatusCode::NOT_FOUND,
+            &json!({"detail": "results manifest is not ready"}),
+        );
     };
     let relative = posix(&rel);
-    let Some(declared) = manifest.artifacts.iter().find(|artifact| artifact.path == relative) else {
-        return json_response(StatusCode::NOT_FOUND, &json!({"detail": "artifact is not declared"}));
+    let Some(declared) = manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path == relative)
+    else {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            &json!({"detail": "artifact is not declared"}),
+        );
     };
     let file_path = base_dir.join(&rel);
     match std::fs::read(&file_path) {
         Ok(bytes) => {
-            if bytes.len() as u64 != declared.bytes || format!("{:x}", Sha256::digest(&bytes)) != declared.sha256 {
-                return json_response(StatusCode::NOT_FOUND, &json!({"detail": "artifact digest mismatch"}));
+            if bytes.len() as u64 != declared.bytes
+                || format!("{:x}", Sha256::digest(&bytes)) != declared.sha256
+            {
+                return json_response(
+                    StatusCode::NOT_FOUND,
+                    &json!({"detail": "artifact digest mismatch"}),
+                );
             }
             let ct = declared.content_type.as_str();
             let name = file_path
