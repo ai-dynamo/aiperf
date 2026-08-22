@@ -2808,18 +2808,22 @@ impl LaneResumeGraphTraceSource {
         session_limit: Option<u64>,
         request_limit: Option<u64>,
         trace_instances: GraphTraceInstanceSequence,
-        start_ordinal: u64,
+        local_start_ordinal: u64,
         t_star: TStarWindow,
         partition: Option<ModuloCellPartition>,
     ) -> Result<Self> {
         // Request-bounded sources are not cell-partitioned. Match the recycle
         // selection below when assigning prefix ordinals to the global session
-        // budget so every cell subtracts the same aggregate prefix range.
+        // budget. Each local prefix entry consumes one complete cell-count-wide
+        // ownership round before this cell's next recyclable ordinal.
         let session_partition = partition
             .filter(|partition| partition.cell_count() > 1 && request_limit.is_none())
             .unwrap_or_else(ModuloCellPartition::direct);
         let cell_id = u64::from(session_partition.cell_id());
         let cell_count = u64::from(session_partition.cell_count());
+        let global_start_ordinal = local_start_ordinal
+            .checked_mul(cell_count)
+            .ok_or_else(|| anyhow!("graph resume global recycle cursor exceeds u64"))?;
         let mut accepted = 0usize;
         let mut admitted_requests = 0u64;
         let mut prefix_exhausted_budget = false;
@@ -2847,12 +2851,12 @@ impl LaneResumeGraphTraceSource {
         }
         prefix.truncate(accepted);
 
-        let aggregate_prefix_sessions = u64::try_from(prefix.len())
+        let prefix_global_span = u64::try_from(prefix.len())
             .context("resume prefix count exceeds u64")?
             .checked_mul(cell_count)
-            .ok_or_else(|| anyhow!("aggregate resume prefix count exceeds u64"))?;
+            .ok_or_else(|| anyhow!("resume prefix global span exceeds u64"))?;
         let remaining_sessions =
-            session_limit.map(|limit| limit.saturating_sub(aggregate_prefix_sessions));
+            session_limit.map(|limit| limit.saturating_sub(prefix_global_span));
         let remaining_requests = request_limit.map(|limit| limit.saturating_sub(admitted_requests));
         let has_recycle_budget = !prefix_exhausted_budget
             && remaining_sessions != Some(0)
@@ -2864,7 +2868,7 @@ impl LaneResumeGraphTraceSource {
                     remaining_sessions,
                     remaining_requests,
                     trace_instances,
-                    start_ordinal,
+                    global_start_ordinal,
                     t_star,
                     partition,
                 )
@@ -3066,7 +3070,7 @@ fn rebuild_resume_workload(
 
     // Bounded recycling continues after pressure and fresh-start draws; unbounded
     // profiling starts at zero to cover the corpus once.
-    let start_ordinal = if recycle_bounded {
+    let local_start_ordinal = if recycle_bounded {
         handoff
             .corpus_cursor
             .checked_add(fresh_start_draws)
@@ -3080,7 +3084,7 @@ fn rebuild_resume_workload(
         resume.session_limit,
         resume.request_limit,
         resume.trace_instances.clone(),
-        start_ordinal,
+        local_start_ordinal,
         resume.t_star,
         ModuloCellPartition::from_env(),
     )?);
@@ -5945,7 +5949,7 @@ mod tests {
         recycle_plans: Vec<GraphTracePlan>,
         session_limit: Option<u64>,
         request_limit: Option<u64>,
-        start_ordinal: u64,
+        local_start_ordinal: u64,
         partition: ModuloCellPartition,
     ) -> LaneResumeGraphTraceSource {
         LaneResumeGraphTraceSource::new(
@@ -5954,7 +5958,7 @@ mod tests {
             session_limit,
             request_limit,
             GraphTraceInstanceSequence::default(),
-            start_ordinal,
+            local_start_ordinal,
             TStarWindow::default(),
             Some(partition),
         )
@@ -6031,7 +6035,7 @@ mod tests {
     }
 
     #[test]
-    fn lane_resume_source_preserves_cursor_across_global_cellular_session_budget() {
+    fn lane_resume_source_converts_local_cursor_to_global_cellular_ordinal() {
         let make_prefix = || {
             vec![LaneResumePlan {
                 lane: 0,
@@ -6066,12 +6070,51 @@ mod tests {
 
         assert_eq!(
             drawn_trace_ids(&cell_0),
-            vec!["prefix::resume-lane-0", "a::instance-6"]
+            vec!["prefix::resume-lane-0", "b::instance-10", "a::instance-12",]
         );
         assert_eq!(
             drawn_trace_ids(&cell_1),
-            vec!["prefix::resume-lane-0", "c::instance-5", "b::instance-7"]
+            vec!["prefix::resume-lane-0", "c::instance-11"]
         );
+    }
+
+    #[test]
+    fn lane_resume_source_uneven_cellular_concurrency_preserves_global_session_budget() {
+        let prefix = |global_ordinals: &[u64]| {
+            global_ordinals
+                .iter()
+                .enumerate()
+                .map(|(lane, ordinal)| LaneResumePlan {
+                    lane: lane as u64,
+                    plan: pressure_one_node_plan("prefix"),
+                    resume_instance_id: Some(format!("warmup-{ordinal}")),
+                })
+                .collect()
+        };
+        let source = |cell_id, local_cursor, prefix| {
+            lane_resume_source_with_recycle(
+                prefix,
+                vec![pressure_one_node_plan("t")],
+                Some(8),
+                None,
+                local_cursor,
+                ModuloCellPartition::new(cell_id, 3).unwrap(),
+            )
+        };
+
+        let cell_0 = source(0, 2, prefix(&[0, 3]));
+        let cell_1 = source(1, 1, prefix(&[1]));
+        let cell_2 = source(2, 1, prefix(&[2]));
+
+        assert_eq!(
+            drawn_trace_ids(&cell_0),
+            vec!["warmup-0", "warmup-3", "t::instance-6"]
+        );
+        assert_eq!(
+            drawn_trace_ids(&cell_1),
+            vec!["warmup-1", "t::instance-4", "t::instance-7"]
+        );
+        assert_eq!(drawn_trace_ids(&cell_2), vec!["warmup-2", "t::instance-5"]);
     }
 
     #[test]
