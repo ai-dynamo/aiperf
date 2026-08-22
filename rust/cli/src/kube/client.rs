@@ -41,12 +41,28 @@ pub struct KubeRequest {
     pub deadline: Duration,
 }
 
+/// Bounded stream of Kubernetes watch events. Dropping it cancels its receiver.
+pub struct KubeWatch {
+    receiver: std::sync::mpsc::Receiver<Result<Vec<u8>, KubeError>>,
+}
+
+impl KubeWatch {
+    /// Wait no longer than `timeout` for the next raw watch event.
+    pub fn next(&self, timeout: Duration) -> Result<Option<Vec<u8>>, KubeError> {
+        match self.receiver.recv_timeout(timeout) {
+            Ok(event) => event.map(Some),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(None),
+        }
+    }
+}
+
 /// Injectable synchronous boundary around the HTTP/TLS implementation.
 pub trait KubeTransport: Send + Sync {
     /// Send a bounded request and return its HTTP status.
     fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError>;
-    /// Open one bounded watch request. Callers own reconnect policy.
-    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError>;
+    /// Open a bounded stream of Kubernetes watch events. Callers own reconnect policy.
+    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<KubeWatch, KubeError>;
 }
 
 /// Kubernetes API client with finite request and watch deadlines.
@@ -95,7 +111,7 @@ impl KubeClient {
     pub fn watch_deadline(&self) -> Duration { self.watch_deadline }
 
     /// Open one bounded watch request. Reconnect policy remains at the caller.
-    pub fn watch(&self, path: &str) -> Result<u16, KubeError> {
+    pub fn watch(&self, path: &str) -> Result<KubeWatch, KubeError> {
         self.transport.watch(&self.credentials, KubeRequest {
             method: "GET".to_string(), path: path.to_string(), content_type: String::new(), body: Vec::new(), deadline: self.watch_deadline,
         })
@@ -156,7 +172,21 @@ impl rustls::client::danger::ServerCertVerifier for InsecureVerifier {
 
 impl KubeTransport for HyperKubeTransport {
     fn send(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> { send_bounded(credentials, request) }
-    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> { send_bounded(credentials, request) }
+
+    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<KubeWatch, KubeError> {
+        let credentials = credentials.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new().name("aiperf-k8s-watch".to_string()).spawn(move || {
+            let result = tokio::runtime::Builder::new_current_thread().enable_all().build()
+                .map_err(|error| KubeError::Transport(error.to_string()))
+                .and_then(|runtime| runtime.block_on(async {
+                    tokio::time::timeout(request.deadline, stream_watch(&credentials, request, &sender)).await
+                        .map_err(|_| KubeError::Transport("Kubernetes watch timed out".to_string()))?
+                }));
+            if let Err(error) = result { let _ = sender.send(Err(error)); }
+        }).map_err(KubeError::Io)?;
+        Ok(KubeWatch { receiver })
+    }
 }
 
 fn send_bounded(credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
@@ -187,6 +217,34 @@ fn client_auth(credentials: &KubeCredentials) -> Result<Option<(Vec<rustls::pki_
 }
 
 async fn send_request(credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
+    let response = open_response(credentials, request).await?;
+    let status = response.status().as_u16();
+    let _ = response.into_body().collect().await;
+    Ok(status)
+}
+
+async fn stream_watch(
+    credentials: &KubeCredentials,
+    request: KubeRequest,
+    sender: &std::sync::mpsc::Sender<Result<Vec<u8>, KubeError>>,
+) -> Result<(), KubeError> {
+    let mut response = open_response(credentials, request).await?;
+    if !response.status().is_success() {
+        return Err(KubeError::Transport(format!("Kubernetes watch returned {}", response.status())));
+    }
+    while let Some(frame) = response.body_mut().frame().await {
+        let frame = frame.map_err(|error| KubeError::Transport(error.to_string()))?;
+        if let Ok(data) = frame.into_data() {
+            if sender.send(Ok(data.to_vec())).is_err() { break; }
+        }
+    }
+    Ok(())
+}
+
+async fn open_response(
+    credentials: &KubeCredentials,
+    request: KubeRequest,
+) -> Result<hyper::Response<hyper::body::Incoming>, KubeError> {
     let client_auth = client_auth(credentials)?;
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let config = if credentials.insecure_skip_tls_verify {
@@ -237,10 +295,7 @@ async fn send_request(credentials: &KubeCredentials, request: KubeRequest) -> Re
     if let Some(token) = &credentials.token {
         builder = builder.header("authorization", format!("Bearer {token}"));
     }
-    let response = sender.send_request(builder.body(Full::<Bytes>::new(Bytes::from(request.body))).map_err(|error| KubeError::Transport(error.to_string()))?)
+    sender.send_request(builder.body(Full::<Bytes>::new(Bytes::from(request.body))).map_err(|error| KubeError::Transport(error.to_string()))?)
         .await
-        .map_err(|error| KubeError::Transport(error.to_string()))?;
-    let status = response.status().as_u16();
-    let _ = response.into_body().collect().await;
-    Ok(status)
+        .map_err(|error| KubeError::Transport(error.to_string()))
 }

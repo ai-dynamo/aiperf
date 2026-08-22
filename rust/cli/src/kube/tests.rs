@@ -109,5 +109,7 @@ impl KubeTransport for RecordingTransport {
         *self.request.lock().map_err(|_| KubeError::Transport("recording lock poisoned".to_string()))? = Some(request);
         Ok(200)
     }
-    fn watch(&self, credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> { self.send(credentials, request) }
+    fn watch(&self, _credentials: &KubeCredentials, _request: KubeRequest) -> Result<super::client::KubeWatch, KubeError> {
+        Err(KubeError::Transport("watch is not needed by this recording transport".to_string()))
+    }
 }
