@@ -146,10 +146,11 @@ local-source serialization; worker-thread lifecycle; identity; per-field
 normalization and absence semantics; boundary `Some(empty)` behavior; counter
 deltas; gauge summaries; partial failures; JPEG raw-FFI behavior; and no
 fallback. Product tests feed fixture sources through the real sidecar and
-accumulator. No local NVIDIA or AMD hardware is required for development,
-testing, or merge. Hardware validation is an opt-in external acceptance check on
-an NVIDIA/NVML host and, when an AMD ROCm host is available, an AMD SMI host; it
-verifies the normalized JSONL and report fields.
+accumulator. Unit and fixture tests require no vendor hardware. Because this
+development environment has NVIDIA hardware, NVML hardware validation is a
+required acceptance check before merge and verifies normalized JSONL and report
+fields. AMD SMI hardware validation remains an opt-in external acceptance check
+when an AMD ROCm host is available.
 
 ## Source anchors
 
