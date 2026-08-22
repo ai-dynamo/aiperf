@@ -198,7 +198,7 @@ fn split_host_port(endpoint: &str) -> Result<(String, u16), KubeError> {
         return Err(KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}")));
     }
     let host = url.host_str().ok_or_else(|| KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}")))?;
-    Ok((host.to_string(), url.port().unwrap_or(443)))
+    Ok((host.trim_start_matches('[').trim_end_matches(']').to_string(), url.port().unwrap_or(443)))
 }
 
 fn resolve_token(user: &User, config_path: &Path) -> Result<Option<String>, KubeError> {
