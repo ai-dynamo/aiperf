@@ -9,7 +9,14 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::{
+    ffi::CString,
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+        unix::{ffi::OsStrExt, fs::PermissionsExt},
+    },
+    path::Component,
+};
 
 use serde_json::Value;
 
@@ -23,6 +30,8 @@ use super::{
 
 struct DiscoveredImportedSelection {
     root: PathBuf,
+    #[cfg(unix)]
+    root_directory: fs::File,
     selected_path: PathBuf,
     requested_source: RecordedAgentSourceFormat,
     candidates: Vec<(PathBuf, PathBuf, ImportedSessionFamily)>,
@@ -37,17 +46,39 @@ struct OpenedImportedAgentSource {
 
 impl OpenedImportedAgentSource {
     fn open(
+        discovered: &DiscoveredImportedSelection,
         source_path: PathBuf,
         relative_path: PathBuf,
         family: ImportedSessionFamily,
     ) -> Result<Self, ImportedAgentError> {
-        let file = open_source_file(&source_path, "unknown")?;
-        Ok(Self {
-            source_path,
-            relative_path,
-            family,
-            file,
-        })
+        #[cfg(unix)]
+        {
+            let file = open_source_file_beneath(
+                &discovered.root_directory,
+                &relative_path,
+                &source_path,
+                "unknown",
+            )?;
+            Ok(Self {
+                source_path,
+                relative_path,
+                family,
+                file,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = discovered;
+            let _ = relative_path;
+            let _ = family;
+            Err(error(
+                &source_path,
+                0,
+                "unknown",
+                "unknown",
+                "secure source acquisition is unavailable on this platform",
+            ))
+        }
     }
 
     fn materialize(
@@ -182,7 +213,8 @@ pub(super) fn acquire_selection(
                     "no recognized source marker in scan",
                 )
             })?;
-            let mut opened = OpenedImportedAgentSource::open(source_path, relative_path, family)?;
+            let mut opened =
+                OpenedImportedAgentSource::open(&discovered, source_path, relative_path, family)?;
             let source = scan_source(
                 &opened.source_path,
                 &mut opened.file,
@@ -224,7 +256,8 @@ pub(super) fn acquire_selection(
     }
     let mut files = Vec::with_capacity(candidates.len());
     for (source_path, relative_path, family) in candidates {
-        let opened = OpenedImportedAgentSource::open(source_path, relative_path, family)?;
+        let opened =
+            OpenedImportedAgentSource::open(&discovered, source_path, relative_path, family)?;
         files.push(opened.materialize(scratch.path(), source)?);
     }
     if source == ImportedAgentSource::Codex {
@@ -388,6 +421,8 @@ fn discover_selection(
     }
 
     let root = resolve_root(&selected_path, is_directory, request.replay_root.as_deref())?;
+    #[cfg(unix)]
+    let root_directory = open_directory_nofollow(&root)?;
     let candidates = match (request.source_format, is_directory) {
         (RecordedAgentSourceFormat::Codex, true) => enumerate_codex(&selected_path)?,
         (RecordedAgentSourceFormat::Codex | RecordedAgentSourceFormat::Auto, false) => {
@@ -439,6 +474,8 @@ fn discover_selection(
     }
     Ok(DiscoveredImportedSelection {
         root,
+        #[cfg(unix)]
+        root_directory,
         selected_path,
         requested_source: request.source_format,
         candidates: files,
@@ -808,6 +845,171 @@ fn open_source_file(path: &Path, source: &'static str) -> Result<fs::File, Impor
     Ok(file)
 }
 
+#[cfg(unix)]
+fn open_directory_nofollow(path: &Path) -> Result<fs::File, ImportedAgentError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut directory = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | directory_open_flags())
+        .open(Path::new("/"))
+        .map_err(|_| error(path, 0, "unknown", "unknown", "cannot read replay root"))?;
+    let relative = path.strip_prefix(Path::new("/")).map_err(|_| {
+        error(
+            path,
+            0,
+            "unknown",
+            "unknown",
+            "replay root must be absolute",
+        )
+    })?;
+    for component in relative.components() {
+        let Component::Normal(name) = component else {
+            return Err(error(
+                path,
+                0,
+                "unknown",
+                "unknown",
+                "invalid replay root component",
+            ));
+        };
+        directory = openat_nofollow(
+            directory.as_raw_fd(),
+            name,
+            directory_open_flags(),
+            path,
+            "unknown",
+        )?;
+    }
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn open_source_file_beneath(
+    root: &fs::File,
+    relative_path: &Path,
+    source_path: &Path,
+    source: &'static str,
+) -> Result<fs::File, ImportedAgentError> {
+    let mut components = relative_path.components().peekable();
+    let mut directory = None;
+    while let Some(component) = components.next() {
+        let directory_fd = directory
+            .as_ref()
+            .map_or_else(|| root.as_raw_fd(), AsRawFd::as_raw_fd);
+        let Component::Normal(name) = component else {
+            return Err(error(
+                source_path,
+                0,
+                source,
+                "unknown",
+                "invalid root-relative source path",
+            ));
+        };
+        if components.peek().is_none() {
+            let file = openat_nofollow(
+                directory_fd,
+                name,
+                libc::O_RDONLY | libc::O_NONBLOCK,
+                source_path,
+                source,
+            )?;
+            let metadata = file.metadata().map_err(|_| {
+                error(
+                    source_path,
+                    0,
+                    source,
+                    "unknown",
+                    "cannot inspect source file",
+                )
+            })?;
+            if !metadata.is_file() {
+                return Err(error(
+                    source_path,
+                    0,
+                    source,
+                    "unknown",
+                    "source must be a regular file",
+                ));
+            }
+            return Ok(file);
+        }
+        let next = openat_nofollow(
+            directory_fd,
+            name,
+            directory_open_flags(),
+            source_path,
+            source,
+        )?;
+        directory = Some(next);
+    }
+    Err(error(
+        source_path,
+        0,
+        source,
+        "unknown",
+        "invalid root-relative source path",
+    ))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const fn directory_open_flags() -> libc::c_int {
+    libc::O_PATH | libc::O_DIRECTORY
+}
+
+#[cfg(target_vendor = "apple")]
+const fn directory_open_flags() -> libc::c_int {
+    libc::O_SEARCH | libc::O_DIRECTORY
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android", target_vendor = "apple"))
+))]
+const fn directory_open_flags() -> libc::c_int {
+    libc::O_RDONLY | libc::O_DIRECTORY
+}
+
+#[cfg(unix)]
+fn openat_nofollow(
+    directory_fd: RawFd,
+    name: &std::ffi::OsStr,
+    flags: libc::c_int,
+    source_path: &Path,
+    source: &'static str,
+) -> Result<fs::File, ImportedAgentError> {
+    let name = CString::new(name.as_bytes()).map_err(|_| {
+        error(
+            source_path,
+            0,
+            source,
+            "unknown",
+            "invalid source path component",
+        )
+    })?;
+    // SAFETY: `directory_fd` is borrowed from a live `File`, `name` is NUL-terminated, and
+    // `openat` does not retain either argument after returning.
+    let descriptor = unsafe {
+        libc::openat(
+            directory_fd,
+            name.as_ptr(),
+            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if descriptor < 0 {
+        return Err(error(
+            source_path,
+            0,
+            source,
+            "unknown",
+            "cannot read source file",
+        ));
+    }
+    // SAFETY: a nonnegative `openat` result is a newly owned descriptor transferred exactly once.
+    let descriptor = unsafe { OwnedFd::from_raw_fd(descriptor) };
+    Ok(fs::File::from(descriptor))
+}
+
 fn scan_source<R: std::io::Read>(
     path: &Path,
     source_bytes: R,
@@ -1026,12 +1228,20 @@ mod tests {
         let original = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n";
         std::fs::write(&source, original).unwrap();
 
-        let opened = OpenedImportedAgentSource::open(
-            source.clone(),
-            PathBuf::from("session.jsonl"),
-            ImportedSessionFamily::Session,
+        let mut discovered = discover_selection(
+            &ImportedAgentSelectionRequest::new(
+                source.clone(),
+                None,
+                RecordedAgentSourceFormat::Codex,
+                None,
+            )
+            .unwrap(),
         )
-        .expect("open original source once");
+        .unwrap();
+        let (source_path, relative_path, family) = discovered.candidates.remove(0);
+        let opened =
+            OpenedImportedAgentSource::open(&discovered, source_path, relative_path, family)
+                .expect("open original source once");
         std::fs::write(
             &replacement,
             b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"replacement\"}}\n",
@@ -1044,6 +1254,125 @@ mod tests {
             .materialize(scratch.path(), ImportedAgentSource::Codex)
             .expect("materialize opened source");
         assert_eq!(std::fs::read(file.path).unwrap(), original);
+    }
+
+    #[test]
+    fn imported_acquisition_refuses_ancestor_symlink_swap_after_discovery() {
+        let root = tempfile::tempdir().unwrap();
+        let sessions = root.path().join("sessions");
+        std::fs::create_dir(&sessions).unwrap();
+        let source = sessions.join("session.jsonl");
+        std::fs::write(
+            &source,
+            b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"original\"}}\n",
+        )
+        .unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_bytes = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"outside\"}}\n";
+        std::fs::write(outside.path().join("session.jsonl"), outside_bytes).unwrap();
+        let request = ImportedAgentSelectionRequest::new(
+            root.path().to_path_buf(),
+            None,
+            RecordedAgentSourceFormat::Codex,
+            None,
+        )
+        .unwrap();
+        let mut discovered = discover_selection(&request).unwrap();
+        let (source_path, relative_path, family) = discovered.candidates.remove(0);
+
+        std::fs::rename(&sessions, root.path().join("validated-sessions")).unwrap();
+        symlink(outside.path(), &sessions).unwrap();
+
+        let snapshot = tempfile::tempdir().unwrap();
+        let result = OpenedImportedAgentSource::open(
+            &discovered,
+            source_path,
+            relative_path.clone(),
+            family,
+        )
+        .and_then(|opened| opened.materialize(snapshot.path(), ImportedAgentSource::Codex));
+
+        assert!(
+            result.is_err(),
+            "acquisition must refuse a source whose validated ancestor became a symlink"
+        );
+        assert_ne!(
+            std::fs::read(snapshot.path().join(relative_path))
+                .ok()
+                .as_deref(),
+            Some(outside_bytes.as_slice()),
+            "outside bytes must not enter the acquired snapshot"
+        );
+    }
+
+    #[test]
+    fn imported_acquisition_refuses_fifo_replacement_without_blocking() {
+        use std::sync::mpsc::RecvTimeoutError;
+        use std::time::Duration;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("session.jsonl");
+        std::fs::write(&source, b"{\"type\":\"session_meta\",\"payload\":{}}\n").unwrap();
+        let mut discovered = discover_selection(
+            &ImportedAgentSelectionRequest::new(
+                source.clone(),
+                None,
+                RecordedAgentSourceFormat::Codex,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let (source_path, relative_path, family) = discovered.candidates.remove(0);
+        std::fs::remove_file(&source).unwrap();
+        let fifo = CString::new(source.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `fifo` is a live, NUL-free temporary path and the mode is valid.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let result =
+                OpenedImportedAgentSource::open(&discovered, source_path, relative_path, family);
+            let _ = sender.send(result);
+        });
+        let result = match receiver.recv_timeout(Duration::from_secs(1)) {
+            Ok(result) => result,
+            Err(RecvTimeoutError::Timeout) => {
+                let _writer = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&source)
+                    .expect("unblock FIFO reader");
+                let _ = receiver.recv_timeout(Duration::from_secs(1));
+                reader.join().expect("reader thread");
+                panic!("recording FIFO open blocked before rejecting its file type");
+            }
+            Err(RecvTimeoutError::Disconnected) => panic!("reader disconnected"),
+        };
+        reader.join().expect("reader thread");
+        assert!(result.is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[test]
+    fn imported_acquisition_supports_source_beneath_search_only_ancestor() {
+        let temporary = tempfile::tempdir().unwrap();
+        let search_only = temporary.path().join("search-only");
+        std::fs::create_dir(&search_only).unwrap();
+        let source = search_only.join("session.jsonl");
+        std::fs::write(&source, b"{\"type\":\"session_meta\",\"payload\":{}}\n").unwrap();
+        std::fs::set_permissions(&search_only, std::fs::Permissions::from_mode(0o111)).unwrap();
+
+        let result = ImportedAgentSelectionRequest::new(
+            source,
+            None,
+            RecordedAgentSourceFormat::Codex,
+            None,
+        )
+        .and_then(ImportedAgentSelectionRequest::acquire);
+
+        std::fs::set_permissions(&search_only, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let error = result.err();
+        assert!(error.is_none(), "search-only ancestors failed: {error:?}");
     }
 
     #[test]
