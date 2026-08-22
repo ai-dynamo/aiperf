@@ -59,7 +59,7 @@ impl GpuTelemetryRun {
                 }
                 // The local collectors are URL-less by construction, so there is
                 // nothing to check beyond their strict decode.
-                GpuTelemetrySourceSpec::Nvml | GpuTelemetrySourceSpec::AmdSmi => {}
+                GpuTelemetrySourceSpec::Nvml {} | GpuTelemetrySourceSpec::AmdSmi {} => {}
                 GpuTelemetrySourceSpec::Python {
                     collector,
                     url,
@@ -144,7 +144,7 @@ impl GpuTelemetryRun {
                 // The local collectors have no source implementation in this
                 // build. Selecting one fails the run rather than falling back to
                 // a different collector and reporting its numbers instead.
-                GpuTelemetrySourceSpec::Nvml | GpuTelemetrySourceSpec::AmdSmi => {
+                GpuTelemetrySourceSpec::Nvml {} | GpuTelemetrySourceSpec::AmdSmi {} => {
                     anyhow::bail!(
                         "the selected local GPU telemetry collector has no native source"
                     );

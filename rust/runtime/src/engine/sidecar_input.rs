@@ -213,10 +213,14 @@ pub enum GpuTelemetrySourceSpec {
         /// Metrics endpoint; `/metrics` is appended when absent.
         url: String,
     },
-    /// In-process NVIDIA NVML collection on the local host.
-    Nvml,
-    /// In-process AMD SMI collection on the local host.
-    AmdSmi,
+    /// In-process NVIDIA NVML collection on the local host. Braced-empty so
+    /// `deny_unknown_fields` applies: serde silently accepts extra keys on a
+    /// unit variant of an internally-tagged enum, which would let a stray `url`
+    /// through instead of failing closed.
+    Nvml {},
+    /// In-process AMD SMI collection on the local host. Braced-empty for the
+    /// same strict-decode reason as [`GpuTelemetrySourceSpec::Nvml`].
+    AmdSmi {},
     /// Collector or user extension supervised as a worker process.
     Python {
         /// Registered Config-v2 collector name.
@@ -539,7 +543,7 @@ impl SidecarInputAdapter for GpuTelemetryInputAdapter {
                 GpuTelemetrySourceSpec::Dcgm { url } => ensure_nonempty(url, "DCGM url")?,
                 // Local collectors carry no configuration to validate; their
                 // strict URL-less decode is the whole contract.
-                GpuTelemetrySourceSpec::Nvml | GpuTelemetrySourceSpec::AmdSmi => {}
+                GpuTelemetrySourceSpec::Nvml {} | GpuTelemetrySourceSpec::AmdSmi {} => {}
                 GpuTelemetrySourceSpec::Python {
                     collector,
                     url,
