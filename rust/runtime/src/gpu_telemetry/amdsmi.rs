@@ -141,7 +141,10 @@ impl AmdSmiWorker {
 
     fn initialize_devices(&mut self) -> Result<(), GpuTelemetryError> {
         let init = self.symbol::<InitFn>(b"amdsmi_init\0")?;
-        status(unsafe { init(AMDSMI_INIT_AMD_GPUS) }, "initializing AMD SMI")?;
+        status(
+            unsafe { init(AMDSMI_INIT_AMD_GPUS) },
+            "initializing AMD SMI",
+        )?;
         self.is_initialized = true;
         let sockets = enumerate_sockets(&self.library)?;
         for socket in sockets {
@@ -195,23 +198,41 @@ impl VendorWorker for AmdSmiWorker {
 }
 
 fn enumerate_sockets(library: &Library) -> Result<Vec<SocketHandle>, GpuTelemetryError> {
-    let get = unsafe { library.get::<SocketHandlesFn>(b"amdsmi_get_socket_handles\0") }
-        .map_err(|error| GpuTelemetryError::Worker(format!("loading AMD SMI socket enumeration: {error}")))?;
+    let get = unsafe { library.get::<SocketHandlesFn>(b"amdsmi_get_socket_handles\0") }.map_err(
+        |error| GpuTelemetryError::Worker(format!("loading AMD SMI socket enumeration: {error}")),
+    )?;
     let mut count = 0;
-    status(unsafe { get(&mut count, std::ptr::null_mut()) }, "counting AMD SMI sockets")?;
+    status(
+        unsafe { get(&mut count, std::ptr::null_mut()) },
+        "counting AMD SMI sockets",
+    )?;
     let mut sockets = vec![std::ptr::null_mut(); count as usize];
-    status(unsafe { get(&mut count, sockets.as_mut_ptr()) }, "enumerating AMD SMI sockets")?;
+    status(
+        unsafe { get(&mut count, sockets.as_mut_ptr()) },
+        "enumerating AMD SMI sockets",
+    )?;
     sockets.truncate(count as usize);
     Ok(sockets)
 }
 
-fn enumerate_processors(library: &Library, socket: SocketHandle) -> Result<Vec<ProcessorHandle>, GpuTelemetryError> {
+fn enumerate_processors(
+    library: &Library,
+    socket: SocketHandle,
+) -> Result<Vec<ProcessorHandle>, GpuTelemetryError> {
     let get = unsafe { library.get::<ProcessorHandlesFn>(b"amdsmi_get_processor_handles\0") }
-        .map_err(|error| GpuTelemetryError::Worker(format!("loading AMD SMI processor enumeration: {error}")))?;
+        .map_err(|error| {
+            GpuTelemetryError::Worker(format!("loading AMD SMI processor enumeration: {error}"))
+        })?;
     let mut count = 0;
-    status(unsafe { get(socket, &mut count, std::ptr::null_mut()) }, "counting AMD SMI processors")?;
+    status(
+        unsafe { get(socket, &mut count, std::ptr::null_mut()) },
+        "counting AMD SMI processors",
+    )?;
     let mut processors = vec![std::ptr::null_mut(); count as usize];
-    status(unsafe { get(socket, &mut count, processors.as_mut_ptr()) }, "enumerating AMD SMI processors")?;
+    status(
+        unsafe { get(socket, &mut count, processors.as_mut_ptr()) },
+        "enumerating AMD SMI processors",
+    )?;
     processors.truncate(count as usize);
     Ok(processors)
 }
@@ -250,18 +271,39 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
         .ok()
         .is_some_and(|function| unsafe { function(device, &mut power) } == AMDSMI_SUCCESS)
     {
-        let value = [power.socket_power as f64, power.current_socket_power as f64, power.average_socket_power as f64]
-            .into_iter().find(|value| *value > 0.0 && *value < u32::MAX as f64);
-        if let Some(value) = value { metrics.insert("amd_power".to_string(), value); }
+        let value = [
+            power.socket_power as f64,
+            power.current_socket_power as f64,
+            power.average_socket_power as f64,
+        ]
+        .into_iter()
+        .find(|value| *value > 0.0 && *value < u32::MAX as f64);
+        if let Some(value) = value {
+            metrics.insert("amd_power".to_string(), value);
+        }
     }
     let mut activity: AmdsmiEngineUsage = unsafe { std::mem::zeroed() };
-    if unsafe { library.get::<ActivityFn>(b"amdsmi_get_gpu_activity\0") }.ok().is_some_and(|function| unsafe { function(device, &mut activity) } == AMDSMI_SUCCESS) {
-        insert_finite(&mut metrics, "amd_gfx_activity", activity.gfx_activity as f64);
-        insert_finite(&mut metrics, "amd_umc_activity", activity.umc_activity as f64);
+    if unsafe { library.get::<ActivityFn>(b"amdsmi_get_gpu_activity\0") }
+        .ok()
+        .is_some_and(|function| unsafe { function(device, &mut activity) } == AMDSMI_SUCCESS)
+    {
+        insert_finite(
+            &mut metrics,
+            "amd_gfx_activity",
+            activity.gfx_activity as f64,
+        );
+        insert_finite(
+            &mut metrics,
+            "amd_umc_activity",
+            activity.umc_activity as f64,
+        );
         insert_finite(&mut metrics, "amd_mm_activity", activity.mm_activity as f64);
     }
     let mut vram: AmdsmiVramUsage = unsafe { std::mem::zeroed() };
-    if unsafe { library.get::<VramUsageFn>(b"amdsmi_get_gpu_vram_usage\0") }.ok().is_some_and(|function| unsafe { function(device, &mut vram) } == AMDSMI_SUCCESS) {
+    if unsafe { library.get::<VramUsageFn>(b"amdsmi_get_gpu_vram_usage\0") }
+        .ok()
+        .is_some_and(|function| unsafe { function(device, &mut vram) } == AMDSMI_SUCCESS)
+    {
         insert_finite(&mut metrics, "amd_vram_used", vram.vram_used as f64 * 1e-3);
     }
     let mut energy = 0_u64;
@@ -276,13 +318,19 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
 fn c_string(value: &[c_char]) -> Option<String> {
     let bytes = value.iter().map(|byte| *byte as u8).collect::<Vec<_>>();
     let end = bytes.iter().position(|byte| *byte == 0)?;
-    std::str::from_utf8(&bytes[..end]).ok().map(ToOwned::to_owned)
+    std::str::from_utf8(&bytes[..end])
+        .ok()
+        .map(ToOwned::to_owned)
 }
 
 fn insert_finite(metrics: &mut BTreeMap<String, f64>, name: &str, value: f64) {
-    if value.is_finite() && value < u32::MAX as f64 { metrics.insert(name.to_string(), value); }
+    if value.is_finite() && value < u32::MAX as f64 {
+        metrics.insert(name.to_string(), value);
+    }
 }
 
 fn status(result: u32, operation: &str) -> Result<(), GpuTelemetryError> {
-    (result == AMDSMI_SUCCESS).then_some(()).ok_or_else(|| GpuTelemetryError::Worker(format!("AMD SMI {operation} failed with status {result}")))
+    (result == AMDSMI_SUCCESS).then_some(()).ok_or_else(|| {
+        GpuTelemetryError::Worker(format!("AMD SMI {operation} failed with status {result}"))
+    })
 }

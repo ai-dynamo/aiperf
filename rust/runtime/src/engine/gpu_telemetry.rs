@@ -17,11 +17,10 @@ use std::rc::Rc;
 
 use crate::clock::Clock;
 use crate::gpu_telemetry::{
-    amdsmi::AmdSmiTelemetrySource, DcgmPrometheusDecoder, DcgmTelemetrySource, GpuBoundarySnapshot,
-    GpuMetricKind,
+    DcgmPrometheusDecoder, DcgmTelemetrySource, GpuBoundarySnapshot, GpuMetricKind,
     GpuPhaseBoundary, GpuTelemetryAccumulator, GpuTelemetryCollector, GpuTelemetryRecord,
     GpuTelemetrySummary, PythonGpuTelemetryConfig, PythonGpuTelemetrySource, RuntimeGpuMetricSpec,
-    nvml::NvmlTelemetrySource,
+    amdsmi::AmdSmiTelemetrySource, nvml::NvmlTelemetrySource,
 };
 use crate::metrics_core::Unit;
 use crate::phase_runtime::ScheduledPhaseSidecar;
@@ -162,7 +161,7 @@ impl GpuTelemetryRun {
                             tracing::warn!(error = %error, collector = "amdsmi", "GPU telemetry skipped unavailable native source")
                         }
                     }
-                },
+                }
                 GpuTelemetrySourceSpec::Python {
                     collector,
                     url,
