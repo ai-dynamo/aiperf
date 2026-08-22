@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use super::auth::{KubeAuthOptions, KubeCredentials};
-use super::client::{KubeClient, KubeRequest, KubeTransport, DEFAULT_REQUEST_DEADLINE, DEFAULT_WATCH_DEADLINE};
+use super::client::{KubeClient, KubeRequest, KubeTransport, KubeWatch, DEFAULT_REQUEST_DEADLINE, DEFAULT_WATCH_DEADLINE};
 use super::contract::{validate_envelope, validate_image_capabilities};
 use super::error::KubeError;
 
@@ -72,6 +72,20 @@ fn exec_credential_resolves_token() {
 }
 
 #[test]
+fn resolves_ipv6_kubeconfig_authority() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("config");
+    std::fs::write(
+        &path,
+        "apiVersion: v1\ncurrent-context: test\nclusters:\n- name: cluster\n  cluster:\n    server: https://[::1]:6443\n    certificate-authority-data: Y2E=\ncontexts:\n- name: test\n  context:\n    cluster: cluster\n    user: user\nusers:\n- name: user\n  user:\n    token: token\n",
+    ).expect("config write");
+    let credentials = KubeAuthOptions { kubeconfig: Some(path), ..Default::default() }
+        .resolve().expect("IPv6 credentials");
+    assert_eq!(credentials.host, "::1");
+    assert_eq!(credentials.port, 6443);
+}
+
+#[test]
 fn rejects_invalid_cluster_ca_before_network_io() {
     let credentials = credentials(Some(b"not PEM".to_vec()));
     let client = KubeClient::from_credentials(credentials).expect("client construction");
@@ -84,6 +98,12 @@ fn defaults_and_overrides_keep_deadlines_finite() {
     assert_eq!(client.request_deadline(), DEFAULT_REQUEST_DEADLINE);
     assert_eq!(client.watch_deadline(), DEFAULT_WATCH_DEADLINE);
     assert!(client.with_deadlines(Duration::ZERO, Duration::from_secs(1)).is_err());
+}
+
+#[test]
+fn watch_disconnect_is_not_reported_as_idle() {
+    let watch = KubeWatch::closed_for_test();
+    assert!(matches!(watch.next(Duration::ZERO), Err(KubeError::Transport(_))));
 }
 
 #[test]

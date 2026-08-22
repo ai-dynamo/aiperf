@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use serde::Deserialize;
+use url::Url;
 
 use super::error::KubeError;
 
@@ -194,14 +195,13 @@ impl KubeConfig {
 }
 
 fn split_host_port(endpoint: &str) -> Result<(String, u16), KubeError> {
-    let authority = endpoint.trim_end_matches('/');
-    if authority.is_empty() || authority.contains('/') {
+    let url = Url::parse(endpoint)
+        .map_err(|error| KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}: {error}")))?;
+    if url.scheme() != "https" || url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
         return Err(KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}")));
     }
-    match authority.rsplit_once(':') {
-        Some((host, port)) if !host.is_empty() => port.parse().map(|port| (host.to_string(), port)).map_err(|error| KubeError::Authentication(format!("invalid Kubernetes API port: {error}"))),
-        _ => Ok((authority.to_string(), 443)),
-    }
+    let host = url.host_str().ok_or_else(|| KubeError::Authentication(format!("invalid Kubernetes API server {endpoint}")))?;
+    Ok((host.to_string(), url.port().unwrap_or(443)))
 }
 
 fn resolve_token(user: &User, config_path: &Path) -> Result<Option<String>, KubeError> {

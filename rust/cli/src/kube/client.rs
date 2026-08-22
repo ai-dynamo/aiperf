@@ -23,6 +23,8 @@ pub const AIPERF_GROUP: &str = "aiperf.nvidia.com";
 pub const AIPERF_VERSION: &str = "v1alpha1";
 /// AIPerf custom-resource plural.
 pub const AIPERF_PLURAL: &str = "aiperfjobs";
+/// Largest accepted newline-delimited Kubernetes watch record.
+pub const MAX_WATCH_RECORD_BYTES: usize = 1024 * 1024;
 /// Annotation written after results publication completes.
 pub const BENCHMARK_COMPLETE_ANNOTATION: &str = "aiperf.nvidia.com/benchmark-complete";
 
@@ -47,12 +49,21 @@ pub struct KubeWatch {
 }
 
 impl KubeWatch {
+    #[cfg(test)]
+    pub(super) fn closed_for_test() -> Self {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        drop(sender);
+        Self { receiver }
+    }
+
     /// Wait no longer than `timeout` for the next raw watch event.
     pub fn next(&self, timeout: Duration) -> Result<Option<Vec<u8>>, KubeError> {
         match self.receiver.recv_timeout(timeout) {
             Ok(event) => event.map(Some),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(KubeError::Transport(
+                "Kubernetes watch stream closed".to_string(),
+            )),
         }
     }
 }
@@ -183,7 +194,7 @@ impl KubeTransport for HyperKubeTransport {
                     tokio::time::timeout(request.deadline, stream_watch(&credentials, request, &sender)).await
                         .map_err(|_| KubeError::Transport("Kubernetes watch timed out".to_string()))?
                 }));
-            if let Err(error) = result { let _ = sender.send(Err(error)); }
+            if let Err(error) = result { let _ = sender.try_send(Err(error)); }
         }).map_err(KubeError::Io)?;
         Ok(KubeWatch { receiver })
     }
@@ -237,9 +248,14 @@ async fn stream_watch(
         let frame = frame.map_err(|error| KubeError::Transport(error.to_string()))?;
         if let Ok(data) = frame.into_data() {
             pending.extend_from_slice(&data);
+            if pending.len() > MAX_WATCH_RECORD_BYTES {
+                return Err(KubeError::Transport(format!(
+                    "Kubernetes watch record exceeds {MAX_WATCH_RECORD_BYTES} bytes",
+                )));
+            }
             while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                 let record: Vec<_> = pending.drain(..=newline).collect();
-                if sender.send(Ok(record)).is_err() { return Ok(()); }
+                if sender.try_send(Ok(record)).is_err() { return Ok(()); }
             }
         }
     }
