@@ -73,3 +73,16 @@ async def test_reconcile_creates_projected_jobset() -> None:
     assert jobsets.kwargs["group"] == "jobset.x-k8s.io"
     assert jobsets.kwargs["namespace"] == envelope.namespace
     assert jobsets.kwargs["body"] == build_jobset(envelope)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_is_idempotent_after_jobset_already_exists() -> None:
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    class ExistingJobSet:
+        async def create_namespaced_custom_object(self, **_: object) -> None:
+            raise ApiException(status=409, reason="AlreadyExists")
+
+    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    status = await reconcile_job(envelope, ExistingJobSet())
+    assert status == {"phase": "Pending", "runId": envelope.run_id, "jobSet": envelope.job_id}

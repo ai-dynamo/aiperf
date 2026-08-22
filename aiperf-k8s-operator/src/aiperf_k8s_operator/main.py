@@ -9,6 +9,7 @@ from typing import Any
 
 import kopf
 from kubernetes_asyncio import client
+from kubernetes_asyncio.client.exceptions import ApiException
 
 from .contract import ControllerEnvelope, validate_envelope
 from .reconciliation import build_jobset, submitted_status
@@ -24,13 +25,17 @@ async def reconcile_job(
 ) -> dict[str, Any]:
     """Create the exact immutable JobSet projection for one accepted envelope."""
     jobset = build_jobset(envelope)
-    await jobsets.create_namespaced_custom_object(
-        group="jobset.x-k8s.io",
-        version="v1alpha2",
-        namespace=envelope.namespace,
-        plural="jobsets",
-        body=jobset,
-    )
+    try:
+        await jobsets.create_namespaced_custom_object(
+            group="jobset.x-k8s.io",
+            version="v1alpha2",
+            namespace=envelope.namespace,
+            plural="jobsets",
+            body=jobset,
+        )
+    except ApiException as error:
+        if error.status != 409:
+            raise
     return submitted_status(envelope)
 
 
