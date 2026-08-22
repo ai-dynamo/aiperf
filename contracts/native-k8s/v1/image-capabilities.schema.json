@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aiperf.nvidia.com/contracts/native-k8s/v1/image-capabilities.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "imageDigest", "cellular", "resultsSidecar", "hierarchicalAggregation"],
+  "properties": {
+    "contractVersion": { "const": "native-k8s/v1" },
+    "imageDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "cellular": { "const": true },
+    "resultsSidecar": { "const": true },
+    "hierarchicalAggregation": { "const": false }
+  }
+}

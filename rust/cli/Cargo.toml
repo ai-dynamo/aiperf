@@ -87,6 +87,9 @@ clap = { version = "4", features = ["derive", "string"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 serde_yaml = "0.9"
+jsonschema = "0.30"
+sha2 = "0.10"
+base64.workspace = true
 toml.workspace = true
 chrono = { workspace = true }
 uuid = { version = "1", features = ["v4"] }

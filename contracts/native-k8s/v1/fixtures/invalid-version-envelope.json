@@ -1,0 +1,1 @@
+{"contractVersion":"native-k8s/v2","runId":"run-4","namespace":"bench","jobId":"job-4","imageDigest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","cells":1,"artifactRoot":"/results","configRef":{"name":"config-4"},"controllerAddress":"controller:443","roles":[]}
