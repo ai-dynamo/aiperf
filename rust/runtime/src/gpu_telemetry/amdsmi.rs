@@ -362,10 +362,13 @@ fn observe_device(
             )
         });
     let mut memory_used_bytes = 0_u64;
-    let memory_used_bytes = unsafe { library.get::<MemoryUsageFn>(b"amdsmi_get_gpu_memory_usage\0") }
-        .ok()
-        .filter(|function| unsafe { function(device, 0, &mut memory_used_bytes) } == AMDSMI_SUCCESS)
-        .map(|_| memory_used_bytes);
+    let memory_used_bytes =
+        unsafe { library.get::<MemoryUsageFn>(b"amdsmi_get_gpu_memory_usage\0") }
+            .ok()
+            .filter(
+                |function| unsafe { function(device, 0, &mut memory_used_bytes) } == AMDSMI_SUCCESS,
+            )
+            .map(|_| memory_used_bytes);
     let mut temperature = 0_i64;
     let temperature = unsafe { library.get::<TemperatureFn>(b"amdsmi_get_temp_metric\0") }
         .ok()
