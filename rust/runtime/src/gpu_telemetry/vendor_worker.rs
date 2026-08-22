@@ -813,7 +813,7 @@ mod tests {
         tokio::pin!(spawn);
         tokio::select! {
             () = receive_signal(started_receiver) => {}
-            result = &mut spawn => panic!("initialization unexpectedly completed: {result:?}"),
+            _ = &mut spawn => panic!("initialization unexpectedly completed"),
         }
 
         clock.advance_to(1);
