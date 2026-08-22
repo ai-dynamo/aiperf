@@ -953,6 +953,20 @@ mod tests {
             }])
             .unwrap_err();
         assert!(format!("{error:#}").contains("unknown field"), "{error:#}");
+
+        let config = spec(serde_json::json!([{
+            "type": "python",
+            "collector": "pynvml",
+            "python_executable": "/usr/bin/python3",
+            "worker_module": "aiperf.gpu_telemetry.native_worker"
+        }]));
+        let error = resolver
+            .prepare(&[AuthoredSidecarInput {
+                id: GPU_TELEMETRY_SIDECAR_ID,
+                config: &config,
+            }])
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("unknown variant"), "{error:#}");
     }
 
     #[test]
