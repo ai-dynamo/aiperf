@@ -204,9 +204,10 @@ impl AmdSmiWorker {
 }
 
 fn validate_library_abi(library: &Library) -> Result<(), GpuTelemetryError> {
-    let version = unsafe { library.get::<VersionFn>(b"amdsmi_get_lib_version\0") }.map_err(
-        |error| GpuTelemetryError::Worker(format!("loading AMD SMI version query: {error}")),
-    )?;
+    let version =
+        unsafe { library.get::<VersionFn>(b"amdsmi_get_lib_version\0") }.map_err(|error| {
+            GpuTelemetryError::Worker(format!("loading AMD SMI version query: {error}"))
+        })?;
     let mut reported = std::mem::MaybeUninit::<AmdsmiVersion>::zeroed();
     status(
         unsafe { version(reported.as_mut_ptr()) },
