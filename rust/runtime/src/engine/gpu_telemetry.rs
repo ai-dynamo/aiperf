@@ -556,7 +556,59 @@ impl<'a> From<&'a GpuTelemetryRecord> for TelemetryRow<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gpu_telemetry::{GpuMetadata, NVIDIA_GPU_TELEMETRY_PLATFORM};
+    use crate::clock::SimClock;
+    use crate::gpu_telemetry::{
+        AMD_GPU_TELEMETRY_PLATFORM, GpuMetadata, GpuScrape, GpuScrapeMode, GpuTelemetryError,
+        GpuTelemetrySource, NVIDIA_GPU_TELEMETRY_PLATFORM,
+    };
+
+    struct FixtureSource {
+        calls: Cell<i64>,
+        shutdown_calls: Cell<u32>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl GpuTelemetrySource for FixtureSource {
+        fn endpoint_url(&self) -> &str {
+            "amdsmi://localhost"
+        }
+
+        async fn scrape(
+            &self,
+            _mode: GpuScrapeMode,
+        ) -> Result<Option<GpuScrape>, GpuTelemetryError> {
+            let timestamp_ns = self.calls.get() * 10;
+            self.calls.set(self.calls.get() + 1);
+            Ok(Some(GpuScrape {
+                timestamp_ns,
+                endpoint_url: self.endpoint_url().to_string(),
+                records: vec![GpuTelemetryRecord {
+                    timestamp_ns,
+                    endpoint_url: self.endpoint_url().to_string(),
+                    metadata: GpuMetadata {
+                        gpu_index: 0,
+                        gpu_uuid: "GPU-fixture".to_string(),
+                        gpu_model_name: "MI300X".to_string(),
+                        pci_bus_id: Some("0000:41:00.0".to_string()),
+                        device: Some("amd0".to_string()),
+                        hostname: Some("localhost".to_string()),
+                        namespace: None,
+                        pod_name: None,
+                        platform: AMD_GPU_TELEMETRY_PLATFORM.to_string(),
+                    },
+                    metrics: BTreeMap::from([
+                        ("amd_energy_consumption".to_string(), 1.0 + timestamp_ns as f64),
+                        ("amd_throttle_status".to_string(), 1.0),
+                    ]),
+                }],
+            }))
+        }
+
+        async fn shutdown(&self) -> Result<(), GpuTelemetryError> {
+            self.shutdown_calls.set(self.shutdown_calls.get() + 1);
+            Ok(())
+        }
+    }
 
     fn canonical_json(value: &serde_json::Value) -> String {
         match value {
@@ -662,6 +714,53 @@ mod tests {
                 canonical_json(&expected_native_json(fixture))
             );
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fixture_source_exercises_sidecar_lifecycle_jsonl_and_summary() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let source = Rc::new(FixtureSource {
+                    calls: Cell::new(0),
+                    shutdown_calls: Cell::new(0),
+                });
+                let collector = Rc::new(GpuTelemetryCollector::new(source.clone()));
+                let sidecar = GpuTelemetrySidecar::new(
+                    Rc::new(SimClock::new()),
+                    1_000_000,
+                    vec![collector],
+                    GpuTelemetryAccumulator::new(),
+                );
+
+                sidecar.start().await.unwrap();
+                tokio::task::yield_now().await;
+                sidecar.on_phase_start(100);
+                sidecar.on_phase_end(200);
+                sidecar.finish().await.unwrap();
+
+                assert_eq!(source.shutdown_calls.get(), 1);
+                let temporary = tempfile::tempdir().unwrap();
+                let output = temporary.path().join("gpu.jsonl");
+                sidecar.write_records_jsonl(&output).unwrap();
+                let rows = std::fs::read_to_string(&output)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(rows.len(), 3);
+                assert!(rows.iter().all(|row| row["dcgm_url"] == "amdsmi://localhost"));
+                assert!(rows.iter().all(|row| row["platform"] == "amd"));
+                assert!(rows.iter().all(|row| {
+                    row["telemetry_data"]["amd_energy_consumption"].is_number()
+                        && row["telemetry_data"]["amd_throttle_status"] == 1.0
+                }));
+
+                let summary = sidecar.summarize(Some(10.0), Some(1));
+                assert_eq!(summary.phase_duration_seconds, Some(1e-7));
+                assert!(summary.metrics.contains_key("amd_energy_consumption"));
+            })
+            .await;
     }
 
     #[test]
