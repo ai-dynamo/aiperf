@@ -38,8 +38,15 @@ takes `envelope.run.into_authored()` and runs the rest of the engine against
   `workload_id` from the typed `workload_kind(&cfg)` classifier, folds
   content-server into sidecars, and hand-builds `json!` blobs for three strict
   per-workload DTOs (`ScheduledWorkloadConfigV2`, `GraphWorkloadConfigV2`,
-  `StaticAccuracyWorkloadConfigV2`); the first two differ only in a
-  graph-only field.
+  `StaticAccuracyWorkloadConfigV2`). The graph DTO carries **five** fields the
+  scheduled DTO does not (`protocol_v2.rs:404-422`): `weka_semantics`,
+  `ignore_trace_delays`, `recorded_agent_default`, `planned_replay_traces`, and a
+  conditionally-attached `system_idle_gap_cap_seconds` (emitted only when
+  `weka_semantics` is `legacy` or `agentx`). Only the first two and the cap are
+  plain copies of typed `BenchmarkConfig` fields; `recorded_agent_default` is a
+  *derivation* (`cfg.scenario.as_deref() == Some("recorded-agent-default")`) and
+  `planned_replay_traces` comes from `BenchmarkRunWireV2`, not from
+  `BenchmarkConfig` at all.
 - **Components are open `RawValue`.** `NamedRunnerComponentSpecV2 { id:
   ComponentId, config: Box<RawValue> }` carries an opaque payload "strictly
   decoded by the selected factory." `TransportFactory::validate(&self, authored:
@@ -75,21 +82,30 @@ Rust implementation choice, not a requirement of a typed run model.
 Every component config the runner selects becomes a typed field on the one model,
 following the shape `phases`/`datasets` already have:
 
-- `transport: Transport` — a `#[serde(tag = "type")]` internally-tagged enum, one
-  variant per compiled transport (`Http(HttpTransportConfig)`,
-  `Grpc(GrpcTransportConfig)`, `DryRun(DryRunConfig)`, and under their features
-  `DynosimOffline(..)`, `DynosimOnline(..)`). Feature-gated transports are
-  `#[cfg(feature = "…")]` variants — the serde-level equivalent of Python's
-  conditional imports.
+- `transport` — the **config payload** becomes typed per built-in
+  (`HttpTransportConfig`, `GrpcTransportConfig`, `DryRunConfig`, and under their
+  features the `dynosim_offline`/`dynosim_online` configs). The **discriminant
+  stays an open, normalized `RegistryId` string**, decoded by a plain derive and
+  dispatched by `match id.as_str()` with a plugin-tail default arm — see §3,
+  which is authoritative on this point. An earlier draft of this record made
+  `transport` a closed `#[serde(tag = "type")]` enum; the 2026-07-26 empirical
+  serde test retired that encoding, and no closed transport enum is proposed
+  here. Feature gating applies to the built-in `match` arms, not to enum
+  variants.
 - Workload kind stays **emergent**, computed by the existing
   `config::model::workload_kind(&BenchmarkConfig)` from dataset + phase shape —
   never a wire field. `workload_kind()` is already a total, IO-free function over
   typed fields returning `{Scheduled, Graph}`, so an exhaustive 2-arm match is a
   sound substitute for the `ComponentId` lookup. The two `*WorkloadConfigV2` DTOs
-  differ by exactly two graph-only fields (`weka_semantics`,
-  `ignore_trace_delays`) that **already exist as typed fields on
-  `BenchmarkConfig`**; they collapse into typed-optional fields consulted only on
-  the graph arm, impossible to misplace. Caveat: a third `static_accuracy`
+  differ by **five** graph-only fields (see [Built](#built)). Three
+  (`weka_semantics`, `ignore_trace_delays`, `system_idle_gap_cap_seconds`) are
+  typed fields on `BenchmarkConfig` and collapse into typed-optional fields
+  consulted only on the graph arm. The other two do **not** collapse for free and
+  are the real work of this step: `recorded_agent_default` is a derivation over
+  `cfg.scenario` that must be recomputed (or the scenario string carried and the
+  comparison moved into the graph arm), and `planned_replay_traces` is
+  controller-injected run data with no `BenchmarkConfig` home at all — see §5
+  step 4. Caveat: a third `static_accuracy`
   workload shape exists (`StaticAccuracyWorkloadConfigV2`, adds `accuracy`, drops
   `failure_policy`) but is registered only in tests and unreachable via
   `workload_kind` today; if the accuracy path is later promoted to a distinct
@@ -143,9 +159,11 @@ this record conflated:
   `Value`-shuffling) and it is cheap: a built-in config is one
   `#[derive(Deserialize)] #[serde(deny_unknown_fields)]` struct.
 
-A component on the wire is therefore just `{ "type": <RegistryId>, …config… }`
-(built-in fields flat, as today). Decoding is a plain derive plus a match on the
-id — **no hand-written enum `Deserialize`**:
+A component on the wire is `{ "type": <RegistryId>, "config": { … } }` — the
+config nested under its own key, which is the shape
+`NamedRunnerComponentSpecV2 { id, config }` already emits today (an earlier draft
+of this record described the built-in fields as flat; they are not). Decoding is
+a plain derive plus a match on the id — **no hand-written enum `Deserialize`**:
 
 ```rust
 struct ComponentSpec { #[serde(rename = "type")] id: RegistryId, config: Box<RawValue> }
@@ -230,11 +248,12 @@ still backs `--capabilities` output and any genuinely `dyn` executor seams, but
 it no longer owns component-config decode or `ComponentId` → factory lookup for
 selection. [extension-registry.md](extension-registry.md) is updated in the same
 change to describe the reduced surface; the frozen-at-bootstrap guarantee is
-unchanged (unknown component identifiers now fail closed at serde decode of the
-tagged enum rather than at registry lookup). Diagnostic-parity caveat: today an
-unknown component id produces a helpful "available: …" list; a bare
-`#[serde(tag)]` unknown-variant error is less informative, so the enum needs a
-small custom deserialize error to preserve the message quality. Only **transports
+unchanged (a built-in id resolves in the `match`'s typed arm; an unknown id falls
+to the plugin tail and fails closed at registry lookup, as today).
+Diagnostic-parity caveat: the helpful "available: …" list comes from registry
+lookup, which the plugin tail still performs — but the built-in arms bypass it,
+so a typo'd built-in id must still produce that same list from the `match`'s
+default arm rather than a bare decode error. Only **transports
 and workloads** carry the `RawValue`-per-factory config-decode role; endpoints,
 samplers, exporters, and actuators are already typed or name-keyed and are
 untouched. The `--capabilities` catalog is unaffected — `Catalog::from_registry`
@@ -255,21 +274,49 @@ One transport family at a time, byte-exact against the mock server at each step:
    must supply those bindings directly or every workload's prepare/`validate_run`
    breaks with "transport not registered"; (b) `--capabilities` builds its catalog
    from registered factory **descriptors**, so built-ins must still contribute
-   their `TransportDescriptor`/`WorkloadDescriptor`. Keep the `id → factory` lookup
-   for the plugin tail; only built-ins leave it. Verify with the http + grpc e2e
-   suites.
+   their `TransportDescriptor`/`WorkloadDescriptor`; (c) a **third** consumer
+   outside the profile path resolves transports by id —
+   `CurrentNativeGraphModelBindingResolver::resolve`
+   (`rust/runtime/src/eval/native_graph/model_runtime.rs:94`, with further lookups
+   at `:309` and `:389`) calls
+   `registry.transport_factory(binding.transport_factory_id())` for its
+   `UnknownTransport` rejection and reads `transport.descriptor().url_schemes` for
+   `validate_transport_urls`. That is the `aiperf eval --model-runtime`
+   native-graph path, which the http + grpc **profile** e2e suites do not
+   exercise; it needs its own verification, or built-ins must keep contributing a
+   registry entry for descriptor lookup even after selection leaves the registry.
+   Keep the `id → factory` lookup for the plugin tail; only built-ins leave it.
+   Verify with the http + grpc e2e suites **and** the native-graph eval path.
 3. Repeat for the workload seam; collapse `ScheduledWorkloadConfigV2` /
-   `GraphWorkloadConfigV2` into typed-optional fields; verify graph + scheduled
-   e2e.
+   `GraphWorkloadConfigV2` into typed-optional fields — all **five** graph-only
+   fields, including the `recorded_agent_default` derivation and the
+   `weka_semantics`-conditional `system_idle_gap_cap_seconds` attachment, whose
+   conditionality is behavioral (`online_execution.rs:1251` branches on
+   `workload.recorded_agent_default`). Verify graph + scheduled e2e.
 4. Delete `AuthoredRunSpecV2`, `into_authored`, `NamedRunnerComponentSpecV2`,
    `BenchmarkRunWireV2`; point `coordinator.rs` at `BenchmarkConfig`. The
    protocol-v2 request/response module is reduced to the `EnvelopeV2` outer shape
-   and the diagnostic/result types. `into_authored` injects **no** data absent
-   from the typed model — an audited per-field pass found every field is a copy or
-   a pure derivation (`workload_kind`, `parse_dispatch_mode`, `worker_count` from
-   `available_parallelism`). The `validate_run` seam repoints to `&BenchmarkConfig`
-   **losslessly** (it consumes only `models.items` and `sidecars.live_streaming`).
-   Two hazards remain: (a) today's projection performs **lossy endpoint/model
+   and the diagnostic/result types. **Corrected (contest round 2):** `into_authored`
+   injects data that is **not** in `BenchmarkConfig`. `planned_replay_traces`
+   lives on `BenchmarkRunWireV2` (`protocol_v2.rs:325`), is written by the
+   controller at `cellular_controller.rs:1978`, copied into
+   `GraphWorkloadConfigV2` (`registry.rs:904`) by `into_authored`
+   (`protocol_v2.rs:413-415`), and consumed at `entrypoints.rs:415` as
+   `expected_replay_traces`. It appears **nowhere** in `runtime/src/config/` or
+   `cli/src/`. Deleting `BenchmarkRunWireV2` therefore requires first giving this
+   field a home on `BenchmarkRun` — a run-level fact alongside `cfg`, not a
+   `BenchmarkConfig` field, since it is controller-derived rather than authored —
+   or cellular graph replay loses its trace expectation. Every *other* field is a
+   copy or a pure derivation (`workload_kind`, `parse_dispatch_mode`,
+   `worker_count` from `available_parallelism`).
+   The `validate_run` seam is also **not one body**: "consumes only `models.items`
+   and `sidecars.live_streaming`" holds for `online_execution.rs:105` alone.
+   `ws_execution.rs:151` additionally consumes `run.artifacts.trace` and five
+   sidecar fields (rejecting trace artifacts and all sidecars), and
+   `dry_run.rs:539` consumes `run.dispatch` and `run.workload.id.as_str()`
+   (rejecting sharded dispatch and graph workloads under virtual workers). Each
+   body repoints on its own terms.
+   Two further hazards remain: (a) today's projection performs **lossy endpoint/model
    transforms** (rename `timeout` → `timeout_seconds`, drop `url_strategy`, retain
    only `name`/`weight`) that the migration must reproduce or push into the
    endpoint/model factories; (b) **`resource_presence`** is *not* a naive
@@ -279,8 +326,21 @@ One transport family at a time, byte-exact against the mock server at each step:
    explicitly or the Forbidden checks change behavior. A naive "just pass `cfg`"
    would regress both.
 
-Each step keeps the stdin protocol wire-compatible (the outer `EnvelopeV2` is
-unchanged); only the internal projection is removed.
+Each step keeps the stdin protocol wire-compatible; only the internal projection
+is removed. **The boundary to hold fixed is not `EnvelopeV2`.** `EnvelopeV2`
+(`protocol_v2.rs:118`) is never deserialized from stdin — it is constructed
+in-process at `cli/src/execute_mode.rs:477` after decode, and its own doc comment
+says it is "reconstructed around the bare `BenchmarkRunWireV2` stdin payload".
+The actual stdin contract is what `decode_execute_wire` (`protocol_v2.rs:191`)
+accepts: an `AuthoringWireV2` (`{"authoring": <Inputs>, sweep_id, variation,
+trial}`, `protocol_v2.rs:155`) or a bare `BenchmarkRunWireV2`, discriminated by
+presence of the `authoring` key (`resolved_run_bytes`, `protocol_v2.rs:207`). The
+authoring arm is the one AIPerf itself writes; the bare-resolved-run arm is
+retained for external harnesses. Step 4's deletion of `BenchmarkRunWireV2`
+therefore *does* touch the stdin contract — the bare arm must either be re-typed
+to `BenchmarkRun` or dropped with a stated compatibility break. §2's
+"`EnvelopeV2 { run: BenchmarkRun, … }` is decoded with plain
+`serde_json::from_slice`" describes a boundary that does not exist today.
 
 ## Non-goals and trade-offs
 
