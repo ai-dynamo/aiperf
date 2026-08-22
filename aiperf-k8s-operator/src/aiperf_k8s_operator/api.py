@@ -28,6 +28,7 @@ from .settings import OperatorSettings
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _LENGTH = re.compile(r"^(?:0|[1-9][0-9]*)$")
+_LIFECYCLE_TIMEOUT_SECONDS = 5.0
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -53,6 +54,41 @@ def create_app(
     index = index or ResultsIndex(Path(settings.artifact_root))
     app = FastAPI(title="AIPerf Kubernetes Operator")
     app.include_router(dashboard_router)
+    lifecycle_tasks: set[asyncio.Task[None]] = set()
+
+    async def update_lifecycle(
+        namespace: str,
+        job_id: str,
+        run_id: str,
+    ) -> None:
+        if lifecycle is None:
+            return
+        try:
+            async with asyncio.timeout(_LIFECYCLE_TIMEOUT_SECONDS):
+                await lifecycle.mark_results_ready(namespace, job_id, run_id)
+        except TimeoutError:
+            _LOGGER.warning(
+                "durable results committed but lifecycle update timed out",
+                extra={
+                    "namespace": namespace,
+                    "job_id": job_id,
+                    "run_id": run_id,
+                },
+            )
+        except Exception:
+            _LOGGER.exception(
+                "durable results committed but lifecycle update failed",
+                extra={
+                    "namespace": namespace,
+                    "job_id": job_id,
+                    "run_id": run_id,
+                },
+            )
+
+    def detach_lifecycle_update(namespace: str, job_id: str, run_id: str) -> None:
+        task = asyncio.create_task(update_lifecycle(namespace, job_id, run_id))
+        lifecycle_tasks.add(task)
+        task.add_done_callback(lifecycle_tasks.discard)
 
     @app.get("/healthz")
     async def health() -> dict[str, str]:
@@ -60,7 +96,7 @@ def create_app(
 
     @app.get("/index/stats")
     async def stats() -> dict[str, int | float]:
-        return index.stats()
+        return await asyncio.to_thread(index.stats)
 
     @app.get("/api/results/{namespace}/{job_id}/{run_id}/manifest")
     async def manifest(
@@ -203,18 +239,7 @@ def create_app(
             UploadTooLarge,
         ) as error:
             raise upload_error(error) from error
-        if lifecycle is not None:
-            try:
-                await lifecycle.mark_results_ready(namespace, job_id, run_id)
-            except Exception:
-                _LOGGER.exception(
-                    "durable results committed but lifecycle update failed",
-                    extra={
-                        "namespace": namespace,
-                        "job_id": job_id,
-                        "run_id": run_id,
-                    },
-                )
+        detach_lifecycle_update(namespace, job_id, run_id)
         return Response(status_code=201 if created else 200)
 
     return app

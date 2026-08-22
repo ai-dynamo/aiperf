@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import hashlib
 import json
 import threading
@@ -18,11 +19,13 @@ IDENTITY = ResultIdentity("bench", "job-1", "run-1")
 class StaticLifecycle:
     def __init__(self) -> None:
         self.ready: list[tuple[str, str, str]] = []
+        self.completed = asyncio.Event()
 
     async def mark_results_ready(
         self, namespace: str, job_id: str, run_id: str
     ) -> None:
         self.ready.append((namespace, job_id, run_id))
+        self.completed.set()
 
 
 async def chunks(body: bytes) -> AsyncIterator[bytes]:
@@ -164,6 +167,7 @@ async def test_manifest_commit_runs_off_loop_and_marks_lifecycle_ready(
                 content=document,
             )
         ).status_code == 201
+        await asyncio.wait_for(lifecycle.completed.wait(), timeout=0.25)
     assert commit_threads and commit_threads[0] != event_loop_thread
     assert lifecycle.ready == [("bench", "job-1", "run-1")]
 

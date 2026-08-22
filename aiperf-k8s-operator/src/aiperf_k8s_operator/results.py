@@ -337,6 +337,46 @@ class ResultsIndex:
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise UploadInvalid("stored result identity is invalid") from error
 
+    def _has_legacy_uid_identity(self, run_fd: int) -> bool:
+        try:
+            document = json.loads(
+                self._read_file(run_fd, _IDENTITY_NAME, MAX_MANIFEST_BYTES)
+            )
+            if set(document) != {
+                "namespace",
+                "jobId",
+                "runId",
+                "objectUid",
+                "created",
+            }:
+                return False
+            legacy_values = (
+                (document["namespace"], 253),
+                (document["jobId"], 253),
+                (document["runId"], 512),
+                (document["objectUid"], 128),
+            )
+            created = float(document["created"])
+            return all(
+                isinstance(value, str)
+                and 0 < len(value.encode()) <= maximum
+                and not any(
+                    ord(character) < 32 or ord(character) == 127 for character in value
+                )
+                for value, maximum in legacy_values
+            ) and 0 <= created < float("inf")
+        except (
+            KeyError,
+            OSError,
+            TypeError,
+            UnicodeDecodeError,
+            UploadInvalid,
+            UploadTooLarge,
+            ValueError,
+            json.JSONDecodeError,
+        ):
+            return False
+
     def _expire_published_if_due_locked(self, identity: ResultIdentity) -> None:
         key = self._key(identity)
         try:
@@ -443,22 +483,29 @@ class ResultsIndex:
         usage: dict[str, tuple[int, int]] = {}
         for key in os.listdir(self._staging_fd):
             run_fd = self._open_dir(self._staging_fd, key)
+            is_legacy = False
             try:
-                identity, created = self._read_identity(run_fd)
-                if self._key(identity) != key:
-                    raise UploadConflict("staging identity is inconsistent")
-                if (
-                    self._now() - created > self._limits.staging_ttl_seconds
-                    and not self._active.get(key)
-                ):
-                    expired = True
-                    files = {}
-                else:
-                    expired = False
-                    files, temporary_count, temporary_bytes = self._walk(run_fd)
+                try:
+                    identity, created = self._read_identity(run_fd)
+                except UploadInvalid:
+                    if not self._has_legacy_uid_identity(run_fd):
+                        raise
+                    is_legacy = True
+                if not is_legacy:
+                    if self._key(identity) != key:
+                        raise UploadConflict("staging identity is inconsistent")
+                    if (
+                        self._now() - created > self._limits.staging_ttl_seconds
+                        and not self._active.get(key)
+                    ):
+                        expired = True
+                        files = {}
+                    else:
+                        expired = False
+                        files, temporary_count, temporary_bytes = self._walk(run_fd)
             finally:
                 os.close(run_fd)
-            if expired:
+            if is_legacy or expired:
                 self._remove_tree(self._staging_fd, key)
             else:
                 usage[key] = (
@@ -478,21 +525,30 @@ class ResultsIndex:
         expired_identities: list[ResultIdentity] = []
         for key in os.listdir(self._published_fd):
             run_fd = self._open_dir(self._published_fd, key)
+            is_legacy = False
             try:
-                identity, created = self._read_identity(run_fd)
-                if self._key(identity) != key:
-                    raise UploadConflict("published identity is inconsistent")
-                files, temporary_count, _ = self._walk(run_fd)
-                if temporary_count:
-                    raise UploadConflict("published result contains temporary files")
-                if self._now() - created > self._limits.published_ttl_seconds:
-                    is_expired = True
-                    expired_identities.append(identity)
-                else:
-                    is_expired = False
+                try:
+                    identity, created = self._read_identity(run_fd)
+                except UploadInvalid:
+                    if not self._has_legacy_uid_identity(run_fd):
+                        raise
+                    is_legacy = True
+                if not is_legacy:
+                    if self._key(identity) != key:
+                        raise UploadConflict("published identity is inconsistent")
+                    files, temporary_count, _ = self._walk(run_fd)
+                    if temporary_count:
+                        raise UploadConflict(
+                            "published result contains temporary files"
+                        )
+                    if self._now() - created > self._limits.published_ttl_seconds:
+                        is_expired = True
+                        expired_identities.append(identity)
+                    else:
+                        is_expired = False
             finally:
                 os.close(run_fd)
-            if is_expired:
+            if is_legacy or is_expired:
                 self._remove_tree(self._published_fd, key)
             else:
                 usage[key] = sum(files.values())
@@ -959,6 +1015,7 @@ class ResultsIndex:
                     run_fd = self._open_dir(self._published_fd, key)
                 except OSError:
                     continue
+                remove_legacy = False
                 try:
                     identity, _ = self._read_identity(run_fd)
                     if self._key(identity) != key:
@@ -967,9 +1024,12 @@ class ResultsIndex:
                     self._verify_set(run_fd, self._declared(manifest))
                     self.publish_manifest(identity, manifest)
                 except (OSError, UploadConflict, UploadInvalid, UploadTooLarge):
-                    continue
+                    remove_legacy = self._has_legacy_uid_identity(run_fd)
                 finally:
                     os.close(run_fd)
+                if remove_legacy:
+                    with suppress(FileNotFoundError):
+                        self._remove_tree(self._published_fd, key)
 
     @staticmethod
     def _is_ready_manifest(identity: ResultIdentity, manifest: Any) -> bool:

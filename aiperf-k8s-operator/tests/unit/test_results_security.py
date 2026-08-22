@@ -91,6 +91,38 @@ async def test_published_triple_survives_restart_and_rebuild(
     assert restarted.open_artifact(identity, "answer.bin").read() == b"published"
 
 
+async def test_legacy_uid_identity_is_removed_without_blocking_new_results(
+    tmp_path: Path,
+) -> None:
+    legacy_key = "59050385603661a295144e664a8edbcf2b11f3c301efef3092cfdefa86b5e7ba"
+    legacy_identity = json.dumps(
+        {
+            "namespace": "bench",
+            "jobId": "job-legacy",
+            "runId": "run-legacy",
+            "objectUid": "4f78fcbe-9aae-4cc9-ae19-204231b21575",
+            "created": 100.0,
+        },
+        separators=(",", ":"),
+    )
+    for collection in (".staging", "runs"):
+        legacy_run = tmp_path / collection / legacy_key
+        legacy_run.mkdir(parents=True)
+        (legacy_run / ".aiperf-result-identity.json").write_text(legacy_identity)
+        (legacy_run / "legacy.bin").write_bytes(b"legacy")
+
+    index = ResultsIndex(tmp_path)
+    index.rebuild()
+
+    assert index.stats()["stagingRuns"] == 0
+    assert index.stats()["publishedRuns"] == 0
+    assert not (tmp_path / ".staging" / legacy_key).exists()
+    assert not (tmp_path / "runs" / legacy_key).exists()
+    current = results.ResultIdentity("bench", "job-current", "run-current")
+    await publish(index, current, "current.bin", b"current")
+    assert index.open_artifact(current, "current.bin").read() == b"current"
+
+
 async def test_replayed_artifact_after_publish_never_recreates_staging(
     tmp_path: Path,
 ) -> None:
