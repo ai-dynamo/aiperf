@@ -132,7 +132,11 @@ impl CrReporter {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
+    use crate::kube::auth::KubeCredentials;
+    use crate::kube::client::{KubeRequest, KubeTransport, KubeWatch};
 
     #[test]
     fn status_and_object_paths() {
@@ -154,6 +158,26 @@ mod tests {
         let marker = write_ready_marker(dir.path(), false).expect("marker write");
         let value: Value = serde_json::from_slice(&std::fs::read(marker).expect("marker read")).expect("marker JSON");
         assert_eq!(value["ready"], true);
+    }
+
+    #[test]
+    fn reporter_constructs_status_and_completion_requests() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let credentials = KubeCredentials { host: "api".to_string(), port: 443, server_name: "api".to_string(), token: Some("token".to_string(), client_certificate_pem: None, client_key_pem: None, ca_pem: None, insecure_skip_tls_verify: true };
+        let client = KubeClient::with_transport(credentials, Arc::new(RecordingTransport(requests.clone())));
+        let reporter = CrReporter { config: Some(InClusterConfig { client, namespace: "bench".to_string(), job_id: "job".to_string() }) };
+        reporter.patch_status(&progress_body("profiling", 2, Some(4), None, None));
+        reporter.signal_complete();
+        let requests = requests.lock().expect("recording lock");
+        assert_eq!(requests[0].path, "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench/aiperfjobs/job/status");
+        assert_eq!(requests[1].path, "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench/aiperfjobs/job");
+        assert_eq!(requests[1].body, serde_json::to_vec(&complete_body()).expect("completion JSON"));
+    }
+
+    struct RecordingTransport(Arc<Mutex<Vec<KubeRequest>>>);
+    impl KubeTransport for RecordingTransport {
+        fn send(&self, _credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, crate::kube::error::KubeError> { self.0.lock().expect("recording lock").push(request); Ok(200) }
+        fn watch(&self, _credentials: &KubeCredentials, _request: KubeRequest) -> Result<KubeWatch, crate::kube::error::KubeError> { Err(crate::kube::error::KubeError::Transport("watch is unavailable in reporter test".to_string())) }
     }
 
     #[test]
