@@ -324,18 +324,20 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
         .ok()
         .is_some_and(|function| unsafe { function(device, &mut vram) } == AMDSMI_SUCCESS)
     {
-        insert_finite(&mut metrics, "amd_memory_used", vram.vram_used as f64 * 1e-3);
+        insert_finite(
+            &mut metrics,
+            "amd_memory_used",
+            vram.vram_used as f64 * 1e-3,
+        );
     }
     let mut temperature = 0_i64;
     let temperature_result = unsafe { library.get::<TemperatureFn>(b"amdsmi_get_temp_metric\0") }
         .ok()
         .and_then(|function| {
-            [1_u32, 2_u32]
-                .into_iter()
-                .find_map(|sensor| {
-                    (unsafe { function(device, sensor, 0, &mut temperature) } == AMDSMI_SUCCESS)
-                        .then_some(temperature)
-                })
+            [1_u32, 2_u32].into_iter().find_map(|sensor| {
+                (unsafe { function(device, sensor, 0, &mut temperature) } == AMDSMI_SUCCESS)
+                    .then_some(temperature)
+            })
         });
     if let Some(value) = temperature_result.filter(|value| *value != i64::MAX) {
         let value = value as f64;
@@ -365,7 +367,11 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
     {
         metrics.insert(
             "amd_throttle_status".to_string(),
-            if gpu_metrics.throttle_status != 0 { 1.0 } else { 0.0 },
+            if gpu_metrics.throttle_status != 0 {
+                1.0
+            } else {
+                0.0
+            },
         );
     }
     let mut energy = 0_u64;
