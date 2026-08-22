@@ -5,12 +5,12 @@
 
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
-use std::sync::{Arc, Condvar, Mutex as StdMutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::sync::mpsc::{OwnedPermit, Sender, channel};
+use tokio::sync::{Notify, mpsc::{OwnedPermit, Receiver as TokioReceiver, Sender, channel}};
 
 use crate::clock::Clock;
 use crate::gpu_telemetry::model::{GpuScrape, GpuTelemetryRecord};
@@ -29,7 +29,7 @@ pub(super) trait VendorWorker: Send + 'static {
     fn shutdown(&mut self) -> Result<(), GpuTelemetryError>;
 }
 
-type WorkerReply<T> = SyncSender<Result<T, GpuTelemetryError>>;
+type WorkerReply<T> = Sender<Result<T, GpuTelemetryError>>;
 type WorkerResult = Result<(), GpuTelemetryError>;
 
 enum WorkerCommand {
@@ -51,7 +51,7 @@ struct CompletionState {
 #[derive(Default)]
 struct WorkerCompletion {
     state: StdMutex<CompletionState>,
-    ready: Condvar,
+    ready: Notify,
 }
 
 impl WorkerCompletion {
@@ -59,23 +59,20 @@ impl WorkerCompletion {
         let mut state = lock_unpoisoned(&self.state);
         state.result = Some(result);
         let abandoned_error = abandoned_error_to_report(&mut state);
-        self.ready.notify_all();
+        self.ready.notify_waiters();
         drop(state);
         if let Some(error) = abandoned_error {
             tracing::error!(error = %error, component = "gpu_vendor_worker", "dropped GPU vendor source cleanup failed");
         }
     }
 
-    fn wait(&self) -> WorkerResult {
-        let mut state = lock_unpoisoned(&self.state);
+    async fn wait(&self) -> WorkerResult {
         loop {
-            if let Some(result) = &state.result {
+            let notified = self.ready.notified();
+            if let Some(result) = &lock_unpoisoned(&self.state).result {
                 return result.clone();
             }
-            state = match self.ready.wait(state) {
-                Ok(state) => state,
-                Err(poisoned) => poisoned.into_inner(),
-            };
+            notified.await;
         }
     }
 
@@ -222,7 +219,7 @@ impl VendorWorkerSource {
         // succeeds, the OS JoinHandle is handed to the reaper without an await.
         let reaper_slot = reserve_reaper_slot().await?;
         let (commands, command_receiver) = sync_channel(CHANNEL_CAPACITY);
-        let (startup_reply, startup_receiver) = sync_channel(CHANNEL_CAPACITY);
+        let (startup_reply, startup_receiver) = channel(CHANNEL_CAPACITY);
         let worker_thread = thread::Builder::new()
             .name(WORKER_THREAD_NAME.to_string())
             .spawn(move || run_worker(factory, command_receiver, startup_reply))
@@ -279,7 +276,7 @@ impl VendorWorkerSource {
                 }
             }
         };
-        let (reply, receiver) = sync_channel(CHANNEL_CAPACITY);
+        let (reply, receiver) = channel(CHANNEL_CAPACITY);
         try_send_command(
             &commands,
             WorkerCommand::Scrape {
@@ -459,37 +456,26 @@ fn send_worker_reply<T>(
     operation: &str,
 ) -> Result<(), GpuTelemetryError> {
     reply.try_send(result).map_err(|error| match error {
-        TrySendError::Full(_) => {
+        tokio::sync::mpsc::error::TrySendError::Full(_) => {
             GpuTelemetryError::Worker(format!("vendor {operation} reply channel is full"))
         }
-        TrySendError::Disconnected(_) => {
+        tokio::sync::mpsc::error::TrySendError::Closed(_) => {
             GpuTelemetryError::Worker(format!("vendor {operation} reply channel disconnected"))
         }
     })
 }
 
-async fn receive_reply<T: Send + 'static>(
-    receiver: Receiver<Result<T, GpuTelemetryError>>,
+async fn receive_reply<T>(
+    mut receiver: TokioReceiver<Result<T, GpuTelemetryError>>,
     operation: &'static str,
 ) -> Result<T, GpuTelemetryError> {
-    tokio::task::spawn_blocking(move || {
-        receiver.recv().map_err(|_| {
-            GpuTelemetryError::Worker(format!("vendor worker exited before the {operation} reply"))
-        })?
-    })
-    .await
-    .map_err(|error| {
-        GpuTelemetryError::Worker(format!("waiting for vendor {operation} reply: {error}"))
+    receiver.recv().await.ok_or_else(|| {
+        GpuTelemetryError::Worker(format!("vendor worker exited before the {operation} reply"))
     })?
 }
 
 async fn wait_for_completion(completion: Arc<WorkerCompletion>) -> Result<(), GpuTelemetryError> {
-    let waiter_completion = completion.clone();
-    let result = tokio::task::spawn_blocking(move || waiter_completion.wait())
-        .await
-        .map_err(|error| {
-            GpuTelemetryError::Worker(format!("waiting for vendor worker reaper: {error}"))
-        })?;
+    let result = completion.wait().await;
     completion.observe();
     result
 }
@@ -754,7 +740,7 @@ mod tests {
             GpuTelemetryError::Worker(message) if message.contains("command channel is full")
         ));
 
-        let (reply, _receiver) = sync_channel(CHANNEL_CAPACITY);
+        let (reply, _receiver) = channel(CHANNEL_CAPACITY);
         reply.try_send(Ok(())).unwrap();
         let error = send_worker_reply(&reply, Ok(()), "scrape").unwrap_err();
         assert!(matches!(
