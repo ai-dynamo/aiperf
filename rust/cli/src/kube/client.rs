@@ -127,7 +127,7 @@ impl KubeTransport for HyperKubeTransport {
 }
 
 async fn send_request(credentials: &KubeCredentials, request: KubeRequest) -> Result<u16, KubeError> {
-    let ca_pem = credentials.ca_pem.as_deref().ok_or_else(|| {
+    let mut ca_pem = credentials.ca_pem.as_deref().ok_or_else(|| {
         KubeError::Tls("Kubernetes API credentials omitted a certificate authority".to_string())
     })?;
     let mut roots = rustls::RootCertStore::empty();
