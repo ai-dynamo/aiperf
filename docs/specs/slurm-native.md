@@ -43,6 +43,30 @@ The command sets the `AIPERF_CELL_*` environment every downstream stage reads
 operator would inject it. Any `slurm` subcommand other than `run` (i.e. `generate`)
 delegates to the Python CLI.
 
+### Session-security inputs
+
+SLURM supplies placement, a public controller coordinate, and role-specific
+private material; the coordinate is not identity. Rank 0 requires
+`AIPERF_CONTROLLER_BOOTSTRAP_FILE`, and every cell rank requires its own
+`AIPERF_ROLE_BOOTSTRAP_FILE`. Each mount contains fixed binary role material,
+must be a regular no-follow file with exact `0600` permissions, and is acquired
+once into the process-owned security context. Key bytes are never carried in
+JSON, environment values, argv, or the controller coordinate.
+
+The rank-0 hostname and Velo `_hello` are routing inputs only. Application
+admission begins with the signed registration and controller reply attestation,
+then each cell-originated Velo preflight, heartbeat, phase signal,
+dataset/phaser subscription, partition, and artifact-control request is a
+payload-bound, sequenced authenticated frame under the registered session.
+Controller-to-cell dataset/phaser pushes are not per-push authenticated frames;
+adding that direction is a separate follow-up. Cross-host HTTP artifact bytes
+instead use the transactionally registered exact bearer over pinned TLS; those
+uploads are not `AuthenticatedFrame`-sequenced. The transport handshake itself is not
+authenticated by AIPerf and may insert a Velo peer before application rejection;
+no confidentiality claim follows from this admission layer. A hierarchy request
+is rejected before acquisition, bind, or launch because SLURM does not yet
+provision controller-authorized material for aggregator tree edges.
+
 ### Topology mapping
 
 `rust/runtime/src/engine/slurm_topology.rs` holds the pure `SLURM_*` → topology
