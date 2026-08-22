@@ -29,7 +29,6 @@ use serde::Deserialize;
 const RESULTS_MANIFEST_NAME: &str = "results-manifest.json";
 const READY_MARKER_NAME: &str = ".aiperf_results_ready.json";
 const PROCESSING_MARKER_NAME: &str = ".aiperf_results_processing.json";
-const CHECKPOINTS_DIR_NAME: &str = "checkpoints";
 
 /// Run the results HTTP server until the process is terminated.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
@@ -130,35 +129,6 @@ fn list_results(base_dir: &Path) -> serde_json::Value {
     json!({"files": files, "ready": true, "processing": is_processing(base_dir)})
 }
 
-/// Enumerate ready artifacts and all checkpoints in stable path order.
-fn collect_files(base_dir: &Path) -> Vec<(String, u64)> {
-    let mut out: Vec<(String, u64)> = Vec::new();
-    let checkpoints = base_dir.join(CHECKPOINTS_DIR_NAME);
-
-    if is_ready(base_dir) {
-        for entry in walk_files(base_dir) {
-            if entry.starts_with(&checkpoints) {
-                continue;
-            }
-            if entry.file_name().and_then(|n| n.to_str()) == Some(READY_MARKER_NAME) {
-                continue;
-            }
-            if let (Ok(rel), Ok(meta)) = (entry.strip_prefix(base_dir), entry.metadata()) {
-                out.push((posix(rel), meta.len()));
-            }
-        }
-    }
-    if checkpoints.is_dir() {
-        for entry in walk_files(&checkpoints) {
-            if let (Ok(rel), Ok(meta)) = (entry.strip_prefix(base_dir), entry.metadata()) {
-                out.push((posix(rel), meta.len()));
-            }
-        }
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
-}
-
 /// Serve a marker-gated artifact after rejecting lexical traversal components.
 fn serve_file(base_dir: &Path, filename: &str) -> Response<Full<Bytes>> {
     let Some(rel) = safe_relative(filename) else {
@@ -206,10 +176,6 @@ fn serve_file(base_dir: &Path, filename: &str) -> Response<Full<Bytes>> {
     }
 }
 
-fn is_ready(base_dir: &Path) -> bool {
-    base_dir.join(READY_MARKER_NAME).is_file()
-}
-
 fn is_processing(base_dir: &Path) -> bool {
     base_dir.join(PROCESSING_MARKER_NAME).is_file()
 }
@@ -233,42 +199,11 @@ fn safe_relative(filename: &str) -> Option<PathBuf> {
     Some(rel)
 }
 
-/// Collect regular files iteratively, skipping unreadable directories.
-fn walk_files(root: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            match entry.file_type() {
-                Ok(ft) if ft.is_dir() => stack.push(path),
-                Ok(ft) if ft.is_file() => files.push(path),
-                _ => {}
-            }
-        }
-    }
-    files
-}
-
 fn posix(path: &Path) -> String {
     path.components()
         .filter_map(|c| c.as_os_str().to_str())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn content_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("json") => "application/json",
-        Some("jsonl") => "application/x-ndjson",
-        Some("csv") => "text/csv",
-        Some("parquet") => "application/vnd.apache.parquet",
-        Some("txt") => "text/plain",
-        _ => "application/octet-stream",
-    }
 }
 
 fn json_response(status: StatusCode, body: &serde_json::Value) -> Response<Full<Bytes>> {
@@ -313,37 +248,19 @@ mod tests {
     }
 
     #[test]
-    fn content_type_by_extension() {
-        assert_eq!(content_type(Path::new("a.json")), "application/json");
-        assert_eq!(content_type(Path::new("a.jsonl")), "application/x-ndjson");
-        assert_eq!(content_type(Path::new("a.csv")), "text/csv");
-        assert_eq!(
-            content_type(Path::new("a.parquet")),
-            "application/vnd.apache.parquet"
-        );
-        assert_eq!(content_type(Path::new("a.bin")), "application/octet-stream");
-    }
-
-    #[test]
-    fn list_gates_on_ready_marker_but_always_serves_checkpoints() {
+    fn list_requires_a_valid_manifest() {
         let dir = std::env::temp_dir().join(format!("aiperf-sidecar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("checkpoints")).unwrap();
-        std::fs::write(dir.join("profile_export_aiperf.json"), b"{}").unwrap();
-        std::fs::write(dir.join("checkpoints").join("ckpt_0.parquet"), b"x").unwrap();
-
-        let before = collect_files(&dir);
-        let names: Vec<&str> = before.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, vec!["checkpoints/ckpt_0.parquet"]);
-
+        std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(READY_MARKER_NAME), b"{\"ready\":true}").unwrap();
-        let after = collect_files(&dir);
-        let names: Vec<&str> = after.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(
-            names,
-            vec!["checkpoints/ckpt_0.parquet", "profile_export_aiperf.json"]
-        );
-        assert!(!names.iter().any(|n| n.contains(READY_MARKER_NAME)));
+        assert_eq!(list_results(&dir)["ready"], false);
+
+        std::fs::write(
+            dir.join(RESULTS_MANIFEST_NAME),
+            r#"{"contractVersion":"native-k8s/v1","runId":"run","ready":true,"wasCancelled":false,"artifactRoot":"/results","artifacts":[{"path":"profile.json","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":2,"contentType":"application/json"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(list_results(&dir)["files"][0]["name"], "profile.json");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
