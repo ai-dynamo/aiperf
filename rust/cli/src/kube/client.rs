@@ -158,7 +158,7 @@ async fn send_request(credentials: &KubeCredentials, request: KubeRequest) -> Re
         .map_err(|error| KubeError::Transport(error.to_string()))?;
     tokio::spawn(async move { let _ = connection.await; });
     let mut builder = Request::builder()
-        .method(request.method)
+        .method(request.method.as_str())
         .uri(request.path)
         .header("host", format!("{}:{}", credentials.host, credentials.port))
         .header("content-type", request.content_type)
