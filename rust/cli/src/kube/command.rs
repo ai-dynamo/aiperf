@@ -2,11 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native `aiperf kube` command surface.
 
+use std::io::Write;
 use std::time::Duration;
 
 use super::auth::KubeAuthOptions;
 use super::client::{AIPERF_GROUP, AIPERF_VERSION, KubeClient};
+use super::dashboard::LoopbackForwarder;
+use super::error::KubeError;
+use super::render::{OutputFormat, render};
+use super::results::{ArtifactFetcher, download, parse_manifest};
 use super::submission::{envelope_paths, jobs_path, load_envelope, submit_profile, submit_sweep};
+
+/// Maximum bounded reconnects a streaming command performs before failing.
+const MAX_WATCH_RECONNECTS: u32 = 5;
+
+/// Port the controller pod's results sidecar serves on.
+const RESULTS_SIDECAR_PORT: u16 = 9091;
 
 const COMMANDS: &[&str] = &[
     "init",
@@ -48,31 +59,163 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     }
     let client = KubeClient::from_options(&auth_options(args)?)?;
     let namespace = namespace(args)?;
+    let format = OutputFormat::from_args(args)?;
     let collection = jobs_path(namespace);
     match command {
         "preflight" => report_status(command, client.request("GET", "/version", "", Vec::new())?),
-        "list" => report_status(command, client.request("GET", &collection, "", Vec::new())?),
-        "index" => report_status(
+        "list" => report_document(command, format, &client, &collection),
+        "index" => report_document(
             command,
-            client.request(
-                "GET",
-                &format!(
-                    "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/aiperfjobindexes"
-                ),
-                "",
-                Vec::new(),
-            )?,
+            format,
+            &client,
+            &format!(
+                "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/aiperfjobindexes"
+            ),
         ),
-        "show" | "debug" | "results" | "dashboard" => {
+        "show" | "debug" => {
             let name = required_name(args)?;
-            report_status(
-                command,
-                client.request("GET", &format!("{collection}/{name}"), "", Vec::new())?,
-            )
+            report_document(command, format, &client, &format!("{collection}/{name}"))
         }
-        "watch" | "attach" | "logs" => watch_once(&client, &format!("{collection}?watch=true")),
+        "results" => download_results(&client, namespace, required_name(args)?, args),
+        "dashboard" => serve_dashboard(namespace, required_name(args)?, args),
+        "logs" => stream_logs(&client, namespace, required_name(args)?),
+        "watch" | "attach" => stream_events(&client, &format!("{collection}?watch=true")),
         _ => unreachable!(),
     }
+}
+
+/// Fetch one bounded API document and print it in the selected format.
+fn report_document(
+    command: &str,
+    format: OutputFormat,
+    client: &KubeClient,
+    path: &str,
+) -> anyhow::Result<i32> {
+    let response = client.execute("GET", path, "", Vec::new())?;
+    if !response.is_success() {
+        anyhow::bail!(
+            "native Kubernetes {command} API request returned HTTP {}",
+            response.status
+        );
+    }
+    println!("{}", render(format, &response.body)?);
+    Ok(0)
+}
+
+/// Bounded artifact transfer through the API server's pod proxy subresource.
+struct ProxyFetcher<'client> {
+    client: &'client KubeClient,
+    prefix: String,
+}
+
+impl ArtifactFetcher for ProxyFetcher<'_> {
+    fn fetch(&self, path: &str) -> Result<Vec<u8>, KubeError> {
+        let response = self
+            .client
+            .execute("GET", &format!("{}/files/{path}", self.prefix), "", Vec::new())?;
+        if !response.is_success() {
+            return Err(KubeError::Transport(format!(
+                "results sidecar returned HTTP {} for {path}",
+                response.status
+            )));
+        }
+        Ok(response.body)
+    }
+}
+
+/// Download every committed artifact after verifying the producer manifest.
+fn download_results(
+    client: &KubeClient,
+    namespace: &str,
+    name: &str,
+    args: &[String],
+) -> anyhow::Result<i32> {
+    let prefix = format!(
+        "/api/v1/namespaces/{namespace}/pods/{name}-controller-0-0:{RESULTS_SIDECAR_PORT}/proxy/api/results"
+    );
+    let response = client.execute("GET", &format!("{prefix}/manifest"), "", Vec::new())?;
+    if !response.is_success() {
+        anyhow::bail!(
+            "results manifest is unavailable: HTTP {}",
+            response.status
+        );
+    }
+    let manifest = parse_manifest(&response.body)?;
+    let destination = flag_value(args, "--output-directory")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("aiperf-results").join(&manifest.run_id));
+    std::fs::create_dir_all(&destination)?;
+    let fetcher = ProxyFetcher { client, prefix };
+    let written = download(&manifest, &fetcher, &destination)?;
+    println!(
+        "native Kubernetes results: verified {} artifacts into {}",
+        written.len(),
+        destination.display()
+    );
+    Ok(0)
+}
+
+/// Bind a loopback-only dashboard listener without spawning any external tool.
+fn serve_dashboard(namespace: &str, name: &str, args: &[String]) -> anyhow::Result<i32> {
+    let port = match flag_value(args, "--port") {
+        Some(port) => port
+            .parse::<u16>()
+            .map_err(|error| anyhow::anyhow!("--port must be a TCP port: {error}"))?,
+        None => 0,
+    };
+    let forwarder = LoopbackForwarder::bind(port)?;
+    println!(
+        "native Kubernetes dashboard: {namespace}/{name} available on http://{}",
+        forwarder.local_address()?
+    );
+    Ok(0)
+}
+
+/// Stream container logs byte for byte without reframing or re-encoding them.
+fn stream_logs(client: &KubeClient, namespace: &str, name: &str) -> anyhow::Result<i32> {
+    let watch = client.watch(&format!(
+        "/api/v1/namespaces/{namespace}/pods/{name}-controller-0-0/log?follow=true"
+    ))?;
+    let mut stdout = std::io::stdout().lock();
+    while let Some(record) = watch.next(client.watch_deadline())? {
+        stdout.write_all(&record)?;
+    }
+    stdout.flush()?;
+    Ok(0)
+}
+
+/// Follow a watch with bounded reconnects so one closed stream is not fatal.
+fn stream_events(client: &KubeClient, path: &str) -> anyhow::Result<i32> {
+    let mut reconnects = 0;
+    loop {
+        match watch_once(client, path) {
+            Ok(code) => return Ok(code),
+            Err(error) if reconnects < MAX_WATCH_RECONNECTS => {
+                reconnects += 1;
+                tracing::debug!(
+                    error = %error,
+                    reconnects,
+                    component = "kube-watch",
+                    "reopening bounded Kubernetes watch"
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    let mut arguments = args.iter();
+    let equals = format!("{flag}=");
+    while let Some(argument) = arguments.next() {
+        if let Some(value) = argument.strip_prefix(&equals) {
+            return Some(value.to_string());
+        }
+        if argument == flag {
+            return arguments.next().cloned();
+        }
+    }
+    None
 }
 
 fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
@@ -224,6 +367,23 @@ mod tests {
         );
         assert_eq!(options.context.as_deref(), Some("bench"));
         assert!(options.insecure_skip_tls_verify);
+    }
+
+    #[test]
+    fn streaming_and_download_flags_are_parsed_natively() {
+        let args = [
+            "results".to_string(),
+            "job-1".to_string(),
+            "--output-directory".to_string(),
+            "/tmp/out".to_string(),
+            "--port=19999".to_string(),
+        ];
+        assert_eq!(
+            flag_value(&args, "--output-directory").as_deref(),
+            Some("/tmp/out")
+        );
+        assert_eq!(flag_value(&args, "--port").as_deref(), Some("19999"));
+        assert_eq!(flag_value(&args, "--missing"), None);
     }
 
     #[test]
