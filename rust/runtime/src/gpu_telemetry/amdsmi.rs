@@ -284,15 +284,7 @@ fn metadata(library: &Library, device: ProcessorHandle, index: usize) -> GpuMeta
     let pci_bus_id = unsafe { library.get::<BdfFn>(b"amdsmi_get_gpu_device_bdf\0") }
         .ok()
         .filter(|function| unsafe { function(device, &mut bdf) } == AMDSMI_SUCCESS)
-        .map(|_| {
-            format!(
-                "{:04x}:{:02x}:{:02x}.{}",
-                bdf.as_uint >> 16,
-                (bdf.as_uint >> 8) & 0xff,
-                (bdf.as_uint >> 3) & 0x1f,
-                bdf.as_uint & 0x7,
-            )
-        });
+        .map(|_| pci_bus_id(bdf));
     GpuMetadata {
         gpu_index: index.min(i32::MAX as usize) as i32,
         gpu_uuid,
@@ -304,6 +296,24 @@ fn metadata(library: &Library, device: ProcessorHandle, index: usize) -> GpuMeta
         pod_name: None,
         platform: AMD_GPU_TELEMETRY_PLATFORM.to_string(),
     }
+}
+
+fn pci_bus_id(bdf: AmdsmiBdf) -> String {
+    format!(
+        "{:04x}:{:02x}:{:02x}.{}",
+        bdf.as_uint >> 16,
+        (bdf.as_uint >> 8) & 0xff,
+        (bdf.as_uint >> 3) & 0x1f,
+        bdf.as_uint & 0x7,
+    )
+}
+
+fn mebibytes_to_gigabytes(value: u32) -> f64 {
+    value as f64 * 1.048_576e-3
+}
+
+fn is_throttled(status: u32, independent_status: u64) -> bool {
+    status != 0 || independent_status != 0
 }
 
 fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> {
@@ -349,7 +359,7 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
         insert_finite(
             &mut metrics,
             "amd_memory_used",
-            vram.vram_used as f64 * 1.048_576e-3,
+            mebibytes_to_gigabytes(vram.vram_used),
         );
     }
     let mut temperature = 0_i64;
@@ -388,7 +398,10 @@ fn metrics(library: &Library, device: ProcessorHandle) -> BTreeMap<String, f64> 
     {
         metrics.insert(
             "amd_throttle_status".to_string(),
-            if gpu_metrics.throttle_status != 0 || gpu_metrics.independent_throttle_status != 0 {
+            if is_throttled(
+                gpu_metrics.throttle_status,
+                gpu_metrics.independent_throttle_status,
+            ) {
                 1.0
             } else {
                 0.0
@@ -422,4 +435,29 @@ fn status(result: u32, operation: &str) -> Result<(), GpuTelemetryError> {
     (result == AMDSMI_SUCCESS).then_some(()).ok_or_else(|| {
         GpuTelemetryError::Worker(format!("AMD SMI {operation} failed with status {result}"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_vram_mib_like_origin_main_bytes() {
+        assert_eq!(mebibytes_to_gigabytes(1024), 1.073_741_824);
+    }
+
+    #[test]
+    fn formats_bdf_from_the_documented_bit_layout() {
+        let bdf = AmdsmiBdf {
+            as_uint: (0x1234_u64 << 16) | (0xab_u64 << 8) | (0x1c_u64 << 3) | 0x5,
+        };
+        assert_eq!(pci_bus_id(bdf), "1234:ab:1c.5");
+    }
+
+    #[test]
+    fn independent_throttle_signal_is_authoritative() {
+        assert!(is_throttled(0, 1));
+        assert!(is_throttled(1, 0));
+        assert!(!is_throttled(0, 0));
+    }
 }
