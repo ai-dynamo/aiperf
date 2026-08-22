@@ -577,7 +577,7 @@ mod tests {
             &self,
             _mode: GpuScrapeMode,
         ) -> Result<Option<GpuScrape>, GpuTelemetryError> {
-            let timestamp_ns = self.calls.get() * 10;
+            let timestamp_ns = 100 + self.calls.get() * 50;
             self.calls.set(self.calls.get() + 1);
             Ok(Some(GpuScrape {
                 timestamp_ns,
