@@ -176,9 +176,6 @@ impl GpuTelemetrySource for PythonGpuTelemetrySource {
                 boundary: mode == GpuScrapeMode::Boundary,
             })
             .await?;
-        if result.duplicate && mode == GpuScrapeMode::Continuous {
-            return Ok(None);
-        }
         if result.endpoint_url != self.endpoint_url {
             return Err(GpuTelemetryError::Worker(format!(
                 "worker changed endpoint identity from {:?} to {:?}",
@@ -371,7 +368,8 @@ struct ConfigureResult {
 #[derive(Deserialize)]
 struct ScrapeResult {
     endpoint_url: String,
-    duplicate: bool,
+    #[serde(rename = "duplicate")]
+    _duplicate: bool,
     records: Vec<PythonTelemetryRecord>,
 }
 
@@ -440,6 +438,19 @@ struct ShutdownResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_worker_result_is_not_a_source_suppression_signal() {
+        let result: ScrapeResult = serde_json::from_value(serde_json::json!({
+            "endpoint_url": "pynvml://localhost",
+            "duplicate": true,
+            "records": [],
+        }))
+        .unwrap();
+
+        assert_eq!(result.endpoint_url, "pynvml://localhost");
+        assert!(result.records.is_empty());
+    }
 
     #[test]
     fn python_record_propagates_amd_platform() {
