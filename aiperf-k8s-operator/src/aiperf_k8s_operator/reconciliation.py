@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from .contract import (
@@ -115,7 +117,11 @@ def build_jobset(envelope: ControllerEnvelope) -> dict[str, Any]:
         "metadata": {
             "name": envelope.job_id,
             "namespace": envelope.namespace,
-            "labels": {"aiperf.nvidia.com/run-id": envelope.run_id},
+            "labels": {
+                "aiperf.nvidia.com/run-id": envelope.run_id,
+                "aiperf.nvidia.com/role": "jobset",
+            },
+            "annotations": {"aiperf.nvidia.com/sha256": envelope_sha256(envelope)},
         },
         "spec": {
             "network": {"enableDNSHostnames": True},
@@ -141,6 +147,34 @@ def build_jobset(envelope: ControllerEnvelope) -> dict[str, Any]:
             ],
         },
     }
+
+
+def envelope_sha256(envelope: ControllerEnvelope) -> str:
+    """Return the stable digest of the typed envelope's canonical JSON form."""
+    canonical = json.dumps(
+        envelope.model_dump(mode="json", by_alias=True),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def validate_jobset_identity(
+    envelope: ControllerEnvelope, jobset: dict[str, Any]
+) -> None:
+    """Accept an existing JobSet only when its immutable run identity matches."""
+    metadata = jobset.get("metadata", {})
+    labels = metadata.get("labels", {})
+    annotations = metadata.get("annotations", {})
+    if (
+        metadata.get("name") != envelope.job_id
+        or metadata.get("namespace") != envelope.namespace
+        or labels.get("aiperf.nvidia.com/run-id") != envelope.run_id
+        or labels.get("aiperf.nvidia.com/role") != "jobset"
+        or annotations.get("aiperf.nvidia.com/sha256") != envelope_sha256(envelope)
+    ):
+        raise ValueError("existing JobSet identity does not match submitted envelope")
 
 
 def _job(
@@ -173,6 +207,13 @@ def validate_references(
         if metadata is None:
             raise ValueError(f"bootstrap Secret metadata missing for {role.name}")
         validate_bootstrap_metadata(role.bootstrap, metadata)
+        if (
+            metadata.get("metadata", {})
+            .get("labels", {})
+            .get("aiperf.nvidia.com/run-id")
+            != envelope.run_id
+        ):
+            raise ValueError("bootstrap Secret run-id label does not match envelope")
     for bootstrap in envelope.cell_bootstraps:
         metadata = metadata_by_name.get(bootstrap.secret_name)
         if metadata is None:
@@ -180,6 +221,13 @@ def validate_references(
                 f"bootstrap Secret metadata missing for cell {bootstrap.cell_id}"
             )
         validate_bootstrap_metadata(bootstrap, metadata)
+        if (
+            metadata.get("metadata", {})
+            .get("labels", {})
+            .get("aiperf.nvidia.com/run-id")
+            != envelope.run_id
+        ):
+            raise ValueError("bootstrap Secret run-id label does not match envelope")
 
 
 def submitted_status(envelope: ControllerEnvelope) -> dict[str, Any]:

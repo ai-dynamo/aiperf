@@ -256,10 +256,52 @@ fn create_bootstrap_secret(
         "application/json",
         body,
     )?;
-    if !(200..300).contains(&status) && status != 409 {
+    if status == 409 {
+        validate_existing_bootstrap_secret(client, envelope, secret_name, expected_digest, role)?;
+    } else if !(200..300).contains(&status) {
         anyhow::bail!(
             "bootstrap Secret {} creation returned HTTP {status}",
             secret_name
+        );
+    }
+    Ok(())
+}
+
+fn validate_existing_bootstrap_secret(
+    client: &KubeClient,
+    envelope: &ControllerEnvelope,
+    secret_name: &str,
+    expected_digest: &str,
+    role: &str,
+) -> anyhow::Result<()> {
+    let response = client.execute(
+        "GET",
+        &format!(
+            "/api/v1/namespaces/{}/secrets/{secret_name}",
+            envelope.namespace
+        ),
+        "application/json",
+        Vec::new(),
+    )?;
+    if !response.is_success() {
+        anyhow::bail!(
+            "bootstrap Secret {secret_name} conflict lookup returned HTTP {}",
+            response.status
+        );
+    }
+    let existing: Value = serde_json::from_slice(&response.body).map_err(|error| {
+        anyhow::anyhow!("failed to decode existing bootstrap Secret {secret_name}: {error}")
+    })?;
+    let metadata = &existing["metadata"];
+    if existing["immutable"] != true
+        || metadata["name"] != secret_name
+        || metadata["namespace"] != envelope.namespace
+        || metadata["labels"]["aiperf.nvidia.com/run-id"] != envelope.run_id
+        || metadata["labels"]["aiperf.nvidia.com/role"] != role
+        || metadata["annotations"]["aiperf.nvidia.com/sha256"] != expected_digest
+    {
+        anyhow::bail!(
+            "existing bootstrap Secret {secret_name} identity does not match the submitted run"
         );
     }
     Ok(())
@@ -338,6 +380,12 @@ pub fn envelope_paths(args: &[String]) -> Result<Vec<&Path>, KubeError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    use super::super::auth::KubeCredentials;
+    use super::super::client::{KubeRequest, KubeResponse, KubeTransport, KubeWatch};
+
     use super::*;
 
     const FIXTURES: &str = concat!(
@@ -399,10 +447,192 @@ mod tests {
     }
 
     #[test]
+    fn secret_conflict_rejects_wrong_run_role_or_digest_identity() {
+        for (field, wrong_value) in [
+            ("run", "other-run"),
+            ("role", "cell"),
+            (
+                "digest",
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            ),
+        ] {
+            let test = secret_conflict_fixture();
+            let mut existing = test.identity.clone();
+            match field {
+                "run" => {
+                    existing["metadata"]["labels"]["aiperf.nvidia.com/run-id"] =
+                        Value::String(wrong_value.to_string());
+                }
+                "role" => {
+                    existing["metadata"]["labels"]["aiperf.nvidia.com/role"] =
+                        Value::String(wrong_value.to_string());
+                }
+                "digest" => {
+                    existing["metadata"]["annotations"]["aiperf.nvidia.com/sha256"] =
+                        Value::String(wrong_value.to_string());
+                }
+                _ => unreachable!(),
+            }
+            test.transport.push_response(409, Vec::new());
+            test.transport.push_response(
+                200,
+                serde_json::to_vec(&existing).expect("existing Secret JSON"),
+            );
+
+            let error = create_bootstrap_secret(
+                &test.client,
+                &test.envelope,
+                &test.material,
+                "bootstrap-controller",
+                &test.digest,
+                "controller",
+            )
+            .expect_err("mismatched Secret identity must fail");
+            assert!(
+                error.to_string().contains("identity does not match"),
+                "unexpected {field} mismatch error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn matching_secret_conflict_is_idempotently_accepted_after_get() {
+        let test = secret_conflict_fixture();
+        test.transport.push_response(409, Vec::new());
+        test.transport.push_response(
+            200,
+            serde_json::to_vec(&test.identity).expect("existing Secret JSON"),
+        );
+
+        create_bootstrap_secret(
+            &test.client,
+            &test.envelope,
+            &test.material,
+            "bootstrap-controller",
+            &test.digest,
+            "controller",
+        )
+        .expect("matching existing Secret");
+
+        let requests = test.transport.requests.lock().expect("requests");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "POST");
+        let submitted: Value = serde_json::from_slice(&requests[0].body).expect("submitted Secret");
+        assert_eq!(submitted["immutable"], true);
+        assert_eq!(
+            submitted["metadata"]["labels"],
+            test.identity["metadata"]["labels"]
+        );
+        assert_eq!(
+            submitted["metadata"]["annotations"],
+            test.identity["metadata"]["annotations"]
+        );
+        assert_eq!(requests[1].method, "GET");
+        assert_eq!(
+            requests[1].path,
+            "/api/v1/namespaces/bench/secrets/bootstrap-controller"
+        );
+    }
+
+    #[test]
     fn job_collection_is_namespace_scoped() {
         assert_eq!(
             jobs_path("bench"),
             "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench/aiperfjobs"
         );
+    }
+
+    struct SecretConflictFixture {
+        client: KubeClient,
+        transport: Arc<ConflictTransport>,
+        envelope: ControllerEnvelope,
+        material: PathBuf,
+        digest: String,
+        identity: Value,
+        _directory: tempfile::TempDir,
+    }
+
+    fn secret_conflict_fixture() -> SecretConflictFixture {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let material = directory.path().join("bootstrap");
+        std::fs::write(&material, b"controller bootstrap").expect("bootstrap material");
+        let digest = format!("{:x}", Sha256::digest(b"controller bootstrap"));
+        let envelope = fixture("valid-one-cell-envelope.json");
+        let identity = json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "immutable": true,
+            "metadata": {
+                "name": "bootstrap-controller",
+                "namespace": "bench",
+                "labels": {
+                    "aiperf.nvidia.com/run-id": envelope.run_id,
+                    "aiperf.nvidia.com/role": "controller",
+                },
+                "annotations": {"aiperf.nvidia.com/sha256": digest},
+            },
+        });
+        let transport = Arc::new(ConflictTransport::default());
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        SecretConflictFixture {
+            client,
+            transport,
+            envelope,
+            material,
+            digest,
+            identity,
+            _directory: directory,
+        }
+    }
+
+    fn test_credentials() -> KubeCredentials {
+        KubeCredentials {
+            host: "127.0.0.1".to_string(),
+            port: 443,
+            server_name: "localhost".to_string(),
+            token: Some("token".to_string()),
+            client_certificate_pem: None,
+            client_key_pem: None,
+            ca_pem: None,
+            insecure_skip_tls_verify: true,
+        }
+    }
+
+    #[derive(Default)]
+    struct ConflictTransport {
+        requests: Mutex<Vec<KubeRequest>>,
+        responses: Mutex<VecDeque<KubeResponse>>,
+    }
+
+    impl ConflictTransport {
+        fn push_response(&self, status: u16, body: Vec<u8>) {
+            self.responses
+                .lock()
+                .expect("responses")
+                .push_back(KubeResponse { status, body });
+        }
+    }
+
+    impl KubeTransport for ConflictTransport {
+        fn send(
+            &self,
+            _credentials: &KubeCredentials,
+            request: KubeRequest,
+        ) -> Result<KubeResponse, KubeError> {
+            self.requests.lock().expect("requests").push(request);
+            self.responses
+                .lock()
+                .expect("responses")
+                .pop_front()
+                .ok_or_else(|| KubeError::Transport("missing test response".to_string()))
+        }
+
+        fn watch(
+            &self,
+            _credentials: &KubeCredentials,
+            _request: KubeRequest,
+        ) -> Result<KubeWatch, KubeError> {
+            Err(KubeError::Transport("watch is not used".to_string()))
+        }
     }
 }

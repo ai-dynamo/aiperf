@@ -40,8 +40,10 @@ and any requested Kueue queue. The CLI reports authorization, TLS, quota,
 namespace, and admission prerequisites before it submits a run.
 
 The chart installs operator RBAC for reconciliation and workload RBAC for
-controller completion/progress reporting. It deliberately does not grant the
-operator Secret-data read permissions. See [RBAC and Security](rbac-security.md)
+controller completion/progress reporting. The operator has only `get` access to
+Secrets because Kubernetes cannot authorize metadata-only Secret reads; it
+extracts reference metadata without accessing `.data` and has no Secret
+list/watch/create/update/delete permission. See [RBAC and Security](rbac-security.md)
 for the complete authority split.
 
 ## Results preflight

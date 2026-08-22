@@ -4,7 +4,9 @@
 import ast
 import json
 from pathlib import Path
+from typing import Any
 
+import aiperf_k8s_operator.main as operator_main
 import pytest
 from aiperf_k8s_operator.contract import validate_bootstrap_metadata, validate_envelope
 from aiperf_k8s_operator.main import reconcile_job
@@ -17,6 +19,31 @@ PACKAGE = ROOT / "aiperf-k8s-operator" / "src" / "aiperf_k8s_operator"
 
 def fixture(name: str) -> dict[str, object]:
     return json.loads((FIXTURES / name).read_text())
+
+
+def reference_metadata(envelope: Any) -> dict[str, dict[str, Any]]:
+    bootstraps = [
+        *(
+            role.bootstrap
+            for role in envelope.roles
+            if role.name != "cell" and role.bootstrap is not None
+        ),
+        *envelope.cell_bootstraps,
+    ]
+    return {
+        bootstrap.secret_name: {
+            "immutable": True,
+            "metadata": {
+                "name": bootstrap.secret_name,
+                "labels": {
+                    "aiperf.nvidia.com/run-id": envelope.run_id,
+                    "aiperf.nvidia.com/role": bootstrap.role,
+                },
+                "annotations": {"aiperf.nvidia.com/sha256": bootstrap.sha256},
+            },
+        }
+        for bootstrap in bootstraps
+    }
 
 
 def test_operator_sources_never_import_legacy_aiperf_package() -> None:
@@ -40,6 +67,17 @@ def test_operator_sources_never_import_legacy_aiperf_package() -> None:
 def test_envelope_projects_exact_two_jobsets() -> None:
     envelope = validate_envelope(fixture("valid-multi-cell-envelope.json"))
     jobset = build_jobset(envelope)
+    assert jobset["metadata"] == {
+        "name": envelope.job_id,
+        "namespace": envelope.namespace,
+        "labels": {
+            "aiperf.nvidia.com/run-id": envelope.run_id,
+            "aiperf.nvidia.com/role": "jobset",
+        },
+        "annotations": {
+            "aiperf.nvidia.com/sha256": "4686fd14d91975667fd3fc3164d113d70fad54452d0b7e4b146aaba6adc5d77c"
+        },
+    }
     jobs = jobset["spec"]["replicatedJobs"]
     assert [job["name"] for job in jobs] == [
         "controller",
@@ -116,25 +154,9 @@ def test_envelope_projects_exact_two_jobsets() -> None:
 
 def test_metadata_validation_never_reads_secret_data() -> None:
     envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
-    bootstraps = [
-        *(
-            role.bootstrap
-            for role in envelope.roles
-            if role.name != "cell" and role.bootstrap is not None
-        ),
-        *envelope.cell_bootstraps,
-    ]
-    metadata = {
-        bootstrap.secret_name: {
-            "immutable": True,
-            "metadata": {
-                "name": bootstrap.secret_name,
-                "labels": {"aiperf.nvidia.com/role": bootstrap.role},
-                "annotations": {"aiperf.nvidia.com/sha256": bootstrap.sha256},
-            },
-            "data": {"must-not-be-read": "not-a-real-secret"},
-        }
-        for bootstrap in bootstraps
+    metadata = reference_metadata(envelope)
+    metadata[envelope.roles[0].bootstrap.secret_name]["data"] = {
+        "must-not-be-read": "not-a-real-secret"
     }
     validate_references(envelope, metadata)
     with pytest.raises(ValueError, match="role label"):
@@ -145,6 +167,17 @@ def test_metadata_validation_never_reads_secret_data() -> None:
                 "metadata": {"name": envelope.roles[0].bootstrap.secret_name},
             },
         )
+
+
+def test_reference_validation_rejects_wrong_run_id() -> None:
+    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    metadata = reference_metadata(envelope)
+    metadata[envelope.roles[0].bootstrap.secret_name]["metadata"]["labels"][
+        "aiperf.nvidia.com/run-id"
+    ] = "other-run"
+
+    with pytest.raises(ValueError, match="run-id label"):
+        validate_references(envelope, metadata)
 
 
 def test_envelope_rejects_duplicate_cell_bootstrap_secrets() -> None:
@@ -199,7 +232,7 @@ async def test_reconcile_creates_projected_jobset() -> None:
 
     envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
     jobsets = FakeJobSets()
-    status = await reconcile_job(envelope, jobsets)
+    status = await reconcile_job(envelope, jobsets, reference_metadata(envelope))
 
     assert status == {
         "phase": "Pending",
@@ -212,17 +245,124 @@ async def test_reconcile_creates_projected_jobset() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_is_idempotent_after_jobset_already_exists() -> None:
+async def test_reconcile_rejects_wrong_reference_before_creating_jobset() -> None:
+    class FakeJobSets:
+        was_created = False
+
+        async def create_namespaced_custom_object(self, **_: object) -> None:
+            self.was_created = True
+
+    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    metadata = reference_metadata(envelope)
+    metadata[envelope.roles[0].bootstrap.secret_name]["metadata"]["labels"][
+        "aiperf.nvidia.com/role"
+    ] = "cell"
+    jobsets = FakeJobSets()
+
+    with pytest.raises(ValueError, match="role label"):
+        await reconcile_job(envelope, jobsets, metadata)
+    assert not jobsets.was_created
+
+
+@pytest.mark.asyncio
+async def test_reconcile_is_idempotent_for_matching_existing_jobset() -> None:
     from kubernetes_asyncio.client.exceptions import ApiException
 
     class ExistingJobSet:
         async def create_namespaced_custom_object(self, **_: object) -> None:
             raise ApiException(status=409, reason="AlreadyExists")
 
+        async def get_namespaced_custom_object(self, **_: object) -> dict[str, Any]:
+            return build_jobset(envelope)
+
     envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
-    status = await reconcile_job(envelope, ExistingJobSet())
+    status = await reconcile_job(
+        envelope, ExistingJobSet(), reference_metadata(envelope)
+    )
     assert status == {
         "phase": "Pending",
         "runId": envelope.run_id,
         "jobSet": envelope.job_id,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "wrong_value"),
+    [
+        ("run", "other-run"),
+        ("role", "controller"),
+        (
+            "digest",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ),
+    ],
+)
+async def test_reconcile_rejects_conflicting_jobset_identity(
+    field: str, wrong_value: str
+) -> None:
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    existing = build_jobset(envelope)
+    if field == "run":
+        existing["metadata"]["labels"]["aiperf.nvidia.com/run-id"] = wrong_value
+    elif field == "role":
+        existing["metadata"]["labels"]["aiperf.nvidia.com/role"] = wrong_value
+    else:
+        existing["metadata"].setdefault("annotations", {})[
+            "aiperf.nvidia.com/sha256"
+        ] = wrong_value
+
+    class ExistingJobSet:
+        async def create_namespaced_custom_object(self, **_: object) -> None:
+            raise ApiException(status=409, reason="AlreadyExists")
+
+        async def get_namespaced_custom_object(self, **_: object) -> dict[str, Any]:
+            return existing
+
+    with pytest.raises(ValueError, match="JobSet identity does not match"):
+        await reconcile_job(envelope, ExistingJobSet(), reference_metadata(envelope))
+
+
+@pytest.mark.asyncio
+async def test_create_handler_loads_each_secret_reference_before_reconcile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kubernetes_asyncio import client as kubernetes_client
+
+    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    metadata = reference_metadata(envelope)
+
+    class FakeSecrets:
+        names: list[str] = []
+
+        async def read_namespaced_secret(
+            self, name: str, namespace: str
+        ) -> kubernetes_client.V1Secret:
+            self.names.append(name)
+            identity = metadata[name]
+            return kubernetes_client.V1Secret(
+                immutable=True,
+                metadata=kubernetes_client.V1ObjectMeta(
+                    name=name,
+                    namespace=namespace,
+                    labels=identity["metadata"]["labels"],
+                    annotations=identity["metadata"]["annotations"],
+                ),
+            )
+
+    class FakeJobSets:
+        async def create_namespaced_custom_object(self, **_: object) -> None:
+            return None
+
+    secrets = FakeSecrets()
+    monkeypatch.setattr(operator_main.client, "CoreV1Api", lambda: secrets)
+    monkeypatch.setattr(operator_main.client, "CustomObjectsApi", FakeJobSets)
+
+    result = await operator_main.create_job(
+        {"envelope": fixture("valid-one-cell-envelope.json")}
+    )
+
+    assert result["status"]["runId"] == envelope.run_id
+    assert set(secrets.names) == set(metadata)

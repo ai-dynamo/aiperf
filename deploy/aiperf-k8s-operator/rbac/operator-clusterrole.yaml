@@ -20,4 +20,6 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "configmaps"]
   verbs: ["get", "list", "watch"]
-# Deliberately no Secret rules: the operator receives only prevalidated reference metadata.
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
