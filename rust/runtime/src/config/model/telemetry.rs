@@ -411,7 +411,11 @@ impl ServerMetricsSidecar {
 ///
 /// Non-HTTP schemes are treated as bare hosts and prefixed with `http://`.
 pub fn normalize_metrics_url(url: &str) -> String {
-    let mut url = if url.starts_with("http://") || url.starts_with("https://") {
+    let mut url = if let Some(endpoint) = url.strip_prefix("grpc://") {
+        format!("http://{endpoint}")
+    } else if let Some(endpoint) = url.strip_prefix("grpcs://") {
+        format!("https://{endpoint}")
+    } else if url.starts_with("http://") || url.starts_with("https://") {
         url.to_string()
     } else {
         format!("http://{url}")
