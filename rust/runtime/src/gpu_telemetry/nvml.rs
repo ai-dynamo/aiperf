@@ -503,6 +503,39 @@ mod tests {
     }
 
     #[test]
+    fn process_utilization_cursor_only_returns_new_samples() {
+        let mut timestamps = BTreeMap::new();
+        let first = process_sm_utilization(&mut timestamps, 0, |timestamp| {
+            assert_eq!(timestamp, None);
+            Ok::<_, ()>(vec![(100, 40), (120, 60)])
+        });
+        assert_eq!(first, Some(vec![40, 60]));
+        assert_eq!(timestamps.get(&0), Some(&120));
+
+        let second = process_sm_utilization(&mut timestamps, 0, |timestamp| {
+            assert_eq!(timestamp, Some(120));
+            Ok::<_, ()>(vec![(140, 75)])
+        });
+        assert_eq!(second, Some(vec![75]));
+        assert_eq!(timestamps.get(&0), Some(&140));
+    }
+
+    #[test]
+    fn process_utilization_cursor_preserves_timestamp_on_empty_or_error() {
+        let mut timestamps = BTreeMap::from([(0, 120)]);
+        assert_eq!(
+            process_sm_utilization(&mut timestamps, 0, |_| Ok::<_, ()>(Vec::new())),
+            Some(Vec::new())
+        );
+        assert_eq!(timestamps.get(&0), Some(&120));
+        assert_eq!(
+            process_sm_utilization(&mut timestamps, 0, |_| Err::<Vec<(u64, u32)>, _>(())),
+            None
+        );
+        assert_eq!(timestamps.get(&0), Some(&120));
+    }
+
+    #[test]
     fn process_sm_utilization_is_used_without_gpm() {
         let record = record_from_observation(
             123,
