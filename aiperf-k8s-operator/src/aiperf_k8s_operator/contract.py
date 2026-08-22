@@ -17,6 +17,14 @@ _ROLES = frozenset({"controller", "cell", "results-sidecar"})
 _CONTRACT_ROOT = Path(__file__).resolve().parents[3] / "contracts" / "native-k8s" / "v1"
 
 
+class ConfigReference(BaseModel):
+    """Reference to immutable benchmark configuration material."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: str = Field(min_length=1)
+
+
 class BootstrapReference(BaseModel):
     """Reference-only bootstrap material; no Secret bytes cross this boundary."""
 
@@ -24,8 +32,8 @@ class BootstrapReference(BaseModel):
 
     secret_name: str = Field(alias="secretName", min_length=1)
     role: Literal["controller", "cell", "results-sidecar"]
-    mount_path: str = Field(alias="mountPath", min_length=1)
-    sha256: str = Field(min_length=64, max_length=64)
+    mount_path: str = Field(alias="mountPath", pattern=r"^/")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class RoleEnvelope(BaseModel):
@@ -34,7 +42,7 @@ class RoleEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     name: Literal["controller", "cell", "results-sidecar"]
-    command: str = Field(min_length=1)
+    command: list[str] = Field(min_length=1)
     argv: list[str]
     environment: dict[str, str]
     bootstrap: BootstrapReference
@@ -59,7 +67,7 @@ class ControllerEnvelope(BaseModel):
     image_digest: str = Field(alias="imageDigest", pattern=r"^sha256:[0-9a-f]{64}$")
     cells: int = Field(ge=1)
     artifact_root: str = Field(alias="artifactRoot", min_length=1)
-    config_ref: str = Field(alias="configRef", min_length=1)
+    config_ref: ConfigReference = Field(alias="configRef")
     controller_address: str = Field(alias="controllerAddress", min_length=1)
     roles: list[RoleEnvelope]
 
@@ -68,9 +76,7 @@ class ControllerEnvelope(BaseModel):
         """Make aggregator/hierarchical roles impossible in the v1 operator."""
         names = {role.name for role in self.roles}
         if names != _ROLES or len(self.roles) != len(_ROLES):
-            raise ValueError(
-                "native-k8s/v1 requires exactly controller, cell, and results-sidecar roles"
-            )
+            raise ValueError("native-k8s/v1 requires exactly controller, cell, and results-sidecar roles")
         return self
 
 
@@ -81,25 +87,21 @@ def _schema(name: str) -> dict[str, Any]:
 
 def validate_envelope(payload: dict[str, Any]) -> ControllerEnvelope:
     """Validate caller JSON against its checked-in schema and strict local model."""
-    errors = sorted(
-        Draft202012Validator(_schema("controller-envelope.schema.json")).iter_errors(
-            payload
-        ),
-        key=str,
-    )
+    errors = sorted(Draft202012Validator(_schema("controller-envelope.schema.json")).iter_errors(payload), key=str)
     if errors:
         raise ValueError(errors[0].message)
     return ControllerEnvelope.model_validate(payload)
 
 
-def validate_bootstrap_metadata(
-    reference: BootstrapReference, metadata: dict[str, Any]
-) -> None:
-    """Validate Secret metadata without reading, listing, hashing, or logging `.data`."""
+def validate_bootstrap_metadata(reference: BootstrapReference, metadata: dict[str, Any]) -> None:
+    """Validate supplied Secret metadata without reading, listing, hashing, or logging `.data`."""
     if metadata.get("immutable") is not True:
         raise ValueError("bootstrap Secret must be immutable")
-    labels = metadata.get("metadata", {}).get("labels", {})
-    annotations = metadata.get("metadata", {}).get("annotations", {})
+    object_metadata = metadata.get("metadata", {})
+    if object_metadata.get("name") != reference.secret_name:
+        raise ValueError("bootstrap Secret name does not match envelope")
+    labels = object_metadata.get("labels", {})
+    annotations = object_metadata.get("annotations", {})
     if labels.get("aiperf.nvidia.com/role") != reference.role:
         raise ValueError("bootstrap Secret role label does not match envelope")
     if annotations.get("aiperf.nvidia.com/sha256") != reference.sha256:
