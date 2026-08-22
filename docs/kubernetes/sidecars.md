@@ -18,7 +18,7 @@ sidebar-title: Controller Pod Sidecars
 
 Every AIPerf benchmark controller pod runs a short stack of sidecar containers alongside the control-plane process. Two of them — the **event-bus proxy** and the **results sidecar** — exist to offload load or provide a fallback surface that the SystemController itself cannot reliably host. They are invisible in normal usage, but anyone debugging fan-in hangs, startup races, or partial result retrieval needs to know what they do and how to tune them.
 
-The source of truth is `rust/cli/src/kube/manifest.rs` (composition), `rust/cli/src/results_sidecar.rs` (FastAPI app), and `src/aiperf/kubernetes/environment.py` (resource defaults and ports).
+The target source of truth is `rust/cli/src/kube/manifest.rs` (composition) and `rust/cli/src/results_sidecar.rs` (the native Tokio/Hyper artifact server). Operator chart resources are independent deployment data, not `src/aiperf` settings.
 
 ---
 

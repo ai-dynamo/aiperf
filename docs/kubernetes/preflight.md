@@ -11,73 +11,30 @@ before any resources are created. They surface common failure modes (missing CRD
 insufficient RBAC, exhausted quotas, malformed manifests) as explicit, actionable
 failures instead of cryptic pod errors an hour into a run.
 
-There are two entry points:
+The public entry point is **`aiperf kube preflight`**, a native Rust command
+that validates the target cluster before it creates bootstrap material or
+submits an AIPerfJob. It owns authentication, config projection, image
+capability checks, and workload-envelope validation.
 
-- **`aiperf kube preflight`** — ad-hoc CLI check against the target cluster. Does not
-  require an AIPerfJob CR.
-- **Operator preflight** — runs on every `AIPerfJob` creation, before the operator
-  creates the ConfigMap, JobSet, Role, or RoleBinding. On any `FAIL`, the operator
-  sets the CR to `Failed` with a `PreflightPassed=False` condition and does not create
-  resources.
+After submission, the independent operator validates the envelope's version
+and reference metadata before it materializes a JobSet. It does not parse the
+benchmark configuration, re-run configuration preflight, or read Secret data.
+A malformed envelope fails before JobSet creation; lifecycle progress after a
+valid run starts remains best effort.
 
-Both share the same `CheckResult` / `CheckStatus` / `PreflightResults` shapes
-(`src/aiperf/kubernetes/preflight.py`). The check sets differ because each has
-different inputs: the CLI knows only what the user passed on the command line; the
-operator has the full resolved deployment spec.
+## Validation order
 
-## Tiered execution
-
-The operator runs checks in tiers. Later tiers only run if earlier tiers pass —
-no point probing node capacity if the cluster is the wrong Kubernetes version.
-See `src/aiperf/operator/preflight/_checker.py:88` (`OperatorPreflightChecker.run_all`).
-
-```mermaid
-flowchart TD
-    T1[Tier 1: Cluster compatibility<br/>K8s version, JobSet CRD]
-    T2[Tier 2: RBAC permissions]
-    T3[Tier 3+: Concurrent checks<br/>infra, resources, workload]
-    Admit[Admit: create ConfigMap and JobSet]
-    Reject[Reject: CR set to Failed<br/>PreflightPassed=False]
-
-    T1 -->|all pass| T2
-    T2 -->|pass| T3
-    T3 -->|no FAIL| Admit
-    T1 -->|any FAIL| Reject
-    T2 -->|FAIL| Reject
-    T3 -->|any FAIL| Reject
-```
-
-Tier 1 and Tier 2 are sequential and short-circuit: the first failing check aborts the
-whole run. Tier 3+ checks are fanned out with `asyncio.gather` and all results are
-collected regardless of individual failures — users see every problem in one pass
-rather than fix-and-retry whack-a-mole.
-
-The whole sequence is bounded by `AIPERF_PREFLIGHT_TIMEOUT` (default 30 s,
-`src/aiperf/operator/environment.py:310`). A timeout is reported as a synthetic
-`Preflight Timeout` check with status `FAIL`.
-
-## Operator vs. CLI invocation
-
-| Aspect | Operator (`OperatorPreflightChecker`) | CLI (`CLIPreflightChecker`) |
-|---|---|---|
-| Trigger | `kopf.on.create` for `AIPerfJob` | `aiperf kube preflight` |
-| Inputs | Fully resolved `DeploymentConfig`, `KubernetesDeployment`, `AIPerfConfig` | CLI flags only |
-| Check count | 19 | 13 |
-| On FAIL | CR → `Failed`, `kopf.PermanentError` raised | CLI exits 1, JSON output on stdout if `-o json` |
-| Source | `src/aiperf/operator/preflight/_checker.py` | `src/aiperf/kubernetes/preflight.py:CLIPreflightChecker` |
+The native CLI first rejects malformed configuration, unsupported contract
+versions, image-capability mismatch, and unavailable required cluster APIs. It
+then checks requested namespace, RBAC, quota, queue, and endpoint prerequisites
+before submission. Failures prevent creation of bootstrap references and the
+AIPerfJob.
 
 ## Status values
 
-Every check produces one of five statuses (`CheckStatus`,
-`src/aiperf/kubernetes/preflight.py`):
-
-| Status | When |
-|---|---|
-| `pass` | Check confirmed the cluster meets the requirement. |
-| `fail` | Check confirmed a blocking problem. Operator rejects the CR; CLI exits 1. |
-| `warn` | Potential problem or non-blocking concern (e.g. quota close to limit, tainted-node mismatch). Does not block. |
-| `skip` | Check not applicable (e.g. no nodeSelector set, no secrets referenced, Kueue not installed). |
-| `info` | Informational only — value reported, no pass/fail judgment (e.g. external endpoint URL was parsed but cannot be dialled from the CLI). |
+A native preflight result is `pass`, `fail`, `warn`, `skip`, or `info`. A
+`fail` stops submission; a `warn` is reported but does not alter the submitted
+envelope. The result format is a CLI contract, not an operator Python model.
 
 ## CLI command
 
@@ -378,20 +335,16 @@ See `OperatorPreflightChecker._resource_mode_skip`.
 
 ## Check catalog — Tier 3 (concurrent, workload)
 
-### Secrets
+### Bootstrap references
 
-- **Validates**: every secret referenced by the pod template — `imagePullSecrets`,
-  `volumes[].secret.secretName`, and `env[].valueFrom.secretKeyRef.name` — exists
-  in the namespace.
-- **Source**: `src/aiperf/operator/preflight/_workload.py:_check_secrets`,
-  `src/aiperf/kubernetes/preflight_capacity_checks.py:check_secrets`
-- **Status**:
-  - `skip` — no secrets referenced.
-  - `pass` — all secrets readable.
-  - `fail` — at least one secret returned 404.
-  - `warn` — at least one secret returned 403 (cannot verify).
-- **Fix**: `kubectl create secret -n <namespace>` for missing names, or grant
-  `get secrets` to the caller.
+- **Validates**: native submission creates each named role bootstrap Secret with
+  a role label, immutable flag, and digest annotation before it creates the
+  AIPerfJob.
+- **Operator behavior**: reconciliation compares only those declared reference
+  metadata fields. It never reads Secret data, computes a Secret digest, or
+  receives Secret `get`, `list`, or `watch` permission.
+- **Fix**: rerun native submission after correcting the local bootstrap or
+  cluster authorization failure; do not expand operator Secret permissions.
 
 ### Image Reference (operator) / Image Pull (CLI)
 
