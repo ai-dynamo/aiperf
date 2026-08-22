@@ -126,7 +126,7 @@ pub struct MLflowStreamingSpec {
 pub struct GpuTelemetrySpec {
     /// Clock cadence between continuous scrapes.
     pub collection_interval_ns: i64,
-    /// Clock deadline applied independently to each telemetry HTTP request.
+    /// Clock deadline applied independently to every telemetry source operation.
     pub request_timeout_ns: i64,
     /// Per-GPU JSONL path relative to the run directory.
     pub records_path: PathBuf,

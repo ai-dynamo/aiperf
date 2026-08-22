@@ -7,11 +7,12 @@
 #   -> Rust Clock-driven scrape/accumulate -> *_gpu_telemetry.jsonl
 #
 # Prereqs on the GPU box:
-#   - NVIDIA driver + `pip install nvidia-ml-py` (import name: pynvml)
+#   - NVIDIA driver with runtime-loadable NVML (`libnvidia-ml.so`)
 #   - a running OpenAI-compatible inference server (edit url/model below)
 #
-# Fail-fast: `aiperf config validate pynvml_smoke.yaml` will error at
-# validate time if pynvml can't be imported (collector.validate_environment()).
+# Fail-fast: `aiperf config validate pynvml_smoke.yaml` validates the strict
+# URL-less native collector selection. Library/device availability is checked
+# when the profile starts.
 #
 # Run:
 #   aiperf config validate pynvml_smoke.yaml

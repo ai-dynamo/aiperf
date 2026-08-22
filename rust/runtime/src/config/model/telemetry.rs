@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Default sidecar cadence: 0.333 s in nanoseconds.
 const COLLECTION_INTERVAL_NS: u64 = 333_000_000;
-/// Default reachability timeout: 10 s in nanoseconds.
+/// Default telemetry source operation timeout: 10 s in nanoseconds.
 const REACHABILITY_TIMEOUT_NS: u64 = 10_000_000_000;
 /// Default DCGM exporter endpoints.
 const DEFAULT_DCGM_ENDPOINTS: [&str; 2] = ["localhost:9400", "localhost:9401"];
