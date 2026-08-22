@@ -72,6 +72,8 @@ impl WorkerCompletion {
     async fn wait(&self) -> WorkerResult {
         loop {
             let notified = self.ready.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if let Some(result) = &lock_unpoisoned(&self.state).result {
                 return result.clone();
             }
