@@ -142,12 +142,16 @@ impl GpuTelemetryRun {
                     };
                     collectors.push(Rc::new(GpuTelemetryCollector::new(source)));
                 }
-                GpuTelemetrySourceSpec::Nvml {} => match NvmlTelemetrySource::spawn(clock.clone()).await {
-                    Ok(source) => collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source)))),
-                    Err(error) => {
-                        tracing::warn!(error = %error, collector = "pynvml", "GPU telemetry skipped unavailable native source")
+                GpuTelemetrySourceSpec::Nvml {} => {
+                    match NvmlTelemetrySource::spawn(clock.clone()).await {
+                        Ok(source) => {
+                            collectors.push(Rc::new(GpuTelemetryCollector::new(Rc::new(source))))
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, collector = "pynvml", "GPU telemetry skipped unavailable native source")
+                        }
                     }
-                },
+                }
                 GpuTelemetrySourceSpec::AmdSmi {} => anyhow::bail!(
                     "gpuTelemetry.collector \"amdsmi\" has no native source in this build"
                 ),

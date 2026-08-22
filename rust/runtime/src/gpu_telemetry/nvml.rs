@@ -103,10 +103,15 @@ impl VendorWorker for NvmlWorker {
     }
 }
 
-fn device_metadata(device: &nvml_wrapper::Device<'_>, index: u32) -> Result<GpuMetadata, GpuTelemetryError> {
+fn device_metadata(
+    device: &nvml_wrapper::Device<'_>,
+    index: u32,
+) -> Result<GpuMetadata, GpuTelemetryError> {
     let pci_bus_id = device.pci_info().ok().map(|pci| pci.bus_id);
     Ok(GpuMetadata {
-        gpu_index: i32::try_from(index).map_err(|_| GpuTelemetryError::Protocol(format!("NVML GPU index {index} exceeds i32")))?,
+        gpu_index: i32::try_from(index).map_err(|_| {
+            GpuTelemetryError::Protocol(format!("NVML GPU index {index} exceeds i32"))
+        })?,
         gpu_uuid: device.uuid().map_err(nvml_error)?,
         gpu_model_name: device.name().map_err(nvml_error)?,
         pci_bus_id,
@@ -120,15 +125,59 @@ fn device_metadata(device: &nvml_wrapper::Device<'_>, index: u32) -> Result<GpuM
 
 fn device_metrics(device: &nvml_wrapper::Device<'_>) -> BTreeMap<String, f64> {
     let mut metrics = BTreeMap::new();
-    insert_result(&mut metrics, "nvidia_power_usage", device.power_usage().map(|value| value as f64 * 1e-3));
-    insert_result(&mut metrics, "nvidia_energy_consumption", device.total_energy_consumption().map(|value| value as f64 * 1e-9));
-    insert_result(&mut metrics, "nvidia_gpu_utilization", device.utilization_rates().map(|value| value.gpu as f64));
-    insert_result(&mut metrics, "nvidia_memory_utilization", device.utilization_rates().map(|value| value.memory as f64));
-    insert_result(&mut metrics, "nvidia_memory_used", device.memory_info().map(|value| value.used as f64 * 1e-9));
-    insert_result(&mut metrics, "nvidia_temperature", device.temperature(TemperatureSensor::Gpu).map(f64::from));
-    insert_result(&mut metrics, "nvidia_encoder_utilization", device.encoder_utilization().map(|value| value.utilization as f64));
-    insert_result(&mut metrics, "nvidia_decoder_utilization", device.decoder_utilization().map(|value| value.utilization as f64));
-    insert_result(&mut metrics, "nvidia_power_violation", device.violation_status(PerformancePolicy::Power).map(|value| value.violation_time as f64 * 1e-3));
+    insert_result(
+        &mut metrics,
+        "nvidia_power_usage",
+        device.power_usage().map(|value| value as f64 * 1e-3),
+    );
+    insert_result(
+        &mut metrics,
+        "nvidia_energy_consumption",
+        device
+            .total_energy_consumption()
+            .map(|value| value as f64 * 1e-9),
+    );
+    insert_result(
+        &mut metrics,
+        "nvidia_gpu_utilization",
+        device.utilization_rates().map(|value| value.gpu as f64),
+    );
+    insert_result(
+        &mut metrics,
+        "nvidia_memory_utilization",
+        device.utilization_rates().map(|value| value.memory as f64),
+    );
+    insert_result(
+        &mut metrics,
+        "nvidia_memory_used",
+        device.memory_info().map(|value| value.used as f64 * 1e-9),
+    );
+    insert_result(
+        &mut metrics,
+        "nvidia_temperature",
+        device.temperature(TemperatureSensor::Gpu).map(f64::from),
+    );
+    insert_result(
+        &mut metrics,
+        "nvidia_encoder_utilization",
+        device
+            .encoder_utilization()
+            .map(|value| value.utilization as f64),
+    );
+    insert_result(
+        &mut metrics,
+        "nvidia_decoder_utilization",
+        device
+            .decoder_utilization()
+            .map(|value| value.utilization as f64),
+    );
+    insert_result(
+        &mut metrics,
+        "nvidia_power_violation",
+        device
+            .violation_status(PerformancePolicy::Power)
+            .map(|value| value.violation_time as f64 * 1e-3),
+    );
     metrics
 }
 
