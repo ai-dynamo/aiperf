@@ -137,8 +137,10 @@ fn insert_result(
     name: &str,
     result: Result<f64, nvml_wrapper::error::NvmlError>,
 ) {
-    if let Ok(value) = result.filter(|value| value.is_finite()) {
-        metrics.insert(name.to_string(), value);
+    if let Ok(value) = result {
+        if value.is_finite() {
+            metrics.insert(name.to_string(), value);
+        }
     }
 }
 
