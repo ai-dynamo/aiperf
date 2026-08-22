@@ -23,6 +23,7 @@ use crate::gpu_telemetry::source::{GpuScrapeMode, GpuTelemetryError, GpuTelemetr
 const CHANNEL_CAPACITY: usize = 1;
 const REAPER_CHANNEL_CAPACITY: usize = 64;
 const REAPER_POLL_INTERVAL: Duration = Duration::from_millis(1);
+#[cfg(test)]
 const DEFAULT_OPERATION_TIMEOUT_NS: i64 = 10_000_000_000;
 const WORKER_THREAD_NAME: &str = "aiperf-gpu-vendor";
 const REAPER_THREAD_NAME: &str = "aiperf-gpu-reaper";
@@ -208,6 +209,7 @@ pub(super) struct VendorWorkerSource {
 
 impl VendorWorkerSource {
     /// Starts one vendor worker with the default operation deadline.
+    #[cfg(test)]
     pub(super) async fn spawn<F>(
         clock: Rc<dyn Clock>,
         endpoint_url: impl Into<String>,
