@@ -44,6 +44,8 @@ pub struct KubeRequest {
     pub body: Vec<u8>,
     /// Deadline for the entire request.
     pub deadline: Duration,
+    /// Maximum bytes the response collector may retain.
+    pub response_limit: usize,
 }
 
 /// One bounded Kubernetes API response.
@@ -71,6 +73,16 @@ impl KubeWatch {
     #[cfg(test)]
     pub(super) fn closed_for_test() -> Self {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        drop(sender);
+        Self { receiver }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn events_for_test(events: Vec<Vec<u8>>) -> Self {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(events.len().max(1));
+        for event in events {
+            sender.send(Ok(event)).expect("test receiver is open");
+        }
         drop(sender);
         Self { receiver }
     }
@@ -171,6 +183,7 @@ impl KubeClient {
                 content_type: String::new(),
                 body: Vec::new(),
                 deadline: self.watch_deadline,
+                response_limit: MAX_RESPONSE_BYTES,
             },
         )
     }
@@ -194,6 +207,23 @@ impl KubeClient {
         content_type: &str,
         body: Vec<u8>,
     ) -> Result<KubeResponse, KubeError> {
+        self.execute_with_response_limit(method, path, content_type, body, MAX_RESPONSE_BYTES)
+    }
+
+    /// Submit a JSON API request and collect at most `response_limit` response bytes.
+    pub fn execute_with_response_limit(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+        response_limit: usize,
+    ) -> Result<KubeResponse, KubeError> {
+        if response_limit == 0 {
+            return Err(KubeError::Transport(
+                "Kubernetes response limit must be positive".to_string(),
+            ));
+        }
         self.transport.send(
             &self.credentials,
             KubeRequest {
@@ -202,6 +232,7 @@ impl KubeClient {
                 content_type: content_type.to_string(),
                 body,
                 deadline: self.request_deadline,
+                response_limit,
             },
         )
     }
@@ -368,6 +399,7 @@ async fn send_request(
     credentials: &KubeCredentials,
     request: KubeRequest,
 ) -> Result<KubeResponse, KubeError> {
+    let response_limit = request.response_limit;
     let mut response = open_response(credentials, request).await?;
     let status = response.status().as_u16();
     // Bodies are read frame by frame so an unbounded API response cannot exhaust memory.
@@ -375,9 +407,10 @@ async fn send_request(
     while let Some(frame) = response.body_mut().frame().await {
         let frame = frame.map_err(|error| KubeError::Transport(error.to_string()))?;
         if let Ok(data) = frame.into_data() {
-            if body.len() + data.len() > MAX_RESPONSE_BYTES {
+            if body.len() + data.len() > response_limit {
                 return Err(KubeError::Transport(format!(
-                    "Kubernetes API response exceeds {MAX_RESPONSE_BYTES} bytes",
+                    "Kubernetes API response exceeds {} bytes",
+                    response_limit,
                 )));
             }
             body.extend_from_slice(&data);
@@ -410,14 +443,16 @@ async fn stream_watch(
             }
             while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                 let record: Vec<_> = pending.drain(..=newline).collect();
-                if sender.try_send(Ok(record)).is_err() {
-                    return Ok(());
-                }
+                sender.send(Ok(record)).map_err(|_| {
+                    KubeError::Transport("Kubernetes watch receiver closed".to_string())
+                })?;
             }
         }
     }
-    if !pending.is_empty() && sender.send(Ok(pending)).is_err() {
-        return Ok(());
+    if !pending.is_empty() {
+        sender
+            .send(Ok(pending))
+            .map_err(|_| KubeError::Transport("Kubernetes watch receiver closed".to_string()))?;
     }
     Ok(())
 }

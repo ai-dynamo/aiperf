@@ -8,8 +8,10 @@
 //! re-checked to be loopback before any byte is proxied. No `kubectl` process
 //! is spawned; the upstream leg uses the same authenticated native client seam.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::thread::sleep;
+use std::time::Duration;
 
 use super::error::KubeError;
 
@@ -45,6 +47,24 @@ impl LoopbackForwarder {
         }
         Ok(stream)
     }
+
+    /// Keep accepting loopback dashboard connections until the owner cancels the session.
+    pub fn serve_until_cancelled(&self, is_cancelled: impl Fn() -> bool) -> Result<(), KubeError> {
+        self.listener.set_nonblocking(true)?;
+        while !is_cancelled() {
+            match self.listener.accept() {
+                Ok((stream, peer)) if is_loopback(&peer) => drop(stream),
+                Ok((_stream, peer)) => {
+                    tracing::warn!(peer = %peer, "refused non-loopback dashboard client");
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(KubeError::Io(error)),
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Return whether a peer address is on the loopback interface.
@@ -73,6 +93,10 @@ pub fn relay(source: &mut impl Read, sink: &mut impl Write) -> Result<u64, KubeE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     #[test]
     fn forwarder_binds_loopback_only() {
@@ -97,5 +121,24 @@ mod tests {
         let copied = relay(&mut source, &mut sink).expect("relay");
         assert_eq!(copied, payload.len() as u64);
         assert_eq!(sink, payload);
+    }
+
+    #[test]
+    fn listener_remains_bound_until_the_dashboard_session_is_cancelled() {
+        let forwarder = LoopbackForwarder::bind(0).expect("bind");
+        let address = forwarder.local_address().expect("address");
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let stop = cancelled.clone();
+        let serving = std::thread::spawn(move || {
+            forwarder.serve_until_cancelled(|| stop.load(Ordering::Relaxed))
+        });
+
+        TcpStream::connect(address).expect("first connection");
+        TcpStream::connect(address).expect("second connection");
+        cancelled.store(true, Ordering::Relaxed);
+        serving
+            .join()
+            .expect("server thread")
+            .expect("dashboard session");
     }
 }

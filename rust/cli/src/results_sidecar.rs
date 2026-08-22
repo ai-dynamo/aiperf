@@ -15,20 +15,25 @@
 //! Env: `AIPERF_RESULTS_DIR` (default `/results`),
 //! `AIPERF_RESULTS_SIDECAR_PORT` (default `9091`). Binds `0.0.0.0:<port>`.
 
+use std::io::{Read, Seek};
 use std::path::{Component, Path, PathBuf};
 
 use bytes::Bytes;
-use http_body_util::Full;
+use futures::TryStreamExt;
+use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use serde_json::json;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tokio_util::io::ReaderStream;
 
 const RESULTS_MANIFEST_NAME: &str = "results-manifest.json";
 const READY_MARKER_NAME: &str = ".aiperf_results_ready.json";
 const PROCESSING_MARKER_NAME: &str = ".aiperf_results_processing.json";
+const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+type ResponseBody = BoxBody<Bytes, std::io::Error>;
 
 /// Run the results HTTP server until the process is terminated.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
@@ -77,9 +82,12 @@ async fn serve(results_dir: PathBuf, port: u16) -> anyhow::Result<()> {
 async fn handle(
     req: Request<hyper::body::Incoming>,
     base_dir: PathBuf,
-) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
-    let path = req.uri().path().to_string();
-    let resp = if req.method() != hyper::Method::GET {
+) -> Result<Response<ResponseBody>, std::convert::Infallible> {
+    Ok(route(req.method(), req.uri().path(), &base_dir))
+}
+
+fn route(method: &hyper::Method, path: &str, base_dir: &Path) -> Response<ResponseBody> {
+    if method != hyper::Method::GET {
         json_response(
             StatusCode::METHOD_NOT_ALLOWED,
             &json!({"detail": "GET only"}),
@@ -88,12 +96,13 @@ async fn handle(
         json_response(StatusCode::OK, &json!({"status": "ok"}))
     } else if path == "/api/results/list" {
         json_response(StatusCode::OK, &list_results(&base_dir))
+    } else if path == "/api/results/manifest" {
+        serve_manifest(&base_dir)
     } else if let Some(rest) = path.strip_prefix("/api/results/files/") {
         serve_file(&base_dir, rest)
     } else {
         json_response(StatusCode::NOT_FOUND, &json!({"detail": "not found"}))
-    };
-    Ok(resp)
+    }
 }
 
 #[derive(Deserialize)]
@@ -148,7 +157,28 @@ fn list_results(base_dir: &Path) -> serde_json::Value {
 }
 
 /// Serve a marker-gated artifact after rejecting lexical traversal components.
-fn serve_file(base_dir: &Path, filename: &str) -> Response<Full<Bytes>> {
+fn serve_manifest(base_dir: &Path) -> Response<ResponseBody> {
+    let path = base_dir.join(RESULTS_MANIFEST_NAME);
+    if read_manifest(base_dir).is_none() {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            &json!({"detail": "results manifest is not ready"}),
+        );
+    }
+    match std::fs::read(path) {
+        Ok(body) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(full_body(Bytes::from(body)))
+            .expect("response"),
+        Err(_) => json_response(
+            StatusCode::NOT_FOUND,
+            &json!({"detail": "results manifest is unavailable"}),
+        ),
+    }
+}
+
+fn serve_file(base_dir: &Path, filename: &str) -> Response<ResponseBody> {
     let Some(rel) = safe_relative(filename) else {
         return json_response(
             StatusCode::BAD_REQUEST,
@@ -181,14 +211,43 @@ fn serve_file(base_dir: &Path, filename: &str) -> Response<Full<Bytes>> {
         );
     };
     let file_path = base_dir.join(&rel);
-    match std::fs::read(&file_path) {
-        Ok(bytes) => {
-            if bytes.len() as u64 != declared.bytes
-                || format!("{:x}", Sha256::digest(&bytes)) != declared.sha256
-            {
+    match std::fs::File::open(&file_path) {
+        Ok(mut file) => {
+            let mut hasher = Sha256::new();
+            let mut length = 0_u64;
+            let mut buffer = [0_u8; 64 * 1024];
+            loop {
+                let read = match file.read(&mut buffer) {
+                    Ok(read) => read,
+                    Err(_) => {
+                        return json_response(
+                            StatusCode::NOT_FOUND,
+                            &json!({"detail": format!("result file not found: {filename}")}),
+                        );
+                    }
+                };
+                if read == 0 {
+                    break;
+                }
+                length += read as u64;
+                if length > MAX_ARTIFACT_BYTES {
+                    return json_response(
+                        StatusCode::NOT_FOUND,
+                        &json!({"detail": "artifact exceeds maximum download size"}),
+                    );
+                }
+                hasher.update(&buffer[..read]);
+            }
+            if length != declared.bytes || format!("{:x}", hasher.finalize()) != declared.sha256 {
                 return json_response(
                     StatusCode::NOT_FOUND,
                     &json!({"detail": "artifact digest mismatch"}),
+                );
+            }
+            if file.rewind().is_err() {
+                return json_response(
+                    StatusCode::NOT_FOUND,
+                    &json!({"detail": format!("result file not found: {filename}")}),
                 );
             }
             let ct = declared.content_type.as_str();
@@ -196,6 +255,10 @@ fn serve_file(base_dir: &Path, filename: &str) -> Response<Full<Bytes>> {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("download");
+            let body = StreamBody::new(
+                ReaderStream::new(tokio::fs::File::from_std(file)).map_ok(hyper::body::Frame::data),
+            )
+            .boxed();
             Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", ct)
@@ -204,7 +267,8 @@ fn serve_file(base_dir: &Path, filename: &str) -> Response<Full<Bytes>> {
                     format!("attachment; filename=\"{name}\""),
                 )
                 .header("x-filename", name)
-                .body(Full::new(Bytes::from(bytes)))
+                .header("content-length", length)
+                .body(body)
                 .expect("response")
         }
         Err(_) => json_response(
@@ -244,14 +308,18 @@ fn posix(path: &Path) -> String {
         .join("/")
 }
 
-fn json_response(status: StatusCode, body: &serde_json::Value) -> Response<Full<Bytes>> {
+fn json_response(status: StatusCode, body: &serde_json::Value) -> Response<ResponseBody> {
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(
+        .body(full_body(Bytes::from(
             serde_json::to_vec(body).expect("json"),
         )))
         .expect("response")
+}
+
+fn full_body(bytes: Bytes) -> ResponseBody {
+    Full::new(bytes).map_err(|never| match never {}).boxed()
 }
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
@@ -283,6 +351,49 @@ mod tests {
             Some(PathBuf::from("aggregate/profile.json"))
         );
         assert_eq!(safe_relative("./x.json"), Some(PathBuf::from("x.json")));
+    }
+
+    #[tokio::test]
+    async fn ready_manifest_and_declared_large_artifact_are_retrievable() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let payload = vec![b'x'; 9 * 1024 * 1024];
+        let digest = format!("{:x}", Sha256::digest(&payload));
+        std::fs::write(directory.path().join("large.bin"), &payload).expect("artifact");
+        std::fs::write(
+            directory.path().join(RESULTS_MANIFEST_NAME),
+            format!(
+                r#"{{"contractVersion":"native-k8s/v1","runId":"run-1","ready":true,"wasCancelled":false,"artifactRoot":"/results","artifacts":[{{"path":"large.bin","sha256":"{digest}","bytes":{},"contentType":"application/octet-stream"}}]}}"#,
+                payload.len()
+            ),
+        )
+        .expect("manifest");
+
+        let manifest = route(
+            &hyper::Method::GET,
+            "/api/results/manifest",
+            directory.path(),
+        );
+        assert_eq!(manifest.status(), StatusCode::OK);
+
+        let artifact = route(
+            &hyper::Method::GET,
+            "/api/results/files/large.bin",
+            directory.path(),
+        );
+        assert_eq!(artifact.status(), StatusCode::OK);
+        let content_length = artifact
+            .headers()
+            .get("content-length")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        assert_eq!(content_length, Some(payload.len().to_string()));
+        let streamed = artifact
+            .into_body()
+            .collect()
+            .await
+            .expect("artifact stream")
+            .to_bytes();
+        assert_eq!(streamed, payload);
     }
 
     #[test]

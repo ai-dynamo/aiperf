@@ -10,7 +10,7 @@ use super::client::{AIPERF_GROUP, AIPERF_VERSION, KubeClient};
 use super::dashboard::LoopbackForwarder;
 use super::error::KubeError;
 use super::render::{OutputFormat, render};
-use super::results::{ArtifactFetcher, download, parse_manifest};
+use super::results::{ArtifactFetcher, MAX_ARTIFACT_BYTES, download, parse_manifest};
 use super::submission::{
     create_bootstrap_secrets, envelope_paths, jobs_path, load_envelope, material_paths,
     submit_profile, submit_sweep,
@@ -52,10 +52,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         anyhow::bail!("unknown native Kubernetes command {command}");
     }
     if matches!(command, "init" | "generate") {
-        println!(
-            "native Kubernetes {command}: provide a strict native-k8s/v1 envelope with --envelope"
+        anyhow::bail!(
+            "native Kubernetes {command} is unavailable; use a strict native-k8s/v1 envelope with profile or sweep"
         );
-        return Ok(0);
     }
     if matches!(command, "profile" | "sweep" | "validate") {
         return envelope_command(command, &args[1..]);
@@ -113,11 +112,12 @@ struct ProxyFetcher<'client> {
 
 impl ArtifactFetcher for ProxyFetcher<'_> {
     fn fetch(&self, path: &str) -> Result<Vec<u8>, KubeError> {
-        let response = self.client.execute(
+        let response = self.client.execute_with_response_limit(
             "GET",
             &format!("{}/files/{path}", self.prefix),
             "",
             Vec::new(),
+            MAX_ARTIFACT_BYTES as usize,
         )?;
         if !response.is_success() {
             return Err(KubeError::Transport(format!(
@@ -171,6 +171,7 @@ fn serve_dashboard(namespace: &str, name: &str, args: &[String]) -> anyhow::Resu
         "native Kubernetes dashboard: {namespace}/{name} available on http://{}",
         forwarder.local_address()?
     );
+    forwarder.serve_until_cancelled(|| false)?;
     Ok(0)
 }
 
@@ -189,10 +190,19 @@ fn stream_logs(client: &KubeClient, namespace: &str, name: &str) -> anyhow::Resu
 
 /// Follow a watch with bounded reconnects so one closed stream is not fatal.
 fn stream_events(client: &KubeClient, path: &str) -> anyhow::Result<i32> {
+    let mut stdout = std::io::stdout().lock();
+    stream_events_to(client, path, &mut stdout)
+}
+
+fn stream_events_to(
+    client: &KubeClient,
+    path: &str,
+    output: &mut impl Write,
+) -> anyhow::Result<i32> {
     let mut reconnects = 0;
     loop {
-        match watch_once(client, path) {
-            Ok(code) => return Ok(code),
+        match watch_once(client, path, output) {
+            Ok(()) => return Ok(0),
             Err(error) if reconnects < MAX_WATCH_RECONNECTS => {
                 reconnects += 1;
                 tracing::debug!(
@@ -314,13 +324,14 @@ fn report_status(command: &str, status: u16) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-fn watch_once(client: &KubeClient, path: &str) -> anyhow::Result<i32> {
+fn watch_once(client: &KubeClient, path: &str, output: &mut impl Write) -> anyhow::Result<()> {
     let watch = client.watch(path)?;
-    match watch.next(Duration::from_secs(30))? {
-        Some(event) => print!("{}", String::from_utf8_lossy(&event)),
-        None => anyhow::bail!("Kubernetes watch timed out without an event"),
+    loop {
+        match watch.next(Duration::from_secs(30))? {
+            Some(event) => output.write_all(&event)?,
+            None => anyhow::bail!("Kubernetes watch timed out without an event"),
+        }
     }
-    Ok(0)
 }
 
 fn help() -> anyhow::Result<i32> {
@@ -331,6 +342,12 @@ fn help() -> anyhow::Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use sha2::{Digest, Sha256};
+
+    use crate::kube::auth::KubeCredentials;
+    use crate::kube::client::{KubeRequest, KubeResponse, KubeTransport, MAX_RESPONSE_BYTES};
 
     #[test]
     fn help_lists_the_complete_native_surface() {
@@ -402,5 +419,141 @@ mod tests {
             required_name(&["show".to_string(), "job-1".to_string()]).expect("name"),
             "job-1"
         );
+    }
+
+    #[test]
+    fn watch_reconnects_and_emits_events_after_the_first_stream_ends() {
+        let transport = Arc::new(WatchTransport {
+            watches: Mutex::new(vec![
+                super::super::client::KubeWatch::events_for_test(vec![b"second\n".to_vec()]),
+                super::super::client::KubeWatch::events_for_test(vec![b"first\n".to_vec()]),
+            ]),
+        });
+        let client = KubeClient::with_transport(test_credentials(), transport);
+        let mut output = Vec::new();
+
+        let error = stream_events_to(&client, "/watch", &mut output).expect_err("streams end");
+        assert!(error.to_string().contains("watch streams exhausted"));
+        assert_eq!(output, b"first\nsecond\n");
+    }
+
+    #[test]
+    fn results_downloads_a_declared_artifact_larger_than_generic_api_responses() {
+        let payload = vec![b'x'; MAX_RESPONSE_BYTES + 1];
+        let digest = format!("{:x}", Sha256::digest(&payload));
+        let manifest = format!(
+            r#"{{"contractVersion":"native-k8s/v1","runId":"run-1","ready":true,"wasCancelled":false,"artifactRoot":"/results","artifacts":[{{"path":"large.bin","sha256":"{digest}","bytes":{},"contentType":"application/octet-stream"}}]}}"#,
+            payload.len()
+        )
+        .into_bytes();
+        let transport = Arc::new(ResultsTransport {
+            manifest,
+            artifact: payload.clone(),
+            requests: Mutex::new(Vec::new()),
+        });
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        let directory = tempfile::tempdir().expect("tempdir");
+        let args = vec![
+            "results".to_string(),
+            "job-1".to_string(),
+            "--output-directory".to_string(),
+            directory.path().display().to_string(),
+        ];
+
+        download_results(&client, "bench", "job-1", &args).expect("results download");
+        assert_eq!(
+            std::fs::read(directory.path().join("large.bin")).expect("artifact"),
+            payload
+        );
+        let requests = transport.requests.lock().expect("requests");
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.path.ends_with("/manifest"))
+        );
+        assert!(requests.iter().any(|request| {
+            request.path.ends_with("/files/large.bin")
+                && request.response_limit == MAX_ARTIFACT_BYTES as usize
+        }));
+    }
+
+    fn test_credentials() -> KubeCredentials {
+        KubeCredentials {
+            host: "127.0.0.1".to_string(),
+            port: 443,
+            server_name: "localhost".to_string(),
+            token: Some("token".to_string()),
+            client_certificate_pem: None,
+            client_key_pem: None,
+            ca_pem: None,
+            insecure_skip_tls_verify: true,
+        }
+    }
+
+    struct ResultsTransport {
+        manifest: Vec<u8>,
+        artifact: Vec<u8>,
+        requests: Mutex<Vec<KubeRequest>>,
+    }
+
+    struct WatchTransport {
+        watches: Mutex<Vec<super::super::client::KubeWatch>>,
+    }
+
+    impl KubeTransport for WatchTransport {
+        fn send(
+            &self,
+            _credentials: &KubeCredentials,
+            _request: KubeRequest,
+        ) -> Result<KubeResponse, KubeError> {
+            Err(KubeError::Transport("request not used".to_string()))
+        }
+
+        fn watch(
+            &self,
+            _credentials: &KubeCredentials,
+            _request: KubeRequest,
+        ) -> Result<super::super::client::KubeWatch, KubeError> {
+            self.watches
+                .lock()
+                .map_err(|_| KubeError::Transport("watches lock poisoned".to_string()))?
+                .pop()
+                .ok_or_else(|| KubeError::Transport("watch streams exhausted".to_string()))
+        }
+    }
+
+    impl KubeTransport for ResultsTransport {
+        fn send(
+            &self,
+            _credentials: &KubeCredentials,
+            request: KubeRequest,
+        ) -> Result<KubeResponse, KubeError> {
+            let response = if request.path.ends_with("/manifest") {
+                self.manifest.clone()
+            } else if request.path.ends_with("/files/large.bin") {
+                self.artifact.clone()
+            } else {
+                return Err(KubeError::Transport(format!(
+                    "unexpected path {}",
+                    request.path
+                )));
+            };
+            self.requests
+                .lock()
+                .map_err(|_| KubeError::Transport("requests lock poisoned".to_string()))?
+                .push(request);
+            Ok(KubeResponse {
+                status: 200,
+                body: response,
+            })
+        }
+
+        fn watch(
+            &self,
+            _credentials: &KubeCredentials,
+            _request: KubeRequest,
+        ) -> Result<super::super::client::KubeWatch, KubeError> {
+            Err(KubeError::Transport("watch not used".to_string()))
+        }
     }
 }

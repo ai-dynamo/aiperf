@@ -107,6 +107,7 @@ libmimalloc-sys.workspace = true
 # the transport stack — no reqwest so loopback is never proxied). `rt-multi-thread`
 # also backs the `--cell`/`--aggregator` envelope-fetch runtimes in `execute_mode`.
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util", "net", "time"] }
+tokio-util = { workspace = true, features = ["io"] }
 hyper = { version = "1.10", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"

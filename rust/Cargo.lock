@@ -99,6 +99,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.4",
  "tokio-stream",
+ "tokio-util",
  "toml",
  "tonic 0.14.6",
  "tracing",
