@@ -27,14 +27,22 @@ pub(crate) struct NvmlTelemetrySource {
 
 impl NvmlTelemetrySource {
     /// Initializes NVML on its dedicated vendor worker thread.
-    pub(crate) async fn spawn(clock: Rc<dyn Clock>) -> Result<Self, GpuTelemetryError> {
+    pub(crate) async fn spawn(
+        clock: Rc<dyn Clock>,
+        request_timeout_ns: i64,
+    ) -> Result<Self, GpuTelemetryError> {
         Ok(Self {
-            worker: VendorWorkerSource::spawn(clock, NVML_ENDPOINT_URL, || {
-                Ok(Box::new(NvmlWorker {
-                    nvml: None,
-                    gpm_samples: BTreeMap::new(),
-                }))
-            })
+            worker: VendorWorkerSource::spawn_with_timeout(
+                clock,
+                NVML_ENDPOINT_URL,
+                request_timeout_ns,
+                || {
+                    Ok(Box::new(NvmlWorker {
+                        nvml: None,
+                        gpm_samples: BTreeMap::new(),
+                    }))
+                },
+            )
             .await?,
         })
     }

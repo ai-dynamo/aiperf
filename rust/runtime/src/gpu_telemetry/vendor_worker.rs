@@ -3,6 +3,7 @@
 
 //! Dedicated bounded worker for synchronous vendor GPU APIs.
 
+use std::future::Future;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard, OnceLock};
@@ -22,6 +23,7 @@ use crate::gpu_telemetry::source::{GpuScrapeMode, GpuTelemetryError, GpuTelemetr
 const CHANNEL_CAPACITY: usize = 1;
 const REAPER_CHANNEL_CAPACITY: usize = 64;
 const REAPER_POLL_INTERVAL: Duration = Duration::from_millis(1);
+const DEFAULT_OPERATION_TIMEOUT_NS: i64 = 10_000_000_000;
 const WORKER_THREAD_NAME: &str = "aiperf-gpu-vendor";
 const REAPER_THREAD_NAME: &str = "aiperf-gpu-reaper";
 
@@ -200,11 +202,12 @@ struct WorkerState {
 pub(super) struct VendorWorkerSource {
     clock: Rc<dyn Clock>,
     endpoint_url: String,
+    request_timeout_ns: i64,
     state: StdMutex<WorkerState>,
 }
 
 impl VendorWorkerSource {
-    /// Starts one vendor worker and returns only after initialization succeeds.
+    /// Starts one vendor worker with the default operation deadline.
     pub(super) async fn spawn<F>(
         clock: Rc<dyn Clock>,
         endpoint_url: impl Into<String>,
@@ -213,7 +216,45 @@ impl VendorWorkerSource {
     where
         F: FnOnce() -> Result<Box<dyn VendorWorker>, GpuTelemetryError> + Send + 'static,
     {
-        let endpoint_url = endpoint_url.into();
+        Self::spawn_with_timeout(clock, endpoint_url, DEFAULT_OPERATION_TIMEOUT_NS, factory).await
+    }
+
+    /// Starts one vendor worker and bounds initialization by the supplied clock.
+    pub(super) async fn spawn_with_timeout<F>(
+        clock: Rc<dyn Clock>,
+        endpoint_url: impl Into<String>,
+        request_timeout_ns: i64,
+        factory: F,
+    ) -> Result<Self, GpuTelemetryError>
+    where
+        F: FnOnce() -> Result<Box<dyn VendorWorker>, GpuTelemetryError> + Send + 'static,
+    {
+        if request_timeout_ns <= 0 {
+            return Err(GpuTelemetryError::Protocol(
+                "vendor source request_timeout_ns must be positive".to_string(),
+            ));
+        }
+        match wait_with_timeout(
+            clock.clone(),
+            request_timeout_ns,
+            Self::spawn_inner(clock, endpoint_url.into(), request_timeout_ns, factory),
+        )
+        .await
+        {
+            DeadlineResult::Ready(result) => result,
+            DeadlineResult::TimedOut => Err(timeout_error("initialization", request_timeout_ns)),
+        }
+    }
+
+    async fn spawn_inner<F>(
+        clock: Rc<dyn Clock>,
+        endpoint_url: String,
+        request_timeout_ns: i64,
+        factory: F,
+    ) -> Result<Self, GpuTelemetryError>
+    where
+        F: FnOnce() -> Result<Box<dyn VendorWorker>, GpuTelemetryError> + Send + 'static,
+    {
         if endpoint_url.trim().is_empty() {
             return Err(GpuTelemetryError::Protocol(
                 "vendor source endpoint_url must be non-empty".to_string(),
@@ -240,6 +281,7 @@ impl VendorWorkerSource {
         let source = Self {
             clock,
             endpoint_url,
+            request_timeout_ns,
             state: StdMutex::new(WorkerState {
                 lifecycle: WorkerLifecycle::Running(commands),
                 completion,
@@ -289,7 +331,19 @@ impl VendorWorkerSource {
                 reply,
             },
         )?;
-        receive_reply(receiver, "scrape").await
+        match wait_with_timeout(
+            self.clock.clone(),
+            self.request_timeout_ns,
+            receive_reply(receiver, "scrape"),
+        )
+        .await
+        {
+            DeadlineResult::Ready(result) => result,
+            DeadlineResult::TimedOut => {
+                self.request_shutdown_after_startup_failure();
+                Err(timeout_error("scrape", self.request_timeout_ns))
+            }
+        }
     }
 
     fn begin_shutdown(&self) -> Result<Arc<WorkerCompletion>, GpuTelemetryError> {
@@ -358,7 +412,16 @@ impl GpuTelemetrySource for VendorWorkerSource {
 
     async fn shutdown(&self) -> Result<(), GpuTelemetryError> {
         let completion = self.begin_shutdown()?;
-        wait_for_completion(completion).await
+        match wait_with_timeout(
+            self.clock.clone(),
+            self.request_timeout_ns,
+            wait_for_completion(completion),
+        )
+        .await
+        {
+            DeadlineResult::Ready(result) => result,
+            DeadlineResult::TimedOut => Err(timeout_error("shutdown", self.request_timeout_ns)),
+        }
     }
 }
 
@@ -468,6 +531,27 @@ fn send_worker_reply<T>(
             GpuTelemetryError::Worker(format!("vendor {operation} reply channel disconnected"))
         }
     })
+}
+
+enum DeadlineResult<T> {
+    Ready(T),
+    TimedOut,
+}
+
+async fn wait_with_timeout<T>(
+    clock: Rc<dyn Clock>,
+    request_timeout_ns: i64,
+    future: impl Future<Output = T>,
+) -> DeadlineResult<T> {
+    tokio::select! {
+        biased;
+        result = future => DeadlineResult::Ready(result),
+        () = clock.sleep(request_timeout_ns) => DeadlineResult::TimedOut,
+    }
+}
+
+fn timeout_error(operation: &str, request_timeout_ns: i64) -> GpuTelemetryError {
+    GpuTelemetryError::Worker(format!("vendor {operation} timed out after {request_timeout_ns}ns"))
 }
 
 async fn receive_reply<T>(

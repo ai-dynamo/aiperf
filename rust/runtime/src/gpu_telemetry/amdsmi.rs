@@ -27,11 +27,17 @@ pub(crate) struct AmdSmiTelemetrySource {
 
 impl AmdSmiTelemetrySource {
     /// Initializes AMD SMI on its dedicated vendor worker thread.
-    pub(crate) async fn spawn(clock: Rc<dyn Clock>) -> Result<Self, GpuTelemetryError> {
+    pub(crate) async fn spawn(
+        clock: Rc<dyn Clock>,
+        request_timeout_ns: i64,
+    ) -> Result<Self, GpuTelemetryError> {
         Ok(Self {
-            worker: VendorWorkerSource::spawn(clock, AMDSMI_ENDPOINT_URL, || {
-                Ok(Box::new(AmdSmiWorker::new()?))
-            })
+            worker: VendorWorkerSource::spawn_with_timeout(
+                clock,
+                AMDSMI_ENDPOINT_URL,
+                request_timeout_ns,
+                || Ok(Box::new(AmdSmiWorker::new()?)),
+            )
             .await?,
         })
     }
