@@ -433,6 +433,14 @@ mod tests {
             "http://host/v1/chat/completions/metrics"
         );
         assert_eq!(
+            normalize_metrics_url("grpc://host:9000"),
+            "http://host:9000/metrics"
+        );
+        assert_eq!(
+            normalize_metrics_url("grpcs://host:9000"),
+            "https://host:9000/metrics"
+        );
+        assert_eq!(
             redact_url("https://user:secret@host/metrics"),
             "https://host/metrics"
         );

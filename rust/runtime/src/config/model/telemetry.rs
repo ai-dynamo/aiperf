@@ -539,7 +539,11 @@ mod tests {
         );
         assert_eq!(
             normalize_metrics_url("grpc://127.0.0.1:8001"),
-            "http://grpc://127.0.0.1:8001/metrics"
+            "http://127.0.0.1:8001/metrics"
+        );
+        assert_eq!(
+            normalize_metrics_url("grpcs://127.0.0.1:8001"),
+            "https://127.0.0.1:8001/metrics"
         );
         assert_eq!(
             normalize_metrics_url("http://h:9/custom"),
