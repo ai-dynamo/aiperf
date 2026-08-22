@@ -757,8 +757,17 @@ mod tests {
                 }));
 
                 let summary = sidecar.summarize(Some(10.0), Some(1));
-                assert_eq!(summary.phase_duration_seconds, Some(1e-7));
-                assert!(summary.metrics.contains_key("amd_energy_consumption"));
+                assert_eq!(summary.energy_gpu_count(), 1);
+                assert!(
+                    summary
+                        .sidecar_metrics()
+                        .contains_key("amd_energy_consumption")
+                );
+                assert!(
+                    summary
+                        .sidecar_metrics()
+                        .contains_key("amd_throttle_status")
+                );
             })
             .await;
     }
