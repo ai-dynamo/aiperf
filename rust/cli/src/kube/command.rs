@@ -11,7 +11,10 @@ use super::dashboard::LoopbackForwarder;
 use super::error::KubeError;
 use super::render::{OutputFormat, render};
 use super::results::{ArtifactFetcher, download, parse_manifest};
-use super::submission::{envelope_paths, jobs_path, load_envelope, submit_profile, submit_sweep};
+use super::submission::{
+    create_bootstrap_secrets, envelope_paths, jobs_path, load_envelope, material_paths,
+    submit_profile, submit_sweep,
+};
 
 /// Maximum bounded reconnects a streaming command performs before failing.
 const MAX_WATCH_RECONNECTS: u32 = 5;
@@ -232,6 +235,12 @@ fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
         return Ok(0);
     }
     let client = KubeClient::from_options(&auth_options(args)?)?;
+    // Bootstrap material is created before submission so no role ever starts
+    // without its Secret, and the envelope keeps only reference metadata.
+    let material = material_paths(args)?;
+    for envelope in &envelopes {
+        create_bootstrap_secrets(&client, envelope, &material)?;
+    }
     let status = match command {
         "profile" => {
             if envelopes.len() != 1 {

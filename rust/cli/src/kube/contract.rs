@@ -62,7 +62,7 @@ pub struct RoleEnvelope {
 }
 
 /// Roles representable by `native-k8s/v1`.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NativeK8sRole {
     /// Cellular controller process.
