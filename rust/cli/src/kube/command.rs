@@ -46,7 +46,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     if matches!(command, "profile" | "sweep" | "validate") {
         return envelope_command(command, &args[1..]);
     }
-    let client = KubeClient::from_options(&KubeAuthOptions::default())?;
+    let client = KubeClient::from_options(&auth_options(args)?)?;
     let namespace = namespace(args)?;
     let collection = jobs_path(namespace);
     match command {
@@ -88,7 +88,7 @@ fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
         println!("native Kubernetes validate: native-k8s/v1 envelope is valid");
         return Ok(0);
     }
-    let client = KubeClient::from_options(&KubeAuthOptions::default())?;
+    let client = KubeClient::from_options(&auth_options(args)?)?;
     let status = match command {
         "profile" => {
             if envelopes.len() != 1 {
@@ -100,6 +100,35 @@ fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
         _ => unreachable!(),
     };
     report_status(command, status)
+}
+
+fn auth_options(args: &[String]) -> anyhow::Result<KubeAuthOptions> {
+    let mut options = KubeAuthOptions::default();
+    let mut arguments = args.iter();
+    while let Some(argument) = arguments.next() {
+        if let Some(path) = argument.strip_prefix("--kubeconfig=") {
+            options.kubeconfig = Some(path.into());
+        } else if argument == "--kubeconfig" {
+            options.kubeconfig = Some(
+                arguments
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--kubeconfig requires a path"))?
+                    .into(),
+            );
+        } else if let Some(context) = argument.strip_prefix("--context=") {
+            options.context = Some(context.to_string());
+        } else if argument == "--context" {
+            options.context = Some(
+                arguments
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--context requires a value"))?
+                    .to_string(),
+            );
+        } else if argument == "--insecure-skip-tls-verify" {
+            options.insecure_skip_tls_verify = true;
+        }
+    }
+    Ok(options)
 }
 
 fn namespace(args: &[String]) -> anyhow::Result<&str> {
@@ -178,6 +207,23 @@ mod tests {
             .expect("separate"),
             "bench"
         );
+    }
+
+    #[test]
+    fn auth_options_accept_explicit_kubeconfig_context_and_tls_escape_hatch() {
+        let options = auth_options(&[
+            "--kubeconfig=/tmp/config".to_string(),
+            "--context".to_string(),
+            "bench".to_string(),
+            "--insecure-skip-tls-verify".to_string(),
+        ])
+        .expect("options");
+        assert_eq!(
+            options.kubeconfig.expect("config"),
+            std::path::PathBuf::from("/tmp/config")
+        );
+        assert_eq!(options.context.as_deref(), Some("bench"));
+        assert!(options.insecure_skip_tls_verify);
     }
 
     #[test]
