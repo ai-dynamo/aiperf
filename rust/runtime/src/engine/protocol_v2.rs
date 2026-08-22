@@ -22,6 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::config::model::BenchmarkConfig;
+use crate::config::model::transport::Transport;
 use crate::config::model::workload_kind::{WorkloadKind, workload_kind};
 use crate::engine::protocol::{
     DispatchMode, HopRouting, MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
@@ -1832,7 +1833,7 @@ mod dispatch_mode_tests {
 mod transport_component_tests {
     use super::*;
     use crate::config::model::transport::{
-        DryRunConfig, DynosimConfig, Transport, WebSocketTransportConfig,
+        DryRunConfig, DynosimConfig, WebSocketTransportConfig,
     };
 
     /// Every `Transport` variant, so the payload-bearing arms are covered.
