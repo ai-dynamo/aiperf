@@ -65,10 +65,11 @@ type ProcessorHandlesFn = unsafe extern "C" fn(SocketHandle, *mut u32, *mut Proc
 type UuidFn = unsafe extern "C" fn(ProcessorHandle, *mut u32, *mut c_char) -> u32;
 type BdfFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiBdf) -> u32;
 type AsicInfoFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiAsicInfo) -> u32;
+type BoardInfoFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiBoardInfo) -> u32;
 type PowerInfoFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiPowerInfo) -> u32;
 type EnergyCountFn = unsafe extern "C" fn(ProcessorHandle, *mut u64, *mut f32, *mut u64) -> u32;
 type ActivityFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiEngineUsage) -> u32;
-type VramUsageFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiVramUsage) -> u32;
+type MemoryUsageFn = unsafe extern "C" fn(ProcessorHandle, u32, *mut u64) -> u32;
 type TemperatureFn = unsafe extern "C" fn(ProcessorHandle, u32, u32, *mut i64) -> u32;
 type EccCountFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiErrorCount) -> u32;
 type GpuMetricsFn = unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiGpuMetrics) -> u32;
@@ -106,6 +107,17 @@ struct AmdsmiAsicInfo {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct AmdsmiBoardInfo {
+    model_number: [c_char; 256],
+    product_serial: [c_char; 256],
+    fru_id: [c_char; 256],
+    product_name: [c_char; 256],
+    manufacturer_name: [c_char; 256],
+    reserved: [u64; 64],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct AmdsmiPowerInfo {
     socket_power: u64,
     current_socket_power: u32,
@@ -124,14 +136,6 @@ struct AmdsmiEngineUsage {
     umc_activity: u32,
     mm_activity: u32,
     reserved: [u32; 13],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct AmdsmiVramUsage {
-    vram_total: u32,
-    vram_used: u32,
-    reserved: [u32; 2],
 }
 
 #[repr(C)]
@@ -300,7 +304,7 @@ struct AmdSmiDeviceObservation {
     bdf: Option<AmdsmiBdf>,
     power_candidates: Option<[u64; 3]>,
     activity: Option<(u32, u32, u32)>,
-    vram_used_mib: Option<u32>,
+    memory_used_bytes: Option<u64>,
     temperature: Option<i64>,
     ecc_uncorrectable: Option<u64>,
     throttle_status: Option<(u32, u64)>,
@@ -318,11 +322,18 @@ fn observe_device(
         .ok()
         .filter(|function| unsafe { function(device, &mut uuid_length, uuid.as_mut_ptr()) } == AMDSMI_SUCCESS)
         .and_then(|_| c_string(&uuid));
-    let mut asic: AmdsmiAsicInfo = unsafe { std::mem::zeroed() };
-    let gpu_model_name = unsafe { library.get::<AsicInfoFn>(b"amdsmi_get_gpu_asic_info\0") }
+    let mut board: AmdsmiBoardInfo = unsafe { std::mem::zeroed() };
+    let gpu_model_name = unsafe { library.get::<BoardInfoFn>(b"amdsmi_get_gpu_board_info\0") }
         .ok()
-        .filter(|function| unsafe { function(device, &mut asic) } == AMDSMI_SUCCESS)
-        .and_then(|_| c_string(&asic.market_name));
+        .filter(|function| unsafe { function(device, &mut board) } == AMDSMI_SUCCESS)
+        .and_then(|_| c_string(&board.product_name))
+        .or_else(|| {
+            let mut asic: AmdsmiAsicInfo = unsafe { std::mem::zeroed() };
+            unsafe { library.get::<AsicInfoFn>(b"amdsmi_get_gpu_asic_info\0") }
+                .ok()
+                .filter(|function| unsafe { function(device, &mut asic) } == AMDSMI_SUCCESS)
+                .and_then(|_| c_string(&asic.market_name))
+        });
     let mut bdf = AmdsmiBdf { as_uint: 0 };
     let bdf = unsafe { library.get::<BdfFn>(b"amdsmi_get_gpu_device_bdf\0") }
         .ok()
@@ -350,11 +361,11 @@ fn observe_device(
                 activity.mm_activity,
             )
         });
-    let mut vram: AmdsmiVramUsage = unsafe { std::mem::zeroed() };
-    let vram_used_mib = unsafe { library.get::<VramUsageFn>(b"amdsmi_get_gpu_vram_usage\0") }
+    let mut memory_used_bytes = 0_u64;
+    let memory_used_bytes = unsafe { library.get::<MemoryUsageFn>(b"amdsmi_get_gpu_memory_usage\0") }
         .ok()
-        .filter(|function| unsafe { function(device, &mut vram) } == AMDSMI_SUCCESS)
-        .map(|_| vram.vram_used);
+        .filter(|function| unsafe { function(device, 0, &mut memory_used_bytes) } == AMDSMI_SUCCESS)
+        .map(|_| memory_used_bytes);
     let mut temperature = 0_i64;
     let temperature = unsafe { library.get::<TemperatureFn>(b"amdsmi_get_temp_metric\0") }
         .ok()
@@ -390,7 +401,7 @@ fn observe_device(
         bdf,
         power_candidates,
         activity,
-        vram_used_mib,
+        memory_used_bytes,
         temperature,
         ecc_uncorrectable,
         throttle_status,
@@ -434,9 +445,9 @@ fn record_from_observation(
         &mut metrics,
         "amd_memory_used",
         observation
-            .vram_used_mib
-            .and_then(valid_u32)
-            .map(mebibytes_to_gigabytes),
+            .memory_used_bytes
+            .filter(|value| *value != u64::MAX)
+            .map(bytes_to_gigabytes),
     );
     insert_finite(
         &mut metrics,
@@ -519,10 +530,6 @@ fn pci_bus_id(bdf: AmdsmiBdf) -> String {
 
 fn valid_u32(value: u32) -> Option<u32> {
     (value != u32::MAX).then_some(value)
-}
-
-fn mebibytes_to_gigabytes(value: u32) -> f64 {
-    bytes_to_gigabytes(value as u64 * 1_048_576)
 }
 
 fn bytes_to_gigabytes(value: u64) -> f64 {
@@ -610,11 +617,6 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_vram_mib_like_origin_main_bytes() {
-        assert_eq!(mebibytes_to_gigabytes(1024), 1.073_741_824);
-    }
-
-    #[test]
     fn origin_main_fixture_assembles_complete_native_amdsmi_record() {
         let fixture = serde_json::from_str::<Vec<FixtureRecord>>(include_str!(
             "../../tests/data/gpu_telemetry/amdsmi_origin_main.json"
@@ -654,7 +656,7 @@ mod tests {
                 bdf: None,
                 power_candidates: None,
                 activity: None,
-                vram_used_mib: None,
+                memory_used_bytes: None,
                 temperature: None,
                 ecc_uncorrectable: None,
                 throttle_status: Some((u32::MAX, 1)),
@@ -676,7 +678,7 @@ mod tests {
                 bdf: None,
                 power_candidates: None,
                 activity: None,
-                vram_used_mib: None,
+                memory_used_bytes: None,
                 temperature: None,
                 ecc_uncorrectable: None,
                 throttle_status: Some((0, u64::MAX)),
