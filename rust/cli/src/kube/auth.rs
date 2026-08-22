@@ -155,10 +155,7 @@ impl KubeConfig {
         let user = self.users.iter().find(|entry| entry.name == context.context.user).ok_or_else(|| {
             KubeError::Authentication(format!("kubeconfig user {} does not exist", context.context.user))
         })?;
-        let endpoint = cluster.cluster.server.strip_prefix("https://").ok_or_else(|| {
-            KubeError::Authentication("Kubernetes API server must use https".to_string())
-        })?;
-        let (host, port) = split_host_port(endpoint)?;
+        let (host, port) = split_host_port(&cluster.cluster.server)?;
         if cluster.cluster.insecure_skip_tls_verify.unwrap_or(false) && !options.insecure_skip_tls_verify {
             return Err(KubeError::Authentication("kubeconfig requests insecure TLS but --insecure-skip-tls-verify was not supplied".to_string()));
         }
