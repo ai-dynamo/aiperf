@@ -162,6 +162,7 @@ assert status("PUT", base + "/artifacts/nested/%2E%2E/escape.txt", b"unsafe") ==
 assert status("POST", base + "/manifest", b"", declared_length=1048577) == 413
 
 assert status("PUT", base + "/artifacts/nested/result.txt", artifact) in (200, 201)
+assert status("GET", results + "/manifest") == 409
 assert status("GET", results + "/artifacts/nested/result.txt") == 404
 manifest = json.dumps(
     {
