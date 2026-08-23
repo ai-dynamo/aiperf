@@ -42,7 +42,9 @@ round-trip, no per-factory re-decode, decode-time errors, and the opaque
 **Status (contest O8, proven).** This record is *partly* built, not
 forward-looking. Implementation lives on `ajc/typed-factory-runner-v2`:
 `b7619602fb` already ships §5 step 3's DTO collapse as the unified
-`WorkloadConfigV2` (`engine/registry.rs:876`, `:883`), and step 1's typed
+`WorkloadConfigV2` (`engine/registry.rs:855`, with
+`ScheduledWorkloadConfigV2`/`GraphWorkloadConfigV2` kept as type aliases at
+`:902-904`), and step 1's typed
 `cfg.transport` consumer is `transport_component`
 (`engine/protocol_v2.rs`), pinned against the projection it replaces by
 `transport_component_matches_inline_projection`. Steps 2 and 4 are not built.
@@ -248,7 +250,7 @@ contest round 4):
 | `variables` | `BTreeMap<String, Value>` | `serde_json::Map<String, Value>` |
 | `planned_replay_traces` | `BTreeSet<PlannedReplayTraceInstance>` | **absent** (see §5 step 4) |
 | outer validation | `validate_outer()` (`protocol_v2.rs:332-350`): non-empty `benchmark_id`, non-empty `artifact_dir`, **non-empty** `datasets` (see O1 — the message says "exactly one" but the `ensure!` only tests `!datasets.is_empty()`) | **none** |
-| export stem derivation | `into_authored` (`protocol_v2.rs:462-475`) rewrites `export.genai_perf.stem` and `export.timeslice.stem` from `artifacts.records_path` | **none** — `cfg.export` carries the undelivered authored value (see O2) |
+| export stem derivation | `into_authored` (`protocol_v2.rs:464-475`) rewrites `export.genai_perf.stem` and `export.timeslice.stem` from `artifacts.records_path` | **none** — `cfg.export` carries the undelivered authored value (see O2) |
 
 The table is therefore a **port list**, not a compatibility obligation. Each row
 is decided on merit:
@@ -297,10 +299,25 @@ is decided on merit:
   re-typing `BenchmarkRun::variation` to `VariationSpec` is the correct direction
   and belongs in this change rather than being inherited as-is.
 
+  **`resolved` is a sharper tightening than "the typed model winning" implies
+  (independent audit).** `Resolved` (`config/model/resolved.rs:13-46`) carries
+  **no** per-field `#[serde(default)]` — its module doc states the contract
+  outright: "Every field is present in the wire object, including nulls." Its
+  `impl Default` (`:48-68`) only serves `BenchmarkRun::resolved`'s own
+  `#[serde(default)]`, i.e. omitting the whole section. So the re-type accepts a
+  strictly narrower set of payloads than `resolved: Value` did: a `resolved`
+  object present but missing *any* one of its sixteen keys — including the
+  `Option` ones, which without `serde(default)` are required-but-nullable —
+  decodes today and is rejected after. That only bites the bare-resolved-run arm
+  §4 keeps for external harnesses (AIPerf's own authoring arm re-projects a full
+  `Resolved`). It is still the right direction, and the greenfield premise
+  carries it, but it is a behavior change and is recorded as one rather than
+  filed under "accept `BenchmarkRun`'s shapes".
+
 - **Export stem derivation — port it. Added by contest O2 (proven).** The port
   list above was drawn from `BenchmarkRunWireV2`'s *fields* and so missed a
   behavior that lives only in `into_authored`'s **body**: at
-  `protocol_v2.rs:462-475` it reads `artifacts_spec.records_path`, strips a
+  `protocol_v2.rs:464-475` it reads `artifacts_spec.records_path`, strips a
   `.jsonl` suffix from the file name, and — when the stem is non-empty —
   overwrites `export_cfg.genai_perf.stem` with it and
   `export_cfg.timeslice.stem` with `format!("{stem}_aiperf")`. This is the live
@@ -342,8 +359,14 @@ is decided on merit:
   - **An invalid metric SLO silently defaults the whole metrics section.**
     `cfg.metrics.and_then(|m| MetricsSpec::try_from(m).ok()).unwrap_or_default()`
     — and `TryFrom` fails on the *first* non-numeric `slos` entry
-    (`engine/protocol.rs:209-231`), so `.ok()` discards `slice_duration_seconds`,
-    every valid SLO, `sketch`, and `steady_state` along with it.
+    (`engine/protocol.rs:209-231` **on `ajc/typed-factory-runner-v2`**; there is
+    no such impl on `ajc/rust`), so `.ok()` discards `slice_duration_seconds`,
+    every valid SLO, `sketch`, and `steady_state` along with it. On `ajc/rust`
+    the same swallow is *wider*: `serde_json::from_value(metrics).unwrap_or_default()`
+    (`protocol_v2.rs:490`) over a `deny_unknown_fields` `MetricsSpec`
+    (`engine/protocol.rs:164-179`) defaults on **any** decode failure — an unknown
+    key, a mistyped `slice_duration_seconds`, a non-bool `sketch` — not just a
+    non-numeric SLO.
 
   Decisions, explicit rather than incidental:
 
@@ -641,15 +664,37 @@ One transport family at a time, byte-exact against the mock server at each step:
    graph arm whenever `cfg.system_idle_gap_cap_seconds` is `Some`, with **no**
    `weka_semantics` predicate; a typed-optional field consulted on the graph arm
    reproduces that exactly, and reintroducing the legacy/agentx guard would make
-   the flag a silent no-op under graph-ir again. All
-   four graph-only fields that survive the DTO are consumed inside `lower_graph`
-   (`online_execution.rs:1215`), and dropping any is a **silent** behavior loss,
-   not a decode error: `workload.recorded_agent_default` gates
-   `validate_canonical_recorded_agent_bundle(&prepared.bundle)` (canonical-bundle
-   validation simply stops running if the flag is lost);
-   `workload.system_idle_gap_cap_seconds` and `workload.ignore_trace_delays` flow
-   into `NativeGraphDatasetPlan`; `workload.planned_replay_traces` is assigned to
-   `plan.planned_replay_traces` after `build_common_plan`. Note also that
+   the flag a silent no-op under graph-ir again.
+
+   **Corrected (independent audit): `lower_graph` is not the only consumer.** An
+   earlier draft of this step said all four surviving graph-only fields are
+   consumed inside `lower_graph`. Four are read there
+   (`online_execution.rs:1215-1282`) — `workload.recorded_agent_default` (`:1251`)
+   gates `validate_canonical_recorded_agent_bundle(&prepared.bundle)`, so
+   canonical-bundle validation simply stops running if the flag is lost;
+   `workload.ignore_trace_delays` (`:1262`) and
+   `workload.system_idle_gap_cap_seconds` (`:1263`) flow into
+   `NativeGraphDatasetPlan`; `workload.planned_replay_traces` (`:1280`) is
+   assigned to `plan.planned_replay_traces` after `build_common_plan`. But three
+   of the five fields have live readers *outside* `lower_graph`, and a repoint
+   that only follows that one function misses them:
+
+   - `workload.system_idle_gap_cap_seconds` is read again by
+     `lower_legacy_agentic` (`online_execution.rs:1632`), where it becomes
+     `PhaseSpec::AgenticReplay { system_idle_gap_cap_seconds, .. }` — the AgentX
+     legacy arm, i.e. exactly the `weka_semantics == legacy` path the cap
+     correction above is about.
+   - `workload.ignore_trace_delays` is read again by `prepare_dynosim_graph`
+     (`offline_execution.rs:1543`) into `PreparedDynosimGraphOperation` — the
+     dynosim arm, which never enters `lower_graph` at all.
+   - `workload.weka_semantics`, the fifth field, is consumed by **no** lowering
+     function. It is read only in the graph workload's `validate_run`, as
+     `weka_wants_legacy(workload.weka_semantics.as_deref())`
+     (`online_execution.rs:347`, `:381`) — which is what selects
+     `lower_legacy_agentic` over `lower_graph` in the first place.
+
+   Dropping any of the five is a **silent** behavior loss, not a decode error.
+   Note also that
    `lower_graph` takes `&AuthoredRunSpecV2` and reads `run.endpoints.identities()`
    and `run.identity.random_seed`, and passes `run` on to `build_common_plan` —
    further step-4 repoint surface. Verify graph + scheduled e2e.
@@ -723,9 +768,9 @@ One transport family at a time, byte-exact against the mock server at each step:
    `timeout_seconds` and removes `url_strategy`; `models_from_config` (`:507-521`)
    retains only `name`/`weight`. Against the typed model these are no-ops:
    `Endpoint` (`config/model/endpoint.rs:117`) already stores `timeout_seconds`
-   (`:137`) and has neither a `timeout` nor a `url_strategy` field — `url_strategy`
+   (`:138`) and has neither a `timeout` nor a `url_strategy` field — `url_strategy`
    exists only in the authoring layer (`cli/src/flags.rs:368`,
-   `cli/src/yaml.rs:898`, consumed and validated at `yaml.rs:1673`) and never
+   `cli/src/yaml.rs:915`, consumed and validated at `yaml.rs:1690`) and never
    reaches `BenchmarkConfig` — and `ModelItem` (`config/model/models.rs:22`) has
    only `name` and `weight`. For the **default** profile
    (`serde_json::to_value(&cfg.endpoint)`, `protocol_v2.rs:446`) and for models,
@@ -749,7 +794,7 @@ One transport family at a time, byte-exact against the mock server at each step:
    `serde_json::to_value(&cfg.sidecars).as_object().is_some_and(|o| !o.is_empty())`.
    That is emptiness of the *serialized object*, a categorically different
    predicate from `Option::is_some`: every field of `Sidecars`
-   (`config/model/telemetry.rs:206-221`) carries
+   (`config/model/telemetry.rs:216-230`) carries
    `skip_serializing_if = "Option::is_none"`, so `Some(Sidecars::default())`
    serializes to `{}` and classifies as **absent**, while `cfg.sidecars.is_some()`
    would call it present. That flip changes the Required/Optional/**Forbidden**
@@ -856,7 +901,7 @@ mandatory at every step, not just the last. Beyond that shared floor:
   `resource_presence` algorithm selected under O5. A step-4 change could land all
   five wrong and still be green, which is the same shape of hole this section was
   written to close. Worse, the closest thing the tree has to such a test does not
-  run: `protocol_v2.rs:1304` declares `#[cfg(any())] mod tests` — an
+  run: `protocol_v2.rs:1284` declares `#[cfg(any())] mod tests` — an
   always-false cfg that compiles the entire module out — and among its bodies is
   `outer_contract_rejects_unknown_fields`, i.e. the one existing unknown-field
   assertion has been silently disabled since `904cc07e2a`. Step 4 must therefore
