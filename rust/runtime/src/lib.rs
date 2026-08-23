@@ -54,7 +54,7 @@ pub mod eval;
 pub mod extensions;
 pub mod gpu_telemetry;
 pub mod graph;
-#[cfg(feature = "cellular")]
+#[cfg(all(feature = "cellular", feature = "engine"))]
 pub mod hub;
 pub mod metrics_core;
 pub mod network_latency;

@@ -47,14 +47,14 @@ impl ArtifactChannelServerConfig {
 #[cfg(feature = "cellular")]
 pub mod connect;
 /// Velo distribution for the dataset fan-out data plane.
-#[cfg(feature = "cellular")]
+#[cfg(all(feature = "cellular", feature = "engine"))]
 pub mod dataset_velo;
 /// Velo distribution for the monotonic phaser control plane.
-#[cfg(feature = "cellular")]
+#[cfg(all(feature = "cellular", feature = "engine"))]
 pub mod phaser_velo;
 /// The velo-backed cell↔controller transport (cell client + controller
 /// endpoint), gated on the `velo` feature.
-#[cfg(feature = "cellular")]
+#[cfg(all(feature = "cellular", feature = "engine"))]
 pub mod velo_transport;
 
 /// One per-cell phase-barrier signal surfaced to the controller.
