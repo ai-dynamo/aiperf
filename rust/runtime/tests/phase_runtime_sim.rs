@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end phased scheduled-runtime coverage over virtual time.
+#![cfg(feature = "engine")]
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Lowering and adapter integration coverage for imported agent sessions.
+#![cfg(feature = "engine")]
 
 use std::fs;
 use std::path::{Path, PathBuf};

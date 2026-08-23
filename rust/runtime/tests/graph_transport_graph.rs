@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end graph dispatch over HTTP through `TransportChatSink`.
+#![cfg(feature = "engine")]
 
 use std::io::Read;
 use std::path::PathBuf;

@@ -10,6 +10,7 @@
 //!
 //! Both are actually *run* (not handed off) and produce output, proving the
 //! switch is fully wired to two live, parallel semantics.
+#![cfg(feature = "engine")]
 
 use std::collections::HashMap;
 

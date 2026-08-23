@@ -18,6 +18,7 @@
 //! The two agentic phase instances share one accelerated-warmup carrier exactly as
 //! the engine threads it (`WARMUP` writes it at finalize, `PROFILING` reads it), so
 //! the residual frontier is produced by the production code path, not the test.
+#![cfg(feature = "engine")]
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

@@ -6,6 +6,7 @@
 //! Exercises the public load → compose → tokenize path for the four generated
 //! fixture formats, the one-line `Sample` JSON schema, and structured errors for
 //! unknown formats and missing CLI arguments.
+#![cfg(feature = "engine")]
 
 #[path = "../examples/dataset_load_bench.rs"]
 mod dataset_load_bench;

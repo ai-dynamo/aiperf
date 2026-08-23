@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Pure contracts for normalized Harbor benchmark execution plans.
+#![cfg(feature = "engine")]
 
 use std::{
     cell::RefCell,

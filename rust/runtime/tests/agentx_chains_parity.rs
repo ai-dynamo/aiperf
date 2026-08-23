@@ -7,6 +7,7 @@
 //! Golden produced by `tools/agentx_chains_golden.py`; this replays each
 //! scenario and diffs the full partition (main index, worker indices, seams,
 //! per-chain request lists, fork metadata, spliced_into).
+#![cfg(feature = "engine")]
 
 use aiperf_runtime::agentx::chains::{
     ChainReq, compute_chain_prefix_blocks, detect_agent_chains, worker_group_assignment,

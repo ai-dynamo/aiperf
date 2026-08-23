@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! KServe endpoint wire and behavior contracts.
+#![cfg(feature = "engine")]
 
 use std::collections::BTreeSet;
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! NativeGraph model-runtime resolution contracts.
+#![cfg(feature = "engine")]
 
 use std::{
     fs,

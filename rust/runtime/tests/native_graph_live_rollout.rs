@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Package-bound live-rollout model-decision admission contracts.
+#![cfg(feature = "engine")]
 
 use std::{
     cell::{Cell, RefCell},

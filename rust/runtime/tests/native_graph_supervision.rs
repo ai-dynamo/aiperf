@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Adversarial contracts for supervised NativeGraph adapter sessions.
+#![cfg(feature = "engine")]
 
 use std::{
     cell::RefCell,

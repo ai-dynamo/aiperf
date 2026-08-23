@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! NativeGraph rollout environment-binder selection contracts.
+#![cfg(feature = "engine")]
 
 use std::{
     cell::{Cell, RefCell},

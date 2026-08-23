@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Frozen RL rollout completion and evaluator integration contracts.
+#![cfg(feature = "engine")]
 
 use std::{cell::RefCell, collections::BTreeMap, fs, io::Cursor, num::NonZeroUsize, rc::Rc};
 

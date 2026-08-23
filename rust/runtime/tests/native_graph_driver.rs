@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Staged live NativeGraph trace-driver contracts.
+#![cfg(feature = "engine")]
 
 use std::{collections::BTreeMap, fs};
 

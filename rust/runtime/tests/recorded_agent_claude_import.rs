@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Claude Code JSONL normalization contracts for imported recorded-agent sessions.
+#![cfg(feature = "engine")]
 
 use std::fs;
 use std::path::{Path, PathBuf};

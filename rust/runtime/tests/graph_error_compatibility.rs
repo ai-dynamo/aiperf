@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Public graph error compatibility regressions.
+#![cfg(feature = "engine")]
 
 use aiperf_runtime::graph::conditional::ConditionalError;
 use aiperf_runtime::graph::scheduler::MixedAnchorFanInError;

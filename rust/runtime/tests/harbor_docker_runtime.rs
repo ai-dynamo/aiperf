@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Redacted structured Docker command contracts for Harbor execution.
+#![cfg(feature = "engine")]
 
 use std::{
     cell::{Cell, RefCell},

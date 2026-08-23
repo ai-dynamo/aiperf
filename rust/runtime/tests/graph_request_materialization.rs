@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Public behavior coverage for typed graph request materialization.
+#![cfg(feature = "engine")]
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

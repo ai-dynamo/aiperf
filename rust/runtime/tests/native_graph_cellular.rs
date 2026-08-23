@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Controller-owned NativeGraph cellular placement and fold contracts.
+#![cfg(feature = "engine")]
 
 use std::{
     collections::{BTreeMap, BTreeSet},

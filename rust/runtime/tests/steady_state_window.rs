@@ -10,6 +10,7 @@
 //! it ingests a deterministic ramp/steady/drain record set, detects the window,
 //! and inspects the per-record attribution and the steady summary produced by
 //! the ordinary accumulator export path.
+#![cfg(feature = "engine")]
 
 use aiperf_runtime::metrics_core::window::Phase;
 use aiperf_runtime::metrics_core::{

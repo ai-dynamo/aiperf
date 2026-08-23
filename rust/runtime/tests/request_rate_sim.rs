@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Deterministic request-rate multi-turn policy coverage over `SimClock`.
+#![cfg(feature = "engine")]
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end native Tonic transport coverage for Riva ASR bidi streaming.
+#![cfg(feature = "engine")]
 
 use std::convert::Infallible;
 use std::pin::Pin;

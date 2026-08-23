@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Public WebSocket transport-configuration contract.
+#![cfg(feature = "engine")]
 
 use aiperf_runtime::config::model::transport::{
     Transport, WebSocketTransportConfig, WebSocketTransportConfigError,

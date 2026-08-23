@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Real-loopback TLS verification tests.
+#![cfg(feature = "engine")]
 
 mod common;
 

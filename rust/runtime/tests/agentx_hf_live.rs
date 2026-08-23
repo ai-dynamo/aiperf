@@ -4,7 +4,7 @@
 //! Live HuggingFace fetch of the real AgentX corpus. Ignored by default (hits
 //! the network); run with `--ignored`. Downloads `semianalysisai/cc-traces-weka-062126`
 //! (393 public v7 traces), validates rows as `WekaTrace`, and reconstructs.
-
+#![cfg(feature = "engine")]
 #![cfg(feature = "parquet")]
 
 use aiperf_runtime::agentx::hf_dataset::{HfDatasetRef, fetch_hf_weka_rows};

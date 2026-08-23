@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! Contract tests for the canonical recorded-agent scenario lock.
+#![cfg(feature = "engine")]
 
 use aiperf_runtime::agentx::scenario::{
     RecordedAgentScenarioInputs, apply_recorded_agent_scenario_locks, recorded_agent_default,

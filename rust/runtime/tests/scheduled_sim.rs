@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Deterministic end-to-end schedule-policy tests over the real workload runtime.
+#![cfg(feature = "engine")]
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

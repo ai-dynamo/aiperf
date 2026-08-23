@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Source-faithful NativeGraph lowering contracts.
+#![cfg(feature = "engine")]
 
 use std::fs;
 use std::path::Path;

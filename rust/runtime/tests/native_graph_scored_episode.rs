@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! NativeGraph task-environment callback ordering contracts.
+#![cfg(feature = "engine")]
 
 use std::{
     cell::{Cell, RefCell},

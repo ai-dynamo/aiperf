@@ -4,6 +4,7 @@
 //! Golden-vector verification for `t*` sampling.
 //!
 //! Fixtures record each `t_star_us` as its `f64` bit pattern.
+#![cfg(feature = "engine")]
 
 use aiperf_runtime::graph::tstar::{TStarSampler, WindowTStarSampler};
 

@@ -16,6 +16,7 @@
 //!
 //! All wall values are Clock-derived nanoseconds (never `Instant::now`);
 //! byte-exactness holds only under `SimClock`.
+#![cfg(feature = "engine")]
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

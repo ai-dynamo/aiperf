@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Contract tests for controller-owned recorded-agent replay artifacts.
+#![cfg(feature = "engine")]
 
 use std::fs;
 

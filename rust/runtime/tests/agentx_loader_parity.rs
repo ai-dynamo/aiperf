@@ -7,6 +7,7 @@
 //! Golden produced by `tools/agentx_loader_golden.py` (real `ConversationReconstructor`
 //! + real loop helpers + stub token generator). This replays with an identical
 //! stub and diffs the full reconstructed conversation.
+#![cfg(feature = "engine")]
 
 use aiperf_runtime::agentx::loader::{
     MainReconstructOptions, NormalReq, TurnInputKind, reconstruct_main_conversation,

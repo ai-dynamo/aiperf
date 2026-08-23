@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Regression coverage for recorded-agent driver behavior after staged extension.
+#![cfg(feature = "engine")]
 
 use std::collections::BTreeMap;
 

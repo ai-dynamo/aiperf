@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Contract coverage for the Docker recorded-agent tool sandbox.
+#![cfg(feature = "engine")]
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, VecDeque};

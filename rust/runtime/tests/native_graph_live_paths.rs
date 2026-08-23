@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Model-selected NativeGraph path contracts.
+#![cfg(feature = "engine")]
 
 use std::{
     cell::{Cell, RefCell},

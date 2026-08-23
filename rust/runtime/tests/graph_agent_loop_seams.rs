@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Behavioral coverage for the worker-local recorded-agent loop seams.
+#![cfg(feature = "engine")]
 
 use bytes::Bytes;
 use std::rc::Rc;

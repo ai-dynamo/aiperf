@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Immutable NativeGraph RL rollout and environment-stepper contracts.
+#![cfg(feature = "engine")]
 
 use std::{
     cell::RefCell,

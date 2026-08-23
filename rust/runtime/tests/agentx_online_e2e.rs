@@ -7,6 +7,7 @@
 //! server receives the exact byte-exact request bodies. This exercises the full
 //! path from trace bytes through the wire to an actual inference endpoint —
 //! reconstruction content + dispatch timing landing on the wire unchanged.
+#![cfg(feature = "engine")]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
