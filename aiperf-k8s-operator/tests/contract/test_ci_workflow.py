@@ -59,8 +59,8 @@ def test_kind_jobs_run_the_operator_image_built_from_the_checkout() -> None:
     assert "pip install --no-cache-dir ." in image_recipe
 
 
-def test_kind_jobs_share_one_read_only_native_fixture() -> None:
-    """The native suite must inspect one fixture without racing mutations."""
+def test_native_kind_job_runs_the_serial_durable_results_acceptance() -> None:
+    """The native fixture must hand its image to the serial mutating acceptance."""
     kind_job = workflow_job("kind", "native-cli-kind")
     native_job = workflow_job("native-cli-kind")
 
@@ -68,8 +68,12 @@ def test_kind_jobs_share_one_read_only_native_fixture() -> None:
         assert "--namespace aiperf-system --create-namespace" in job
 
     ignored_attribute = "\n#[ignore]\n"
-    assert NATIVE_CONTRACT.count(ignored_attribute) == 1
+    assert NATIVE_CONTRACT.count(ignored_attribute) == 2
+    assert "-- --ignored --test-threads=1" in native_job
+    assert "AIPERF_E2E_OPERATOR_IMAGE: aiperf-k8s-operator:ci" in native_job
     live_contract = NATIVE_CONTRACT.split(ignored_attribute, 1)[1]
     assert 'Command::new("helm")' not in live_contract
-    for unsupported_fixture_operation in ['"profile"', '"results"']:
-        assert unsupported_fixture_operation not in live_contract
+    assert '"profile"' not in live_contract
+    assert (
+        "kind_results_survive_producer_deletion_and_operator_restart" in live_contract
+    )

@@ -25,7 +25,6 @@ spec:
         properties:
           spec:
             type: object
-            additionalProperties: false
             required: [envelope]
             x-kubernetes-validations:
             - rule: self == oldSelf
@@ -36,7 +35,6 @@ spec:
                 x-kubernetes-preserve-unknown-fields: true
           status:
             type: object
-            additionalProperties: false
             required: [phase, runId, jobSet]
             properties:
               phase:

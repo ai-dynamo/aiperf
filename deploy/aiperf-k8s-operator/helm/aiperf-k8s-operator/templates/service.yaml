@@ -4,6 +4,7 @@ metadata:
   name: {{ .Values.api.serviceName }}
   namespace: {{ .Release.Namespace }}
 spec:
+  type: ClusterIP
   selector:
     app.kubernetes.io/name: aiperf-k8s-operator
     app.kubernetes.io/instance: {{ .Release.Name }}

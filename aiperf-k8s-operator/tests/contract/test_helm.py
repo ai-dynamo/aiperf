@@ -11,6 +11,11 @@ CHART = ROOT / "deploy" / "aiperf-k8s-operator" / "helm" / "aiperf-k8s-operator"
 
 
 def render_chart(*values: str) -> list[dict]:
+    values = (
+        "image.repository=example.invalid/aiperf-k8s-operator",
+        "image.tag=test",
+        *values,
+    )
     result = subprocess.run(
         [
             "helm",
@@ -27,6 +32,25 @@ def render_chart(*values: str) -> list[dict]:
         text=True,
     )
     return [resource for resource in yaml.safe_load_all(result.stdout) if resource]
+
+
+def test_chart_requires_an_explicit_operator_image() -> None:
+    """A release must never fall back to a fictional or floating image."""
+    result = subprocess.run(
+        [
+            "helm",
+            "template",
+            "operator",
+            str(CHART),
+            "--namespace",
+            "control-plane",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "image.repository" in result.stderr
 
 
 def one(resources: list[dict], kind: str, name: str) -> dict:
@@ -48,8 +72,13 @@ def test_fresh_chart_renders_jobset_prerequisite_and_durable_results_service() -
     assert "jobsets.jobset.x-k8s.io" in crd_names
 
     deployment = one(resources, "Deployment", "operator")
+    assert deployment["metadata"]["labels"] == {
+        "app.kubernetes.io/name": "aiperf-k8s-operator",
+        "app.kubernetes.io/instance": "operator",
+    }
     pod = deployment["spec"]["template"]["spec"]
     container = pod["containers"][0]
+    assert container["image"] == "example.invalid/aiperf-k8s-operator:test"
     environment = {entry["name"]: entry["value"] for entry in container["env"]}
     assert environment == {
         "AIPERF_K8S_OPERATOR_ARTIFACT_ROOT": "/var/lib/aiperf/results",
@@ -108,7 +137,7 @@ def test_fresh_chart_renders_jobset_prerequisite_and_durable_results_service() -
     status_schema = aiperfjob_crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"][
         "properties"
     ]["status"]
-    assert status_schema["additionalProperties"] is False
+    assert "additionalProperties" not in status_schema
     assert status_schema["required"] == ["phase", "runId", "jobSet"]
     assert status_schema["properties"]["phase"]["enum"] == [
         "Pending",

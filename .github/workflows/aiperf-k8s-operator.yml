@@ -49,7 +49,8 @@ jobs:
     - run: cargo build --release -p aiperf-cli
       working-directory: rust
     # The ignored kind tests drive the real binary against the provisioned cluster.
-    - run: cargo test -p aiperf-e2e-tests --test kube_cli_contract -- --ignored
+    - run: cargo test -p aiperf-e2e-tests --test kube_cli_contract -- --ignored --test-threads=1
       working-directory: rust
       env:
         AIPERF_E2E_BIN: ${{ github.workspace }}/rust/target/release/aiperf
+        AIPERF_E2E_OPERATOR_IMAGE: aiperf-k8s-operator:ci

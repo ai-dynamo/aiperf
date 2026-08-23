@@ -1,7 +1,12 @@
+{{- $repository := required "image.repository must identify the operator registry repository" .Values.image.repository -}}
+{{- $tag := required "image.tag must identify an explicit operator image version" .Values.image.tag -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: aiperf-k8s-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   replicas: 1
   strategy:
@@ -19,7 +24,7 @@ spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       containers:
       - name: operator
-        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        image: {{ printf "%s:%s" $repository $tag | quote }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         args: ["aiperf-k8s-operator"]
         env:
