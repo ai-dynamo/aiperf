@@ -21,10 +21,19 @@ with the Python reference, where the same typed `BenchmarkConfig` rides inside
 `BenchmarkRun` to the child and every service reads `cfg.endpoint` /
 `cfg.transport` typed.
 
-What the change delivers is the config payload typed end to end: no `Value`
-round-trip, no per-factory re-decode, decode-time errors, and the opaque
-`RawValue` seam confined to the two residual uses listed under
-[Non-goals](#non-goals-and-trade-offs).
+What the change delivers is every **typed** section of the config carried typed
+end to end: no typed→`Value`→`RawValue`→typed round-trip, no per-factory
+re-decode, decode-time errors, and the opaque `RawValue` seam confined to the two
+residual uses listed under [Non-goals](#non-goals-and-trade-offs).
+
+It is not a claim that no `Value` survives anywhere. `cfg.endpoint_profiles` is
+declared on `BenchmarkConfig` as an open `serde_json::Map<String, Value>`
+(`config/model/config.rs:118`), so it is untyped *at its source*, and this record
+deliberately keeps the `endpoint_profile` transform over it (§2). Typing that map
+is a separate change. The same applies to `cfg.failure_policy`'s current
+`Option<Value>` and to the residual `RawValue` uses. The round-trip this record
+eliminates is the one it created itself — re-serializing sections that were
+already typed.
 
 **Scope premise: the Rust tree is greenfield.** There is no released native
 protocol-v2 stdin contract and no external consumer of it to preserve. The
@@ -147,10 +156,21 @@ exhaustive workload match must not be read as claiming otherwise.
 Outstanding typing on the authored side, which this arc also completes:
 
 - `dataset.synthesis` → `Option<TraceSynthesisSpec>`.
-- `weka_semantics` → a closed enum. It needs `#[serde(alias)]` plus
-  normalization to preserve today's leniency across `graph-ir`, `graphir`, and
-  `graph_ir`; the fold is **lower + `-`→`_` only** (Python does not strip
-  separators, so `graphir` is a hardcoded alias, not normalization).
+- `weka_semantics` → a closed enum. `#[serde(alias)]` alone cannot express
+  today's acceptance set, because serde aliases are exact byte matches on the
+  wire string. The live decoder is `weka_wants_legacy`
+  (`online_execution.rs:287-294`), which folds
+  `semantics.map(|s| s.trim().to_ascii_lowercase())` and *then* matches: `None`,
+  `""`, `"graph-ir"`, `"graphir"`, `"graph_ir"` → graph-ir; `"legacy"`,
+  `"agentx"` → legacy; anything else is
+  `"unknown weka semantics {other:?}; expected 'legacy' or 'graph-ir'"`. Three
+  behaviors a plain aliased enum drops: the **trim** (so `" legacy "` is accepted
+  today), the **case fold** (so `"Legacy"` is accepted today), and the
+  **empty string** mapping to graph-ir rather than to a decode error. The typed
+  field therefore needs a hand-written `Deserialize`/`FromStr` reproducing that
+  fold, and the error message moves with it verbatim. `None` and `""` collapsing
+  to the same variant means the field is `Option<WekaSemantics>` with absent and
+  blank both meaning `GraphIr`.
 - `failure_policy` → typed `OnFailure`.
 
 ### 2. `BenchmarkRun` is the sole runner vocabulary
@@ -249,22 +269,37 @@ as-is.
 
 **`trial: usize` → `u32` and `variables: BTreeMap` → `serde_json::Map` — accept
 `BenchmarkRun`'s shapes.** These are the typed model winning, which is the point.
-`variables`' ordering and duplicate-key behavior under `serde_json::Map` is a
-detail step 4 should confirm rather than assume.
 
-**`resolved: Value` → `Resolved` — accept it, but record it as a tightening.**
-`Resolved` (`config/model/resolved.rs:13-46`) carries **no** per-field
-`#[serde(default)]`; its module doc states the contract outright: "Every field is
-present in the wire object, including nulls". Its `impl Default` (`:48-68`) only
-serves `BenchmarkRun::resolved`'s own `#[serde(default)]`, i.e. omitting the
-whole section. So the re-type accepts a strictly narrower set of payloads than
-`resolved: Value` did: a `resolved` object present but missing *any* one of its
-sixteen keys — including the `Option` ones, which without `serde(default)` are
-required-but-nullable — decodes today and is rejected after. That only bites the
+The `variables` ordering question is settled here rather than deferred, because
+the two types genuinely differ: `serde_json` is built with `preserve_order` in
+this workspace (`runtime/Cargo.toml:110`), so `serde_json::Map` iterates in
+**insertion** order while `BTreeMap` iterates **sorted**. That difference is
+nevertheless inert, because `variables` has no consumer: it is decoded onto
+`BenchmarkRunWireV2` (`protocol_v2.rs:326-328`) and read nowhere —
+`into_authored` never touches it and `AuthoredRunSpecV2` has no `variables`
+field, so nothing downstream can observe either order. Duplicate keys are
+last-wins in both types. The swap is therefore free, and no step-4 test is owed
+for it.
+
+**`resolved: Value` → `Resolved` — accept it; the narrowing is real but much
+smaller than the module doc implies.** `Resolved`
+(`config/model/resolved.rs:13-46`) has sixteen fields, of which **fourteen are
+`Option<...>`**; only `artifact_dir_created: bool` and
+`gpu_telemetry_mode: String` are not. A derived `Deserialize` defaults a missing
+`Option` field to `None` on its own, so the absence of per-field
+`#[serde(default)]` does *not* make those fourteen required, and the module doc's
+"Every field is present in the wire object, including nulls" describes what the
+producer emits, not what the decoder demands. `Resolved` also carries no
+`deny_unknown_fields`, so extra keys are accepted.
+
+The actual narrowing against `resolved: Value` is therefore exactly three cases:
+a `resolved` object omitting `artifact_dir_created`, one omitting
+`gpu_telemetry_mode`, and one whose value for any field has the wrong JSON type.
+Everything else that decodes as `Value` today still decodes. That only bites the
 bare-resolved-run arm kept for external harnesses; AIPerf's own authoring arm
-re-projects a full `Resolved`. It is the right direction and the greenfield
-premise carries it, but it is a behavior change, and step 4 should confirm the
-narrowing with an actual decode test rather than by reading field attributes.
+re-projects a full `Resolved`. It is the right direction, the greenfield premise
+carries it, and it needs no dedicated step-4 test — the two mandatory keys are
+enforced by the compiler-generated decoder, and no e2e run omits them.
 
 **Export stem derivation — port it.** This behavior lives only in
 `into_authored`'s body: at `protocol_v2.rs:464-475` it reads
@@ -305,6 +340,22 @@ These three are the only thing making models/endpoint/transport mandatory;
 without them a run omitting a transport reaches component selection with `None`
 and fails somewhere less legible, or not at all. They move into
 `BenchmarkRun::validate()`.
+
+**`BenchmarkRun::validate()` is not a boundary the cellular controller crosses,
+and this record does not claim otherwise.** The controller path is selected in
+`cli/src/execute_mode.rs:113-129`, *before* `decode_execute_wire`: it works on a
+raw `serde_json::Value` obtained from `resolved_envelope_from_input`, mutates it
+in `build_cell_envelope`, and ships it. It never constructs `BenchmarkRunWireV2`,
+so `validate_outer()` (`coordinator.rs:138`) and `into_authored`
+(`coordinator.rs:159`) do not run there **today** either. Moving the checks onto
+`BenchmarkRun::validate()` therefore neither adds nor removes controller-side
+coverage; the invariant that holds before and after is that **each cell
+revalidates its own envelope** on the ordinary `run_v2` path. Two obligations
+follow: the migration must not assume `validate()` has run when the controller
+mutates an envelope, and it must not "simplify" the controller onto typed
+`BenchmarkRun` as a side effect of this change — that is a separate step, and
+doing it here would put a validation boundary in front of the mutation for the
+first time and change which runs fail and where.
 
 **The metrics fallback — do *not* port as-is; surface the error.** Today an
 invalid metric SLO silently defaults the whole metrics section. On
@@ -396,29 +447,62 @@ is `Option<Tokenizer>`, so all three rejections vanish with the decode. Both
 models/endpoint/transport rejections; the absent-section case joins them as a
 fourth mandatory section.
 
-**`parse_dispatch_mode`'s cellular-aware default — port the derivation, not
-`unwrap_or_default()`.** `parse_dispatch_mode` (`protocol_v2.rs:260-272`) is not
-`runtime.dispatch.unwrap_or_default()`. An explicit `runtime.dispatch` wins, but
-when it is absent the default branches on `runtime.cells`: `cells > 1` resolves
-`DispatchMode::Sharded`, and `cells <= 1` resolves `DispatchMode::default()`
-(`Global`). The rationale is recorded in the function's own doc comment: a
-cellular run has already forfeited single-process byte-exact determinism, so
-`Global`'s shared cross-thread admission gate inside a cell buys parity that is
-already gone and costs pure overhead — measured ~7-8x slower than `Sharded` in
-cellular mode on a c4-144.
+**`parse_dispatch_mode`'s cellular-aware default — port the derivation, but it
+is already inert at execution time.** `parse_dispatch_mode`
+(`protocol_v2.rs:260-272`) is not `runtime.dispatch.unwrap_or_default()`. An
+explicit `runtime.dispatch` wins, but when it is absent the default branches on
+`runtime.cells`: `cells > 1` resolves `DispatchMode::Sharded`, and `cells <= 1`
+resolves `DispatchMode::default()` (`Global`). The rationale in the function's
+own doc comment is that a cellular run has already forfeited single-process
+byte-exact determinism, so `Global`'s shared cross-thread admission gate inside a
+cell buys parity that is already gone and costs pure overhead.
 
-A typed reader that writes `cfg.runtime.dispatch.unwrap_or_default()` therefore
-silently switches **every cellular run without an explicit dispatch** from
-`Sharded` to `Global`, which is a large performance regression rather than a
-failure, and no gate catches it: the three exact unit tests for this derivation
-(`runtime_dispatch_defaults_to_global_when_absent`,
+**That branch does not, however, reach any process that executes requests.** A
+run with `cells > 1` is promoted to the cellular controller in
+`cli/src/execute_mode.rs:113-129`, and the controller is not an issuer; the cells
+are. Every cell envelope is built by the single call site at
+`cellular_controller.rs:1149-1150`, and `build_cell_envelope` overwrites the
+field — `runtime.insert("cells", 1)` (`cellular_controller.rs:1994`) — before the
+envelope is serialized to the cell, so a cell process always parses `cells == 1`
+and always lands on `Global`. The one consumer of the resolved value,
+`dispatch_mode: run.dispatch` (`online_execution.rs:1758`), therefore never sees
+`Sharded` from this derivation; only an explicitly authored
+`runtime.dispatch: sharded` produces it. Nothing in the controller reads
+`dispatch` at all.
+
+So a typed reader writing `cfg.runtime.dispatch.unwrap_or_default()` changes **no
+executing run's dispatch mode**. What it changes is the controller-side
+projection and the CLI/runner parity assertion that compares the two resolution
+paths (`cli/src/profile.rs:1669-1675`). Port the derivation anyway — dropping it
+would silently make that parity assertion vacuous and would erase the recorded
+intent for cells that are launched some other way — but port it as a documented
+projection detail, not as a performance guard. The claim that omitting it is a
+large cellular performance regression is **wrong**, and this record previously
+made it.
+
+There is a live gap underneath: the intended cellular default is unreachable, so
+the c4-144 measurement it cites does not describe what cells actually run today.
+Whether cells *should* default to `Sharded` is a real question, and it is
+deliberately **out of scope here** — changing it is a runtime behavior change,
+not a typing migration. It is recorded so the migration does not launder it into
+a "preserved behavior" it never had. The three exact unit tests for the
+derivation (`runtime_dispatch_defaults_to_global_when_absent`,
 `runtime_dispatch_defaults_to_sharded_for_cellular`,
 `runtime_explicit_dispatch_wins_over_cellular_default`) sit inside the
-`#[cfg(any())] mod tests` at `protocol_v2.rs:1284` and never compile, and none of
-the five cellular e2e suites authors `runtime.dispatch` at all. The derivation
-moves onto the typed model verbatim, and those three tests move with it — this is
-the second reason re-enabling that module is a step-4 obligation rather than
-cleanup.
+`#[cfg(any())] mod tests` at `protocol_v2.rs:1284` and never compile; they move
+with the derivation, and re-enabling that module stays a step-4 obligation.
+
+**`parse_hop_routing` — a repoint, listed for completeness.**
+`parse_hop_routing` (`protocol_v2.rs:283-290`) is the sibling of the above and is
+the easy case: `Option<HopRouting>` in, `Option<HopRouting>` out, absent stays
+`None`, an unrecognized string is a hard error. `Runtime.hop_routing` is already
+`Option<HopRouting>` (`config/model/runtime.rs:36`), so the typed decode
+reproduces every one of those behaviors, including the rejection. The only work
+is repointing its single consumer, `hop_routing: run.hop_routing`
+(`online_execution.rs:1759`), at `cfg.runtime.hop_routing`, and accepting that
+the error text loses the `run.cfg.runtime.hop_routing:` path prefix the manual
+`map_err` adds. Nothing is at risk; it appears here because its sibling does and
+an omission would read as an oversight.
 
 **`resource_presence` — preserve `into_authored`'s algorithm verbatim.** It is
 not a naive `cfg.field.is_some()` map. The exact classification
@@ -470,6 +554,21 @@ carry `timeout` and `url_strategy` keys, and the rename/removal is live for it.
 The migration must keep the transform on that open map — or type
 `endpoint_profiles` as a `BTreeMap<String, Endpoint>`, which is a larger change
 than this record scopes.
+
+**Override-profile ordering is part of that transform — port it.** Before
+building the profile list, `into_authored` does
+`cfg.endpoint_profiles.into_iter().collect::<BTreeMap<_, _>>()`
+(`protocol_v2.rs:448-451`), and `endpoint_profiles` (`:540-550`) then pushes
+`"default"` first and the rest **in that sorted order**. Because `serde_json` is
+built with `preserve_order` here (`runtime/Cargo.toml:110`), iterating
+`cfg.endpoint_profiles` directly yields *authored* order instead, so the
+collection into a `BTreeMap` is a real normalization and not an incidental type
+choice. It is observable: profile position is the profile's identity downstream —
+`ValidatedEndpointProfileV2`s are indexed by `enumerate()` position
+(`registry.rs:1124`) and resolved back by index (`registry.rs:1244`), and the
+iteration accessor is documented as "authored order" (`registry.rs:1262`). A
+typed consumer that drops the sort reorders every multi-profile run's profile
+indices. Sort the override keys at the same boundary, `"default"` still first.
 
 ### 3. Registry role after the change
 
@@ -863,8 +962,9 @@ itself**, in addition to the e2e gate:
 - a run whose `artifacts.records_path` carries a custom stem names the
   per-record, summary, and timeslice artifacts from that same stem;
 - `variation` round-trips as a typed `VariationSpec`, not an open `Value`;
-- a `resolved` object present but missing one key is rejected (the `Resolved`
-  narrowing), and an omitted `resolved` section still defaults;
+- a `resolved` object missing `artifact_dir_created` is rejected while one
+  missing any of the fourteen `Option` fields still decodes (the exact shape of
+  the `Resolved` narrowing), and an omitted `resolved` section still defaults;
 - `resource_presence` for a config with `models`/`endpoints`/`metrics`/
   `artifacts` absent and `sidecars: Some(Sidecars::default())` matches
   `into_authored`'s classification — four `true` and `sidecars: false`;
@@ -878,7 +978,15 @@ itself**, in addition to the e2e gate:
   each carrying `AuthoredTokenizerV2::decode`'s message;
 - `runtime.dispatch` absent with `runtime.cells > 1` resolves `Sharded`, absent
   with `cells <= 1` resolves `Global`, and an explicit value wins over both —
-  the three tests currently stranded in `#[cfg(any())] mod tests`;
+  the three tests currently stranded in `#[cfg(any())] mod tests`. They assert
+  the projection, not cell behavior: `build_cell_envelope` rewrites `cells` to
+  `1`, so no cell reaches the `Sharded` arm;
+- a config authoring two override `endpoint_profiles` in reverse-sorted key order
+  produces profiles in sorted order after `"default"`, and each override still
+  has `timeout` renamed to `timeout_seconds` and `url_strategy` dropped;
+- `weka_semantics` accepts `" Legacy "` and `"AgentX"` as legacy, `""` and
+  absent as graph-ir, and rejects an unknown value with
+  `weka_wants_legacy`'s message;
 - a run with `cfg.runtime.workers: Some(0)` is rejected with
   `"run.cfg.runtime.workers must be a positive usize"`; a run with `cfg.runtime`
   absent resolves `worker_count` to `default_worker_count()` rather than `1`; and
