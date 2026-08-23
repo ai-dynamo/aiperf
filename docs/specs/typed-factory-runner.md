@@ -37,7 +37,8 @@ open-tail language survives elsewhere, this paragraph governs.
 
 What the change does deliver is the config payload typed end to end: no `Value`
 round-trip, no per-factory re-decode, decode-time errors, and the opaque
-`RawValue` seam confined to the three residual uses listed under Non-goals.
+`RawValue` seam confined to the two residual uses listed under Non-goals (a
+future plugin tail would be a third; per O9 it is not delivered here).
 
 **Status (contest O8, proven).** This record is *partly* built, not
 forward-looking. Implementation lives on `ajc/typed-factory-runner-v2`:
@@ -47,7 +48,14 @@ forward-looking. Implementation lives on `ajc/typed-factory-runner-v2`:
 `:902-904`), and step 1's typed
 `cfg.transport` consumer is `transport_component`
 (`engine/protocol_v2.rs`), pinned against the projection it replaces by
-`transport_component_matches_inline_projection`. Steps 2 and 4 are not built.
+`transport_component_matches_inline_projection`. **Read that precisely (contest
+O8, proven):** what landed is a typed *producer* whose output is still a
+`NamedRunnerComponentSpecV2 { id, config }`, and `AuthoredRunSpecV2` still
+retains only that projected field (`protocol_v2.rs:586`). The pin is at component
+level, not binding level — which step 1 above establishes is the correct and
+sufficient assertion, but the status line must not be read as "typed `Transport`
+now reaches the selection boundary". It does not, and does not until step 2 adds
+the `transport_typed` carrier. Steps 2 and 4 are not built.
 Read every "will" below as "will, where not already noted as landed" — an
 implementer who treats the whole record as unstarted will redo step 3.
 
@@ -387,6 +395,62 @@ is decided on merit:
   the claim in step 4 that every field other than `planned_replay_traces` is "a
   copy or a pure derivation": four of them are validation or fallback branches.
 
+- **Two workload/runtime rejections that live in the projection's *decode*, not
+  its body — decide them, don't inherit them. Added by contest O10 (proven).**
+  The audit above walked `into_authored`'s statements; these two are enforced by
+  the shape the projection hands to the factory, so a statement-level walk misses
+  them:
+
+  - **`cfg.runtime.workers = Some(0)` is rejected**, by
+    `ensure!(worker_count > 0 && worker_count <= usize::MAX as u64,
+    "run.cfg.runtime.workers must be a positive usize")` (`protocol_v2.rs:381-385`).
+    `Runtime.workers` is `Option<u32>` (`config/model/runtime.rs:18`) with no
+    positive-value validation anywhere upstream — `grep -rn "workers > 0"` over
+    `rust/` finds no other config-path check. Note the same lines carry a live
+    *default* the typed path also owes: absent `workers` resolves to
+    `default_worker_count()` (machine parallelism), not `1`.
+  - **`cfg.phases` absent is rejected.** `serde_json::to_value(&cfg.phases)`
+    (`protocol_v2.rs:394-395`) emits JSON `null` for `None` — `skip_serializing_if`
+    on the `BenchmarkConfig` field does not apply to a direct `to_value` of the
+    field — and the factory then decodes into the mandatory
+    `WorkloadConfigV2.phases: Vec<PhaseSpec>` (`registry.rs:853`, on `ajc/rust`
+    `ScheduledWorkloadConfigV2` at `:845-859`), which fails. `BenchmarkConfig`
+    holds `phases: Option<Vec<Phase>>` (`config/model/config.rs:96`), so after the
+    DTO is deleted there is no decode to fail.
+
+  Neither rejection survives *automatically*. Both, however, have downstream
+  backstops that a careless reading would miss and a careless implementation
+  would rely on: `validate_common_workload` (`registry.rs:1650-1666`) asserts
+  `worker_count > 0` ("workload worker_count must be positive") and
+  `!phases.is_empty()` ("workload phases cannot be empty"), and
+  `build_common_plan` re-asserts both (`execute/plan.rs:509-510`), as does
+  `build_native` for workers (`turn_execution.rs:296`). So the accurate statement
+  is not "zero-worker execution becomes reachable" — it is that **the failure
+  moves from a decode error at the projection boundary to an `ensure!` several
+  layers in, with a different message, and only if the migration keeps routing
+  the typed values through `validate_common_workload`.** That routing is a
+  step-3/step-4 obligation, not a given: `validate_common_workload` takes
+  `(worker_count: usize, dataset, tokenizer, phases: &[PhaseSpec])` — values the
+  decoded DTO supplies today.
+
+  Decisions:
+
+  - **`workers`.** `BenchmarkRun::validate()` carries the check verbatim, message
+    included, so an authored `workers: 0` still fails at the same boundary with
+    the same text. The `default_worker_count()` fallback for absent `workers`
+    moves with it.
+  - **`phases`.** Absent and empty collapse to the same condition on the typed
+    model (`cfg.phases.as_deref().unwrap_or_default()`), and the record chooses
+    to *keep them collapsed*: `validate()` rejects both with one message naming
+    the section, rather than reproducing the DTO's absent-vs-empty split (today
+    absent fails at decode and empty fails later in `validate_common_workload`).
+    Merging them is a behavior change in message and failure point only — both
+    inputs are rejected before and after — and is recorded as one.
+  - Neither decision permits deleting the `validate_common_workload` /
+    `build_common_plan` assertions; they stay as defense in depth for the
+    cellular and eval paths that construct plans without going through
+    `BenchmarkRun::validate()`.
+
 What step 4 deletes is both the *projection* (`into_authored`,
 `AuthoredRunSpecV2`, `NamedRunnerComponentSpecV2`) and the *wire DTO*
 (`BenchmarkRunWireV2`), with the **five** ported behaviors above landing on
@@ -552,7 +616,23 @@ One transport family at a time, byte-exact against the mock server at each step:
    `Transport` enum, and `Http`/`Grpc` are unit variants with no payload. Step 1
    for the transport family is therefore *not* "add typed configs" but "add a
    consumer that reads `cfg.transport` directly", run alongside the existing
-   projection, and assert the two produce identical bindings. Dispatch is an
+   projection, and assert the two produce identical **components**.
+
+   **Corrected (contest O10-series, O8 proven): "identical bindings" was the wrong
+   assertion to write here, and is not what landed.** A `NativeTransportExecution`
+   binding cannot be differenced in step 1, because step 1 leaves no `Transport`
+   at the selection boundary — the prerequisite paragraph under step 2 proves
+   exactly that, so step 1 as originally worded owed a check its own successor
+   proves impossible. What *is* both achievable and sufficient is component
+   equality: `resolve_native_execution` is
+   `transport_factory(transport_id).native_execution(config, context)` and
+   nothing else (`online_execution.rs:118-128`), so the binding is a total
+   function of the `{ id, config }` pair plus a `RunContext` neither path varies.
+   Pinning both halves byte-exact pins the binding transitively. That is precisely
+   what the landed `transport_component_matches_inline_projection` asserts —
+   `typed.id == inline.id` and `typed.config.get() == inline.config.get()` over
+   `all_variants()`, all six — and it is the differential gate step 1 owes.
+   No binding-level differential is owed at any step. Dispatch is an
    exhaustive `match` on `Transport`, not `match id.as_str()`; the `RegistryId`
    string and the plugin tail belong to the seam in §3, not to this field.
 2. Move `native_execution` selection to the exhaustive `Transport` match for
@@ -922,7 +1002,12 @@ mandatory at every step, not just the last. Beyond that shared floor:
     absent, and one with `cfg.transport` absent are each rejected with the
     message `into_authored` used, and a run whose `metrics.slos` carries a
     non-numeric threshold is *rejected* naming the offending key rather than
-    silently falling back to `MetricsSpec::default()`.
+    silently falling back to `MetricsSpec::default()`;
+  - **(O10)** a run with `cfg.runtime.workers: Some(0)` is rejected with
+    `"run.cfg.runtime.workers must be a positive usize"`; a run with `cfg.runtime`
+    absent resolves `worker_count` to `default_worker_count()` rather than `1`;
+    and a run with `cfg.phases` absent and a run with `cfg.phases: Some(vec![])`
+    are both rejected by `validate()` with the same message.
 
   Re-enabling or deleting `#[cfg(any())] mod tests` is part of step 4, not
   optional cleanup: leaving a disabled module next to the code it was written to
@@ -965,8 +1050,13 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
   feature-gated registrations in correspondence.
 - **The runtime crate gains a compile dependency on every built-in component
   config type.** That is the cost of typing built-in configs. It is acceptable
-  because the built-in set is frozen at compile time; plugin configs stay opaque
-  (`RawValue`), so the coupling does not extend to the open tail.
+  because the built-in set is frozen at compile time. **Corrected (contest O9,
+  proven):** an earlier draft ended this bullet "plugin configs stay opaque
+  (`RawValue`), so the coupling does not extend to the open tail" — there is no
+  open tail after step 4 (see the O7 note below). The accurate limit is that the
+  dependency is bounded by the closed variant set: it grows only when
+  `Transport`/`workload_kind` grows, and a future plugin arm would reintroduce an
+  untyped tail rather than extend this coupling.
 - **Not touched:** the `dispatch` seam (`Dispatchable`/`RequestSink`/
   `RequestObserver`), the `Clock` seam, the phase/scheduling runtime, metrics,
   exporters' output logic, and the stdio accept path (`decode_execute_wire`'s two
@@ -978,10 +1068,14 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
   `abi_stable`). Those cannot be typed configs (their type is unknown at the
   core's compile time), so the plugin tail's `RawValue` config (keyed by
   `RegistryId`, decoded by the plugin's own `dyn` factory against the
-  bootstrap-frozen registry) is retained precisely for them. The refactor does
-  **not** close the set; it types built-in configs and confines the opaque seam to
-  the open tail. This supersedes an earlier framing of this record that scoped
-  dynamic plugins out — they are in scope, via the string id + `RawValue` tail.
+  bootstrap-frozen registry) is the shape they will need. **Corrected (contest
+  O9, proven): stated in the future tense, because this migration does not deliver
+  it.** An earlier draft said the tail "is retained precisely for them" and that
+  the refactor "does **not** close the set" — the O7 correction immediately below
+  proves the opposite: step 4 deletes the only authored `{ RegistryId, RawValue }`
+  object, and authored selection closes to the `Transport` enum plus the two-arm
+  `workload_kind` classifier. Dynamic plugins remain in scope as *future* work,
+  and the string id + `RawValue` tail is the design that work must add.
 
   **Corrected (contest O7, proven): as specified, the migration does not actually
   leave a selectable tail, and this must be fixed in the design rather than
@@ -1008,12 +1102,16 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
   evidence that one can. Adding that arm is out of scope here; recording that it
   is *required*, and that its absence is a gap rather than a design property, is
   in scope.
-- **"Zero `RawValue`" is a direction, not a literal end state.** Three residual
-  `RawValue` uses are legitimate and stay: the plugin tail (the load-bearing one —
-  a runtime-loaded plugin's config is opaque to the host by definition); the `dynosim` transport variant's nested Dynamo engine/router args
+- **"Zero `RawValue`" is a direction, not a literal end state.** **Corrected
+  (contest O9, proven): there are two residual uses, not three.** An earlier draft
+  counted the plugin tail among them; step 4 deletes it, so it is a *future*
+  residual use contingent on the plugin arm that does not exist. The two that
+  actually survive this migration are: the `dynosim` transport variant's nested
+  Dynamo engine/router args
   (opaque pass-throughs to Dynamo's own parser); and the dataset payload inside
   the workload arm (adapter input; dataset selection is name/structural-probe, not
-  a component-config union). This change types the built-in component majority and
+  a component-config union). A runtime-loaded plugin's config is opaque to the
+  host by definition and would be a third — when such a plugin can be selected. This change types the built-in component majority and
   the first-party inner seams; it does not chase `RawValue` out of the places it
   belongs.
 
