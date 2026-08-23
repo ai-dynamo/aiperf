@@ -14,8 +14,8 @@ use crate::extensions::AIPerfRegistry;
 /// Admission strategy for `workers>1` scheduled execution.
 ///
 /// - `Sharded` statically partitions request budget, concurrency, and rate
-///   `1/workers`-ways up front, per worker thread — today's only behavior,
-///   kept as an explicit throughput-oriented opt-in.
+///   `1/workers`-ways up front, per worker thread as a throughput-oriented
+///   opt-in.
 /// - `Global` (default) admits from one shared [`crate::timing::slots::GlobalSlotPool`]
 ///   / [`crate::timing::rate_gate::GlobalRateGate`] per cell, so aggregate
 ///   concurrency and rate across all worker threads is byte-exact against a
@@ -135,9 +135,9 @@ pub struct TokenizerSpec {
     /// Opt-in server-side tokenizer origin (e.g. `http://host:8000`).
     ///
     /// When set, tokenization is offloaded to the server's `/tokenize` and
-    /// `/detokenize` endpoints instead of a local encoding, and [`name`] is
-    /// only used as the diagnostic model selector. Absent by default, which
-    /// keeps the local built-in / Hugging Face path in force.
+    /// `/detokenize` endpoints instead of a local encoding, and [`name`] selects
+    /// the model sent in tokenizer requests. Absent by default, which keeps the
+    /// local built-in / Hugging Face path in force.
     ///
     /// [`name`]: Self::name
     #[serde(default)]

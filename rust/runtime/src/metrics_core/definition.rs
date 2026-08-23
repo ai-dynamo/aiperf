@@ -118,12 +118,9 @@ impl Definition {
 /// Registry of every [`Definition`] keyed by its public, namespaced id.
 ///
 /// Built once (config/render-time only; never touched on a per-record path) from
-/// the static metric `CATALOG`. Metric ids are namespaced `aiperf.<tag>` at
-/// map-build time; each alias is inserted verbatim (metrics declare none today,
-/// but the loop is wired). A later task registers analyzer definitions here —
-/// their `def.id` is already fully namespaced (e.g. `analyzer.isl`), so they are
-/// inserted under their own key with no extra prefix. See the marked insertion
-/// point below.
+/// the static metric `CATALOG` and analyzer definitions. Metric ids are
+/// namespaced `aiperf.<tag>` at map-build time; fully namespaced analyzer ids and
+/// all aliases are inserted verbatim.
 static REGISTRY: LazyLock<HashMap<String, &'static Definition>> = LazyLock::new(|| {
     let mut map: HashMap<String, &'static Definition> = HashMap::new();
     for spec in crate::metrics_core::catalog::CATALOG.iter() {
@@ -135,9 +132,7 @@ static REGISTRY: LazyLock<HashMap<String, &'static Definition>> = LazyLock::new(
         }
     }
 
-    // Task 9 insertion point: register analyzer base-concept definitions here.
-    // Their `def.id` is already fully namespaced (`analyzer.*`), so insert each
-    // under `def.id` directly (plus any aliases), without the `aiperf.` prefix.
+    // Analyzer ids are already fully namespaced (`analyzer.*`).
     for def in crate::dataset::analysis::ANALYZER_DEFINITIONS {
         map.insert(def.id.to_string(), def);
         for alias in def.aliases {
@@ -158,10 +153,8 @@ pub fn definition(id: &str) -> Option<&'static Definition> {
 /// Resolves a concrete output name to its [`Definition`].
 ///
 /// First tries an exact [`definition`] lookup. Otherwise, if `name` matches the
-/// parameterized `turn<N>_<suffix>` shape (N = digits), it maps to the analyzer
-/// base concept `analyzer.per_turn_<suffix>`. That base def is registered by a
-/// later task, so the parameterized branch returns `None` until then — the rule
-/// is implemented now regardless. Config/render-time only.
+/// parameterized `turn<N>_<suffix>` shape (N = digits), it resolves the analyzer
+/// base concept `analyzer.per_turn_<suffix>`. Config/render-time only.
 pub fn resolve(name: &str) -> Option<&'static Definition> {
     if let Some(def) = definition(name) {
         return Some(def);

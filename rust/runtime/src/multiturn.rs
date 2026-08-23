@@ -471,7 +471,7 @@ impl StoredTraceHashIds {
         }
     }
 
-    /// Dense segment handle retained for diagnostics and tests.
+    /// Content-addressed segment handle used as the Dynosim prompt-cache identity.
     pub const fn handle(&self) -> Handle {
         self.handle
     }

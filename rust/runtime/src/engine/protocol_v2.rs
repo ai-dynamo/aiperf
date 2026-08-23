@@ -595,9 +595,8 @@ pub struct AuthoredRunSpecV2 {
     pub sidecars: SidecarSpecV2,
     /// Native post-report export policy driving the [`crate::export`] plane.
     pub export: crate::export::ExportConfig,
-    /// Admission strategy for `workers>1` scheduled execution
-    /// (`runtime.dispatch`; defaults to [`DispatchMode::Global`]). Config
-    /// surface only: not yet wired into execution behavior.
+    /// Admission strategy selecting the `workers>1` scheduled dispatch
+    /// implementation (`runtime.dispatch`; defaults to [`DispatchMode::Global`]).
     pub dispatch: DispatchMode,
     /// Worker-assignment policy for `DispatchMode::GlobalHop` with `workers > 1`
     /// (`runtime.hop_routing`). `None` leaves the runtime on its

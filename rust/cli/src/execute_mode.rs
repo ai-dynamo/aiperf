@@ -399,9 +399,10 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
     // those pools only spin and contend with the deterministic event loop. Keep
     // explicit operator settings authoritative, keep the simulator on its one
     // deterministic event-loop thread, and avoid allocator purge syscalls before
-    // immediate process exit. Rayon is used only by the post-drain report
-    // reduction; bound it to the available affinity and eight workers so large
-    // sweep sorts can leave Tokio without oversubscribing small hosts. These
+    // immediate process exit. Rayon performs pre-execution corpus tokenization
+    // and post-drain report reduction; bound it to the available affinity and
+    // eight workers so large sweep sorts leave Tokio without oversubscribing
+    // small hosts. These
     // defaults are installed before Python, OpenMP, or either bundled OpenBLAS
     // library is initialized and before offline reduction allocates its buffers.
     let rayon_threads = std::thread::available_parallelism()

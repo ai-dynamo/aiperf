@@ -152,8 +152,7 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
     // `RequestRateWorkload::with_deferred_single_turn_bodies`.
     defer_single_turn_bodies: bool,
 ) -> Result<ScheduledPhasePlan> {
-    // Silence the unused-binding warning on builds without the `agentx` feature
-    // (the only consumer is the feature-gated agentic_replay branch below).
+    // Agentic replay consumes both fields during normal phase construction below.
     let _ = &agentic_trees;
     let _ = &warmup_handoff;
     let phase_rng =
