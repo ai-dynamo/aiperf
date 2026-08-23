@@ -334,6 +334,49 @@ the authored custom stem, i.e. one run emitting two different prefixes. It must
 become an inherent derivation on the typed model, applied at the same boundary as
 `BenchmarkRun::validate()`.
 
+**Two more all-or-nothing decode fallbacks — `artifacts` and `export`. Neither
+was listed, and the artifacts one is reachable.** The metrics decision above is
+not the only `.unwrap_or_default()` in `into_authored`; there are three, and only
+metrics had a decision recorded:
+
+- **`artifacts` (`protocol_v2.rs:454-458`).** `serde_json::from_value::<ArtifactSpecV2>(to_value(&cfg.artifacts)?).unwrap_or_default()`
+  discards the **entire** artifacts section on any decode error. That error path
+  is reachable from a valid `BenchmarkConfig`, because the two types disagree on
+  one field: `UserFile.format` is a plain `String`
+  (`config/model/artifacts.rs:10-15`) while `UserFileSpecV2.format` is the closed
+  `UserFileFormatV2 { Json, Yaml, Text }` (`protocol_v2.rs:1083-1104`). So a run
+  carrying `cfg.artifacts.user_files[0].format = "bogus"` type-checks, decodes as
+  `BenchmarkConfig`, is rejected by `ArtifactSpecV2`, and loses `records_path`,
+  `raw_path`, `inputs_path`, `trace`, and the whole dry-run analysis family to
+  `ArtifactSpecV2::default()` — every field of which is `#[serde(default)]`
+  (`protocol_v2.rs:943-983`), so the failure produces no error and no output
+  rather than a diagnostic. **Decision: do not port the fallback.** The same
+  greenfield rationale applied to metrics and to dataset truncation applies with
+  more force here, because the discarded section decides whether artifacts are
+  written at all. `validate()` surfaces
+  `artifacts.user_files[i].format must be one of json, yaml, text`, and step 4
+  adds a named test for it. Typing `UserFile.format` as the enum outright is the
+  better end state and is compatible with this; it is not required by this
+  record, which only forbids the silent discard.
+- **`export` (`protocol_v2.rs:459-463`).** The same shape, and it deserves its
+  own note because it is not a bridge between one type and a stricter view of
+  itself: `cfg.export` is `Option<Export>` (`config/model/config.rs:99`,
+  `config/model/export.rs:265-285`) and the target is a **separately maintained**
+  `crate::export::ExportConfig` (`export/mod.rs:279-301`). They are not the same
+  struct and do not have the same fields — `ExportConfig` carries `timeslice`,
+  `accuracy_csv`, and a `genai_perf.stem` that typed `GenaiPerf` has no field for
+  (which is why the stem derivation above exists). `ExportConfig` is
+  `#[serde(default, deny_unknown_fields)]`, so the bridge works today only
+  because every key `Export` serializes happens to be a known `ExportConfig` key;
+  it decodes successfully on the current tree, which is why exports work at all
+  and why the stem overwrite is observable. But the failure mode is silent and
+  total: any key added to `Export` and not to `ExportConfig` disables **every**
+  exporter at once, with no error. The migration should read typed `cfg.export`
+  directly and convert field-by-field, or — if the re-decode is kept for now —
+  replace `.unwrap_or_default()` with a surfaced error. This is a second
+  typed → `Value` → typed hop that §2's headline claim does not mention, and it
+  survives the projection's deletion unless it is repointed.
+
 **Three mandatory-section rejections — port them verbatim, messages included.**
 `BenchmarkConfig` holds all of these sections as `Option`
 (`config/model/config.rs:66`, `:69`, `:75`, `:81`), so nothing on the typed model
@@ -374,6 +417,33 @@ mutates an envelope, and it must not "simplify" the controller onto typed
 `BenchmarkRun` as a side effect of this change — that is a separate step, and
 doing it here would put a validation boundary in front of the mutation for the
 first time and change which runs fail and where.
+
+**The controller has its own metrics decoder, and the metrics decision below does
+not reach it unless the migration repoints it.** `cellular_metrics_config`
+(`cellular_controller.rs:2845-2856`) reads `/run/cfg/metrics` straight out of the
+raw envelope `Value` and repeats the same swallow —
+`.map(|value| serde_json::from_value(value).unwrap_or_default())` into
+`engine::protocol::MetricsSpec` — with no `BenchmarkRunWireV2`, no
+`into_authored`, and no `validate()` anywhere upstream of it. It runs on the
+controller's startup path (`cellular_controller.rs:862`, deriving the
+`MetricsConfig` the merge folds with) and again from
+`cellular_will_use_exact_fold` (`:2225-2231`, deciding exact-vs-sketch storage).
+So a cellular run whose `metrics.slos` carries a string value would, after the
+change below, still have the controller silently build a **default** merge and
+storage policy while each cell independently rejects the run — a split where the
+controller's fold policy and the cells' verdict disagree, and where step 4 can
+pass every `BenchmarkRun::validate()` test listed in this record without
+touching it.
+
+This is a required port, not an observation: `cellular_metrics_config` must go
+through the same strict typed conversion `validate()` uses, so the controller
+fails on the same input the cells fail on, and step 4 adds a controller test for
+a **non-numeric SLO value**. The existing controller test at
+`cellular_controller.rs:4532-4552` covers an unknown SLO *name*, which is a
+different rejection and passes either way. If instead the controller keeps a
+lenient fallback, that has to be written down as a deliberate asymmetry with a
+reason — this record does not choose that, because a merge policy derived from
+config the run is about to reject has no defensible meaning.
 
 **The metrics fallback — do *not* port as-is; surface the error.** Today an
 invalid metric SLO silently defaults the whole metrics section. On
@@ -625,9 +695,33 @@ retains only `name`/`weight`. Against the typed model these are no-ops:
 exists only in the authoring layer (`cli/src/flags.rs:368`, `cli/src/yaml.rs:915`,
 consumed and validated at `yaml.rs:1690`) and never reaches `BenchmarkConfig` —
 and `ModelItem` (`config/model/models.rs:22`) has only `name` and `weight`. For
-the **default** profile (`serde_json::to_value(&cfg.endpoint)`,
-`protocol_v2.rs:446`) and for models, the migration may simply drop these
-transforms.
+models, the migration may simply drop the transform.
+
+**It may not drop the default-profile transform, because that transform supplies
+the profile's identity.** `endpoint_profile` does not only rename and remove; its
+first statement is
+`profile.insert("id".to_owned(), Value::String(id.to_owned()))`
+(`protocol_v2.rs:557`), and `endpoint_profiles` calls it as
+`endpoint_profile("default", default)` (`:545`). Typed `Endpoint`
+(`config/model/endpoint.rs:115-174`) has **no `id` field at all** — the literal
+string `"default"` exists nowhere in the typed model and is manufactured here.
+Downstream the field is required, not decorative: `endpoint_profile_identity`
+(`:917-935`) fails with `id must be a string` when it is absent and additionally
+requires non-empty and untrimmed-free, and `RunContext::default_endpoint_profile`
+(`registry.rs:1256-1259`) resolves profiles by the literal name `"default"`. A
+migration that drops this transform produces profiles with no identity, and every
+`default_endpoint_profile()` lookup fails.
+
+The same statement is what names the **override** profiles: the loop at `:546-548`
+passes each `cfg.endpoint_profiles` map key as `id`, so the key becomes the
+profile's `profile_id`. That is the map key being promoted into the value, which
+no typed re-read reproduces — and note it *overwrites*, so an override body that
+already carried its own `"id"` key has it replaced by the map key today.
+
+Two obligations, neither optional: derive the default profile's `id` as the
+literal `"default"`, and derive each override profile's `id` from its map key,
+overwriting any authored `id`. The sort ported below orders profiles; it does not
+identify them, and the two are separate ports.
 
 They are **not** no-ops for the override profiles. `cfg.endpoint_profiles`
 (`config/model/config.rs:118`) is an open `serde_json::Map<String, Value>`, not a
@@ -970,10 +1064,23 @@ Of `into_authored`'s own content, only `workload_kind` and `worker_count` from
 `available_parallelism` are plain copies or derivations of the typed fields. The
 rest is not: `planned_replay_traces` has no `BenchmarkConfig` home;
 `parse_dispatch_mode` branches on `runtime.cells` rather than reading the field;
-and the mandatory-section rejections, the tokenizer rejections, the metrics
-fallback, the export-stem derivation, `resource_presence`, and the
-`workers`/`phases` decode-shape rejections are validation or transform branches.
-All are enumerated in §2's port list.
+the endpoint-profile transform injects an `id` no typed field carries; and the
+mandatory-section rejections, the tokenizer rejections, the three
+`.unwrap_or_default()` fallbacks (`metrics`, `artifacts`, `export`), the
+export-stem derivation, `resource_presence`, and the `workers`/`phases`
+decode-shape rejections are validation or transform branches.
+
+**Treat §2's port list as a floor, not a closed enumeration.** An earlier form of
+this paragraph asserted that all nontrivial branches were enumerated there. That
+assertion was false when written — the `artifacts` and `export` fallbacks above,
+and the `id` injection in §2's endpoint entry, were all missing — and it is the
+kind of claim that stops the next reader from re-walking the function. Three
+separate audits of `into_authored` each missed a behavior of the same class:
+something that lives in the function's body or in the shape it hands the factory
+rather than in a field of any struct. The migration owes a fresh statement-level
+walk of `into_authored` at the start of step 4, checking every `?`, every
+`unwrap_or_default`, every `insert`/`remove` on a `Map`, and every value
+constructed rather than copied — not a re-read of this list.
 
 ## Verification gates
 
