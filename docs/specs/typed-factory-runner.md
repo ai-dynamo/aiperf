@@ -261,11 +261,24 @@ as `expected_replay_traces`. It appears **nowhere** in `runtime/src/config/` or
 `cli/src/`. Deleting `BenchmarkRunWireV2` without giving it a home loses cellular
 graph replay's trace expectation.
 
-**`variation: Value` → `Option<VariationSpec>` — re-type `BenchmarkRun`.**
-`BenchmarkRun` holds `variation` as an open `Value` where the wire DTO had a
-typed `VariationSpec`; here the wire DTO is the stricter one, so the re-type is
-the correct direction and belongs in this change rather than being inherited
-as-is.
+**`variation: Value` → `Option<VariationSpec>` — re-type `BenchmarkRun`, after
+relocating the type.** `BenchmarkRun` holds `variation` as an open `Value`
+(`config/model/run.rs:45-46`) where the wire DTO had a typed `VariationSpec`;
+here the wire DTO is the stricter one, so the re-type is the correct direction
+and belongs in this change rather than being inherited as-is.
+
+It cannot be done by referring to the existing type. `VariationSpec` is declared
+at `engine/protocol.rs:279`, inside `pub mod engine`, which is
+`#[cfg(feature = "engine")]` (`runtime/src/lib.rs:40-41`). `config` is **not**
+feature-gated (`lib.rs:48`), so `BenchmarkRun` compiles in every build; pointing
+an unconditional field at a feature-gated type fails to compile whenever `engine`
+is off — which is the default, and is the plain `cargo test -p aiperf-runtime`
+invocation the gates run at every step. The step must therefore **move**
+`VariationSpec` into `config/model/` (with `engine::protocol` re-exporting it so
+existing `protocol::VariationSpec` paths keep working), not `use` it across the
+boundary. Its `deny_unknown_fields` and its `BTreeMap<String, Value> values`
+field move unchanged. Duplicating the struct is rejected: two `deny_unknown_fields`
+definitions of one wire shape is the drift this arc exists to remove.
 
 **`trial: usize` → `u32` and `variables: BTreeMap` → `serde_json::Map` — accept
 `BenchmarkRun`'s shapes.** These are the typed model winning, which is the point.
@@ -292,10 +305,15 @@ smaller than the module doc implies.** `Resolved`
 producer emits, not what the decoder demands. `Resolved` also carries no
 `deny_unknown_fields`, so extra keys are accepted.
 
-The actual narrowing against `resolved: Value` is therefore exactly three cases:
-a `resolved` object omitting `artifact_dir_created`, one omitting
-`gpu_telemetry_mode`, and one whose value for any field has the wrong JSON type.
-Everything else that decodes as `Value` today still decodes. That only bites the
+The actual narrowing against `resolved: Value` has two parts. **Non-object
+payloads:** `resolved: Value` accepts *any* JSON value — `3`, `"x"`, `[]`,
+`true`, and explicit `null` — because `Value` is total over JSON;
+`resolved: Resolved` rejects every one of them, and `#[serde(default)]` covers
+only an **absent** key, so an explicit `"resolved": null` is a decode error where
+today it is `Value::Null`. **Object payloads:** an object omitting
+`artifact_dir_created`, one omitting `gpu_telemetry_mode`, or one whose value for
+any field has the wrong JSON type. Every other object that decodes as `Value`
+today still decodes. That only bites the
 bare-resolved-run arm kept for external harnesses; AIPerf's own authoring arm
 re-projects a full `Resolved`. It is the right direction, the greenfield premise
 carries it, and it needs no dedicated step-4 test — the two mandatory keys are
@@ -439,6 +457,19 @@ enforces three things the typed model does not:
   blank or whitespace-padded name is rejected.
 - `!config.revision.trim().is_empty()`.
 
+A fourth behavior rides the same decode and is not a rejection:
+`trust_remote_code = true` emits a `tracing::warn!`
+(`online_execution.rs:975-983`) explaining that the native `tokenizers` library
+never executes repository Python, so the flag is inert and the tokenizer loads as
+if it were false. It exists so that harness command lines which pass the flag
+unconditionally still run *and* still tell the operator the flag did nothing.
+Deleting the decode deletes the only place that warning is emitted — silently,
+since nothing fails. Port it with the three rejections. Note the flag is not
+inert everywhere: `lower` still forwards it as
+`resolver.resolve(&self.name, &self.revision, self.trust_remote_code)`
+(`online_execution.rs:1059`), so the warning's claim is scoped to repository-code
+execution, not to the resolver, and the ported text must keep that scope.
+
 `Tokenizer` (`config/model/tokenizer.rs:15-38`) is a plain derived struct with a
 mandatory `name` but **no** semantic validation, and `BenchmarkConfig.tokenizer`
 is `Option<Tokenizer>`, so all three rejections vanish with the decode. Both
@@ -488,9 +519,13 @@ not a typing migration. It is recorded so the migration does not launder it into
 a "preserved behavior" it never had. The three exact unit tests for the
 derivation (`runtime_dispatch_defaults_to_global_when_absent`,
 `runtime_dispatch_defaults_to_sharded_for_cellular`,
-`runtime_explicit_dispatch_wins_over_cellular_default`) sit inside the
-`#[cfg(any())] mod tests` at `protocol_v2.rs:1284` and never compile; they move
-with the derivation, and re-enabling that module stays a step-4 obligation.
+`runtime_explicit_dispatch_wins_over_cellular_default`) are **live**: they sit in
+`mod dispatch_mode_tests`, declared `#[cfg(test)]` at `protocol_v2.rs:1410-1411`,
+not in the disabled module above it. They compile and run under
+`cargo test -p aiperf-runtime --features engine`, and they move with the
+derivation. What they pin is the projection, not cell behavior — which is why
+they stayed green while the `Sharded` arm became unreachable at execution
+time.
 
 **`parse_hop_routing` — a repoint, listed for completeness.**
 `parse_hop_routing` (`protocol_v2.rs:283-290`) is the sibling of the above and is
@@ -532,6 +567,54 @@ production behavior and the only one with e2e coverage; adopting the
 Forbidden/Required transitions for every run that omits a section. The
 `Deserialize` impl disappears with `AuthoredRunSpecV2` in step 4, so the
 divergence is closed by deletion rather than reconciled.
+
+**The sidecar adapter boundary — a `{ id, RawValue }` seam this migration does
+*not* delete, and the §3 claim must be scoped to say so.** `into_authored`
+serializes typed `cfg.sidecars` to a `Value` and re-decodes it into
+`SidecarSpecV2` (`protocol_v2.rs:430-443`), whose five fields are each
+`Option<Box<RawValue>>` (`protocol_v2.rs:1105-1124`). `authored_inputs()`
+(`:1132-1143`) then pairs each present body with a fixed string id and hands
+`AuthoredSidecarInput { id: &str, config: &RawValue }`
+(`sidecar_input.rs:273-279`) to a resolver over an **open** adapter registry,
+where `SidecarInputAdapter::validate(&RawValue)` performs "the sole full strict
+decode" (`sidecar_input.rs:311-318`). That is structurally the same
+id-plus-opaque-body shape §1 removes for transports, it is reached from a typed
+`Sidecars` (`config/model/telemetry.rs:214-230`), and **nothing in this record
+touches it**. Three consequences, all of which the record must state rather than
+imply:
+
+- The §3/§4 statement that step 4 deletes the `{ RegistryId, RawValue }` seam is
+  true of `NamedRunnerComponentSpecV2` only. The sidecar seam is open by
+  design — adapters are registered, not enumerated — and survives.
+- Feeding those adapters after the projection dies still requires
+  typed `Sidecars` → `RawValue`. That is a round-trip, and it is the one place
+  the Purpose section's claim would be false if left unqualified. Either the
+  migration re-points `SidecarInputAdapter::validate` at typed values (a
+  five-adapter change this record does not scope), or it re-serializes at the
+  adapter boundary and says so. This record selects **re-serialize and say so**:
+  the seam's openness is the reason it exists, and closing it is a separate
+  decision from deleting the projection.
+- `SidecarSpecV2` carries a fifth field, `live_streaming`, that typed `Sidecars`
+  does not have at all. Since `into_authored` builds the DTO by re-decoding the
+  serialized typed value, `live_streaming` is already unreachable from Config v2
+  and always `None`. Deleting the DTO makes that structural instead of
+  incidental. It is not a loss, but a reader comparing the two types will find
+  the field and should not have to re-derive this.
+
+One thing here is *not* owed. `SidecarSpecV2::validate_outer`
+(`protocol_v2.rs:1145-1159`) checks each present body parses as JSON and is an
+object, with per-field messages — but its only caller is
+`AuthoredRunSpecV2::validate_outer` (`protocol_v2.rs:722-751`), and that function
+has no production caller at all: the sole reachable `validate_outer` in
+`coordinator.rs:138` is `EnvelopeV2`'s, which delegates to
+`BenchmarkRunWireV2::validate_outer` (`protocol_v2.rs:138`, `:332-350`). A
+repo-wide grep finds `AuthoredRunSpecV2::validate_outer` called only from
+`runtime/tests/recorded_agent_protocol.rs:63`/`:90`. So the sidecar,
+models, metrics, artifacts, and endpoint `validate_outer` bodies gated behind it
+are dead in production today, and porting them would *add* validation rather than
+preserve it. They are listed here as deliberately dropped, with the note that a
+`RawValue` body that is valid JSON but not an object will now fail inside the
+adapter's own strict decode instead.
 
 **Endpoint and model transforms — mostly no-ops, with one live exception.**
 `endpoint_profile` (`protocol_v2.rs:552-563`) renames `timeout` →
@@ -707,8 +790,20 @@ plus a `RunContext` neither path varies. Pinning both halves byte-exact pins the
 binding transitively. That is what the landed
 `transport_component_matches_inline_projection` asserts (`typed.id == inline.id`
 and `typed.config.get() == inline.config.get()` over `all_variants()`, all six),
-and it is the differential gate step 1 owes. **No binding-level differential is
-owed at any step.**
+and it is the differential gate step 1 owes.
+
+**That transitivity is exactly as wide as step 1 and no wider.** It holds because
+both step-1 paths end in the same `factory.native_execution(transport, context)`
+call, so equal inputs give an equal binding. Step 2 removes that call: obligation
+(a) has the match arms supply bindings **directly**, so the shared terminal
+function the argument depends on is gone, and a component-equality result carries
+nothing about whether a hand-written arm reproduces what the registry lookup
+returned. Step 2 therefore owes its own differential — for each variant, the arm
+and `registry.transport_factory(id).native_execution(...)` must be shown to
+produce the same binding, asserted while both are still reachable — and this
+record does not claim otherwise. An earlier formulation here said no
+binding-level differential was owed at any step; that generalized a step-1
+property past the step that makes it true.
 
 Dispatch is an exhaustive `match` on `Transport`, not `match id.as_str()`; the
 `RegistryId` string and the plugin tail belong to §4, not to this field.
@@ -898,15 +993,28 @@ mandatory at every step, not just the last. Beyond that shared floor:
 test_chat_endpoint --test test_completions_endpoint --test
 test_kserve_grpc_endpoint`.
 
-**Step 2.** The step-1 gate, plus `cargo test -p aiperf-dry-run-tests --test
-dry_run --test virtual_workers` — the only payload-bearing built-in transport arm
-any suite exercises, since `Http` and `Grpc` are unit variants — plus `cargo test
--p aiperf-e2e-tests --test test_websocket` for the
-`Websocket(WebSocketTransportConfig)` arm, plus `cargo test -p aiperf-e2e-tests
---test test_harbor_native_graph_rollout` for obligation (c)'s
-`aiperf eval --model-runtime` path. Plus a lean-build compile check
-(`cargo check -p aiperf-cli --no-default-features`) alongside the feature-bearing
-builds in `CLAUDE.md`, for obligation (e).
+**Step 2.** The step-1 gate, plus the arm↔registry binding differential named in
+step 2's prerequisite, plus `cargo test -p aiperf-dry-run-tests --test dry_run
+--test virtual_workers` and `cargo test -p aiperf-e2e-tests --test test_websocket`
+— the two payload-bearing arms any suite exercises today, `Http` and `Grpc` being
+unit variants — plus `cargo test -p aiperf-e2e-tests --test
+test_harbor_native_graph_rollout` for obligation (c)'s `aiperf eval
+--model-runtime` path. Plus a lean-build compile check (`cargo check -p
+aiperf-cli --no-default-features`) alongside the feature-bearing builds in
+`CLAUDE.md`, for obligation (e).
+
+**Neither `DynosimOffline` nor `DynosimOnline` is executed by any of that**, and
+they are the two arms most exposed to a match rewrite: both carry a
+`DynosimConfig` payload with nested `RawValue` engine/router args, so unlike the
+unit variants they have a config half that a hand-written arm can get wrong. No
+e2e or dry-run suite runs either — `grep -rl dynosim` over `e2e-tests/` and
+`dry-run-tests/` matches one file, `global_dispatch_real_clock.rs`, and only in
+a doc comment. Step 2's gate is therefore incomplete until it adds a
+`--features dynosim` run that executes both arms. Until such a suite exists, the
+minimum is the binding differential above run over `all_variants()` under
+`--features dynosim`, which at least covers the config half without a live
+Dynamo target; a socket-free `dynosim_offline` profile run is the real gate and
+this record names it as owed work rather than pretending the arms are covered.
 
 **Step 3.** The step-2 gate, plus `cargo test -p aiperf-e2e-tests --test
 test_conditional_graph --test test_flatgraph_parity --test
@@ -949,10 +1057,13 @@ dataset cardinality tightening, the export-stem derivation, `variation:
 Option<VariationSpec>`, or the `resource_presence` algorithm. A step-4 change
 could land all five wrong and still be green. Worse, the closest thing the tree
 has to such a test does not run: `protocol_v2.rs:1284` declares
-`#[cfg(any())] mod tests` — an always-false cfg that compiles the entire module
-out — and among its bodies is `outer_contract_rejects_unknown_fields`, i.e. the
-one existing unknown-field assertion has been silently disabled since
-`904cc07e2a`. Step 4 therefore adds **named unit tests on `BenchmarkRun`
+`#[cfg(any())] mod tests` — an always-false cfg that compiles that module
+(`:1284-1408`) out — and among its bodies is
+`outer_contract_rejects_unknown_fields`, i.e. the one existing unknown-field
+assertion has been silently disabled since `904cc07e2a`. The scope of that
+disablement is exactly that module: the `#[cfg(test)] mod dispatch_mode_tests`
+that follows at `:1410-1411` is live, so the dispatch and hop-routing derivations
+*are* covered and only the outer-contract bodies are dark. Step 4 therefore adds **named unit tests on `BenchmarkRun`
 itself**, in addition to the e2e gate:
 
 - an unknown top-level field on a bare run payload is rejected (replacing the
@@ -978,9 +1089,9 @@ itself**, in addition to the e2e gate:
   each carrying `AuthoredTokenizerV2::decode`'s message;
 - `runtime.dispatch` absent with `runtime.cells > 1` resolves `Sharded`, absent
   with `cells <= 1` resolves `Global`, and an explicit value wins over both —
-  the three tests currently stranded in `#[cfg(any())] mod tests`. They assert
-  the projection, not cell behavior: `build_cell_envelope` rewrites `cells` to
-  `1`, so no cell reaches the `Sharded` arm;
+  ported from the live `mod dispatch_mode_tests` (`protocol_v2.rs:1410-1411`).
+  They assert the projection, not cell behavior: `build_cell_envelope` rewrites
+  `cells` to `1`, so no cell reaches the `Sharded` arm;
 - a config authoring two override `endpoint_profiles` in reverse-sorted key order
   produces profiles in sorted order after `"default"`, and each override still
   has `timeout` renamed to `timeout_seconds` and `url_strategy` dropped;
@@ -993,9 +1104,10 @@ itself**, in addition to the e2e gate:
   a run with `cfg.phases` absent and a run with `cfg.phases: Some(vec![])` are
   both rejected by `validate()` with the same message.
 
-Re-enabling or deleting `#[cfg(any())] mod tests` is part of step 4, not optional
-cleanup: leaving a disabled module next to the code it was written to guard is
-how the gap recurs.
+Re-enabling or deleting the `#[cfg(any())] mod tests` at `protocol_v2.rs:1284`
+is part of step 4, not optional cleanup: leaving a disabled module next to the
+code it was written to guard is how the gap recurs. This applies to that module
+alone — `mod dispatch_mode_tests` at `:1410` needs porting, not re-enabling.
 
 Each step keeps the stdin accept path *structurally* intact — both arms of
 `decode_execute_wire` survive; the bare arm changes type. No step owes anything
@@ -1053,14 +1165,17 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
   and this record must not be read as evidence that one can. Adding the arm is
   out of scope here; recording that it is *required*, and that its absence is a
   gap rather than a design property, is in scope.
-- **"Zero `RawValue`" is a direction, not a literal end state.** Two uses survive
-  this migration: the `dynosim` transport variants' nested Dynamo engine/router
-  args (opaque pass-throughs to Dynamo's own parser), and the dataset payload
-  inside the workload arm (adapter input; dataset selection is
-  name/structural-probe, not a component-config union). A runtime-loaded
-  plugin's config would be a third — when such a plugin can be selected. This
-  change types the built-in component majority and the first-party inner seams;
-  it does not chase `RawValue` out of the places it belongs.
+- **"Zero `RawValue`" is a direction, not a literal end state.** Three uses
+  survive this migration. Two are inner adapter inputs: the `dynosim` transport
+  variants' nested Dynamo engine/router args (opaque pass-throughs to Dynamo's
+  own parser), and the dataset payload inside the workload arm (dataset
+  selection is name/structural-probe, not a component-config union). The third
+  is the **sidecar adapter boundary**, and it is a different thing: a live
+  `{ open id, RawValue }` seam, not an opaque leaf — see §2's port entry. A
+  runtime-loaded plugin's config would be a fourth, when such a plugin can be
+  selected. This change types the built-in component majority and the
+  first-party inner seams; it does not chase `RawValue` out of the places it
+  belongs, and it does not remove the sidecar seam.
 
 ## Source anchors
 
