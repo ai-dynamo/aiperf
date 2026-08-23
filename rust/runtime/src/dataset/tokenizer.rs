@@ -320,6 +320,7 @@ struct TiktokenAddedToken {
     /// HuggingFace marks placeholder/control tokens `"special": true`. Defaults
     /// to `false` (matching the `AddedToken` default) when the field is absent.
     #[serde(default)]
+    #[allow(dead_code)]
     special: bool,
 }
 

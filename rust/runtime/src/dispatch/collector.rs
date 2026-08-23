@@ -480,23 +480,27 @@ impl TraceCollector {
     }
 
     /// Set SLA thresholds used to classify goodput.
+    #[allow(dead_code)]
     pub(crate) fn set_sla_thresholds(&mut self, sla: SlaThresholds) {
         self.sla = sla;
     }
 
     /// Add provisioned worker-seconds for an elapsed interval, including
     /// starting and draining workers. Aggregated replay uses only `decode`.
+    #[allow(dead_code)]
     pub(crate) fn add_worker_seconds(&mut self, prefill: f64, decode: f64) {
         self.prefill_worker_seconds += prefill;
         self.decode_worker_seconds += decode;
     }
 
     /// Set fixed provisioned worker counts when no event loop integrates them.
+    #[allow(dead_code)]
     pub(crate) fn set_static_worker_count(&mut self, prefill: usize, decode: usize) {
         self.static_worker_count = Some((prefill, decode));
     }
 
     /// Set GPUs per worker for GPU-hour accounting.
+    #[allow(dead_code)]
     pub(crate) fn set_gpus_per_worker(&mut self, prefill: usize, decode: usize) {
         self.prefill_gpus_per_worker = prefill;
         self.decode_gpus_per_worker = decode;
@@ -535,6 +539,7 @@ impl TraceCollector {
     /// (offline disagg replay only). Idempotent — subsequent calls are no-ops
     /// once a value is set, so the first dispatch wins. Aggregated replay does
     /// not call this; for those requests `prefill_worker_idx` stays `None`.
+    #[allow(dead_code)]
     pub(crate) fn on_prefill_assigned(&mut self, uuid: Uuid, worker_idx: usize) {
         if let Some(stats) = self.requests.get_mut(&uuid)
             && stats.prefill_worker_idx.is_none()
@@ -546,6 +551,7 @@ impl TraceCollector {
     /// Record that `uuid` was dispatched to `worker_idx` on the decode pool
     /// (offline disagg replay), or to the only pool (aggregated replay).
     /// Idempotent.
+    #[allow(dead_code)]
     pub(crate) fn on_decode_assigned(&mut self, uuid: Uuid, worker_idx: usize) {
         if let Some(stats) = self.requests.get_mut(&uuid)
             && stats.decode_worker_idx.is_none()
@@ -564,6 +570,7 @@ impl TraceCollector {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_prefill_admit(
         &mut self,
         uuid: Uuid,
@@ -581,6 +588,7 @@ impl TraceCollector {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_decode_admit(
         &mut self,
         uuid: Uuid,
@@ -598,36 +606,42 @@ impl TraceCollector {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_source_held(&mut self, uuid: Uuid, at_ms: f64) {
         if let Some(detail) = self.detail_mut(uuid) {
             detail.source_held_ms.get_or_insert(at_ms);
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_destination_reserved(&mut self, uuid: Uuid, at_ms: f64) {
         if let Some(detail) = self.detail_mut(uuid) {
             detail.destination_reserved_ms.get_or_insert(at_ms);
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_destination_activated(&mut self, uuid: Uuid, at_ms: f64) {
         if let Some(detail) = self.detail_mut(uuid) {
             detail.destination_activated_ms.get_or_insert(at_ms);
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_source_released(&mut self, uuid: Uuid, at_ms: f64) {
         if let Some(detail) = self.detail_mut(uuid) {
             detail.source_released_ms.get_or_insert(at_ms);
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_prefill_route_overlap(&mut self, uuid: Uuid, tokens: usize) {
         if let Some(detail) = self.detail_mut(uuid) {
             detail.prefill_route_overlap_tokens.get_or_insert(tokens);
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn on_decode_route_overlap(&mut self, uuid: Uuid, tokens: usize) {
         if let Some(detail) = self.detail_mut(uuid) {
             detail.decode_route_overlap_tokens.get_or_insert(tokens);
