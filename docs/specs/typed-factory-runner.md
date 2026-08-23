@@ -23,8 +23,11 @@ with the Python reference, where the same typed `BenchmarkConfig` rides inside
 
 What the change delivers is every **typed** section of the config carried typed
 end to end: no typed→`Value`→`RawValue`→typed round-trip, no per-factory
-re-decode, decode-time errors, and the opaque `RawValue` seam confined to the two
-residual uses listed under [Non-goals](#non-goals-and-trade-offs).
+re-decode, decode-time errors, and the opaque `RawValue` seam confined to the
+residual uses listed under [Non-goals](#non-goals-and-trade-offs) — three of
+them: the dynosim nested engine/router args, the dataset payload, and the
+sidecar adapter boundary, the last of which is an open seam this migration keeps
+by design rather than an opaque leaf.
 
 It is not a claim that no `Value` survives anywhere. `cfg.endpoint_profiles` is
 declared on `BenchmarkConfig` as an open `serde_json::Map<String, Value>`
@@ -149,9 +152,36 @@ alternative (fork B — an open string discriminant with a plugin tail) is
 recorded in [§4](#4-open-id-plugin-seam-future-work) as the design the eventual
 plugin work inherits; it is not what this migration builds.
 
-`StaticAccuracyWorkloadConfigV2` remains outside `workload_kind`'s two arms — it
-is selected by the static-accuracy path, not by the classifier — and the
-exhaustive workload match must not be read as claiming otherwise.
+`StaticAccuracyWorkloadConfigV2` remains outside `workload_kind`'s two arms, and
+the reason is stronger than "a different selection path": **it is not selected at
+all on this tree.** `register_online_workloads` (`online_execution.rs:167-175`)
+installs exactly `ScheduledWorkloadFactoryV2` and `GraphWorkloadFactoryV2`;
+`register_http_static_accuracy_workload` (`:178`) has no production caller — a
+repo-wide search over `rust/` finds only its own declaration, its
+`_with_factories` delegate, and one unit-test call at `:2137`. Independently,
+`into_authored` emits `workload_kind.workload_id()` (`protocol_v2.rs:367`,
+`:424-426`), and `WorkloadKind::workload_id` returns only `"scheduled"` or
+`"graph"` (`config/model/workload_kind.rs:55-62`). So even were the factory
+registered, no projected run could name it.
+
+A static-accuracy run today is a **`scheduled`** run distinguished by its dataset
+plan, `NativeDatasetPlan::StaticAccuracy` — which the source comment at
+`workload_kind.rs:38-46` states directly, along with the `TODO(step-1)` saying a
+`StaticAccuracy` variant should be added only once the projection emits a
+distinct id. The exhaustive two-arm match is therefore complete against what the
+wire can carry, and adding a third arm now would invent behavior nothing
+produces.
+
+The consequence for §3's repoint inventory: `StaticAccuracyWorkloadFactoryV2::validate_run`
+(`online_execution.rs:447`) is **not** live production behavior and must not be
+counted as a preserved `validate_run` surface. Its `transport_id == "http"` check
+and its `run.models.items.len()` read are reachable only from the unit test that
+registers the factory by hand. Repointing it is dead-code maintenance — worth
+doing so the file compiles coherently after `AuthoredRunSpecV2` dies, and worth
+doing carefully because the accuracy path is expected to become selectable — but
+it carries no behavior-preservation obligation and no e2e gate. The live surface
+to audit for static accuracy is the scheduled body plus the dataset plan, not
+this factory.
 
 Outstanding typing on the authored side, which this arc also completes:
 
@@ -377,6 +407,55 @@ metrics had a decision recorded:
   typed → `Value` → typed hop that §2's headline claim does not mention, and it
   survives the projection's deletion unless it is repointed.
 
+**The endpoint-profile validation and normalization pipeline — the largest
+unspecified consumer of the deleted types.** Everything §2 says about endpoint
+profiles so far concerns how `into_authored` *builds* them: `id` injection, the
+override rename/removal, the sort. It says nothing about who *consumes* them, and
+that consumer is substantial and live. `validate_endpoint_profiles_v2`
+(`registry.rs:1293-1418`) takes `&AuthoredRunSpecV2`, iterates
+`run.endpoints.profiles: Vec<Box<RawValue>>`, and `strict_decode`s each entry
+into a **private** `EndpointProfileConfigV2` (`registry.rs:966-1011+`) — a third
+endpoint shape, distinct from both typed `Endpoint` and the projected profile
+JSON. It then enforces non-empty `urls`, positive `connection_limit`, the
+`wait_for_model_mode` domain, session-header semantics, endpoint canonicalization
+and preparation, readiness policy, and proxy resolution, converts times, and
+constructs the `ValidatedEndpointProfileV2`s the rest of the run indexes by
+position. Its production caller is `coordinator.rs:190`.
+
+Step 4 deletes `AuthoredRunSpecV2` and `EndpointProfilesSpecV2` — this function's
+parameter type and its input field — so it cannot survive unchanged, and this
+record named neither it nor `EndpointProfileConfigV2` before now. That is the
+gap, and it is not closed by pointing execution at typed `cfg.endpoint`: the
+derived `Endpoint` decoder does not enforce `urls` non-empty or
+`connection_limit > 0` (both are plain fields with no validation attached), and
+nothing in the typed model produces a `ValidatedEndpointProfileV2` at all.
+Dropping the function loses real rejections and the entire normalization step.
+
+Nor can it be kept as-is. Keeping it means rebuilding typed `Endpoint` →
+`Value`/`RawValue` → `EndpointProfileConfigV2`, which is precisely the round-trip
+this record exists to delete, reintroduced at the one boundary that matters most.
+
+The obligation, therefore: **split the function by profile provenance.** The
+default profile converts field-by-field from typed `Endpoint` into
+`ValidatedEndpointProfileV2` with every live semantic check re-expressed against
+typed fields — `urls` non-empty, `connection_limit > 0`, trimmed
+`session_header`, plus the canonicalization, readiness, proxy, and time
+conversions unchanged — and with the `"default"` identity supplied as §2 requires
+above. The override profiles keep the raw path, because `cfg.endpoint_profiles`
+stays an open `serde_json::Map<String, Value>`: they continue through
+`strict_decode::<EndpointProfileConfigV2>` with their map-key identity, so the
+existing checks apply to them verbatim. `coordinator.rs:189-203` repoints onto
+the split. This is the largest single unit of work step 4 carries, and estimating
+the migration without it understates the step materially.
+
+Two checks the split must not lose sight of, because they are easy to drop when
+re-expressing a decoder as a converter: `EndpointProfileConfigV2` carries fields
+typed `Endpoint` does not obviously mirror (`reset_kv_cache`, `server_profiler`,
+`template`, `response_field`, `api_key`, `polling_interval_seconds`,
+`request_content_type`), and any of those that reach the default profile today
+must reach it after. A field-by-field diff of the two structs is a step-4
+prerequisite, not an implementation detail.
+
 **Three mandatory-section rejections — port them verbatim, messages included.**
 `BenchmarkConfig` holds all of these sections as `Option`
 (`config/model/config.rs:66`, `:69`, `:75`, `:81`), so nothing on the typed model
@@ -444,6 +523,33 @@ different rejection and passes either way. If instead the controller keeps a
 lenient fallback, that has to be written down as a deliberate asymmetry with a
 reason — this record does not choose that, because a merge policy derived from
 config the run is about to reject has no defensible meaning.
+
+**The controller decodes `artifacts` for itself too, and that one is already
+broken on valid input.** `run_cellular_with_startup_probe` reads
+`/run/cfg/artifacts` out of the raw envelope into
+`crate::engine::protocol::ArtifactSpec` with
+`.and_then(|value| serde_json::from_value(value).ok()).unwrap_or_default()`
+(`cellular_controller.rs:720-725`), and uses the result to decide artifact
+upload and concatenation. `ArtifactSpec` is `#[serde(deny_unknown_fields)]`
+(`engine/protocol.rs:199-202`) and has **no `user_files` field** — a search of
+that file returns none — while typed `Artifacts` carries
+`user_files: Option<Vec<UserFile>>` (`config/model/artifacts.rs:37-39`), omitted
+from the serialized form only while it is `None`. So a cellular run that authors
+any user file at all — every value valid, nothing malformed — trips
+`deny_unknown_fields`, and the controller silently falls back to
+`ArtifactSpec::default()`, losing `records_path`, `raw_path`, `outputs_path`,
+`inputs_path`, and `trace` for the shipping and concatenation decisions. This is
+a live defect on the current tree, not one the migration introduces, and it is
+the second instance of the same pattern as the metrics decoder above.
+
+Step 4 owes three things here, and the first is not optional: repoint this
+conversion onto the typed section so the controller sees the authored paths,
+**taking care that adding `user_files` awareness does not drop the fields the
+controller actually consumes**; add a cellular controller test covering a run
+with `user_files` present, asserting the records/raw/inputs paths survive; and
+add the named `BenchmarkRun` artifact-format rejection test promised by the
+artifacts decision above, which the step-4 test list previously omitted. Both new
+tests are listed in the step-4 gate below.
 
 **The metrics fallback — do *not* port as-is; surface the error.** Today an
 invalid metric SLO silently defaults the whole metrics section. On
@@ -1205,6 +1311,12 @@ itself**, in addition to the e2e gate:
 - `weka_semantics` accepts `" Legacy "` and `"AgentX"` as legacy, `""` and
   absent as graph-ir, and rejects an unknown value with
   `weka_wants_legacy`'s message;
+- a run whose `artifacts.user_files[i].format` is not one of `json`/`yaml`/`text`
+  is *rejected* naming the offending index and key, rather than silently
+  discarding the whole `artifacts` section to `ArtifactSpecV2::default()`; and,
+  on the cellular side, a controller envelope carrying valid `user_files`
+  alongside `records_path`/`raw_path`/`inputs_path` retains those paths instead
+  of falling back to `ArtifactSpec::default()`;
 - a run with `cfg.runtime.workers: Some(0)` is rejected with
   `"run.cfg.runtime.workers must be a positive usize"`; a run with `cfg.runtime`
   absent resolves `worker_count` to `default_worker_count()` rather than `1`; and
