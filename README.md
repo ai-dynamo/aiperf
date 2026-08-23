@@ -44,15 +44,18 @@ pip install aiperf
 ```
 
 > [!NOTE]
-> On Linux **aarch64** (`arm64`), one of AIPerf's dependencies (`crick`)
-> ships only an sdist and needs a C compiler at install time. Install
-> the system build toolchain before `pip install aiperf` —
-> `sudo apt install build-essential` (Debian/Ubuntu),
-> `sudo yum groupinstall "Development Tools"` (RHEL/CentOS), or
-> equivalent. Linux x86_64, macOS, and Windows install from pre-built
-> wheels and need no toolchain.
+> On Linux **aarch64** (`arm64`), the optional `crick` dependency ships
+> only an sdist and needs a C compiler at install time. `crick` backs the
+> non-default `tdigest` list-metric backend, so a plain `pip install aiperf`
+> does not pull it and needs no toolchain. If you want that backend
+> (`AIPERF_METRICS_LIST_BACKEND=tdigest`), install the system build tools
+> first: `sudo apt install build-essential` (Debian/Ubuntu),
+> `sudo yum groupinstall "Development Tools"` (RHEL/CentOS), or equivalent.
+> Then `pip install "aiperf[tdigest]"`. Linux x86_64, macOS, and Windows
+> install `crick` from pre-built wheels and need no toolchain.
 
 Optional integrations:
+- `pip install "aiperf[tdigest]"` enables the bounded-memory t-digest list-metric backend
 - `pip install "aiperf[mlflow]"` enables MLflow uploads and live telemetry streaming
 - `pip install "aiperf[otel]"` enables OpenTelemetry metric streaming
 - `pip install "aiperf[wandb]"` enables Weights & Biases result uploads
