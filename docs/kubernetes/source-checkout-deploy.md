@@ -142,19 +142,18 @@ credentials. A deployable envelope must contain:
 - `imageDigest` and the matching digest-qualified `imageReference`;
 - the fixed `controller`, `cell`, and `results-sidecar` commands, argv, and
   environment;
-- one bootstrap reference for the controller and results sidecar;
+- one bootstrap reference for the controller;
 - one numbered `cellBootstraps` reference per cell; and
 - the SHA-256 digest of each corresponding local bootstrap file; and
 - the complete ConfigMap content digest in `configRef.sha256`.
 
-The bootstrap files are opaque security material produced with the envelope.
-Do not substitute random bytes, reuse them between runs, add them to the
-envelope, or commit them to source control. For a one-cell envelope, set local
-paths for all three identities:
+The bootstrap files are opaque cellular-execution material produced with the
+envelope. Do not substitute random bytes, reuse them between runs, add them to
+the envelope, or commit them to source control. The results sidecar has no
+bootstrap. For a one-cell envelope, set local paths for the controller and cell:
 
 ```bash
 export CONTROLLER_BOOTSTRAP=/secure/run-1/controller.bootstrap
-export SIDECAR_BOOTSTRAP=/secure/run-1/results-sidecar.bootstrap
 export CELL_0_BOOTSTRAP=/secure/run-1/cell-0.bootstrap
 ```
 
@@ -195,7 +194,6 @@ uv run aiperf kube profile \
   --envelope controller-envelope.json \
   --image-capabilities image-capabilities.json \
   --bootstrap-material "controller=${CONTROLLER_BOOTSTRAP}" \
-  --bootstrap-material "results-sidecar=${SIDECAR_BOOTSTRAP}" \
   --bootstrap-material "cell-0=${CELL_0_BOOTSTRAP}"
 ```
 
@@ -225,9 +223,13 @@ uv run aiperf kube results job-1 \
 ```
 
 The CLI retrieves the durable result through the locally selected Kubernetes
-Service proxy and uses the per-incarnation results-read capability. If the
-chart was installed with a nondefault release namespace or API Service name, add
-`--operator-namespace <namespace>` and `--operator-service <name>`.
+Service proxy. It addresses the persisted namespace/job/run triple directly and
+does not need the AIPerfJob, a Secret, or an application-level read capability;
+the caller's Kubernetes identity authorizes the Service-proxy request. Results
+remain available after the producer or AIPerfJob is deleted and after an
+operator restart. If the chart was installed with a nondefault release namespace
+or API Service name, add `--operator-namespace <namespace>` and
+`--operator-service <name>`.
 
 For API health diagnostics:
 

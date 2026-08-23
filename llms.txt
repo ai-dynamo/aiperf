@@ -67,15 +67,18 @@ purpose for each, so an agent knows which file to open for a given question.
   API without importing `aiperf.*`. V1 ships only AIPerfJob; `validate` and
   `profile` require an image-digest-bound capability document, while `sweep`,
   `index`, and `dashboard` refuse. The immutable CR spec and per-run RBAC bind the
-  controller to status-only updates. The chart installs JobSet, a fixed
-  `aiperf-k8s-operator` Service, and a results PVC. The regular sidecar signs the
-  exact manifest-declared artifact set with object-UID-bound derived authority,
-  publishes the manifest last, and exits after durable acknowledgement. It
-  exposes health only; results are read from the authenticated durable API.
-  Completed-result retrieval requires the dedicated per-incarnation read
-  capability plus trusted namespace/job/run and operator Service identity;
-  workload annotations cannot redirect it. Default cluster-local HTTP uploads
-  authenticate content but do not provide transport confidentiality.
+  controller to status-only updates. The chart requires an explicit operator image
+  repository and tag and installs JobSet, a fixed ClusterIP
+  `aiperf-k8s-operator` Service, and a single-owner results PVC. The regular
+  sidecar shares a pod-local `emptyDir` with the controller, streams bounded
+  digest/length-checked artifacts, publishes the manifest last, and exits after
+  durable acknowledgement. The service atomically publishes results under the
+  namespace/job/run identity; `aiperf kube results` retrieves them through the
+  fixed Kubernetes Service proxy after producer deletion or operator restart.
+  This trusted namespace-level in-cluster service uses no application token,
+  signature, public key, results-read Secret, authority ConfigMap, or external
+  ingress. Controller and cell cellular bootstraps are separate from results.
+  Default cluster-local HTTP uploads do not provide transport confidentiality.
 - **Native graph inspection:** `aiperf graph validate`, `aiperf graph explain`,
   and `aiperf graph visualize` are local-only Rust commands. Each resolves one
   selected stock built-in graph adapter exactly once, then inspects the retained

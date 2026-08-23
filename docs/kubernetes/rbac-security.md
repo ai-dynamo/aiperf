@@ -23,8 +23,8 @@ reconciliation:
 | `aiperf.nvidia.com` | `aiperfjobs` | `get, list, watch, patch` | Reconcile jobs and maintain the Kopf finalizer |
 | `aiperf.nvidia.com` | `aiperfjobs/status` | `patch` | Publish bounded lifecycle status |
 | `jobset.x-k8s.io` | `jobsets` | `create, delete, get` | Materialize, validate, and remove the exact workload |
-| core | `secrets` | `create, delete, get` | Read exact bootstrap references and own the dedicated results-read capability |
-| core | `configmaps` | `create, delete, get` | Read source configuration and own immutable config/result-authority snapshots |
+| core | `secrets` | `delete, get` | Read and clean up exact controller/cell bootstrap references |
+| core | `configmaps` | `create, delete, get` | Read source configuration and own immutable config snapshots |
 | core | `serviceaccounts` | `create, delete, get` | Own the exact run identity |
 | `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get` | Bind and remove the exact run identity |
 
@@ -33,17 +33,13 @@ Kubernetes Event posting disabled. It therefore does not require Event or
 peering-object permissions beyond the table above.
 
 There is no shipped AIPerfSweep resource or sweep-handler identity. The
-operator cannot list, watch, update, or patch Secrets. Kubernetes returns the
-complete Secret for an exact-name `get`; the operator validates every
-reference's immutable metadata, digest annotation, and exact CR-UID owner
-reference. It reads only the
-results-sidecar's `data.bootstrap`, verifies those bytes against the envelope
-digest, derives an object-incarnation-bound Ed25519 public verifier, and
-discards the private bytes after reconciliation. It also creates one distinct
-immutable 32-byte results-read capability Secret. That capability is random;
-it is not role bootstrap material and cannot be used for cellular admission.
-Private bootstrap material is never written into the AIPerfJob, JobSet, logs,
-result-authority record, or results store.
+operator cannot list, watch, create, update, or patch Secrets. Kubernetes
+returns the complete Secret for an exact-name `get`; the operator validates
+each controller/cell bootstrap reference's immutable metadata, digest
+annotation, and exact CR-UID owner reference. The results sidecar has no
+bootstrap material. Controller and cell bootstraps remain cellular-execution
+material and are never written into the AIPerfJob, JobSet, logs, or results
+store.
 
 ## Per-run workload authority
 
@@ -64,13 +60,12 @@ same pod does not mount that projection, and cell containers receive no API
 credential. Workload pods receive no Secret API permissions; bootstrap bytes
 arrive through exact read-only Secret volumes.
 
-The AIPerfJob's exact UID is a non-blocking owner reference on its bootstrap
-Secrets, JobSet, ServiceAccount, Role, RoleBinding, configuration snapshot,
-read-capability Secret, and authority ConfigMap. These references do not require
-delete-on-owner or owner-finalizer admission authority. A delete handler
-explicitly removes the complete set; Kubernetes garbage collection is only a
-backstop. A name-reused AIPerfJob cannot inherit authority from an earlier
-object incarnation.
+The AIPerfJob's exact UID is a non-blocking owner reference on its controller
+and cell bootstrap Secrets, JobSet, ServiceAccount, Role, RoleBinding, and
+configuration snapshot. These references do not require delete-on-owner or
+owner-finalizer admission authority. A delete handler explicitly removes that
+workload set; Kubernetes garbage collection is only a backstop. Results use the
+durable namespace/job/run identity, not a UID incarnation.
 
 The source ConfigMap is user-owned. `configRef.sha256` covers canonical JSON of
 its complete `data` and `binaryData` maps. Reconciliation verifies that digest
@@ -82,37 +77,25 @@ accepted workload.
 
 The controller and regular results-sidecar container share a writable
 `emptyDir` only within their Job pod. The sidecar validates the committed
-manifest, uploads each exact declared artifact, then publishes the manifest to
-the operator API. Each request is signed by a key derived from the private
-sidecar bootstrap and bound to namespace, job, run, object kind, path, SHA-256,
-and byte length, including the AIPerfJob UID.
-
-The operator accepts the JobSet first with a required authority-ConfigMap
-startup gate, then re-reads the AIPerfJob UID, immutable envelope, and bootstrap
-references. Only after that revalidation does it create the immutable authority
-ConfigMap containing the upload public key and the read-capability hash. The
-ConfigMap contains no private capability. Upload authorization recomputes the
-expected verifier from the exact immutable bootstrap Secret and current CR UID
-and validates the complete ConfigMap identity before accepting a request.
-
-Completed-result reads require the dedicated bearer capability. A trusted
-caller obtains only the dedicated results-read Secret through Kubernetes
-authorization; it never reads a controller, cell, or results-sidecar bootstrap
-Secret. The API validates the bearer against the ConfigMap hash and the exact
-namespace, job, run, and object UID before serving a manifest or artifact.
+manifest, streams each exact declared artifact to the operator API, and then
+publishes the manifest. Each upload carries SHA-256 and length metadata, which
+the service validates against the bytes. The results service has no application
+token, signature, public-key verifier, results-read Secret, or authority
+ConfigMap; its durable identity is exactly namespace, job ID, and run ID.
 
 The chart exposes the API as a ClusterIP Service and stores published results
 on a mandatory single-replica PVC. Partial uploads remain under a private
 staging directory and are not readable. Only an exact declared set can be
 atomically published; the sidecar exits after the durable manifest response so
-the Job can become terminal. `aiperf kube results` reaches persisted results
-through the Kubernetes Service proxy using trusted local
-`--operator-service`/`--operator-namespace` configuration. Workload-controlled
-annotations never select that privileged proxy target.
+the Job can become terminal. AIPerfJob deletion cleans workload resources but
+does not release published PVC results; the index rebuilds them on operator
+restart. `aiperf kube results` reaches persisted results through the Kubernetes
+Service proxy using trusted local `--operator-service`/`--operator-namespace`
+configuration and an explicit `--run-id`. Workload-controlled annotations
+never select that proxy target.
 
-The chart's default upload transport is cluster-local HTTP. Signatures provide
-request authentication and content integrity, not confidentiality or traffic
-analysis protection. Clusters that require confidentiality must enforce it
-with a service mesh or equivalent network layer and should restrict access to
-the operator Service with NetworkPolicy. No external Ingress or dashboard is
-shipped.
+The chart's default upload transport is cluster-local HTTP and assumes trusted
+namespace-level in-cluster access. It does not provide confidentiality or
+traffic-analysis protection. Clusters that require confidentiality must enforce
+it with a service mesh or equivalent network layer and should restrict access to
+the operator Service with NetworkPolicy. No external Ingress is shipped.

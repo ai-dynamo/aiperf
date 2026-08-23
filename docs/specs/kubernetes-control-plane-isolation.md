@@ -41,10 +41,10 @@ routes to `kube::command::run`; no command delegates to Python.
 reconciliation, retry and recovery, durable result indexing, and a
 cluster-local API. It does not import `aiperf.*`, parse benchmark configuration,
 construct native argv, or mint bootstrap material. It validates every declared
-Secret reference's name, role label, immutability, digest annotation, and exact
-non-blocking CR owner reference. It
-reads only the results-sidecar bootstrap bytes, verifies their declared digest,
-derives an object-UID-bound upload public key, and retains no private material.
+controller/cell Secret reference's name, role label, immutability, digest
+annotation, and exact non-blocking CR owner reference. The results sidecar has
+no bootstrap material; controller and cell bootstraps remain cellular-execution
+material rather than results-service credentials.
 
 The cross-boundary schema directory is `contracts/native-k8s/v1/`. Consumers
 reject unknown contract versions, unknown required capabilities, malformed
@@ -91,30 +91,28 @@ report. The native results sidecar exposes health only; neither the manifest nor
 artifacts are published from the workload pod. The compatibility marker is not
 a network API. The controller and regular sidecar share one writable results
 `emptyDir`. Through retained no-follow descriptors, the sidecar validates and
-uploads only the exact manifest-declared set. Its signatures bind namespace,
-job, run, current AIPerfJob object UID, kind, path, digest, and length. The
-operator stages artifacts on its PVC and atomically publishes only an exact
-manifest-declared set; bounded staging and published-run quotas plus expiry
-keep incomplete and retained state finite. Incomplete state stays unreadable.
-A durable manifest acknowledgement ends the sidecar; missing manifests or an
-exhausted retry budget fail it, allowing the Job to become terminal rather than
-hang while completed results remain available from the operator Service.
+streams only the exact manifest-declared artifact set, carrying SHA-256 and
+length metadata. The operator stages artifacts on its PVC and atomically
+publishes only the matching manifest-declared set; incomplete state stays
+unreadable. A durable manifest acknowledgement ends the sidecar; missing
+manifests or an exhausted retry budget fail it, allowing the Job to become
+terminal without hanging. Published results are retained on the PVC across
+producer deletion and operator restart; they are identified by namespace, job,
+and run, not a UID incarnation.
 
 `aiperf kube results` accepts only a ready manifest, refuses traversing or
 duplicate paths and malformed digests, and verifies each artifact's SHA-256
 before writing it through retained no-follow destination descriptors. Retrieval
-requires a trusted `--run-id`, refuses a mismatched namespace/job/run/UID, and
-selects only the local `--operator-service`/`--operator-namespace` identity
-before using the Kubernetes Service proxy; workload annotations cannot redirect
-it. Under the caller's Kubernetes authority, the CLI retrieves and validates
-the exact immutable, owner-referenced results-read Secret. It forwards that
-distinct capability in a sensitive application header while retaining the
-Kubernetes bearer for API-server authentication; role bootstrap material is
-never used for reads. The operator API accepts no unauthenticated result reads
-and verifies the capability against the immutable authority ConfigMap. The
-default chart Service is `aiperf-k8s-operator` on port 8080. Default uploads use
-cluster-local HTTP, which provides no transport confidentiality beyond
-signature-based authentication and integrity.
+requires a trusted `--run-id` and selects only the local
+`--operator-service`/`--operator-namespace` identity before using the
+Kubernetes Service proxy; workload annotations cannot redirect it. The CLI
+addresses the durable triple directly: it does not retrieve an AIPerfJob or a
+Secret and sends no application credential. Kubernetes authentication and RBAC
+protect the Service-proxy hop. The chart requires an explicit operator image
+repository and tag, exposes the default `aiperf-k8s-operator` Service on port
+8080 as ClusterIP, and mounts a single-owner PVC. Default uploads use
+cluster-local HTTP, which assumes trusted namespace-level in-cluster access and
+does not provide transport confidentiality. No external ingress is shipped.
 
 ## Verification
 
