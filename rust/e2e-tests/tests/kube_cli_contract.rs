@@ -128,28 +128,41 @@ fn kind_results_survive_producer_deletion_and_operator_restart() {
     const UPLOAD_SCRIPT: &str = r#"
 import hashlib
 import json
+import urllib.error
 import urllib.request
 
 base = "http://aiperf-k8s-operator.aiperf-system.svc:8080/api/uploads/bench/job-1/run-1"
+results = "http://aiperf-k8s-operator.aiperf-system.svc:8080/api/results/bench/job-1/run-1"
 artifact = b"durable results survived producer deletion\n"
 
-def send(method, url, body):
-    digest = hashlib.sha256(body).hexdigest()
+def status(method, url, body=None, declared_length=None):
+    headers = {}
+    if body is not None:
+        length = len(body) if declared_length is None else declared_length
+        headers = {
+            "Content-Length": str(length),
+            "Content-Type": "application/json" if url.endswith("/manifest") else "application/octet-stream",
+            "X-AIPerf-Content-Length": str(length),
+            "X-AIPerf-Content-SHA256": hashlib.sha256(body).hexdigest(),
+        }
     request = urllib.request.Request(
         url,
         data=body,
         method=method,
-        headers={
-            "Content-Length": str(len(body)),
-            "Content-Type": "application/json" if url.endswith("/manifest") else "application/octet-stream",
-            "X-AIPerf-Content-Length": str(len(body)),
-            "X-AIPerf-Content-SHA256": digest,
-        },
+        headers=headers,
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        assert response.status in (200, 201), response.status
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status
+    except urllib.error.HTTPError as error:
+        return error.code
 
-send("PUT", base + "/artifacts/nested/result.txt", artifact)
+assert status("GET", results + "/manifest") == 409
+assert status("PUT", base + "/artifacts/nested/%2E%2E/escape.txt", b"unsafe") == 422
+assert status("POST", base + "/manifest", b"", declared_length=1048577) == 413
+
+assert status("PUT", base + "/artifacts/nested/result.txt", artifact) in (200, 201)
+assert status("GET", results + "/artifacts/nested/result.txt") == 404
 manifest = json.dumps(
     {
         "contractVersion": "native-k8s/v1",
@@ -168,7 +181,7 @@ manifest = json.dumps(
     },
     separators=(",", ":"),
 ).encode()
-send("POST", base + "/manifest", manifest)
+assert status("POST", base + "/manifest", manifest) in (200, 201)
 "#;
 
     let operator_image = std::env::var("AIPERF_E2E_OPERATOR_IMAGE")

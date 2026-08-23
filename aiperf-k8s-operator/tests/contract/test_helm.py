@@ -4,6 +4,7 @@
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -35,7 +36,7 @@ def render_chart(*values: str) -> list[dict]:
 
 
 def test_chart_requires_an_explicit_operator_image() -> None:
-    """A release must never fall back to a fictional or floating image."""
+    """A release must provide explicit operator image configuration."""
     result = subprocess.run(
         [
             "helm",
@@ -60,6 +61,31 @@ def one(resources: list[dict], kind: str, name: str) -> dict:
         if resource.get("kind") == kind
         and resource.get("metadata", {}).get("name") == name
     )
+
+
+def assert_no_externally_exposed_service(resources: list[dict]) -> None:
+    exposed = [
+        resource["metadata"]["name"]
+        for resource in resources
+        if resource.get("kind") == "Service"
+        and resource["spec"].get("type", "ClusterIP") in {"LoadBalancer", "NodePort"}
+    ]
+    assert exposed == [], f"rendered externally exposed Services: {exposed}"
+
+
+def test_every_rendered_service_remains_cluster_internal() -> None:
+    resources = render_chart()
+    assert_no_externally_exposed_service(resources)
+
+    dependency_service = next(
+        resource
+        for resource in resources
+        if resource.get("kind") == "Service"
+        and resource["metadata"]["name"] != "aiperf-k8s-operator"
+    )
+    dependency_service["spec"]["type"] = "NodePort"
+    with pytest.raises(AssertionError, match="rendered externally exposed Services"):
+        assert_no_externally_exposed_service(resources)
 
 
 def test_fresh_chart_renders_jobset_prerequisite_and_durable_results_service() -> None:
@@ -119,6 +145,7 @@ def test_fresh_chart_renders_jobset_prerequisite_and_durable_results_service() -
     assert service["spec"]["ports"] == [
         {"name": "http", "port": 8080, "targetPort": "http"}
     ]
+    assert_no_externally_exposed_service(resources)
     assert not any(resource.get("kind") == "Ingress" for resource in resources)
     claim = one(resources, "PersistentVolumeClaim", "operator-results")
     assert claim["spec"]["accessModes"] == ["ReadWriteOnce"]
