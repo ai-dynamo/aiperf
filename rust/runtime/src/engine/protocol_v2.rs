@@ -628,7 +628,8 @@ pub struct AuthoredRunSpecV2 {
     /// Native post-report export policy driving the [`crate::export`] plane.
     pub export: crate::export::ExportConfig,
     /// Admission strategy selecting the `workers>1` scheduled dispatch
-    /// implementation (`runtime.dispatch`; defaults to [`DispatchMode::Global`]).
+    /// implementation (`runtime.dispatch`). When omitted, single-process runs use
+    /// [`DispatchMode::Global`] and cellular runs use [`DispatchMode::Sharded`].
     pub dispatch: DispatchMode,
     /// Worker-assignment policy for `DispatchMode::GlobalHop` with `workers > 1`
     /// (`runtime.hop_routing`). `None` leaves the runtime on its
