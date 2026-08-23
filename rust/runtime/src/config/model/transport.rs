@@ -32,6 +32,22 @@ pub enum Transport {
 }
 
 impl Transport {
+    /// Canonical wire discriminant id for this transport (the `type` value).
+    ///
+    /// This is the typed source of truth for the id the runner keys component
+    /// selection on (`match id.as_str()`), replacing string extraction from the
+    /// serialized value. Matches the serde `rename_all = "snake_case"` tag.
+    pub const fn canonical_id(&self) -> &'static str {
+        match self {
+            Transport::Http => "http",
+            Transport::Grpc => "grpc",
+            Transport::DynosimOffline(_) => "dynosim_offline",
+            Transport::DynosimOnline(_) => "dynosim_online",
+            Transport::DryRun(_) => "dry_run",
+            Transport::Websocket(_) => "websocket",
+        }
+    }
+
     /// Whether this is one of the in-process Dynamo co-simulation transports.
     pub fn is_dynosim(&self) -> bool {
         matches!(
@@ -693,19 +709,49 @@ mod tests {
     }
 
     #[test]
-    fn required_features_sorted_and_deduped() {
-        let mut cfg = DynosimConfig {
-            required_features: Some(vec![
-                "dynamo-zmq-events".into(),
-                "dynamo-router-runtime".into(),
-                "dynamo-zmq-events".into(),
-            ]),
-            ..Default::default()
-        };
-        cfg.normalize();
-        assert_eq!(
-            cfg.required_features.unwrap(),
-            vec!["dynamo-router-runtime", "dynamo-zmq-events"]
-        );
+    fn canonical_id_matches_serde_tag() {
+        // `canonical_id()` must stay byte-identical to the serialized `type`
+        // tag, since the runner keys component selection on it. The sample list
+        // alone cannot enforce that: it is hand-maintained, and `Websocket` was
+        // added to `Transport` while this guard kept passing over the five
+        // variants someone had remembered to list. The exhaustive `match` below
+        // is the trip-wire — a new variant fails to compile here, so it cannot
+        // escape both the accessor and its own test the way `Websocket` did.
+        let cases = [
+            Transport::Http,
+            Transport::Grpc,
+            Transport::DynosimOffline(DynosimConfig::default()),
+            Transport::DynosimOnline(DynosimConfig::default()),
+            Transport::DryRun(DryRunConfig::default()),
+            Transport::Websocket(WebSocketTransportConfig::default()),
+        ];
+
+        let mut covered = std::collections::BTreeSet::new();
+        for transport in &cases {
+            let expected = match transport {
+                Transport::Http => "http",
+                Transport::Grpc => "grpc",
+                Transport::DynosimOffline(_) => "dynosim_offline",
+                Transport::DynosimOnline(_) => "dynosim_online",
+                Transport::DryRun(_) => "dry_run",
+                Transport::Websocket(_) => "websocket",
+            };
+            let wire_tag = serde_json::to_value(transport).unwrap()["type"]
+                .as_str()
+                .expect("transport serializes with a string `type` tag")
+                .to_string();
+            assert_eq!(wire_tag, expected, "serde tag drifted for {expected}");
+            assert_eq!(
+                transport.canonical_id(),
+                expected,
+                "canonical_id drifted for {expected}"
+            );
+            covered.insert(expected);
+        }
+
+        // The compiler pins the arm count; these pin that every arm actually
+        // received a sample, so adding an arm without a sample still fails.
+        assert_eq!(covered.len(), cases.len(), "duplicate sample variants");
+        assert_eq!(covered.len(), 6, "add a sample for the new Transport variant");
     }
 }

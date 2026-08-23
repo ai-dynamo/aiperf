@@ -840,53 +840,35 @@ pub struct OnlineHttpControlClientConfigV2 {
 #[serde(deny_unknown_fields)]
 pub struct OnlineGrpcTransportConfigV2 {}
 
-/// Strict built-in scheduled-workload authored config.
+/// Strict built-in workload authored config, shared by the scheduled and
+/// graph-IR workloads.
+///
+/// Workload kind is emergent (selected by workload id from the dataset+phase
+/// shape), not a distinct config shape, so the two former DTOs collapse to one
+/// typed struct. The graph-only fields are optional and consulted only on the
+/// graph arm — impossible to misplace on a scheduled run. `deny_unknown_fields`
+/// still rejects genuinely unknown keys; the two workloads' differing
+/// failure-policy defaults are applied by their factories from `None`, not by
+/// the struct.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ScheduledWorkloadConfigV2 {
-    /// Number of local execution workers.
+pub struct WorkloadConfigV2 {
+    /// Number of local execution / whole-trace placement workers.
     pub worker_count: usize,
-    /// Dataset-factory-owned authored object.
+    /// Dataset-factory- / graph-input-adapter-owned authored object.
     pub dataset: Box<RawValue>,
     /// Tokenizer-factory-owned authored object.
     pub tokenizer: Box<RawValue>,
     /// Phase-factory-owned authored objects.
     pub phases: Vec<PhaseSpec>,
-    /// Optional run-failure policy; absent selects the scheduled default
-    /// (resilient — record failed requests and continue).
+    /// Optional run-failure policy; absent selects the workload's default
+    /// (scheduled: resilient; graph: fail-fast).
     #[serde(default)]
     pub failure_policy: Option<OnFailure>,
-}
-
-impl Debug for ScheduledWorkloadConfigV2 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ScheduledWorkloadConfigV2")
-            .field("worker_count", &self.worker_count)
-            .field("phase_count", &self.phases.len())
-            .finish_non_exhaustive()
-    }
-}
-
-/// Strict built-in direct Graph-IR workload authored config.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GraphWorkloadConfigV2 {
-    /// Number of whole-trace placement workers.
-    pub worker_count: usize,
-    /// Direct graph-input-adapter-owned authored object.
-    pub dataset: Box<RawValue>,
-    /// Tokenizer-factory-owned authored object.
-    pub tokenizer: Box<RawValue>,
-    /// Ordered graph phase policy objects.
-    pub phases: Vec<PhaseSpec>,
-    /// Optional run-failure policy; absent selects the graph default
-    /// (fail-fast — abort the run on the first non-cancellation failure).
-    #[serde(default)]
-    pub failure_policy: Option<OnFailure>,
-    /// WEKA reconstruction semantics selector (`legacy`|`graph-ir`); absent/`graph-ir`
-    /// uses the graph-ir path, `legacy` routes weka runs to the byte-exact AgentX
-    /// agentic pipeline (requires the `agentx` feature).
+    /// Graph-only WEKA reconstruction semantics selector (`legacy`|`graph-ir`);
+    /// absent/`graph-ir` uses the graph-ir path, `legacy` routes weka runs to the
+    /// byte-exact AgentX agentic pipeline (requires the `agentx` feature). Absent
+    /// on scheduled runs.
     #[serde(default)]
     pub weka_semantics: Option<String>,
     /// Legacy AgentX replay global idle cap, seconds.
@@ -905,15 +887,21 @@ pub struct GraphWorkloadConfigV2 {
         std::collections::BTreeSet<crate::graph::supplement::PlannedReplayTraceInstance>,
 }
 
-impl Debug for GraphWorkloadConfigV2 {
+impl Debug for WorkloadConfigV2 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("GraphWorkloadConfigV2")
+            .debug_struct("WorkloadConfigV2")
             .field("worker_count", &self.worker_count)
             .field("phase_count", &self.phases.len())
             .finish_non_exhaustive()
     }
 }
+
+/// The scheduled and graph workloads share one authored config type; the names
+/// are retained as aliases so call sites and `downcast_ref` targets are stable.
+pub type ScheduledWorkloadConfigV2 = WorkloadConfigV2;
+/// See [`ScheduledWorkloadConfigV2`] — one shared type, workload kind emergent.
+pub type GraphWorkloadConfigV2 = WorkloadConfigV2;
 
 /// Strict built-in static-accuracy workload authored config.
 #[derive(Deserialize)]

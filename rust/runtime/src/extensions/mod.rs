@@ -17,7 +17,7 @@ use std::sync::Arc;
 mod registry_id;
 mod transactional;
 
-pub use registry_id::{RegistryId, RegistryIdError};
+pub use registry_id::{normalize_ident, RegistryId, RegistryIdError};
 pub(crate) use transactional::commit_on_clone;
 pub use transactional::{DuplicateName, TransactionalRegistry};
 

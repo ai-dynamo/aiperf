@@ -22,6 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
 use crate::config::model::BenchmarkConfig;
+use crate::config::model::transport::Transport;
 use crate::config::model::workload_kind::{WorkloadKind, workload_kind};
 use crate::engine::protocol::{
     DispatchMode, HopRouting, MetricsSpec, ModelSelectionStrategy, ModelsSpec, VariationSpec,
@@ -64,7 +65,11 @@ impl FromStr for ComponentId {
     type Err = String;
 
     fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        let mut bytes = value.bytes();
+        // Normalize case and `-`→`_` through the shared seam (spec: every
+        // discriminant matches Python's `_normalize_name`), then enforce the
+        // strict runner-id grammar on the normalized form.
+        let normalized = crate::extensions::normalize_ident(value);
+        let mut bytes = normalized.bytes();
         let Some(first) = bytes.next() else {
             return Err("runner component ID cannot be empty".into());
         };
@@ -78,7 +83,7 @@ impl FromStr for ComponentId {
                 "runner component ID {value:?} may contain only lowercase ASCII letters, digits, and underscores"
             ));
         }
-        Ok(Self(value.to_owned()))
+        Ok(Self(normalized))
     }
 }
 
@@ -365,9 +370,7 @@ impl BenchmarkRunWireV2 {
         let dataset = serde_json::to_value(&dataset)
             .map_err(|error| anyhow!("run.cfg.datasets[0]: {error}"))?;
         let workload_id = workload_kind.workload_id();
-        let transport_value = serde_json::to_value(&cfg.transport)
-            .map_err(|error| anyhow!("run.cfg.transport: {error}"))?;
-        let transport = component_from_inline(transport_value, "run.cfg.transport")?;
+        let transport = transport_component(cfg.transport.as_ref())?;
         // Re-serialize the typed runtime policy so the worker-count and dispatch
         // resolution keep reading the same wire shape (`Null` when unset).
         let runtime = serde_json::to_value(&cfg.runtime)
@@ -413,11 +416,13 @@ impl BenchmarkRunWireV2 {
             workload_config["planned_replay_traces"] =
                 serde_json::to_value(&self.planned_replay_traces)
                     .map_err(|error| anyhow!("run.planned_replay_traces: {error}"))?;
-            if matches!(
-                cfg.weka_semantics.as_deref(),
-                Some("legacy") | Some("agentx")
-            ) && let Some(cap) = cfg.system_idle_gap_cap_seconds
-            {
+            // Both weka arms consume the cap: `lower_legacy_agentic` threads it
+            // into every `PhaseSpec::AgenticReplay`, and `lower_graph` puts it on
+            // `NativeGraphDatasetPlan` where `TraceExecutor::cap_system_idle_wait_us`
+            // applies it. Gating the projection on legacy/agentx made the flag a
+            // silent no-op under graph-ir even though `resolve.rs` validates it and
+            // its own rejection message names graph-ir as a supported mode.
+            if let Some(cap) = cfg.system_idle_gap_cap_seconds {
                 workload_config["system_idle_gap_cap_seconds"] = serde_json::json!(cap);
             }
         }
@@ -441,16 +446,26 @@ impl BenchmarkRunWireV2 {
         } else {
             (SidecarSpecV2::default(), false)
         };
-        let models = serde_json::to_value(&cfg.models)
-            .map_err(|error| anyhow!("run.cfg.models: {error}"))?;
+        // Lower the authoring models to the runner spec via the typed `From`
+        // (no `Value` round-trip); a missing models section is a hard error, as
+        // before.
+        let models = cfg
+            .models
+            .map(ModelsSpec::from)
+            .ok_or_else(|| anyhow!("run.cfg.models must be an object"))?;
         let endpoint = serde_json::to_value(&cfg.endpoint)
             .map_err(|error| anyhow!("run.cfg.endpoint: {error}"))?;
         let additional_profiles = cfg
             .endpoint_profiles
             .into_iter()
             .collect::<BTreeMap<_, _>>();
-        let metrics = serde_json::to_value(&cfg.metrics)
-            .map_err(|error| anyhow!("run.cfg.metrics: {error}"))?;
+        // Lower the authoring metrics to the runner spec via the typed
+        // `TryFrom` (no untyped `Value` round-trip); default on absence or a
+        // non-numeric SLO, matching the prior `from_value(...).unwrap_or_default()`.
+        let metrics = cfg
+            .metrics
+            .and_then(|metrics| MetricsSpec::try_from(metrics).ok())
+            .unwrap_or_default();
         let artifacts_spec: ArtifactSpecV2 = serde_json::from_value(
             serde_json::to_value(&cfg.artifacts)
                 .map_err(|error| anyhow!("run.cfg.artifacts: {error}"))?,
@@ -483,11 +498,11 @@ impl BenchmarkRunWireV2 {
                 variation: self.variation,
             },
             artifact_target: self.artifact_dir,
-            models: models_from_config(models)?,
+            models,
             endpoints: endpoint_profiles(endpoint, additional_profiles)?,
             transport,
             workload,
-            metrics: serde_json::from_value(metrics).unwrap_or_default(),
+            metrics,
             artifacts: artifacts_spec,
             export: export_cfg,
             sidecars,
@@ -504,20 +519,37 @@ impl BenchmarkRunWireV2 {
     }
 }
 
-fn models_from_config(value: Value) -> Result<ModelsSpec> {
-    let mut models = value
+/// Build the runner's transport component from the typed [`Transport`].
+///
+/// The id comes from `canonical_id()` rather than from a string lifted out of
+/// the serialized body, so it cannot drift from the variant, and the
+/// factory-owned config is the serialized body minus the `type` tag. Built-in
+/// ids decode typed downstream; the plugin tail keeps the config opaque.
+///
+/// This is the typed consumer that replaces reading the transport back out of
+/// an untyped `Value`. It is deliberately kept equivalent to routing
+/// `serde_json::to_value(&transport)` through [`component_from_inline`], and
+/// `transport_component_matches_inline_projection` pins that equivalence for
+/// every variant.
+fn transport_component(transport: Option<&Transport>) -> Result<NamedRunnerComponentSpecV2> {
+    let Some(transport) = transport else {
+        // Preserve the prior "transport must be an object" failure when unset.
+        return component_from_inline(Value::Null, "run.cfg.transport");
+    };
+    let id: ComponentId = transport
+        .canonical_id()
+        .parse()
+        .map_err(|error: String| anyhow!("run.cfg.transport.type: {error}"))?;
+    let mut object = serde_json::to_value(transport)
+        .map_err(|error| anyhow!("run.cfg.transport: {error}"))?
         .as_object()
         .cloned()
-        .ok_or_else(|| anyhow!("run.cfg.models must be an object"))?;
-    if let Some(Value::Array(items)) = models.get_mut("items") {
-        for item in items {
-            if let Some(item) = item.as_object_mut() {
-                item.retain(|key, _| matches!(key.as_str(), "name" | "weight"));
-            }
-        }
-    }
-    serde_json::from_value(Value::Object(models))
-        .map_err(|error| anyhow!("run.cfg.models: {error}"))
+        .ok_or_else(|| anyhow!("run.cfg.transport must be an object"))?;
+    object.remove("type");
+    Ok(NamedRunnerComponentSpecV2 {
+        id,
+        config: raw_value(Value::Object(object))?,
+    })
 }
 
 fn component_from_inline(value: Value, field: &str) -> Result<NamedRunnerComponentSpecV2> {
@@ -1335,11 +1367,25 @@ mod tests {
     }
 
     #[test]
-    fn component_ids_are_open_but_wire_safe() {
+    fn component_ids_are_open_normalized_and_wire_safe() {
+        // Canonical forms round-trip unchanged.
         for valid in ["http", "acme_zmq4", "x"] {
             assert_eq!(valid.parse::<ComponentId>().unwrap().as_str(), valid);
         }
-        for invalid in ["", " Online_http", "Online", "a-b", "a.b", "a/b"] {
+        // Non-canonical spellings normalize (trim + lowercase + `-`→`_`) rather
+        // than being rejected — the discriminant follows Python's
+        // `_normalize_name` convention.
+        for (input, normalized) in [
+            (" Online_http", "online_http"),
+            ("Online", "online"),
+            ("a-b", "a_b"),
+            ("DYNOSIM-OFFLINE", "dynosim_offline"),
+        ] {
+            assert_eq!(input.parse::<ComponentId>().unwrap().as_str(), normalized);
+        }
+        // Structurally invalid ids (empty, or characters no fold can rescue)
+        // still fail closed.
+        for invalid in ["", "   ", "a.b", "a/b", "1abc"] {
             assert!(invalid.parse::<ComponentId>().is_err(), "{invalid:?}");
         }
     }
@@ -1780,6 +1826,89 @@ mod dispatch_mode_tests {
         assert!(
             wire.is_err(),
             "unknown runtime.hop_routing variant must be rejected at wire decode"
+        );
+    }
+}
+
+#[cfg(test)]
+mod transport_component_tests {
+    use super::*;
+    use crate::config::model::transport::{
+        DryRunConfig, DynosimConfig, WebSocketTransportConfig,
+    };
+
+    /// Every `Transport` variant, so the payload-bearing arms are covered.
+    ///
+    /// The existing projection assertions only compare transport *ids*, which
+    /// `Http`/`Grpc` satisfy trivially — they carry no payload, so an id-only
+    /// check cannot detect a config body that the typed path drops or reshapes.
+    fn all_variants() -> Vec<Transport> {
+        vec![
+            Transport::Http,
+            Transport::Grpc,
+            Transport::DynosimOffline(DynosimConfig::default()),
+            Transport::DynosimOnline(DynosimConfig::default()),
+            Transport::DryRun(DryRunConfig::default()),
+            Transport::Websocket(WebSocketTransportConfig::default()),
+        ]
+    }
+
+    /// Migration step 1: the typed `cfg.transport` consumer and the untyped
+    /// projection it replaces must produce identical bindings.
+    ///
+    /// Identical means both halves of the component: the `id` the runner keys
+    /// factory selection on, and the byte-exact `config` the factory decodes.
+    #[test]
+    fn transport_component_matches_inline_projection() {
+        for transport in all_variants() {
+            let typed = transport_component(Some(&transport))
+                .unwrap_or_else(|error| panic!("typed component for {transport:?}: {error}"));
+            let value = serde_json::to_value(&transport)
+                .unwrap_or_else(|error| panic!("serialize {transport:?}: {error}"));
+            let inline = component_from_inline(value, "run.cfg.transport")
+                .unwrap_or_else(|error| panic!("inline component for {transport:?}: {error}"));
+
+            assert_eq!(
+                typed.id.as_str(),
+                inline.id.as_str(),
+                "transport id diverged for {transport:?}"
+            );
+            assert_eq!(
+                typed.config.get(),
+                inline.config.get(),
+                "transport config diverged for {transport:?}"
+            );
+        }
+    }
+
+    /// The derived id must equal `canonical_id()`, and the config must never
+    /// retain the `type` tag — a factory decoding a strict typed config would
+    /// reject it as an unknown field.
+    #[test]
+    fn transport_component_drops_the_type_tag() {
+        for transport in all_variants() {
+            let component = transport_component(Some(&transport))
+                .unwrap_or_else(|error| panic!("typed component for {transport:?}: {error}"));
+            assert_eq!(component.id.as_str(), transport.canonical_id());
+            let config: Value = serde_json::from_str(component.config.get())
+                .unwrap_or_else(|error| panic!("component config is JSON: {error}"));
+            assert!(
+                config.get("type").is_none(),
+                "`type` survived into the factory config for {transport:?}: {config}"
+            );
+        }
+    }
+
+    /// An unset `cfg.transport` keeps failing, and keeps failing with the
+    /// message that names the field.
+    #[test]
+    fn absent_transport_is_rejected() {
+        let error = transport_component(None)
+            .expect_err("an absent transport has no component")
+            .to_string();
+        assert!(
+            error.contains("run.cfg.transport"),
+            "error does not name the field: {error}"
         );
     }
 }

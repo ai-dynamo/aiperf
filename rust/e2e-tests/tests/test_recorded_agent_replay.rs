@@ -422,6 +422,91 @@ fn assert_successful_replay_artifacts(
     );
 }
 
+/// Config for the `recorded-agent-default` scenario pointed at a bundle that is
+/// *not* the canonical corpus.
+///
+/// Every scenario lock is satisfied so `resolve` admits the run and it reaches
+/// the runner; only the canonical-bundle identity check can reject it.
+fn write_non_canonical_scenario_config(dir: &Path, url: &str) -> PathBuf {
+    let fixture = fixture_root();
+    let yaml = format!(
+        "schemaVersion: \"2.0\"\n\
+         benchmark:\n\
+        \x20 model: openai/qwen3.6:35b-a3b\n\
+        \x20 scenario: recorded-agent-default\n\
+        \x20 endpoint:\n\
+        \x20   url: {url}\n\
+        \x20   type: chat\n\
+        \x20   streaming: true\n\
+        \x20   use_server_token_count: true\n\
+        \x20 dataset:\n\
+        \x20   type: file\n\
+        \x20   path: {recording}\n\
+        \x20   format: agent_recording\n\
+        \x20   sampling: sequential\n\
+        \x20   graph:\n\
+        \x20     replay_root: {root}\n\
+        \x20     execute_tools: true\n\
+        \x20     emit_warmup: true\n\
+        \x20     pinch_image: aiperf-recorded-agent-pinchbench:v1\n\
+        \x20 metadata:\n\
+        \x20   hardware: unknown\n\
+        \x20   endpoint_placement: remote\n\
+        \x20 profiling:\n\
+        \x20   concurrency: 1\n\
+        \x20   sessions: 1\n\
+         runtime:\n\
+        \x20 workers: 1\n\
+        \x20 cells: 1\n\
+        \x20 ui: none\n",
+        recording = fixture.join("recording.json").display(),
+        root = fixture.display(),
+    );
+    let path = dir.join("recorded-agent-non-canonical.yaml");
+    fs::write(&path, yaml).expect("write non-canonical scenario config");
+    path
+}
+
+/// `scenario: recorded-agent-default` must reject a bundle whose programs are
+/// not the canonical manifest's tasks and recording digests.
+///
+/// This guards a check with no other coverage. `validate_canonical_recorded_agent_bundle`
+/// (`online_execution.rs:1284`) runs only behind `workload.recorded_agent_default`,
+/// which the runner derives from `cfg.scenario` — so if that flag is ever dropped
+/// while threading the workload config, validation silently stops running and the
+/// run *succeeds* instead of failing to decode. The resolve-side scenario locks do
+/// not cover it: `RecordedAgentScenarioInputs::canonical` seeds `manifest_digest`,
+/// `recording_digests`, and `task_order` from the fixture itself and `resolve`
+/// never overrides them, so those three lock comparisons are tautological, and
+/// `CanonicalReplayFixture::validate_replay_root` has no production caller.
+#[tokio::test]
+async fn recorded_agent_default_scenario_rejects_non_canonical_bundle() {
+    let harness = AIPerfHarness::new().await;
+    let temp = tempfile::tempdir().expect("temporary config directory");
+    let config = write_non_canonical_scenario_config(temp.path(), &harness.mock.url);
+    let result = harness.run(&format!(
+        "--config {}",
+        config.display()
+    ));
+
+    assert!(
+        !result.success(),
+        "a non-canonical bundle was accepted under scenario=recorded-agent-default \
+         (exit {}); the canonical-bundle check did not run\nstdout:\n{}\nstderr:\n{}",
+        result.exit_code,
+        result.stdout,
+        result.stderr
+    );
+    let output = format!("{}{}", result.stdout, result.stderr);
+    assert!(
+        output.contains("canonical manifest task order and recording digests")
+            || output.contains("recorded-agent-default requires recorded replay metadata"),
+        "run failed for some other reason than the canonical-bundle check\nstdout:\n{}\nstderr:\n{}",
+        result.stdout,
+        result.stderr
+    );
+}
+
 #[tokio::test]
 async fn recorded_agent_default_replays_exact_warmup_and_profile_wires() {
     assert_pinch_fixture_lifecycle();

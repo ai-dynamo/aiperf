@@ -209,7 +209,8 @@ pub struct ProfileFlags {
     #[arg(long = "trace-idle-gap-cap-seconds")]
     pub trace_idle_gap_cap_seconds: Option<f64>,
 
-    /// Legacy Weka: cap periods where the whole replay is idle without rewriting trace timing
+    /// Cap periods where the whole replay is idle without rewriting trace timing. Applies to
+    /// both weka arms (`--weka-semantics legacy` and `graph-ir`).
     /// (`--system-idle-gap-cap-seconds`).
     #[arg(long = "system-idle-gap-cap-seconds")]
     pub system_idle_gap_cap_seconds: Option<f64>,
