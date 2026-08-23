@@ -88,12 +88,10 @@ impl CompatibilityCaptureSession {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn package_identity(&self) -> &ArtifactDigest {
         &self.package_identity
     }
 
-    #[allow(dead_code)]
     pub(crate) fn identity_digest(&self) -> &ArtifactDigest {
         &self.identity_digest
     }
@@ -114,7 +112,6 @@ impl CompatibilityTerminalReceipt {
     pub const MAX_CANONICAL_BYTES: usize = 64 * 1024;
 
     /// Seals a bounded canonical terminal payload without retaining its contents.
-    #[allow(dead_code)]
     pub(crate) fn from_canonical_terminal_bytes(
         session: CompatibilityCaptureSession,
         bytes: &[u8],
@@ -207,7 +204,6 @@ impl CapturePolicy {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn from_session(session: &CompatibilityCaptureSession) -> Self {
         Self {
             package_identity: session.package_identity().clone(),
@@ -355,7 +351,6 @@ impl CompatibilityObservationReport {
     ///
     /// The conversion is deliberately one way: callers can retain or emit only the bounded
     /// report, never a raw capture or a NativeGraph/exact compatibility classification.
-    #[allow(dead_code)]
     pub(crate) fn into_terminal_supplement(
         self,
         receipt: CompatibilityTerminalReceipt,

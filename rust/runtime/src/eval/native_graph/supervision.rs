@@ -856,14 +856,12 @@ impl Drop for StrictSupervisedAdapter {
 /// The owning runner retains cancellation and reaping authority. This session can issue only the
 /// one fixed Driver terminal request and converts its response before the raw JSON leaves this
 /// private boundary.
-#[allow(dead_code)]
 pub(crate) struct ProtocolExternalDriverSession<'a> {
     adapter: &'a mut dyn SupervisedAdapter,
     terminal: DriverTerminalProtocol,
     capture_session: Option<CompatibilityCaptureSession>,
 }
 
-#[allow(dead_code)]
 impl<'a> ProtocolExternalDriverSession<'a> {
     pub(crate) fn new(
         adapter: &'a mut dyn SupervisedAdapter,

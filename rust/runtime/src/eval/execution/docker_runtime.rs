@@ -935,7 +935,6 @@ impl DockerComposeExecRequest {
         self
     }
 
-    #[allow(dead_code)]
     pub(crate) fn secret_environment(&self) -> &BTreeMap<EnvName, SecretValue> {
         &self.secret_environment
     }

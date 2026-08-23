@@ -633,14 +633,12 @@ const DRIVER_TERMINAL_SEQUENCE: u64 = 1;
 /// The ordinary supervised protocol owns startup negotiation. This boundary starts immediately
 /// after that exchange and independently verifies the sole Driver terminal transition before its
 /// candidate can reach compatibility evidence.
-#[allow(dead_code)]
 pub(crate) struct DriverTerminalProtocol {
     config: AdapterProtocolConfig,
     has_requested_terminal: bool,
     is_settled: bool,
 }
 
-#[allow(dead_code)]
 impl DriverTerminalProtocol {
     pub(crate) fn new(config: AdapterProtocolConfig) -> Result<Self, ProtocolError> {
         config.validate_external_driver_terminal()?;
