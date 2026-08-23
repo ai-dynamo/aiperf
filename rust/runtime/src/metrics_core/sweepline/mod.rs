@@ -28,7 +28,6 @@ pub use stats::{
 pub const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
 const PARALLEL_SWEEP_MIN_ROWS: usize = 4_096;
-#[allow(dead_code)] // Exercised by `radix_argsort_mt` tests.
 const PARALLEL_EVENT_SORT_MIN_EVENTS: usize = 262_144;
 
 /// One timestamped change applied by the sweep-line cumulative sum.

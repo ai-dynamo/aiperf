@@ -859,7 +859,6 @@ pub(super) const CUDA_ERRORS: &[&str] = &[
 ];
 
 // Language-specific tool transcripts select their matching file-path pool.
-#[allow(dead_code)]
 pub(super) const PYTHON_FILE_PATHS: &[&str] = &[
     "src/main.py",
     "src/config.py",
@@ -885,7 +884,6 @@ pub(super) const PYTHON_FILE_PATHS: &[&str] = &[
     "tests/integration/test_api.py",
 ];
 
-#[allow(dead_code)]
 pub(super) const GO_FILE_PATHS: &[&str] = &[
     "lib/core.go",
     "lib/handler.go",
@@ -909,7 +907,6 @@ pub(super) const GO_FILE_PATHS: &[&str] = &[
     "internal/health/probe.go",
 ];
 
-#[allow(dead_code)]
 pub(super) const RUST_FILE_PATHS: &[&str] = &[
     "src/lib.rs",
     "src/main.rs",
@@ -930,7 +927,6 @@ pub(super) const RUST_FILE_PATHS: &[&str] = &[
     "benches/throughput.rs",
 ];
 
-#[allow(dead_code)]
 pub(super) const TS_FILE_PATHS: &[&str] = &[
     "src/index.ts",
     "src/app.ts",

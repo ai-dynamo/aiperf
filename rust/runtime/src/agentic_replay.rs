@@ -306,9 +306,7 @@ pub struct AgenticReplayConfig {
 /// The agentic-replay workload: drives one phase's dispatch over a
 /// [`ConversationSource`] of reconstructed WEKA trajectories.
 pub struct AgenticReplayWorkload {
-    #[allow(dead_code)]
     source: Rc<RefCell<Box<dyn ConversationSource>>>,
-    #[allow(dead_code)]
     config: AgenticReplayConfig,
 }
 

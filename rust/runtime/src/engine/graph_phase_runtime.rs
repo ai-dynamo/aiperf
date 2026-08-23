@@ -375,7 +375,6 @@ impl GraphLaneLedger {
     /// Associate a lane index with the instance it is executing.
     ///
     /// Re-registering a lane updates its live identity without discarding returns.
-    #[allow(dead_code)]
     pub(crate) fn register_lane(&self, lane: u64, identity: GraphLaneIdentity) {
         self.instance_to_lane
             .borrow_mut()
@@ -404,13 +403,11 @@ impl GraphLaneLedger {
     }
 
     /// This lane's registered resume identity, if any.
-    #[allow(dead_code)]
     pub(crate) fn lane_identity(&self, lane: u64) -> Option<GraphLaneIdentity> {
         self.identities.borrow().get(&lane).cloned()
     }
 
     /// The set of node ids this lane executed (returned a non-cancelled record).
-    #[allow(dead_code)]
     pub(crate) fn executed_node_ids(&self, lane: u64) -> BTreeSet<String> {
         self.executed_node_ids
             .borrow()
@@ -420,7 +417,6 @@ impl GraphLaneLedger {
     }
 
     /// This lane's `node_id -> return_wall_us` ledger on the Clock-derived wall.
-    #[allow(dead_code)]
     pub(crate) fn return_wall_us(&self, lane: u64) -> BTreeMap<String, f64> {
         self.return_wall_us
             .borrow()
@@ -430,7 +426,6 @@ impl GraphLaneLedger {
     }
 
     /// Every lane index that has a registered identity, ascending.
-    #[allow(dead_code)]
     pub(crate) fn registered_lanes(&self) -> Vec<u64> {
         self.identities.borrow().keys().copied().collect()
     }
@@ -441,7 +436,6 @@ impl GraphLaneLedger {
     }
 
     /// The next undrawn corpus position.
-    #[allow(dead_code)]
     pub(crate) fn corpus_cursor(&self) -> u64 {
         self.corpus_cursor.get()
     }

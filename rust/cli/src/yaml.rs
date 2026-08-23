@@ -510,7 +510,6 @@ struct ConfigFile {
     /// command, so this is accepted for compatibility with the Python CLI and
     /// warned about by [`warn_unimplemented_keys`] rather than silently dropped.
     #[serde(default)]
-    #[allow(dead_code)]
     plot: Option<serde_json::Value>,
     benchmark: Benchmark,
     /// Top-level deterministic run seed (`randomSeed`).
