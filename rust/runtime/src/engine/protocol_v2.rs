@@ -1833,9 +1833,7 @@ mod dispatch_mode_tests {
 #[cfg(test)]
 mod transport_component_tests {
     use super::*;
-    use crate::config::model::transport::{
-        DryRunConfig, DynosimConfig, WebSocketTransportConfig,
-    };
+    use crate::config::model::transport::{DryRunConfig, DynosimConfig, WebSocketTransportConfig};
 
     /// Every `Transport` variant, so the payload-bearing arms are covered.
     ///

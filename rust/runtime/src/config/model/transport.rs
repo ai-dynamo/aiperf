@@ -752,6 +752,10 @@ mod tests {
         // The compiler pins the arm count; these pin that every arm actually
         // received a sample, so adding an arm without a sample still fails.
         assert_eq!(covered.len(), cases.len(), "duplicate sample variants");
-        assert_eq!(covered.len(), 6, "add a sample for the new Transport variant");
+        assert_eq!(
+            covered.len(),
+            6,
+            "add a sample for the new Transport variant"
+        );
     }
 }

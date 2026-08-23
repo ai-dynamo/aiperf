@@ -226,7 +226,10 @@ impl TryFrom<crate::config::model::metrics::Metrics> for MetricsSpec {
             slice_duration_seconds: value.slice_duration_seconds,
             slos,
             sketch: value.sketch.unwrap_or(false),
-            steady_state: value.steady_state.map(SteadyStateSpec::from).unwrap_or_default(),
+            steady_state: value
+                .steady_state
+                .map(SteadyStateSpec::from)
+                .unwrap_or_default(),
         })
     }
 }

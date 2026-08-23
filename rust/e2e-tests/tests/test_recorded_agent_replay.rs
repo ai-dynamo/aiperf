@@ -484,10 +484,7 @@ async fn recorded_agent_default_scenario_rejects_non_canonical_bundle() {
     let harness = AIPerfHarness::new().await;
     let temp = tempfile::tempdir().expect("temporary config directory");
     let config = write_non_canonical_scenario_config(temp.path(), &harness.mock.url);
-    let result = harness.run(&format!(
-        "--config {}",
-        config.display()
-    ));
+    let result = harness.run(&format!("--config {}", config.display()));
 
     assert!(
         !result.success(),
