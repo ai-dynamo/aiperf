@@ -374,6 +374,52 @@ Decisions:
   and eval paths that construct plans without going through
   `BenchmarkRun::validate()`.
 
+**Three tokenizer rejections that live in the DTO's decode.** `into_authored`
+maps `cfg.tokenizer: None` to `{}` (`protocol_v2.rs:388-392`), and every workload
+then calls `validate_authored_tokenizer(&workload.tokenizer)`
+(`online_execution.rs:248`, `:344`, `:467`, `offline_execution.rs:1450`), which
+runs `AuthoredTokenizerV2::decode` (`online_execution.rs:960-985`). That decode
+enforces three things the typed model does not:
+
+- `name` is a **mandatory** field on `AuthoredTokenizerV2`
+  (`online_execution.rs:594-607`), so an absent `cfg.tokenizer` section — which
+  projects to `{}` — fails to decode outright.
+- `!config.name.trim().is_empty() && config.name.trim() == config.name`, i.e. a
+  blank or whitespace-padded name is rejected.
+- `!config.revision.trim().is_empty()`.
+
+`Tokenizer` (`config/model/tokenizer.rs:15-38`) is a plain derived struct with a
+mandatory `name` but **no** semantic validation, and `BenchmarkConfig.tokenizer`
+is `Option<Tokenizer>`, so all three rejections vanish with the decode. Both
+`ensure!` messages appear nowhere else in the tree. **Port all three into
+`BenchmarkRun::validate()`, messages included**, in the same batch as the
+models/endpoint/transport rejections; the absent-section case joins them as a
+fourth mandatory section.
+
+**`parse_dispatch_mode`'s cellular-aware default — port the derivation, not
+`unwrap_or_default()`.** `parse_dispatch_mode` (`protocol_v2.rs:260-272`) is not
+`runtime.dispatch.unwrap_or_default()`. An explicit `runtime.dispatch` wins, but
+when it is absent the default branches on `runtime.cells`: `cells > 1` resolves
+`DispatchMode::Sharded`, and `cells <= 1` resolves `DispatchMode::default()`
+(`Global`). The rationale is recorded in the function's own doc comment: a
+cellular run has already forfeited single-process byte-exact determinism, so
+`Global`'s shared cross-thread admission gate inside a cell buys parity that is
+already gone and costs pure overhead — measured ~7-8x slower than `Sharded` in
+cellular mode on a c4-144.
+
+A typed reader that writes `cfg.runtime.dispatch.unwrap_or_default()` therefore
+silently switches **every cellular run without an explicit dispatch** from
+`Sharded` to `Global`, which is a large performance regression rather than a
+failure, and no gate catches it: the three exact unit tests for this derivation
+(`runtime_dispatch_defaults_to_global_when_absent`,
+`runtime_dispatch_defaults_to_sharded_for_cellular`,
+`runtime_explicit_dispatch_wins_over_cellular_default`) sit inside the
+`#[cfg(any())] mod tests` at `protocol_v2.rs:1284` and never compile, and none of
+the five cellular e2e suites authors `runtime.dispatch` at all. The derivation
+moves onto the typed model verbatim, and those three tests move with it — this is
+the second reason re-enabling that module is a step-4 obligation rather than
+cleanup.
+
 **`resource_presence` — preserve `into_authored`'s algorithm verbatim.** It is
 not a naive `cfg.field.is_some()` map. The exact classification
 `into_authored` hardcodes (`protocol_v2.rs:496-501`) is `models: true`,
@@ -726,12 +772,14 @@ Each body repoints on its own terms. A repoint audited against
 `online_execution.rs:105` alone silently changes the gRPC, WebSocket, dry-run,
 dynosim, graph, and static-accuracy rejection surfaces.
 
-Of `into_authored`'s own content, `workload_kind`, `parse_dispatch_mode`, and
-`worker_count` from `available_parallelism` are copies or pure derivations. The
-rest is not: `planned_replay_traces` has no `BenchmarkConfig` home, and the
-mandatory-section rejections, the metrics fallback, the export-stem derivation,
-`resource_presence`, and the two decode-shape rejections are validation or
-transform branches, all enumerated in §2's port list.
+Of `into_authored`'s own content, only `workload_kind` and `worker_count` from
+`available_parallelism` are plain copies or derivations of the typed fields. The
+rest is not: `planned_replay_traces` has no `BenchmarkConfig` home;
+`parse_dispatch_mode` branches on `runtime.cells` rather than reading the field;
+and the mandatory-section rejections, the tokenizer rejections, the metrics
+fallback, the export-stem derivation, `resource_presence`, and the
+`workers`/`phases` decode-shape rejections are validation or transform branches.
+All are enumerated in §2's port list.
 
 ## Verification gates
 
@@ -825,6 +873,12 @@ itself**, in addition to the e2e gate:
   `into_authored` used, and a run whose `metrics.slos` carries a non-numeric
   threshold is *rejected* naming the offending key rather than silently falling
   back to `MetricsSpec::default()`;
+- a run with `cfg.tokenizer` absent is rejected, as are one with a
+  whitespace-padded `tokenizer.name` and one with a blank `tokenizer.revision`,
+  each carrying `AuthoredTokenizerV2::decode`'s message;
+- `runtime.dispatch` absent with `runtime.cells > 1` resolves `Sharded`, absent
+  with `cells <= 1` resolves `Global`, and an explicit value wins over both —
+  the three tests currently stranded in `#[cfg(any())] mod tests`;
 - a run with `cfg.runtime.workers: Some(0)` is rejected with
   `"run.cfg.runtime.workers must be a positive usize"`; a run with `cfg.runtime`
   absent resolves `worker_count` to `default_worker_count()` rather than `1`; and
