@@ -59,9 +59,17 @@ takes `envelope.run.into_authored()` and runs the rest of the engine against
   per-workload DTOs (`ScheduledWorkloadConfigV2`, `GraphWorkloadConfigV2`,
   `StaticAccuracyWorkloadConfigV2`). The graph DTO carries **five** fields the
   scheduled DTO does not (`protocol_v2.rs:404-422`): `weka_semantics`,
-  `ignore_trace_delays`, `recorded_agent_default`, `planned_replay_traces`, and a
-  conditionally-attached `system_idle_gap_cap_seconds` (emitted only when
-  `weka_semantics` is `legacy` or `agentx`). Only the first two and the cap are
+  `ignore_trace_delays`, `recorded_agent_default`, `planned_replay_traces`, and
+  `system_idle_gap_cap_seconds`. **Corrected (contest O1, proven):** that last
+  field *was* attached conditionally — only when `weka_semantics` was `legacy` or
+  `agentx` — and that condition was the third defect the step-3 guards found (see
+  the step-3 verification gate). It is fixed on the implementation branch: `3f77a3adac`
+  ("fix(engine): project the system idle-gap cap under graph-ir too") replaced the
+  `matches!(cfg.weka_semantics.as_deref(), Some("legacy") | Some("agentx"))` guard
+  with a plain `if let Some(cap) = cfg.system_idle_gap_cap_seconds`, so the cap is
+  now attached for **every** `WorkloadKind::Graph` run. Current behavior is
+  unconditional-within-graph; the migration must carry that forward, not the
+  pre-fix condition. Only the first two and the cap are
   plain copies of typed `BenchmarkConfig` fields; `recorded_agent_default` is a
   *derivation* (`cfg.scenario.as_deref() == Some("recorded-agent-default")`) and
   `planned_replay_traces` comes from `BenchmarkRunWireV2`, not from
@@ -442,7 +450,34 @@ One transport family at a time, byte-exact against the mock server at each step:
    exhaustive `match` on `Transport`, not `match id.as_str()`; the `RegistryId`
    string and the plugin tail belong to the seam in §3, not to this field.
 2. Move `native_execution` selection to the exhaustive `Transport` match for
-   built-ins. Three obligations the audits surfaced: (a) the registry resolves not
+   built-ins.
+
+   **Prerequisite (contest O2, proven): step 2 needs a typed `Transport` value at
+   the selection boundary, and after step 1 there isn't one.** Step 1 lands a
+   typed *producer* — `transport_component(cfg.transport.as_ref())` — but its
+   output is still a `NamedRunnerComponentSpecV2 { id, config }`: it serializes the
+   variant, removes the `"type"` tag, and hands the remainder on as `RawValue`.
+   `AuthoredRunSpecV2` keeps only `pub transport: NamedRunnerComponentSpecV2`
+   (`protocol_v2.rs:586`), and the selection site is
+   `resolve_native_execution` (`online_execution.rs:118`), whose signature is
+   `(&RunContext, &dyn ValidatedTransportConfig, transport_id: &str)`, called from
+   the five workload bodies that are themselves handed `&AuthoredRunSpecV2`. So an
+   "exhaustive `match` on `Transport`" has no `Transport` to match on until step 4
+   repoints the engine at `BenchmarkRun`. Written as-is, step 2 is either
+   unimplementable or silently collapses into step 4.
+
+   The intermediate this record selects: **`AuthoredRunSpecV2` gains a typed
+   `transport_typed: Transport` field**, populated by `into_authored` straight from
+   `cfg.transport`, carried *alongside* the existing projected
+   `NamedRunnerComponentSpecV2`. The match arms read `run.transport_typed`; the
+   `NamedRunnerComponentSpecV2` stays for exactly the id-addressed consumers named
+   in obligations (b) and (c), which do not go away in this step. Both fields die
+   together in step 4 when the struct does, so the duplication is bounded to steps
+   2–3 and costs one `Transport` clone per run. The alternative — hoisting step 4's
+   `BenchmarkRun` repoint ahead of step 2 — is rejected: it merges the two largest
+   steps and forfeits the differential assertion step 1 exists to provide.
+
+   Three further obligations the audits surfaced: (a) the registry resolves not
    just config but
    the transport's **`NativeTransportExecution` binding** (`resolve_native_execution`
    → `transport_factory(id).native_execution(...)`), so the match arms
@@ -516,7 +551,14 @@ One transport family at a time, byte-exact against the mock server at each step:
 3. Repeat for the workload seam; collapse `ScheduledWorkloadConfigV2` /
    `GraphWorkloadConfigV2` into typed-optional fields — all **five** graph-only
    fields, including the `recorded_agent_default` derivation and the
-   `weka_semantics`-conditional `system_idle_gap_cap_seconds` attachment. All
+   `system_idle_gap_cap_seconds` attachment. **Corrected (contest O1, proven):**
+   an earlier draft of this line said "`weka_semantics`-conditional
+   `system_idle_gap_cap_seconds` attachment", which would have re-encoded the very
+   bug the step-3 guards uncovered and `3f77a3adac` fixed. The cap attaches on the
+   graph arm whenever `cfg.system_idle_gap_cap_seconds` is `Some`, with **no**
+   `weka_semantics` predicate; a typed-optional field consulted on the graph arm
+   reproduces that exactly, and reintroducing the legacy/agentx guard would make
+   the flag a silent no-op under graph-ir again. All
    four graph-only fields that survive the DTO are consumed inside `lower_graph`
    (`online_execution.rs:1215`), and dropping any is a **silent** behavior loss,
    not a decode error: `workload.recorded_agent_default` gates
@@ -839,7 +881,10 @@ This is a correctness/type-safety refactor, deliberately made with eyes open:
   first — §2);
   `EnvelopeV2` (an in-process struct constructed after decode — not a wire shape).
 - `rust/runtime/src/engine/coordinator.rs` — `envelope.run.into_authored()`, the
-  child composition root to repoint at `BenchmarkConfig`.
+  child composition root to repoint at **`BenchmarkRun`** (contest O3: this anchor
+  said `BenchmarkConfig`, contradicting §2's O4 correction and §5 step 4; the
+  runner vocabulary is `BenchmarkRun`, with authored sections reached as
+  `run.cfg`).
 - `rust/runtime/src/engine/registry.rs` — `TransportFactory`/`WorkloadFactory`,
   `ValidatedTransportConfig`/`ValidatedWorkloadConfig`, `WorkloadRequirements`,
   `native_execution` (the factory seam to make typed).
