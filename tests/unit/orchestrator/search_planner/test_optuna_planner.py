@@ -617,3 +617,24 @@ def test_ask_preserves_url_userinfo() -> None:
     assert cfg.endpoint.urls == [
         "http://alice:s3cret@host1.example.com/v1/chat/completions"
     ]
+
+
+def test_ask_with_shape_mismatched_search_space_raises_clear_error() -> None:
+    """Safety net: if a search-space dimension still doesn't fit the base
+    phase's shape (e.g. a hand-written dotted path our lightweight CLI-time
+    inference can't see, since this planner is constructed directly here
+    with no CLI conversion in between), ask() must raise a clear, actionable
+    ValueError -- not let a raw pydantic extra_forbidden ValidationError
+    propagate to the user."""
+    base = _base_config()  # phases[0].type == "concurrency"
+    cfg = _cfg(
+        extra_dims=[
+            SearchSpaceDimension(
+                path="phases.profiling.rate", lo=1, hi=100, kind="real"
+            )
+        ]
+    )
+    planner = OptunaSearchPlanner(base, cfg)
+
+    with pytest.raises(ValueError, match="shape"):
+        planner.ask()

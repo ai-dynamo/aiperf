@@ -23,6 +23,8 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from aiperf.common.finite import is_finite_value
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, SweepVariation, _set_nested_value
@@ -219,7 +221,19 @@ class OptunaSearchPlanner(SearchPlanner):
         )
         for path, val in values.items():
             _set_nested_value(cfg_dict, path, val)
-        cfg = BenchmarkConfig.model_validate(cfg_dict)
+        try:
+            cfg = BenchmarkConfig.model_validate(cfg_dict)
+        except ValidationError as e:
+            base_phase_type = self._base.phases[0].type
+            raise ValueError(
+                f"--search-space path(s) {sorted(values)} do not fit this "
+                f"benchmark's shape ('{base_phase_type}'). A benchmark has one "
+                "shape before it starts (concurrency, rate, user, or gamma); "
+                "searching a field that belongs to a different shape (e.g. "
+                "'rate' needs --request-rate, 'users' needs "
+                "--user-centric-rate, 'smoothness' needs --arrival-pattern "
+                f"gamma) fails like this. Underlying error: {e}"
+            ) from e
 
         variation = SweepVariation(
             index=self._iter,
