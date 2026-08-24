@@ -62,10 +62,15 @@ DeepEval-backed AIME path
 | `bfcl_ast` | _per-problem — built from that problem's tool schemas; `--accuracy-system-prompt` is **rejected** (see [BFCL](#bfcl-tool-call-correctness-bfcl_ast))_ |
 | (others) | _none — pass via `--accuracy-system-prompt` if desired_ |
 
-The CLI's `--accuracy-system-prompt` flag always wins; the per-benchmark
-default is only consulted when the flag is unset. An empty-string default
-in metadata is treated as no default (aiperf doesn't inject a zero-length
-system message).
+For benchmarks that accept an override, the CLI's `--accuracy-system-prompt`
+flag wins; the per-benchmark default is only consulted when the flag is unset.
+An empty-string default in metadata is treated as no default (aiperf doesn't
+inject a zero-length system message).
+
+`bfcl_ast` is the exception: it **rejects** the flag rather than honouring it,
+because its system prompt is built per problem from that problem's tool
+schemas and a global override would strip the tool definitions the model is
+being asked to call.
 
 ## Available Benchmarks
 
@@ -203,8 +208,17 @@ Accuracy (irrelevance)             68.0%   Unparsed  0.0%
 **Accuracy and `Unparsed` are two different failure modes, and the split is
 the point.** `Unparsed` counts responses from which no call list could be
 extracted at all — the model did not follow the required output format.
-Accuracy counts, among responses that *did* produce a call, how many were
-right. A decoded-but-wrong call is scored incorrect and **not** unparsed.
+Accuracy counts, among the responses that were gradeable, how many gave the
+right answer. A decoded-but-wrong call is scored incorrect and **not**
+unparsed.
+
+"The right answer" is category-dependent. For the AST categories it means the
+right call: correct function name, parameters and values. For the
+hallucination categories (`irrelevance`, `live_irrelevance`) the right answer
+is **no call at all**, so a prose refusal is scored *correct* — and
+`live_relevance` inverts that again, where emitting a call is correct. Only an
+empty answer channel is treated as unparsed there, since silence is not an
+abstention.
 
 Every graded record in `accuracy_export.jsonl` carries a normalized failure
 bucket at the front of its `explanation`, so a run can be triaged without
@@ -453,7 +467,7 @@ aiperf profile my-model --url http://localhost:8000 \
 | `lighteval_latex` | Same as `lighteval_expr` but the gold/prediction extractor uses lighteval's `LatexExtractionConfig` for `\boxed{...}` LaTeX answers (lighteval `latex_gold_metric`). Requires the `[accuracy]` extra. | MATH-500 |
 | `lighteval_gpqa` | Multiple-choice `A`-`D` index extraction via lighteval's `gpqa_metric` (`NativeLetters`), using the simple-evals template the GPQA-Diamond loader mirrors for parity. Requires the `[accuracy]` extra. | GPQA-Diamond |
 | `lighteval_gsm8k` | Extract the number after `####` from gold and the last number from the prediction (preferring a `####` marker when present); numeric comparison so `24` and `24.0` match (lighteval `quasi_exact_match_gsm8k`). Pure-regex — no lighteval install required. | GSM8K |
-| `tool_call_ast` | Decode the model's Prompt-mode response into BFCL's canonical `[{"func": {"param": "val"}}]` call list, then score it with bfcl-eval's deterministic `ast_checker` (function-name match, required-vs-optional parameters, strict types, accepted values, order-independent parallel calls). Hallucination categories are graded on whether a call was emitted at all. `unparsed` when no call list was extractable — a format-adherence failure, not a wrong call. Failure modes are normalized into `wrong_tool` / `param_type_error` / `param_value_error` / `should_not_have_called` and prefixed onto the explanation. Requires the `[bfcl]` extra. | BFCL (`bfcl_ast`) |
+| `tool_call_ast` | Decode the model's Prompt-mode response into BFCL's canonical `[{"func": {"param": "val"}}]` call list, then score it with bfcl-eval's deterministic `ast_checker` (function-name match, required-vs-optional parameters, strict types, accepted values, order-independent parallel calls). Hallucination categories are graded on whether a call was emitted at all. `unparsed` when no call list was extractable — a format-adherence failure, not a wrong call. Failure modes are normalized into `wrong_tool` / `param_type_error` / `param_value_error` / `should_not_have_called` / `should_have_called` / `unparsed` / `unclassified` and prefixed onto the explanation. Requires the `[bfcl]` extra. | BFCL (`bfcl_ast`) |
 
 The `math` grader pipeline (aligned with `trt-llm-benchmark-recipe/src/accuracy/aime/`):
 

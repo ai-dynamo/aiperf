@@ -421,7 +421,7 @@ class TestPreflightVersionPin:
         monkeypatch.setattr(_bfcl_compat, "installed_version", lambda: "1.2.3")
         monkeypatch.setattr(Environment.ACCURACY, "BFCL_VERSION_PIN", "2026.3.23")
 
-        with pytest.raises(RuntimeError, match="2026.3.23"):
+        with pytest.raises(RuntimeError, match=r"2026\.3\.23"):
             BFCLASTBenchmark.check_available()
 
     def test_check_available_passes_when_pinned_version_matches(

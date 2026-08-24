@@ -101,7 +101,8 @@ Accuracy (irrelevance)             68.0%   Unparsed  0.0%
 
 Read the two columns separately:
 
-- **Accuracy** — of the responses that produced a call, how many were right.
+- **Accuracy** — of the responses that were gradeable, how many gave the right
+  answer.
 - **Unparsed** — how many responses contained no extractable call list at all.
 
 A decoded-but-wrong call counts against accuracy and is **not** unparsed. A
@@ -109,11 +110,15 @@ rising `Unparsed` rate as concurrency increases is a formatting/serving signal,
 not a capability one, and it is the number to watch when triaging a tool-call
 parser.
 
-The `irrelevance` row is the hallucination measurement: no offered function can
-answer the question, so the correct behavior is to emit *no* call. A prose
-refusal there is a correct answer, not an unparsed one — but an *empty* answer
-channel is not an abstention and is counted as unparsed, so a truncated
-generation cannot inflate this category.
+"The right answer" depends on the category. For the AST categories it is the
+right call — correct function name, parameters and values. For the
+hallucination categories it is the opposite: on `irrelevance` no offered
+function can answer the question, so the correct behavior is to emit **no**
+call, and a prose refusal scores *correct*. (`live_relevance` inverts it once
+more: there a relevant tool exists, so refusing is the failure.)
+
+Only an *empty* answer channel is counted as unparsed on those categories —
+silence is not an abstention — so a truncated generation cannot inflate them.
 
 ### Triage the failures
 
@@ -140,7 +145,11 @@ jq -r '.explanation | split(":")[0]' artifacts/*/accuracy_export.jsonl \
 | `param_type_error` | Right tool, wrong argument type | Schema/type coercion; `"5"` where an integer was required |
 | `param_value_error` | Right tool and types, wrong or missing argument value | The dominant failure mode at scale |
 | `should_not_have_called` | Emitted a call on an `irrelevance` question | Over-eagerness / hallucinated tool use |
+| `should_have_called` | Emitted no call on a `live_relevance` question | Over-refusal — the mirror image of the row above |
 | `unparsed` | No call list could be extracted, or the answer channel was empty | Output format — truncation, prose wrapping, parser issues |
+| `unclassified` | An `error_type` this `bfcl-eval` version added that AIPerf does not yet bucket | An upstream version bump — worth reporting |
+
+(`correct` is the remaining value, for a passing verdict.)
 
 To inspect specific failures with the model's actual output:
 
