@@ -122,7 +122,7 @@ def _patch_bigbench_deepeval_names(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _patch_bfcl_compat_names(request, monkeypatch):
+def _patch_bfcl_compat_names(monkeypatch: pytest.MonkeyPatch) -> None:
     """Swap ``_bfcl_compat``'s upstream resolvers for the fake when the real
     ``bfcl_eval`` isn't present.
 

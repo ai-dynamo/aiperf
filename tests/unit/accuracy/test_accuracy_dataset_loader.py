@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from aiperf.accuracy.models import BenchmarkProblem
+from aiperf.config import BenchmarkRun
 from aiperf.dataset.loader.accuracy_dataset_loader import AccuracyDatasetLoader
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
@@ -258,7 +259,7 @@ class TestBFCLProblemConversion:
     """
 
     @staticmethod
-    def _bfcl_run():
+    def _bfcl_run() -> BenchmarkRun:
         """A run with ``bfcl_ast`` selected.
 
         ``_convert_to_conversations`` resolves the system prompt through

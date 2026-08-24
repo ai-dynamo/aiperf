@@ -172,7 +172,9 @@ _TYPE_CHECKS: dict[str, tuple[type, ...]] = {
 }
 
 
-def ast_parse(input_str: str, language: Any = None, has_tool_call_tag: bool = False):
+def ast_parse(
+    input_str: str, language: Any = None, has_tool_call_tag: bool = False
+) -> list[dict[str, Any]]:
     """Decode a Python-style call list into BFCL's canonical shape.
 
     Raises:
