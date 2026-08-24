@@ -493,6 +493,50 @@ class FileDataset(SystemPromptMixin):
         ),
     ]
 
+    prompt_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of text items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable text inputs entirely (e.g. image/audio/video-only workloads).",
+        ),
+    ]
+
+    image_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of images per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable image inputs entirely.",
+        ),
+    ]
+
+    audio_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of audio items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable audio inputs entirely.",
+        ),
+    ]
+
+    video_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of video items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable video inputs entirely.",
+        ),
+    ]
+
     block_size: Annotated[
         int | None,
         Field(
@@ -602,6 +646,28 @@ class FileDataset(SystemPromptMixin):
             raise ValueError(
                 "--ignore-trace-delays and --use-think-time-only are mutually "
                 "exclusive (each sets Turn.delay differently)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_batch_sizes_random_pool_only(self) -> FileDataset:
+        """Reject per-modality batch sizes on non-random_pool formats.
+
+        These fields are only consumed by RandomPoolDatasetLoader. Setting them
+        on other formats is an error, not a silent no-op.
+        """
+        batch_fields = {
+            "prompt_batch_size": self.prompt_batch_size,
+            "image_batch_size": self.image_batch_size,
+            "audio_batch_size": self.audio_batch_size,
+            "video_batch_size": self.video_batch_size,
+        }
+        set_fields = {k: v for k, v in batch_fields.items() if v is not None}
+        if set_fields and self.format != DatasetFormat.RANDOM_POOL:
+            names = ", ".join(set_fields)
+            raise ValueError(
+                f"{names} are rejected on formats other than random_pool; "
+                f"got format: {self.format}."
             )
         return self
 

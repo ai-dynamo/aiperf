@@ -12,7 +12,8 @@ from pydantic import ValidationError
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import MediaType
-from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
+from aiperf.common.models import Audio, Conversation, Image, Media, Text, Turn, Video
+from aiperf.config.dataset.config import FileDataset
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
@@ -41,6 +42,15 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
       - supports client-side batching for each data (e.g. batch size > 1)
       - supports named fields for each modality (e.g. text_field_a, text_field_b, etc.)
       - DOES NOT support multi-turn or its features (e.g. delay, sessions, etc.)
+
+    Batching and named pools are mutually exclusive: batch sizes other than 1 are
+    rejected outright for directory input (multiple named pools), since batching
+    flattens every pool into one anonymous pool per modality. Directory input is
+    caught at config time by ``_reject_file_dataset_incompatible``; the pool shapes
+    only visible after parsing (inline multi-key ``records:``, entries embedding
+    named media objects) are caught here by ``_reject_batching_with_named_pools``.
+    A batch size on a modality absent from the pool does not count as batching --
+    see ``_batching_requested``.
 
     Note on batching and associations:
     When entries have paired data across modalities (e.g. {"image": "cat.png", "text": "describe
@@ -103,18 +113,35 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         self.num_conversations = (
             num_conversations if num_conversations is not None else 100
         )
-        # Per-modality batch_size only exists on SyntheticDataset (and even then
-        # only when the modality config block is present). FileDataset has none
-        # of these, so default to 1 for missing fields rather than crashing.
+        # Per-modality batch sizes come from different places depending on the
+        # dataset type.  SyntheticDataset carries them nested under
+        # prompts/images/audio/video sub-configs.  FileDataset (the --input-file
+        # path) stores them as flat fields populated by the CLI converter.
         dataset = self.run.cfg.get_default_dataset()
-        prompts = getattr(dataset, "prompts", None)
-        images = getattr(dataset, "images", None)
-        audio = getattr(dataset, "audio", None)
-        video = getattr(dataset, "video", None)
-        self.batch_size_image = getattr(images, "batch_size", 1) if images else 1
-        self.batch_size_text = getattr(prompts, "batch_size", 1) if prompts else 1
-        self.batch_size_audio = getattr(audio, "batch_size", 1) if audio else 1
-        self.batch_size_video = getattr(video, "batch_size", 1) if video else 1
+        if isinstance(dataset, FileDataset):
+            self.batch_size_text = (
+                dataset.prompt_batch_size
+                if dataset.prompt_batch_size is not None
+                else 1
+            )
+            self.batch_size_image = (
+                dataset.image_batch_size if dataset.image_batch_size is not None else 1
+            )
+            self.batch_size_audio = (
+                dataset.audio_batch_size if dataset.audio_batch_size is not None else 1
+            )
+            self.batch_size_video = (
+                dataset.video_batch_size if dataset.video_batch_size is not None else 1
+            )
+        else:
+            prompts = getattr(dataset, "prompts", None)
+            images = getattr(dataset, "images", None)
+            audio = getattr(dataset, "audio", None)
+            video = getattr(dataset, "video", None)
+            self.batch_size_image = getattr(images, "batch_size", 1) if images else 1
+            self.batch_size_text = getattr(prompts, "batch_size", 1) if prompts else 1
+            self.batch_size_audio = getattr(audio, "batch_size", 1) if audio else 1
+            self.batch_size_video = getattr(video, "batch_size", 1) if video else 1
 
     @staticmethod
     def _validate_path(path: Path) -> int:
@@ -286,12 +313,8 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             "Sampling random_pool dataset entries with replacement. "
             "Duplicates within a single request are possible when batch_size exceeds pool size."
         )
-        if (
-            self.batch_size_image != 1
-            or self.batch_size_text != 1
-            or self.batch_size_audio != 1
-            or self.batch_size_video != 1
-        ):
+        if self._batching_requested(data):
+            self._reject_batching_with_named_pools(data)
             return self._convert_to_conversations_batched(data)
 
         conversations = [
@@ -324,6 +347,95 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
             conversations[i].turns.append(turn)
 
         return conversations
+
+    def _batching_requested(self, data: dict[Filename, list[RandomPool]]) -> bool:
+        """Return True if a modality actually present in the pool has batch size != 1.
+
+        A batch size on a modality absent from the pool produces the same (empty)
+        output on either path, so it must not select the flattened one:
+        ``--image-batch-size 0`` against a text-only pool means "disable image
+        inputs entirely" (as the flag's own description says), not "flatten every
+        named text pool into one anonymous pool".
+        """
+        for batch_size, singular, plural in (
+            (self.batch_size_text, "text", "texts"),
+            (self.batch_size_image, "image", "images"),
+            (self.batch_size_audio, "audio", "audios"),
+            (self.batch_size_video, "video", "videos"),
+        ):
+            if batch_size == 1:
+                continue
+            if any(
+                getattr(entry, singular) is not None or getattr(entry, plural)
+                for pool in data.values()
+                for entry in pool
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _reject_batching_with_named_pools(
+        data: dict[Filename, list[RandomPool]],
+    ) -> None:
+        """Reject batch sizes other than 1 when batching would discard pool identity.
+
+        Two distinct ways this happens, both from the same root cause:
+        ``_build_flat_pool`` unwraps embedded ``Text``/``Image``/``Audio``/``Video``
+        objects down to bare content strings, and ``_convert_to_conversations_batched``
+        rebuilds them as ``X(name="", contents=...)`` -- discarding any authored
+        ``name`` and, for images, any authored ``uuids`` (vLLM cache-reuse IDs).
+
+        1. Multiple named pools in ``data`` -- one per key. Directory input (multiple
+           files, e.g. ``queries.jsonl`` -> ``query``, ``passages.jsonl`` -> ``passage``)
+           and inline YAML ``records:`` with multiple top-level keys (e.g.
+           ``records: {queries: [...], passages: [...]}``) both land here; either
+           way, each key is a separately named pool that name-sensitive endpoints
+           (e.g. rankings, which routes on the ``query``/``queries`` and ``passages``
+           field names) depend on. Flattening across pools merges them into one
+           anonymous pool per modality.
+
+        2. A single pool whose entries embed named ``Text``/``Image``/``Audio``/
+           ``Video`` objects, or ``Image`` objects carrying ``uuids``. This is
+           reachable from a single file (or single-key inline YAML ``records``)
+           and is not caught by pool count alone.
+
+        Raises:
+            ValueError: If either condition applies.
+        """
+        if len(data) > 1:
+            names = ", ".join(sorted(data))
+            raise ValueError(
+                f"random_pool batch sizes other than 1 are not supported for named "
+                f"pools (found {len(data)}: {names}). Drop the batch-size flags, or "
+                "use a single unnamed pool -- one file, or a flat inline records: list."
+            )
+        if RandomPoolDatasetLoader._pool_entries_carry_metadata(data):
+            raise ValueError(
+                "random_pool batch sizes other than 1 are not supported when pool "
+                "entries carry named Text/Image/Audio/Video objects or image cache "
+                "uuids. Drop the batch-size flags, or strip name/uuids from the "
+                "entries if only their contents matter."
+            )
+
+    @staticmethod
+    def _pool_entries_carry_metadata(data: dict[Filename, list[RandomPool]]) -> bool:
+        """Return True if any pool entry authors a Media name or (image) uuids.
+
+        Checks the plural list fields (``texts``/``images``/``audios``/``videos`` --
+        the only ones that can hold ``Media`` objects rather than bare strings)
+        across every ``RandomPool`` entry in every pool.
+        """
+        for pool in data.values():
+            for entry in pool:
+                for items in (entry.texts, entry.images, entry.audios, entry.videos):
+                    if not items:
+                        continue
+                    for item in items:
+                        if isinstance(item, Media) and (
+                            item.name or getattr(item, "uuids", None)
+                        ):
+                            return True
+        return False
 
     def _build_flat_pool(
         self,
@@ -381,6 +493,25 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         text_pool = self._build_flat_pool(data, "text", "texts")
         audio_pool = self._build_flat_pool(data, "audio", "audios")
         video_pool = self._build_flat_pool(data, "video", "videos")
+
+        if not (
+            (image_pool and self.batch_size_image > 0)
+            or (text_pool and self.batch_size_text > 0)
+            or (audio_pool and self.batch_size_audio > 0)
+            or (video_pool and self.batch_size_video > 0)
+        ):
+            # Raise rather than warn: this loader runs inside the DatasetManager
+            # subprocess, whose stdlib-logger output only reaches the log file, so a
+            # warning here never surfaces on the console. The run would then fail
+            # with a generic "check the server URL/endpoint/response format" error
+            # for what is purely a local config mistake.
+            raise ValueError(
+                f"random_pool batch sizes produce turns with no content: every "
+                f"modality is absent from the pool or has batch size 0 (text="
+                f"{self.batch_size_text}, image={self.batch_size_image}, audio="
+                f"{self.batch_size_audio}, video={self.batch_size_video}). Set a "
+                "batch size above 0 for a modality that is present in the pool."
+            )
 
         conversations = []
         for _ in range(self.num_conversations):
