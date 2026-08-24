@@ -3,8 +3,6 @@
 
 import platform as _platform
 
-from aiperf.common.enums.enums import CreditPhase
-
 # Platform detection — evaluated once at import time.
 IS_WINDOWS: bool = _platform.system() == "Windows"
 IS_MACOS: bool = _platform.system() == "Darwin"
@@ -18,7 +16,6 @@ NANOS_PER_SECOND = 1_000_000_000
 NANOS_PER_MILLIS = 1_000_000
 MILLIS_PER_SECOND = 1000
 BYTES_PER_MIB = 1024 * 1024
-WARMUP_SYSTEM_MESSAGE_PREFIX = CreditPhase.WARMUP
 
 STAT_KEYS = [
     "avg",
@@ -39,3 +36,14 @@ STAT_KEYS = [
 
 GOOD_REQUEST_COUNT_TAG = "good_request_count"
 """GoodRequestCount metric tag"""
+
+SYSTEM_PROMPT_JOIN_SEP = "\n\n"
+"""Separator joining a verbatim ``--system-prompt`` to a dataset's own system message.
+
+Shared by the two places that perform the merge -- the composer, for datasets
+whose system message was hoisted to ``Conversation.system_message``, and the chat
+endpoint, for datasets that leave an unhoisted ``role: system`` in
+``turn.raw_messages``. The two must agree: a run can hit either path depending on
+the loader, and a drift between them would silently change request bytes and
+prefix-cache behavior.
+"""

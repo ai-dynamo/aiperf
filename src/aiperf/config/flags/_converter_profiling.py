@@ -5,7 +5,13 @@
 
 from __future__ import annotations
 
+import gzip
+import zlib
 from typing import TYPE_CHECKING, Any
+
+from aiperf.common.aiperf_logger import AIPerfLogger
+
+_logger = AIPerfLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -383,16 +389,10 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
     _maybe_set_dag_root_sessions(prof, cli, file_path)
 
 
-def _first_record_has_timestamp(file_path: object) -> bool:
-    """Return True when a trace file carries timestamp data."""
-    from pathlib import Path
-
-    from aiperf.common.utils import load_json_str
-
-    path = Path(file_path)
-    if not path.is_file():
-        return False
-    if path.suffix.lower() == ".parquet":
+def _columnar_file_has_timestamp(path: Path) -> bool | None:
+    """Probe known columnar formats, or return None for another format."""
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
         try:
             import pyarrow as pa
             import pyarrow.parquet as pq
@@ -403,8 +403,36 @@ def _first_record_has_timestamp(file_path: object) -> bool:
             return "timestamp_start_unix_ms" in set(pq.read_schema(path).names)
         except (OSError, pa.ArrowException):
             return False
+    if suffix in {".arrow", ".ipc"}:
+        from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
+
+        return BasetenTraceDatasetLoader.can_load(filename=path)
+    return None
+
+
+def _has_timing_events_timestamp(data: dict) -> bool:
+    events = data.get("timing_events")
+    return bool(
+        events
+        and isinstance(events, list)
+        and isinstance(events[0], dict)
+        and events[0].get("timestamp") is not None
+    )
+
+
+def _first_record_has_timestamp(file_path: object) -> bool:
+    """Return True when a trace file carries timestamp data."""
+    from pathlib import Path
+
+    from aiperf.common.utils import load_json_str, open_text_maybe_gzip
+
+    path = Path(file_path)
+    if not path.is_file():
+        return False
+    if (columnar_result := _columnar_file_has_timestamp(path)) is not None:
+        return columnar_result
     try:
-        with open(path, encoding="utf-8") as f:
+        with open_text_maybe_gzip(path) as f:
             for line in f:
                 if not (stripped := line.strip()):
                     continue
@@ -414,15 +442,22 @@ def _first_record_has_timestamp(file_path: object) -> bool:
                     return False
                 if not isinstance(data, dict):
                     return False
-                return data.get("timestamp") is not None
-    except OSError:
+                return data.get(
+                    "timestamp"
+                ) is not None or _has_timing_events_timestamp(data)
+    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+        _logger.warning(f"Truncated or corrupt gzip in '{file_path}': {e}")
+        return False
+    except (OSError, UnicodeDecodeError):
         return False
     return False
 
 
 def _count_dataset_records(file_path: object) -> int:
-    """Count records across a JSONL file/directory or Parquet trace file."""
+    """Count records across JSONL, Parquet, or Arrow IPC input."""
     from pathlib import Path
+
+    from aiperf.common.utils import open_text_maybe_gzip
 
     path = Path(file_path)
     try:
@@ -443,9 +478,18 @@ def _count_dataset_records(file_path: object) -> int:
                 return pq.ParquetFile(path).metadata.num_rows
             except (OSError, pa.ArrowException):
                 return 0
+        if path.suffix.lower() in {".arrow", ".ipc"} and path.is_file():
+            from aiperf.dataset.loader.baseten_trace import (
+                count_baseten_records,
+            )
+
+            return count_baseten_records(str(path))
         if path.is_file():
-            with open(path, encoding="utf-8") as f:
+            with open_text_maybe_gzip(path) as f:
                 return sum(1 for line in f if line.strip())
+    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+        _logger.warning(f"Truncated or corrupt gzip in '{file_path}': {e}")
+        return 0
     except (OSError, UnicodeDecodeError):
         return 0
     return 0

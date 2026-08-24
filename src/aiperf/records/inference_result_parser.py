@@ -25,6 +25,7 @@ from aiperf.common.models.record_models import (
     TokenCounts,
     ToolCallResponseData,
     find_last_non_empty_usage,
+    first_content_chunk_completion_tokens,
 )
 from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
@@ -339,8 +340,9 @@ class InferenceResultParser(CommunicationMixin):
         ``n > 1`` streaming request, where each sequence's stats ride its own
         finish chunk): the per-request record can't attribute request-level
         ``completion_tokens`` to a single sequence, so a mixed record is worse
-        than none. ``n > 1`` non-streaming is suppressed upstream in
-        ``BaseEndpoint.extract_spec_decode_stats``.
+        than none. ``n > 1`` non-streaming needs no client-side guard: vLLM
+        populates ``metrics.speculative_decoding`` only for single-sequence
+        requests and leaves it null otherwise.
 
         Counts payloads by truthiness (not ``is not None``) to match the
         adapter's ``_find_spec_decode_payload``: an empty ``{}`` is treated as
@@ -515,10 +517,21 @@ class InferenceResultParser(CommunicationMixin):
                 usage.completion_tokens, reasoning_token_count
             )
 
+        # Only read the first content chunk's count when the user opted into
+        # per-chunk usage. Otherwise a server that volunteers usage on a
+        # content-bearing chunk would change (or delete) inter-token latency with
+        # no flag set -- the opt-in contract the docs describe must be enforced
+        # here, not just at payload-injection time.
+        first_chunk_tokens = (
+            first_content_chunk_completion_tokens(responses)
+            if self.run.cfg.endpoint.per_chunk_usage
+            else None
+        )
         token_counts = TokenCounts(
             input=input_token_count,
             reasoning=reasoning_token_count,
             output=output_token_count,
+            first_content_chunk_tokens=first_chunk_tokens,
         )
 
         # Warn if server provided no usage information

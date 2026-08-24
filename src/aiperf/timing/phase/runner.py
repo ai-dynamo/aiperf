@@ -205,6 +205,14 @@ class PhaseRunner(TaskManagerMixin):
         self._baseline_start_ns: int | None = None
         self._baseline_end_ns: int | None = None
 
+    def _resolve_cache_bust_target(self) -> CacheBustTarget:
+        """Return the active cache-bust target, or NONE when no run is attached."""
+        return (
+            self._run.cfg.get_cache_bust_target()
+            if self._run is not None
+            else CacheBustTarget.NONE
+        )
+
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
     ) -> CreditIssuer:
@@ -230,6 +238,7 @@ class PhaseRunner(TaskManagerMixin):
                 or self._cache_warmup_enabled
             ),
             replay_barrier=self._replay_barrier,
+            cache_bust_target=self._resolve_cache_bust_target(),
         )
 
     def _maybe_construct_branch_orchestrator(
@@ -261,11 +270,7 @@ class PhaseRunner(TaskManagerMixin):
             return
         sticky_router = getattr(self._credit_router, "sticky_router", None)
         benchmark_id = self._run.benchmark_id if self._run is not None else "unknown"
-        cache_bust_target = (
-            self._run.cfg.get_cache_bust_target()
-            if self._run is not None
-            else CacheBustTarget.NONE
-        )
+        cache_bust_target = self._resolve_cache_bust_target()
         self._branch_orchestrator = BranchOrchestrator(
             conversation_source=conversation_source,
             credit_issuer=self._credit_issuer,
@@ -451,8 +456,10 @@ class PhaseRunner(TaskManagerMixin):
         fatal = self._progress.fatal_error or task_exc
         if fatal is not None:
             self.error(
-                lambda: "fatal request-free control-node failure in seamless "
-                f"phase {self._config.phase}: {fatal!r}"
+                lambda: (
+                    "fatal request-free control-node failure in seamless "
+                    f"phase {self._config.phase}: {fatal!r}"
+                )
             )
             if self._on_phase_error is not None:
                 self._on_phase_error(fatal)
@@ -487,6 +494,7 @@ class PhaseRunner(TaskManagerMixin):
     async def run(
         self,
         is_final_phase: bool,
+        seamless_to_next: bool = False,
     ) -> CreditPhaseStats:
         """Execute phase with full lifecycle management.
 
@@ -497,6 +505,8 @@ class PhaseRunner(TaskManagerMixin):
         Args:
             is_final_phase: True if this is the last phase. Non-final seamless phases
                 spawn background return-wait task; final phases wait synchronously.
+            seamless_to_next: True when the next phase should start before this
+                phase's in-flight requests finish returning.
 
         Returns:
             CreditPhaseStats snapshot of final phase state.
@@ -504,7 +514,9 @@ class PhaseRunner(TaskManagerMixin):
         strategy = self._build_strategy()
         try:
             self._register_strategy_with_callback_handler(strategy)
-            return await self._run_strategy(strategy, is_final_phase)
+            return await self._run_strategy(
+                strategy, is_final_phase, seamless_to_next=seamless_to_next
+            )
         except Exception as e:
             await self._publish_phase_failure_lifecycle()
             raise e
@@ -577,15 +589,20 @@ class PhaseRunner(TaskManagerMixin):
             return
         released = self._session_tree_registry.release_all(self._phase_key)
         self.info(
-            lambda: f"Session-tree slots for phase {self._config.phase}: "
-            f"peak_open={self._session_tree_registry.peak_open} "
-            f"(target concurrency {self._config.concurrency}); "
-            f"released {released} still-open at teardown; "
-            f"late_events={self._session_tree_registry.late_events}"
+            lambda: (
+                f"Session-tree slots for phase {self._config.phase}: "
+                f"peak_open={self._session_tree_registry.peak_open} "
+                f"(target concurrency {self._config.concurrency}); "
+                f"released {released} still-open at teardown; "
+                f"late_events={self._session_tree_registry.late_events}"
+            )
         )
 
     async def _run_strategy(
-        self, strategy: TimingStrategyProtocol, is_final_phase: bool
+        self,
+        strategy: TimingStrategyProtocol,
+        is_final_phase: bool,
+        seamless_to_next: bool = False,
     ) -> CreditPhaseStats:
         """Drive the strategy through its execute → sending-complete →
         returning-complete pipeline. The exception path (publishing partial
@@ -660,7 +677,7 @@ class PhaseRunner(TaskManagerMixin):
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
-        if self._config.seamless and not is_final_phase:
+        if seamless_to_next and not is_final_phase:
             self._return_wait_task = self.execute_async(
                 self._wait_for_returning_complete(strategy, phase_id=phase_id)
             )

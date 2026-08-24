@@ -21,6 +21,7 @@ from aiperf.config.flags._section_fields import (
 
 if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
+    from aiperf.plugin.enums import CustomDatasetType
 
 
 def _normalize_sample_rate_khz(value: float | int) -> float:
@@ -265,6 +266,10 @@ _VERBATIM_DATASET_FIELDS = (
     ("open_loop_strict", "open_loop_strict", False),
     ("omit_kv_hints", "omit_kv_hints", False),
     ("force_min_tokens", "force_min_tokens", False),
+    # SystemPromptMixin fields live on all three dataset variants, so unlike the
+    # synthetic-only subtables below they must NOT be popped per-type.
+    ("system_prompt", "system_prompt", False),
+    ("system_prompt_file", "system_prompt_file", False),
 )
 
 
@@ -421,6 +426,45 @@ def _apply_sequence_distribution(d: dict[str, Any], cli: CLIConfig) -> None:
     ]
 
 
+def _apply_random_corpus_style_and_range_ratio(
+    d: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Write ``random_corpus_style`` and ``random_range_ratio`` onto the prompts dict.
+
+    The style is written FIRST, before the ratio gate. It is not merely a
+    modifier of the ratio: with no ratio set it still selects the token pool
+    (``valid_token_ids`` vs ``all_token_ids``), which is then the only thing it
+    selects. Writing it after an early return meant ``--random-corpus-style
+    sglang`` alone was silently discarded and the user got vLLM's pool.
+
+    Only the sglang request was observably lost, since vllm is the default and
+    a dropped write lands there anyway -- which is why this survived so long.
+    """
+    if "prompt_random_corpus_style" in cli.model_fields_set:
+        d.setdefault("prompts", {})["random_corpus_style"] = (
+            cli.prompt_random_corpus_style
+        )
+
+    if not cli.prompt_random_range_ratio:
+        return
+    from aiperf.common.enums import RandomCorpusStyle
+    from aiperf.common.models.sequence_distribution import (
+        _parse_sglang_ratio_string,
+        _parse_vllm_ratio_string,
+    )
+
+    parser = (
+        _parse_sglang_ratio_string
+        if cli.prompt_random_corpus_style == RandomCorpusStyle.SGLANG
+        else _parse_vllm_ratio_string
+    )
+    try:
+        parser(cli.prompt_random_range_ratio)
+    except ValueError as e:
+        raise ValueError(f"Invalid --random-range-ratio value: {e}") from e
+    d.setdefault("prompts", {})["random_range_ratio"] = cli.prompt_random_range_ratio
+
+
 def _apply_turns(d: dict[str, Any], cli: CLIConfig) -> None:
     fields_set = cli.model_fields_set
     if (
@@ -546,6 +590,7 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
+    ("prompt_random_range_ratio", "--random-range-ratio"),
     ("image_batch_size", "--image-batch-size"),
     ("image_source", "--image-source"),
     ("image_source_sampling", "--image-source-sampling"),
@@ -647,7 +692,12 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
         )
 
 
-def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
+def _reject_baseten_trace_unsupported_synthesis(
+    cli: CLIConfig,
+    dataset_format: CustomDatasetType | str | None,
+    *,
+    dataset_format_source: str = "--custom-dataset-type baseten_trace",
+) -> None:
     """Reject synthesis knobs that cannot apply to baseten_trace replay.
 
     baseten_trace replay is paced by --replay-speedup; synthesis speedup
@@ -659,16 +709,19 @@ def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
     from the prompt. Output-length synthesis and the max-ISL/OSL filter/cap
     remain valid. The auto-detected dataset-type path is guarded at load
     time by the loader.
+
+    ``dataset_format`` is the resolved loader identity: the CLI
+    ``--custom-dataset-type`` or the YAML ``format`` field being overlaid.
+    ``dataset_format_source`` is its user-facing spelling in error messages.
     """
     from aiperf.plugin.enums import CustomDatasetType
 
-    if cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE:
+    if dataset_format != CustomDatasetType.BASETEN_TRACE:
         return
     if cli.synthesis_speedup_ratio != 1.0:
         raise ValueError(
             "--synthesis-speedup-ratio is not supported with "
-            "--custom-dataset-type baseten_trace; use --replay-speedup to "
-            "scale replay pacing."
+            f"{dataset_format_source}; use --replay-speedup to scale replay pacing."
         )
     reshaping_flags = [
         flag
@@ -695,7 +748,7 @@ def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
         verb = "is" if len(reshaping_flags) == 1 else "are"
         raise ValueError(
             f"{', '.join(reshaping_flags)} {verb} not supported with "
-            "--custom-dataset-type baseten_trace: it replays recorded "
+            f"{dataset_format_source}: it replays recorded "
             "prompts verbatim, so hash-reshaping synthesis cannot change "
             "the sent prompt and would desync the forwarded hash_ids KV "
             "hints."
@@ -901,8 +954,8 @@ _BLOCK_SIZE_TRACE_FORMATS = frozenset(
     {
         "mooncake_trace",
         "bailian_trace",
-        "burst_gpt_trace",
-        "sagemaker_data_capture",
+        "baseten_trace",
+        "tracelab",
     }
 )
 
@@ -911,8 +964,8 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--isl-block-size`` onto ``FileDataset.block_size`` for hash-id
     trace datasets.
 
-    block_size is fundamentally a TRACE field: the mooncake/bailian/burst_gpt/
-    sagemaker loaders decode each ``hash_id`` into a cached block of this many
+    block_size is fundamentally a TRACE field: the mooncake/bailian/baseten/
+    tracelab loaders decode each ``hash_id`` into a cached block of this many
     tokens (default 512 / 16 from plugin metadata). Synthetic datasets carry it
     on ``prompts.block_size`` (written by ``_build_prompts``, then stripped for
     FILE/PUBLIC by ``_apply_dataset_type``), so for FILE traces it must be
@@ -958,9 +1011,9 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
         return
     raise ValueError(
         "--isl-block-size only applies to synthetic generation or hash-id trace "
-        "replay (mooncake_trace, bailian_trace, burst_gpt_trace, "
-        "sagemaker_data_capture). The selected dataset does not decode hash-id "
-        "token blocks; drop --isl-block-size."
+        "replay (mooncake_trace, bailian_trace, baseten_trace, tracelab). "
+        "The selected dataset does not decode hash-id token blocks; "
+        "drop --isl-block-size."
     )
 
 
@@ -982,6 +1035,7 @@ _NON_TEXT_TEXT_TRIGGERS: tuple[tuple[str, str], ...] = (
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
+    ("prompt_random_range_ratio", "--random-range-ratio"),
 )
 
 # Tokenizer options are also rejected for non-tokenizing endpoints
@@ -1051,7 +1105,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
     _reject_baseten_only_trace_flags(cli)
-    _reject_baseten_trace_unsupported_synthesis(cli)
+    _reject_baseten_trace_unsupported_synthesis(cli, cli.custom_dataset_type)
     _reject_baseten_trace_extra_input_collisions(cli)
     if cli.dataset_filters and not _implies_public_dataset(cli):
         raise ValueError("--dataset-filter requires --public-dataset")
@@ -1060,6 +1114,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _attach_subtables(d, cli)
     _apply_dataset_type(d, cli, needs_text)
     _apply_sequence_distribution(d, cli)
+    _apply_random_corpus_style_and_range_ratio(d, cli)
     _apply_turns(d, cli)
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)

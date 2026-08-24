@@ -15,7 +15,7 @@ trace synthesis sub-configs live in sibling ``content.py`` / ``trace.py`` /
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     ConfigDict,
@@ -28,8 +28,8 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     DatasetFormat,
     DatasetType,
+    PromptCorpus,
 )
-from aiperf.config.base import BaseConfig
 from aiperf.config.dataset.content import (
     AudioConfig,
     CacheBustConfig,
@@ -39,6 +39,7 @@ from aiperf.config.dataset.content import (
     PromptSelectionConfig,
     RankingsConfig,
 )
+from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
 )
@@ -85,7 +86,7 @@ _DatasetName = Annotated[
 
 
 # Dataset type variants using discriminated unions
-class SyntheticDataset(BaseConfig):
+class SyntheticDataset(SystemPromptMixin):
     """
     Synthetic dataset configuration.
 
@@ -281,7 +282,7 @@ class SyntheticDataset(BaseConfig):
         return self
 
 
-class FileDataset(BaseConfig):
+class FileDataset(SystemPromptMixin):
     """
     File-based dataset configuration.
 
@@ -305,8 +306,9 @@ class FileDataset(BaseConfig):
             description="Path to file or directory containing benchmark dataset. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
-            "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/"
-            "bailian_trace, Parquet for baseten_trace, directories for random_pool.",
+            "JSONL for single_turn/multi_turn, JSONL (optionally gzipped) for "
+            "tracelab, JSONL trace files for mooncake_trace/bailian_trace, "
+            "Parquet for baseten_trace, directories for random_pool.",
         ),
     ]
 
@@ -330,6 +332,7 @@ class FileDataset(BaseConfig):
             description="Dataset file format determining parsing logic and expected file structure. "
             "single_turn: JSONL with single prompt-response exchanges. "
             "multi_turn: JSONL with conversation history. "
+            "tracelab: TraceLab agentic-coding corpus, JSONL or gzipped JSONL. "
             "mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: "
             "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
@@ -496,9 +499,9 @@ class FileDataset(BaseConfig):
             default=None,
             ge=1,
             description="Hash-id block granularity for trace replay (--isl-block-size). "
-            "hash-id trace loaders (mooncake_trace, bailian_trace, burst_gpt_trace, "
-            "sagemaker_data_capture) decode each hash_id into a cached block of this "
-            "many tokens; total ISL = (num_hash_ids - 1) * block_size + final_block_size. "
+            "hash-id trace loaders (mooncake_trace, bailian_trace, baseten_trace, "
+            "tracelab) decode each hash_id into a cached block of this many tokens; "
+            "total ISL = (num_hash_ids - 1) * block_size + final_block_size. "
             "When unset, the loader's plugin-metadata default applies (e.g. 512 for "
             "mooncake_trace, 16 for bailian_trace). Not used by weka, which carries its "
             "own inline per-block sizes.",
@@ -656,6 +659,31 @@ class FileDataset(BaseConfig):
 
         return self
 
+    _HASH_ID_TRACE_FORMATS: ClassVar[frozenset[DatasetFormat]] = frozenset(
+        {
+            DatasetFormat.MOONCAKE_TRACE,
+            DatasetFormat.BAILIAN_TRACE,
+            DatasetFormat.BURST_GPT_TRACE,
+            DatasetFormat.SAGEMAKER_DATA_CAPTURE,
+            DatasetFormat.WEKA_TRACE,
+        }
+    )
+
+    @model_validator(mode="after")
+    def _validate_random_corpus_incompatible_with_trace(self) -> FileDataset:
+        if (
+            self.prompts is not None
+            and self.prompts.corpus == PromptCorpus.RANDOM
+            and self.format in self._HASH_ID_TRACE_FORMATS
+        ):
+            raise ValueError(
+                f"prompt_corpus 'random' is not compatible with format '{self.format}'; "
+                "trace loaders synthesize prompt content from a text corpus keyed by "
+                "hash_id — there is no corpus to draw from when corpus='random'. "
+                "Use corpus='sonnet' or 'coding', or switch to a synthetic dataset format."
+            )
+        return self
+
     @model_validator(mode="after")
     def _validate_open_loop_strict_requires_open_loop(self) -> FileDataset:
         # open_loop_strict is an open-loop-only modifier; the loader would
@@ -689,7 +717,7 @@ class FileDataset(BaseConfig):
         return self
 
 
-class PublicDataset(BaseConfig):
+class PublicDataset(SystemPromptMixin):
     """
     Public dataset configuration.
 

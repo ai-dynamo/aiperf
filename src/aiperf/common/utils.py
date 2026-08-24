@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import gzip
 import inspect
 import multiprocessing as mp
 import os
@@ -8,7 +9,7 @@ import threading
 import types
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, TextIO
 
 import orjson
 
@@ -82,6 +83,19 @@ async def call_all_functions(funcs: list[Callable], *args, **kwargs) -> None:
 
     if len(exceptions) > 0:
         raise AIPerfMultiError("Errors calling functions", exceptions)
+
+
+def open_text_maybe_gzip(path: str | os.PathLike[str]) -> TextIO:
+    """Open a text file, transparently decompressing gzip data.
+
+    Detection is by magic-byte sniff (``\\x1f\\x8b``) rather than filename
+    suffix, so a gzipped file without a ``.gz`` extension is handled correctly.
+    """
+    with open(path, "rb") as _probe:
+        _magic = _probe.read(2)
+    if _magic == b"\x1f\x8b":
+        return gzip.open(path, "rt", encoding="utf-8")
+    return open(path, encoding="utf-8")
 
 
 def load_json_str(
