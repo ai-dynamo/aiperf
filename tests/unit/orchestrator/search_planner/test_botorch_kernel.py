@@ -54,18 +54,18 @@ class TestDspKernelBatchShape:
     and this code path never executed.
     """
 
-    def test_batch_shape_is_applied_to_both_kernels(self):
+    def test_batch_shape_is_applied_to_both_kernels(self) -> None:
         kernel = make_dsp_kernel(d=3, batch_shape=torch.Size([2]))
         assert kernel.batch_shape == torch.Size([2])
         assert kernel.base_kernel.batch_shape == torch.Size([2])
         assert kernel.base_kernel.lengthscale.shape[0] == 2
 
-    def test_omitting_batch_shape_stays_unbatched(self):
+    def test_omitting_batch_shape_stays_unbatched(self) -> None:
         kernel = make_dsp_kernel(d=3)
         assert kernel.batch_shape == torch.Size([])
 
     @pytest.mark.parametrize("n_outputs", [1, 2, 3])
-    def test_gp_fit_succeeds_for_each_output_count(self, n_outputs: int):
+    def test_gp_fit_succeeds_for_each_output_count(self, n_outputs: int) -> None:
         """m=1 is unconstrained; m>1 is one column per SLA filter."""
         botorch = pytest.importorskip("botorch")
         from botorch.fit import fit_gpytorch_mll
