@@ -258,6 +258,25 @@ class TestBFCLProblemConversion:
     """
 
     @staticmethod
+    def _bfcl_run():
+        """A run with ``bfcl_ast`` selected.
+
+        ``_convert_to_conversations`` resolves the system prompt through
+        ``_resolve_system_prompt(self.run)``, which reads the *selected*
+        benchmark's ``default_system_prompt`` metadata. Selecting MMLU here
+        would exercise MMLU's resolution path and leave the assertion below
+        blind: if a ``default_system_prompt`` were ever added to ``bfcl_ast``,
+        every conversation would silently gain a second system message and
+        these tests would still pass.
+        """
+        return make_benchmark_run(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            streaming=False,
+            accuracy={"benchmark": AccuracyBenchmarkType.BFCL_AST},
+        )
+
+    @staticmethod
     def _bfcl_problem() -> BenchmarkProblem:
         return BenchmarkProblem(
             prompt="SYSTEM\n\nWhat is the weather in SF?",
@@ -271,7 +290,7 @@ class TestBFCLProblemConversion:
         )
 
     def test_bfcl_problem_keeps_exactly_one_system_message(self) -> None:
-        loader = AccuracyDatasetLoader(run=_make_run(system_prompt=None))
+        loader = AccuracyDatasetLoader(run=self._bfcl_run())
 
         conversations = loader._convert_to_conversations([self._bfcl_problem()])
 
@@ -281,21 +300,21 @@ class TestBFCLProblemConversion:
 
     def test_bfcl_problem_stamps_category_as_accuracy_task(self) -> None:
         """The per-category console/CSV breakdown keys off this field."""
-        loader = AccuracyDatasetLoader(run=_make_run(system_prompt=None))
+        loader = AccuracyDatasetLoader(run=self._bfcl_run())
 
         conversations = loader._convert_to_conversations([self._bfcl_problem()])
 
         assert conversations[0].accuracy_task == "simple_python"
 
     def test_bfcl_problem_uses_its_generation_size(self) -> None:
-        loader = AccuracyDatasetLoader(run=_make_run(system_prompt=None))
+        loader = AccuracyDatasetLoader(run=self._bfcl_run())
 
         conversations = loader._convert_to_conversations([self._bfcl_problem()])
 
         assert conversations[0].turns[0].max_tokens == 4096
 
     def test_bfcl_problem_ground_truth_blob_reaches_the_grader(self) -> None:
-        loader = AccuracyDatasetLoader(run=_make_run(system_prompt=None))
+        loader = AccuracyDatasetLoader(run=self._bfcl_run())
 
         conversations = loader._convert_to_conversations([self._bfcl_problem()])
 

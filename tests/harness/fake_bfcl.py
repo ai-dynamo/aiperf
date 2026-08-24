@@ -39,6 +39,8 @@ from __future__ import annotations
 import ast
 from typing import Any
 
+import orjson
+
 #: Synthetic system prompt. Structurally similar to upstream's (persona, task,
 #: return-format instruction, tool list) so loader assertions about ordering and
 #: tool inclusion are meaningful, but deliberately not byte-equal.
@@ -337,9 +339,26 @@ def build_chat_messages(
     test_entry_id: str,
 ) -> list[dict[str, Any]]:
     """Prepend a synthetic BFCL-shaped system prompt to the entry's turn."""
-    import orjson
-
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         functions=orjson.dumps(function_docs).decode("utf-8")
     )
     return [{"role": "system", "content": system_prompt}, *question_messages]
+
+
+def decode_calls(response_text: str, language: str) -> list[dict[str, Any]]:
+    """Stand-in for ``_bfcl_compat.decode_calls``, raising its error type.
+
+    Lives here rather than in each conftest so the empty-response rule and the
+    ``BFCLDecodeError`` wrapping are defined once - both the unit-test fixture
+    and the component-integration test patch ``_bfcl_compat.decode_calls`` with
+    this, and they must agree on the contract for their results to mean the
+    same thing.
+    """
+    from aiperf.accuracy.graders._bfcl_compat import BFCLDecodeError
+
+    if not response_text or not response_text.strip():
+        raise BFCLDecodeError("empty answer channel")
+    try:
+        return ast_parse(response_text, language)
+    except Exception as e:
+        raise BFCLDecodeError(f"{type(e).__name__}: {e}") from e

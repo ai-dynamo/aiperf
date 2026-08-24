@@ -1706,7 +1706,7 @@ Override the default grader for the selected benchmark (e.g., exact_match, math,
 
 #### `--accuracy-system-prompt` `<str>`
 
-Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific system prompt.
+Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific system prompt. Not supported by 'bfcl_ast', which builds a per-problem system prompt from each problem's tool schemas and rejects this flag rather than discarding them.
 
 #### `--accuracy-verbose`
 
@@ -3297,7 +3297,7 @@ Override the default grader for the selected benchmark (e.g., exact_match, math,
 
 #### `--accuracy-system-prompt` `<str>`
 
-Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific system prompt.
+Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific system prompt. Not supported by 'bfcl_ast', which builds a per-problem system prompt from each problem's tool schemas and rejects this flag rather than discarding them.
 
 #### `--accuracy-verbose`
 

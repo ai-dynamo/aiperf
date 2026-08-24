@@ -179,7 +179,10 @@ class AccuracyConfig(BaseConfig):
         Field(
             default=None,
             description="Custom system prompt to use for accuracy evaluation. "
-            "Overrides any benchmark-specific system prompt.",
+            "Overrides any benchmark-specific system prompt. Not supported by "
+            "'bfcl_ast', which builds a per-problem system prompt from each "
+            "problem's tool schemas and rejects this flag rather than "
+            "discarding them.",
         ),
     ]
 

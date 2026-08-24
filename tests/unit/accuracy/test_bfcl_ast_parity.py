@@ -35,6 +35,7 @@ from pytest import param
 # bfcl-eval isn't installed rather than faking it.
 pytest.importorskip("bfcl_eval")
 
+import orjson  # noqa: E402
 from bfcl_eval.constants.category_mapping import (  # noqa: E402
     LIVE_CATEGORY,
     NON_LIVE_CATEGORY,
@@ -44,6 +45,7 @@ from bfcl_eval.eval_checker.ast_eval.ast_checker import ast_checker  # noqa: E40
 from bfcl_eval.model_handler.utils import ast_parse  # noqa: E402
 
 from aiperf.accuracy.benchmarks.bfcl_ast import (  # noqa: E402
+    DEFAULT_CATEGORIES,
     LIVE_CATEGORIES,
     NON_LIVE_CATEGORIES,
 )
@@ -73,8 +75,6 @@ def _grader() -> ToolCallASTGrader:
 
 
 def _ground_truth(category: str, function, gold) -> str:
-    import orjson
-
     return orjson.dumps(
         {
             "id": f"{category}_0",
@@ -307,8 +307,6 @@ class TestBundledDataLayout:
     def test_every_default_category_ships_a_question_file(self) -> None:
         """A missing file would surface as a load-time error mid-run; catching
         it here names the category instead."""
-        from aiperf.accuracy.benchmarks.bfcl_ast import DEFAULT_CATEGORIES
-
         prefix = _bfcl_compat.version_prefix()
         missing = [
             category

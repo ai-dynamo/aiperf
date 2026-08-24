@@ -87,15 +87,7 @@ def _fake_bfcl(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_bfcl_compat, "require_bfcl", lambda: None)
     monkeypatch.setattr(_bfcl_compat, "bfcl_available", lambda: True)
 
-    def _decode_calls(response_text: str, language: str):
-        if not response_text or not response_text.strip():
-            raise _bfcl_compat.BFCLDecodeError("empty answer channel")
-        try:
-            return fake_bfcl.ast_parse(response_text, language)
-        except Exception as e:
-            raise _bfcl_compat.BFCLDecodeError(f"{type(e).__name__}: {e}") from e
-
-    monkeypatch.setattr(_bfcl_compat, "decode_calls", _decode_calls)
+    monkeypatch.setattr(_bfcl_compat, "decode_calls", fake_bfcl.decode_calls)
     monkeypatch.setattr(
         _bfcl_compat, "ast_check", lambda **kwargs: fake_bfcl.ast_checker(**kwargs)
     )
