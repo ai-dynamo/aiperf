@@ -91,17 +91,19 @@ _RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
-    """Field name -> lower bound for every dimension in ``--search-space``.
+def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
+    """Field name -> (lower bound, kind) for every dimension in ``--search-space``.
 
     A lightweight companion to ``parse_search_space()`` (which runs later,
     in ``_build_adaptive_search``): only extracts each dimension's final
     path segment (resolving bare-name aliases the same way the real parser
-    does) and its lower bound, so ``_profiling_phase_type``/``build_profiling``
-    can pick a compatible phase shape -- and seed a self-supplying field's
-    initial value from its own search range -- before search-space
-    bounds/kind are even validated. Malformed entries are skipped here; the
-    real parser reports the actual grammar error. Only dimensions that
+    does), its lower bound, and its declared ``kind`` (``int``/``real``,
+    default ``real`` when omitted -- matches ``SearchSpaceDimension``'s own
+    default), so ``_profiling_phase_type``/``build_profiling`` can pick a
+    compatible phase shape -- and seed a self-supplying field's initial
+    value from its own search range -- before search-space bounds/kind are
+    even validated by the real parser. Malformed entries are skipped here;
+    the real parser reports the actual grammar error. Only dimensions that
     target ``phases.profiling.*`` are considered (bare aliases always
     resolve there); a fully-qualified path targeting a different phase
     (e.g. ``phases.warmup.*``) is ignored by this shape-inference helper --
@@ -113,9 +115,9 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
 
     from aiperf.config.loader.dotted_path import _resolve_path_alias
 
-    dims: dict[str, float] = {}
+    dims: dict[str, tuple[float, str]] = {}
     for raw in cli.search_space:
-        path_part, _, bounds_part = raw.partition(":")
+        path_part, _, rest = raw.partition(":")
         path = path_part.strip()
         if not path:
             continue
@@ -124,15 +126,19 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
         if not path.startswith("phases.profiling."):
             continue
         field = path.rsplit(".", 1)[-1]
+        bounds_part, _, kind_part = rest.partition(":")
         lo_str = bounds_part.split(",", 1)[0].strip()
+        kind = kind_part.strip() or "real"
         try:
-            dims[field] = float(lo_str)
+            dims[field] = (float(lo_str), kind)
         except ValueError:
             continue
     return dims
 
 
-def _profiling_phase_type(cli: CLIConfig, search_dims: dict[str, float]) -> Any:
+def _profiling_phase_type(
+    cli: CLIConfig, search_dims: dict[str, tuple[float, str]]
+) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
@@ -183,7 +189,7 @@ def _profiling_phase_type(cli: CLIConfig, search_dims: dict[str, float]) -> Any:
 
 
 def _apply_search_space_shape_seeds(
-    prof: dict[str, Any], search_dims: dict[str, float]
+    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]]
 ) -> None:
     """Seed the required scalar(s) a search-space-inferred shape still needs.
 
@@ -215,13 +221,20 @@ def _apply_search_space_shape_seeds(
         and "users" not in prof
         and "users" in search_dims
     ):
-        if search_dims["users"] < 1:
+        users_lo, users_kind = search_dims["users"]
+        if users_kind != "int":
+            raise ValueError(
+                "--search-space 'users' must use ':int' kind (e.g. "
+                "'users:1,50:int'), not ':real' -- the number of simulated "
+                "users must be a whole number."
+            )
+        if users_lo < 1:
             raise ValueError(
                 f"--search-space 'users' lower bound must be >= 1 (got "
-                f"{search_dims['users']!r}); the number of simulated users "
-                "can't be less than one."
+                f"{users_lo!r}); the number of simulated users can't be "
+                "less than one."
             )
-        prof["users"] = int(search_dims["users"])
+        prof["users"] = int(users_lo)
 
     if (
         phase_type
@@ -235,12 +248,13 @@ def _apply_search_space_shape_seeds(
         and "rate_series" not in prof
     ):
         if "rate" in search_dims:
-            if search_dims["rate"] <= 0:
+            rate_lo, _rate_kind = search_dims["rate"]
+            if rate_lo <= 0:
                 raise ValueError(
                     f"--search-space 'rate' lower bound must be > 0 (got "
-                    f"{search_dims['rate']!r}); rate must be positive."
+                    f"{rate_lo!r}); rate must be positive."
                 )
-            prof["rate"] = search_dims["rate"]
+            prof["rate"] = rate_lo
         else:
             raise ValueError(
                 f"--search-space selects a rate-shaped benchmark (phase type "

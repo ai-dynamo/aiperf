@@ -963,6 +963,33 @@ class TestSearchSpacePhaseShapeInference:
         with pytest.raises(ValueError, match="must be >= 1"):
             build_profiling(user)
 
+    def test_users_real_kind_raises_clear_error(self) -> None:
+        """'users:1.5,50:real' must not silently truncate 1.5 -> 1 (a value
+        below the user's own declared lower bound) as the seed -- the number
+        of simulated users can only ever be a whole number, so a ':real'
+        kind for 'users' must fail clearly instead."""
+        loadgen = CLIConfig(
+            search_space=["users:1.5,50:real"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
+    def test_users_default_kind_is_real_and_still_raises(self) -> None:
+        """Omitting ':kind' defaults to 'real' (matching
+        SearchSpaceDimension's own default) -- 'users' without an explicit
+        ':int' suffix must also raise, not silently pass."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
     def test_warmup_path_search_space_dimension_ignored_for_shape_inference(
         self,
     ) -> None:

@@ -105,7 +105,12 @@ base rate from somewhere -- pass `--request-rate` (or `--user-centric-rate`
 for a user shape), or add a `rate` dimension to the same `--search-space`.
 Without one, AIPerf errors at config time with a message explaining what's
 missing, rather than searching `rate_ramp`/`rate_series`/`smoothness` in a
-vacuum.
+vacuum. `users` is a partial exception: it self-seeds the user count from
+its own search range, but a user-shaped benchmark still needs the same base
+rate as the rate shapes (users share a global request rate), so searching
+`users` alone also requires `--request-rate`, `--user-centric-rate`, or a
+`rate` dimension -- same requirement, same error, just for a different
+field.
 
 ### Search space grammar
 
