@@ -85,6 +85,20 @@ This runs 30 search iterations × 3 trials each = 90 benchmarks. `--search-plann
 | `--optuna-acquisition ACQ` | no | BoTorch acquisition override. Only consulted with `--search-planner=optuna --optuna-sampler=botorch`. Single-objective: `qnei` (Letham 2019) or `qlognei` (Ament 2023) for noisy-EI; `logei`/`qlogei` are the explicit defaults. Multi-objective: `qehvi`, `qnehvi`, or `qlognehvi` (Daulton 2021). The cross-field validator on `AdaptiveSearchSweep` requires the choice to match `len(objectives)`: single-objective acquisitions reject `len(objectives) > 1`, multi-objective acquisitions reject `len(objectives) == 1`. The `bayesian` preset auto-selects `qlognei` (single-obj) or `qlognehvi` (multi-obj) based on `len(objectives)`. See [Multi-objective Pareto BO](#multi-objective-pareto-bo). |
 | `--optuna-terminator MODE` | no | Posterior-regret stopping: `regret` (Makarova 2022 `RegretBoundEvaluator`) or `emmr` (Ishibashi 2023). Only consulted with `--search-planner=optuna`. Layered on top of three-signal convergence; `convergence_reason` becomes `posterior_regret_bound` or `emmr` when it fires. |
 
+A benchmark has one "shape" before it starts: `concurrency` ("send as many
+requests as possible"), `rate` ("send N requests per second"), `user`
+("simulate N users"), or `gamma` ("send requests with a particular
+bumpy/smooth pattern"). Searching a shape-specific field --
+`rate`/`rate_ramp`/`rate_series` (rate shape), `smoothness` (gamma shape), or
+`users` (user shape) -- automatically switches the base benchmark to a
+compatible shape, the same as passing the matching CLI flag
+(`--request-rate`, `--arrival-pattern gamma`, `--user-centric-rate`) would.
+Fields from the same shape combine freely — e.g. searching `users` and
+`rate` together fully auto-seeds a user shape, since a user-shaped benchmark
+has both fields (it shares the rate machinery with the rate shape).
+Searching fields from two mutually-exclusive shapes (e.g. `users` and
+`smoothness` together — no shape has both) is rejected with a clear error.
+
 ### Search space grammar
 
 `PATH:LO,HI[:KIND]`
