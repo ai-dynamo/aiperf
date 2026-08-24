@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
+from aiperf.common.enums import UserCentricGapDistribution
 from aiperf.config.phases import (
     BasePhaseConfig,
     ConcurrencyPhase,
@@ -277,3 +278,180 @@ class TestAdaptiveScalePhaseValidation:
                     "sla": {"request_latency": {"p95": {"le": 1000}}},
                 },
             )
+
+
+def _make_user_centric_phase(**overrides) -> UserCentricPhase:
+    kwargs = {
+        "name": "profiling",
+        "type": PhaseType.USER_CENTRIC,
+        "rate": 10.0,
+        "users": 5,
+        "requests": 10,
+    }
+    kwargs.update(overrides)
+    return UserCentricPhase(**kwargs)
+
+
+class TestUserCentricGapDistribution:
+    """Cross-field validation of gap_distribution / gap_median on UserCentricPhase."""
+
+    def test_default_is_fixed_without_median(self) -> None:
+        phase = _make_user_centric_phase()
+        assert phase.gap_distribution == UserCentricGapDistribution.FIXED
+        assert phase.gap_median is None
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_valid_median_below_mean_accepted(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        # mean gap = users / rate = 5 / 10.0 = 0.5s; median 0.3s < mean.
+        phase = _make_user_centric_phase(gap_distribution=distribution, gap_median=0.3)
+        assert phase.gap_distribution == distribution
+        assert phase.gap_median == 0.3
+
+    def test_median_with_fixed_distribution_rejected(self) -> None:
+        with pytest.raises(ValueError, match="--user-centric-gap-median"):
+            _make_user_centric_phase(gap_median=0.3)
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_missing_median_for_sampled_distribution_rejected(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        with pytest.raises(ValueError, match="requires --user-centric-gap-median"):
+            _make_user_centric_phase(gap_distribution=distribution)
+
+    @pytest.mark.parametrize(
+        "median",
+        [
+            param(0.5, id="median_equals_mean"),
+            param(1.5, id="median_above_mean"),
+        ],
+    )  # fmt: skip
+    def test_median_not_below_mean_rejected_with_computed_mean(
+        self, median: float
+    ) -> None:
+        # mean gap = users / rate = 5 / 10.0 = 0.5s.
+        with pytest.raises(ValueError, match=r"0\.5"):
+            _make_user_centric_phase(
+                gap_distribution=UserCentricGapDistribution.LOGNORMAL,
+                gap_median=median,
+            )
+
+    def test_non_positive_median_rejected(self) -> None:
+        with pytest.raises(ValueError, match="greater than 0"):
+            _make_user_centric_phase(
+                gap_distribution=UserCentricGapDistribution.LOGNORMAL,
+                gap_median=0.0,
+            )
+
+
+def _make_adaptive_users_phase(**overrides) -> UserCentricPhase:
+    """User-centric phase scaling 'users' adaptively from control.min upward."""
+    adaptive_scale = {
+        "enabled": True,
+        "sustain_duration": 1,
+        "control": {"variable": "users", "min": 2},
+        "sla": {"request_latency": {"p95": {"le": 1000}}},
+    }
+    adaptive_scale.update(overrides.pop("adaptive_scale", {}))
+    return _make_user_centric_phase(
+        rate=4.0,
+        users=16,
+        requests=None,
+        duration=30,
+        adaptive_scale=adaptive_scale,
+        **overrides,
+    )
+
+
+class TestAdaptiveUsersGapMedianBound:
+    """gap_median is bounded by the smallest mean turn gap the run can reach.
+
+    ``users`` is the maximum user count; adaptive 'users' scaling starts the run
+    at ``control.min``, where the mean turn gap is smallest.
+    """
+
+    @pytest.mark.parametrize(
+        "median",
+        [
+            param(0.5, id="median_equals_control_min_gap"),
+            param(1.0, id="median_between_control_min_and_users_gap"),
+            param(3.9, id="median_just_below_users_gap"),
+        ],
+    )  # fmt: skip
+    def test_median_above_control_min_gap_rejected(self, median: float) -> None:
+        # control.min gap = 2 / 4.0 = 0.5s; users gap = 16 / 4.0 = 4.0s.
+        with pytest.raises(ValueError, match=r"adaptive_scale\.control\.min \(2\)"):
+            _make_adaptive_users_phase(
+                gap_distribution=UserCentricGapDistribution.LOGNORMAL,
+                gap_median=median,
+            )
+
+    def test_rejection_message_names_the_bound_and_its_value(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            _make_adaptive_users_phase(
+                gap_distribution=UserCentricGapDistribution.WEIBULL,
+                gap_median=1.0,
+            )
+        message = str(excinfo.value)
+        assert "adaptive_scale.control.min (2) / --user-centric-rate" in message
+        assert "= 0.5 seconds" in message
+        assert "starts the run at control.min" in message
+
+    @pytest.mark.parametrize(
+        "distribution",
+        [
+            param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+            param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+        ],
+    )  # fmt: skip
+    def test_median_below_control_min_gap_accepted(
+        self, distribution: UserCentricGapDistribution
+    ) -> None:
+        phase = _make_adaptive_users_phase(
+            gap_distribution=distribution, gap_median=0.4
+        )
+        assert phase.gap_distribution == distribution
+        assert phase.gap_median == 0.4
+
+    def test_default_control_min_bounds_the_gap_at_one_user(self) -> None:
+        # control.min defaults to 1, so the smallest gap is 1 / 4.0 = 0.25s.
+        with pytest.raises(ValueError, match=r"adaptive_scale\.control\.min \(1\)"):
+            _make_adaptive_users_phase(
+                gap_distribution=UserCentricGapDistribution.LOGNORMAL,
+                gap_median=0.4,
+                adaptive_scale={"control": {"variable": "users"}},
+            )
+
+    def test_non_users_control_variable_keeps_the_num_users_bound(self) -> None:
+        # control.min here bounds concurrency, not users, so the gap bound stays
+        # at users / rate = 16 / 4.0 = 4.0s.
+        phase = _make_adaptive_users_phase(
+            gap_distribution=UserCentricGapDistribution.LOGNORMAL,
+            gap_median=3.0,
+            concurrency=32,
+            adaptive_scale={
+                "control": {"variable": "concurrency", "min": 2, "max": 32},
+            },
+        )
+        assert phase.gap_median == 3.0
+
+    def test_disabled_adaptive_scale_keeps_the_num_users_bound(self) -> None:
+        phase = _make_adaptive_users_phase(
+            gap_distribution=UserCentricGapDistribution.LOGNORMAL,
+            gap_median=3.0,
+            adaptive_scale={"enabled": False},
+        )
+        assert phase.gap_median == 3.0

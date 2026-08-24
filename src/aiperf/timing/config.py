@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
 
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import (
+    CacheBustTarget,
+    CreditPhase,
+    UserCentricGapDistribution,
+)
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import PhaseKind
 from aiperf.config.dataset.defaults import InputDefaults
@@ -316,6 +320,23 @@ class CreditPhaseConfig(AIPerfBaseModel):
         ge=1,
         description="The number of concurrent users to use for the credit phase. "
         "This is only applicable when using user-centric rate limiting mode. ",
+    )
+    user_centric_gap_distribution: UserCentricGapDistribution = Field(
+        default=UserCentricGapDistribution.FIXED,
+        description="Distribution of the per-user gap between turns in user-centric "
+        "rate mode. fixed uses the deterministic constant gap of "
+        "num_users / request_rate seconds; lognormal/weibull draw each turn gap "
+        "from the named distribution, with the sampled distribution's mean "
+        "pinned to num_users / request_rate seconds. Pinning that mean does "
+        "not preserve the realized aggregate request rate, which falls as skew "
+        "increases.",
+    )
+    user_centric_gap_median: float | None = Field(
+        default=None,
+        gt=0,
+        description="Median of the sampled per-user turn gap in seconds. "
+        "Only used when user_centric_gap_distribution is lognormal or weibull; "
+        "must be strictly less than the mean gap of num_users / request_rate.",
     )
     concurrency_ramp_duration_sec: float | None = Field(
         default=None,
@@ -682,6 +703,10 @@ def _build_profiling_config(
         seamless=phase.seamless,
         grace_period_sec=phase.grace_period,
         num_users=getattr(phase, "users", None),
+        user_centric_gap_distribution=getattr(
+            phase, "gap_distribution", UserCentricGapDistribution.FIXED
+        ),
+        user_centric_gap_median=getattr(phase, "gap_median", None),
         concurrency_ramp_duration_sec=_ramp_duration(phase.concurrency_ramp),
         prefill_concurrency_ramp_duration_sec=_ramp_duration(phase.prefill_ramp),
         request_rate_ramp_duration_sec=_ramp_duration(

@@ -111,6 +111,7 @@ class ScenarioSpec(AIPerfBaseModel):
     system_idle_gap_cap_seconds: float | None = Field(
         default=None,
         ge=0,
+        allow_inf_nan=False,
         description=(
             "Hard ceiling in seconds for globally idle replay time. Pending "
             "request timers shift uniformly only when no request is active."

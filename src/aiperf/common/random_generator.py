@@ -121,6 +121,16 @@ class RandomGenerator:
         """Get the seed used to initialize this generator."""
         return self._seed
 
+    @property
+    def numpy_generator(self) -> np.random.Generator:
+        """The underlying NumPy Generator, for APIs that require one directly.
+
+        Draws made through the returned generator advance this RandomGenerator's
+        NumPy stream (state is shared, not copied), so reproducibility under
+        rng.derive() is preserved.
+        """
+        return self._numpy_rng
+
     def integers(
         self,
         low: int,

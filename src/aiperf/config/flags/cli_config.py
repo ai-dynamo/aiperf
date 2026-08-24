@@ -53,6 +53,7 @@ from aiperf.common.enums import (
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
+    UserCentricGapDistribution,
     VideoAudioCodec,
     VideoFormat,
     VideoSynthType,
@@ -2377,6 +2378,7 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=0.0,
+            allow_inf_nan=False,
             description="AGENTIC_REPLAY only: maximum time in seconds the "
             "replay may remain globally idle while future requests are "
             "scheduled. When no requests are in flight or ready, all pending "
@@ -2632,6 +2634,61 @@ class CLIConfig(BaseConfig):
         BeforeValidator(parse_int_or_int_list),
         CLIParameter(
             name=("--num-users",),
+            group=Groups.USER_CENTRIC,
+        ),
+    ] = None
+
+    user_centric_gap_distribution: Annotated[
+        UserCentricGapDistribution,
+        Field(
+            description="Distribution of the per-user gap between turns for --user-centric-rate mode. "
+            "`fixed`: deterministic constant gap of num_users / user_centric_rate seconds (default, "
+            "the existing behavior). "
+            "`lognormal` / `weibull`: draw each turn gap from the named distribution, with the "
+            "sampled distribution's mean pinned to the active user count over the rate -- "
+            "num_users / user_centric_rate seconds, or adaptive_scale.control.min / "
+            "user_centric_rate when adaptive scaling of `users` starts the run below the "
+            "configured maximum; supply --user-centric-gap-median to control skew. "
+            "Pinning the sampled distribution's mean does NOT preserve the realized aggregate "
+            "request rate. The scheduler advances each user to "
+            "max(now, previous_send + gap), which can only lengthen an inter-send interval and "
+            "never shorten it, so realized throughput degrades as skew increases -- measured up to "
+            "-52% relative to `fixed` (4 req/s target over 45s, same seed: 3.38 req/s with `fixed` "
+            "vs 1.62 req/s with `lognormal` at median 0.5). "
+            "Expect a lower request rate with `lognormal` / `weibull` "
+            "than with `fixed`; that drop is scheduler behavior, not a server regression. "
+            "SCOPE: because the shape changes the delivered rate, this option cannot isolate the "
+            "effect of burstiness at matched load -- a `fixed` vs `lognormal`/`weibull` A/B "
+            "confounds gap shape with offered load, and no choice of median removes that. Use it "
+            "to ask how the system behaves under bursty users; do not use it to attribute a "
+            "latency or hit-rate difference to burstiness alone. Comparisons that hold the "
+            "distribution family AND the median-to-mean ratio fixed are unaffected; a sweep over "
+            "--user-centric-gap-median is not one of those, since it moves shape and delivered "
+            "load together -- report the realized rate per arm. "
+            "Requires --user-centric-rate.",
+        ),
+        CLIParameter(
+            name=("--user-centric-gap-distribution",),
+            group=Groups.USER_CENTRIC,
+        ),
+    ] = UserCentricGapDistribution.FIXED
+
+    user_centric_gap_median: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Median of the sampled per-user turn gap in seconds. Required when "
+            "--user-centric-gap-distribution is lognormal or weibull; rejected for fixed. Must be "
+            "strictly between 0 and the smallest mean gap the run reaches: "
+            "num_users / user_centric_rate seconds, or adaptive_scale.control.min / "
+            "user_centric_rate when adaptive scaling of `users` starts the run at control.min "
+            "(both distributions are right-skewed, so median < mean). "
+            "The further the median sits below the mean, the stronger the skew and the lower the "
+            "realized aggregate request rate -- see --user-centric-gap-distribution. "
+            "Requires --user-centric-rate.",
+        ),
+        CLIParameter(
+            name=("--user-centric-gap-median",),
             group=Groups.USER_CENTRIC,
         ),
     ] = None

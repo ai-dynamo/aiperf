@@ -19,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from aiperf.common.enums import UserCentricGapDistribution
 from aiperf.common.phase import infer_legacy_phase_kind
 from aiperf.common.types import PhaseKind
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
@@ -340,6 +341,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         Field(
             default=None,
             ge=0.0,
+            allow_inf_nan=False,
             description="AGENTIC_REPLAY only: maximum time in seconds the "
             "replay may remain globally idle while future requests are "
             "scheduled. When no requests are in flight or ready, all pending "
@@ -628,6 +630,41 @@ class UserCentricPhase(RatePhaseConfig):
         ),
     ]
 
+    gap_distribution: Annotated[
+        UserCentricGapDistribution,
+        Field(
+            default=UserCentricGapDistribution.FIXED,
+            description="Distribution of the per-user gap between turns. "
+            "fixed: deterministic constant gap of users / rate seconds. "
+            "lognormal / weibull: draw each turn gap from the named "
+            "distribution, with the sampled distribution's mean pinned to "
+            "users / rate seconds; gap_median controls skew. Pinning the "
+            "sampled distribution's mean does NOT preserve the realized "
+            "aggregate request rate: the scheduler advances each user to "
+            "max(now, previous_send + gap), which can only lengthen an "
+            "inter-send interval, so realized throughput falls as skew "
+            "increases (measured up to -52% relative to fixed). That drop is "
+            "scheduler behavior, not a server regression.",
+        ),
+    ]
+
+    gap_median: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0,
+            description="Median of the sampled per-user turn gap in seconds. "
+            "Required for lognormal/weibull gap distributions and rejected for "
+            "fixed. Must be strictly less than the smallest mean turn gap the "
+            "run reaches (both distributions are right-skewed): "
+            "users / rate seconds normally, or "
+            "adaptive_scale.control.min / rate when adaptive scaling of "
+            "'users' is active, since the run starts at control.min. The "
+            "further the median sits below the mean, the stronger the skew "
+            "and the lower the realized aggregate request rate.",
+        ),
+    ]
+
     @model_validator(mode="after")
     def validate_user_centric_constraints(self) -> UserCentricPhase:
         """Validate user-centric mode constraints."""
@@ -646,7 +683,58 @@ class UserCentricPhase(RatePhaseConfig):
                 f">= --num-users ({self.users}). Each user needs at least one request."
             )
 
+        self._validate_gap_distribution()
         return self
+
+    def _validate_gap_distribution(self) -> None:
+        """Validate gap_distribution / gap_median cross-field constraints."""
+        if self.gap_distribution == UserCentricGapDistribution.FIXED:
+            if self.gap_median is not None:
+                raise ValueError(
+                    f"Phase '{self.name}': --user-centric-gap-median only applies "
+                    "to sampled gap distributions. Pass "
+                    "--user-centric-gap-distribution lognormal or weibull, or "
+                    "drop --user-centric-gap-median."
+                )
+            return
+
+        if self.gap_median is None:
+            raise ValueError(
+                f"Phase '{self.name}': --user-centric-gap-distribution "
+                f"{self.gap_distribution} requires --user-centric-gap-median "
+                "(median of the sampled turn gap in seconds)."
+            )
+
+        mean_gap, bound_expr, bound_note = self._smallest_mean_turn_gap()
+        if self.gap_median >= mean_gap:
+            raise ValueError(
+                f"Phase '{self.name}': --user-centric-gap-median "
+                f"({self.gap_median}) must be less than the mean turn gap of "
+                f"{bound_expr} = {mean_gap} seconds.{bound_note} "
+                "Lognormal and weibull turn-gap sampling keeps the mean pinned "
+                "to that value and supports right-skewed gaps only "
+                "(median < mean)."
+            )
+
+    def _smallest_mean_turn_gap(self) -> tuple[float, str, str]:
+        """Return the smallest reachable mean turn gap, plus how it was derived.
+
+        ``users`` is the *maximum* user count: with adaptive ``users`` scaling
+        the run starts at ``adaptive_scale.control.min`` and ramps up, and the
+        mean turn gap is ``num_users / rate``, so the starting user count yields
+        the smallest gap. Bounding ``gap_median`` by that smallest gap is what
+        keeps a config that validates from dying at phase start in
+        ``UserCentricStrategy._solve_gap_params``.
+        """
+        floor = self.adaptive_users_control_floor()
+        if floor is None or floor >= self.users:
+            return self.users / self.rate, "--num-users / --user-centric-rate", ""
+        return (
+            floor / self.rate,
+            f"adaptive_scale.control.min ({floor:g}) / --user-centric-rate",
+            " Adaptive scaling of 'users' starts the run at control.min, so "
+            "that is the smallest mean turn gap the run reaches.",
+        )
 
 
 class FixedSchedulePhase(BasePhaseConfig):

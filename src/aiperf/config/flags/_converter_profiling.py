@@ -44,6 +44,12 @@ _FIXED_SCHEDULE_ONLY_ROUTES: tuple[tuple[str, str], ...] = (
 )
 
 
+_USER_CENTRIC_ONLY_ROUTES: tuple[tuple[str, str], ...] = (
+    ("gap_distribution", "user_centric_gap_distribution"),
+    ("gap_median", "user_centric_gap_median"),
+)
+
+
 _RAMP_FIELDS: tuple[tuple[str, str], ...] = (
     ("concurrency_ramp_duration", "concurrency_ramp"),
     ("prefill_concurrency_ramp_duration", "prefill_ramp"),
@@ -215,6 +221,17 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
                 "--fixed-schedule-{auto,start,end}-offset requires --fixed-schedule. "
                 "Pass --fixed-schedule with a trace file to enable offsets, or drop "
                 "these flags."
+            )
+        prof[output_key] = getattr(cli, attr_name)
+
+    for output_key, attr_name in _USER_CENTRIC_ONLY_ROUTES:
+        if attr_name not in fields_set:
+            continue
+        if phase_type != PhaseType.USER_CENTRIC:
+            flag = f"--{attr_name.replace('_', '-')}"
+            raise ValueError(
+                f"{flag} requires --user-centric-rate. Pass --user-centric-rate "
+                f"to enable user-centric mode, or drop {flag}."
             )
         prof[output_key] = getattr(cli, attr_name)
 

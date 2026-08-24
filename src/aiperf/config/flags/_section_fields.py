@@ -185,6 +185,8 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "trace_idle_gap_cap_seconds",
         "trajectory_start_max_ratio",
         "trajectory_start_min_ratio",
+        "user_centric_gap_distribution",
+        "user_centric_gap_median",
         "user_centric_rate",
         "warmup_arrival_pattern",
         "warmup_concurrency",

@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config.flags._converter_profiling import build_profiling
 from aiperf.config.flags.cli_config import CLIConfig
@@ -252,6 +254,58 @@ class TestNumUsersRequiresUserCentric:
         assert prof["users"] == 5
 
 
+class TestGapDistributionRequiresUserCentric:
+    def test_gap_distribution_with_request_rate_raises(self) -> None:
+        loadgen = CLIConfig(
+            user_centric_gap_distribution="lognormal",
+            request_rate=100.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError,
+            match="--user-centric-gap-distribution requires --user-centric-rate",
+        ):
+            build_profiling(user)
+
+    def test_gap_median_with_concurrency_mode_raises(self) -> None:
+        loadgen = CLIConfig(
+            user_centric_gap_median=5.0, request_count=10, concurrency=1
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError, match="--user-centric-gap-median requires --user-centric-rate"
+        ):
+            build_profiling(user)
+
+    def test_explicit_fixed_without_user_centric_rate_raises(self) -> None:
+        """Even the default value passed explicitly is rejected without the mode."""
+        loadgen = CLIConfig(
+            user_centric_gap_distribution="fixed", request_count=10, concurrency=1
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError,
+            match="--user-centric-gap-distribution requires --user-centric-rate",
+        ):
+            build_profiling(user)
+
+    def test_gap_flags_with_user_centric_route_to_phase(self) -> None:
+        loadgen = CLIConfig(
+            user_centric_rate=10.0,
+            num_users=5,
+            user_centric_gap_distribution="weibull",
+            user_centric_gap_median=0.3,
+            request_count=20,
+            conversation_turn_mean=2,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["gap_distribution"] == "weibull"
+        assert prof["gap_median"] == 0.3
+
+
 # ---------------------------------------------------------------------------
 # BUG 4b — --request-rate-ramp-duration without --request-rate
 # ---------------------------------------------------------------------------
@@ -335,6 +389,27 @@ class TestSystemIdleGapCapRouting:
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert "system_idle_gap_cap_seconds" not in prof
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param(float("inf"), id="inf"),
+            param(float("-inf"), id="-inf"),
+            param(float("nan"), id="nan"),
+        ],
+    )  # fmt: skip
+    def test_system_idle_gap_cap_rejects_non_finite(self, value: float) -> None:
+        """``inf`` is the regression case: ``ge=0.0`` alone admits it, so an
+        infinite cap silently disabled the global idle guard instead of
+        erroring. ``allow_inf_nan=False`` rejects it at ``CLIConfig``
+        construction. ``-inf``/``nan`` already failed ``ge=0.0`` and are kept
+        here so the whole non-finite set stays covered."""
+        with pytest.raises(ValidationError):
+            CLIConfig(
+                concurrency=8,
+                request_count=10,
+                system_idle_gap_cap_seconds=value,
+            )
 
 
 class TestAdaptiveScaleCliRemoval:

@@ -847,3 +847,18 @@ class RandomCorpusStyle(CaseInsensitiveStrEnum):
 
     The default ``--dataset-name random`` is a different algorithm upstream
     (repeat/truncate ShareGPT token ids) and is not what this style mirrors."""
+
+
+class UserCentricGapDistribution(CaseInsensitiveStrEnum):
+    """Distribution of the per-user gap between turns in user-centric rate mode.
+
+    FIXED keeps the deterministic constant gap of num_users / user_centric_rate
+    seconds (the historical behavior). LOGNORMAL and WEIBULL draw each turn gap
+    from the named distribution whose mean stays pinned to
+    num_users / user_centric_rate seconds, preserving the aggregate request
+    rate; the user-supplied median controls skew.
+    """
+
+    FIXED = "fixed"
+    LOGNORMAL = "lognormal"
+    WEIBULL = "weibull"
