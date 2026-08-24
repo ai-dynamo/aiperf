@@ -450,7 +450,7 @@ For multimodal workloads, `random_pool` supports per-modality batch-size flags t
 | `--audio-batch-size N` | `audio_batch_size` | 1 | Audio items per request. Set to `0` to disable audio inputs. |
 | `--video-batch-size N` | `video_batch_size` | 1 | Video items per request. Set to `0` to disable video inputs. |
 
-Setting a batch size to `0` for a modality that is absent from the pool is a no-op: it neither suppresses anything nor counts as batching, so `--image-batch-size 0` against a text-only pool leaves that pool sampled normally. A configuration where *every* modality is either absent from the pool or set to `0` produces empty requests and is rejected, since there is nothing left to send.
+Setting a batch size to `0` for a modality that is absent from the pool is a no-op: it neither suppresses anything nor counts as batching, so `--image-batch-size 0` against a single-file text-only pool leaves that pool sampled normally. A configuration where *every* modality is either absent from the pool or set to `0` produces empty requests and is rejected, since there is nothing left to send. Directory input rejects any batch size other than `1` regardless of which modalities are present, because pool contents are not known at config time -- see below.
 
 These flags are only valid with `format: random_pool` (set via `--custom-dataset-type random_pool` on the CLI, or `format: random_pool` directly in a YAML dataset config -- either selects the same format). Using them with other file dataset formats (e.g. `mooncake_trace`) is an error.
 
