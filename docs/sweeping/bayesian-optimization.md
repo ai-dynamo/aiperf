@@ -110,7 +110,9 @@ its own search range, but a user-shaped benchmark still needs the same base
 rate as the rate shapes (users share a global request rate), so searching
 `users` alone also requires `--request-rate`, `--user-centric-rate`, or a
 `rate` dimension -- same requirement, same error, just for a different
-field.
+field. A `users` dimension must also use `:int` kind (e.g.
+`users:1,50:int`) -- the omitted-kind default of `:real` is rejected, since
+the number of simulated users can only ever be a whole number.
 
 ### Search space grammar
 

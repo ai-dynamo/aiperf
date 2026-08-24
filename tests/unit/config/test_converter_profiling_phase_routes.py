@@ -990,6 +990,58 @@ class TestSearchSpacePhaseShapeInference:
         with pytest.raises(ValueError, match="':int' kind"):
             build_profiling(user)
 
+    def test_users_real_kind_with_explicit_num_users_still_raises(self) -> None:
+        """An explicit --num-users must not bypass ':int'-kind validation
+        for a 'users' search-space dimension. Before this was fixed, an
+        already-set prof["users"] (from --num-users) short-circuited the
+        seed function entirely, letting 'users:1.5,50:real' silently reach
+        the search planner as a real-valued dimension for a field that
+        requires an integer."""
+        loadgen = CLIConfig(
+            search_space=["users:1.5,50:real"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
+    def test_users_lower_bound_zero_with_explicit_num_users_still_raises(
+        self,
+    ) -> None:
+        """Same bypass check for the bound validation: an explicit
+        --num-users must not let an out-of-bounds 'users' search-space
+        lower bound go unvalidated."""
+        loadgen = CLIConfig(
+            search_space=["users:0,50:int"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
+    def test_users_explicit_num_users_wins_over_search_space_lower_bound(
+        self,
+    ) -> None:
+        """When --num-users is explicit AND 'users' is validly searched
+        (:int kind, valid bound), the explicit --num-users value is kept
+        rather than overwritten by the search-space lower bound -- the
+        search-space dimension is still validated, just not used as the
+        seed when an explicit value already exists."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 5
+
     def test_warmup_path_search_space_dimension_ignored_for_shape_inference(
         self,
     ) -> None:

@@ -206,21 +206,24 @@ def _apply_search_space_shape_seeds(
     "rate-controlled phases require rate or rate_series" surface as an
     unexplained crash on the very first config build.
 
-    By construction this is a no-op whenever the phase type came from an
-    explicit CLI flag rather than search-space inference: --request-rate,
-    --request-rate-series, and --user-centric-rate all populate
-    prof["rate"]/prof["rate_series"] via _PROF_FIELD_ROUTES /
-    _apply_profiling_rate_series before this runs.
+    By construction the rate-seeding block below is a no-op whenever the
+    phase type came from an explicit CLI flag rather than search-space
+    inference: --request-rate, --request-rate-series, and
+    --user-centric-rate all populate prof["rate"]/prof["rate_series"] via
+    _PROF_FIELD_ROUTES / _apply_profiling_rate_series before this runs. The
+    'users' kind/bound validation below intentionally does NOT have that
+    same short-circuit: --num-users populates prof["users"] via the same
+    routes, but a 'users' search-space dimension is validated regardless
+    of whether an explicit --num-users also set prof["users"] first --
+    otherwise `--num-users 10 --search-space "users:1.5,50:real"` would
+    silently skip validation on a real-valued dimension that still reaches
+    the planner and can crash later on a non-integral sampled value.
     """
     from aiperf.config.phases import PhaseType
 
     phase_type = prof["type"]
 
-    if (
-        phase_type == PhaseType.USER_CENTRIC
-        and "users" not in prof
-        and "users" in search_dims
-    ):
+    if phase_type == PhaseType.USER_CENTRIC and "users" in search_dims:
         users_lo, users_kind = search_dims["users"]
         if users_kind != "int":
             raise ValueError(
@@ -234,7 +237,8 @@ def _apply_search_space_shape_seeds(
                 f"{users_lo!r}); the number of simulated users can't be "
                 "less than one."
             )
-        prof["users"] = int(users_lo)
+        if "users" not in prof:
+            prof["users"] = int(users_lo)
 
     if (
         phase_type
