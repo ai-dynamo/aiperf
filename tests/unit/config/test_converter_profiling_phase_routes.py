@@ -25,6 +25,7 @@ from typing import ClassVar
 
 import pytest
 
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.flags._converter_profiling import build_profiling
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import ArrivalPattern, PhaseType
@@ -701,7 +702,8 @@ class TestRateSeries:
 class TestSearchSpacePhaseShapeInference:
     def test_bare_rate_keyword_infers_poisson_phase(self) -> None:
         """--search-space 'rate:...' with no --request-rate must not crash;
-        it should auto-switch to a rate-controlled (poisson default) phase."""
+        it should auto-switch to a rate-controlled (poisson default) phase,
+        seeding 'rate' from the search-space dimension's own lower bound."""
         loadgen = CLIConfig(
             search_space=["rate:1,100:real"],
             request_count=10,
@@ -709,7 +711,7 @@ class TestSearchSpacePhaseShapeInference:
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.POISSON
-        assert "rate" not in prof  # value comes from the search planner, not here
+        assert prof["rate"] == 1.0
 
     def test_dotted_rate_path_infers_poisson_phase(self) -> None:
         """Full dotted path form ('phases.profiling.rate') resolves the same
@@ -721,6 +723,7 @@ class TestSearchSpacePhaseShapeInference:
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 1.0
 
     def test_rate_search_space_respects_explicit_arrival_pattern(self) -> None:
         """--arrival-pattern gamma + --search-space 'rate:...' should still
@@ -733,57 +736,127 @@ class TestSearchSpacePhaseShapeInference:
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.GAMMA
+        assert prof["rate"] == 1.0
 
-    def test_rate_ramp_keyword_infers_rate_controlled_phase(self) -> None:
+    def test_rate_ramp_keyword_with_request_rate_stays_poisson(self) -> None:
+        """--request-rate supplies the base rate; 'rate_ramp' alone in
+        search-space just needs a companion rate source, per the bug
+        report's documented workaround."""
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:1,60:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 10.0
+
+    def test_rate_ramp_keyword_alone_raises_clear_error(self) -> None:
+        """'rate_ramp' layers a ramp on top of a base rate -- it cannot
+        supply that base rate itself. Without --request-rate or a 'rate'
+        search-space dimension, this must fail with a clear error, not a
+        raw Pydantic 'rate-controlled phases require rate or rate_series'."""
         loadgen = CLIConfig(
             search_space=["rate_ramp:1,60:real"],
             request_count=10,
         )
         user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
+
+    def test_rate_series_keyword_with_request_rate_stays_poisson(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 10.0
 
-    def test_rate_series_keyword_infers_rate_controlled_phase(self) -> None:
+    def test_rate_series_keyword_alone_raises_clear_error(self) -> None:
         loadgen = CLIConfig(
             search_space=["rate_series:1,100:real"],
             request_count=10,
         )
         user = _make_user(loadgen=loadgen)
-        prof = build_profiling(user)
-        assert prof["type"] == PhaseType.POISSON
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
 
-    def test_smoothness_keyword_infers_gamma_phase(self) -> None:
-        """--search-space 'smoothness:...' alone (no --request-rate, no
-        --arrival-pattern) must auto-switch to gamma, not crash."""
+    def test_smoothness_keyword_with_request_rate_infers_gamma_phase(self) -> None:
+        """--search-space 'smoothness:...' auto-switches to gamma, but still
+        needs a base rate from somewhere -- --request-rate supplies it."""
         loadgen = CLIConfig(
             search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
             request_count=10,
         )
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.GAMMA
+        assert prof["rate"] == 10.0
+
+    def test_smoothness_keyword_alone_raises_clear_error(self) -> None:
+        """'smoothness' alone (no --request-rate, no 'rate' in search-space)
+        auto-switches the *type* to gamma but has no base rate to seed --
+        must fail with a clear error, not a raw Pydantic crash."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
 
     def test_users_keyword_infers_user_centric_phase(self) -> None:
+        """--user-centric-rate supplies the shared base rate; 'users' in
+        search-space self-seeds the user count from its own lower bound."""
         loadgen = CLIConfig(
             search_space=["users:1,50:int"],
+            user_centric_rate=10.0,
             conversation_turn_mean=4,
         )
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 1
+        assert prof["rate"] == 10.0
 
-    def test_users_and_rate_together_raises_clear_conflict_error(self) -> None:
-        """A benchmark has exactly one shape; searching 'users' and 'rate' at
-        once is a genuine conflict, not something to silently resolve."""
+    def test_users_keyword_alone_raises_clear_error(self) -> None:
+        """'users' alone (no --user-centric-rate, no 'rate' in search-space)
+        auto-switches the *type* to user-centric and self-seeds 'users', but
+        has no base rate to seed -- must fail with a clear error."""
         loadgen = CLIConfig(
-            search_space=["users:1,50:int", "rate:1,100:real"],
-            request_count=10,
+            search_space=["users:1,50:int"],
+            conversation_turn_mean=4,
         )
         user = _make_user(loadgen=loadgen)
-        with pytest.raises(ValueError, match="only have one shape"):
+        with pytest.raises(ValueError, match="base rate"):
             build_profiling(user)
 
+    def test_users_and_rate_together_infers_user_centric_with_both_seeded(
+        self,
+    ) -> None:
+        """'users' and 'rate' are compatible, not a conflict: UserCentricPhase
+        subclasses RatePhaseConfig, so it legitimately has both fields.
+        Searching them together fully self-seeds a user-centric shape with
+        no companion flags needed at all."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "rate:1,100:real"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 1
+        assert prof["rate"] == 1.0
+
     def test_users_and_smoothness_together_raises_clear_conflict_error(self) -> None:
+        """This IS a genuine, unresolvable conflict: no phase type has both
+        a 'users' field (UserCentricPhase-only) and a 'smoothness' field
+        (GammaPhase-only)."""
         loadgen = CLIConfig(
             search_space=["users:1,50:int", "smoothness:0.5,2.0:real"],
             request_count=10,
@@ -829,3 +902,41 @@ class TestSearchSpacePhaseShapeInference:
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.GAMMA
         assert prof["smoothness"] == 1.0
+
+    def test_bare_rate_keyword_produces_a_fully_valid_benchmark_config(self) -> None:
+        """End-to-end proof, not just build_profiling()'s dict: the seeded
+        phase actually passes full BenchmarkConfig/Pydantic validation."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        cfg = BenchmarkConfig.model_validate(
+            {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "profiling", "type": "synthetic"}],
+                "phases": [{"name": "profiling", **prof}],
+            }
+        )
+        assert cfg.phases[0].type == PhaseType.POISSON
+
+    def test_users_and_rate_together_produces_a_fully_valid_benchmark_config(
+        self,
+    ) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "rate:1,100:real"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        cfg = BenchmarkConfig.model_validate(
+            {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "profiling", "type": "synthetic"}],
+                "phases": [{"name": "profiling", **prof}],
+            }
+        )
+        assert cfg.phases[0].type == PhaseType.USER_CENTRIC

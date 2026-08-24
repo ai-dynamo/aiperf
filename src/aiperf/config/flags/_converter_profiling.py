@@ -91,49 +91,60 @@ _RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _search_space_target_fields(cli: CLIConfig) -> set[str]:
-    """Bare field names referenced anywhere in ``--search-space``.
+def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
+    """Field name -> lower bound for every dimension in ``--search-space``.
 
     A lightweight companion to ``parse_search_space()`` (which runs later,
     in ``_build_adaptive_search``): only extracts each dimension's final
-    path segment, resolving bare-name aliases the same way the real parser
-    does, so ``_profiling_phase_type`` can pick a compatible phase shape
-    before search-space bounds/kind are even validated. Malformed entries
-    are ignored here -- the real parser reports the actual grammar error.
+    path segment (resolving bare-name aliases the same way the real parser
+    does) and its lower bound, so ``_profiling_phase_type``/``build_profiling``
+    can pick a compatible phase shape -- and seed a self-supplying field's
+    initial value from its own search range -- before search-space
+    bounds/kind are even validated. Malformed entries are skipped here; the
+    real parser reports the actual grammar error.
     """
     if not cli.search_space:
-        return set()
+        return {}
 
     from aiperf.config.loader.dotted_path import _resolve_path_alias
 
-    fields: set[str] = set()
+    dims: dict[str, float] = {}
     for raw in cli.search_space:
-        path = raw.split(":", 1)[0].strip()
+        path_part, _, bounds_part = raw.partition(":")
+        path = path_part.strip()
         if not path:
             continue
         if "." not in path:
             path = _resolve_path_alias(path)
-        fields.add(path.rsplit(".", 1)[-1])
-    return fields
+        field = path.rsplit(".", 1)[-1]
+        lo_str = bounds_part.split(",", 1)[0].strip()
+        try:
+            dims[field] = float(lo_str)
+        except ValueError:
+            continue
+    return dims
 
 
-def _profiling_phase_type(cli: CLIConfig) -> Any:
+def _profiling_phase_type(cli: CLIConfig, search_dims: dict[str, float]) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
     if cli.fixed_schedule:
         return PhaseType.FIXED_SCHEDULE
 
-    search_space_fields = _search_space_target_fields(cli)
-    user_centric_needed = "users" in search_space_fields
-    rate_shape_needed = bool(search_space_fields & _RATE_SHAPE_SEARCH_FIELDS)
+    user_centric_needed = "users" in search_dims
+    rate_shape_needed = bool(set(search_dims) & _RATE_SHAPE_SEARCH_FIELDS)
 
-    if user_centric_needed and rate_shape_needed:
+    # UserCentricPhase has no 'smoothness' field and GammaPhase has no
+    # 'users' field -- no phase type can satisfy both, unlike users+rate
+    # (UserCentricPhase legitimately has rate/rate_ramp/rate_series too,
+    # inherited from RatePhaseConfig).
+    if user_centric_needed and "smoothness" in search_dims:
         raise ValueError(
             "--search-space targets both 'users' (a user-centric-shaped "
-            "benchmark) and a rate-shaped field ('rate'/'rate_ramp'/"
-            "'rate_series'/'smoothness'). A benchmark can only have one "
-            "shape at a time -- search these in separate runs."
+            "benchmark) and 'smoothness' (a gamma-shaped benchmark). A "
+            "benchmark can only have one shape at a time -- search these in "
+            "separate runs."
         )
 
     if cli.user_centric_rate is not None or user_centric_needed:
@@ -151,7 +162,7 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
         # that made --vllm-burstiness unusable on its own. A 'smoothness'
         # search-space dimension is the same knob, so it auto-promotes too.
         if "arrival_pattern" not in cli.model_fields_set and (
-            cli.arrival_smoothness is not None or "smoothness" in search_space_fields
+            cli.arrival_smoothness is not None or "smoothness" in search_dims
         ):
             return PhaseType.GAMMA
         match cli.arrival_pattern:
@@ -162,6 +173,64 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
             case _:
                 return PhaseType.POISSON
     return PhaseType.CONCURRENCY
+
+
+def _apply_search_space_shape_seeds(
+    prof: dict[str, Any], search_dims: dict[str, float]
+) -> None:
+    """Seed the required scalar(s) a search-space-inferred shape still needs.
+
+    ``_profiling_phase_type`` can auto-switch the phase *type* from
+    ``--search-space`` alone, but rate-controlled/user-centric phases also
+    require a *value* for their defining scalar (``rate``, and for
+    user-centric also ``users``) before Pydantic will accept the base
+    config -- the search planner only supplies that value once trials
+    start. When the searched field is the scalar itself, its own lower
+    bound is a natural seed (the planner immediately overrides it on trial
+    0 anyway). When it isn't -- e.g. searching 'smoothness' or 'rate_ramp'
+    without ever searching or explicitly setting 'rate' -- there's no value
+    to seed from; raise a clear error instead of letting Pydantic's
+    "rate-controlled phases require rate or rate_series" surface as an
+    unexplained crash on the very first config build.
+
+    By construction this is a no-op whenever the phase type came from an
+    explicit CLI flag rather than search-space inference: --request-rate,
+    --request-rate-series, and --user-centric-rate all populate
+    prof["rate"]/prof["rate_series"] via _PROF_FIELD_ROUTES /
+    _apply_profiling_rate_series before this runs.
+    """
+    from aiperf.config.phases import PhaseType
+
+    phase_type = prof["type"]
+
+    if (
+        phase_type == PhaseType.USER_CENTRIC
+        and "users" not in prof
+        and "users" in search_dims
+    ):
+        prof["users"] = int(search_dims["users"])
+
+    if (
+        phase_type
+        in (
+            PhaseType.POISSON,
+            PhaseType.GAMMA,
+            PhaseType.CONSTANT,
+            PhaseType.USER_CENTRIC,
+        )
+        and "rate" not in prof
+        and "rate_series" not in prof
+    ):
+        if "rate" in search_dims:
+            prof["rate"] = search_dims["rate"]
+        else:
+            raise ValueError(
+                f"--search-space selects a rate-shaped benchmark (phase type "
+                f"{phase_type!r}), which also requires a base rate. Pass "
+                "--request-rate <value> (or --user-centric-rate for a "
+                "user-shaped benchmark), or add a 'rate' dimension to "
+                "--search-space."
+            )
 
 
 def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:
@@ -562,7 +631,9 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
     _apply_agentic_replay_fields(prof, cli)
     _apply_profiling_rate_series(prof, cli)
 
-    prof["type"] = _profiling_phase_type(cli)
+    search_dims = _search_space_dimensions(cli)
+    prof["type"] = _profiling_phase_type(cli, search_dims)
+    _apply_search_space_shape_seeds(prof, search_dims)
     _reject_orphan_load_generator_flags(prof, cli)
     _apply_phase_specific_routes(prof, cli)
 
