@@ -442,6 +442,11 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
 <br/>_Flag (no value required)_
 
+#### `--per-chunk-usage`
+
+Request per-chunk token usage on streaming responses by setting stream_options.continuous_usage_stats, so the server reports cumulative usage on every chunk instead of only the final one. This lets inter-token latency subtract the first content chunk's real token count (fixing TPS/user inflation when a server bundles multiple tokens into the first streamed chunk). Requires a server that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. Requires --use-server-token-count.
+<br/>_Flag (no value required)_
+
 #### `--connection-reuse-strategy` `<str>`
 
 Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response. 'sticky-user-sessions': connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing).
@@ -700,6 +705,7 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 |-------|:-------:|-------------|
 | `sonnet` |  | Shakespeare sonnets (default). Classic prose for filler text. |
 | `coding` |  | Realistic coding content: code, bash output, JSON, error tracebacks, git diffs. |
+| `random` |  | Random tokens drawn from the full tokenizer vocabulary minus special tokens. Matches vLLM bench's RandomDataset token-generation strategy. |
 
 ### Cache Bust
 
@@ -761,6 +767,21 @@ Token block size for hash-based prompt synthesis when dataset entries carry `has
 #### `--seq-dist`, `--sequence-distribution` `<str>`
 
 Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Format: `ISL,OSL:prob;ISL,OSL:prob` (semicolons separate pairs, probabilities are percentages 0-100 that must sum to 100). Supports optional stddev: `ISL|stddev,OSL|stddev:prob`. Examples: `128,64:25;512,128:50;1024,256:25` or with variance: `256|10,128|5:40;512|20,256|10:60`. Also supports bracket `[(256,128):40,(512,256):60]` and JSON formats.
+
+#### `--random-range-ratio` `<str>`
+
+Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. The window is computed from `--random-corpus-style` (defaults to `vllm`): vllm style → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); sglang style → `[max(1, int(mean*r)), mean]` (lower-bounded). Accepts a single float applied to both ISL and OSL. The JSON object form `{"input": 0.3, "output": 0.5}` for independent values is accepted only under vllm style; sglang style applies one ratio to both and requires a plain float. Requires both `--isl` and `--osl` to be set explicitly — there is no default mean for either. Mutually exclusive with `--seq-dist`. Under vllm style with a tokenizer configured, the ISL mean is automatically reduced by `tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total server-side input tokens, matching `vllm bench serve` semantics; sglang style applies no such adjustment.
+
+#### `--random-corpus-style` `<str>`
+
+Benchmark style for RANDOM corpus generation. Controls range ratio formula, token pool composition, and other per-tool behaviors. `vllm` (default) mirrors `vllm bench serve`: symmetric range window, non-special token pool (special tokens excluded). `sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). Applies in two independent places: token-pool selection whenever `--prompt-corpus random` is set (including with no `--random-range-ratio`, where the pool is the only thing the style selects), and the range-window formula, special-token accounting and RNG algorithm whenever `--random-range-ratio` is set — the latter regardless of corpus.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `vllm` | _default_ | vllm bench serve semantics: symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). Special tokens excluded from the sampling pool. BOS subtracted from ISL mean. |
+| `sglang` |  | sglang ``benchmark.serving`` semantics under ``--dataset-name random-ids``: lower-bounded window ``[max(1, int(mean*r)), mean]``. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Full vocab_size range used for token sampling (no special-token exclusion). No BOS adjustment. The default ``--dataset-name random`` is a different algorithm upstream (repeat/truncate ShareGPT token ids) and is not what this style mirrors. |
 
 ### Output Sequence Length (OSL)
 
@@ -2012,6 +2033,11 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 Use server-reported token counts from API usage fields instead of client-side tokenization. When enabled, tokenizers are still loaded (needed for dataset generation) but tokenizer.encode() is not called for computing metrics. Token count fields will be None if the server does not provide usage information. For OpenAI-compatible streaming endpoints (chat/completions), stream_options.include_usage is automatically configured when this flag is enabled.
 <br/>_Flag (no value required)_
 
+#### `--per-chunk-usage`
+
+Request per-chunk token usage on streaming responses by setting stream_options.continuous_usage_stats, so the server reports cumulative usage on every chunk instead of only the final one. This lets inter-token latency subtract the first content chunk's real token count (fixing TPS/user inflation when a server bundles multiple tokens into the first streamed chunk). Requires a server that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. Requires --use-server-token-count.
+<br/>_Flag (no value required)_
+
 #### `--connection-reuse-strategy` `<str>`
 
 Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response. 'sticky-user-sessions': connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing).
@@ -2270,6 +2296,7 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 |-------|:-------:|-------------|
 | `sonnet` |  | Shakespeare sonnets (default). Classic prose for filler text. |
 | `coding` |  | Realistic coding content: code, bash output, JSON, error tracebacks, git diffs. |
+| `random` |  | Random tokens drawn from the full tokenizer vocabulary minus special tokens. Matches vLLM bench's RandomDataset token-generation strategy. |
 
 ### Cache Bust
 
@@ -2331,6 +2358,21 @@ Token block size for hash-based prompt synthesis when dataset entries carry `has
 #### `--seq-dist`, `--sequence-distribution` `<str>`
 
 Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Format: `ISL,OSL:prob;ISL,OSL:prob` (semicolons separate pairs, probabilities are percentages 0-100 that must sum to 100). Supports optional stddev: `ISL|stddev,OSL|stddev:prob`. Examples: `128,64:25;512,128:50;1024,256:25` or with variance: `256|10,128|5:40;512|20,256|10:60`. Also supports bracket `[(256,128):40,(512,256):60]` and JSON formats.
+
+#### `--random-range-ratio` `<str>`
+
+Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. The window is computed from `--random-corpus-style` (defaults to `vllm`): vllm style → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); sglang style → `[max(1, int(mean*r)), mean]` (lower-bounded). Accepts a single float applied to both ISL and OSL. The JSON object form `{"input": 0.3, "output": 0.5}` for independent values is accepted only under vllm style; sglang style applies one ratio to both and requires a plain float. Requires both `--isl` and `--osl` to be set explicitly — there is no default mean for either. Mutually exclusive with `--seq-dist`. Under vllm style with a tokenizer configured, the ISL mean is automatically reduced by `tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total server-side input tokens, matching `vllm bench serve` semantics; sglang style applies no such adjustment.
+
+#### `--random-corpus-style` `<str>`
+
+Benchmark style for RANDOM corpus generation. Controls range ratio formula, token pool composition, and other per-tool behaviors. `vllm` (default) mirrors `vllm bench serve`: symmetric range window, non-special token pool (special tokens excluded). `sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). Applies in two independent places: token-pool selection whenever `--prompt-corpus random` is set (including with no `--random-range-ratio`, where the pool is the only thing the style selects), and the range-window formula, special-token accounting and RNG algorithm whenever `--random-range-ratio` is set — the latter regardless of corpus.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `vllm` | _default_ | vllm bench serve semantics: symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``. r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1). Special tokens excluded from the sampling pool. BOS subtracted from ISL mean. |
+| `sglang` |  | sglang ``benchmark.serving`` semantics under ``--dataset-name random-ids``: lower-bounded window ``[max(1, int(mean*r)), mean]``. r=0 allows full variability [1, mean]; r=1 fixes length at mean. Full vocab_size range used for token sampling (no special-token exclusion). No BOS adjustment. The default ``--dataset-name random`` is a different algorithm upstream (repeat/truncate ShareGPT token ids) and is not what this style mirrors. |
 
 ### Output Sequence Length (OSL)
 

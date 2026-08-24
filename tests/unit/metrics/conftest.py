@@ -60,6 +60,7 @@ def create_record(
     responses: list[int] | None = None,
     input_tokens: int | None = None,
     output_tokens_per_response: int = 1,
+    first_content_chunk_tokens: int | None = None,
     error: ErrorDetails | None = None,
 ) -> ParsedResponseRecord:
     """
@@ -98,6 +99,7 @@ def create_record(
             input=input_tokens,
             output=len(responses) * output_tokens_per_response,
             reasoning=None,
+            first_content_chunk_tokens=first_content_chunk_tokens,
         ),
     )
 

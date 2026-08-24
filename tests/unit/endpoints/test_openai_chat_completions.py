@@ -3,7 +3,7 @@
 import pytest
 
 from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models import Image, Text, Turn
+from aiperf.common.models import Conversation, Image, Text, Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -71,6 +71,9 @@ class TestChatEndpoint:
             "model": "test-model",
             "stream": True,
             "max_completion_tokens": 42,
+            # Requested on every streaming run so vLLM emits the trailing
+            # usage chunk that carries per-request metrics.
+            "stream_options": {"include_usage": True},
         }
         assert payload == expected_payload
 
@@ -197,12 +200,16 @@ class TestChatEndpoint:
             (True, True, None, {"include_usage": True}),
             # Don't add when not streaming
             (False, True, None, None),
-            # Don't add when flag disabled
-            (True, False, None, None),
-            # Don't add when neither enabled
+            # Add for any streaming run, even without server token counts:
+            # vLLM only emits the metrics-bearing trailing usage chunk when
+            # include_usage is set, and per-request spec-decode metrics ride it.
+            (True, False, None, {"include_usage": True}),
+            # Don't add when not streaming
             (False, False, None, None),
             # Preserve user's include_usage=False
             (True, True, {"stream_options": {"include_usage": False}}, {"include_usage": False}),
+            # Preserve the opt-out without server token counts too
+            (True, False, {"stream_options": {"include_usage": False}}, {"include_usage": False}),
             # Merge with user's other options
             (True, True, {"stream_options": {"continuous_updates": True}}, {"continuous_updates": True, "include_usage": True}),
         ],
@@ -233,6 +240,106 @@ class TestChatEndpoint:
             assert "stream_options" in payload
             assert payload["stream_options"] == expected_stream_options
             endpoint.build_messages(turns)
+
+    @pytest.mark.parametrize(
+        "streaming,per_chunk_usage,expected",
+        [
+            # per_chunk_usage implies use_server_token_count (validator), so these
+            # are the only reachable states; use_server_token_count is always True.
+            (True, True, {"include_usage": True, "continuous_usage_stats": True}),
+            (True, False, {"include_usage": True}),
+            (False, True, None),
+        ],
+        ids=["on", "server_count_only", "non_streaming_no_injection"],
+    )  # fmt: skip
+    def test_per_chunk_usage_injects_continuous_usage_stats(
+        self,
+        model_endpoint,
+        sample_conversations,
+        streaming,
+        per_chunk_usage,
+        expected,
+    ):
+        """--per-chunk-usage adds stream_options.continuous_usage_stats (on top of
+        include_usage) on streaming server-token-count requests; server-token-count
+        alone adds only include_usage; non-streaming injects nothing."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = streaming
+        model_endpoint.endpoint.use_server_token_count = True
+        model_endpoint.endpoint.per_chunk_usage = per_chunk_usage
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        if expected is None:
+            assert "stream_options" not in payload
+        else:
+            assert payload["stream_options"] == expected
+
+    def test_format_payload_does_not_mutate_endpoint_extra(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
+        """Auto-adding include_usage must not write back into endpoint.extra.
+
+        The payload merge aliases the shared config dict, so an in-place edit
+        would rewrite the author's config mid-run and leak into every
+        subsequent request.
+        """
+        endpoint = ChatEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.use_server_token_count = False
+        model_endpoint.endpoint.extra = [
+            ("stream_options", {"continuous_updates": True})
+        ]
+
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream_options"] == {
+            "continuous_updates": True,
+            "include_usage": True,
+        }
+        assert model_endpoint.endpoint.extra == [
+            ("stream_options", {"continuous_updates": True})
+        ]
+
+    def test_format_payload_stream_override_suppresses_stream_options(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
+        """extra_body may turn streaming off; stream_options must follow it.
+
+        A server rejects stream_options when stream is false, so the injection
+        decision reads the merged payload rather than the endpoint config.
+        """
+        endpoint = ChatEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        turns[-1].extra_body = {"stream": False}
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream"] is False
+        assert "stream_options" not in payload
+
+    def test_format_payload_explicit_null_stream_options_still_injects(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
+        """An explicit null parses from the CLI; treat it as absent, not as opt-out."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.extra = [("stream_options", None)]
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream_options"] == {"include_usage": True}
 
     def test_create_messages_with_system_message(
         self, model_endpoint, sample_conversations

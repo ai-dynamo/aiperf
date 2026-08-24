@@ -426,6 +426,45 @@ def _apply_sequence_distribution(d: dict[str, Any], cli: CLIConfig) -> None:
     ]
 
 
+def _apply_random_corpus_style_and_range_ratio(
+    d: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Write ``random_corpus_style`` and ``random_range_ratio`` onto the prompts dict.
+
+    The style is written FIRST, before the ratio gate. It is not merely a
+    modifier of the ratio: with no ratio set it still selects the token pool
+    (``valid_token_ids`` vs ``all_token_ids``), which is then the only thing it
+    selects. Writing it after an early return meant ``--random-corpus-style
+    sglang`` alone was silently discarded and the user got vLLM's pool.
+
+    Only the sglang request was observably lost, since vllm is the default and
+    a dropped write lands there anyway -- which is why this survived so long.
+    """
+    if "prompt_random_corpus_style" in cli.model_fields_set:
+        d.setdefault("prompts", {})["random_corpus_style"] = (
+            cli.prompt_random_corpus_style
+        )
+
+    if not cli.prompt_random_range_ratio:
+        return
+    from aiperf.common.enums import RandomCorpusStyle
+    from aiperf.common.models.sequence_distribution import (
+        _parse_sglang_ratio_string,
+        _parse_vllm_ratio_string,
+    )
+
+    parser = (
+        _parse_sglang_ratio_string
+        if cli.prompt_random_corpus_style == RandomCorpusStyle.SGLANG
+        else _parse_vllm_ratio_string
+    )
+    try:
+        parser(cli.prompt_random_range_ratio)
+    except ValueError as e:
+        raise ValueError(f"Invalid --random-range-ratio value: {e}") from e
+    d.setdefault("prompts", {})["random_range_ratio"] = cli.prompt_random_range_ratio
+
+
 def _apply_turns(d: dict[str, Any], cli: CLIConfig) -> None:
     fields_set = cli.model_fields_set
     if (
@@ -551,6 +590,7 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
+    ("prompt_random_range_ratio", "--random-range-ratio"),
     ("image_batch_size", "--image-batch-size"),
     ("image_source", "--image-source"),
     ("image_source_sampling", "--image-source-sampling"),
@@ -995,6 +1035,7 @@ _NON_TEXT_TEXT_TRIGGERS: tuple[tuple[str, str], ...] = (
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
+    ("prompt_random_range_ratio", "--random-range-ratio"),
 )
 
 # Tokenizer options are also rejected for non-tokenizing endpoints
@@ -1073,6 +1114,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _attach_subtables(d, cli)
     _apply_dataset_type(d, cli, needs_text)
     _apply_sequence_distribution(d, cli)
+    _apply_random_corpus_style_and_range_ratio(d, cli)
     _apply_turns(d, cli)
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)

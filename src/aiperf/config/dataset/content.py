@@ -12,8 +12,9 @@ used as building blocks inside dataset variants. Video configs live in
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Self
+from typing import TYPE_CHECKING, Annotated, Self
 
+import orjson
 from pydantic import (
     BeforeValidator,
     ConfigDict,
@@ -29,8 +30,13 @@ from aiperf.common.enums import (
     ImageSource,
     ImageSourceSamplingStrategy,
     PromptCorpus,
+    RandomCorpusStyle,
 )
 from aiperf.config.base import BaseConfig
+
+if TYPE_CHECKING:
+    from aiperf.common.models.sequence_distribution import SequenceLengthSampler
+
 from aiperf.config.types import (
     FixedDistribution,
     SamplingDistribution,
@@ -107,6 +113,21 @@ class CacheBustConfig(BaseConfig):
         """
         self._target_explicitly_set = "target" in self.model_fields_set
         return self
+
+
+def _coerce_range_ratio(v: object) -> object:
+    """Normalize native float/dict inputs to the string form the ratio configs expect.
+
+    YAML parses ``random_range_ratio: 0.3`` as float and ``{input: 0.3, output: 0.5}``
+    as dict. Both are valid user intent but the ratio field validators require a string.
+    """
+    if isinstance(v, bool):
+        return v  # let Pydantic reject booleans via type validation
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, dict):
+        return orjson.dumps(v).decode()
+    return v
 
 
 class PromptConfig(BaseConfig):
@@ -200,6 +221,30 @@ class PromptConfig(BaseConfig):
         ),
     ]
 
+    random_range_ratio: Annotated[
+        str | None,
+        BeforeValidator(_coerce_range_ratio),
+        Field(
+            default=None,
+            description="Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. "
+            "Accepts a single float (applied to both ISL and OSL) or a JSON object "
+            '{"input": 0.3, "output": 0.5} for independent values. '
+            "Mutually exclusive with sequence_distribution. "
+            "When a tokenizer is configured, the ISL mean is automatically reduced by "
+            "tokenizer.num_special_tokens_to_add(pair=False) so --isl represents total server-side input tokens.",
+        ),
+    ]
+
+    random_corpus_style: Annotated[
+        RandomCorpusStyle,
+        Field(
+            default=RandomCorpusStyle.VLLM,
+            description="Sampling formula for random_range_ratio. "
+            "vllm (default): symmetric window [floor(mean*(1-r)), ceil(mean*(1+r))], ratio in [0, 1). "
+            "sglang: lower-bounded window [max(1, int(mean*r)), mean], ratio in [0, 1].",
+        ),
+    ]
+
     @field_validator("sequence_distribution")
     @classmethod
     def validate_sequence_probabilities(
@@ -208,6 +253,104 @@ class PromptConfig(BaseConfig):
         if v is not None:
             validate_probability_distribution(v)
         return v
+
+    @model_validator(mode="after")
+    def _validate_random_range_ratio(self) -> Self:
+        if self.random_range_ratio is None:
+            return self
+        from aiperf.common.models.sequence_distribution import _CLASS_FOR_MODE
+
+        if self.sequence_distribution is not None:
+            raise ValueError(
+                "random_range_ratio cannot be combined with sequence_distribution; "
+                "use one or the other."
+            )
+
+        if self.isl is None:
+            raise ValueError(
+                "--random-range-ratio requires --isl to be set explicitly. "
+                "There is no safe default when a ratio window is requested."
+            )
+        if self.osl is None:
+            raise ValueError(
+                "--random-range-ratio requires --osl to be set explicitly. "
+                "There is no safe default when a ratio window is requested."
+            )
+
+        # Checked here rather than left to the ratio config's `ge=1` bound: both
+        # means are declared `ge=0`, so `--isl 0` is a legal value that only
+        # fails once the sampler is constructed, surfacing a nested pydantic
+        # error about `isl_mean` that names neither flag. The tokenizer-aware
+        # half of this check (vLLM's min_total_input guard, which needs
+        # num_special_tokens and the prefix length) lives in
+        # BaseDatasetComposer._build_sequence_distribution.
+        if int(self.isl.expected_value) < 1:
+            raise ValueError(
+                "--random-range-ratio requires --isl >= 1, got "
+                f"{int(self.isl.expected_value)}. A zero-token input window has "
+                "no prompt to scale."
+            )
+        if int(self.osl.expected_value) < 1:
+            raise ValueError(
+                "--random-range-ratio requires --osl >= 1, got "
+                f"{int(self.osl.expected_value)}. A zero-token output window "
+                "would request no generation."
+            )
+
+        try:
+            _CLASS_FOR_MODE[self.random_corpus_style].get_config_class()(
+                isl_mean=int(self.isl.expected_value),
+                osl_mean=int(self.osl.expected_value),
+                isl_stddev=float(getattr(self.isl, "stddev", 0.0) or 0.0),
+                osl_stddev=float(getattr(self.osl, "stddev", 0.0) or 0.0),
+                range_ratio=self.random_range_ratio,
+            )
+        except Exception as e:
+            raise ValueError(f"Invalid random_range_ratio value: {e}") from e
+
+        return self
+
+    def get_sequence_distribution(
+        self, num_special_tokens: int = 0
+    ) -> SequenceLengthSampler | None:
+        """Return a sampler for (ISL, OSL) pairs, or None if not configured."""
+        if self.sequence_distribution is not None:
+            from aiperf.common.models.sequence_distribution import (
+                SequenceLengthDistribution,
+                SequenceLengthPair,
+            )
+
+            pairs = [
+                SequenceLengthPair(
+                    input_seq_len=int(entry.isl.expected_value),
+                    output_seq_len=int(entry.osl.expected_value),
+                    probability=float(entry.probability),
+                    input_seq_len_stddev=float(
+                        getattr(entry.isl, "stddev", 0.0) or 0.0
+                    ),
+                    output_seq_len_stddev=float(
+                        getattr(entry.osl, "stddev", 0.0) or 0.0
+                    ),
+                )
+                for entry in self.sequence_distribution
+            ]
+            return SequenceLengthDistribution(pairs)
+
+        if self.random_range_ratio is not None:
+            from aiperf.common.models.sequence_distribution import _CLASS_FOR_MODE
+
+            DistClass = _CLASS_FOR_MODE[self.random_corpus_style]
+            config = DistClass.get_config_class()(
+                isl_mean=int(self.isl.expected_value),
+                osl_mean=int(self.osl.expected_value),
+                isl_stddev=0.0,
+                osl_stddev=0.0,
+                range_ratio=self.random_range_ratio,
+                num_special_tokens=num_special_tokens,
+            )
+            return DistClass(config)
+
+        return None
 
 
 class PromptSelectionConfig(BaseConfig):
@@ -262,8 +405,8 @@ class PrefixPromptConfig(BaseConfig):
             default=None,
             description="Token length for each prefix prompt in the pool. "
             "Only used when pool_size is set. "
-            "Note: due to prefix and user prompts being concatenated, "
-            "the final prompt token count may be off by one. "
+            "The prefix is concatenated to the body at the token level, so the "
+            "final prompt contains exactly prefix length + input length tokens. "
             "Mutually exclusive with shared_system_length/user_context_length.",
         ),
     ]

@@ -107,30 +107,23 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
     @staticmethod
     def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
-        """Capture the raw ``choices[0]`` speculative-decoding payload, if any.
+        """Capture the raw speculative-decoding payload from the response root.
 
-        vLLM attaches ``speculative_decoding_stats`` per choice (the finish-reason
-        chunk in streaming). Captured verbatim and uninterpreted so a
-        ``SpecDecodeAdapterProtocol`` owns the engine-specific interpretation
-        downstream; None when absent.
+        vLLM nests it at ``metrics.speculative_decoding`` -- on the response body
+        non-streaming, or on the trailing usage chunk (empty ``choices``)
+        streaming -- when the server runs with ``--per-request-spec-decode-metrics``.
+        Captured verbatim and uninterpreted so a ``SpecDecodeAdapterProtocol``
+        owns the engine-specific interpretation downstream; None when absent.
 
-        A response with more than one choice is an ``n > 1`` non-streaming
-        request; its record is suppressed (None) because a single per-request
-        record can't attribute request-level usage to one sequence -- reporting
-        one choice's acceptance alongside all choices' token count would be a
-        mixed, misleading record. (``n > 1`` streaming is suppressed in the
-        parser, where each sequence's stats arrive on separate chunks.)
+        vLLM populates it only for single-sequence requests (``n == 1``), leaving
+        it ``null`` otherwise, so no client-side ``n > 1`` suppression is needed:
+        a mixed per-request record can never arise here.
         """
-        choices = json_obj.get("choices")
-        if (
-            not isinstance(choices, list)
-            or not choices
-            or not isinstance(choices[0], dict)
-        ):
+        metrics = json_obj.get("metrics")
+        if not isinstance(metrics, dict):
             return None
-        if len(choices) > 1:
-            return None
-        return choices[0].get("speculative_decoding_stats")
+        stats = metrics.get("speculative_decoding")
+        return stats if isinstance(stats, dict) else None
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Build a Turn representing the assistant response for context replay.

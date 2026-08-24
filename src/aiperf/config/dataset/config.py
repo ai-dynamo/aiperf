@@ -15,7 +15,7 @@ trace synthesis sub-configs live in sibling ``content.py`` / ``trace.py`` /
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     ConfigDict,
@@ -28,6 +28,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     DatasetFormat,
     DatasetType,
+    PromptCorpus,
 )
 from aiperf.config.dataset.content import (
     AudioConfig,
@@ -656,6 +657,31 @@ class FileDataset(SystemPromptMixin):
         if records_set and isinstance(self.records, list) and not self.records:
             raise ValueError("`records:` must contain at least one record.")
 
+        return self
+
+    _HASH_ID_TRACE_FORMATS: ClassVar[frozenset[DatasetFormat]] = frozenset(
+        {
+            DatasetFormat.MOONCAKE_TRACE,
+            DatasetFormat.BAILIAN_TRACE,
+            DatasetFormat.BURST_GPT_TRACE,
+            DatasetFormat.SAGEMAKER_DATA_CAPTURE,
+            DatasetFormat.WEKA_TRACE,
+        }
+    )
+
+    @model_validator(mode="after")
+    def _validate_random_corpus_incompatible_with_trace(self) -> FileDataset:
+        if (
+            self.prompts is not None
+            and self.prompts.corpus == PromptCorpus.RANDOM
+            and self.format in self._HASH_ID_TRACE_FORMATS
+        ):
+            raise ValueError(
+                f"prompt_corpus 'random' is not compatible with format '{self.format}'; "
+                "trace loaders synthesize prompt content from a text corpus keyed by "
+                "hash_id — there is no corpus to draw from when corpus='random'. "
+                "Use corpus='sonnet' or 'coding', or switch to a synthetic dataset format."
+            )
         return self
 
     @model_validator(mode="after")

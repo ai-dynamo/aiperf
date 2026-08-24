@@ -22,6 +22,8 @@ def _make_config(
     *,
     cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
     shared_system_prompt_length: int | None = None,
+    prefix_pool_size: int | None = None,
+    prefix_length: int | None = None,
     isl_mean: int = 100,
     apply_chat_template: bool = True,
 ):
@@ -36,14 +38,25 @@ def _make_config(
     }
     if shared_system_prompt_length is not None:
         overrides["prompt_prefix_shared_system_length"] = shared_system_prompt_length
+    if prefix_pool_size is not None:
+        overrides["prompt_prefix_pool_size"] = prefix_pool_size
+    if prefix_length is not None:
+        overrides["prompt_prefix_length"] = prefix_length
     return make_run_from_cli(CLIConfig(**overrides))
 
 
 def _make_tokenizer_no_chat_template():
-    """A tokenizer mock with no apply_chat_template — overheads collapse to 0."""
+    """A tokenizer mock with no apply_chat_template — overheads collapse to 0.
+
+    ``num_prompt_special_tokens`` is stubbed to 0 (the gpt2 case) because the
+    composer now subtracts it from the ISL target; an unstubbed MagicMock would
+    reach real arithmetic. 0 keeps these budget assertions about chat-template
+    and cache-bust costs alone, with no special-token contribution.
+    """
     tokenizer = MagicMock()
     tokenizer.encode = MagicMock(return_value=list(range(10)))
     tokenizer._tokenizer = MagicMock(spec=[])  # spec=[] -> no attributes
+    tokenizer.num_prompt_special_tokens = MagicMock(return_value=0)
     return tokenizer
 
 
@@ -250,19 +263,29 @@ class TestChatTemplateOverheadProbe:
         assert _estimate_chat_template_overheads(tokenizer) == (0, 0)
 
     def test_decomposes_fixed_and_wrap(self):
-        """Synthetic Llama-3-like template: BOS=1, gen_prompt=3, wrap=5/msg."""
+        """Synthetic Llama-3-like template: BOS=1, gen_prompt=3, wrap=5/msg.
+
+        BOS is excluded from per_request_fixed because RangeRatioDistribution
+        already accounts for it via num_special_tokens. The function returns
+        only the template-structural overhead (gen_prompt suffix, not BOS).
+        """
         from aiperf.dataset.composer.base import (
             _CHAT_TEMPLATE_PROBE_SAMPLES,
             _estimate_chat_template_overheads,
         )
 
         per_msg_wrap = 5
-        per_request_fixed = 4  # BOS(1) + gen_prompt(3)
+        bos = 1
+        gen_prompt = 3
+        template_total_fixed = bos + gen_prompt  # what apply_chat_template adds
 
-        def fake_apply(messages, **_kwargs):
+        def fake_apply(messages, tokenize=True, add_generation_prompt=True, **_kwargs):
+            # tokenizer.encode counts by whitespace-delimited words, so return a
+            # string with exactly the right number of space-separated words.
             content_tokens = sum(len(m["content"].split()) for m in messages)
             wrapping = per_msg_wrap * len(messages)
-            return list(range(per_request_fixed + wrapping + content_tokens))
+            total = template_total_fixed + wrapping + content_tokens
+            return " ".join(["x"] * total)
 
         inner = MagicMock()
         inner.apply_chat_template = MagicMock(side_effect=fake_apply)
@@ -271,9 +294,10 @@ class TestChatTemplateOverheadProbe:
         tokenizer.encode = MagicMock(
             side_effect=lambda text: list(range(len(text.split())))
         )
+        tokenizer.num_prompt_special_tokens = MagicMock(return_value=bos)
 
         fixed, wrap = _estimate_chat_template_overheads(tokenizer)
-        assert fixed == per_request_fixed
+        assert fixed == gen_prompt  # BOS excluded — handled by RangeRatioDistribution
         assert wrap == per_msg_wrap
         # 2 templates per sample -> 2 * len(samples) apply calls.
         assert inner.apply_chat_template.call_count == 2 * len(
@@ -301,15 +325,20 @@ class TestAdjustmentProperties:
     """The two public properties must compose the components correctly."""
 
     def test_first_turn_adjustment_composes_all_three(self):
-        config = _make_config(cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
+        config = _make_config(
+            cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX,
+            prefix_pool_size=3,
+            prefix_length=20,
+        )
         composer = _build_composer(config, marker_cost=10, chat_fixed=4, chat_wrap=5)
-        # 4 (fixed) + 5 (wrap) + 10 (marker) = 19
+        # 4 (fixed) + 5 (wrap) + 10 (marker) = 19. The 20-token prefix is NOT
+        # subtracted: prefixes are additive.
         assert composer.first_turn_isl_adjustment == 19
 
     def test_subsequent_turn_adjustment_only_per_msg_wrap(self):
         config = _make_config(cache_bust_target=CacheBustTarget.FIRST_TURN_PREFIX)
         composer = _build_composer(config, marker_cost=10, chat_fixed=4, chat_wrap=5)
-        # Only 5 (wrap), no fixed and no marker.
+        # Only 5 (wrap): fixed, marker, and prefix all apply only to the first turn.
         assert composer.subsequent_turn_isl_adjustment == 5
 
     def test_no_adjustment_when_everything_zero(self):
@@ -317,6 +346,23 @@ class TestAdjustmentProperties:
         composer = _build_composer(config)
         assert composer.first_turn_isl_adjustment == 0
         assert composer.subsequent_turn_isl_adjustment == 0
+
+    def test_prefix_length_excluded_from_first_turn_adjustment(self):
+        """Prefixes are additive: the body keeps the full ISL and the prefix rides on top.
+
+        Matches vLLM's --random-prefix-len and SGLang's prefix_len, so
+        --prompt-input-tokens-mean describes the body rather than the wire total.
+        """
+        config = _make_config(prefix_pool_size=3, prefix_length=30)
+        composer = _build_composer(config)
+        assert composer.first_turn_isl_adjustment == 0
+        assert composer.subsequent_turn_isl_adjustment == 0
+
+    def test_prefix_length_without_pool_size_also_excluded(self):
+        """prefix_length without pool_size likewise has no effect on adjustment."""
+        config = _make_config(prefix_length=30)
+        composer = _build_composer(config)
+        assert composer.first_turn_isl_adjustment == 0
 
 
 class TestSyntheticPromptBudgetSubtraction:
@@ -485,3 +531,54 @@ def test_marker_estimator_is_invoked_when_compensation_is_needed(
         SyntheticDatasetComposer(run=config, tokenizer=tokenizer)
 
     assert mock_estimate.call_count == expected_marker_estimator_calls
+
+
+class TestSpecialTokenBudgetOnNonRangeRatioPath:
+    """Server-added special tokens must be budgeted on every path.
+
+    `_estimate_chat_template_overheads` deliberately excludes BOS from
+    `per_request_fixed`, documenting that the mean is adjusted elsewhere -- but
+    only `VLLMRatioConfig.compute_input_bounds` was doing that adjustment. The
+    non-range-ratio path used `--isl` raw, so `--isl 128` on a BOS tokenizer put
+    129 tokens on the wire (measured on TinyLlama, before and after this fix).
+    """
+
+    def _composer(self, *, num_special: int, isl_mean: int = 128):
+        run = _make_config(isl_mean=isl_mean, apply_chat_template=False)
+        tokenizer = _make_tokenizer_no_chat_template()
+        tokenizer.num_prompt_special_tokens = MagicMock(return_value=num_special)
+        with (
+            patch(_MARKER_COST_PATCH, return_value=0),
+            patch(
+                "aiperf.dataset.composer.base._estimate_chat_template_overheads",
+                return_value=(0, 0),
+            ),
+            patch("aiperf.dataset.composer.base.resolve_prompt_generator"),
+        ):
+            return SyntheticDatasetComposer(run=run, tokenizer=tokenizer)
+
+    def test_special_tokens_subtracted_from_isl_target(self):
+        composer = self._composer(num_special=1)
+        isl, _ = composer._get_turn_sequence_lengths(turn_id=1)
+        assert isl == 127, (
+            "BOS must come out of the body budget so wire ISL lands on 128"
+        )
+
+    def test_no_special_tokens_leaves_target_untouched(self):
+        """gpt2-style tokenizers (no auto-BOS) must see no change."""
+        composer = self._composer(num_special=0)
+        isl, _ = composer._get_turn_sequence_lengths(turn_id=1)
+        assert isl == 128
+
+    def test_multi_special_token_tokenizer(self):
+        """BERT-style (CLS+SEP) subtracts both."""
+        composer = self._composer(num_special=2)
+        isl, _ = composer._get_turn_sequence_lengths(turn_id=1)
+        assert isl == 126
+
+    def test_target_floors_at_zero_not_negative(self):
+        """Mirrors vLLM's max(0, input_len - num_special); the downstream
+        sample_positive_normal_integer floors the actual draw at 1."""
+        composer = self._composer(num_special=5, isl_mean=2)
+        isl, _ = composer._get_turn_sequence_lengths(turn_id=1)
+        assert isl == 0
