@@ -74,7 +74,7 @@ aiperf profile \
   --accuracy-benchmark bfcl_ast \
   --accuracy-tasks simple_python,multiple,parallel,irrelevance \
   --concurrency 32 \
-  --extra-inputs temperature:0
+  --extra-inputs '{"temperature": 0}'
 ```
 
 Run at `temperature=0`. BFCL AST is the most reproducible of the widely used
@@ -146,7 +146,7 @@ jq -r '.explanation | split(":")[0]' artifacts/*/accuracy_export.jsonl \
 | `param_value_error` | Right tool and types, wrong or missing argument value | The dominant failure mode at scale |
 | `should_not_have_called` | Emitted a call on an `irrelevance` question | Over-eagerness / hallucinated tool use |
 | `should_have_called` | Emitted no call on a `live_relevance` question | Over-refusal — the mirror image of the row above |
-| `unparsed` | No call list could be extracted, or the answer channel was empty | Output format — truncation, prose wrapping, parser issues |
+| `unparsed` | No call list could be extracted. On the hallucination categories only an *empty* answer channel counts, since a prose refusal is a valid answer there | Output format — truncation, prose wrapping, parser issues |
 | `unclassified` | An `error_type` this `bfcl-eval` version added that AIPerf does not yet bucket | An upstream version bump — worth reporting |
 
 (`correct` is the remaining value, for a passing verdict.)

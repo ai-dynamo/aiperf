@@ -159,6 +159,7 @@ aiperf profile \
   --endpoint-type chat \
   --accuracy-benchmark bfcl_ast \
   --accuracy-tasks simple_python,multiple,parallel,irrelevance \
+  --extra-inputs '{"temperature": 0}' \
   --concurrency 32
 ```
 
@@ -232,7 +233,7 @@ extra tooling:
 | `param_value_error` | Right tool and types, wrong/missing argument value |
 | `should_not_have_called` | Emitted a call on an `irrelevance` question |
 | `should_have_called` | Emitted no call on a `live_relevance` question |
-| `unparsed` | No call list could be extracted — including an empty answer channel on an `irrelevance` question, which is silence rather than an abstention |
+| `unparsed` | No call list could be extracted. On the hallucination categories only an *empty* answer channel counts — a prose refusal is a valid answer there, whereas silence is not an abstention |
 | `unclassified` | An `error_type` this bfcl-eval version added that AIPerf does not yet bucket |
 
 Parameter mismatches (right tool, wrong arguments) dominate tool-calling
