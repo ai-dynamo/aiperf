@@ -672,7 +672,7 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     set_batch_flags = [
         flag
         for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
-        if attr in s and attr in batch_size_attrs
+        if attr in s and attr in batch_size_attrs and getattr(cli, attr) != 1
     ]
     if set_batch_flags and cli.input_file is not None and Path(cli.input_file).is_dir():
         raise ValueError(

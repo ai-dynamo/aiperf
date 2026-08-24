@@ -337,6 +337,32 @@ class TestBatchSizeDirectoryAndTypeMessages:
             build_dataset(user)
         assert "directory" in str(exc_info.value)
 
+    @pytest.mark.parametrize(
+        "batch_kwarg",
+        [
+            param({"prompt_batch_size": 1}, id="text"),
+            param({"image_batch_size": 1}, id="image"),
+            param({"audio_batch_size": 1}, id="audio"),
+            param({"video_batch_size": 1}, id="video"),
+        ],
+    )  # fmt: skip
+    def test_batch_size_of_one_on_directory_input_is_not_rejected(
+        self, pool_dir: Path, batch_kwarg: dict
+    ) -> None:
+        """Batch size 1 means "not batching" everywhere else in this PR
+        (``_batching_requested`` in the loader treats it as a no-op); the
+        directory guard must agree instead of rejecting the documented
+        default just because the flag was explicitly set."""
+        user = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            **CLIConfig(request_count=5, concurrency=1).model_dump(exclude_unset=True),
+            input_file=str(pool_dir),
+            custom_dataset_type="random_pool",
+            **batch_kwarg,
+        )
+        build_dataset(user)
+
     def test_directory_batch_size_message_does_not_demand_custom_dataset_type(
         self, pool_dir: Path
     ) -> None:
