@@ -737,10 +737,13 @@ def _raise_file_dataset_violation(
     # not first told to add --custom-dataset-type random_pool and only then rejected
     # at load time. The loader repeats an equivalent check for the pool shapes that
     # are only visible once the files are parsed (inline records, named entries).
+    s = cli.model_fields_set
     set_batch_flags = [
         flag
         for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
-        if attr in s and attr in batch_size_attrs and getattr(cli, attr) != 1
+        if attr in s
+        and attr in _RANDOM_POOL_BATCH_SIZE_FLAGS
+        and getattr(cli, attr) != 1
     ]
     if set_batch_flags and cli.input_file is not None and Path(cli.input_file).is_dir():
         raise ValueError(
