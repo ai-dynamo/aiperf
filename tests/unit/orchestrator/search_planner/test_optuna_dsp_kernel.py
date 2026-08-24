@@ -27,12 +27,15 @@ def _capture_built_models(monkeypatch, captured: list):
     """Patch SingleTaskGP so every constructed model lands in `captured`."""
     real_cls = botorch.models.SingleTaskGP
 
-    def _spy(*args, **kwargs):
-        instance = real_cls(*args, **kwargs)
-        captured.append(instance)
-        return instance
+    # A subclass, not a wrapper function: production code also reaches for
+    # class-level API such as SingleTaskGP.get_batch_dimensions, which a plain
+    # function stand-in would not carry.
+    class _Spy(real_cls):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            captured.append(self)
 
-    monkeypatch.setattr(botorch.models, "SingleTaskGP", _spy)
+    monkeypatch.setattr(botorch.models, "SingleTaskGP", _Spy)
     # Also patch the symbol bound inside _optuna_helpers' candidates_func
     # closure — the `from botorch.models import SingleTaskGP` binding is
     # captured at builder construction time inside the closure, so monkeypatch
@@ -40,7 +43,7 @@ def _capture_built_models(monkeypatch, captured: list):
     import aiperf.orchestrator.search_planner._optuna_helpers as helpers_mod
 
     if hasattr(helpers_mod, "SingleTaskGP"):
-        monkeypatch.setattr(helpers_mod, "SingleTaskGP", _spy)
+        monkeypatch.setattr(helpers_mod, "SingleTaskGP", _Spy)
 
 
 def test_qlognei_candidates_func_fits_dsp_kernel(monkeypatch):
@@ -79,7 +82,7 @@ def test_qlognei_constrained_path_fits_batched_gp() -> None:
     func = build_qlognei_candidates_func()
     train_x = torch.rand(8, 3, dtype=torch.float64)
     train_obj = torch.rand(8, 1, dtype=torch.float64)
-    train_con = torch.rand(8, 2, dtype=torch.float64)  # two SLA filters
+    train_con = torch.rand(8, 2, dtype=torch.float64) - 0.5  # two SLA filters
     bounds = torch.stack(
         [torch.zeros(3, dtype=torch.float64), torch.ones(3, dtype=torch.float64)]
     )
