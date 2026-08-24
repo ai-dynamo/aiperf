@@ -58,12 +58,17 @@ def _resolve_list_backend_class() -> type[ListMetricBackendT]:
             from aiperf.metrics.list_metric_aggregation import (
                 TDigestListMetricAggregator,
             )
-        except ImportError as exc:
+        except ModuleNotFoundError as exc:
+            # Only a genuinely absent crick gets the friendly message. A crick
+            # that is installed but fails to import is a different problem, and
+            # telling the user to install it would send them the wrong way.
+            if exc.name != "crick":
+                raise
             raise ImportError(
                 "AIPERF_METRICS_LIST_BACKEND='tdigest' needs the optional "
                 "'crick' package, which is not installed. Install it with "
-                "`pip install aiperf[tdigest]`, or leave the default 'ragged' "
-                "backend in place."
+                '`pip install "aiperf[tdigest]"`, or leave the default '
+                "'ragged' backend in place."
             ) from exc
         return TDigestListMetricAggregator
     return RaggedSeries
