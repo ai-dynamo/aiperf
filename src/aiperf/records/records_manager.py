@@ -523,6 +523,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._complete_credit_phases: set[CreditPhase] = set()
         self._credits_complete_received = False
         self._all_records_received_phases: set[CreditPhase] = set()
+        # (last observed total_records, monotonic time of last change) per phase,
+        # maintained by the completion-stall watchdog while a completed phase is
+        # still waiting on outstanding records.
+        self._completion_stall_state: dict[CreditPhase, tuple[int, float]] = {}
+        self._completion_stall_last_log: dict[CreditPhase, float] = {}
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
@@ -1090,6 +1095,81 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             worker_stats=worker_stats,
         )
         await self.publish(message)
+
+    @background_task(
+        interval=Environment.RECORD.PROGRESS_REPORT_INTERVAL, immediate=False
+    )
+    async def _completion_stall_watchdog_task(self) -> None:
+        """Release the records completion barrier when it can no longer make progress.
+
+        The all-records barrier is event-driven: it is only re-evaluated when a
+        record message arrives. If a credit is counted but its record is never
+        emitted (e.g. an exception between credit accounting and record emission),
+        no further event fires and the phase waits forever. This watchdog observes
+        the record count after a phase reports complete and, once it has not moved
+        for ``Environment.RECORD.COMPLETION_INACTIVITY_DEADLINE`` seconds, logs the
+        outstanding deficit and force-finalizes the phase with partial results.
+        """
+        await self._check_completion_stall(
+            time.monotonic(), Environment.RECORD.COMPLETION_INACTIVITY_DEADLINE
+        )
+
+    async def _check_completion_stall(self, now: float, deadline: float) -> None:
+        """Force-release stalled completion barriers; ``deadline<=0`` disables."""
+        if deadline <= 0:
+            return
+        for phase in tuple(self._complete_credit_phases):
+            if phase in self._all_records_received_phases:
+                self._completion_stall_state.pop(phase, None)
+                continue
+            # Mirror the gating of the event-driven checks: with multiple
+            # profiling phases the final count is only trustworthy once
+            # CREDITS_COMPLETE has arrived.
+            if (
+                phase == CreditPhase.PROFILING
+                and self._has_multiple_profiling_phases()
+                and not self._credits_complete_received
+            ):
+                continue
+            stats = (
+                self._records_tracker.create_aggregate_stats_for_phase(phase)
+                if phase == CreditPhase.PROFILING
+                else self._records_tracker.create_stats_for_phase(phase)
+            )
+            if stats.final_requests_completed is None:
+                continue
+            outstanding = stats.final_requests_completed - stats.total_records
+            if outstanding <= 0:
+                self._completion_stall_state.pop(phase, None)
+                continue
+            last = self._completion_stall_state.get(phase)
+            if last is None or last[0] != stats.total_records:
+                self._completion_stall_state[phase] = (stats.total_records, now)
+                continue
+            stalled_for = now - last[1]
+            if stalled_for >= deadline:
+                self.error(
+                    f"Records completion barrier for phase {phase} made no progress "
+                    f"for {stalled_for:.0f}s: {stats.total_records:,} of "
+                    f"{stats.final_requests_completed:,} records received "
+                    f"({outstanding:,} outstanding, {stats.success_records:,} ok / "
+                    f"{stats.error_records:,} errors). Some credits completed without "
+                    "ever emitting a record; force-finalizing this phase with partial "
+                    "results. Tune via AIPERF_RECORD_COMPLETION_INACTIVITY_DEADLINE "
+                    "(0 disables)."
+                )
+                self._completion_stall_state.pop(phase, None)
+                self._completion_stall_last_log.pop(phase, None)
+                await self._handle_all_records_received_once(phase)
+            elif now - self._completion_stall_last_log.get(phase, last[1]) >= 30.0:
+                self._completion_stall_last_log[phase] = now
+                self.notice(
+                    f"Waiting on {outstanding:,} outstanding records for phase "
+                    f"{phase} ({stats.total_records:,} of "
+                    f"{stats.final_requests_completed:,} received, no progress for "
+                    f"{stalled_for:.0f}s; force-release in "
+                    f"{max(deadline - stalled_for, 0):.0f}s)..."
+                )
 
     @on_command(CommandType.PROCESS_RECORDS)
     async def _on_process_records_command(

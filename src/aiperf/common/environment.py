@@ -1027,6 +1027,16 @@ class _RecordSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for processing record results",
     )
+    COMPLETION_INACTIVITY_DEADLINE: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=120.0,
+        description="Seconds without record-count progress, after a phase has reported "
+        "complete, before the records completion barrier is force-released with a "
+        "warning describing the outstanding record deficit. The barrier is otherwise "
+        "event-driven: a credit that completes without ever emitting a record would "
+        "leave it waiting forever. 0 disables the backstop (wait indefinitely).",
+    )
     STRIP_PAYLOAD_BYTES: bool | None = Field(
         default=None,
         description="Tri-state control for omitting canonical request payload "
