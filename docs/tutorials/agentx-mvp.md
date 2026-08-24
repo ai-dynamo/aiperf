@@ -401,7 +401,12 @@ so AIPerf cancels in-flight warmup immediately, logs the failing trace at
 `WARNING` ("aborting run early"), and shuts down as a cancelled run stamped
 `submission_valid: false` (reason `run_cancelled`). A *subagent* stream's
 warmup failure does not trigger the abort — only root (depth-0)
-conversations gate it. Slow-but-healthy warmups are also *not* aborted: the
+conversations gate it. **Context-overflow rejections are the one exception**:
+a warmup request the server refuses as too long for its context window
+indicates a workload/window mismatch, not a sick pool, so it terminates just
+that trajectory (logged at `WARNING`, counted in
+`warmup_metrics.context_overflow_count`) and the run proceeds to profiling,
+where the overflow-rate validation applies. Slow-but-healthy warmups are also *not* aborted: the
 warmup grace period (`--agentic-warmup-grace-period`; under `--scenario`,
 `--warmup-grace-period` aliases onto it when the dedicated flag is unset —
 see the [Warmup Phase tutorial](warmup.md)) has no limit by default, so a
@@ -596,10 +601,13 @@ partial result: the run cancels immediately and the failing trace is named
 in the `WARNING` log. Check the AIPerf and
 server logs — the underlying cause is usually a connection error
 (`Connection refused`: wrong `--url` or the server isn't running), an auth
-failure (`401`/`403`: pass `--api-key`), a model-name mismatch
+failure (`401`/`403`: pass `--api-key`), or a model-name mismatch
 (`404` / `model not found`: `--model` doesn't match what the server is
-serving), or the server's `max-model-len` set lower than the trace's
-requested context.
+serving). A context-length rejection (the server's `max-model-len` set lower
+than the trace's requested context) does **not** abort the run: the
+overflowing trajectory is terminated, the rejection is counted in
+`warmup_metrics.context_overflow_count`, and the run proceeds — see the next
+entry for how profiling-phase overflows are then validated.
 
 **Run completes but `submission_valid: false` with `"context_overflow_rate_exceeded"`**
 Your server is rejecting prompts as too long for more than 1% of requests.

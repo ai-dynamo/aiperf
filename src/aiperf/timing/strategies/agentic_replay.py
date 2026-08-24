@@ -775,34 +775,19 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 time.perf_counter_ns()
             )
 
-    async def _handle_accelerated_warmup_return(
-        self, credit: Credit, *, error: str | None = None
-    ) -> None:
-        """Issue the next compressed turn or recycle a completed tree."""
-        terminal_overflow = (
-            not credit.is_final_turn
-            and error is not None
-            and is_context_overflow_response(body=error)
-        )
+    async def _handle_accelerated_warmup_return(self, credit: Credit) -> None:
+        """Issue the next compressed turn or recycle a completed tree.
 
-        if credit.is_final_turn or terminal_overflow:
-            if terminal_overflow:
-                self.info(
-                    lambda: (
-                        f"Terminating warmup trajectory {credit.conversation_id} early at "
-                        f"turn {credit.turn_index}/{credit.num_turns - 1}: "
-                        f"context-overflow error from server"
-                    )
-                )
-                self._handoff_credits.pop(credit.x_correlation_id, None)
-                self._handoff_returned_at_ns.pop(credit.x_correlation_id, None)
+        Context overflows never reach this method: the sole caller
+        (``_handle_warmup_return``) terminates overflowed trajectories before
+        delegating here.
+        """
+        if credit.is_final_turn:
             if credit.agent_depth == 0 and not self._has_tree_registry:
                 await self._spawn_from_recycle_or_id(
                     credit.conversation_id,
                     finished_correlation_id=credit.x_correlation_id,
                 )
-            if terminal_overflow and self.branch_orchestrator is not None:
-                await self.branch_orchestrator.on_child_stopped(credit.x_correlation_id)
             return
 
         next_meta = self.conversation_source.get_next_turn_metadata(credit)
@@ -1401,12 +1386,26 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     credit.conversation_id,
                     finished_correlation_id=credit.x_correlation_id,
                 )
-            if terminal_overflow and self.branch_orchestrator is not None:
+            if self.branch_orchestrator is not None:
                 await self.branch_orchestrator.on_child_stopped(credit.x_correlation_id)
+            # A child stream has no recycle rescue during baseline warmup: a
+            # child overflow never clears root_pending, so the tree does not
+            # drain and no replacement credit refills the slot. Count the
+            # terminated stream here or the baseline tally never reaches
+            # warmup_credit_count and the phase hangs forever. Roots are
+            # deliberately NOT counted: their slot is refilled by the recycled
+            # turn-0 credit's own return.
+            if not self._accelerated_warmup_started and credit.agent_depth > 0:
+                self._baseline_warmup_returns[credit.x_correlation_id] = credit
+                if (
+                    len(self._baseline_warmup_returns)
+                    >= self.conversation_source.warmup_credit_count
+                ):
+                    await self._start_accelerated_warmup()
             return
 
         if self._accelerated_warmup_started:
-            await self._handle_accelerated_warmup_return(credit, error=error)
+            await self._handle_accelerated_warmup_return(credit)
             return
         self._baseline_warmup_returns[credit.x_correlation_id] = credit
         if (

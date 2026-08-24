@@ -300,15 +300,22 @@ class CreditCallbackHandler:
             and (credit_return.error is not None or credit_return.cancelled)
         ):
             return
-        # A context overflow response during warmup indicates a workload/window mismatch,
-        # not a degraded/sick pool. Allow it to bypass warmup failure recording so that
-        # CONTEXT_OVERFLOW_RATE_LIMIT can govern it during export.
-        if credit_return.error is not None and is_context_overflow_response(
-            body=credit_return.error
+        # A context overflow response during warmup indicates a workload/window
+        # mismatch, not a degraded/sick pool: skip failure recording and the live
+        # abort so the run can proceed to PROFILING. The overflow is still
+        # classified by the records pipeline and surfaced in
+        # warmup_metrics.context_overflow_count. Cancelled credits are excluded:
+        # cancellation is its own signal, even when the partial record happens to
+        # carry an overflow-shaped error body.
+        if (
+            not credit_return.cancelled
+            and credit_return.error is not None
+            and is_context_overflow_response(body=credit_return.error)
         ):
-            _logger.info(
-                lambda: f"Bypassing warmup failure recording for context overflow "
-                f"on trace {credit.conversation_id} (will be governed by rate limits)."
+            _logger.warning(
+                lambda: f"Context overflow on warmup trace "
+                f"{credit.conversation_id}; skipping warmup failure recording "
+                f"(reported in warmup_metrics.context_overflow_count)."
             )
             return
         record_warmup_failure = getattr(handler.strategy, "record_warmup_failure", None)

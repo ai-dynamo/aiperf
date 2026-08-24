@@ -629,14 +629,16 @@ async def test_overflow_skips_intercept_and_runs_terminal_path(
 
 
 @pytest.mark.asyncio
-async def test_overflow_with_intercept_true_bypasses_warmup_failure_recording(
+async def test_warmup_overflow_skips_intercept_and_bypasses_failure_recording(
     mock_concurrency: MagicMock,
     mock_progress: MagicMock,
     mock_lifecycle: MagicMock,
     mock_stop_checker: MagicMock,
     mock_branch_orchestrator: MagicMock,
 ) -> None:
-    """Overflow reaches ``_handle_warmup_failure`` but bypasses warmup failure recording (R4)."""
+    """Overflow is terminal, so intercept is skipped entirely (even though it
+    would return True); ``_handle_warmup_failure`` is reached but bypasses
+    warmup failure recording and the live abort (R4)."""
     registry = MagicMock()
     registry.has_tree.return_value = True
     mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
@@ -1338,6 +1340,63 @@ class TestWarmupEarlyAbort:
         await early_abort_handler.on_credit_return("worker-1", credit_return)
 
         abort_cb.assert_not_awaited()
+
+    async def test_warmup_overflow_does_not_fire_abort(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """A context-overflow warmup failure neither records nor fires the
+        abort -- the ProfileCancelCommand broadcast is the bug in #1288."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=False,
+            first_token_sent=False,
+            error=_OVERFLOW_ERROR,
+        )
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_not_awaited()
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+    async def test_warmup_overflow_on_final_turn_does_not_fire_abort(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """Final-turn overflow reaches ``_handle_warmup_failure`` via the
+        non-overflow-terminal branch (``overflow_terminal`` is False) and must
+        also bypass recording and the abort."""
+        credit = make_credit(turn_index=2, num_turns=3, phase=CreditPhase.WARMUP)
+        assert credit.is_final_turn
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=False,
+            first_token_sent=False,
+            error=_OVERFLOW_ERROR,
+        )
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_not_awaited()
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+    async def test_warmup_cancelled_with_overflow_body_still_records(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """Cancellation is its own signal: a cancelled credit whose partial
+        record carries an overflow-shaped error body must not take the
+        overflow bypass."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=True,
+            first_token_sent=False,
+            error=_OVERFLOW_ERROR,
+        )
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once()
+        abort_cb.assert_awaited_once()
 
     async def test_publish_failure_resets_trigger_flag(
         self, mock_concurrency, mock_progress, mock_lifecycle, mock_stop_checker
