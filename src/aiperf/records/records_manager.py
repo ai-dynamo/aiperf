@@ -428,6 +428,17 @@ def _pooled_spec_decode_histogram(
     return populated[0] if populated else None
 
 
+# Cadence of the completion-stall watchdog. Derived from the deadline itself
+# (not from PROGRESS_REPORT_INTERVAL) so a large reporting interval cannot
+# stretch the effective force-release time; the added slack is bounded by one
+# tick of at most 30s. Effectively idle when the backstop is disabled.
+_COMPLETION_STALL_CHECK_INTERVAL: float = (
+    min(max(Environment.RECORD.COMPLETION_INACTIVITY_DEADLINE / 8.0, 1.0), 30.0)
+    if Environment.RECORD.COMPLETION_INACTIVITY_DEADLINE > 0
+    else 3600.0
+)
+
+
 class RecordsManager(PullClientMixin, BaseComponentService):
     """Collects and processes benchmark results from workers.
 
@@ -528,6 +539,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # still waiting on outstanding records.
         self._completion_stall_state: dict[CreditPhase, tuple[int, float]] = {}
         self._completion_stall_last_log: dict[CreditPhase, float] = {}
+        # Records envelopes currently inside _on_records: counters only advance
+        # after dispatch returns, so a slow accumulator/exporter must read as
+        # in-progress ingestion to the stall watchdog, not as missing records.
+        self._inflight_record_dispatches: int = 0
 
         self._telemetry_state = ErrorTrackingState()
         self._server_metrics_state = ErrorTrackingState()
@@ -769,19 +784,25 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         phase = message.metadata.benchmark_phase
 
-        # Context-overflow records in AGENTIC_REPLAY scenarios bypass normal
-        # user-facing per-record processing but still advance the records-side
-        # success counter so the completion barrier converges. Keep only a
-        # narrow aggregate side-channel count for runtime submission validation.
-        if getattr(message.metadata, "context_overflow_skip", False):
-            await self._handle_context_overflow_skip(message, phase)
-            return
+        self._inflight_record_dispatches = (
+            getattr(self, "_inflight_record_dispatches", 0) + 1
+        )
+        try:
+            # Context-overflow records in AGENTIC_REPLAY scenarios bypass normal
+            # user-facing per-record processing but still advance the records-side
+            # success counter so the completion barrier converges. Keep only a
+            # narrow aggregate side-channel count for runtime submission validation.
+            if getattr(message.metadata, "context_overflow_skip", False):
+                await self._handle_context_overflow_skip(message, phase)
+                return
 
-        dispatch_errors: list[BaseException] = []
-        for record in message.records:
-            if isinstance(record, MetricRecordsData):
-                self._maybe_hint_missing_cache_reporting(record)
-            dispatch_errors.extend(await self._dispatch_record(record))
+            dispatch_errors: list[BaseException] = []
+            for record in message.records:
+                if isinstance(record, MetricRecordsData):
+                    self._maybe_hint_missing_cache_reporting(record)
+                dispatch_errors.extend(await self._dispatch_record(record))
+        finally:
+            self._inflight_record_dispatches -= 1
 
         self._records_tracker.update_from_request(message.metadata, message.error)
         if message.error:
@@ -1096,9 +1117,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         await self.publish(message)
 
-    @background_task(
-        interval=Environment.RECORD.PROGRESS_REPORT_INTERVAL, immediate=False
-    )
+    @background_task(interval=_COMPLETION_STALL_CHECK_INTERVAL, immediate=False)
     async def _completion_stall_watchdog_task(self) -> None:
         """Release the records completion barrier when it can no longer make progress.
 
@@ -1117,6 +1136,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     async def _check_completion_stall(self, now: float, deadline: float) -> None:
         """Force-release stalled completion barriers; ``deadline<=0`` disables."""
         if deadline <= 0:
+            return
+        if getattr(self, "_inflight_record_dispatches", 0) > 0:
+            # Ingestion is mid-dispatch; the counters are stale, not stalled.
+            # Reset the clocks rather than measuring against them.
+            self._completion_stall_state.clear()
             return
         for phase in tuple(self._complete_credit_phases):
             if phase in self._all_records_received_phases:
@@ -1148,7 +1172,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 continue
             stalled_for = now - last[1]
             if stalled_for >= deadline:
-                self.error(
+                self.warning(
                     f"Records completion barrier for phase {phase} made no progress "
                     f"for {stalled_for:.0f}s: {stats.total_records:,} of "
                     f"{stats.final_requests_completed:,} records received "

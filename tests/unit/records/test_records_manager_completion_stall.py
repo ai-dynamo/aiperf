@@ -57,7 +57,9 @@ def _manager(tracker: RecordsTracker) -> RecordsManager:
     manager._all_records_received_phases = set()
     manager._completion_stall_state = {}
     manager._completion_stall_last_log = {}
+    manager._inflight_record_dispatches = 0
     manager._handle_all_records_received_once = AsyncMock()
+    manager.warning = MagicMock()
     manager.error = MagicMock()
     manager.notice = MagicMock()
     manager.debug = MagicMock()
@@ -87,7 +89,7 @@ class TestCompletionStallWatchdog:
         manager._handle_all_records_received_once.assert_awaited_once_with(
             CreditPhase.PROFILING
         )
-        manager.error.assert_called_once()
+        manager.warning.assert_called_once()
         assert CreditPhase.PROFILING not in manager._completion_stall_state
 
     @pytest.mark.asyncio
@@ -147,3 +149,21 @@ class TestCompletionStallWatchdog:
         await manager._check_completion_stall(now=1e9, deadline=DEADLINE)
         assert manager._completion_stall_state == {}
         manager._handle_all_records_received_once.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_inflight_dispatch_defers_forcing(self) -> None:
+        manager = _manager(_tracker(final_requests_completed=3, records=2))
+        await manager._check_completion_stall(now=0.0, deadline=DEADLINE)
+        # A records envelope is mid-dispatch: counters are stale, not stalled.
+        manager._inflight_record_dispatches = 1
+        await manager._check_completion_stall(now=DEADLINE, deadline=DEADLINE)
+        manager._handle_all_records_received_once.assert_not_awaited()
+        assert manager._completion_stall_state == {}
+        # Dispatch finished without closing the deficit: the clock restarts.
+        manager._inflight_record_dispatches = 0
+        await manager._check_completion_stall(now=DEADLINE, deadline=DEADLINE)
+        manager._handle_all_records_received_once.assert_not_awaited()
+        await manager._check_completion_stall(now=DEADLINE * 2, deadline=DEADLINE)
+        manager._handle_all_records_received_once.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
