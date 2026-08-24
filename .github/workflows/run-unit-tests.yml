@@ -152,10 +152,10 @@ jobs:
       PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
     steps:
     - uses: actions/checkout@v6
-    - name: Set up Python 3.12
+    - name: Set up Python 3.13
       uses: actions/setup-python@v6
       with:
-        python-version: "3.12"
+        python-version: "3.13"
     - name: Set up uv with cache
       uses: astral-sh/setup-uv@v7
       with:
@@ -163,7 +163,7 @@ jobs:
         cache-dependency-glob: "uv.lock"
     - name: Install CPU-only BoTorch dependencies
       run: |
-        make ci-install PYTHON_VERSION=3.12
+        make ci-install PYTHON_VERSION=3.13
         uv pip install --torch-backend cpu -e ".[botorch]"
     - name: Run BoTorch GP regression tests
       run: |
