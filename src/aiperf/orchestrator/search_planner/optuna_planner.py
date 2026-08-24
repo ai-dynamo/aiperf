@@ -224,6 +224,16 @@ class OptunaSearchPlanner(SearchPlanner):
         try:
             cfg = BenchmarkConfig.model_validate(cfg_dict)
         except ValidationError as e:
+            # Only reframe genuine shape mismatches -- a field that doesn't
+            # exist on this phase type ("extra_forbidden": e.g. injecting
+            # 'rate' onto a concurrency phase) or a required field the base
+            # config never got a chance to seed ("missing"). Ordinary
+            # numeric-bounds violations (e.g. a sampled concurrency=0 against
+            # ge=1) are unrelated to phase shape and should surface as-is --
+            # reframing them as a "shape" problem is actively misleading.
+            shape_error_types = {"extra_forbidden", "missing"}
+            if not any(err.get("type") in shape_error_types for err in e.errors()):
+                raise
             base_phase_type = self._base.phases[0].type
             raise ValueError(
                 f"--search-space path(s) {sorted(values)} do not fit this "

@@ -101,7 +101,12 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
     can pick a compatible phase shape -- and seed a self-supplying field's
     initial value from its own search range -- before search-space
     bounds/kind are even validated. Malformed entries are skipped here; the
-    real parser reports the actual grammar error.
+    real parser reports the actual grammar error. Only dimensions that
+    target ``phases.profiling.*`` are considered (bare aliases always
+    resolve there); a fully-qualified path targeting a different phase
+    (e.g. ``phases.warmup.*``) is ignored by this shape-inference helper --
+    the real search-space parser still processes it normally later, just
+    not for the purpose of phase-shape inference.
     """
     if not cli.search_space:
         return {}
@@ -116,6 +121,8 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
             continue
         if "." not in path:
             path = _resolve_path_alias(path)
+        if not path.startswith("phases.profiling."):
+            continue
         field = path.rsplit(".", 1)[-1]
         lo_str = bounds_part.split(",", 1)[0].strip()
         try:
@@ -208,6 +215,12 @@ def _apply_search_space_shape_seeds(
         and "users" not in prof
         and "users" in search_dims
     ):
+        if search_dims["users"] < 1:
+            raise ValueError(
+                f"--search-space 'users' lower bound must be >= 1 (got "
+                f"{search_dims['users']!r}); the number of simulated users "
+                "can't be less than one."
+            )
         prof["users"] = int(search_dims["users"])
 
     if (
@@ -222,11 +235,16 @@ def _apply_search_space_shape_seeds(
         and "rate_series" not in prof
     ):
         if "rate" in search_dims:
+            if search_dims["rate"] <= 0:
+                raise ValueError(
+                    f"--search-space 'rate' lower bound must be > 0 (got "
+                    f"{search_dims['rate']!r}); rate must be positive."
+                )
             prof["rate"] = search_dims["rate"]
         else:
             raise ValueError(
                 f"--search-space selects a rate-shaped benchmark (phase type "
-                f"{phase_type!r}), which also requires a base rate. Pass "
+                f"{phase_type}), which also requires a base rate. Pass "
                 "--request-rate <value> (or --user-centric-rate for a "
                 "user-shaped benchmark), or add a 'rate' dimension to "
                 "--search-space."

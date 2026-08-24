@@ -99,6 +99,14 @@ has both fields (it shares the rate machinery with the rate shape).
 Searching fields from two mutually-exclusive shapes (e.g. `users` and
 `smoothness` together — no shape has both) is rejected with a clear error.
 
+`rate_ramp`, `rate_series`, and `smoothness` modulate an existing rate
+rather than supplying one, so searching any of them alone still requires a
+base rate from somewhere -- pass `--request-rate` (or `--user-centric-rate`
+for a user shape), or add a `rate` dimension to the same `--search-space`.
+Without one, AIPerf errors at config time with a message explaining what's
+missing, rather than searching `rate_ramp`/`rate_series`/`smoothness` in a
+vacuum.
+
 ### Search space grammar
 
 `PATH:LO,HI[:KIND]`

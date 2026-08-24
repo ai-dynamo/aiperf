@@ -15,6 +15,8 @@ optuna = pytest.importorskip("optuna")
 
 # Imports below depend on optuna being importable. pytest.importorskip must
 # precede them so the whole module is skipped when the `optuna` extra is absent.
+from pydantic import ValidationError  # noqa: E402
+
 from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
 from aiperf.config.config import BenchmarkConfig  # noqa: E402
 from aiperf.config.sweep import (  # noqa: E402
@@ -637,4 +639,30 @@ def test_ask_with_shape_mismatched_search_space_raises_clear_error() -> None:
     planner = OptunaSearchPlanner(base, cfg)
 
     with pytest.raises(ValueError, match="shape"):
+        planner.ask()
+
+
+def test_ask_with_ordinary_bounds_violation_raises_original_error() -> None:
+    """A search-space dimension that samples an out-of-bounds value for
+    a field that DOES belong on the base phase (e.g. concurrency=0 on a
+    ConcurrencyPhase, which requires ge=1) is not a shape mismatch --
+    the original pydantic ValidationError must propagate unreframed,
+    not get relabeled as a 'shape' problem."""
+    # SearchSpaceDimension itself enforces hi > lo strictly, so lo=hi=0 isn't
+    # constructible; lo=-1, hi=0 is the smallest range where every integer
+    # in [lo, hi] still violates concurrency's ge=1, so the outcome is
+    # deterministic regardless of which value the sampler picks. This
+    # replaces (rather than extends) _cfg's default 'concurrency' dimension,
+    # since AdaptiveSearchSweep forbids duplicate-path dimensions.
+    base = _base_config()  # phases[0].type == "concurrency"
+    cfg = _cfg(
+        search_space=[
+            SearchSpaceDimension(
+                path="phases.profiling.concurrency", lo=-1, hi=0, kind="int"
+            )
+        ]
+    )
+    planner = OptunaSearchPlanner(base, cfg)
+
+    with pytest.raises(ValidationError):
         planner.ask()

@@ -940,3 +940,40 @@ class TestSearchSpacePhaseShapeInference:
             }
         )
         assert cfg.phases[0].type == PhaseType.USER_CENTRIC
+
+    def test_rate_lower_bound_zero_raises_clear_error(self) -> None:
+        """A zero/negative --search-space 'rate' lower bound must not
+        silently seed an invalid value and crash with a raw Pydantic
+        'greater than' error -- it should fail clearly at seed time."""
+        loadgen = CLIConfig(
+            search_space=["rate:0,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_users_lower_bound_zero_raises_clear_error(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:0,50:int"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
+    def test_warmup_path_search_space_dimension_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """A dotted path targeting a non-profiling phase (e.g. warmup) must
+        not be mistaken for a profiling-phase field by its trailing segment
+        alone -- it should be ignored by shape inference entirely."""
+        loadgen = CLIConfig(
+            search_space=["phases.warmup.rate:1,10:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
