@@ -168,5 +168,6 @@ jobs:
     - name: Run BoTorch GP regression tests
       run: |
         uv run pytest -n auto --dist=worksteal \
-          tests/unit/orchestrator/search_planner/test_botorch_kernel.py \
+          tests/unit/orchestrator/search_planner/test_botorch_kernel.py
+        uv run pytest -n auto --dist=worksteal -m slow \
           tests/unit/orchestrator/search_planner/test_optuna_dsp_kernel.py
