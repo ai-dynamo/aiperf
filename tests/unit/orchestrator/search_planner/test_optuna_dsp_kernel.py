@@ -67,6 +67,27 @@ def test_qlognei_candidates_func_fits_dsp_kernel(monkeypatch):
     assert math.isclose(prior.loc.item(), expected_loc, rel_tol=1e-9)
 
 
+def test_qlognei_constrained_path_fits_batched_gp() -> None:
+    """Regression: constraints make train_y multi-column -> batched GP.
+
+    Exercises ``build_qlognei_candidates_func`` end to end with a non-None
+    ``train_con``. Without a batched kernel the fit dies inside BoTorch's
+    scipy path with ``shape '[m, 1]' is invalid for input of size 1``. Also
+    smoke-tests the ``GenericMCObjective`` + ``constraints`` wiring downstream
+    of the fit.
+    """
+    func = build_qlognei_candidates_func()
+    train_x = torch.rand(8, 3, dtype=torch.float64)
+    train_obj = torch.rand(8, 1, dtype=torch.float64)
+    train_con = torch.rand(8, 2, dtype=torch.float64)  # two SLA filters
+    bounds = torch.stack(
+        [torch.zeros(3, dtype=torch.float64), torch.ones(3, dtype=torch.float64)]
+    )
+    candidates = func(train_x, train_obj, train_con, bounds, None)
+
+    assert candidates.shape == (1, 3)
+
+
 def test_qnehvi_candidates_func_fits_dsp_kernel_per_objective(monkeypatch):
     captured: list = []
     _capture_built_models(monkeypatch, captured)

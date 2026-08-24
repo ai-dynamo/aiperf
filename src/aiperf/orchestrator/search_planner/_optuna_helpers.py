@@ -291,19 +291,20 @@ def build_qlognei_candidates_func() -> Any:
         pending_x_n = (
             normalize(pending_x, bounds=bounds) if pending_x is not None else None
         )
-        # A multi-column train_y makes SingleTaskGP a batched multi-output model
-        # (batch_shape == Size([m])), so the custom kernel must carry the same
-        # leading dim. m > 1 exactly when SLA filters are configured, since the
-        # constrained path cat-stacks objective + one column per filter.
-        n_outputs = train_y.size(-1)
+        # A multi-column train_y makes SingleTaskGP a batched multi-output
+        # model, so the custom kernel must carry the same leading dim. See
+        # make_dsp_kernel's docstring for why.
+        _, aug_batch_shape = SingleTaskGP.get_batch_dimensions(
+            train_X=train_x_n, train_Y=train_y
+        )
         model = SingleTaskGP(
             train_x_n,
             train_y,
             covar_module=make_dsp_kernel(
                 d=train_x_n.size(-1),
-                batch_shape=torch.Size([n_outputs]) if n_outputs > 1 else None,
+                batch_shape=aug_batch_shape,
             ),
-            outcome_transform=Standardize(m=n_outputs),
+            outcome_transform=Standardize(m=train_y.size(-1)),
         )
         fit_gpytorch_mll(ExactMarginalLogLikelihood(model.likelihood, model))
 
