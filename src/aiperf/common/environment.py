@@ -65,9 +65,10 @@ __all__ = ["Environment"]
 class _AccuracySettings(BaseSettings):
     """Accuracy benchmark settings.
 
-    Tunables for accuracy benchmarking: the cancel-path result-wait timeout and
-    the LiveCodeBench dataset release pin, so accuracy behavior and numbers are
-    reproducible across runs without requiring source edits.
+    Tunables for accuracy benchmarking: the cancel-path result-wait timeout, the
+    LiveCodeBench dataset release pin, and the BFCL package pin, so accuracy
+    behavior and numbers are reproducible across runs without requiring source
+    edits.
     """
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
@@ -111,6 +112,21 @@ class _AccuracySettings(BaseSettings):
         "entirely — the loader surfaces a clear error with a "
         "``datasets<4`` pin). Consumed by "
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
+
+    BFCL_VERSION_PIN: str = Field(
+        default="2026.3.23",
+        description="Exact ``bfcl-eval`` package version the ``bfcl_ast`` "
+        "benchmark requires. BFCL bundles its question files, its "
+        "``possible_answer`` ground truth, and its AST checker in the same "
+        "wheel, so pinning the package pins the dataset AND the grading "
+        "semantics together - scores are only comparable across runs that "
+        "share this version. The loader compares this against the installed "
+        "``bfcl_eval`` distribution version and raises with an actionable "
+        "``uv pip install`` hint on mismatch. Set to ``any`` to skip the check "
+        "(scores then carry no version guarantee). Use ``2025.12.17`` for "
+        "strict BFCL-v4-leaderboard reproduction parity. Consumed by "
+        "``aiperf.accuracy.graders._bfcl_compat``.",
     )
 
 

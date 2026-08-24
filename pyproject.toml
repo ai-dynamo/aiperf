@@ -145,6 +145,24 @@ accuracy = [
     # recipe ships.
     "deepeval>=2.9.0,<5.0.0",
 ]
+bfcl = [
+    # BFCL's question files and their possible_answer/ ground truth ship
+    # inside the wheel (gorilla PR #504), so the dataset version IS the
+    # package version -- no separate download, and no HuggingFace dataset
+    # that can drift out from under the pinned checker.
+    #
+    # bfcl-eval's base install_requires is heavy (anthropic, cohere, boto3,
+    # faiss-cpu, sentence-transformers, tree-sitter*, ...) and upstream ships
+    # no checker-only extra, which is why this is its own opt-in extra rather
+    # than being folded into [accuracy].
+    "bfcl-eval==2026.3.23",
+    # bfcl-eval's own metadata omits it, but importing its AST checker pulls
+    # bfcl_eval.constants.model_config -> the qwen model handler -> qwen_agent,
+    # which imports soundfile at module scope. Without it every entry point we
+    # use raises ModuleNotFoundError, so declare it here rather than leaving
+    # the extra broken on a fresh install.
+    "soundfile>=0.12",
+]
 
 [dependency-groups]
 dev = [
@@ -160,6 +178,18 @@ dev = [
 # Sdist counts as installable — crick ships only sdist on Linux
 # aarch64 and is unaffected (env-builder compiles it from source).
 [tool.uv]
+# bfcl-eval pins numpy==1.26.4 while lighteval (the [accuracy] extra) requires
+# numpy>=2, so the two extras cannot co-exist in one environment. Declaring the
+# conflict lets uv lock each of them separately instead of failing to resolve
+# the project at all; installing both together is rejected with a clear message.
+# Practically this is not a limitation: no benchmark uses a grader from both
+# extras, and bfcl_ast/tool_call_ast only ever need [bfcl].
+conflicts = [
+  [
+    { extra = "accuracy" },
+    { extra = "bfcl" },
+  ],
+]
 required-environments = [
   "sys_platform == 'linux' and platform_machine == 'x86_64'",
   "sys_platform == 'linux' and platform_machine == 'aarch64'",
@@ -234,6 +264,7 @@ markers = [
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
     "network: marks tests that require network access",
     "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
+    "requires_bfcl: tests that need the real bfcl-eval install (i.e. the [bfcl] extra) — skipped when only the fake-bfcl harness is registered",
     "looptime: marks tests that use virtual event-loop time",
 ]
 # Better console output

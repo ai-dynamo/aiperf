@@ -99,7 +99,7 @@ SpecDecodeAdapterType = plugins.create_enum(PluginType.SPEC_DECODE_ADAPTER, "Spe
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
-"""Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.LIGHTEVAL_GSM8K, AccuracyGraderType.MULTIPLE_CHOICE"""
+"""Dynamic enum for accuracy grader. Example: AccuracyGraderType.CODE_EXECUTION, AccuracyGraderType.LIGHTEVAL_LATEX, AccuracyGraderType.TOOL_CALL_AST"""
 
 AccuracyBenchmarkTypeStr: TypeAlias = str
 AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "AccuracyBenchmarkType", module=__name__)
