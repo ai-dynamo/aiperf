@@ -16,8 +16,10 @@ use crate::extensions::AIPerfRegistry;
 /// - `Sharded` statically partitions request budget, concurrency, and rate
 ///   `1/workers`-ways up front, per worker thread as a throughput-oriented
 ///   opt-in.
-/// - `Global` (default) admits from one shared [`crate::timing::slots::GlobalSlotPool`]
-///   / [`crate::timing::rate_gate::GlobalRateGate`] per cell, so aggregate
+/// - `Global` (the single-process default; cellular defaulting is resolved during
+///   configuration parsing) admits from one shared
+///   [`crate::timing::slots::GlobalSlotPool`] /
+///   [`crate::timing::rate_gate::GlobalRateGate`] per cell, so aggregate
 ///   concurrency and rate across all worker threads is byte-exact against a
 ///   single global limiter, matching the Python baseline.
 /// - `GlobalHop` additionally routes every individual request through one

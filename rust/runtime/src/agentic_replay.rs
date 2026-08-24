@@ -926,9 +926,8 @@ pub fn take_ready<T>(
 /// `observe_credit_return`, lines 698-717): when `Some`, every credit return
 /// advances the replay barrier gate ([`ReplayGate::complete`]) and records the
 /// warmup-to-profile handoff, routing the return wall through the injected
-/// [`Clock`](crate::clock::Clock). `None` (every current caller — the standard
-/// warmup/profiling path) changes no runtime behavior; the accelerated substage
-/// (a later task) is the sole caller that arms it.
+/// [`Clock`](crate::clock::Clock). The accelerated-warmup path passes `Some` to
+/// arm this behavior; standard warmup and profiling pass `None`.
 /// Accelerated-warmup dispatch context threaded alongside the tree gate: the
 /// drain latch (set when the duration timer fires — no new continuation/recycle
 /// issuance after it) and the zero-idle flag (accelerated pressure fires each
