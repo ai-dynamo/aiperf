@@ -691,3 +691,141 @@ class TestRateSeries:
 
         with pytest.raises(ValueError, match="user-centric-rate"):
             build_profiling(user)
+
+
+# ---------------------------------------------------------------------------
+# BUG 5 (NVBugs 6656707) — --search-space keywords must auto-infer phase shape
+# ---------------------------------------------------------------------------
+
+
+class TestSearchSpacePhaseShapeInference:
+    def test_bare_rate_keyword_infers_poisson_phase(self) -> None:
+        """--search-space 'rate:...' with no --request-rate must not crash;
+        it should auto-switch to a rate-controlled (poisson default) phase."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert "rate" not in prof  # value comes from the search planner, not here
+
+    def test_dotted_rate_path_infers_poisson_phase(self) -> None:
+        """Full dotted path form ('phases.profiling.rate') resolves the same
+        as the bare alias."""
+        loadgen = CLIConfig(
+            search_space=["phases.profiling.rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+
+    def test_rate_search_space_respects_explicit_arrival_pattern(self) -> None:
+        """--arrival-pattern gamma + --search-space 'rate:...' should still
+        pick GAMMA, not the POISSON default."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            arrival_pattern=ArrivalPattern.GAMMA,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+
+    def test_rate_ramp_keyword_infers_rate_controlled_phase(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:1,60:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+
+    def test_rate_series_keyword_infers_rate_controlled_phase(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+
+    def test_smoothness_keyword_infers_gamma_phase(self) -> None:
+        """--search-space 'smoothness:...' alone (no --request-rate, no
+        --arrival-pattern) must auto-switch to gamma, not crash."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+
+    def test_users_keyword_infers_user_centric_phase(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+
+    def test_users_and_rate_together_raises_clear_conflict_error(self) -> None:
+        """A benchmark has exactly one shape; searching 'users' and 'rate' at
+        once is a genuine conflict, not something to silently resolve."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only have one shape"):
+            build_profiling(user)
+
+    def test_users_and_smoothness_together_raises_clear_conflict_error(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "smoothness:0.5,2.0:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only have one shape"):
+            build_profiling(user)
+
+    def test_explicit_request_rate_still_wins_without_search_space(self) -> None:
+        """Regression guard: explicit --request-rate path (no search-space)
+        is unaffected by the new inference logic."""
+        loadgen = CLIConfig(request_rate=50.0, request_count=10)
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 50.0
+
+    def test_concurrency_search_space_keyword_unaffected(self) -> None:
+        """'concurrency' is already valid on every phase type incl. the
+        default -- must keep resolving to PhaseType.CONCURRENCY."""
+        loadgen = CLIConfig(
+            search_space=["concurrency:1,1000:int"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+
+    def test_smoothness_search_space_with_gamma_and_explicit_smoothness_flag(
+        self,
+    ) -> None:
+        """--search-space 'smoothness:...' combined with an explicit
+        --arrival-smoothness flag under gamma still succeeds normally (the
+        two features are independent; this just proves no interaction bug)."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            arrival_pattern=ArrivalPattern.GAMMA,
+            arrival_smoothness=1.0,
+            request_rate=50.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["smoothness"] == 1.0

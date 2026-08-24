@@ -86,24 +86,72 @@ def _apply_agentic_replay_fields(phase: dict[str, Any], cli: CLIConfig) -> None:
         phase["agentic_warmup_grace_period"] = cli.warmup_grace_period
 
 
+_RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
+    {"rate", "rate_ramp", "rate_series", "smoothness"}
+)
+
+
+def _search_space_target_fields(cli: CLIConfig) -> set[str]:
+    """Bare field names referenced anywhere in ``--search-space``.
+
+    A lightweight companion to ``parse_search_space()`` (which runs later,
+    in ``_build_adaptive_search``): only extracts each dimension's final
+    path segment, resolving bare-name aliases the same way the real parser
+    does, so ``_profiling_phase_type`` can pick a compatible phase shape
+    before search-space bounds/kind are even validated. Malformed entries
+    are ignored here -- the real parser reports the actual grammar error.
+    """
+    if not cli.search_space:
+        return set()
+
+    from aiperf.config.loader.dotted_path import _resolve_path_alias
+
+    fields: set[str] = set()
+    for raw in cli.search_space:
+        path = raw.split(":", 1)[0].strip()
+        if not path:
+            continue
+        if "." not in path:
+            path = _resolve_path_alias(path)
+        fields.add(path.rsplit(".", 1)[-1])
+    return fields
+
+
 def _profiling_phase_type(cli: CLIConfig) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
     if cli.fixed_schedule:
         return PhaseType.FIXED_SCHEDULE
-    if cli.user_centric_rate is not None:
+
+    search_space_fields = _search_space_target_fields(cli)
+    user_centric_needed = "users" in search_space_fields
+    rate_shape_needed = bool(search_space_fields & _RATE_SHAPE_SEARCH_FIELDS)
+
+    if user_centric_needed and rate_shape_needed:
+        raise ValueError(
+            "--search-space targets both 'users' (a user-centric-shaped "
+            "benchmark) and a rate-shaped field ('rate'/'rate_ramp'/"
+            "'rate_series'/'smoothness'). A benchmark can only have one "
+            "shape at a time -- search these in separate runs."
+        )
+
+    if cli.user_centric_rate is not None or user_centric_needed:
         return PhaseType.USER_CENTRIC
-    if cli.request_rate is not None or cli.request_rate_series is not None:
+    if (
+        cli.request_rate is not None
+        or cli.request_rate_series is not None
+        or rate_shape_needed
+    ):
         # v1 parity (user_config.py auto-promote): --arrival-smoothness /
         # --vllm-burstiness without an explicit --arrival-pattern resolves to
         # gamma, since smoothness is a gamma-distribution knob. Without this the
         # flag fell through to POISSON and then _apply_phase_specific_routes
         # hard-rejected it ("only supported with gamma") -- a cutover regression
-        # that made --vllm-burstiness unusable on its own.
-        if (
-            "arrival_pattern" not in cli.model_fields_set
-            and cli.arrival_smoothness is not None
+        # that made --vllm-burstiness unusable on its own. A 'smoothness'
+        # search-space dimension is the same knob, so it auto-promotes too.
+        if "arrival_pattern" not in cli.model_fields_set and (
+            cli.arrival_smoothness is not None or "smoothness" in search_space_fields
         ):
             return PhaseType.GAMMA
         match cli.arrival_pattern:
