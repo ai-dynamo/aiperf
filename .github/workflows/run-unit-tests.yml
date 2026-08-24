@@ -143,3 +143,30 @@ jobs:
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         slug: ai-dynamo/aiperf
+
+  botorch-regression:
+    name: BoTorch Regression Tests (CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
+    steps:
+    - uses: actions/checkout@v6
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Set up uv with cache
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: "uv.lock"
+    - name: Install CPU-only BoTorch dependencies
+      run: |
+        make ci-install PYTHON_VERSION=3.12
+        uv pip install --torch-backend cpu -e ".[botorch]"
+    - name: Run BoTorch GP regression tests
+      run: |
+        uv run pytest -n auto --dist=worksteal \
+          tests/unit/orchestrator/search_planner/test_botorch_kernel.py \
+          tests/unit/orchestrator/search_planner/test_optuna_dsp_kernel.py
