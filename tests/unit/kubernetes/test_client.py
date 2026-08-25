@@ -1408,9 +1408,7 @@ class TestWaitForControllerPodReady:
             "aiperf.kubernetes.client_pods.asyncio.get_running_loop",
             MagicMock(return_value=fake_loop),
         )
-        monkeypatch.setattr(
-            "aiperf.kubernetes.client_pods.asyncio.sleep", AsyncMock()
-        )
+        monkeypatch.setattr("aiperf.kubernetes.client_pods.asyncio.sleep", AsyncMock())
         monkeypatch.setattr("aiperf.kubernetes.client_pods.logger.info", info)
 
         with patch(
