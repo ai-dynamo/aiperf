@@ -27,10 +27,17 @@ __all__ = [
     "_download_and_decompress",
     "_get_no_redirects",
     "_is_refused_name",
+    "_results_server_port",
     "_verify_operator_health",
 ]
 
-RESULTS_SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SERVER_PORT", "8081"))
+
+def _results_server_port() -> int:
+    """Read the configured operator results-server port."""
+    return int(os.environ.get("AIPERF_RESULTS_SERVER_PORT", "8081"))
+
+
+RESULTS_SERVER_PORT = _results_server_port()
 _REDIRECT_STATUSES = {301, 302, 307, 308}
 
 
