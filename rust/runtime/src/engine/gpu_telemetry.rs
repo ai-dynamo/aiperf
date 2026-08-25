@@ -509,7 +509,7 @@ struct TelemetryRow<'a> {
     pod_name: Option<&'a str>,
     platform: &'a str,
     timestamp_ns: i64,
-    dcgm_url: &'a str,
+    telemetry_source_url: &'a str,
     telemetry_data: &'a BTreeMap<String, f64>,
 }
 
@@ -526,7 +526,7 @@ impl<'a> From<&'a GpuTelemetryRecord> for TelemetryRow<'a> {
             pod_name: record.metadata.pod_name.as_deref(),
             platform: &record.metadata.platform,
             timestamp_ns: record.timestamp_ns,
-            dcgm_url: &record.endpoint_url,
+            telemetry_source_url: &record.endpoint_url,
             telemetry_data: &record.metrics,
         }
     }
@@ -651,8 +651,9 @@ mod tests {
                 assert_eq!(rows.len(), 3);
                 assert!(
                     rows.iter()
-                        .all(|row| row["dcgm_url"] == "amdsmi://localhost")
+                        .all(|row| row["telemetry_source_url"] == "amdsmi://localhost")
                 );
+                assert!(rows.iter().all(|row| row.get("dcgm_url").is_none()));
                 assert!(rows.iter().all(|row| row["platform"] == "amd"));
                 assert!(rows.iter().all(|row| {
                     row["telemetry_data"]["amd_energy_consumption"].is_number()
@@ -726,7 +727,8 @@ mod tests {
             ]),
         };
         let value = serde_json::to_value(TelemetryRow::from(&record)).unwrap();
-        assert_eq!(value["dcgm_url"], "amdsmi://localhost");
+        assert_eq!(value["telemetry_source_url"], "amdsmi://localhost");
+        assert!(value.get("dcgm_url").is_none());
         assert_eq!(value["platform"], "amd");
         assert_eq!(value["pci_bus_id"], "0000:41:00.0");
         assert_eq!(value["telemetry_data"]["amd_energy_consumption"], 1.25);
