@@ -1352,10 +1352,15 @@ def _run_dataset_rejections(
         cli, declared_format=declared_format if override_mode else None
     )
     if override_mode:
+        source = (
+            f"--custom-dataset-type {declared_format}"
+            if "custom_dataset_type" in cli.model_fields_set
+            else f"YAML format: {declared_format}"
+        )
         _reject_baseten_trace_unsupported_synthesis(
             cli,
             declared_format,
-            dataset_format_source=f"YAML format: {declared_format}",
+            dataset_format_source=source,
         )
     else:
         _reject_baseten_trace_unsupported_synthesis(cli, cli.custom_dataset_type)
@@ -1456,10 +1461,20 @@ def build_dataset(
     """
 
     override_mode = declared_type is not None
+    # --custom-dataset-type legitimately overrides the YAML-declared format
+    # (see _seed_declared_identity / _reject_source_override_type_switch), so
+    # the format-sensitive guards below must judge the overridden value, not
+    # the stale pre-override declared_format -- otherwise a guard can reject
+    # the exact override it is checking for.
+    effective_format = (
+        cli.custom_dataset_type
+        if "custom_dataset_type" in cli.model_fields_set
+        else declared_format
+    )
 
     needs_text = _determine_needs_text(cli)
     _run_dataset_rejections(
-        cli, declared_type=declared_type, declared_format=declared_format
+        cli, declared_type=declared_type, declared_format=effective_format
     )
 
     d = _flat_dataset_fields(cli)
@@ -1479,7 +1494,7 @@ def build_dataset(
         _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
     _apply_random_pool_batch_sizes(
-        d, cli, declared_format=declared_format if override_mode else None
+        d, cli, declared_format=effective_format if override_mode else None
     )
     # block_size for FILE hash-id traces is owned by _apply_block_size (which
     # also rejects weka / non-hash-id formats). Do not also call

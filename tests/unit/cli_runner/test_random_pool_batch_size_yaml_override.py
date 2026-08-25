@@ -348,3 +348,49 @@ def test_batch_size_flag_applies_without_cli_custom_dataset_type(
     assert "custom_dataset_type" not in cli.model_fields_set
     cfg = resolve_config(cli, yaml_path)
     assert _dataset(cfg).prompt_batch_size == 4
+
+
+def _write_single_turn_yaml(tmp_path: Path, pool_path: Path) -> Path:
+    """Write a minimal YAML config with a non-random_pool file dataset."""
+    yaml_content = f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: single_turn
+    path: {pool_path}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    cfg_path = tmp_path / "single_turn.yaml"
+    cfg_path.write_text(yaml_content)
+    return cfg_path
+
+
+def test_batch_size_flag_applies_when_custom_dataset_type_overrides_yaml_format(
+    tmp_path: Path,
+) -> None:
+    """--custom-dataset-type random_pool overrides a non-random_pool YAML
+    format; the batch-size guard must judge the overridden format, not the
+    stale pre-override YAML value.
+
+    Regression: declared_format was read straight off the raw YAML dict
+    before build_dataset applies the --custom-dataset-type override, so this
+    raised "requires a random_pool dataset... declares format: single_turn"
+    even though --custom-dataset-type random_pool is exactly the format the
+    guard is checking for -- the guard and the resolver disagreed about what
+    the format was.
+    """
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_path = _write_single_turn_yaml(tmp_path, pool)
+    cli = _cli(custom_dataset_type="random_pool", prompt_batch_size=4)
+    cfg = resolve_config(cli, yaml_path)
+    dataset = _dataset(cfg)
+    assert dataset.format == "random_pool"
+    assert dataset.prompt_batch_size == 4
