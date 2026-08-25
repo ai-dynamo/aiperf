@@ -67,7 +67,7 @@ implementation, test run, or review.
 | 39 | `1e32a51318` | Baseten load performance | analysing | unassessed | Requires benchmark before claiming a port gap. |
 | 40 | `215be05b6a` | Baseten outcome fidelity | pending | applicable | Only `duration_ttft_ms` and `cached_tokens_reference` remain missing. |
 | 41 | `516faa12c8` | CODEOWNERS | complete | not-applicable | Exact merge in `eeb59a96d5`; closure note `docs/origin-main-findings/commit-041-516faa12c8.md`. |
-| 42 | `ce453582c7` | CONTRIBUTING spelling | pending | not-applicable | Documentation only. |
+| 42 | `ce453582c7` | CONTRIBUTING spelling | complete | not-applicable | Exact merge completed on `ajc/port-origin-042`; closure note `docs/origin-main-findings/commit-042-ce453582c7.md`. |
 | 43 | `6ed4823d12` | cache-bust help link | pending | not-applicable | Documentation only. |
 | 44 | `082a51827e` | TraceLab dataset | pending | applicable | No native loader/config path. |
 | 45 | `21f8ad7b3e` | high-resolution pacing | analysing | unassessed | timerfd exists; late-slot behavior needs characterization. |
