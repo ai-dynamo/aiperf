@@ -92,8 +92,8 @@ async def _consume_stream(
     Returns ``(responses, output_parts, reasoning_parts, last_usage)``.
 
     Raises:
-        SSEResponseError: if the server signals a mid-stream ``event: error``
-            after a 200 OK (surfaced instead of reported as a truncated reply).
+        SSEResponseError: if the server sends a named or structured mid-stream
+            SSE error after a 200 OK instead of a complete reply.
     """
     responses: list[ParsedResponse] = []
     output_parts: list[str] = []

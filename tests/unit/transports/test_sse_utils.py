@@ -620,6 +620,11 @@ class TestInspectMessageForError:
             "event: message\n: This is a comment\ndata: content",
             'data: {"metadata": {"error": "not a response error"}}',
             'data: {"error": null}',
+            'data: {"error": false}',
+            'data: {"error": ""}',
+            'data: {"error": {}}',
+            'data: {"error": []}',
+            'data: {"error": 0}',
             'data: {"error":',
             "data: [DONE]",
             ": This is just a comment",
@@ -679,6 +684,30 @@ class TestInspectMessageForError:
         assert exc_info.value.error_code == expected_error_code
 
     @pytest.mark.parametrize(
+        "code,expected_error_code",
+        [
+            param(399, 502, id="below-range"),
+            param(400, 400, id="lower-bound"),
+            param(599, 599, id="upper-bound"),
+            param(600, 502, id="above-range"),
+            param(True, 502, id="boolean"),
+        ],
+    )  # fmt: skip
+    def test_data_error_code_validation(
+        self, code: int | bool, expected_error_code: int, base_perf_ns: int
+    ) -> None:
+        """Only HTTP error status codes are preserved from data errors."""
+        raw_payload = orjson.dumps(
+            {"error": {"message": "Request failed", "code": code}}
+        ).decode()
+        message = SSEMessage.parse(f"data: {raw_payload}", base_perf_ns)
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert exc_info.value.error_code == expected_error_code
+
+    @pytest.mark.parametrize(
         "raw_message,expected_error_text",
         [
             (
@@ -711,16 +740,55 @@ class TestInspectMessageForError:
         assert expected_error_text in str(exc_info.value)
         assert exc_info.value.error_code == 502
 
-    def test_error_event_without_comment(self, base_perf_ns: int) -> None:
-        """Test that error event without comment raises with full message."""
-        raw_message = 'event: error\ndata: {"error": "Something went wrong"}'
+    def test_error_event_without_comment_uses_structured_error(
+        self, base_perf_ns: int
+    ) -> None:
+        """A structured error supplies the message and code when no comment exists."""
+        raw_message = (
+            'event: error\ndata: {"error":{"message":"Overloaded","code":429}}'
+        )
         message = SSEMessage.parse(raw_message, base_perf_ns)
 
         with pytest.raises(SSEResponseError) as exc_info:
             AsyncSSEStreamReader.inspect_message_for_error(message)
 
-        assert "Unknown error in SSE response" in str(exc_info.value)
+        assert "Overloaded" in str(exc_info.value)
+        assert "Unknown error" not in str(exc_info.value)
+        assert exc_info.value.error_code == 429
+
+    def test_error_event_comment_takes_precedence_over_structured_error(
+        self, base_perf_ns: int
+    ) -> None:
+        """A named error comment remains authoritative when data also has an error."""
+        raw_message = (
+            "event: error\n: Gateway failure\n"
+            'data: {"error":{"message":"Backend failure","code":429}}'
+        )
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert "Gateway failure" in str(exc_info.value)
+        assert "Backend failure" not in str(exc_info.value)
         assert exc_info.value.error_code == 502
+
+    def test_multi_packet_without_error_skips_data_assembly(
+        self, base_perf_ns: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Normal multi-packet messages do not allocate combined data during inspection."""
+        message = SSEMessage.parse(
+            'event: message\ndata: {"content":"Hello"}\nid: msg-1', base_perf_ns
+        )
+
+        def fail_extract_data_content(self: SSEMessage) -> str:
+            raise AssertionError("normal messages must not assemble data")
+
+        monkeypatch.setattr(
+            SSEMessage, "extract_data_content", fail_extract_data_content
+        )
+
+        AsyncSSEStreamReader.inspect_message_for_error(message)
 
     def test_error_event_with_multiple_comments_uses_first(
         self, base_perf_ns: int

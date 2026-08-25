@@ -202,6 +202,7 @@ class TestAioHttpClient:
             )
 
         assert record.error is not None
+        assert record.status == 200
         assert record.error.code == 500
         assert record.error.type == "SSEResponseError"
         assert "Internal server error" in record.error.message
