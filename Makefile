@@ -244,7 +244,7 @@ install-mock-server: mock-server-native #? install the native Rust `aiperf-mock-
 	cp $(RUST_TARGET)/release/aiperf-mock-server $(VENV_PATH)/bin/aiperf-mock-server
 	chmod +x $(VENV_PATH)/bin/aiperf-mock-server
 
-install-mock-amdsmi: #? install the fake amdsmi bindings for testing the AMD telemetry path (not part of default install).
+install-mock-amdsmi: #? install the fake amdsmi bindings for testing the AMD telemetry path.
 	$(activate_venv) && uv pip install -e "tests/aiperf_mock_amdsmi[dev]"
 
 check-mock-server-install: #? verify the native `aiperf-mock-server` command is installed and runnable.
