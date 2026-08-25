@@ -5378,6 +5378,10 @@ When job_id is an AIPerfSweep name, target child variation index (0..199). Resol
 
 Trial index (0..9) within a sweep variation. Requires -v.
 
+#### `--ignore-not-found`, `--no-ignore-not-found`
+
+Exit 0 instead of 1 when the benchmark does not exist (mirrors kubectl).
+
 ### Kubernetes
 
 #### `--kubeconfig` `<str>`
@@ -5483,6 +5487,10 @@ When job_id is an AIPerfSweep name, target child variation index (0..199). Resol
 #### `-t`, `--trial` `<int>`
 
 Trial index (0..9) within a sweep variation. Requires -v.
+
+#### `--ignore-not-found`, `--no-ignore-not-found`
+
+Exit 0 instead of 1 when the benchmark does not exist (mirrors kubectl).
 
 ### Kubernetes
 

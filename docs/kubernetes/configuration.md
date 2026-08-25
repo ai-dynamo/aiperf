@@ -310,7 +310,10 @@ needed for cross-pod operation. Other runtime fields, including
 `workers`, `workersPerPod`, `recordProcessors`,
 `recordProcessorsPerPod`, and `statsInterval`, remain user-configurable. A
 total `recordProcessors` value must divide evenly across identical worker pods;
-otherwise set `recordProcessorsPerPod` explicitly.
+otherwise set `recordProcessorsPerPod` explicitly. These fields also drive the
+preflight memory estimate, so a pod layout you set here is the layout the
+estimate is sized against — see
+[Memory estimator](memory-estimator.md#topology).
 
 ---
 

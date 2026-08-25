@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,34 @@ if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
 
 
+@dataclass(slots=True)
+class SavedPodLogs:
+    """What a bulk pod-log dump actually wrote, so callers can narrate it.
+
+    Every "nothing was written" path is representable: an unmatched label
+    selector leaves ``pods_matched`` at zero, and a pod whose ``kubectl logs``
+    failed or came back empty contributes to ``failures`` instead of
+    ``files_written``. Without this, callers can only assume success.
+    """
+
+    logs_dir: Path
+    """``<output_dir>/logs``. Not created when no pod matched."""
+
+    pods_matched: int = 0
+    """Pods the job's label selector matched."""
+
+    files_written: list[str] = field(default_factory=list)
+    """Basenames of the ``.log`` files that landed on disk."""
+
+    failures: list[str] = field(default_factory=list)
+    """``<pod>: <reason>`` for every matched pod that produced no file."""
+
+    @property
+    def wrote_anything(self) -> bool:
+        """Whether at least one log file landed on disk."""
+        return bool(self.files_written)
+
+
 async def save_pod_logs(
     job_id: str,
     namespace: str,
@@ -23,7 +52,7 @@ async def save_pod_logs(
     *,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
-) -> None:
+) -> SavedPodLogs:
     """Save logs from all benchmark pods to the output directory.
 
     Creates a ``logs/`` subdirectory and writes one file per pod
@@ -36,13 +65,18 @@ async def save_pod_logs(
         api: Connected kubernetes_asyncio ApiClient.
         kubeconfig: Path to kubeconfig file.
         kube_context: Kubernetes context name.
-    """
-    pods = await get_pods(api, namespace, job_selector(job_id))
-    if not pods:
-        return
 
-    logs_dir = output_dir / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    Returns:
+        A :class:`SavedPodLogs` describing which pods matched, which files were
+        written, and why any matched pod produced nothing.
+    """
+    saved = SavedPodLogs(logs_dir=output_dir / "logs")
+    pods = await get_pods(api, namespace, job_selector(job_id))
+    saved.pods_matched = len(pods)
+    if not pods:
+        return saved
+
+    saved.logs_dir.mkdir(parents=True, exist_ok=True)
 
     kube_args: list[str] = []
     if kubeconfig:
@@ -53,6 +87,7 @@ async def save_pod_logs(
     for pod in pods:
         pod_name = pod.metadata.name if pod.metadata and pod.metadata.name else ""
         if not pod_name:
+            saved.failures.append("<unnamed pod>: no metadata.name to fetch logs by")
             continue
         # Controller pods carry 5+ service containers + sidecars; default
         # ``kubectl logs`` only emits the first container, so always pass
@@ -69,6 +104,17 @@ async def save_pod_logs(
             *kube_args,
         ]
         result = await run_command(cmd)
-        if result.returncode == 0 and result.stdout:
-            log_file = logs_dir / f"{pod_name}.log"
-            await asyncio.to_thread(log_file.write_text, result.stdout)
+        if result.returncode != 0:
+            reason = (result.stderr or "").strip() or "no stderr"
+            saved.failures.append(
+                f"{pod_name}: kubectl logs exited {result.returncode}: {reason}"
+            )
+            continue
+        if not result.stdout:
+            saved.failures.append(f"{pod_name}: kubectl logs returned no output")
+            continue
+        log_file = saved.logs_dir / f"{pod_name}.log"
+        await asyncio.to_thread(log_file.write_text, result.stdout)
+        saved.files_written.append(log_file.name)
+
+    return saved

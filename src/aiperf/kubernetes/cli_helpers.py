@@ -52,6 +52,38 @@ def resolve_job_id_and_namespace(
     return (last.job_id, namespace or last.namespace)
 
 
+def exit_target_not_found(*, ignore_not_found: bool) -> None:
+    """Fail the shell for a target that could not be addressed.
+
+    Target-addressing subcommands narrate rather than gate, so a benchmark that
+    merely has no pods left is not an error. A benchmark that does not exist is,
+    otherwise the command cannot be used as a CI existence check. ``kubectl``
+    spells the opt-out ``--ignore-not-found``; matching it lets scripted callers
+    treat a missing benchmark as a no-op while still seeing the printed error.
+    """
+    if not ignore_not_found:
+        raise SystemExit(1)
+
+
+async def target_exists(api: ApiClient, name: str, namespace: str | None) -> bool:
+    """Whether an AIPerfJob, AIPerfSweep, or JobSet named ``name`` exists.
+
+    Cheaper than :func:`resolve_job` for callers that only need presence, and
+    used on the empty-pod-list path so the happy path pays no extra round trip.
+    """
+    from aiperf.kubernetes.client import (
+        find_aiperf_job,
+        find_aiperf_sweep,
+        find_jobset,
+    )
+
+    if await find_aiperf_job(api, name, namespace):
+        return True
+    if await find_aiperf_sweep(api, name, namespace):
+        return True
+    return bool(await find_jobset(api, name, namespace))
+
+
 class ResolvedJob:
     """Result of resolving a job identifier to an AIPerfJob CR.
 

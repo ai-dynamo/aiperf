@@ -1487,3 +1487,138 @@ class TestColumnStoreMetadataColumnDrift:
             "allocation is the premise _COLUMN_STORE_METADATA_NUMERIC_COLUMNS "
             "is calibrated against."
         )
+
+
+# =============================================================================
+# Topology derivation agrees with the deployed JobSet
+# =============================================================================
+
+
+def _topology_config(**runtime: object) -> object:
+    """An AIPerfConfig whose only interesting content is ``benchmark.runtime``."""
+    from aiperf.config.config import AIPerfConfig
+
+    return AIPerfConfig(
+        benchmark={
+            "models": "test-model",
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [{"name": "main", "type": "synthetic", "entries": 100}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 32,
+                    "requests": 1000,
+                }
+            ],
+            "runtime": runtime,
+        }
+    )
+
+
+def _deployed_record_processors_per_pod(config: object, num_pods: int) -> int:
+    """Record-processor containers the JobSet manifest puts in each worker pod."""
+    from aiperf.kubernetes.jobset import AIPerfJobSetSpec
+
+    spec = AIPerfJobSetSpec(
+        name="bench",
+        namespace="aiperf",
+        job_id="job",
+        image="aiperf:test",
+        worker_replicas=num_pods,
+        workers_per_pod=config.benchmark.runtime.workers_per_pod,
+        record_processors_per_pod=config.benchmark.runtime.record_processors_per_pod,
+    )
+    worker_job = next(
+        job
+        for job in spec.to_k8s_manifest()["spec"]["replicatedJobs"]
+        if job["name"].startswith("worker")
+    )
+    containers = worker_job["template"]["spec"]["template"]["spec"]["containers"]
+    return sum(1 for c in containers if c["name"].startswith("record-processor"))
+
+
+class TestTopologyRecordProcessorDerivation:
+    """``_derive_topology`` must honor ``runtime.record_processors_per_pod``.
+
+    The deployment path honors it (``spec_converter.apply_worker_config`` ->
+    ``AIPerfJobSetSpec._resolve_record_processors_per_pod``), so an estimate
+    derived only from ``RECORD_PROCESSOR_SCALE_FACTOR`` described a topology
+    that is not the one deployed.
+    """
+
+    @pytest.mark.parametrize(
+        "workers_per_pod,configured_rp_per_pod,expected_rp_per_pod",
+        [
+            param(4, 1, 1, id="configured_below_scale_factor_derivation"),
+            param(4, 2, 2, id="configured_between_floor_and_derivation"),
+            param(4, 8, 8, id="configured_above_scale_factor_derivation"),
+            param(4, None, 4, id="unset_falls_back_to_scale_factor"),
+            param(1, None, 1, id="unset_single_worker_hits_floor"),
+        ],
+    )  # fmt: skip
+    def test_rp_per_pod_honors_config(
+        self,
+        workers_per_pod: int,
+        configured_rp_per_pod: int | None,
+        expected_rp_per_pod: int,
+    ) -> None:
+        runtime: dict[str, object] = {"workers_per_pod": workers_per_pod}
+        if configured_rp_per_pod is not None:
+            runtime["record_processors_per_pod"] = configured_rp_per_pod
+        params = MemoryEstimationParams.from_config(
+            _topology_config(**runtime), total_workers=workers_per_pod
+        )
+        assert params.record_processors_per_pod == expected_rp_per_pod
+
+    def test_unset_respects_floor_when_scale_factor_exceeds_workers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A scale factor above workers-per-pod must still leave one RP."""
+        from aiperf.kubernetes.environment import K8sEnvironment
+
+        monkeypatch.setattr(K8sEnvironment, "RECORD_PROCESSOR_SCALE_FACTOR", 8)
+        params = MemoryEstimationParams.from_config(
+            _topology_config(workers_per_pod=4), total_workers=4
+        )
+        assert params.record_processors_per_pod == 1
+
+    def test_configured_rp_per_pod_lowers_the_worker_pod_estimate(self) -> None:
+        """The count is load-bearing: fewer RPs must mean a smaller estimate."""
+        derived = estimate_memory(_topology_config(workers_per_pod=4), total_workers=8)
+        configured = estimate_memory(
+            _topology_config(workers_per_pod=4, record_processors_per_pod=1),
+            total_workers=8,
+        )
+        assert configured.worker_pod.total_peak_mib < derived.worker_pod.total_peak_mib
+
+    @pytest.mark.parametrize(
+        "total_workers,runtime",
+        [
+            param(8, {"workers_per_pod": 4}, id="defaults"),
+            param(8, {"workers_per_pod": 4, "record_processors_per_pod": 1}, id="rp_per_pod_set"),
+            param(8, {"workers_per_pod": 4, "record_processors_per_pod": 3}, id="rp_per_pod_above_workers"),
+            param(8, {"workers_per_pod": 4, "record_processors": 4}, id="rp_total_set"),
+            param(10, {"workers_per_pod": 8}, id="non_divisible_collapses_to_one_pod"),
+            param(5, {}, id="no_runtime_overrides"),
+        ],
+    )  # fmt: skip
+    def test_estimated_topology_matches_deployed_topology(
+        self, total_workers: int, runtime: dict[str, object]
+    ) -> None:
+        """The real invariant: the estimate describes the pods that get created.
+
+        The operator runs ``apply_worker_config`` before preflight, so the
+        estimator sees the same normalized config the JobSet builder does.
+        """
+        from aiperf.kubernetes.spec_converter import apply_worker_config
+
+        config = _topology_config(**runtime)
+        num_pods = apply_worker_config(config, total_workers)
+        params = MemoryEstimationParams.from_config(config, total_workers=total_workers)
+
+        assert params.num_worker_pods == num_pods
+        assert params.workers_per_pod == config.benchmark.runtime.workers_per_pod
+        assert params.record_processors_per_pod == _deployed_record_processors_per_pod(
+            config, num_pods
+        )

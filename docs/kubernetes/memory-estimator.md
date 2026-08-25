@@ -84,7 +84,22 @@ groups:
 | `total_workers` | Total worker processes across all pods. |
 | `workers_per_pod` | Worker processes per worker pod. |
 | `num_worker_pods` | Worker pod replica count (`ceil(total_workers / workers_per_pod)`). |
-| `record_processors_per_pod` | Record processors per worker pod (`max(1, workers_per_pod // RECORD_PROCESSOR_SCALE_FACTOR)`). The estimator always derives this from the scale factor; an explicit `benchmark.runtime.record_processors_per_pod` is honored by the deployment but not by `_derive_topology`. |
+| `record_processors_per_pod` | Record processors per worker pod. `benchmark.runtime.record_processors_per_pod` when set, otherwise `max(1, workers_per_pod // RECORD_PROCESSOR_SCALE_FACTOR)`. |
+
+`_derive_topology` reads the same config fields, in the same precedence order,
+that `spec_converter.apply_worker_config` uses to lay out the JobSet, so the
+estimate always describes the pods that are actually created. The operator calls
+`apply_worker_config` before preflight, which normalizes `workers_per_pod` and
+`record_processors_per_pod` onto the config first — so the estimate also picks up
+the cluster-wide `runtime.record_processors` total (divided across pods) and the
+single-pod collapse that a worker count not divisible by `workers_per_pod`
+triggers.
+
+The `aiperf kube generate` and `aiperf kube profile --dry-run` banners print
+their estimate from the *pre-normalization* config. An explicit
+`recordProcessorsPerPod` or `workersPerPod` is honored there, but a bare
+`runtime.record_processors` total, and the non-divisible single-pod collapse, are
+not yet resolved at that point and so are not reflected in the printed numbers.
 
 ### Load profile
 
@@ -550,9 +565,11 @@ amplification — at ISL+OSL=173K the queue reaches 10x `conc_per_rp`. Options:
 - Bump the worker pod's memory limit (`AIPERF_K8S_WORKER_POD_MEMORY`) to the
   estimator's `recommended_limit_mib`.
 
-Setting `benchmark.runtime.record_processors_per_pod` does add RPs to the real
-deployment, but `_derive_topology` ignores it, so the estimate will not reflect
-the change.
+- Lower `benchmark.runtime.record_processors_per_pod`. This packs fewer RPs into
+  each pod, and the estimate follows it: at the default scale factor, dropping
+  from one RP per worker to a single RP on a 4-worker pod removes roughly 975 MiB
+  of peak per-pod RP memory. It raises `conc_per_rp` in exchange, so re-read the
+  RecordProcessor warning afterwards.
 
 ### "Tokenizer cache dominates each RP"
 
