@@ -53,7 +53,9 @@ PYTHON_ONLY_COMMANDS = frozenset({"plugins"})
 
 def _command_label(command: str) -> str:
     """Return the installed executable and command path for generated docs."""
-    executable = "aiperf-python" if command.split()[0] in PYTHON_ONLY_COMMANDS else "aiperf"
+    executable = (
+        "aiperf-python" if command.split()[0] in PYTHON_ONLY_COMMANDS else "aiperf"
+    )
     return f"{executable} {command}"
 
 
