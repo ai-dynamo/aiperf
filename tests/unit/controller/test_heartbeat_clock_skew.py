@@ -28,7 +28,7 @@ SKEW_NS = 20 * 1_000_000_000
 def _registration() -> RegisterServiceCommand:
     return RegisterServiceCommand(
         service_id="worker_group_manager_0",
-        service_type=ServiceType.WORKER_GROUP_MANAGER,
+        service_type=ServiceType.WORKER_MANAGER,
         state=LifecycleState.RUNNING,
         pod_name="worker-pod-0",
         pod_index="0",
@@ -52,7 +52,7 @@ async def test_heartbeat_from_skewed_sender_clock_does_not_backdate_last_seen(
     await system_controller._process_heartbeat_message(
         HeartbeatMessage(
             service_id="worker_group_manager_0",
-            service_type=ServiceType.WORKER_GROUP_MANAGER,
+            service_type=ServiceType.WORKER_MANAGER,
             state=LifecycleState.RUNNING,
             request_ns=before_ns - SKEW_NS,
         )
@@ -74,7 +74,7 @@ async def test_out_of_order_heartbeat_does_not_move_state_backwards(
     await system_controller._process_heartbeat_message(
         HeartbeatMessage(
             service_id="worker_group_manager_0",
-            service_type=ServiceType.WORKER_GROUP_MANAGER,
+            service_type=ServiceType.WORKER_MANAGER,
             state=LifecycleState.STOPPING,
             request_ns=time.time_ns(),
         )
@@ -84,7 +84,7 @@ async def test_out_of_order_heartbeat_does_not_move_state_backwards(
     # Delivered late by the transport, carrying an older view of the service.
     ServiceRegistry.update_service(
         "worker_group_manager_0",
-        ServiceType.WORKER_GROUP_MANAGER,
+        ServiceType.WORKER_MANAGER,
         newest_ns - 1,
         LifecycleState.RUNNING,
     )
@@ -105,7 +105,7 @@ async def test_status_from_skewed_sender_clock_does_not_backdate_last_seen(
     await system_controller._process_status_message(
         StatusMessage(
             service_id="worker_group_manager_0",
-            service_type=ServiceType.WORKER_GROUP_MANAGER,
+            service_type=ServiceType.WORKER_MANAGER,
             state=LifecycleState.RUNNING,
             request_ns=before_ns - SKEW_NS,
         )
