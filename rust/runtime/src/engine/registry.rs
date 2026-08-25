@@ -212,10 +212,14 @@ pub trait TransportFactory: Debug + Send + Sync {
     /// execution mode (dynosim's virtual-clock co-simulation) prepared through
     /// its own module.
     ///
-    /// This is the seam that makes a transport *swappable*: the workload asks the
-    /// registered transport for its execution binding and drives the shared
-    /// scheduled/graph runtime through it, never matching on a transport kind.
-    /// The default returns `None`; every RequestExecutor transport
+    /// This is the id-addressed accessor for a binding: the capability catalog
+    /// and out-of-tree registrations reach a transport's execution binding
+    /// through it. Selection from authored config does *not* — `cfg.transport`
+    /// is the closed [`crate::config::model::transport::Transport`] enum, and
+    /// `resolve_native_execution`
+    /// (`crate::engine::online_execution`) matches on it exhaustively so the
+    /// compiler keeps arms and registrations in correspondence. The default
+    /// returns `None`; every RequestExecutor transport
     /// (`http`/`grpc`/`dry_run`) overrides it.
     fn native_execution(
         &self,
@@ -230,14 +234,16 @@ pub trait TransportFactory: Debug + Send + Sync {
 /// drives the `RequestExecutor` seam over a real clock (`http`, `grpc`,
 /// `dry_run`).
 ///
-/// The scheduled and graph workloads resolve one of these from the
-/// transport-registry entry and drive the entire native runtime (pacing,
-/// admission, phase orchestration, metrics, export) through it. There is no
-/// `match` on a closed transport enum: adding a native transport means
-/// registering a factory that returns its own binding, and nothing in the
-/// workloads changes. A transport whose execution mode is not the
-/// `RequestExecutor` seam (dynosim) returns `None` from
-/// [`TransportFactory::native_execution`] instead.
+/// The scheduled and graph workloads resolve one of these and drive the entire
+/// native runtime (pacing, admission, phase orchestration, metrics, export)
+/// through it. Resolution is an exhaustive `match` on the closed
+/// [`crate::config::model::transport::Transport`] enum in
+/// `resolve_native_execution`: no authored Config v2 document can name a
+/// transport outside those variants, so adding a native transport means adding
+/// an arm there alongside its registration, and nothing else in the workloads
+/// changes. A transport whose execution mode is not the `RequestExecutor` seam
+/// (dynosim) resolves to `None`, and its feature-gated variants carry explicit
+/// rejection arms naming the missing build feature.
 pub trait NativeTransportExecution: Send + Sync {
     /// Turn-placement factory this transport drives below the shared dispatcher.
     fn executor_factory(&self) -> Arc<dyn crate::engine::turn_execution::RequestExecutorFactory>;

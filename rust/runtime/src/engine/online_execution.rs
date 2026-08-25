@@ -27,6 +27,7 @@ use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
 use url::Url;
 
+use crate::config::model::transport::Transport;
 use crate::engine::dataset_input::DatasetInputContext;
 use crate::engine::execute::{
     NativeDatasetPlan, NativeEndpointPlan, NativeGraphDatasetPlan, NativeRunSpec,
@@ -111,20 +112,67 @@ impl NativeTransportExecution for HttpNativeExecution {
     }
 }
 
-/// Resolve the native execution binding for a validated transport.
+/// Resolve the native execution binding for the selected transport.
+///
+/// Selection is an exhaustive match on the closed [`Transport`] enum, not a
+/// registry lookup by id: `Transport` is `#[serde(tag = "type")]` over a fixed
+/// set of variants, so no authored Config v2 document can select anything else,
+/// and the compiler — rather than a run-time lookup miss — is what keeps the
+/// arms and the in-tree registrations in correspondence. The registry stays the
+/// authority for the *id-addressed* consumers (capability descriptors, the
+/// native-graph model-runtime resolver).
+///
+/// Variants whose implementation is feature-gated get an explicit rejection arm
+/// naming the missing build feature, so a lean binary reports what it was built
+/// without instead of an opaque "transport is not registered".
 ///
 /// Returns `Ok(None)` for a transport whose execution mode is not the
 /// `RequestExecutor` seam, such as virtual-clock co-simulation.
 fn resolve_native_execution(
     context: &RunContext,
     transport: &dyn ValidatedTransportConfig,
-    transport_id: &str,
+    transport_typed: &Transport,
 ) -> Result<Option<Arc<dyn NativeTransportExecution>>> {
-    let factory = context
-        .product_registry()
-        .transport_factory(transport_id)
-        .ok_or_else(|| anyhow::anyhow!("transport {transport_id:?} is not registered"))?;
-    factory.native_execution(transport, context)
+    match transport_typed {
+        Transport::Http => Ok(Some(Arc::new(HttpNativeExecution::new(
+            context.execution_factories().http_handle(),
+        )))),
+
+        #[cfg(feature = "grpc")]
+        Transport::Grpc => Ok(Some(Arc::new(
+            crate::engine::grpc_execution::GrpcNativeExecution::new(),
+        ))),
+        #[cfg(not(feature = "grpc"))]
+        Transport::Grpc => anyhow::bail!(
+            "transport `grpc` selected but this binary was built without the `grpc` feature"
+        ),
+
+        #[cfg(feature = "websocket")]
+        Transport::Websocket(_) => {
+            let config = ValidatedTransportConfig::as_any(transport)
+                .downcast_ref::<crate::config::model::transport::WebSocketTransportConfig>()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("websocket transport received an invalid validated config")
+                })?
+                .clone();
+            Ok(Some(Arc::new(
+                crate::engine::ws_execution::WebSocketNativeExecution::new(config),
+            )))
+        }
+        #[cfg(not(feature = "websocket"))]
+        Transport::Websocket(_) => anyhow::bail!(
+            "transport `websocket` selected but this binary was built without the `websocket` feature"
+        ),
+
+        Transport::DryRun(_) => Ok(Some(crate::engine::dry_run::dry_run_native_execution(
+            transport,
+        )?)),
+
+        // Dynosim co-simulation is not the `RequestExecutor` seam; its arm in
+        // every workload is `dynosim_or_unsupported!`, which supplies the
+        // feature-off rejection.
+        Transport::DynosimOffline(_) | Transport::DynosimOnline(_) => Ok(None),
+    }
 }
 
 use crate::engine::sidecar_input::{CONTENT_SERVER_SIDECAR_ID, ContentServerSpec};
@@ -234,7 +282,7 @@ impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
         transport_id: &str,
     ) -> Result<()> {
         let workload = workload_config::<ScheduledWorkloadConfigV2>(workload, "scheduled")?;
-        match resolve_native_execution(context, transport, transport_id)? {
+        match resolve_native_execution(context, transport, &run.transport_typed)? {
             Some(binding) => binding.validate_run(run, context)?,
             None => dynosim_or_unsupported!(
                 transport_id,
@@ -256,7 +304,7 @@ impl WorkloadFactory for ScheduledWorkloadFactoryV2 {
         workload: Box<dyn ValidatedWorkloadConfig>,
         transport_id: &str,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        match resolve_native_execution(context, transport.as_ref(), transport_id)? {
+        match resolve_native_execution(context, transport.as_ref(), &run.transport_typed)? {
             Some(binding) => {
                 let workload =
                     workload_config::<ScheduledWorkloadConfigV2>(workload.as_ref(), "scheduled")?;
@@ -330,7 +378,7 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
         transport_id: &str,
     ) -> Result<()> {
         let workload = workload_config::<GraphWorkloadConfigV2>(workload, "graph")?;
-        match resolve_native_execution(context, transport, transport_id)? {
+        match resolve_native_execution(context, transport, &run.transport_typed)? {
             Some(binding) => {
                 binding.validate_run(run, context)?;
                 ensure!(
@@ -371,7 +419,7 @@ impl WorkloadFactory for GraphWorkloadFactoryV2 {
         workload: Box<dyn ValidatedWorkloadConfig>,
         transport_id: &str,
     ) -> Result<Box<dyn PreparedRunnerOperation>> {
-        match resolve_native_execution(context, transport.as_ref(), transport_id)? {
+        match resolve_native_execution(context, transport.as_ref(), &run.transport_typed)? {
             Some(binding) => {
                 let workload =
                     workload_config::<GraphWorkloadConfigV2>(workload.as_ref(), "graph")?;
@@ -480,7 +528,7 @@ impl WorkloadFactory for StaticAccuracyWorkloadFactoryV2 {
             transport_id == "http",
             "static accuracy execution runs only over the http transport"
         );
-        let binding = resolve_native_execution(context, transport.as_ref(), transport_id)?
+        let binding = resolve_native_execution(context, transport.as_ref(), &run.transport_typed)?
             .ok_or_else(|| {
                 anyhow::anyhow!("static accuracy execution runs only over the http transport")
             })?;
@@ -1834,6 +1882,118 @@ impl PreparedRunnerOperation for PreparedNativeOperation {
             run_metadata: self.run_metadata,
             report_commit: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod transport_binding_differential {
+    use std::sync::Arc;
+
+    use serde_json::{Value, value::RawValue};
+
+    use super::resolve_native_execution;
+    use crate::config::model::transport::Transport;
+    use crate::engine::registry::{
+        NativeTransportExecution, RunContext, ValidatedTransportConfig,
+        inference_workload_requirements,
+    };
+    use crate::extensions::AIPerfRegistry;
+
+    /// Every `Transport` variant reachable in this build.
+    fn variants() -> Vec<Transport> {
+        let mut all = vec![Transport::Http, Transport::DryRun(Default::default())];
+        #[cfg(feature = "grpc")]
+        all.push(Transport::Grpc);
+        #[cfg(feature = "websocket")]
+        all.push(Transport::Websocket(Default::default()));
+        #[cfg(feature = "dynosim")]
+        {
+            all.push(Transport::DynosimOffline(Default::default()));
+            all.push(Transport::DynosimOnline(Default::default()));
+        }
+        all
+    }
+
+    /// The projected `{id, config}` pair the registry lookup path consumes.
+    fn projected(transport: &Transport) -> (String, Box<RawValue>) {
+        let mut object = serde_json::to_value(transport)
+            .expect("transport serializes")
+            .as_object()
+            .cloned()
+            .expect("transport serializes to an object");
+        let id = object
+            .remove("type")
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .expect("transport carries its type tag");
+        let config = RawValue::from_string(
+            serde_json::to_string(&Value::Object(object)).expect("config serializes"),
+        )
+        .expect("config is valid json");
+        (id, config)
+    }
+
+    fn context() -> RunContext {
+        RunContext::new(
+            format!("blake3:{}", "a".repeat(64)),
+            Arc::new(AIPerfRegistry::builtin().expect("builtin registry")),
+            crate::engine::execution_factories::native_execution_factories(),
+            Arc::new(crate::engine::graph_input::BuiltinRunnerGraphInputAdapterResolver::new()),
+            Arc::new(crate::engine::dataset_input::BuiltinRunnerDatasetInputAdapterResolver::new()),
+            Arc::new(crate::engine::sidecar_input::PreparedSidecarInputs::default()),
+            Vec::new(),
+        )
+        .expect("run context")
+    }
+
+    /// The observable surface of a binding. `NativeTransportExecution` is not
+    /// `Eq` and its members are trait objects, so equality is asserted over the
+    /// facts the runtime actually reads off a binding.
+    fn observed(binding: Option<&Arc<dyn NativeTransportExecution>>) -> Option<(bool, bool, &str)> {
+        binding.map(|binding| {
+            (
+                binding.readiness_enabled(),
+                binding.uses_virtual_clock(),
+                binding.graph_transport_label(),
+            )
+        })
+    }
+
+    /// Step 2's own obligation: for every variant, the hand-written match arm
+    /// must produce the same binding the registry lookup produced, asserted
+    /// while both paths are still reachable. Step 1's component-equality
+    /// differential says nothing about this, because the arms no longer route
+    /// through the shared terminal `factory.native_execution` call.
+    #[test]
+    fn match_arm_binding_matches_the_registry_lookup_for_every_variant() {
+        let context = context();
+        let requirements = inference_workload_requirements();
+        for transport in variants() {
+            let (id, config) = projected(&transport);
+            let factory = context
+                .product_registry()
+                .transport_factory(&id)
+                .unwrap_or_else(|| panic!("transport {id:?} is registered"));
+            let validated: Box<dyn ValidatedTransportConfig> = factory
+                .validate(&config, &requirements)
+                .unwrap_or_else(|error| panic!("validate {id:?}: {error}"));
+
+            let from_registry = factory
+                .native_execution(validated.as_ref(), &context)
+                .unwrap_or_else(|error| panic!("registry binding for {id:?}: {error}"));
+            let from_match = resolve_native_execution(&context, validated.as_ref(), &transport)
+                .unwrap_or_else(|error| panic!("match binding for {id:?}: {error}"));
+
+            assert_eq!(
+                observed(from_match.as_ref()),
+                observed(from_registry.as_ref()),
+                "binding diverged from the registry lookup for {id:?}"
+            );
+            assert_eq!(
+                from_match.is_some(),
+                from_registry.is_some(),
+                "binding presence diverged for {id:?}"
+            );
+        }
     }
 }
 

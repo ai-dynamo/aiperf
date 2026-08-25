@@ -478,6 +478,25 @@ impl TransportFactory for DryRunTransportFactoryV2 {
     }
 }
 
+/// Build the `dry_run` native execution binding from its validated config.
+///
+/// The typed [`crate::config::model::transport::DryRunConfig`] carries authored
+/// knobs, while [`DryRunTransportConfigV2`] is the validated shape whose
+/// `validate` proved every latency coefficient finite and non-negative. The
+/// selection match therefore hands the *validated* config here rather than
+/// re-deriving params from the authored variant.
+pub(crate) fn dry_run_native_execution(
+    config: &dyn ValidatedTransportConfig,
+) -> Result<Arc<dyn NativeTransportExecution>> {
+    let config = ValidatedTransportConfig::as_any(config)
+        .downcast_ref::<DryRunTransportConfigV2>()
+        .ok_or_else(|| anyhow::anyhow!("dry_run transport received a non-dry_run config"))?;
+    Ok(Arc::new(DryRunNativeExecution {
+        params: config.params(),
+        virtual_workers: config.virtual_workers.clone(),
+    }))
+}
+
 /// Native execution binding for the built-in `dry_run` transport.
 ///
 /// The fake leaf carries its analytic latency params by value and builds its own

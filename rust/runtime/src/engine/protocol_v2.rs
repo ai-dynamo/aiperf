@@ -17,7 +17,7 @@ use std::path::Component;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, value::RawValue};
 
@@ -371,6 +371,11 @@ impl BenchmarkRunWireV2 {
             .map_err(|error| anyhow!("run.cfg.datasets[0]: {error}"))?;
         let workload_id = workload_kind.workload_id();
         let transport = transport_component(cfg.transport.as_ref())?;
+        // `transport_component` already rejected the unset case, so this clone
+        // cannot fail; keep it a checked bind rather than an `expect`.
+        let Some(transport_typed) = cfg.transport.clone() else {
+            bail!("run.cfg.transport must be an object");
+        };
         // Re-serialize the typed runtime policy so the worker-count and dispatch
         // resolution keep reading the same wire shape (`Null` when unset).
         let runtime = serde_json::to_value(&cfg.runtime)
@@ -501,6 +506,7 @@ impl BenchmarkRunWireV2 {
             models,
             endpoints: endpoint_profiles(endpoint, additional_profiles)?,
             transport,
+            transport_typed,
             workload,
             metrics,
             artifacts: artifacts_spec,
@@ -550,6 +556,26 @@ fn transport_component(transport: Option<&Transport>) -> Result<NamedRunnerCompo
         id,
         config: raw_value(Value::Object(object))?,
     })
+}
+
+/// Rebuild the closed [`Transport`] from a projected component spec.
+///
+/// The inverse of [`transport_component`]: re-insert the `type` tag the
+/// projection stripped and decode the closed enum. Only the direct
+/// `AuthoredRunSpecV2` decode arm needs this; `into_authored` carries the typed
+/// value across directly.
+fn transport_from_component(component: &NamedRunnerComponentSpecV2) -> Result<Transport> {
+    let mut object = serde_json::from_str::<Value>(component.config.get())
+        .map_err(|error| anyhow!("transport config: {error}"))?
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow!("transport config must be an object"))?;
+    object.insert(
+        "type".to_owned(),
+        Value::String(component.id.as_str().to_owned()),
+    );
+    serde_json::from_value(Value::Object(object))
+        .map_err(|error| anyhow!("transport {:?}: {error}", component.id.as_str()))
 }
 
 fn component_from_inline(value: Value, field: &str) -> Result<NamedRunnerComponentSpecV2> {
@@ -616,6 +642,11 @@ pub struct AuthoredRunSpecV2 {
     pub endpoints: EndpointProfilesSpecV2,
     /// Open transport selection (the `{transport, clock}` execution axis).
     pub transport: NamedRunnerComponentSpecV2,
+    /// The same selection as a closed typed value. Native execution binding is
+    /// chosen by an exhaustive match on this field; [`Self::transport`] remains
+    /// for the id-addressed consumers (capability descriptors, the native-graph
+    /// model-runtime resolver). Both die together when the projection does.
+    pub transport_typed: Transport,
     /// Open workload selection.
     pub workload: NamedRunnerComponentSpecV2,
     /// Resolved native metrics policy.
@@ -702,6 +733,8 @@ impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
             artifact_target: wire.artifact_target,
             models: wire.resources.models.unwrap_or_else(empty_models),
             endpoints: wire.resources.endpoints.unwrap_or_default(),
+            transport_typed: transport_from_component(&wire.transport)
+                .map_err(serde::de::Error::custom)?,
             transport: wire.transport,
             workload: wire.workload,
             metrics: wire.resources.metrics.unwrap_or_default(),
