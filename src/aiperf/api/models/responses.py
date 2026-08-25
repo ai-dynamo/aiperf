@@ -28,8 +28,9 @@ class ProgressResponse(AIPerfBaseModel):
         default=False,
         description=(
             "True only after the SystemController has written all benchmark "
-            "artifacts to disk, including the readiness marker "
-            "``.aiperf_results_ready.json`` that the results endpoints gate on."
+            "artifacts to disk. The results endpoints do not gate on this: "
+            "they serve whatever is on disk, so poll this flag before "
+            "treating a listing as the complete artifact set."
         ),
     )
     system_state: SystemState = Field(

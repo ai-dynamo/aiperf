@@ -467,7 +467,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
 
     @background_task(
-        interval=Environment.RECORD.COMPLETION_STALL_CHECK_INTERVAL, immediate=False
+        interval=lambda self: Environment.RECORD.COMPLETION_STALL_CHECK_INTERVAL,
+        immediate=False,
     )
     async def _watch_for_record_stall(self) -> None:
         """Finalize a stalled run instead of waiting on records that never come.
