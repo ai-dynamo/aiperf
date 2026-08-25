@@ -31,6 +31,8 @@ use crate::engine::records::{CapturedRecord, record_json_value};
 
 const WORKER_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 const LIVE_STREAMING_PROTOCOL_VERSION: u32 = 1;
+const LIVE_STREAMING_SHIM_MODULE: &str = "aiperf.rust_shims";
+const LIVE_STREAMING_SHIM_NAME: &str = "live-streaming";
 
 /// Terminal/progress consumer seam for optional live result extensions.
 pub(crate) trait LiveResultsSink {
@@ -142,10 +144,6 @@ impl PythonLiveStreamingRun {
             "live streaming python_executable must be absolute"
         );
         ensure!(
-            !spec.worker_module.trim().is_empty(),
-            "live streaming worker_module cannot be empty"
-        );
-        ensure!(
             spec.buffer_capacity > 0,
             "live streaming buffer_capacity must be positive"
         );
@@ -154,7 +152,8 @@ impl PythonLiveStreamingRun {
         let mut child = Command::new(&spec.python_executable)
             .arg("-u")
             .arg("-m")
-            .arg(&spec.worker_module)
+            .arg(LIVE_STREAMING_SHIM_MODULE)
+            .arg(LIVE_STREAMING_SHIM_NAME)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -162,8 +161,7 @@ impl PythonLiveStreamingRun {
             .spawn()
             .with_context(|| {
                 format!(
-                    "starting live telemetry worker {} with {}",
-                    spec.worker_module,
+                    "starting live telemetry shim aiperf.rust_shims live-streaming with {}",
                     spec.python_executable.display()
                 )
             })?;
@@ -578,6 +576,12 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    #[test]
+    fn live_streaming_uses_the_fixed_external_shim() {
+        assert_eq!(LIVE_STREAMING_SHIM_MODULE, "aiperf.rust_shims");
+        assert_eq!(LIVE_STREAMING_SHIM_NAME, "live-streaming");
+    }
 
     #[test]
     fn bounded_queue_drops_oldest_event() {

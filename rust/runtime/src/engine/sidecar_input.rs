@@ -63,19 +63,12 @@ impl ContentServerSpec {
 pub struct LiveStreamingSpec {
     /// Absolute interpreter used to launch the worker.
     pub python_executable: PathBuf,
-    /// Importable strict-stdio worker module.
-    #[serde(default = "default_live_streaming_worker_module")]
-    pub worker_module: String,
     /// Bounded worker queue capacity with drop-oldest overflow.
     pub buffer_capacity: usize,
     /// Canonical OpenTelemetry streaming settings.
     pub otel: OTelStreamingSpec,
     /// Canonical live-MLflow settings.
     pub mlflow: MLflowStreamingSpec,
-}
-
-fn default_live_streaming_worker_module() -> String {
-    "aiperf.post_processors.native_streaming_worker".to_string()
 }
 
 /// OpenTelemetry settings forwarded to the live processor.
@@ -635,7 +628,6 @@ impl SidecarInputAdapter for LiveStreamingInputAdapter {
             spec.python_executable.is_absolute(),
             "python_executable must be absolute"
         );
-        ensure_nonempty(&spec.worker_module, "worker_module")?;
         ensure!(spec.buffer_capacity > 0, "buffer_capacity must be positive");
         ensure!(
             spec.otel.metrics_url.is_some() || spec.mlflow.tracking_uri.is_some(),
@@ -706,7 +698,6 @@ mod tests {
         }));
         let live = raw(serde_json::json!({
             "python_executable": "/usr/bin/python3",
-            "worker_module": "aiperf.post_processors.native_streaming_worker",
             "buffer_capacity": 100,
             "otel": {
                 "metrics_url": "http://otel:4318/v1/metrics",
@@ -772,6 +763,30 @@ mod tests {
                 .mean_rtt_ns,
             Some(2_500_000.0)
         );
+    }
+
+    #[test]
+    fn live_streaming_rejects_authorable_worker_module() {
+        let live = raw(serde_json::json!({
+            "python_executable": "/usr/bin/python3",
+            "worker_module": "fixture.worker",
+            "buffer_capacity": 100,
+            "otel": {
+                "metrics_url": "http://otel:4318/v1/metrics",
+                "stream_metrics_enabled": true,
+                "stream_timing_enabled": true
+            },
+            "mlflow": {"tracking_uri": null, "experiment": "aiperf"}
+        }));
+
+        let error = BuiltinRunnerSidecarInputAdapterResolver::new()
+            .prepare(&[AuthoredSidecarInput {
+                id: LIVE_STREAMING_SIDECAR_ID,
+                config: &live,
+            }])
+            .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field `worker_module`"));
     }
 
     #[test]

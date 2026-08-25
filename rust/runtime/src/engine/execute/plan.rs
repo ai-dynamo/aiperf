@@ -587,10 +587,6 @@ pub(crate) fn validate_plan(request: &NativeRunSpec) -> Result<()> {
             "live streaming python_executable must be absolute"
         );
         ensure!(
-            !spec.worker_module.trim().is_empty(),
-            "live streaming worker_module cannot be empty"
-        );
-        ensure!(
             spec.buffer_capacity > 0,
             "live streaming buffer_capacity must be positive"
         );

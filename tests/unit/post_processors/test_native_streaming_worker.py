@@ -11,7 +11,7 @@ import orjson
 import pytest
 from pydantic import ValidationError
 
-from aiperf.post_processors.native_streaming_worker import (
+from aiperf.rust_shims.live_streaming_worker import (
     _ACTIVATION_CONTROL_ADAPTER,
     _WORKER_EVENT_ADAPTER,
     ActivateEvent,
@@ -19,6 +19,7 @@ from aiperf.post_processors.native_streaming_worker import (
     PhaseStatsEvent,
     _build_run,
     _phase_data,
+    main,
 )
 
 
@@ -156,6 +157,10 @@ def test_activation_is_a_distinct_strict_control_barrier() -> None:
         )
 
 
+def test_worker_rejects_shim_arguments() -> None:
+    assert main(["unexpected"]) == 2
+
+
 def test_worker_prepares_before_artifact_creation_and_activates_afterward(
     tmp_path: Path,
 ) -> None:
@@ -168,7 +173,8 @@ def test_worker_prepares_before_artifact_creation_and_activates_afterward(
             sys.executable,
             "-u",
             "-m",
-            "aiperf.post_processors.native_streaming_worker",
+            "aiperf.rust_shims",
+            "live-streaming",
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,

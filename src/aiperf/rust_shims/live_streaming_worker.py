@@ -429,8 +429,22 @@ async def _main() -> int:
 _PROTOCOL_STDOUT = sys.stdout.buffer
 
 
-if __name__ == "__main__":
+def main(arguments: list[str] | None = None) -> int:
+    """Run the strict stdio worker without accepting shim-specific arguments."""
+    argv = sys.argv[1:] if arguments is None else arguments
+    if argv:
+        print("live-streaming shim does not accept arguments", file=sys.stderr)
+        return 2
+
     # Reserve stdout exclusively for the machine protocol. Canonical AIPerf
     # logger output and extension diagnostics belong on stderr.
+    stdout = sys.stdout
     sys.stdout = sys.stderr
-    raise SystemExit(asyncio.run(_main()))
+    try:
+        return asyncio.run(_main())
+    finally:
+        sys.stdout = stdout
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
