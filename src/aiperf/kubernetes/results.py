@@ -394,11 +394,12 @@ async def kubectl_copy_results(
                 str(output_dir),
                 *kube_args,
             ],
-            timeout=1800.0,
+            timeout=K8sEnvironment.RESULTS.KUBECTL_COPY_TIMEOUT_SECONDS,
         )
     except TimeoutError:
         print_error(
-            f"Timed out copying results from {pod_name}:/results after 1800s. "
+            f"Timed out copying results from {pod_name}:/results after "
+            f"{K8sEnvironment.RESULTS.KUBECTL_COPY_TIMEOUT_SECONDS:g}s. "
             "The artifact tree may be very large; retry with the API path "
             "(omit --from-pods) or copy a smaller subset manually."
         )

@@ -11,6 +11,7 @@ eventually OOMKilled on a long multi-turn run.
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.models.dataset_models import Conversation, Turn
 from aiperf.workers.session_manager import (
     DEFAULT_MAX_SESSIONS,
@@ -42,6 +43,16 @@ def _add(mgr: UserSessionManager, n: int) -> None:
 class TestSessionCacheIsBounded:
     def test_default_cap_is_exposed(self) -> None:
         assert DEFAULT_MAX_SESSIONS >= 1
+
+    def test_default_constructor_uses_configured_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Environment.WORKER, "SESSION_CACHE_MAX_ENTRIES", 3)
+        mgr = UserSessionManager()
+
+        _add(mgr, 5)
+
+        assert len(mgr._cache) == 3
 
     def test_cache_never_exceeds_the_cap(self) -> None:
         mgr = UserSessionManager(max_sessions=10)

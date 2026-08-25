@@ -18,8 +18,16 @@ import asyncio
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.credit.messages import TimePing, TimePong
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
+
+
+def test_default_filter_dimensions_use_environment_settings():
+    tracker = ClockOffsetTracker()
+
+    assert tracker._window.maxlen == Environment.WORKER.CLOCK_OFFSET_WINDOW_SIZE
+    assert tracker._min_samples == Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES
 
 
 def test_offset_is_none_before_any_sample():

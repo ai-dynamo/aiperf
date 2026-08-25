@@ -66,12 +66,6 @@ _TOKENIZER_ALLOW_NAMES: frozenset[str] = frozenset(
 # under ``trust_remote_code`` / ``auto_map``) and tiktoken vocab dumps.
 _TOKENIZER_ALLOW_SUFFIXES: frozenset[str] = frozenset({".py", ".tiktoken"})
 
-# Hard cap on the uncompressed tar size. Real tokenizers are well under 30 MB;
-# a bundle larger than this almost certainly means a non-tokenizer artefact
-# slipped past the allowlist. We raise rather than silently truncate so the
-# allowlist gets fixed instead of users getting a corrupt half-bundle.
-_TOKENIZER_BUNDLE_MAX_BYTES: int = 50 * 1024 * 1024  # 50 MiB
-
 
 def _is_tokenizer_file(entry: Path) -> bool:
     """Return True iff ``entry`` is on the tokenizer allowlist (case-insensitive)."""
@@ -134,9 +128,8 @@ def _materialize_bundle(snapshot_dir: Path) -> bytes:
     full model size. Allowlisted files are still dereferenced (HF cache stores
     even ``tokenizer.json`` as a blob symlink, so we need the real bytes).
 
-    Raises ``ValueError`` if the assembled tar exceeds
-    :data:`_TOKENIZER_BUNDLE_MAX_BYTES` -- a guard against a non-tokenizer
-    artefact slipping past the allowlist.
+    Raises ``ValueError`` if the assembled tar exceeds the configured tokenizer
+    bundle cap -- a guard against a non-tokenizer artefact slipping past the allowlist.
     """
     import io as _io
     import tarfile as _tarfile
@@ -149,10 +142,11 @@ def _materialize_bundle(snapshot_dir: Path) -> bytes:
                     continue
                 tar.add(entry, arcname=entry.name)
         raw_size = raw_tar.tell()
-        if raw_size > _TOKENIZER_BUNDLE_MAX_BYTES:
+        bundle_max_bytes = Environment.TOKENIZER.BUNDLE_MAX_BYTES
+        if raw_size > bundle_max_bytes:
             raise ValueError(
                 f"tokenizer bundle for '{snapshot_dir}' is {raw_size} bytes, "
-                f"exceeds cap of {_TOKENIZER_BUNDLE_MAX_BYTES} bytes; "
+                f"exceeds cap of {bundle_max_bytes} bytes; "
                 f"a non-tokenizer artefact likely slipped past the allowlist "
                 f"in aiperf.api.routers.tokenizer._TOKENIZER_ALLOW_NAMES / "
                 f"_TOKENIZER_ALLOW_SUFFIXES"
@@ -261,7 +255,7 @@ def build_tokenizer_router() -> APIRouter:
             payload = await asyncio.to_thread(_materialize_bundle, snapshot_dir)
             _store.bundles[name] = payload
             elapsed = time.monotonic() - t0
-            if elapsed > 5.0:
+            if elapsed > Environment.TOKENIZER.BUNDLE_BUILD_WARN_SECONDS:
                 # Surface slow on-demand builds in the api log; production
                 # should always hit the prewarmed fast path, so a slow
                 # request-path build is a signal that prewarm missed this

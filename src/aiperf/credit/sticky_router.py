@@ -887,8 +887,8 @@ class StickyCreditRouter(CommunicationMixin):
         """Periodically drop workers whose heartbeats have stopped.
 
         Sweeps every ``STALE_TIME`` but evicts only workers silent for
-        ``STALE_TIME * 3``, so a dead worker leaves routing within roughly
-        three to four sweeps. The margin keeps a worker that misses one or two
+        ``STALE_TIME * ROUTER_STALE_EVICTION_MULTIPLIER``. The default margin
+        keeps a worker that misses one or two
         heartbeats under load in the pool. Suppressed once credits are
         complete or a cancellation is in flight: workers legitimately stop
         talking then, and evicting during teardown would log noise about a
@@ -896,7 +896,10 @@ class StickyCreditRouter(CommunicationMixin):
         """
         if self._credits_complete or self._cancellation_pending:
             return
-        self.evict_stale_workers(Environment.WORKER.STALE_TIME * 3)
+        self.evict_stale_workers(
+            Environment.WORKER.STALE_TIME
+            * Environment.WORKER.ROUTER_STALE_EVICTION_MULTIPLIER
+        )
 
     def _note_peak_workers(self) -> None:
         """Track the high-water mark of registered workers.
