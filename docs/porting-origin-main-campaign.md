@@ -61,7 +61,7 @@ implementation, test run, or review.
 | 33 | `37467dc38c` | force content parts | complete | applicable | Merged in `73e1ab0761`; native bootstrap-captured endpoint policy and focused test coverage are green. |
 | 34 | `00ba1c5db3` | audio transcription | pending | applicable | New multipart endpoint, parser, and mock route. |
 | 35 | `03c9c6ddc5` | LCB grading concurrency | pending | applicable | Delegation/detail are present; upstream multiplexing and unconditional group reaping remain open. |
-| 36 | `6480e5467f` | synthesis YAML overrides | pending | applicable | Flag-only support exists; CLI-over-YAML overlay is absent. |
+| 36 | `6480e5467f` | synthesis YAML overrides | complete | applicable | Merged in `445e2ec4d7`; native CLI-over-YAML overlay, resolver and CLI-path integration tests, exact upstream merge ancestry, and Graham approval recorded. |
 | 37 | `23ed221c3d` | CI speed | pending | not-applicable | CI-only work. |
 | 38 | `c26fe88bd8` | AgentX FAQ | pending | not-applicable | Documentation only. |
 | 39 | `1e32a51318` | Baseten load performance | analysing | unassessed | Requires benchmark before claiming a port gap. |
