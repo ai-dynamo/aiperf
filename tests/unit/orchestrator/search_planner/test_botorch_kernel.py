@@ -10,6 +10,10 @@ import pytest
 
 torch = pytest.importorskip("torch")
 gpytorch = pytest.importorskip("gpytorch")
+# Module level, not inside the test: a per-test importorskip leaves the CI job
+# green (exit 0) with the regression silently skipped. Collected-nothing here
+# exits 5 instead, which is loud.
+botorch = pytest.importorskip("botorch")
 
 from aiperf.orchestrator.search_planner._botorch_kernel import (  # noqa: E402
     make_dsp_kernel,
@@ -67,13 +71,11 @@ class TestDspKernelBatchShape:
     @pytest.mark.parametrize("n_outputs", [1, 2, 3])
     def test_gp_fit_succeeds_for_each_output_count(self, n_outputs: int) -> None:
         """m=1 is unconstrained; m>1 is one column per SLA filter."""
-        botorch = pytest.importorskip("botorch")
         from botorch.fit import fit_gpytorch_mll
         from botorch.models import SingleTaskGP
         from botorch.models.transforms import Standardize
         from gpytorch.mlls import ExactMarginalLogLikelihood
 
-        assert botorch is not None
         torch.manual_seed(0)
         train_x = torch.rand(6, 1, dtype=torch.float64)
         train_y = torch.rand(6, n_outputs, dtype=torch.float64)
