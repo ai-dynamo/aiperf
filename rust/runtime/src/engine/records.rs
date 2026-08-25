@@ -12,7 +12,9 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use crate::dispatch::sink::{TransportFallbackReason, TransportRoute};
+use crate::dispatch::sink::{
+    ObservedSpecDecodeAcceptance, TransportFallbackReason, TransportRoute,
+};
 use crate::export::otel::{OtelRecordAccumulator, classify_spec_error_type};
 use crate::metrics_core::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
@@ -100,6 +102,8 @@ pub struct CapturedHttpExchange {
 struct RecordRow {
     metadata: RecordMetadata,
     metrics: BTreeMap<String, RecordMetric>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spec_decode_acceptance: Option<ObservedSpecDecodeAcceptance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     trace_data: Option<Value>,
     error: Option<RecordError>,
@@ -1002,6 +1006,7 @@ fn record_row(captured: &CapturedRecord, config: &MetricsConfig, include_trace: 
             cancellation_time_ns: record.canceled.then_some(record.end_ns),
         },
         metrics,
+        spec_decode_acceptance: record.spec_decode_acceptance.clone(),
         trace_data: include_trace.then(|| trace_value(record)),
         error,
     }
@@ -1230,6 +1235,7 @@ fn trace_value(record: &RecordIngest) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::sink::ObservedSpecDecodeAcceptance;
     use crate::metrics_core::{Phase, TokenCounts};
 
     /// The fallback constant is the zero-partition label, not an independent
@@ -1294,6 +1300,74 @@ mod tests {
         assert_eq!(row["metrics"]["inter_token_latency"]["value"], 2.5);
         assert!(row.get("trace_data").is_none());
         assert!(row["error"].is_null());
+    }
+
+    #[test]
+    fn jsonl_surfaces_canonical_spec_decode_data_and_all_record_metrics() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("profile_export.jsonl");
+        let mut ingest = RecordIngest::minimal(1_000_000, 11_000_000, Phase::Profiling);
+        ingest.spec_decode_acceptance = Some(ObservedSpecDecodeAcceptance {
+            engine: "vllm".to_string(),
+            mean_acceptance_length: 3.25,
+            draft_acceptance_rate: 0.5625,
+            acceptance_histogram: BTreeMap::from([(0, 1), (1, 1), (2, 2), (3, 3), (4, 1)]),
+            num_accepted_draft_tokens: 18,
+            num_draft_tokens: 32,
+            num_spec_steps: 8,
+            num_spec_tokens: Some(4),
+            completion_tokens: Some(26),
+            per_step_accepted: Some(vec![2, 3, 1, 4, 2, 0, 3, 3]),
+            per_step_drafted: Some(vec![4; 8]),
+        });
+        let captured = CapturedRecord {
+            uuid: Uuid::from_u128(13),
+            x_correlation_id: "session-13".into(),
+            output: CapturedModelOutput::default(),
+            raw: None,
+            ingest,
+        };
+
+        write_records_jsonl(&path, &[captured], &MetricsConfig::default(), false).unwrap();
+
+        let row: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(row["spec_decode_acceptance"]["engine"], "vllm");
+        assert_eq!(
+            row["spec_decode_acceptance"]["acceptance_histogram"],
+            serde_json::json!({"0": 1, "1": 1, "2": 2, "3": 3, "4": 1})
+        );
+        let expected = [
+            ("spec_decode_acceptance_length", 3.25),
+            ("spec_decode_draft_acceptance_rate", 56.25),
+            ("spec_decode_accepted_per_verified", 0.65),
+            ("spec_decode_steps", 8.0),
+            ("spec_decode_accepted_draft_tokens", 18.0),
+            ("spec_decode_draft_tokens", 32.0),
+        ];
+        for (tag, value) in expected {
+            assert_eq!(row["metrics"][tag]["value"], value);
+        }
+    }
+
+    #[test]
+    fn jsonl_omits_spec_decode_data_and_metrics_when_absent() {
+        let captured = CapturedRecord {
+            uuid: Uuid::from_u128(14),
+            x_correlation_id: "session-14".into(),
+            output: CapturedModelOutput::default(),
+            raw: None,
+            ingest: RecordIngest::minimal(1_000_000, 11_000_000, Phase::Profiling),
+        };
+
+        let row = record_json_value(&captured, &MetricsConfig::default(), false).unwrap();
+        assert!(row.get("spec_decode_acceptance").is_none());
+        assert!(
+            row["metrics"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .all(|name| !name.starts_with("spec_decode_"))
+        );
     }
 
     #[cfg(feature = "parquet")]

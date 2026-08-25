@@ -771,6 +771,11 @@ Measurement and output:
   approved native profile-console port for SGLang speculative-decoding gauges:
   configured-model and leader-rank selection, distinct endpoint/label rows,
   finite summaries, percent display scaling, and inactive-gauge suppression.
+- [`docs/specs/2026-08-25-native-spec-decode-acceptance-metrics.md`](docs/specs/2026-08-25-native-spec-decode-acceptance-metrics.md) —
+  approved native per-request vLLM speculative-decode acceptance path: validated
+  canonical records, exact record/derived metrics and phase-pooled histograms
+  across exact/sketch/cellular folds, JSONL/summary/console projection, and a
+  real-profile Rust mock E2E.
 - [`docs/specs/accuracy.md`](docs/specs/accuracy.md) — the Rust dispatch/capture vs
   pinned-Python grading split, the injected evaluator seam, and sharded capture
   with a single grade.

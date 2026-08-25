@@ -503,6 +503,89 @@ fn sglang_speculative_activity_uses_rate_only_without_length() {
     assert!(!render_console_txt(&report, &cfg).contains("Speculative Decoding"));
 }
 
+fn spec_decode_console_config() -> ConsoleTxtExportConfig {
+    ConsoleTxtExportConfig {
+        title: "NVIDIA AIPerf".to_string(),
+        metrics: BTreeMap::from([(
+            "spec_decode_acceptance_length".to_string(),
+            ConsoleMetricMeta {
+                header: "Acceptance Length".to_string(),
+                group: "spec_decode".to_string(),
+                display_order: Some(5000),
+                internal: false,
+                experimental: false,
+                error_only: false,
+            },
+        )]),
+        ..ConsoleTxtExportConfig::default()
+    }
+}
+
+#[test]
+fn spec_decode_console_renders_the_worked_example_histogram() {
+    let mut report = empty_report();
+    report.metrics.insert(
+        "spec_decode_acceptance_length".to_string(),
+        dist_entry("ratio", 3.25),
+    );
+    report.pooled_spec_decode_acceptance_histogram =
+        Some(BTreeMap::from([(0, 1), (1, 1), (2, 2), (3, 3), (4, 1)]));
+
+    let text = render_console_txt(&report, &spec_decode_console_config());
+    assert!(text.contains("NVIDIA AIPerf: Spec Decode"));
+    assert_eq!(
+        text.lines()
+            .find(|line| line.starts_with("Accepted drafts per step")),
+        Some("Accepted drafts per step (% of steps):  0: 12%   1: 12%   2: 25%   3: 38%   4: 12%")
+    );
+}
+
+#[test]
+fn spec_decode_console_fills_gaps_and_folds_buckets_at_eight() {
+    let mut report = empty_report();
+    report.metrics.insert(
+        "spec_decode_acceptance_length".to_string(),
+        dist_entry("ratio", 3.25),
+    );
+    report.pooled_spec_decode_acceptance_histogram =
+        Some(BTreeMap::from([(0, 1), (8, 1), (12, 2)]));
+
+    let text = render_console_txt(&report, &spec_decode_console_config());
+    assert_eq!(
+        text.lines()
+            .find(|line| line.starts_with("Accepted drafts per step")),
+        Some(
+            "Accepted drafts per step (% of steps):  0: 25%   1: 0%   2: 0%   3: 0%   4: 0%   5: 0%   6: 0%   7: 0%   >=8: 75%"
+        )
+    );
+}
+
+#[test]
+fn spec_decode_console_caps_an_authored_zero_count_high_bucket() {
+    let mut report = empty_report();
+    report.metrics.insert(
+        "spec_decode_acceptance_length".to_string(),
+        dist_entry("ratio", 3.25),
+    );
+    report.pooled_spec_decode_acceptance_histogram = Some(BTreeMap::from([(0, 1), (9, 0)]));
+
+    let text = render_console_txt(&report, &spec_decode_console_config());
+    assert_eq!(
+        text.lines()
+            .find(|line| line.starts_with("Accepted drafts per step")),
+        Some(
+            "Accepted drafts per step (% of steps):  0: 100%   1: 0%   2: 0%   3: 0%   4: 0%   5: 0%   6: 0%   7: 0%   >=8: 0%"
+        )
+    );
+}
+
+#[test]
+fn spec_decode_console_omits_the_group_and_histogram_when_absent() {
+    let text = render_console_txt(&empty_report(), &spec_decode_console_config());
+    assert!(!text.contains("NVIDIA AIPerf: Spec Decode"));
+    assert!(!text.contains("Accepted drafts per step"));
+}
+
 #[test]
 fn error_summary_table_absent_without_errors() {
     assert!(error_summary_table(&empty_report(), 140).is_none());

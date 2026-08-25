@@ -146,12 +146,23 @@ pub enum MetricTag {
     ActiveTotalThroughput,
     TimeToLastRoundTrip,
     AverageRoundTripTime,
+    SpecDecodeAcceptanceLength,
+    SpecDecodeTokenWeightedAcceptanceLength,
+    SpecDecodeDraftAcceptanceRate,
+    SpecDecodeOverallDraftAcceptanceRate,
+    SpecDecodeAcceptedPerVerified,
+    SpecDecodeSteps,
+    SpecDecodeAcceptedDraftTokens,
+    SpecDecodeDraftTokens,
+    TotalSpecDecodeSteps,
+    TotalAcceptedDraftTokens,
+    TotalDraftTokens,
 }
 
 impl MetricTag {
     /// Number of distinct tags. Variants are contiguous from discriminant zero,
     /// and new identities append at the tail so existing dense columns remain stable.
-    pub const COUNT: usize = MetricTag::AverageRoundTripTime as usize + 1;
+    pub const COUNT: usize = MetricTag::TotalDraftTokens as usize + 1;
 
     /// Dense array index for this tag — its zero-based declaration discriminant.
     #[inline(always)]
@@ -293,6 +304,21 @@ impl MetricTag {
                 "effective_image_samples_per_second_per_user"
             }
             Self::ActiveTotalThroughput => "active_total_throughput",
+            Self::SpecDecodeAcceptanceLength => "spec_decode_acceptance_length",
+            Self::SpecDecodeTokenWeightedAcceptanceLength => {
+                "spec_decode_token_weighted_acceptance_length"
+            }
+            Self::SpecDecodeDraftAcceptanceRate => "spec_decode_draft_acceptance_rate",
+            Self::SpecDecodeOverallDraftAcceptanceRate => {
+                "spec_decode_overall_draft_acceptance_rate"
+            }
+            Self::SpecDecodeAcceptedPerVerified => "spec_decode_accepted_per_verified",
+            Self::SpecDecodeSteps => "spec_decode_steps",
+            Self::SpecDecodeAcceptedDraftTokens => "spec_decode_accepted_draft_tokens",
+            Self::SpecDecodeDraftTokens => "spec_decode_draft_tokens",
+            Self::TotalSpecDecodeSteps => "total_spec_decode_steps",
+            Self::TotalAcceptedDraftTokens => "total_accepted_draft_tokens",
+            Self::TotalDraftTokens => "total_draft_tokens",
         }
     }
 }
@@ -336,6 +362,7 @@ pub enum MetricConsoleGroup {
     Prediction,
     Audio,
     Reasoning,
+    SpecDecode,
     Effective,
     Active,
 }
@@ -351,6 +378,7 @@ impl MetricConsoleGroup {
             Self::Prediction => "prediction",
             Self::Audio => "audio",
             Self::Reasoning => "reasoning",
+            Self::SpecDecode => "spec_decode",
             Self::Effective => "effective",
             Self::Active => "active",
         }
@@ -540,6 +568,17 @@ const fn cfg_short_header(tag: MetricTag) -> Option<&'static str> {
         OverallUsagePromptCacheReadPct => Some("Overall Cache Read %"),
         PrefillThroughputPerUser => Some("Prefill TPS/User"),
         ReasoningTokenCount => Some("Reasoning Tokens"),
+        SpecDecodeAcceptanceLength => Some("Acceptance Length"),
+        SpecDecodeTokenWeightedAcceptanceLength => Some("Token-Wtd Accept Len"),
+        SpecDecodeDraftAcceptanceRate => Some("Draft Accept Rate"),
+        SpecDecodeOverallDraftAcceptanceRate => Some("Overall Draft Accept Rate"),
+        SpecDecodeAcceptedPerVerified => Some("Accepted / Verified"),
+        SpecDecodeSteps => Some("Spec Decode Steps"),
+        SpecDecodeAcceptedDraftTokens => Some("Accepted Draft"),
+        SpecDecodeDraftTokens => Some("Draft Tokens"),
+        TotalSpecDecodeSteps => Some("Total Spec Decode Steps"),
+        TotalAcceptedDraftTokens => Some("Total Accepted Draft"),
+        TotalDraftTokens => Some("Total Draft"),
         RequestCount => Some("Requests"),
         RequestErrorRate => Some("Err %"),
         RequestLatency => Some("Req Latency"),
@@ -617,6 +656,17 @@ const fn cfg_short_header_hide_unit(tag: MetricTag) -> bool {
             | OverallUsagePromptCacheReadPct
             | PrefillThroughputPerUser
             | ReasoningTokenCount
+            | SpecDecodeAcceptanceLength
+            | SpecDecodeTokenWeightedAcceptanceLength
+            | SpecDecodeDraftAcceptanceRate
+            | SpecDecodeOverallDraftAcceptanceRate
+            | SpecDecodeAcceptedPerVerified
+            | SpecDecodeSteps
+            | SpecDecodeAcceptedDraftTokens
+            | SpecDecodeDraftTokens
+            | TotalSpecDecodeSteps
+            | TotalAcceptedDraftTokens
+            | TotalDraftTokens
             | RequestCount
             | RequestErrorRate
             | RequestThroughput
@@ -739,6 +789,17 @@ const fn cfg_display_order(tag: MetricTag) -> Option<u32> {
         RequestLatency => Some(300),
         RequestThroughput => Some(900),
         Rtfx => Some(850),
+        SpecDecodeAcceptanceLength => Some(5000),
+        SpecDecodeTokenWeightedAcceptanceLength => Some(5010),
+        SpecDecodeDraftAcceptanceRate => Some(5020),
+        SpecDecodeOverallDraftAcceptanceRate => Some(5025),
+        SpecDecodeAcceptedPerVerified => Some(5030),
+        SpecDecodeSteps => Some(5040),
+        SpecDecodeAcceptedDraftTokens => Some(5050),
+        SpecDecodeDraftTokens => Some(5060),
+        TotalSpecDecodeSteps => Some(5140),
+        TotalAcceptedDraftTokens => Some(5150),
+        TotalDraftTokens => Some(5160),
         TimeToFirstOutputToken => Some(210),
         TimeToLastRoundTrip => Some(220),
         AverageRoundTripTime => Some(230),
@@ -780,7 +841,7 @@ const fn cfg_display_order(tag: MetricTag) -> Option<u32> {
 
 /// Per-tag console grouping.
 const fn cfg_console_group(tag: MetricTag) -> MetricConsoleGroup {
-    use MetricConsoleGroup::{Active, Effective, None as Hidden, Usage};
+    use MetricConsoleGroup::{Active, Effective, None as Hidden, SpecDecode, Usage};
     use MetricTag::*;
     match tag {
         UsagePromptTokens
@@ -825,6 +886,12 @@ const fn cfg_console_group(tag: MetricTag) -> MetricConsoleGroup {
         | ActiveDecodeThroughputPerUser
         | ActivePrefillThroughputPerUser
         | ActiveTotalThroughput => Active,
+        SpecDecodeAcceptanceLength
+        | SpecDecodeTokenWeightedAcceptanceLength
+        | SpecDecodeDraftAcceptanceRate
+        | SpecDecodeOverallDraftAcceptanceRate
+        | SpecDecodeAcceptedPerVerified
+        | SpecDecodeSteps => SpecDecode,
         GoodRequestCount
         | GoodRequestFraction
         | MinRequestTimestamp
@@ -840,6 +907,11 @@ const fn cfg_console_group(tag: MetricTag) -> MetricConsoleGroup {
         | TotalErrorInputSequenceLength
         | TotalOutputTokens
         | TotalReasoningTokens
+        | SpecDecodeAcceptedDraftTokens
+        | SpecDecodeDraftTokens
+        | TotalSpecDecodeSteps
+        | TotalAcceptedDraftTokens
+        | TotalDraftTokens
         | TotalTokenThroughput
         | PrefillThroughputPerUser
         | UsagePromptTokensDiffPct
@@ -926,6 +998,12 @@ const fn cfg_value_type(tag: MetricTag) -> MetricValueType {
         | TotalUsagePromptCacheWriteTokens
         | TotalUsagePromptCacheMissTokens
         | TotalUsageToolUsePromptTokens
+        | SpecDecodeSteps
+        | SpecDecodeAcceptedDraftTokens
+        | SpecDecodeDraftTokens
+        | TotalSpecDecodeSteps
+        | TotalAcceptedDraftTokens
+        | TotalDraftTokens
         | NetworkAdjustedRequestLatency
         | NetworkAdjustedTimeToFirstToken
         | NetworkAdjustedTimeToFirstOutputToken
@@ -2162,6 +2240,105 @@ pub static CATALOG: [MetricSpec; MetricTag::COUNT] = [
         MetricFlags::NONE,
         []
     ),
+    spec!(
+        SpecDecodeAcceptanceLength,
+        "Acceptance Length",
+        Ratio,
+        Record,
+        None,
+        MetricFlags::LARGER_IS_BETTER,
+        []
+    ),
+    spec!(
+        SpecDecodeTokenWeightedAcceptanceLength,
+        "Token-Weighted Acceptance Length",
+        Ratio,
+        Derived,
+        None,
+        MetricFlags::LARGER_IS_BETTER,
+        [TotalAcceptedDraftTokens, TotalSpecDecodeSteps]
+    ),
+    spec!(
+        SpecDecodeDraftAcceptanceRate,
+        "Draft Acceptance Rate",
+        Percent,
+        Record,
+        None,
+        MetricFlags::LARGER_IS_BETTER,
+        []
+    ),
+    spec!(
+        SpecDecodeOverallDraftAcceptanceRate,
+        "Overall Draft Acceptance Rate",
+        Percent,
+        Derived,
+        None,
+        MetricFlags::LARGER_IS_BETTER,
+        [TotalAcceptedDraftTokens, TotalDraftTokens]
+    ),
+    spec!(
+        SpecDecodeAcceptedPerVerified,
+        "Accepted per Verified",
+        Ratio,
+        Record,
+        None,
+        MetricFlags::LARGER_IS_BETTER,
+        []
+    ),
+    spec!(
+        SpecDecodeSteps,
+        "Spec Decode Steps",
+        Count,
+        Record,
+        None,
+        MetricFlags::NONE,
+        []
+    ),
+    spec!(
+        SpecDecodeAcceptedDraftTokens,
+        "Accepted Draft Tokens",
+        Token,
+        Record,
+        None,
+        MetricFlags::NONE,
+        []
+    ),
+    spec!(
+        SpecDecodeDraftTokens,
+        "Draft Tokens",
+        Token,
+        Record,
+        None,
+        MetricFlags::NONE,
+        []
+    ),
+    spec!(
+        TotalSpecDecodeSteps,
+        "Total Spec Decode Steps",
+        Count,
+        Derived,
+        None,
+        MetricFlags::NONE,
+        [SpecDecodeSteps]
+    ),
+    spec!(
+        TotalAcceptedDraftTokens,
+        "Total Accepted Draft Tokens",
+        Token,
+        Derived,
+        None,
+        MetricFlags::NONE,
+        [SpecDecodeAcceptedDraftTokens]
+    ),
+    spec!(
+        TotalDraftTokens,
+        "Total Draft Tokens",
+        Token,
+        Derived,
+        None,
+        MetricFlags::NONE,
+        [SpecDecodeDraftTokens]
+    ),
 ];
 
 /// Returns the [`Definition`] for `tag` in O(1).
@@ -2342,13 +2519,44 @@ mod tests {
     #[test]
     fn catalog_has_unique_acyclic_resolved_dependencies() {
         let order = validate_catalog().unwrap();
-        assert_eq!(CATALOG.len(), 127);
+        assert_eq!(CATALOG.len(), 138);
         assert!(order.contains(&MetricTag::RequestLatency));
         assert!(
             CATALOG
                 .iter()
                 .any(|spec| spec.tag == MetricTag::GoodRequestFraction)
         );
+    }
+
+    #[test]
+    fn spec_decode_catalog_contract_is_canonical() {
+        let grouped = [
+            MetricTag::SpecDecodeAcceptanceLength,
+            MetricTag::SpecDecodeTokenWeightedAcceptanceLength,
+            MetricTag::SpecDecodeDraftAcceptanceRate,
+            MetricTag::SpecDecodeOverallDraftAcceptanceRate,
+            MetricTag::SpecDecodeAcceptedPerVerified,
+            MetricTag::SpecDecodeSteps,
+        ];
+        for tag in grouped {
+            assert_eq!(
+                spec_for(tag).unwrap().console_group,
+                super::MetricConsoleGroup::SpecDecode
+            );
+        }
+        for tag in [
+            MetricTag::SpecDecodeAcceptedDraftTokens,
+            MetricTag::SpecDecodeDraftTokens,
+            MetricTag::TotalSpecDecodeSteps,
+            MetricTag::TotalAcceptedDraftTokens,
+            MetricTag::TotalDraftTokens,
+        ] {
+            assert_eq!(
+                spec_for(tag).unwrap().console_group,
+                super::MetricConsoleGroup::None
+            );
+        }
+        assert_eq!(MetricTag::COUNT, 138);
     }
 
     #[test]
@@ -2395,7 +2603,7 @@ mod tests {
         // Updated 2026-07-25: removed the legacy `plot_direction` MetricSpec field;
         // direction now derives from `def.larger_is_better`, which the fingerprint
         // hashes in its place (Task 7 of the definition-registry feature).
-        assert_eq!(catalog_fingerprint(), 4_395_760_333_607_761_587);
+        assert_eq!(catalog_fingerprint(), 12_961_133_547_094_123_540);
     }
 
     #[test]

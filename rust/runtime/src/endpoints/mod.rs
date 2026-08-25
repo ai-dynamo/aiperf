@@ -24,6 +24,7 @@ mod models;
 mod registry;
 mod riva;
 mod sagemaker;
+mod spec_decode;
 mod tier2;
 mod usage;
 mod vllm_generate;
@@ -65,6 +66,7 @@ pub use riva::{
     RivaTransformTextFactory, RivaTtsFactory,
 };
 pub use sagemaker::SageMakerFactory;
+pub(crate) use spec_decode::{extract_vllm_spec_decode_stats, parse_vllm_spec_decode_stats};
 pub use tier2::{
     CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
     ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,
@@ -73,3 +75,66 @@ pub use tier2::{
 };
 pub use usage::UsageView;
 pub use vllm_generate::VllmGenerateFactory;
+
+#[cfg(test)]
+mod spec_decode_tests {
+    use super::spec_decode::{extract_vllm_spec_decode_stats, parse_vllm_spec_decode_stats};
+    use std::collections::BTreeMap;
+
+    fn worked_payload() -> serde_json::Value {
+        serde_json::json!({
+            "mean_acceptance_length": 3.25,
+            "draft_acceptance_rate": 0.5625,
+            "acceptance_histogram": {"0": 1, "1": 1, "2": 2, "3": 3, "4": 1},
+            "num_accepted_draft_tokens": 18,
+            "num_draft_tokens": 32,
+            "num_spec_steps": 8,
+            "num_spec_tokens": 4,
+            "per_step_accepted": [2, 3, 1, 4, 2, 0, 3, 3],
+            "per_step_drafted": [4, 4, 4, 4, 4, 4, 4, 4]
+        })
+    }
+
+    #[test]
+    fn vllm_worked_example_normalizes_to_the_canonical_record() {
+        let record = parse_vllm_spec_decode_stats(worked_payload(), Some(26))
+            .expect("worked payload is canonical");
+
+        assert_eq!(record.engine, "vllm");
+        assert_eq!(
+            record.acceptance_histogram,
+            BTreeMap::from([(0, 1), (1, 1), (2, 2), (3, 3), (4, 1)])
+        );
+        assert_eq!(record.num_spec_steps, 8);
+        assert_eq!(record.num_accepted_draft_tokens, 18);
+        assert_eq!(record.num_draft_tokens, 32);
+        assert_eq!(record.completion_tokens, Some(26));
+    }
+
+    #[test]
+    fn inconsistent_vllm_aggregate_is_rejected() {
+        let mut payload = worked_payload();
+        payload["num_accepted_draft_tokens"] = serde_json::json!(19);
+        assert!(parse_vllm_spec_decode_stats(payload, None).is_err());
+    }
+
+    #[test]
+    fn vllm_draft_acceptance_rate_must_be_a_fraction() {
+        for invalid_rate in [-0.01, 1.01] {
+            let mut payload = worked_payload();
+            payload["draft_acceptance_rate"] = serde_json::json!(invalid_rate);
+            assert!(parse_vllm_spec_decode_stats(payload, None).is_err());
+        }
+    }
+
+    #[test]
+    fn multiple_choices_do_not_claim_one_requests_stats() {
+        let response = serde_json::json!({
+            "choices": [
+                {"speculative_decoding_stats": worked_payload()},
+                {"speculative_decoding_stats": worked_payload()}
+            ]
+        });
+        assert_eq!(extract_vllm_spec_decode_stats(&response), None);
+    }
+}

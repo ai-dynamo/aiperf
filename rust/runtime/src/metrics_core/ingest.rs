@@ -7,6 +7,7 @@
 //! metric overrides. Accumulators decide which catalog rows are computable for a
 //! given export context; producers only fill this shape.
 
+use crate::dispatch::sink::ObservedSpecDecodeAcceptance;
 use crate::dispatch::sink::{TransportFallbackReason, TransportRoute};
 use crate::metrics_core::catalog::MetricTag;
 use crate::metrics_core::value::MetricValue;
@@ -211,6 +212,9 @@ pub struct RecordIngest {
     pub video_peak_memory_mb: Option<f64>,
     /// Explicit metric values injected by endpoint, telemetry, or tests.
     pub metric_overrides: Vec<(MetricTag, MetricValue)>,
+    /// Canonical per-request speculative-decoding acceptance facts.
+    #[serde(default)]
+    pub spec_decode_acceptance: Option<ObservedSpecDecodeAcceptance>,
 }
 
 impl RecordIngest {
@@ -249,6 +253,7 @@ impl RecordIngest {
             video_inference_seconds: None,
             video_peak_memory_mb: None,
             metric_overrides: Vec::new(),
+            spec_decode_acceptance: None,
         }
     }
 
