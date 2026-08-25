@@ -84,6 +84,7 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
         Some("speed-bench-report") => speed_bench::run(&argv[1..]),
         Some("synthesize") => synthesize::run(&argv[1..]),
         Some("metrics") => metrics_list::run(&argv[1..]),
+        Some("analyze" | "plot" | "plugins") => delegate::exec_python_utility(argv),
         None => {
             print_help();
             Ok(0)
