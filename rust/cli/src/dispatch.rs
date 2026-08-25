@@ -22,8 +22,10 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
         Some("slurm") if argv.get(1).map(String::as_str) == Some(slurm::RUN_SUBCOMMAND) => {
             slurm::run(&argv[2..])
         }
-        Some("slurm") if argv.get(1).map(String::as_str) == Some("generate") => {
-            delegate::exec_rust_shim(&delegate::python_executable()?, "slurm-generate", &argv[2..])
+        Some("slurm")
+            if argv.get(1).map(String::as_str) == Some(slurm::generate::GENERATE_SUBCOMMAND) =>
+        {
+            slurm::generate::run(&argv[2..])
         }
         Some("results-sidecar") => results_sidecar::run(&argv[1..]),
         Some("analyze-trace") => analyze_trace::run(&argv[1..]),
