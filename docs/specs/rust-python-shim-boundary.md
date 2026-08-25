@@ -25,8 +25,10 @@ the branch.
   through the Python profile command.
 - `aiperf-python profile` and `python -m aiperf profile` retain a Python
   execution path.
-- Rust may delegate Python-owned utility commands such as plotting, analysis,
-  plugins, help/completion, and SLURM script generation.
+- Rust delegates only `analyze`, `plot`, `plugins`, root help/completion, and
+  `slurm generate`; the first three and root utility cases use `python -m aiperf`,
+  while `slurm generate` uses `python -m aiperf.rust_shims slurm-generate`.
+- `service` and unknown public commands refuse before any Python process starts.
 - Some native Rust features currently have Python support implementations,
   including the live-streaming worker and SLURM generation.
 
@@ -38,11 +40,6 @@ the branch.
   runtime or service mesh.
 - Python benchmark/runtime execution must never bootstrap native Rust
   execution.
-- Utility delegation is permitted only for an explicit Rust allowlist. It is
-  command routing, not a generic execution fallback.
-- `aiperf service` must not be reached by a native catch-all Python delegation
-  path because it starts the Python service runtime. The native command must
-  become native or refuse explicitly.
 - Accuracy is out of scope for this refactor because active work owns that
   area.
 

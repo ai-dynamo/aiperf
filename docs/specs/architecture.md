@@ -27,9 +27,11 @@ only to refuse unavailable hierarchical aggregation.
 
 Native commands include `profile`, `config`, `controller`, `cell`,
 `aggregator`, `results-sidecar`, `analyze-trace`, `chat`, `validate`,
-`speed-bench-report`, and `synthesize`. Commands not owned natively dispatch to
-`aiperf.entrypoint.main`: `pyo3-embed` builds invoke it in-process, lean builds
-invoke `python -m aiperf`.
+`speed-bench-report`, and `synthesize`. Only `analyze`, `plot`, `plugins`, root
+help/completion, and `slurm generate` delegate to external Python utility
+processes; `slurm generate` uses the fixed `aiperf.rust_shims slurm-generate`
+contract. `service` and unknown public commands refuse rather than starting the
+Python product runtime.
 
 `aiperf-mock-server` is a separately launched benchmark and test target; it is
 not supervised by a profile run. See [mock-server.md](mock-server.md).

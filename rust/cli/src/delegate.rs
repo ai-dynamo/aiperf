@@ -1,64 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Delegation of Python-backed subcommands to the `aiperf` Python app.
+//! Process-only delegation for allowlisted Python-owned utilities.
 //!
-//! Builds with `pyo3-embed` invoke `aiperf.entrypoint.main(argv)` in-process.
-//! Other builds spawn `python -m aiperf <argv>`.
+//! Native benchmark commands never enter the Python product. The small utility
+//! allowlist and named Rust shims execute only through external Python processes.
 
-/// Dispatch arguments to the Python `aiperf` app and return its exit code.
-#[cfg(feature = "pyo3-embed")]
-pub fn exec_python(argv: &[String]) -> anyhow::Result<i32> {
-    use pyo3::prelude::*;
-    use pyo3::types::PyList;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-    Python::with_gil(|py| -> PyResult<i32> {
-        // Commands that inspect `sys.argv` require the executable name.
-        let full: Vec<String> = std::iter::once("aiperf".to_string())
-            .chain(argv.iter().cloned())
-            .collect();
-        py.import("sys")?.setattr("argv", PyList::new(py, &full)?)?;
-
-        let main = py.import("aiperf.entrypoint")?.getattr("main")?;
-        match main.call1((PyList::new(py, argv)?,)) {
-            Ok(ret) => {
-                if ret.is_none() {
-                    Ok(0)
-                } else {
-                    Ok(ret.extract::<i32>().unwrap_or(0))
-                }
-            }
-            Err(err) if err.is_instance_of::<pyo3::exceptions::PySystemExit>(py) => {
-                // Preserve CPython's `SystemExit` semantics: `None` is zero, an
-                // integer is its exit code, and any other value is one.
-                let code_obj = err.value(py).getattr("code").ok();
-                let code = match code_obj {
-                    None => 0,
-                    Some(c) if c.is_none() => 0,
-                    Some(c) => c.extract::<i32>().unwrap_or(1),
-                };
-                Ok(code)
-            }
-            Err(err) => {
-                err.print(py);
-                Ok(1)
-            }
-        }
-    })
-    .map_err(|e| anyhow::anyhow!("in-process aiperf delegation failed: {e}"))
-}
-
-/// Spawn `python -m aiperf <argv>` with inherited stdio.
+/// Spawn the configured Python interpreter for an allowlisted utility command.
 ///
 /// `$AIPERF_PYTHON` selects the interpreter and defaults to `python`.
-#[cfg(not(feature = "pyo3-embed"))]
-pub fn exec_python(argv: &[String]) -> anyhow::Result<i32> {
-    use std::process::Command;
-    let python = std::env::var("AIPERF_PYTHON").unwrap_or_else(|_| "python".to_string());
-    let status = Command::new(&python)
+pub fn exec_python_utility(argv: &[String]) -> anyhow::Result<i32> {
+    let python = python_executable()?;
+    exec_python_module(&python, "aiperf", argv)
+}
+
+/// Spawn a named Rust-support shim with inherited stdio.
+///
+/// The caller selects only a fixed shim name from the native command router.
+pub fn exec_rust_shim(python: &Path, shim: &str, argv: &[String]) -> anyhow::Result<i32> {
+    let mut arguments = Vec::with_capacity(argv.len() + 1);
+    arguments.push(shim);
+    arguments.extend(argv);
+    exec_python_module(python, "aiperf.rust_shims", &arguments)
+}
+
+/// Return the interpreter selected for Python utility subprocesses.
+pub fn python_executable() -> anyhow::Result<PathBuf> {
+    match std::env::var_os("AIPERF_PYTHON") {
+        Some(python) if python.is_empty() => anyhow::bail!("AIPERF_PYTHON must not be empty"),
+        Some(python) => Ok(PathBuf::from(python)),
+        None => Ok(PathBuf::from("python")),
+    }
+}
+
+fn exec_python_module(python: &Path, module: &str, argv: &[String]) -> anyhow::Result<i32> {
+    let status = Command::new(python)
         .arg("-m")
-        .arg("aiperf")
+        .arg(module)
         .args(argv)
         .status()
-        .map_err(|e| anyhow::anyhow!("failed to delegate to `{python} -m aiperf`: {e}"))?;
+        .map_err(|error| anyhow::anyhow!("failed to delegate to `{}`: {error}", python.display()))?;
     Ok(status.code().unwrap_or(1))
 }

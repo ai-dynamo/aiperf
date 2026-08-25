@@ -25,7 +25,7 @@ read the record for the subsystem you are touching.
 | Spec | Purpose |
 |---|---|
 | [architecture.md](architecture.md) | Process model, crate topology, and the three orthogonal seams (time, transport, workload) every subsystem composes over. |
-| [rust-python-shim-boundary.md](rust-python-shim-boundary.md) | Planned independent native Rust and Python execution products plus the opt-in external-process `aiperf.rust_shims` boundary for centralized Python support adapters. |
+| [rust-python-shim-boundary.md](rust-python-shim-boundary.md) | Independent native Rust and Python execution products plus the opt-in external-process `aiperf.rust_shims` boundary for centralized Python support adapters. |
 | [repository-layout.md](repository-layout.md) | Cargo workspace topology, package identity (`aiperf-e2e-tests` at `rust/e2e-tests`), and naming rules for new packages, enforced by `tools/check_crate_layout.py`. |
 | [wheel-packaging.md](wheel-packaging.md) | The one installable artifact: the three-step `bundle-cli`→hatchling→`wheel_repack.py` build, the `.data/scripts/` binary interface with no launcher shim, the `py3-none-<platform>` tag derived from the injected binary's own glibc floor, and the packaged payload census hatchling's `packages = ["src/aiperf"]` sweep produces. |
 | [extension-registry.md](extension-registry.md) | Static link-time extensibility: the `AIPerfRegistry`/`AIPerfExtension` composition seam, its capability categories, and the frozen bootstrap object graph. |
