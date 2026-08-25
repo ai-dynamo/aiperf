@@ -1059,6 +1059,13 @@ class SystemController(SignalHandlerMixin, BaseService):
             if not self._exit_errors:
                 await self._print_post_benchmark_info_and_metrics()
             else:
+                # A mid-run failure (a service failing a lifecycle command, or
+                # crashing) populates ``_exit_errors`` before shutdown and routes
+                # us here, skipping ``_print_post_benchmark_info_and_metrics``
+                # entirely. Export the summary here too, otherwise a run whose
+                # requests also failed loses the error table on exactly the runs
+                # carrying two kinds of failure at once.
+                await self._export_error_summary()
                 self._print_exit_errors_and_log_file()
 
             if Environment.DEV.MODE:
