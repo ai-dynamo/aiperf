@@ -83,3 +83,46 @@ SPEED-Bench projection, or the public native-v2 report schema.
   `/usr/bin/sccache` and a Cargo target below `/mnt/4tb`.
 - The complete native implementation range must receive independent task review
   and Graham review with no unresolved Critical or Important findings.
+
+## Upstream test scope
+
+The exact upstream commit adds one test path,
+`tests/unit/exporters/test_server_speculative_decoding_console_exporter.py`.
+It adds no integration or E2E test. The native port therefore strengthens the
+upstream coverage with a Rust product test that launches the real
+`aiperf profile` binary against the in-process native mock and reads the emitted
+console and raw server-metrics artifacts.
+
+## Closure evidence
+
+The existing two-parent merge
+`4d076c660f31d9a9bf66f839867c3b9737e1a0ba` remains the only merge of exact
+upstream commit `34b2be2ee1159cc7e6985e027027791d18dad693`.
+The native remediation landed as:
+
+- `debc81e3ef4f93b037297d05605bc31a6a85d90b` projects every configured model
+  name into the compatibility-defaulted internal console policy.
+- `67fd3896f963a10d6dfe66666203cdbbb63e802c` renders active, finite,
+  leader-selected SGLang speculative series without changing raw report data.
+- `91aae2ee0587accd97dc1c640320035cfacb0e23` adds deterministic native mock
+  gauges and the real-profile Rust E2E; `ae7c592f99c60645df162912434a932a5e8b89f7`
+  strengthens it to bind every exact display cell to its metric row.
+- `475352c0d318526408f43fbdbc0deb1e0ee269c9` documents the native mock's raw
+  SGLang fixture values and leader labels.
+
+Fresh verification used `/usr/bin/sccache` and
+`/mnt/4tb/aiperf-origin-port-003-remediation-target`. The console exporter
+module reported 24 passed; config-export tests reported 7 passed; the real
+native profile E2E reported 1 passed; mock Prometheus tests reported 3 passed;
+the debug CLI/mock build, runtime all-target engine Clippy, and release CLI
+build all exited successfully. The release build completed in 3m35s. Direct
+Rustfmt checks on all changed Rust files and the complete range diff check
+passed. Workspace-wide formatting remains blocked only by the unrelated
+pre-existing wrapping difference in
+`rust/runtime/src/engine/sidecar_input.rs:787`, which this port leaves intact.
+
+Task reviews are clean after one E2E assertion-strength fix. Whole-range review
+is approved with zero Critical, Important, or Minor findings after its mock
+catalog follow-up. The final systems review ends `GRAHAM APPROVED` with zero
+findings. Detailed reports live in
+`.superpowers/sdd/2026-08-25-native-sglang-speculative-console/`.
