@@ -239,9 +239,7 @@ def test_cleanup_timer_delay_overrides_reach_kopf_registration(
             OperatorEnvironment.RESULTS, "CLEANUP_INITIAL_DELAY_SECONDS", 17.0
         )
         context.setattr(OperatorEnvironment.RESULTS, "CLEANUP_IDLE_SECONDS", 23.0)
-        context.setattr(
-            registries, "get_default_registry", lambda: isolated_registry
-        )
+        context.setattr(registries, "get_default_registry", lambda: isolated_registry)
         importlib.reload(operator_main)
 
     timer = next(
@@ -254,9 +252,7 @@ def test_cleanup_timer_delay_overrides_reach_kopf_registration(
 
     restored_registry = registries.OperatorRegistry()
     with monkeypatch.context() as context:
-        context.setattr(
-            registries, "get_default_registry", lambda: restored_registry
-        )
+        context.setattr(registries, "get_default_registry", lambda: restored_registry)
         importlib.reload(operator_main)
 
 
