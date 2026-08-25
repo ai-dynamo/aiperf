@@ -1998,6 +1998,111 @@ mod tests {
         });
     }
 
+    #[test]
+    fn scenario_agentx_defaults_global_idle_guard_for_both_weka_semantics() {
+        for semantics in ["legacy", "graph-ir"] {
+            run_on_big_stack(move || {
+                let flags = parse(&[
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "-u",
+                    "http://localhost:8000",
+                    "--streaming",
+                    "--input-file",
+                    "/tmp/agentx-global-idle-guard.jsonl",
+                    "--custom-dataset-type",
+                    "weka_trace",
+                    "--scenario",
+                    "inferencex-agentx-mvp",
+                    "--weka-semantics",
+                    semantics,
+                ]);
+                let run = super::resolve(&flags).expect("AgentX scenario resolves");
+                assert_eq!(run.cfg.weka_semantics.as_deref(), Some(semantics));
+                assert_eq!(run.cfg.system_idle_gap_cap_seconds, Some(10.0));
+
+                let dataset = run
+                    .cfg
+                    .datasets
+                    .as_ref()
+                    .and_then(|datasets| datasets.first())
+                    .expect("resolved Weka dataset");
+                let dataset = serde_json::to_value(dataset).expect("serialize dataset");
+                assert!(
+                    dataset.pointer("/synthesis/idle_gap_cap_seconds").is_none(),
+                    "AgentX must not synthesize a per-trace cap under {semantics}: {dataset}"
+                );
+                assert!(
+                    dataset
+                        .pointer("/options/inter_turn_delay_cap_seconds")
+                        .is_none(),
+                    "AgentX must not synthesize a per-turn cap under {semantics}: {dataset}"
+                );
+                assert_eq!(
+                    run.resolved
+                        .scenario_outcome
+                        .as_ref()
+                        .and_then(|outcome| outcome["submission_valid"].as_bool()),
+                    Some(true)
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn scenario_agentx_legacy_idle_caps_fail_or_record_unsafe_override() {
+        for (flag, message) in [
+            (
+                "--trace-idle-gap-cap-seconds",
+                "per-trace request timing",
+            ),
+            ("--inter-turn-delay-cap-seconds", "per-turn delay cap"),
+        ] {
+            run_on_big_stack(move || {
+                let base = [
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "-u",
+                    "http://localhost:8000",
+                    "--streaming",
+                    "--input-file",
+                    "/tmp/agentx-global-idle-guard.jsonl",
+                    "--custom-dataset-type",
+                    "weka_trace",
+                    "--scenario",
+                    "inferencex-agentx-mvp",
+                    flag,
+                    "10",
+                ];
+                let flags = parse(&base);
+                let error = super::resolve(&flags)
+                    .expect_err("legacy cap must violate the AgentX scenario");
+                assert!(error.to_string().contains(message), "unexpected: {error}");
+
+                let mut overridden = base.to_vec();
+                overridden.push("--unsafe-override");
+                let flags = parse(&overridden);
+                let run = super::resolve(&flags)
+                    .expect("unsafe override keeps the invalid run resolvable");
+                let outcome = run
+                    .resolved
+                    .scenario_outcome
+                    .as_ref()
+                    .expect("scenario outcome");
+                assert_eq!(outcome["submission_valid"], serde_json::json!(false));
+                assert_eq!(
+                    outcome["submission_invalid_reasons"],
+                    serde_json::json!(["unsafe_override"])
+                );
+                assert_eq!(outcome["violations"][0]["flag"], flag);
+            });
+        }
+    }
+
     /// `--agentic-cache-warmup-duration` on a non-weka run (no scenario, no
     /// `--weka-semantics`) is rejected: neither weka arm lowers the run, so the
     /// accelerated cache-warmup substage reaches no consumer and the flag is an

@@ -92,7 +92,7 @@ dependencies = [
 # via a post-build repack (Makefile `wheel` -> tools/wheel_repack.py), so there is
 # NO Python launcher shim and no `[project.scripts] aiperf` entry. The pure-Python
 # app is reachable as `aiperf-python` (and `python -m aiperf`); the native binary
-# delegates selected Python-owned utility commands back to `python -m aiperf`.
+# delegates only analyze, plot, plugins, help, and completion utilities by process.
 aiperf-python = "aiperf.entrypoint:main"
 aiperf-rust-shim = "aiperf.rust_shims.__main__:main"
 

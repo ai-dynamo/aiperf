@@ -33,11 +33,9 @@ path = "src/main.rs"
 # like a code bug. Only `dynosim` stays opt-in (heaviest dependency surface).
 default = ["grpc", "cellular", "parquet", "websocket"]
 
-# Base: embed a CPython interpreter (pyo3 `auto-initialize`). Enables in-process
-# delegation of every non-profile/config subcommand (chat/plot/plugins/service/
-# synthesize/analyze-trace/…) through `aiperf.entrypoint.main` — ZERO subprocess
-# shell-out. OFF by default so the shipped lean binary stays Python-free (those
-# subcommands then fall back to a `python -m aiperf` subprocess).
+# Base: embed a CPython interpreter (pyo3 `auto-initialize`) for the opt-in
+# numerical search implementations. Python-owned utilities remain external
+# process-only commands in every build configuration.
 pyo3-embed = ["dep:pyo3"]
 # Opt-in scipy/optuna numerical seam for the dynamic search styles
 # (`--search-style smooth_isotonic|bo|optuna`). Implies `pyo3-embed`, so the

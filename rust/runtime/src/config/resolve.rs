@@ -1638,6 +1638,8 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
             _ => None,
         }),
         cache_bust_explicit: inputs.cache_bust.is_some(),
+        trace_idle_gap_cap_seconds: inputs.trace_idle_gap_cap_seconds,
+        inter_turn_delay_cap_seconds: inputs.inter_turn_delay_cap_seconds,
         unsafe_override: inputs.unsafe_override,
         synthetic_default_dataset,
         recorded_agent,
@@ -1719,16 +1721,16 @@ fn apply_scenario_graph_locks(
             .insert("ignore_eos".to_string(), serde_json::Value::Bool(true));
     }
 
-    // GAP 2 — the graph-ir arm needs the `t*` snapshot window plus a warmup
-    // barrier that the legacy arm synthesizes inside its lowering. Legacy leaves
-    // `inputs` untouched for these, so scope the materialization to graph-ir.
+    // GAP 2 — both Weka arms consume the global idle guard, while only graph-ir
+    // needs the `t*` snapshot window and warmup barrier that legacy synthesizes
+    // inside its lowering.
     let is_graph_ir = !matches!(weka_semantics, Some("legacy") | Some("agentx"));
+    let min = spec.default_trajectory_start_min_ratio.unwrap_or(0.0);
+    let max = spec.default_trajectory_start_max_ratio.unwrap_or(1.0);
+    apply_scenario_synthesis(inputs, &spec, min, max, is_graph_ir)?;
     if is_graph_ir {
-        let min = spec.default_trajectory_start_min_ratio.unwrap_or(0.0);
-        let max = spec.default_trajectory_start_max_ratio.unwrap_or(1.0);
         inputs.trajectory_start_min_ratio = min;
         inputs.trajectory_start_max_ratio = max;
-        apply_scenario_synthesis(inputs, &spec, min, max)?;
         // Author an AgentX lane-prime warmup barrier (excluded from results).
         // Unbound (no request/session/duration) under the scenario t* window
         // warms only `concurrency` in-flight lanes at the turn before t*, then
@@ -1754,8 +1756,8 @@ fn apply_scenario_graph_locks(
     Ok(())
 }
 
-/// Overlay the scenario `t*` window, idle-gap cap, and cache-bust target onto the
-/// recorded-graph `synthesis` block the graph-input adapter reads
+/// Apply scenario-wide replay defaults, then overlay Graph-IR reconstruction
+/// synthesis onto the `synthesis` block the graph-input adapter reads
 /// (`TraceSynthesisSpec`). Preserves any user-authored `--synthesis-*` values and
 /// supplies the required (non-defaulted) spec fields at identity when absent.
 fn apply_scenario_synthesis(
@@ -1763,7 +1765,15 @@ fn apply_scenario_synthesis(
     spec: &crate::agentx::scenario::ScenarioSpec,
     min: f64,
     max: f64,
+    is_graph_ir: bool,
 ) -> anyhow::Result<()> {
+    if inputs.system_idle_gap_cap_seconds.is_none() {
+        inputs.system_idle_gap_cap_seconds = spec.system_idle_gap_cap_seconds;
+    }
+    if !is_graph_ir {
+        return Ok(());
+    }
+
     use crate::agentx::cache_bust::CacheBustTarget;
     let num = |v: f64| -> anyhow::Result<serde_json::Value> {
         serde_json::Number::from_f64(v)

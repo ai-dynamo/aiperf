@@ -21,16 +21,17 @@ fn sibling(name: &str) -> PathBuf {
 }
 
 #[test]
-fn unknown_subcommand_delegates_to_python() {
+fn unknown_subcommand_refuses_without_python_delegation() {
     let out = Command::new(aiperf_bin())
         .args(["definitely-not-native", "--help"])
         .env("AIPERF_PYTHON", "this-python-does-not-exist")
         .output()
         .expect("spawn aiperf");
     let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1));
     assert!(
-        stderr.contains("delegate") || stderr.contains("aiperf"),
-        "expected a delegation attempt, got: {stderr}"
+        stderr.contains("unsupported native aiperf command"),
+        "expected an explicit refusal, got: {stderr}"
     );
 }
 

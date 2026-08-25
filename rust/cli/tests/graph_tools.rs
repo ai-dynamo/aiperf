@@ -1367,10 +1367,10 @@ fn built_in_format_commands_agree_with_the_real_adapter_inventory() {
 }
 
 #[test]
-fn unknown_non_graph_commands_still_delegate_to_python() {
+fn unknown_non_graph_commands_refuse_without_python_delegation() {
     let output = output(&["legacy-python-command"]);
     assert_eq!(output.status.code(), Some(1));
-    assert!(stderr(&output).contains("failed to delegate"));
+    assert!(stderr(&output).contains("unsupported native aiperf command"));
 }
 
 #[test]

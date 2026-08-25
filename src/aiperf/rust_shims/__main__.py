@@ -11,7 +11,6 @@ from types import MappingProxyType
 _SHIM_MODULES = MappingProxyType(
     {
         "live-streaming": "aiperf.rust_shims.live_streaming_worker",
-        "slurm-generate": "aiperf.rust_shims.slurm.generate",
     }
 )
 

@@ -60,10 +60,6 @@ Run an AIPerf service in a single process.
 
 [Parameters](#parameters) • [Endpoint](#endpoint) • [Tokenizer](#tokenizer) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Conversation Input](#conversation-input) • [Prompt](#prompt) • [Cache Bust](#cache-bust) • [Prefix Prompt](#prefix-prompt) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Scenario](#scenario) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Output](#output) • [HTTP Trace](#http-trace) • [Server Metrics](#server-metrics) • [Network Latency](#network-latency) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Service](#service) • [Workers](#workers) • [ZMQ Communication](#zmq-communication)
 
-### [`slurm generate`](#aiperf-slurm-generate)
-
-Generate an sbatch job script for a native cellular AIPerf benchmark
-
 ### [`speed-bench-report`](#aiperf-speed-bench-report)
 
 Assemble per-category SPEED-Bench aiperf results into a matrix report.
@@ -1114,17 +1110,6 @@ Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trac
 
 AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle while future requests are scheduled. When no requests are in flight or ready, all pending request timers shift earlier uniformly so the next request arrives within this limit. Per-trace timing is otherwise preserved. None disables the cap.
 <br/>_Constraints: ≥ 0.0_
-
-### Scenario
-
-#### `--scenario` `<str>`
-
-Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
-
-#### `--unsafe-override`
-
-Convert scenario lock errors to warnings; stamps submission_valid=false in the aggregate output. No-op without --scenario.
-<br/>_Flag (no value required)_
 
 ### Warmup
 
@@ -2666,17 +2651,6 @@ Hard ceiling (seconds) for idle gaps within each individual trace. For Weka trac
 AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle while future requests are scheduled. When no requests are in flight or ready, all pending request timers shift earlier uniformly so the next request arrives within this limit. Per-trace timing is otherwise preserved. None disables the cap.
 <br/>_Constraints: ≥ 0.0_
 
-### Scenario
-
-#### `--scenario` `<str>`
-
-Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
-
-#### `--unsafe-override`
-
-Convert scenario lock errors to warnings; stamps submission_valid=false in the aggregate output. No-op without --scenario.
-<br/>_Flag (no value required)_
-
 ### Warmup
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
@@ -3298,60 +3272,6 @@ Directory path for ZMQ IPC (Inter-Process Communication) socket files. When usin
 
 Select the ZMQ dual-bind communication backend (IPC + TCP). All dual-bind knobs are cluster-managed; this flag only selects the discriminator and the converter routes downstream to the default.
 <br/>_Flag (no value required)_
-
-<hr/>
-
-## `aiperf slurm generate`
-
-Generate an sbatch job script for a native cellular AIPerf benchmark
-
-#### `--config` `<str>` _(Required)_
-
-Path to the AIPerf Config v2 YAML file.
-
-#### `--cells` `<int>` _(Required)_
-
-Number of load-generating cells (controller is an extra task).
-
-#### `--job-name` `<str>`
-
-SLURM job name.
-<br/>_Default: `aiperf`_
-
-#### `--partition` `<str>`
-
-SLURM partition.
-
-#### `--account` `<str>`
-
-SLURM account.
-
-#### `--time` `<str>`
-
-Job time limit (HH:MM:SS).
-<br/>_Default: `01:00:00`_
-
-#### `--nodes` `<int>`
-
-Node count (default: cells + 1).
-
-#### `--ntasks-per-node` `<int>`
-
-Tasks per node.
-<br/>_Default: `1`_
-
-#### `--gpus-per-node` `<int>`
-
-GPUs per node (optional).
-
-#### `--controller-port` `<int>`
-
-Velo bootstrap port for the controller (AIPERF_CONTROLLER_PORT).
-<br/>_Default: `9500`_
-
-#### `--output` `<str>`
-
-Write the script to this file instead of stdout.
 
 <hr/>
 
