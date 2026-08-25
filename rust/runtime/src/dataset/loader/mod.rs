@@ -574,7 +574,10 @@ impl LoaderRegistry {
 }
 
 fn probe_file(path: &Path) -> Result<DatasetProbe> {
-    if path.extension().and_then(|suffix| suffix.to_str()) == Some("csv") {
+    if matches!(
+        path.extension().and_then(|suffix| suffix.to_str()),
+        Some("csv" | "parquet" | "arrow" | "ipc")
+    ) {
         return Ok(DatasetProbe {
             value: None,
             path: Some(path.to_path_buf()),
@@ -691,6 +694,33 @@ mod tests {
     use super::*;
     use crate::dataset::tokenizer::TiktokenTokenizer;
 
+    #[cfg(feature = "parquet")]
+    fn write_auto_detect_baseten_arrow(path: &Path) {
+        use arrow::array::{Int64Array, RecordBatch, StringArray};
+        use arrow::datatypes::{DataType, Field, Schema};
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp_start_unix_ms", DataType::Int64, false),
+            Field::new("prompt", DataType::Utf8, false),
+            Field::new("input_tokens", DataType::Int64, false),
+            Field::new("output_tokens", DataType::Int64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(vec![0])),
+                Arc::new(StringArray::from(vec!["hello"])),
+                Arc::new(Int64Array::from(vec![1])),
+                Arc::new(Int64Array::from(vec![1])),
+            ],
+        )
+        .unwrap();
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = arrow::ipc::writer::FileWriter::try_new(file, &schema).unwrap();
+        writer.write(&batch).unwrap();
+        writer.finish().unwrap();
+    }
+
     #[test]
     fn jsonl_reader_preserves_exact_trimmed_wire_and_line_numbers() {
         let rows = rows_from_bytes(b"\n { \"b\": 2, \"a\": 1 } \n", None).unwrap();
@@ -739,6 +769,27 @@ mod tests {
             .unwrap();
         assert_eq!(bytes_probe.value.as_ref().unwrap()["prompt"][0], "hello");
 
+        let dataset = registry
+            .build_dataset(
+                None,
+                &LoadConfig::new(DatasetSource::Path(path)),
+                &ComposeConfig::new("model", RngRoot::new(Some(1))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations().len(), 1);
+    }
+
+    #[cfg(feature = "parquet")]
+    #[tokio::test]
+    async fn columnar_paths_auto_detect_without_json_probing() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("baseten.arrow");
+        write_auto_detect_baseten_arrow(&path);
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let probe = registry.probe(&DatasetSource::Path(path.clone())).unwrap();
+        assert!(probe.value.is_none());
         let dataset = registry
             .build_dataset(
                 None,
