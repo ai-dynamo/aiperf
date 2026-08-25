@@ -53,27 +53,37 @@ fn plot_delegates_to_the_python_utility_entry_point() {
 }
 
 #[test]
-fn slurm_generate_delegates_only_to_its_named_shim() {
+fn slurm_generate_is_native_and_never_starts_python() {
     let directory = tempfile::tempdir().expect("create fixture directory");
     let record = directory.path().join("argv");
+    let config = directory.path().join("benchmark.yaml");
+    fs::write(&config, "benchmark: {}\n").expect("write config fixture");
+    let absolute = fs::canonicalize(&config).expect("canonical config path");
+
     let output = run(
-        &["slurm", "generate", "--cells", "2", "--", "path with spaces"],
+        &["slurm", "generate", "--config", config.to_str().expect("utf-8 path"), "--cells", "2"],
         &recording_python(directory.path()),
         &record,
     );
 
-    assert_eq!(output.status.code(), Some(23));
+    assert_eq!(output.status.code(), Some(0));
+    assert!(!record.exists(), "Python test double was invoked");
     assert_eq!(
-        recorded_arguments(&record),
-        [
-            "-m",
-            "aiperf.rust_shims",
-            "slurm-generate",
-            "--cells",
-            "2",
-            "--",
-            "path with spaces",
-        ]
+        String::from_utf8_lossy(&output.stdout),
+        format!(
+            "#!/bin/bash\n\
+             #SBATCH --job-name=aiperf\n\
+             #SBATCH --nodes=3\n\
+             #SBATCH --ntasks=3\n\
+             #SBATCH --ntasks-per-node=1\n\
+             #SBATCH --time=01:00:00\n\
+             \n\
+             export AIPERF_CELL_LAUNCHER=slurm\n\
+             export AIPERF_CONTROLLER_PORT=9500\n\
+             \n\
+             srun aiperf slurm run --config {}\n",
+            absolute.display()
+        )
     );
 }
 

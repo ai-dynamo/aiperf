@@ -7,7 +7,7 @@ import importlib
 import sys
 from types import SimpleNamespace
 
-from aiperf.rust_shims.__main__ import main
+from aiperf.rust_shims.__main__ import _SHIM_MODULES, main
 
 
 def test_unknown_shim_is_rejected_without_importing_registered_modules(
@@ -50,8 +50,10 @@ def test_launcher_dispatches_each_registered_shim(monkeypatch) -> None:
 
     monkeypatch.setattr(importlib, "import_module", record_import)
 
-    assert main(["slurm-generate"]) == 0
-    assert imported == ["aiperf.rust_shims.slurm.generate"]
+    for shim_name, module_name in _SHIM_MODULES.items():
+        imported.clear()
+        assert main([shim_name]) == 0
+        assert imported == [module_name]
 
 
 def test_launcher_rejects_missing_name() -> None:
@@ -92,9 +94,7 @@ def test_package_import_does_not_load_shims(monkeypatch) -> None:
     monkeypatch.delitem(
         sys.modules, "aiperf.rust_shims.live_streaming_worker", raising=False
     )
-    monkeypatch.delitem(sys.modules, "aiperf.rust_shims.slurm.generate", raising=False)
 
     importlib.reload(importlib.import_module("aiperf.rust_shims"))
 
     assert "aiperf.rust_shims.live_streaming_worker" not in sys.modules
-    assert "aiperf.rust_shims.slurm.generate" not in sys.modules
