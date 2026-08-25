@@ -2603,8 +2603,6 @@ mod tests {
         // Updated 2026-07-25: removed the legacy `plot_direction` MetricSpec field;
         // direction now derives from `def.larger_is_better`, which the fingerprint
         // hashes in its place (Task 7 of the definition-registry feature).
-        // Updated 2026-08-25: added the eleven canonical speculative-decoding
-        // acceptance identities from origin/main's d32f4bb98e.
         assert_eq!(catalog_fingerprint(), 12_961_133_547_094_123_540);
     }
 

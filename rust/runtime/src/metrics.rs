@@ -744,9 +744,9 @@ impl RequestObserver for NativeMetricsObserver {
         }
     }
 
-    fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: ObservedSpecDecodeAcceptance) {
+    fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: &ObservedSpecDecodeAcceptance) {
         if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
-            request.spec_decode_acceptance = Some(Box::new(acceptance));
+            request.spec_decode_acceptance = Some(Box::new(acceptance.clone()));
         }
     }
 
@@ -842,9 +842,9 @@ impl RequestObserver for ObserverTee {
         }
     }
 
-    fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: ObservedSpecDecodeAcceptance) {
+    fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: &ObservedSpecDecodeAcceptance) {
         for delegate in &self.delegates {
-            delegate.on_spec_decode_acceptance(uuid, acceptance.clone());
+            delegate.on_spec_decode_acceptance(uuid, acceptance);
         }
     }
 
@@ -882,6 +882,7 @@ mod tests {
     #[derive(Default)]
     struct SpecDecodeRecorder {
         values: RefCell<Vec<(Uuid, ObservedSpecDecodeAcceptance)>>,
+        addresses: RefCell<Vec<*const ObservedSpecDecodeAcceptance>>,
     }
 
     impl RequestObserver for SpecDecodeRecorder {
@@ -891,8 +892,11 @@ mod tests {
 
         fn on_token(&self, _uuid: Uuid, _at_ms: f64) {}
 
-        fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: ObservedSpecDecodeAcceptance) {
-            self.values.borrow_mut().push((uuid, acceptance));
+        fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: &ObservedSpecDecodeAcceptance) {
+            self.addresses
+                .borrow_mut()
+                .push(std::ptr::from_ref(acceptance));
+            self.values.borrow_mut().push((uuid, acceptance.clone()));
         }
 
         fn on_terminal(&self, _uuid: Uuid, _status: ReplayTerminalStatus) {}
@@ -928,13 +932,20 @@ mod tests {
         let uuid = Uuid::from_u128(104);
         let acceptance = sample_spec_decode_acceptance();
 
-        tee.on_spec_decode_acceptance(uuid, acceptance.clone());
+        tee.on_spec_decode_acceptance(uuid, &acceptance);
 
         assert_eq!(
             first.values.borrow().as_slice(),
             &[(uuid, acceptance.clone())]
         );
-        assert_eq!(second.values.borrow().as_slice(), &[(uuid, acceptance)]);
+        assert_eq!(
+            second.values.borrow().as_slice(),
+            &[(uuid, acceptance.clone())]
+        );
+        let first_address = first.addresses.borrow()[0];
+        let second_address = second.addresses.borrow()[0];
+        assert_eq!(first_address, second_address);
+        assert_eq!(first_address, std::ptr::from_ref(&acceptance));
     }
 
     #[test]
@@ -960,7 +971,7 @@ mod tests {
         let acceptance = sample_spec_decode_acceptance();
 
         observer.on_arrival(uuid, 0.0, 4, 2);
-        observer.on_spec_decode_acceptance(uuid, acceptance.clone());
+        observer.on_spec_decode_acceptance(uuid, &acceptance);
         observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
 
         assert_eq!(

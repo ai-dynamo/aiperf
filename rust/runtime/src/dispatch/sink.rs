@@ -198,7 +198,7 @@ pub trait RequestObserver {
     /// default is a no-op; observers that reconcile counts override it.
     fn on_usage(&self, _uuid: Uuid, _usage: ObservedUsage) {}
     /// Record the terminal canonical speculative-decoding acceptance facts.
-    fn on_spec_decode_acceptance(&self, _uuid: Uuid, _acceptance: ObservedSpecDecodeAcceptance) {}
+    fn on_spec_decode_acceptance(&self, _uuid: Uuid, _acceptance: &ObservedSpecDecodeAcceptance) {}
     /// Record endpoint-specific image/video facts.
     ///
     /// The default is a no-op so token-only transports and observers do not pay

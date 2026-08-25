@@ -29,7 +29,7 @@ Ruling: concrete phase-index selection applies to exact row masks, sketch keys, 
 - Task 1: completed, GREEN, and independently approved
 - Task 2: completed, GREEN, and independently approved
 - Task 3: completed, GREEN, and independently approved
-- Task 4: implementation GREEN; independent review pending
+- Task 4: completed, GREEN, and independently approved
 
 Task 1: dispatch fallback — `spawn_agent` was denied because the root thread's other port agents occupied the team limit. Per the SDD skill's harness-denial rule, implementation proceeds inline; an independent task review remains required before Task 2.
 
@@ -104,3 +104,22 @@ missing header, then passed 1/1 after the resource-only fix. The mock fixture
 suite now passes 3/3, including zero-output tool calls; the rebuilt native
 binary passes the CSV-aware present/absent E2E 14/14. Scoped re-review remains
 required.
+
+Task 4 re-review: APPROVED at
+`0c57560d39`; see `task-4-rereview.md`. The reviewer verified all eleven v1
+headers, exactly five scalar identities, all console metadata, default-derived
+false behavior, canonical/internal-tag CSV assertions, and zero-output
+tool-call ordering. Fresh reviewer runs passed metadata 1/1, mock 3/3, rebuilt
+CLI, real-profile E2E 14/14, formatting, JSON parsing, and diff checks. Task 4
+is complete; the full-range Graham review remains required.
+
+Full-range Graham review: NOT APPROVED for exact range
+`8b5194bcfc26475c5e06030d8701c82b66eb7b6a..0c57560d39`; see
+`graham-review.md`. Two Important hot-path allocation findings were confirmed:
+the owned terminal JSON was deep-cloned before serde, and `ObserverTee` cloned
+the full canonical DTO once per delegate, including no-op consumers. One Minor
+finding removed the new dated/commit-specific fingerprint comment. Structural
+RED failed to compile on the intentionally required consuming parser and
+borrowed observer signatures. The identical engine-enabled focused suite then
+passed 31/31 after the minimal fix; the rebuilt native binary passed the
+present/absent E2E 14/14. Independent and Graham fix re-reviews remain required.

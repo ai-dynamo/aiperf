@@ -789,8 +789,8 @@ impl TransportSink {
             let completion_tokens = observed_usage
                 .completion_tokens
                 .and_then(|value| u64::try_from(value).ok());
-            match parse_vllm_spec_decode_stats(&payload, completion_tokens) {
-                Ok(acceptance) => obs.on_spec_decode_acceptance(uuid, acceptance),
+            match parse_vllm_spec_decode_stats(payload, completion_tokens) {
+                Ok(acceptance) => obs.on_spec_decode_acceptance(uuid, &acceptance),
                 Err(error) => tracing::warn!(
                     uuid = %uuid,
                     endpoint = endpoint.descriptor().id,

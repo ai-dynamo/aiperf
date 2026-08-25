@@ -69,4 +69,5 @@ E2E now asserts canonical CSV names and absence as well.
 The commands emitted only baseline workspace warnings. The initial independent
 Task 4 review was NOT APPROVED at `f657dd91cb` for the incomplete embedded v1
 metadata; see `task-4-independent-review.md`. Scoped re-review of the fix is
-required before final branch review.
+APPROVED at `0c57560d39` with no remaining findings; see
+`task-4-rereview.md`. Final branch review may proceed.

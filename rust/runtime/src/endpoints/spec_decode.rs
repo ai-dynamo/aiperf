@@ -85,10 +85,10 @@ pub(crate) fn extract_vllm_spec_decode_stats(response: &Value) -> Option<&Value>
 
 /// Normalize one vLLM stats object into the engine-neutral observer record.
 pub(crate) fn parse_vllm_spec_decode_stats(
-    payload: &Value,
+    payload: Value,
     completion_tokens: Option<u64>,
 ) -> Result<ObservedSpecDecodeAcceptance, SpecDecodePayloadError> {
-    let wire: VllmSpecDecodeStats = serde_json::from_value(payload.clone())
+    let wire: VllmSpecDecodeStats = serde_json::from_value(payload)
         .map_err(|error| SpecDecodePayloadError::InvalidShape(error.to_string()))?;
     if !wire.mean_acceptance_length.is_finite() {
         return Err(SpecDecodePayloadError::NonFiniteValue(

@@ -97,7 +97,7 @@ mod spec_decode_tests {
 
     #[test]
     fn vllm_worked_example_normalizes_to_the_canonical_record() {
-        let record = parse_vllm_spec_decode_stats(&worked_payload(), Some(26))
+        let record = parse_vllm_spec_decode_stats(worked_payload(), Some(26))
             .expect("worked payload is canonical");
 
         assert_eq!(record.engine, "vllm");
@@ -115,7 +115,7 @@ mod spec_decode_tests {
     fn inconsistent_vllm_aggregate_is_rejected() {
         let mut payload = worked_payload();
         payload["num_accepted_draft_tokens"] = serde_json::json!(19);
-        assert!(parse_vllm_spec_decode_stats(&payload, None).is_err());
+        assert!(parse_vllm_spec_decode_stats(payload, None).is_err());
     }
 
     #[test]
@@ -123,7 +123,7 @@ mod spec_decode_tests {
         for invalid_rate in [-0.01, 1.01] {
             let mut payload = worked_payload();
             payload["draft_acceptance_rate"] = serde_json::json!(invalid_rate);
-            assert!(parse_vllm_spec_decode_stats(&payload, None).is_err());
+            assert!(parse_vllm_spec_decode_stats(payload, None).is_err());
         }
     }
 
