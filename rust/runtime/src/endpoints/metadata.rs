@@ -74,6 +74,8 @@ pub struct EndpointDescriptor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EndpointType {
+    /// OpenAI audio transcription.
+    AudioTranscription,
     /// OpenAI Chat Completions.
     Chat,
     /// OpenAI Completions.
@@ -120,6 +122,7 @@ impl EndpointType {
     /// enum variant here.
     pub const fn canonical_id(self) -> &'static str {
         match self {
+            Self::AudioTranscription => "audio_transcription",
             Self::Chat => "chat",
             Self::Completions => "completions",
             Self::Responses => "responses",
@@ -147,6 +150,7 @@ impl EndpointType {
     /// no [`EndpointType`] variant and return `None`.
     pub fn from_canonical_id(id: &str) -> Option<Self> {
         Some(match id {
+            "audio_transcription" => Self::AudioTranscription,
             "chat" | "chat_completions" => Self::Chat,
             "completions" => Self::Completions,
             "responses" => Self::Responses,
@@ -208,5 +212,18 @@ impl EndpointDescriptor {
     /// Whether this descriptor produces the given output modality.
     pub fn supports_output(self, modality: Modality) -> bool {
         self.output_modalities.contains(&modality)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EndpointType;
+
+    #[test]
+    fn audio_transcription_is_a_registered_legacy_type() {
+        assert_eq!(
+            EndpointType::from_canonical_id("audio_transcription"),
+            Some(EndpointType::AudioTranscription)
+        );
     }
 }

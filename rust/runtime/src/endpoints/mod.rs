@@ -70,9 +70,10 @@ pub use riva::{
 pub use sagemaker::SageMakerFactory;
 pub(crate) use spec_decode::{extract_vllm_spec_decode_stats, parse_vllm_spec_decode_stats};
 pub use tier2::{
-    CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
-    ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,
-    RawEndpoint, RawEndpointFactory, SolidoRagEndpoint, TemplateEndpoint, TemplateEndpointFactory,
+    AudioTranscriptionEndpoint, CohereRankingsEndpoint, HfTeiRankingsEndpoint,
+    HuggingFaceGenerateEndpoint, ImageEditEndpoint, ImageGenerationEndpoint,
+    ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint, RawEndpoint,
+    RawEndpointFactory, SolidoRagEndpoint, TemplateEndpoint, TemplateEndpointFactory,
     VideoGenerationEndpoint,
 };
 pub use usage::UsageView;

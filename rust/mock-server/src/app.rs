@@ -63,6 +63,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/generate_stream", post(handlers::tgi_generate_stream))
         .route("/v1/images/generations", post(handlers::image_generation))
         .route("/v1/images/edits", post(handlers::image_edit))
+        .route(
+            "/v1/audio/transcriptions",
+            post(handlers::audio_transcription),
+        )
         .route("/v1/image/infer", post(handlers::image_retrieval))
         // `image_retrieval` defaults to this alias.
         .route("/v1/infer", post(handlers::image_retrieval))

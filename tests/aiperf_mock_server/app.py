@@ -13,6 +13,12 @@ from time import perf_counter
 from typing import Any
 
 import orjson
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
+from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
+
 from tests.aiperf_mock_server.config import (
     MockServerConfig,
     public_config_dump,
@@ -60,7 +66,10 @@ from tests.aiperf_mock_server.models import (
 from tests.aiperf_mock_server.node_exporter_faker import (
     render_default as render_node_exporter,
 )
-from tests.aiperf_mock_server.request_recorder import RequestRecorder, set_global_recorder
+from tests.aiperf_mock_server.request_recorder import (
+    RequestRecorder,
+    set_global_recorder,
+)
 from tests.aiperf_mock_server.scheduler import init_scheduler, shutdown_scheduler
 from tests.aiperf_mock_server.utils import (
     RequestCtx,
@@ -73,11 +82,6 @@ from tests.aiperf_mock_server.utils import (
     stream_tgi_completion,
     with_error_injection,
 )
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
-from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
-from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
-from starlette.requests import Request
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 dcgm_fakers: list[DCGMFaker] = []
 server_start_time: float = 0.0

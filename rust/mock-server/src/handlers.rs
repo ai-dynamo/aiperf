@@ -4051,6 +4051,73 @@ pub async fn image_edit(
     Ok(Json(body).into_response())
 }
 
+/// Accept a transcription multipart request and return deterministic text.
+pub async fn audio_transcription(
+    State(state): State<Arc<AppState>>,
+    mut multipart: axum::extract::Multipart,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let mut has_file = false;
+    let mut language: Option<String> = None;
+    let mut temperature: Option<f64> = None;
+    loop {
+        let Some(field) = multipart
+            .next_field()
+            .await
+            .map_err(invalid_audio_multipart)?
+        else {
+            break;
+        };
+        match field.name() {
+            Some("file") => {
+                has_file = !field
+                    .bytes()
+                    .await
+                    .map_err(invalid_audio_multipart)?
+                    .is_empty();
+            }
+            Some("language") => {
+                language = Some(field.text().await.map_err(invalid_audio_multipart)?);
+            }
+            Some("temperature") => {
+                let value = field.text().await.map_err(invalid_audio_multipart)?;
+                temperature = value.parse::<f64>().ok();
+            }
+            _ => {
+                field.bytes().await.map_err(invalid_audio_multipart)?;
+            }
+        }
+    }
+    if !has_file {
+        return Err(AppError {
+            status: StatusCode::BAD_REQUEST,
+            message: "file is required".into(),
+            retry_after: None,
+        });
+    }
+    let mut body = json!({
+        "text": "mock transcription",
+        "usage": {"input_tokens": 1}
+    });
+    if let Some(language) = language {
+        body["language"] = Value::String(language);
+    }
+    if let Some(temperature) = temperature {
+        body["temperature"] = json!(temperature);
+    }
+    Ok(Json(body).into_response())
+}
+
+fn invalid_audio_multipart(error: impl std::fmt::Display) -> AppError {
+    AppError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!("invalid audio multipart: {error}"),
+        retry_after: None,
+    }
+}
+
 #[cfg(test)]
 mod content_url_tests {
     use super::*;

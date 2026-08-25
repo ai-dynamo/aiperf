@@ -3,11 +3,11 @@
 #![cfg(feature = "engine")]
 
 use aiperf_runtime::endpoints::{
-    CohereRankingsEndpoint, CreditPhase, Endpoint, EndpointConfig, EndpointType,
-    HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint, ImageGenerationEndpoint,
-    ImageRetrievalEndpoint, Media, ModelEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,
-    RawEndpoint, RequestInfo, ResponseData, ServerResponse, SolidoRagEndpoint, TemplateEndpoint,
-    Turn, VideoGenerationEndpoint,
+    AudioTranscriptionEndpoint, CohereRankingsEndpoint, CreditPhase, Endpoint, EndpointConfig,
+    EndpointType, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
+    ImageGenerationEndpoint, ImageRetrievalEndpoint, Media, ModelEndpoint, NimEmbeddingsEndpoint,
+    NimRankingsEndpoint, RawEndpoint, RequestInfo, ResponseData, ServerResponse, SolidoRagEndpoint,
+    TemplateEndpoint, Turn, VideoGenerationEndpoint,
 };
 use serde_json::{Map, Value, json};
 
@@ -48,6 +48,126 @@ fn named(name: &str, values: &[&str]) -> Media {
         name: name.into(),
         contents: values.iter().map(|value| (*value).to_string()).collect(),
         uuids: vec![],
+    }
+}
+
+#[test]
+fn audio_transcription_does_not_require_input_tokenization() {
+    let descriptor = AudioTranscriptionEndpoint.descriptor();
+
+    assert!(!descriptor.tokenizes_input);
+    assert!(!descriptor.produces_tokens);
+}
+
+#[test]
+fn audio_transcription_uses_raw_text_only_when_json_is_absent() {
+    let endpoint = AudioTranscriptionEndpoint;
+    let parsed = endpoint
+        .parse_response(&ServerResponse {
+            perf_ns: 1,
+            json: None,
+            raw: Some("plain transcript".into()),
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        parsed.data,
+        Some(ResponseData::Text {
+            text: "plain transcript".into()
+        })
+    );
+
+    assert!(
+        endpoint
+            .parse_response(&ServerResponse {
+                perf_ns: 2,
+                json: Some(json!({})),
+                raw: Some("{}".into()),
+            })
+            .is_err()
+    );
+}
+
+#[test]
+fn audio_transcription_model_follows_turn_then_extra_precedence() {
+    let mut req = request(
+        EndpointType::AudioTranscription,
+        vec![Turn {
+            model: Some("turn-model".into()),
+            audios: vec![Media::new(vec!["wav,ZmFrZQ==".into()])],
+            ..Turn::default()
+        }],
+    );
+    let body = plan_body(AudioTranscriptionEndpoint.format_payload(&req).unwrap());
+    assert_eq!(body["model"], "turn-model");
+
+    req.model_endpoint.endpoint.extra = Some(Map::from_iter([
+        ("model".into(), json!("endpoint-extra-model")),
+        ("file".into(), json!("not-a-file")),
+    ]));
+    let body = plan_body(AudioTranscriptionEndpoint.format_payload(&req).unwrap());
+    assert_eq!(body["model"], "endpoint-extra-model");
+    assert_eq!(body["file"]["b64_data"], "ZmFrZQ==");
+
+    req.turns[0].extra_body = Some(Map::from_iter([(
+        "model".into(),
+        json!("turn-extra-model"),
+    )]));
+    let body = plan_body(AudioTranscriptionEndpoint.format_payload(&req).unwrap());
+    assert_eq!(body["model"], "turn-extra-model");
+}
+
+#[test]
+fn audio_transcription_maps_supported_and_unknown_audio_formats() {
+    for (format, content_type) in [
+        ("wav", "audio/wav"),
+        ("mp3", "audio/mpeg"),
+        ("mpga", "audio/mpeg"),
+        ("mpeg", "audio/mpeg"),
+        ("flac", "audio/flac"),
+        ("ogg", "audio/ogg"),
+        ("m4a", "audio/mp4"),
+        ("mp4", "audio/mp4"),
+        ("webm", "audio/webm"),
+        ("aiff", "audio/aiff"),
+    ] {
+        let body = plan_body(
+            AudioTranscriptionEndpoint
+                .format_payload(&request(
+                    EndpointType::AudioTranscription,
+                    vec![Turn {
+                        audios: vec![Media::new(vec![format!("{format},ZmFrZQ==")])],
+                        ..Turn::default()
+                    }],
+                ))
+                .unwrap(),
+        );
+        assert_eq!(body["file"]["content_type"], content_type, "{format}");
+        assert_eq!(
+            body["file"]["filename"],
+            format!("audio.{format}"),
+            "{format}"
+        );
+        assert_eq!(body["file"]["b64_data"], "ZmFrZQ==", "{format}");
+    }
+}
+
+#[test]
+fn audio_transcription_rejects_missing_or_empty_format_data() {
+    for content in ["missing-comma", "", "wav,", ",ZmFrZQ=="] {
+        let error = AudioTranscriptionEndpoint
+            .format_payload(&request(
+                EndpointType::AudioTranscription,
+                vec![Turn {
+                    audios: vec![Media::new(vec![content.into()])],
+                    ..Turn::default()
+                }],
+            ))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("<fmt>,<b64>"),
+            "{content:?}: {error}"
+        );
     }
 }
 

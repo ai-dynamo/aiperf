@@ -56,6 +56,10 @@ pub struct ImageGenerationEndpoint;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ImageEditEndpoint;
 
+/// OpenAI-compatible audio transcription endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AudioTranscriptionEndpoint;
+
 /// OpenAI/SGLang async video generation endpoint.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VideoGenerationEndpoint;
@@ -199,6 +203,25 @@ const IMAGE_EDIT_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     output_modalities: &[Modality::Image],
     metrics_title: "Image Edit Metrics",
     service_kind: "image_edit",
+};
+
+const AUDIO_TRANSCRIPTION_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "audio_transcription",
+    aliases: &[],
+    description: "OpenAI audio transcription API",
+    endpoint_path: Some("/v1/audio/transcriptions"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: false,
+    requires_raw_token_ids: false,
+    requires_form_data: true,
+    requires_polling: false,
+    requires_inline_media: true,
+    input_modalities: &[Modality::Audio],
+    output_modalities: &[Modality::Text],
+    metrics_title: "Audio Transcription Metrics",
+    service_kind: "audio_transcription",
 };
 
 const VIDEO_GENERATION_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
@@ -635,6 +658,80 @@ impl Endpoint for ImageEditEndpoint {
     }
 }
 
+impl Endpoint for AudioTranscriptionEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &AUDIO_TRANSCRIPTION_DESCRIPTOR
+    }
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
+        format_legacy_payload(self, request_info)
+    }
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        let text = match response.json.as_ref() {
+            Some(value) => value.get("text").and_then(Value::as_str),
+            None => response.raw.as_deref().filter(|value| !value.is_empty()),
+        }
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            EndpointError::InvalidResponse("audio transcription response has no text".into())
+        })?;
+        let usage = response.json.as_ref().and_then(|v| v.get("usage")).cloned();
+        Ok(Some(ParsedResponse {
+            perf_ns: response.perf_ns,
+            data: Some(ResponseData::Text { text }),
+            usage,
+            sources: None,
+        }))
+    }
+}
+
+impl PreparedEndpointBehavior for AudioTranscriptionEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        config: &RawEndpointConfig,
+    ) -> EndpointResult<BodyPlan> {
+        let turn = request.turns().last().ok_or_else(|| {
+            EndpointError::InvalidRequest("audio transcription requires an audio turn".into())
+        })?;
+        let audio = turn
+            .audios
+            .first()
+            .and_then(|media| media.contents.first())
+            .ok_or_else(|| {
+                EndpointError::InvalidRequest("audio transcription requires audio content".into())
+            })?;
+        let mut payload = Map::new();
+        payload.insert("file".into(), build_audio_file_field(audio)?);
+        payload.insert(
+            "model".into(),
+            Value::String(prepared_effective_model(request, turn)),
+        );
+        merge_audio_transcription_extra(&mut payload, config.extra.as_ref());
+        merge_audio_transcription_extra(&mut payload, turn.extra_body.as_ref());
+        Ok(BodyPlan::from_object(&payload)?)
+    }
+}
+
+#[cfg(test)]
+mod audio_transcription_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_empty_transcription_responses() {
+        let endpoint = AudioTranscriptionEndpoint;
+        for response in [
+            ServerResponse::from_json(1, serde_json::json!({})),
+            ServerResponse {
+                perf_ns: 1,
+                json: None,
+                raw: Some(String::new()),
+            },
+        ] {
+            assert!(endpoint.parse_response(&response).is_err());
+        }
+    }
+}
+
 impl PreparedEndpointBehavior for ImageEditEndpoint {
     fn format_prepared_payload(
         &self,
@@ -729,6 +826,7 @@ fn parse_image_response(
 }
 
 const RESERVED_IMAGE_EDIT_KEYS: [&str; 4] = ["prompt", "image", "url", "mask"];
+const RESERVED_AUDIO_TRANSCRIPTION_KEYS: [&str; 1] = ["file"];
 
 fn merge_image_edit_extra(payload: &mut Map<String, Value>, extra: Option<&Map<String, Value>>) {
     let Some(extra) = extra else {
@@ -736,6 +834,20 @@ fn merge_image_edit_extra(payload: &mut Map<String, Value>, extra: Option<&Map<S
     };
     for (key, value) in extra {
         if !RESERVED_IMAGE_EDIT_KEYS.contains(&key.as_str()) {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn merge_audio_transcription_extra(
+    payload: &mut Map<String, Value>,
+    extra: Option<&Map<String, Value>>,
+) {
+    let Some(extra) = extra else {
+        return;
+    };
+    for (key, value) in extra {
+        if !RESERVED_AUDIO_TRANSCRIPTION_KEYS.contains(&key.as_str()) {
             payload.insert(key.clone(), value.clone());
         }
     }
@@ -781,6 +893,31 @@ fn build_image_file_field(content: &str) -> EndpointResult<Value> {
     Ok(json!({
         "b64_data": b64,
         "filename": format!("image.{filename_subtype}"),
+        "content_type": content_type
+    }))
+}
+
+fn build_audio_file_field(content: &str) -> EndpointResult<Value> {
+    let (format, b64) = content.split_once(',').ok_or_else(|| {
+        EndpointError::InvalidRequest(
+            "audio content must use non-empty <fmt>,<b64> encoding".into(),
+        )
+    })?;
+    if format.is_empty() || b64.is_empty() {
+        return Err(EndpointError::InvalidRequest(
+            "audio content must use non-empty <fmt>,<b64> encoding".into(),
+        ));
+    }
+
+    let format = format.to_ascii_lowercase();
+    let content_type = match format.as_str() {
+        "mp3" | "mpga" | "mpeg" => "audio/mpeg".to_string(),
+        "m4a" | "mp4" => "audio/mp4".to_string(),
+        _ => format!("audio/{format}"),
+    };
+    Ok(json!({
+        "b64_data": b64,
+        "filename": format!("audio.{format}"),
         "content_type": content_type
     }))
 }

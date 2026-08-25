@@ -46,13 +46,15 @@ use crate::endpoints::riva::{
 };
 use crate::endpoints::sagemaker::SageMakerFactory;
 use crate::endpoints::tier2::{
-    CohereRankingsEndpoint, HfTeiRankingsEndpoint, HuggingFaceGenerateEndpoint, ImageEditEndpoint,
-    ImageGenerationEndpoint, ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint,
-    RawEndpointFactory, SolidoRagEndpoint, TemplateEndpointFactory, VideoGenerationEndpoint,
+    AudioTranscriptionEndpoint, CohereRankingsEndpoint, HfTeiRankingsEndpoint,
+    HuggingFaceGenerateEndpoint, ImageEditEndpoint, ImageGenerationEndpoint,
+    ImageRetrievalEndpoint, NimEmbeddingsEndpoint, NimRankingsEndpoint, RawEndpointFactory,
+    SolidoRagEndpoint, TemplateEndpointFactory, VideoGenerationEndpoint,
 };
 
 pub(crate) fn legacy_descriptor_for(endpoint_type: EndpointType) -> &'static EndpointDescriptor {
     match endpoint_type {
+        EndpointType::AudioTranscription => AudioTranscriptionEndpoint.descriptor(),
         EndpointType::Chat => ChatEndpoint.descriptor(),
         EndpointType::Completions => CompletionsEndpoint.descriptor(),
         EndpointType::Responses => ResponsesEndpoint.descriptor(),
@@ -749,6 +751,7 @@ impl EndpointRegistryBuilder {
         builder.register_endpoint(HuggingFaceGenerateEndpoint)?;
         builder.register_endpoint(ImageGenerationEndpoint)?;
         builder.register_endpoint(ImageEditEndpoint)?;
+        builder.register_endpoint(AudioTranscriptionEndpoint)?;
         builder.register_endpoint(VideoGenerationEndpoint)?;
         builder.register_endpoint(ImageRetrievalEndpoint)?;
         builder.register_endpoint(SolidoRagEndpoint)?;

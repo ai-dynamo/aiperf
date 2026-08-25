@@ -236,6 +236,84 @@ async fn messages_streaming_returns_anthropic_events() {
 }
 
 #[tokio::test]
+async fn audio_transcriptions_accept_multipart_file_and_fields() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let boundary = "aiperf-audio-test-boundary";
+    let body = format!(
+        concat!(
+            "--{boundary}\r\n",
+            "Content-Disposition: form-data; name=\"model\"\r\n\r\n",
+            "whisper-1\r\n",
+            "--{boundary}\r\n",
+            "Content-Disposition: form-data; name=\"language\"\r\n\r\n",
+            "en\r\n",
+            "--{boundary}\r\n",
+            "Content-Disposition: form-data; name=\"temperature\"\r\n\r\n",
+            "0.0\r\n",
+            "--{boundary}\r\n",
+            "Content-Disposition: form-data; name=\"file\"; filename=\"sample.wav\"\r\n",
+            "Content-Type: audio/wav\r\n\r\n",
+            "RIFFmock-audio\r\n",
+            "--{boundary}--\r\n"
+        ),
+        boundary = boundary
+    );
+    let resp = client()
+        .post(format!("http://{addr}/v1/audio/transcriptions"))
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["text"], "mock transcription");
+    assert_eq!(body["language"], "en");
+    assert_eq!(body["temperature"], 0.0);
+    assert_eq!(body["usage"]["input_tokens"], 1);
+}
+
+#[tokio::test]
+async fn audio_transcriptions_reject_malformed_multipart_after_file() {
+    let (addr, _h) = spawn_server(fast_cfg()).await;
+    let boundary = "aiperf-audio-malformed-boundary";
+    let body = format!(
+        concat!(
+            "--{boundary}\r\n",
+            "Content-Disposition: form-data; name=\"file\"; filename=\"sample.wav\"\r\n",
+            "Content-Type: audio/wav\r\n\r\n",
+            "RIFFmock-audio\r\n",
+            "--{boundary}\r\n",
+            "not-a-valid-header\r\n\r\n",
+            "broken\r\n",
+            "--{boundary}--\r\n"
+        ),
+        boundary = boundary
+    );
+    let response = client()
+        .post(format!("http://{addr}/v1/audio/transcriptions"))
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: Value = response.json().await.unwrap();
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.starts_with("invalid audio multipart: ")),
+        "{body}"
+    );
+}
+
+#[tokio::test]
 async fn text_completions_non_streaming() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
     let resp = client()
