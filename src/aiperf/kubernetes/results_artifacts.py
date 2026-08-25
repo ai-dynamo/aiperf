@@ -30,7 +30,7 @@ from aiperf.kubernetes.console import (
 )
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
-from aiperf.kubernetes.results_operator_common import (
+from aiperf.kubernetes.results_operator import (
     _REDIRECT_STATUSES,
     _get_no_redirects,
 )

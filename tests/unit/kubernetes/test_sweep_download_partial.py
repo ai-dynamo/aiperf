@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from aiperf.kubernetes import results_operator_sweeps as sweeps
-from aiperf.kubernetes.results_operator_common import _JobDownloadOutcome
+from aiperf.kubernetes import results_operator as sweeps
+from aiperf.kubernetes.results_operator import _JobDownloadOutcome
 
 
 @pytest.fixture
