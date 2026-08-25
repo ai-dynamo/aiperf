@@ -70,7 +70,7 @@ impl<'a> SessionSynthesizer<'a> {
             *w /= sum;
         }
 
-        let fixed_prefix = config.cache.layer1_tokens + config.cache.layer1_5_tokens;
+        let fixed_prefix = allocator.prefix_tokens();
 
         let output_min = match config.generation_length.max {
             Some(gen_max) => OUTPUT_MIN.min(gen_max as i64),
@@ -540,4 +540,39 @@ impl<'a> SessionSynthesizer<'a> {
 fn banker_round(x: f64) -> i64 {
     let r = x.round_ties_even();
     r as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::synthesize::config::{Layer15GroupConfig, TurnCountConfig};
+
+    #[test]
+    fn initial_context_starts_after_whole_shared_prefix() {
+        let mut config = SessionDistributionConfig::default();
+        config.block_size = 64;
+        config.max_prompt_tokens = 10_000;
+        config.cache.layer1_tokens = 1_000;
+        config.cache.layer1_5_tokens = 500;
+        config.cache.layer2 = LognormalParams::from_mean_median(1.0, 1.0);
+        config.cache.layer1_5_groups = Layer15GroupConfig {
+            num_groups: 1,
+            zipf_alpha: 1.0,
+        };
+        config.turns = Some(TurnCountConfig {
+            mean: 1,
+            median: 1,
+            min: 1,
+            max: 1,
+            allow_truncation: false,
+            max_session_attempts: Some(1),
+        });
+        config.reset = None;
+
+        let mut synthesizer = SessionSynthesizer::new(&config, 42).unwrap();
+        let session = synthesizer.synthesize_sessions(1).unwrap().remove(0);
+        let first_turn = &session.turns[0];
+        assert_eq!(first_turn.input_length, 1537);
+        assert_eq!(first_turn.hash_ids.len(), 25);
+    }
 }
