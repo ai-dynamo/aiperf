@@ -360,6 +360,7 @@ fn full_render_regression() {
         dev: false,
         title: "NVIDIA AIPerf | LLM Metrics".to_string(),
         metrics,
+        model_names: Vec::new(),
     };
     let text = render_console_txt(&report, &cfg);
     // Structural expectations that must hold regardless of box layout.
@@ -410,6 +411,7 @@ fn websocket_lag_rows_render_only_when_present() {
         dev: false,
         title: "NVIDIA AIPerf | LLM Metrics".to_string(),
         metrics,
+        model_names: Vec::new(),
     };
 
     let text = render_console_txt(&report, &cfg);

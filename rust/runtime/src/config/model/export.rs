@@ -86,6 +86,9 @@ pub struct ConsoleTxt {
     pub title: String,
     /// Per-registered-tag console metadata.
     pub metrics: BTreeMap<String, ConsoleMetricMeta>,
+    /// Configured model names used to select model-labeled server metrics.
+    #[serde(default)]
+    pub model_names: Vec<String>,
 }
 
 /// Opaque values echoed by the genai-perf-v1 sink.
@@ -447,6 +450,7 @@ impl Export {
         benchmark_id: &str,
         input_config: serde_json::Value,
         run_info: serde_json::Value,
+        model_names: &[String],
     ) -> Self {
         let envelope = GenaiPerfEnvelope {
             aiperf_version: AIPERF_V1_VERSION.to_string(),
@@ -473,6 +477,7 @@ impl Export {
                 dev: false,
                 title: console_title(endpoint_type),
                 metrics: META.console_metrics.clone(),
+                model_names: model_names.to_vec(),
             },
             otel: None,
             mlflow: None,
@@ -534,6 +539,26 @@ mod tests {
     fn chat_title() {
         assert_eq!(console_title("chat"), "NVIDIA AIPerf | LLM Metrics");
         assert_eq!(console_title("dynosim_offline"), "NVIDIA AIPerf");
+    }
+
+    #[test]
+    fn console_export_preserves_all_configured_model_names() {
+        let model_names = vec!["Model-A".to_string(), "model-b".to_string()];
+        let export = Export::build(
+            "chat",
+            &[],
+            "abc123",
+            serde_json::json!({}),
+            serde_json::json!({}),
+            &model_names,
+        );
+
+        assert_eq!(export.console_txt.model_names, model_names);
+        let wire = serde_json::to_value(&export.console_txt).unwrap();
+        assert_eq!(
+            wire["model_names"],
+            serde_json::json!(["Model-A", "model-b"])
+        );
     }
 
     #[test]

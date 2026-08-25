@@ -60,6 +60,9 @@ pub struct ConsoleTxtExportConfig {
     /// group under the raw tag, sort last, and carry no filtering flags.
     #[serde(default)]
     pub metrics: BTreeMap<String, ConsoleMetricMeta>,
+    /// Configured model names used to select model-labeled server metrics.
+    #[serde(default)]
+    pub model_names: Vec<String>,
 }
 
 impl Default for ConsoleTxtExportConfig {
@@ -70,6 +73,7 @@ impl Default for ConsoleTxtExportConfig {
             dev: false,
             title: "NVIDIA AIPerf".to_string(),
             metrics: BTreeMap::new(),
+            model_names: Vec::new(),
         }
     }
 }
