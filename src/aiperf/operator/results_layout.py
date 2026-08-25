@@ -306,6 +306,14 @@ def run_dir(base: Path, namespace: str, name: str, epoch: str) -> Path:
     return job_dir(base, namespace, name) / epoch
 
 
+def _write_pointer_atomic(root: Path, epoch: str) -> None:
+    """Atomically replace ``root/latest.txt`` with ``epoch``."""
+    pointer = root / LATEST_POINTER
+    staged = root / f"{LATEST_POINTER}.tmp"
+    staged.write_text(epoch)
+    os.replace(staged, pointer)
+
+
 def write_latest(base: Path, namespace: str, name: str, epoch: str) -> None:
     """Atomically record ``epoch`` as the current run for a job.
 
@@ -318,8 +326,9 @@ def write_latest(base: Path, namespace: str, name: str, epoch: str) -> None:
     (``"../escaped"``), or an out-of-range length can never be persisted into
     ``latest.txt`` where ``resolve_latest`` would later hand it back to a path
     join. A delayed older completion is also ignored: if the current pointer
-    already names a numerically newer epoch the write is a no-op, so a
-    late-arriving stale epoch never rolls the pointer backward.
+    already names a wall-clock-newer epoch (compared on the leading
+    whole-seconds component, not the full suffixed key) the write is a no-op,
+    so a late-arriving stale epoch never rolls the pointer backward.
 
     Raises:
         ValueError: if ``epoch`` is not 9-10 decimal digits, optionally
@@ -333,10 +342,7 @@ def write_latest(base: Path, namespace: str, name: str, epoch: str) -> None:
     if _existing_pointer_is_newer(target / LATEST_POINTER, epoch):
         return
     target.mkdir(parents=True, exist_ok=True)
-    pointer = target / LATEST_POINTER
-    staged = target / f"{LATEST_POINTER}.tmp"
-    staged.write_text(epoch)
-    os.replace(staged, pointer)
+    _write_pointer_atomic(target, epoch)
 
 
 def resolve_latest(base: Path, namespace: str, name: str) -> str | None:
@@ -374,9 +380,7 @@ def reconcile_latest(base: Path, namespace: str, name: str) -> str | None:
         return None
 
     epoch = max(epochs, key=lambda value: (_epoch_wall_seconds(value), value))
-    staged = target / f"{LATEST_POINTER}.tmp"
-    staged.write_text(epoch)
-    os.replace(staged, pointer)
+    _write_pointer_atomic(target, epoch)
     return epoch
 
 
@@ -444,7 +448,7 @@ def write_sweep_latest(base: Path, namespace: str, name: str, epoch: str) -> Non
 
     Creates the sweep root if absent. Mirrors :func:`write_latest` for the
     sweep side: rejects non-:data:`EPOCH_RE` epochs and refuses to roll the
-    pointer back to a numerically older epoch. Sweep-controllers call this at
+    pointer back to a wall-clock-older epoch. Sweep-controllers call this at
     the end of each aggregate write so subsequent reads default to the
     freshest epoch.
 
@@ -462,12 +466,7 @@ def write_sweep_latest(base: Path, namespace: str, name: str, epoch: str) -> Non
     if _existing_pointer_is_newer(pointer, epoch):
         return
     sweep_root.mkdir(parents=True, exist_ok=True)
-    # Stage-then-replace like write_latest: a reader must never observe a
-    # partially written pointer. The duplicate in handlers/sweep did this and
-    # this one did not, so whichever writer ran was a coin flip on atomicity.
-    staged = sweep_root / f"{LATEST_POINTER}.tmp"
-    staged.write_text(epoch)
-    os.replace(staged, pointer)
+    _write_pointer_atomic(sweep_root, epoch)
 
 
 def resolve_sweep_latest(base: Path, namespace: str, name: str) -> str | None:
@@ -504,9 +503,7 @@ def reconcile_sweep_latest(base: Path, namespace: str, name: str) -> str | None:
         return None
 
     epoch = max(epochs, key=lambda value: (_epoch_wall_seconds(value), value))
-    staged = sweep_root / f"{LATEST_POINTER}.tmp"
-    staged.write_text(epoch)
-    os.replace(staged, pointer)
+    _write_pointer_atomic(sweep_root, epoch)
     return epoch
 
 
@@ -558,10 +555,11 @@ async def list_sweep_epochs_async(
 ) -> list[RunEntry]:
     """Index-first variant of :func:`list_sweep_epochs` for async callers.
 
-    Reads distinct ``sweep_epoch`` values from the SQLite index first;
-    on a hit, fills :class:`RunEntry` rows from disk stats (the index
-    only tracks per-variation rows, not aggregate file counts). On a
-    miss falls back to the legacy disk-walk via :func:`list_sweep_epochs`.
+    Reads distinct ``sweep_epoch`` values from the SQLite index first, then
+    always runs :func:`list_sweep_epochs` and returns the union: index-only
+    epochs get their :class:`RunEntry` fields stat'd from disk, because the
+    index tracks per-variation rows rather than aggregate file counts. An
+    index miss therefore degrades to the plain disk-walk result.
 
     Example:
         >>> entries = await list_sweep_epochs_async(Path("/data"), "bench", "satsweep")
@@ -710,11 +708,12 @@ def _schedule_lazy_backfill_runs(
 ) -> None:
     """Best-effort fire-and-forget ``runs_index.lazy_backfill_run`` per epoch.
 
-    Called from sync :func:`list_runs` so async callers (FastAPI handlers
-    wrapped via ``asyncio.to_thread``, asyncio test loops) get the SQLite
-    index converged toward disk truth without blocking the read. When no
-    loop is running (pure-sync CLI / retention path), silently skip — the
-    operator's startup ``runs_index.bootstrap`` covers that gap.
+    Called from :func:`list_runs` and :func:`list_runs_async` so the SQLite
+    index converges toward disk truth without blocking the read. Requires a
+    running loop, so when none is running (pure-sync CLI / retention path, or
+    a caller that offloaded the whole walk to ``asyncio.to_thread``) it
+    silently skips — the operator's startup ``runs_index.bootstrap`` covers
+    that gap.
 
     Imported lazily to keep ``results_layout`` import-cycle-free; the
     operator package re-exports ``runs_index`` so a lazy attribute load
