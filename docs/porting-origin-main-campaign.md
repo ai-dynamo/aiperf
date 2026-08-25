@@ -51,7 +51,7 @@ implementation, test run, or review.
 | 23 | `fc7bbf3bdd` | DAG branches | complete | already-covered | Merged in `26c5f285d9`; native Graph-IR/AgentX branch and join regression reviewed. |
 | 24 | `f8c8e36533` | BranchStats test | complete | not-applicable | Merged in `89b5862670`; Python-only test correction, native phase regression reviewed. |
 | 25 | `5a24e0d7c7` | average error-rate SLA | complete | applicable | Merged in `ca54427a94`; native adaptive SLA projection and search tests reviewed. |
-| 26 | `093038afab` | JSON-array endpoint responses | pending | already-covered | Native typed array parsers cover the contract. |
+| 26 | `093038afab` | JSON-array endpoint responses | complete | applicable | Merged in `6cd8137681`; native KServe JSON-array response parsing reviewed. |
 | 27 | `f0128e105b` | reset/profiler hooks | pending | applicable | Hooks exist; partial-start rollback and aggregate stop failures need parity decision. |
 | 28 | `aaaa72e69d` | arrival tutorial flag | pending | not-applicable | Documentation only. |
 | 29 | `c2f5e9d459` | Python enum cache | pending | not-applicable | Python-specific hot path. |
