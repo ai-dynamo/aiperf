@@ -56,7 +56,7 @@ fn plot_delegates_to_the_python_utility_entry_point() {
         recorded_arguments(&record),
         ["-m", "aiperf", "plot", "report.json"]
     );
-    assert_eq!(output.stderr, b"delegated\n");
+    assert_eq!(output.stderr, b"delegated");
 }
 
 #[test]
