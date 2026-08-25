@@ -98,37 +98,29 @@ The env var is read at every `load_problems` call (no module-reload needed)
 and is passed as the positional `name` arg to
 `load_dataset("livecodebench/code_generation_lite", name, split="test", trust_remote_code=True)` —
 the standard HF config-name selector, matching lighteval's `hf_subset=`
-usage. `trust_remote_code=True` is set by the loader so LCB's
-dataset-loading script can execute on `datasets` v4+ (which dropped
-the implicit-trust default); this mirrors lighteval's reference path
-(`get_dataset_config_names(..., trust_remote_code=True)` plus
-`trust_dataset=True` on the task config). Nothing is bundled with the
-aiperf wheel — all subsets are fetched on-demand and cached under
-`~/.cache/huggingface/datasets/`.
+usage. `trust_remote_code=True` is required because LCB still ships a
+repository loading script; `datasets<4` runs it normally. Nothing is
+bundled with the aiperf wheel — all subsets are fetched on-demand and
+cached under `~/.cache/huggingface/datasets/`.
 
-**Compatibility:** the positional-name API is the standard HF
-`load_dataset` shape, and the explicit `trust_remote_code=True` opt-in
-means the loader works on `datasets` v3 **and** v4+ without operator
-env-var fiddling. If a future LCB release renames or removes the
-pinned subset, the loader raises `RuntimeError` prefixed
-`lcb_codegeneration: failed to load …`; recover by bumping the env var:
+**Compatibility:** `livecodebench/code_generation_lite` requires
+`datasets<4`. `datasets>=4` dropped support for repository loading scripts
+entirely, and the loader surfaces a clear error when it detects this:
+
+```text
+lcb_codegeneration: cannot load 'livecodebench/code_generation_lite'
+on `datasets>=4` — LCB still ships a repository loading script that
+`datasets>=4` no longer executes. Pin to an earlier release:
+`uv pip install 'datasets<4'`.
+```
+
+If a future LCB release renames or removes the pinned subset, the loader
+raises `RuntimeError` prefixed `lcb_codegeneration: failed to load …`;
+recover by bumping the env var:
 
 ```bash
 export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or whatever LCB now ships
 ```
-
-The remap also surfaces the installed `datasets` version when ≥ 4 in
-case you've explicitly disabled remote-code execution at the env level
-(`HF_DATASETS_TRUST_REMOTE_CODE=0`); the safest workaround there is to
-install a compatible `datasets`:
-
-```bash
-uv pip install 'datasets>=3.0,<4'
-```
-
-The error message names which condition fired (it includes the installed
-`datasets` version when ≥ 4) so operators get an actionable next step
-without reading the source.
 
 ## MMLU chain-of-thought and reasoning models
 
