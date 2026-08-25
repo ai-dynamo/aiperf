@@ -119,6 +119,15 @@ mod spec_decode_tests {
     }
 
     #[test]
+    fn vllm_draft_acceptance_rate_must_be_a_fraction() {
+        for invalid_rate in [-0.01, 1.01] {
+            let mut payload = worked_payload();
+            payload["draft_acceptance_rate"] = serde_json::json!(invalid_rate);
+            assert!(parse_vllm_spec_decode_stats(&payload, None).is_err());
+        }
+    }
+
+    #[test]
     fn multiple_choices_do_not_claim_one_requests_stats() {
         let response = serde_json::json!({
             "choices": [

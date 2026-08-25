@@ -18,6 +18,8 @@ pub(crate) enum SpecDecodePayloadError {
     InvalidShape(String),
     /// A floating metric is non-finite.
     NonFiniteValue(&'static str),
+    /// A floating metric is outside its canonical range.
+    OutOfRange(&'static str),
     /// A histogram key is not a non-negative decimal integer.
     InvalidHistogramBucket(String),
     /// Two wire keys normalize to the same integer bucket.
@@ -33,6 +35,9 @@ impl Display for SpecDecodePayloadError {
         match self {
             Self::InvalidShape(error) => write!(formatter, "invalid payload shape: {error}"),
             Self::NonFiniteValue(field) => write!(formatter, "{field} must be finite"),
+            Self::OutOfRange(field) => {
+                write!(formatter, "{field} must be between zero and one")
+            }
             Self::InvalidHistogramBucket(bucket) => {
                 write!(formatter, "invalid acceptance histogram bucket {bucket:?}")
             }
@@ -94,6 +99,9 @@ pub(crate) fn parse_vllm_spec_decode_stats(
         return Err(SpecDecodePayloadError::NonFiniteValue(
             "draft_acceptance_rate",
         ));
+    }
+    if !(0.0..=1.0).contains(&wire.draft_acceptance_rate) {
+        return Err(SpecDecodePayloadError::OutOfRange("draft_acceptance_rate"));
     }
     validate_per_step(&wire)?;
 

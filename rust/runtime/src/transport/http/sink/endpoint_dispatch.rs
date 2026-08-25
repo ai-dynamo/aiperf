@@ -934,9 +934,12 @@ mod tests {
     use super::*;
     use crate::clock::Clock;
     use crate::endpoints::PreparedEndpoint;
+    use crate::metrics::NativeMetricsObserver;
+    use crate::metrics_core::{MetricsConfig, Phase};
     use crate::transport::core::SseMessage;
     use crate::transport::http::transport::endpoint_binding::decode_sse_response;
     use crate::transport::reduce::absorb_usage;
+    use axum::{Router, http::header, response::IntoResponse, routing::post};
     use std::cell::{Cell, RefCell};
     use std::io::Read;
     use std::rc::Rc;
@@ -1028,6 +1031,85 @@ mod tests {
             crate::transport::http::TransportSinkConfig::default(),
         )
         .unwrap()
+    }
+
+    async fn spec_decode_chat_handler() -> impl IntoResponse {
+        let body = concat!(
+            "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\",\"speculative_decoding_stats\":{\"mean_acceptance_length\":3.25,\"draft_acceptance_rate\":0.5625,\"acceptance_histogram\":{\"0\":1,\"1\":1,\"2\":2,\"3\":3,\"4\":1},\"num_accepted_draft_tokens\":18,\"num_draft_tokens\":32,\"num_spec_steps\":8,\"num_spec_tokens\":4,\"per_step_accepted\":[2,3,1,4,2,0,3,3],\"per_step_drafted\":[4,4,4,4,4,4,4,4]}}]}\n\n",
+            "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        ([(header::CONTENT_TYPE, "text/event-stream")], body)
+    }
+
+    async fn spawn_spec_decode_chat_mock() -> String {
+        let app = Router::new().route("/v1/chat/completions", post(spec_decode_chat_handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn finish_only_spec_decode_chunk_reaches_the_terminal_record() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let base = spawn_spec_decode_chat_mock().await;
+                let clock = crate::clock::RealClock::new();
+                let sink = TransportSink::new_multi_configured(
+                    clock.clone(),
+                    clock.now_ns(),
+                    std::slice::from_ref(&base),
+                    "m",
+                    crate::transport::http::TransportSinkConfig::default(),
+                )
+                .unwrap();
+                let endpoint = prepared_streaming("chat");
+                let observer = NativeMetricsObserver::new(clock, 0, MetricsConfig::default());
+                let uuid = uuid::Uuid::new_v4();
+                let mut request = bounded_request(None, None);
+                request.uuid = uuid;
+                observer.register_metadata(
+                    uuid,
+                    crate::metrics::RequestMetricMetadata {
+                        phase: Phase::Profiling,
+                        ..crate::metrics::RequestMetricMetadata::default()
+                    },
+                );
+                observer.on_arrival(uuid, 0.0, 2, 2);
+                let on_first_token = |_: i64| {};
+
+                let dispatch = sink
+                    .dispatch_prepared_endpoint_collect_record_with_hooks(
+                        request,
+                        endpoint.as_ref(),
+                        "m",
+                        EndpointDispatchHooks::new(
+                            &observer,
+                            &on_first_token,
+                            None,
+                            TurnDataPolicy::ordinary(),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(dispatch.result.terminal, ReplayTerminalStatus::Completed);
+                let record = observer.snapshot_record(uuid, 0).expect("terminal record");
+                assert!(!record.errored);
+                let acceptance = record
+                    .spec_decode_acceptance
+                    .expect("finish-only stats reach the observer record");
+                assert_eq!(acceptance.num_spec_steps, 8);
+                assert_eq!(acceptance.num_accepted_draft_tokens, 18);
+                assert_eq!(acceptance.num_draft_tokens, 32);
+                assert_eq!(acceptance.completion_tokens, Some(2));
+            })
+            .await;
     }
 
     /// Dispatch one streaming chat turn through the real endpoint-aware path at

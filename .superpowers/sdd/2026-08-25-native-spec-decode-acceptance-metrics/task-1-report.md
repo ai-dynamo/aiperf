@@ -57,3 +57,26 @@ The diff is limited to the new wire/observer/ingest seam and one required direct
 `RecordIngest` literal. It preserves endpoint parse behavior, terminal status,
 usage precedence, and the existing SGLang server-metrics path. Independent
 review remains the gate before Task 2.
+
+## Independent-review fix round
+
+The first independent review rejected Task 1 on one important invariant and one
+minor coverage gap. A focused RED run of the authoritative command executed
+eight tests: the new real endpoint-dispatch test passed, while the new range
+test failed because `draft_acceptance_rate` accepted `-0.01` and `1.01`.
+
+The adapter now rejects every finite value outside `0.0..=1.0`. The dispatch
+test launches an SSE endpoint with content, a finish-only stats chunk, a later
+usage-only chunk, and `[DONE]`; it proves the fast path produces a completed
+dispatch and a terminal `RecordIngest` containing the canonical stats with the
+reconciled completion-token count.
+
+GREEN:
+
+```text
+RUSTC_WRAPPER=sccache CARGO_TARGET_DIR=/mnt/4tb/aiperf-target-port-013 \
+  cargo test -p aiperf-runtime --features engine --lib spec_decode -- --nocapture
+```
+
+Result: 8 passed, 0 failed, 2300 filtered out; the same four unchanged baseline
+warnings remained. Scoped re-review is pending.
