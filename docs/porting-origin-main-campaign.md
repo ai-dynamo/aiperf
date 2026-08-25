@@ -30,7 +30,7 @@ Sol plan, TDD evidence, verification, and the required Graham review.
 | 2 | `0883bd1aee` | chore: bump aiperf version to 0.12.0 (#1194) | not-applicable | Merge `9596121af1` has upstream as second parent. The upstream change is Python package/mock-server/docs version metadata only; native crates own independent versions and no runtime behavior changed. |
 | 3 | `34b2be2ee1` | feat: support Speculative Decoding metrics in AIPerf (#1153) | complete | Merge `4d076c660f`; native SGLang/TRT-LLM speculative acceptance metrics already feed the speed-bench report, so no Rust delta is required. |
 | 4 | `6db948524e` | fix: uncaught valueerror in sagemaker loader (#1199) | complete | Merge `586c529b96`; native SageMaker capture parsing already maps malformed inference timestamps to a typed validation error. |
-| 5 | `ce715ae849` | fix(agentic): preserve trace think time with global idle guard (#1201) | pending | — |
+| 5 | `ce715ae849` | fix(agentic): preserve trace think time with global idle guard (#1201) | rust-porting | Merge `6e8da730e8`; AgentX scenario resolution still injects a legacy per-trace cap and lacks incompatible-cap locks. Spec: `docs/specs/2026-08-25-native-agentx-global-idle-guard.md`. |
 | 6 | `93b6223373` | refactor(telemetry): rename TelemetryRecord.dcgm_url → telemetry_source_url (#1200) | pending | — |
 | 7 | `86ea3f7deb` | fix(cli-runner): fix multi-run detailed aggregation JSONL fallback (#1203) | pending | — |
 | 8 | `5566aae1e1` | perf(dataset): batch-encode ShareGPT to fix 300s configuration timeout (#1206) | pending | — |
