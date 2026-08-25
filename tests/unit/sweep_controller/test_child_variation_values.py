@@ -23,8 +23,10 @@ from aiperf.common.endpoint_credentials import (
     redact_sweep_display_label,
 )
 from aiperf.config import BenchmarkConfig, BenchmarkRun, SweepVariation
-from aiperf.operator.routers._sweeps_live import children_manifest_from_live_aiperfjobs
-from aiperf.operator.routers.sweeps import _children_manifest_from_doc
+from aiperf.operator.routers.sweeps import (
+    _children_manifest_from_doc,
+    children_manifest_from_live_aiperfjobs,
+)
 from aiperf.sweep_controller.k8s_executor import (
     VARIATION_VALUES_ANNOTATION,
     ChildRunRef,
@@ -350,7 +352,7 @@ async def test_live_manifest_reads_values_from_the_child_annotation(
     custom = MagicMock()
     custom.list_namespaced_custom_object = AsyncMock(return_value=listed)
     monkeypatch.setattr(
-        "aiperf.operator.routers._sweeps_live.k8s.CustomObjectsApi",
+        "aiperf.operator.routers.sweeps.client.CustomObjectsApi",
         lambda _api: custom,
     )
 

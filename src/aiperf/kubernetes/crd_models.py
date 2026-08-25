@@ -3,9 +3,9 @@
 """Pydantic models for AIPerfJob operator.
 
 This module provides validated models for:
-- AIPerfJob spec validation
-- Metrics summary extraction
-- Results TTL configuration
+- AIPerfJob and AIPerfSweep spec validation
+- Metrics summary extraction and per-phase progress
+- Owner references and operator-side probe/fetch results
 """
 
 from __future__ import annotations
@@ -15,17 +15,37 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from aiperf.common.enums import SweepMode
 from aiperf.common.finite import FiniteFloat, is_finite_value
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.types import PhaseKind
 from aiperf.config import AIPerfConfig
+from aiperf.config.base import BaseConfig
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.resolution.plan import FailurePolicy
 from aiperf.kubernetes.k8s_models import K8sCamelModel
-from aiperf.kubernetes.sweep_models import ObjectMetaPartial
+
+
+class ObjectMetaPartial(BaseConfig):
+    """Subset of Kubernetes ObjectMeta safe to stamp onto child CRs.
+
+    Only labels and annotations are merged into children; name/namespace/uid
+    are managed by the controller, so accepting them here would silently lose
+    user intent. extra='forbid' surfaces unknown keys at submit time.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Labels merged into every child AIPerfJob.",
+    )
+    annotations: dict[str, str] = Field(
+        default_factory=dict,
+        description="Annotations merged into every child AIPerfJob.",
+    )
 
 
 class OwnerReference(K8sCamelModel):
@@ -257,7 +277,7 @@ class MetricsSummary:
         return cls(data=out)
 
     def to_status_dict(self) -> dict[str, Any]:
-        """Return the projected dict for writing to CR status (omits empty)."""
+        """Return the projected dict for writing to CR status (floats rounded)."""
         return _round_summary(self.data)
 
 

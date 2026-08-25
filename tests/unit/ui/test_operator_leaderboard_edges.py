@@ -14,7 +14,6 @@ UI_ROOT = Path(__file__).resolve().parents[3] / "src" / "aiperf" / "operator" / 
 LEADERBOARD_PATH = UI_ROOT / "pages" / "leaderboard.js"
 COMPARE_FILTERS_PATH = UI_ROOT / "pages" / "compare-filters.js"
 ROUTER_PATH = UI_ROOT / "lib" / "router.js"
-ROUTER_HELPERS_PATH = UI_ROOT / "lib" / "router-helpers.js"
 
 
 def _leaderboard_script(
@@ -266,10 +265,6 @@ def test_job_detail_link_builder_encodes_namespace_name_and_epoch() -> None:
         source = source.replace(
           "import {{ signal }} from '@preact/signals';",
           "const signal = (value) => ({{ value }});",
-        );
-        source = source.replace(
-          "import {{ normalizePath, replaceHash }} from './router-helpers.js';",
-          "import {{ normalizePath, replaceHash }} from {ROUTER_HELPERS_PATH.as_uri()!r};",
         );
         const router = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
         const paths = {{

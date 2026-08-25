@@ -8,20 +8,31 @@ from pathlib import Path
 
 from tests.unit.ui.node_utils import run_node
 
-ROUTER_HELPERS_PATH = (
+ROUTER_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
     / "aiperf"
     / "operator"
     / "ui"
     / "lib"
-    / "router-helpers.js"
+    / "router.js"
 )
 
 
 def test_replace_hash_updates_url_without_push_state() -> None:
     script = f"""
-        import {{ replaceHash }} from {ROUTER_HELPERS_PATH.as_uri()!r};
+        global.window = {{
+          location: {{ hash: '#/' }},
+          addEventListener() {{}},
+        }};
+        import {{ readFileSync }} from 'node:fs';
+        let source = readFileSync({str(ROUTER_PATH)!r}, 'utf8');
+        source = source.replace(
+          "import {{ signal }} from '@preact/signals';",
+          "const signal = (value) => ({{ value }});",
+        );
+        const routerModuleUrl = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
+        const {{ replaceHash }} = await import(routerModuleUrl);
         const calls = [];
         const win = {{
           location: {{ hash: '#/jobs/ns/job' }},

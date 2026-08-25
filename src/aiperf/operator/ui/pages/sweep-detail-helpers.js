@@ -260,7 +260,7 @@ function indexManifestValues(manifest) {
  *   - Freshness: `status.runs[]` is appended only once a child reaches a
  *     terminal phase (operator/handlers/sweep/child_rollup.py:153-154), while
  *     the manifest carries values for children that are still running
- *     (routers/_sweeps_live.children_manifest_from_live_aiperfjobs).
+ *     (routers/sweeps.children_manifest_from_live_aiperfjobs).
  *   - Fidelity: the manifest/annotation budget is 2048 bytes
  *     (VARIATION_VALUES_MAX_ANNOTATION_BYTES) against 256 for `status.runs[]`
  *     (_STATUS_VARIATION_VALUES_MAX_BYTES), so the status copy degrades to a

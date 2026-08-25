@@ -29,7 +29,6 @@ from pytest import param
 
 from aiperf.operator import sweep_union as union_mod
 from aiperf.operator.results_layout import write_sweep_latest
-from aiperf.operator.routers import _sweeps_live as live_mod
 from aiperf.operator.routers import sweeps as mod
 from aiperf.operator.routers.sweeps import create_sweeps_router
 from aiperf.operator.sweep_union import SweepRecord
@@ -656,7 +655,7 @@ class TestSweepsRouterChildrenManifest:
 
         monkeypatch.setattr(mod, "find_any_sweep", fake_find_any_sweep)
         monkeypatch.setattr(
-            live_mod.k8s,
+            mod.client,
             "CustomObjectsApi",
             lambda api: _FakeCustomObjectsApi(api, children),
         )
@@ -725,7 +724,7 @@ class TestSweepsRouterChildrenManifest:
 
         monkeypatch.setattr(mod, "find_any_sweep", fake_find_any_sweep)
         monkeypatch.setattr(
-            live_mod.k8s,
+            mod.client,
             "CustomObjectsApi",
             lambda api: _FakeCustomObjectsApi(api, children),
         )
