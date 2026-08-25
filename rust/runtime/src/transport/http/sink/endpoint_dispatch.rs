@@ -19,7 +19,8 @@ use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{ObservedEndpointMetrics, ObservedUsage, RequestObserver};
 use crate::endpoints::{
     EndpointDescriptor, EndpointResult, ExtractedPayload, ParsedResponse, PreparedEndpoint,
-    RequestRecord as EndpointRequestRecord, ServerResponse, Turn,
+    RequestRecord as EndpointRequestRecord, ServerResponse, Turn, extract_vllm_spec_decode_stats,
+    parse_vllm_spec_decode_stats,
 };
 use crate::metrics_core::RequestTrace;
 use crate::transport::core::{
@@ -562,6 +563,8 @@ impl TransportSink {
         let mut response_text = String::new();
         let mut model_response = ModelResponseMetadata::default();
         let mut observed_usage = ObservedUsage::default();
+        let captures_spec_decode = matches!(endpoint.descriptor().id, "chat" | "completions");
+        let mut spec_decode_stats = None;
         let to_ms = |ns| self.ms(ns);
         let emitter = TokenEmitter {
             uuid,
@@ -599,20 +602,31 @@ impl TransportSink {
                 && let Response::Sse(message) = response
                 && !message.is_done()
                 && let Some(data) = message.data()
-                && let Ok(chunk) = serde_json::from_str::<ChatChunk>(data)
+                && let Ok(mut chunk) = serde_json::from_str::<ChatChunk>(data)
                 // A chunk carrying usage still needs `ParsedResponse.usage` as a
                 // `Value`, so hand those (one per request) to the generic path.
                 && chunk.usage.is_none()
             {
+                let chunk_spec_decode_stats = captures_spec_decode
+                    .then(|| chunk.take_speculative_decoding_stats())
+                    .flatten();
+                let retained_spec_decode_stats = chunk_spec_decode_stats
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .is_some_and(|object| !object.is_empty());
+                if retained_spec_decode_stats {
+                    spec_decode_stats = chunk_spec_decode_stats;
+                }
                 absorb_chat_chunk_wire_metadata(&chunk, &mut model_response);
                 // Matches the generic parse: with no usage, a chunk yields a
                 // ParsedResponse only when it carries response data, so
                 // role-only frames leave `parsed_any` alone exactly as before.
-                if let Some(data) = chunk.into_stream_response_data() {
+                let data = chunk.into_stream_response_data();
+                if data.is_some() || retained_spec_decode_stats {
                     parsed_any = true;
                     let parsed = ParsedResponse {
                         perf_ns: u64::try_from(message.perf_ns).unwrap_or_default(),
-                        data: Some(data),
+                        data,
                         usage: None,
                         sources: None,
                     };
@@ -641,6 +655,12 @@ impl TransportSink {
                 &decoded
             };
             if let Some(value) = &server_response.json {
+                if captures_spec_decode
+                    && let Some(stats) = extract_vllm_spec_decode_stats(value)
+                    && stats.as_object().is_some_and(|object| !object.is_empty())
+                {
+                    spec_decode_stats = Some(stats.clone());
+                }
                 absorb_wire_response_metadata(value, &mut model_response);
             }
             let parsed = match parse_endpoint_response(endpoint, server_response) {
@@ -765,6 +785,20 @@ impl TransportSink {
             );
         }
         obs.on_usage(uuid, observed_usage);
+        if let Some(payload) = spec_decode_stats {
+            let completion_tokens = observed_usage
+                .completion_tokens
+                .and_then(|value| u64::try_from(value).ok());
+            match parse_vllm_spec_decode_stats(&payload, completion_tokens) {
+                Ok(acceptance) => obs.on_spec_decode_acceptance(uuid, acceptance),
+                Err(error) => tracing::warn!(
+                    uuid = %uuid,
+                    endpoint = endpoint.descriptor().id,
+                    error = %error,
+                    "ignoring malformed speculative-decoding statistics"
+                ),
+            }
+        }
         obs.on_endpoint_metrics(uuid, endpoint_metrics);
         obs.on_terminal(uuid, terminal);
 

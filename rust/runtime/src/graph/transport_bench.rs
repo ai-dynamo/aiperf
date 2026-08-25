@@ -304,6 +304,7 @@ impl GraphSink<Msg> for TransportMeteredSink {
             video_inference_seconds: None,
             video_peak_memory_mb: None,
             metric_overrides: Vec::new(),
+            spec_decode_acceptance: None,
         };
         m.native.process_record(&record);
         if ok {

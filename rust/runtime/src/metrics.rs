@@ -16,8 +16,9 @@ use std::sync::Arc;
 use crate::clock::Clock;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::{
-    ObservedEndpointMetrics, ObservedRoundTripMetrics, ObservedTokenKind, ObservedTransportRoute,
-    ObservedUsage, RequestObserver, TransportFallbackReason, TransportRoute,
+    ObservedEndpointMetrics, ObservedRoundTripMetrics, ObservedSpecDecodeAcceptance,
+    ObservedTokenKind, ObservedTransportRoute, ObservedUsage, RequestObserver,
+    TransportFallbackReason, TransportRoute,
 };
 use crate::metrics_core::{
     AccumulatorSummary, InferenceDimensions, MetricTag, MetricValue, MetricsAccumulator,
@@ -107,6 +108,7 @@ struct PendingRequest {
     reasoning_tokens: u64,
     first_output_token_ns: Option<i64>,
     endpoint_metrics: Option<Box<ObservedEndpointMetrics>>,
+    spec_decode_acceptance: Option<Box<ObservedSpecDecodeAcceptance>>,
     round_trip_metrics: Option<ObservedRoundTripMetrics>,
     transport_route: Option<ObservedTransportRoute>,
     observed_usage: CompactObservedUsage,
@@ -624,6 +626,7 @@ impl PendingRequest {
             video_inference_seconds: endpoint_metrics.video_inference_seconds,
             video_peak_memory_mb: endpoint_metrics.video_peak_memory_mb,
             metric_overrides,
+            spec_decode_acceptance: self.spec_decode_acceptance.map(|value| *value),
         }
     }
 }
@@ -676,6 +679,7 @@ impl RequestObserver for NativeMetricsObserver {
                 reasoning_tokens: 0,
                 first_output_token_ns: None,
                 endpoint_metrics: None,
+                spec_decode_acceptance: None,
                 round_trip_metrics: None,
                 transport_route: None,
                 observed_usage: CompactObservedUsage::default(),
@@ -737,6 +741,12 @@ impl RequestObserver for NativeMetricsObserver {
             request.response.prompt_tokens = usage.prompt_tokens.map(|value| value as u64);
             request.response.completion_tokens = usage.completion_tokens.map(|value| value as u64);
             request.observed_usage.set(usage);
+        }
+    }
+
+    fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: ObservedSpecDecodeAcceptance) {
+        if let Some(request) = self.state.borrow_mut().request_mut(uuid) {
+            request.spec_decode_acceptance = Some(Box::new(acceptance));
         }
     }
 
@@ -832,6 +842,12 @@ impl RequestObserver for ObserverTee {
         }
     }
 
+    fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: ObservedSpecDecodeAcceptance) {
+        for delegate in &self.delegates {
+            delegate.on_spec_decode_acceptance(uuid, acceptance.clone());
+        }
+    }
+
     fn on_endpoint_metrics(&self, uuid: Uuid, metrics: ObservedEndpointMetrics) {
         for delegate in &self.delegates {
             delegate.on_endpoint_metrics(uuid, metrics);
@@ -863,6 +879,64 @@ mod tests {
     use crate::clock::SimClock;
     use crate::metrics_core::{MetricTag, MetricValue};
 
+    #[derive(Default)]
+    struct SpecDecodeRecorder {
+        values: RefCell<Vec<(Uuid, ObservedSpecDecodeAcceptance)>>,
+    }
+
+    impl RequestObserver for SpecDecodeRecorder {
+        fn on_arrival(&self, _uuid: Uuid, _at_ms: f64, _input: usize, _output: usize) {}
+
+        fn on_admit(&self, _uuid: Uuid, _at_ms: f64, _reused_input_tokens: usize) {}
+
+        fn on_token(&self, _uuid: Uuid, _at_ms: f64) {}
+
+        fn on_spec_decode_acceptance(&self, uuid: Uuid, acceptance: ObservedSpecDecodeAcceptance) {
+            self.values.borrow_mut().push((uuid, acceptance));
+        }
+
+        fn on_terminal(&self, _uuid: Uuid, _status: ReplayTerminalStatus) {}
+    }
+
+    fn sample_spec_decode_acceptance() -> ObservedSpecDecodeAcceptance {
+        ObservedSpecDecodeAcceptance {
+            engine: "vllm".to_string(),
+            mean_acceptance_length: 3.25,
+            draft_acceptance_rate: 0.5625,
+            acceptance_histogram: std::collections::BTreeMap::from([
+                (0, 1),
+                (1, 1),
+                (2, 2),
+                (3, 3),
+                (4, 1),
+            ]),
+            num_accepted_draft_tokens: 18,
+            num_draft_tokens: 32,
+            num_spec_steps: 8,
+            num_spec_tokens: Some(4),
+            completion_tokens: Some(26),
+            per_step_accepted: Some(vec![2, 3, 1, 4, 2, 0, 3, 3]),
+            per_step_drafted: Some(vec![4; 8]),
+        }
+    }
+
+    #[test]
+    fn observer_tee_forwards_spec_decode_acceptance_once_per_delegate() {
+        let first = Rc::new(SpecDecodeRecorder::default());
+        let second = Rc::new(SpecDecodeRecorder::default());
+        let tee = ObserverTee::new(vec![first.clone(), second.clone()]);
+        let uuid = Uuid::from_u128(104);
+        let acceptance = sample_spec_decode_acceptance();
+
+        tee.on_spec_decode_acceptance(uuid, acceptance.clone());
+
+        assert_eq!(
+            first.values.borrow().as_slice(),
+            &[(uuid, acceptance.clone())]
+        );
+        assert_eq!(second.values.borrow().as_slice(), &[(uuid, acceptance)]);
+    }
+
     #[test]
     fn output_token_batch_preserves_absolute_order_with_one_request_lookup() {
         let clock = Rc::new(SimClock::new());
@@ -876,6 +950,26 @@ mod tests {
         assert_eq!(request.token_arrivals_ns, [1_000_000, 2_500_000, 4_000_000]);
         assert_eq!(request.output_tokens, 3);
         assert_eq!(request.first_output_token_ns, Some(1_000_000));
+    }
+
+    #[test]
+    fn spec_decode_acceptance_moves_from_observer_into_record() {
+        let clock = Rc::new(SimClock::new());
+        let observer = NativeMetricsObserver::new(clock, 0, MetricsConfig::default());
+        let uuid = Uuid::from_u128(103);
+        let acceptance = sample_spec_decode_acceptance();
+
+        observer.on_arrival(uuid, 0.0, 4, 2);
+        observer.on_spec_decode_acceptance(uuid, acceptance.clone());
+        observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+
+        assert_eq!(
+            observer
+                .snapshot_record(uuid, 0)
+                .expect("terminal record")
+                .spec_decode_acceptance,
+            Some(acceptance)
+        );
     }
 
     #[test]

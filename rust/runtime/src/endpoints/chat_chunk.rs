@@ -35,6 +35,14 @@ pub struct ChatChunk {
 }
 
 impl ChatChunk {
+    /// Remove per-request stats from the sole choice, suppressing multi-choice responses.
+    pub fn take_speculative_decoding_stats(&mut self) -> Option<serde_json::Value> {
+        if self.choices.len() != 1 {
+            return None;
+        }
+        self.choices.first_mut()?.speculative_decoding_stats.take()
+    }
+
     /// Returns true when any choice carries non-empty user-visible content.
     pub fn has_output_delta(&self) -> bool {
         self.choices.iter().any(|choice| {
@@ -143,6 +151,9 @@ pub struct ChatChoice {
     /// Finish reason, e.g. `"stop"` or `"length"`, on the terminal choice chunk.
     #[serde(default)]
     pub finish_reason: Option<String>,
+    /// vLLM per-request acceptance data carried by the finish-reason chunk.
+    #[serde(default)]
+    pub speculative_decoding_stats: Option<serde_json::Value>,
 }
 
 /// The incremental delta of a choice.
@@ -348,5 +359,21 @@ mod tests {
         assert_eq!(usage.prompt_tokens, 7);
         assert_eq!(usage.completion_tokens, 3);
         assert_eq!(usage.cached_tokens(), Some(5));
+    }
+
+    #[test]
+    fn finish_only_chunk_retains_speculative_decoding_stats() {
+        let chunk = parse(
+            r#"{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop","speculative_decoding_stats":{"acceptance_histogram":{"0":1},"num_spec_steps":1}}]}"#,
+        );
+        assert!(chunk.choices[0].delta.content.is_none());
+        assert!(chunk.usage.is_none());
+        assert_eq!(
+            chunk.choices[0]
+                .speculative_decoding_stats
+                .as_ref()
+                .and_then(|stats| stats["num_spec_steps"].as_u64()),
+            Some(1)
+        );
     }
 }

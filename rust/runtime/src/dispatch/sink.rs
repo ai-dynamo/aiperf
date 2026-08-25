@@ -11,6 +11,7 @@
 //! behind the trait.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use super::collector::ReplayTerminalStatus;
@@ -53,6 +54,33 @@ pub struct ObservedUsage {
     pub tool_use_prompt_tokens: Option<usize>,
     /// Prompt audio duration in seconds, distinct from audio-token counts.
     pub prompt_audio_seconds: Option<f64>,
+}
+
+/// Engine-neutral per-request speculative-decoding acceptance facts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObservedSpecDecodeAcceptance {
+    /// Serving engine that produced the raw statistics.
+    pub engine: String,
+    /// Mean emitted tokens per verification step, including the bonus token.
+    pub mean_acceptance_length: f64,
+    /// Accepted draft tokens divided by proposed draft tokens as a fraction.
+    pub draft_acceptance_rate: f64,
+    /// Accepted draft count mapped to the number of matching verification steps.
+    pub acceptance_histogram: BTreeMap<u64, u64>,
+    /// Accepted draft tokens, excluding bonus tokens.
+    pub num_accepted_draft_tokens: u64,
+    /// Proposed draft tokens counted toward acceptance.
+    pub num_draft_tokens: u64,
+    /// Number of speculative verification steps.
+    pub num_spec_steps: u64,
+    /// Fixed maximum draft length per step, when reported.
+    pub num_spec_tokens: Option<u64>,
+    /// Completion-token count from the reconciled response usage.
+    pub completion_tokens: Option<u64>,
+    /// Ordered accepted-draft counts per verification step, when reported.
+    pub per_step_accepted: Option<Vec<u64>>,
+    /// Ordered proposed-draft counts per verification step, when reported.
+    pub per_step_drafted: Option<Vec<u64>>,
 }
 
 /// Endpoint-specific modality facts that feed native metrics without exposing
@@ -169,6 +197,8 @@ pub trait RequestObserver {
     /// Individual fields remain absent when the endpoint reports no usage. The
     /// default is a no-op; observers that reconcile counts override it.
     fn on_usage(&self, _uuid: Uuid, _usage: ObservedUsage) {}
+    /// Record the terminal canonical speculative-decoding acceptance facts.
+    fn on_spec_decode_acceptance(&self, _uuid: Uuid, _acceptance: ObservedSpecDecodeAcceptance) {}
     /// Record endpoint-specific image/video facts.
     ///
     /// The default is a no-op so token-only transports and observers do not pay
