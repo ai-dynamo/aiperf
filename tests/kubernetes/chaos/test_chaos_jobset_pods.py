@@ -36,7 +36,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.k8s_slow]
 # Selector fragments passed to the shared-PID busybox ``ps`` + ``grep``
 # pipeline. Each must match the target service's ``args`` list (see
 # ``src/aiperf/kubernetes/jobset_helpers.py::build_container_args`` and
-# ``jobset_builder.py::_create_event_bus_proxy`` /
+# ``jobset.py::_create_event_bus_proxy`` /
 # ``_create_results_sidecar``). Keep these in sync with those call sites.
 CONTROL_PLANE_CMDLINE_MATCH = "system_controller"
 """Unique substring of control-plane container's cmdline."""

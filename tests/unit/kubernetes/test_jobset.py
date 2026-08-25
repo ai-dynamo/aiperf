@@ -22,6 +22,7 @@ from aiperf.kubernetes.jobset import (
     AIPerfJobSetSpec,
     AIPerfReplicatedJobSpec,
 )
+from aiperf.kubernetes.jobset_helpers import build_health_probe, build_startup_probe
 from aiperf.kubernetes.utils import parse_cpu, parse_memory_mib
 
 
@@ -1786,8 +1787,8 @@ class TestJobSetSpecPrivateMethods:
         )
 
     def test_create_health_probe(self, jobset_spec: AIPerfJobSetSpec) -> None:
-        """Test _create_health_probe generates correct probe config."""
-        probe = jobset_spec._create_health_probe(port=8080)
+        """Test build_health_probe generates correct probe config."""
+        probe = build_health_probe(port=8080)
         assert probe["httpGet"]["path"] == "/healthz"
         assert probe["httpGet"]["port"] == 8080
         assert "initialDelaySeconds" in probe
@@ -1798,14 +1799,14 @@ class TestJobSetSpecPrivateMethods:
     def test_create_health_probe_custom_path(
         self, jobset_spec: AIPerfJobSetSpec
     ) -> None:
-        """Test _create_health_probe with custom path."""
-        probe = jobset_spec._create_health_probe(port=9090, path="/custom/health")
+        """Test build_health_probe with custom path."""
+        probe = build_health_probe(port=9090, path="/custom/health")
         assert probe["httpGet"]["path"] == "/custom/health"
         assert probe["httpGet"]["port"] == 9090
 
     def test_create_startup_probe(self, jobset_spec: AIPerfJobSetSpec) -> None:
-        """Test _create_startup_probe generates correct probe config."""
-        probe = jobset_spec._create_startup_probe(port=8080)
+        """Test build_startup_probe generates correct probe config."""
+        probe = build_startup_probe(port=8080)
         assert probe["httpGet"]["path"] == "/healthz"
         assert probe["httpGet"]["port"] == 8080
         assert probe["initialDelaySeconds"] == 0  # Zero for fast first check
@@ -1815,8 +1816,8 @@ class TestJobSetSpecPrivateMethods:
     def test_create_startup_probe_custom_path(
         self, jobset_spec: AIPerfJobSetSpec
     ) -> None:
-        """Test _create_startup_probe with custom path."""
-        probe = jobset_spec._create_startup_probe(port=8080, path="/startup")
+        """Test build_startup_probe with custom path."""
+        probe = build_startup_probe(port=8080, path="/startup")
         assert probe["httpGet"]["path"] == "/startup"
 
     def test_create_security_context(self, jobset_spec: AIPerfJobSetSpec) -> None:

@@ -3,7 +3,7 @@
 """Contract guard: every argv the operator emits must bind against the real CLI.
 
 The operator builds pod `command`/`args` in `aiperf.kubernetes.jobset_helpers`
-and `aiperf.kubernetes.jobset_builder`, while the flags themselves are declared
+and `aiperf.kubernetes.jobset`, while the flags themselves are declared
 in `aiperf.cli_commands.*`. Nothing else couples the two sides, so a flag can be
 renamed or dropped on one side and every static check still passes -- the
 mismatch only surfaces as a CrashLoopBackOff on a real cluster. These tests

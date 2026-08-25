@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pure helper builders for JobSet manifest generation.
 
-Stateless helpers used by :mod:`aiperf.kubernetes.jobset_builder` and
-consumed by :class:`aiperf.kubernetes.jobset.AIPerfJobSetSpec`. Kept
-separate so the per-spec builder module stays under the file-size limit.
+Stateless helpers consumed by :class:`aiperf.kubernetes.jobset.AIPerfJobSetSpec`.
+Kept separate from the spec module so the pod-template fragment builders can be
+reused and tested without constructing a full JobSet spec.
 """
 
 from __future__ import annotations
