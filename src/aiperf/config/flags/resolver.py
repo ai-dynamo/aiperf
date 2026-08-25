@@ -612,7 +612,10 @@ def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
     ownership of dataset type, format, and source.
     """
     from aiperf.config.flags._config_flag_routing import DATASET_OVERRIDE_FIELDS
-    from aiperf.config.flags._converter_dataset import build_dataset
+    from aiperf.config.flags._converter_dataset import (
+        apply_implicit_media_batch_override,
+        build_dataset,
+    )
 
     dataset = _locate_yaml_dataset(merged)
     if dataset is None:
@@ -640,6 +643,7 @@ def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
     if not override:
         return
 
+    apply_implicit_media_batch_override(override, dataset)
     _drop_alias_spellings(dataset, override)
     merged_dataset = deep_merge(dataset, override)
     dataset.clear()

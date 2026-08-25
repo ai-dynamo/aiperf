@@ -394,3 +394,26 @@ def test_batch_size_flag_applies_when_custom_dataset_type_overrides_yaml_format(
     dataset = _dataset(cfg)
     assert dataset.format == "random_pool"
     assert dataset.prompt_batch_size == 4
+
+
+def test_image_shape_flag_on_synthetic_yaml_with_no_images_block_still_generates_images(
+    tmp_path: Path,
+) -> None:
+    """--image-width-mean against a synthetic YAML with no `images:` block must
+    include images, not silently resolve to batch_size=0 ("disabled").
+
+    Regression: _apply_implicit_media_batch (which materializes batch_size=1
+    whenever a media-shape flag is set without an explicit batch size) was
+    suppressed wholesale in override mode to avoid stomping a YAML batch size
+    the user never mentioned. But when the YAML has no images: block at all,
+    there is nothing to stomp, and the model default batch_size=0 means
+    "disabled" -- a multimodal benchmark request silently degrades to
+    text-only with no error, since endpoints/base_endpoint.py skips falsy
+    content strings.
+    """
+    yaml_path = _write_synthetic_yaml(tmp_path)
+    cli = _cli(image_width_mean=64)
+    cfg = resolve_config(cli, yaml_path)
+    images = cfg.benchmark.datasets[0].images
+    assert images is not None
+    assert images.batch_size == 1
