@@ -26,7 +26,10 @@ import zstandard
 from pytest import param
 
 from aiperf.operator import runs_index
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.results_server import (
+    RESULTS_DIR,
+    SERVER_PORT,
     _display_name,
     _safe_resolve,
     create_app,
@@ -170,6 +173,16 @@ async def client(results_dir: Path):
     await ctx.__aexit__(None, None, None)
     if runs_index.is_open():
         await runs_index.close()
+
+
+# ============================================================
+# Environment-backed module defaults
+# ============================================================
+
+
+def test_results_server_defaults_use_operator_environment() -> None:
+    assert RESULTS_DIR == OperatorEnvironment.RESULTS.DIR
+    assert SERVER_PORT == OperatorEnvironment.RESULTS.SERVER_PORT
 
 
 # ============================================================

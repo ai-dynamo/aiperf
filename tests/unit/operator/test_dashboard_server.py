@@ -9,6 +9,17 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from aiperf.operator.environment import OperatorEnvironment
+
+
+def test_default_results_dir_uses_operator_environment() -> None:
+    from aiperf.operator import dashboard_server
+
+    app = dashboard_server.create_app()
+
+    assert dashboard_server.RESULTS_DIR == OperatorEnvironment.RESULTS.DIR
+    assert app.state.results_dir == OperatorEnvironment.RESULTS.DIR
+
 
 def test_healthz_returns_200(tmp_path: Path) -> None:
     from aiperf.operator.dashboard_server import create_app

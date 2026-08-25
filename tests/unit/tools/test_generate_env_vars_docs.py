@@ -26,3 +26,14 @@ def test_generate_operator_cluster_name_uses_root_prefix() -> None:
 
     assert "Set via AIPERF_CLUSTER_NAME" in generated_docs
     assert "AIPERF_OPERATOR_CLUSTER_NAME" not in generated_docs
+
+
+def test_generate_prefers_validation_aliases() -> None:
+    """Document the canonical alias and its lower-precedence compatibility alias."""
+    generated_docs = EnvVarsDocsGenerator().generate().files[0].content
+
+    assert "`AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED`" in generated_docs
+    assert (
+        "Compatibility alias for `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED`"
+        in generated_docs
+    )
