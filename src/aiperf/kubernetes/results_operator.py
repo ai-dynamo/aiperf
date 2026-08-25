@@ -86,11 +86,18 @@ def _get_no_redirects(
     url: str,
     **kwargs: object,
 ) -> object:
-    """Start a GET request without redirects, including test-double fallback."""
+    """Start a GET request without redirects, including test-double fallback.
+
+    The fallback exists only for stand-in sessions whose ``get`` does not accept
+    the kwarg; a real :class:`aiohttp.ClientSession` re-raises so the
+    no-redirect control can never be silently dropped.
+    """
     try:
         return session.get(url, allow_redirects=False, **kwargs)
     except TypeError as e:
-        if "allow_redirects" not in str(e):
+        if isinstance(session, aiohttp.ClientSession) or "allow_redirects" not in str(
+            e
+        ):
             raise
         return session.get(url, **kwargs)
 
@@ -99,14 +106,18 @@ def _get_with_request_timeout(
     session: aiohttp.ClientSession,
     url: str,
 ) -> object:
-    """Start a short result API request with its configured timeout."""
+    """Start a short result API request with its configured timeout.
+
+    As with :func:`_get_no_redirects`, a real :class:`aiohttp.ClientSession`
+    re-raises rather than retrying without the timeout.
+    """
     timeout = aiohttp.ClientTimeout(
         total=K8sEnvironment.RESULTS.REQUEST_TIMEOUT_SECONDS
     )
     try:
         return session.get(url, timeout=timeout)
     except TypeError as e:
-        if "timeout" not in str(e):
+        if isinstance(session, aiohttp.ClientSession) or "timeout" not in str(e):
             raise
         return session.get(url)
 
@@ -227,12 +238,17 @@ def _download_session() -> aiohttp.ClientSession:
 async def _collect_downloads(
     available: list[dict],
     download: Callable[[dict], Awaitable[tuple[str, int] | None]],
+    *,
+    is_refused: Callable[[str], bool] = _is_refused_name,
 ) -> _JobDownloadOutcome:
     """Download every advertised entry, recording rather than raising failures.
 
     A per-file failure is reported in the outcome instead of discarding the
     files that did land, so a mostly-complete directory survives while the
     caller can still refuse to claim success.
+
+    ``is_refused`` must match the refusal policy the ``download`` callable
+    actually applies, otherwise a by-policy skip is misreported as a failure.
     """
     downloaded: list[tuple[str, int]] = []
     failed: list[str] = []
@@ -240,7 +256,7 @@ async def _collect_downloads(
         result = await download(file_info)
         if result is not None:
             downloaded.append(result)
-        elif not _is_refused_name(str(file_info.get("name", ""))):
+        elif not is_refused(str(file_info.get("name", ""))):
             failed.append(str(file_info.get("name", "<unnamed>")))
     return _JobDownloadOutcome(downloaded=downloaded, failed=failed)
 
@@ -509,15 +525,27 @@ def _sweep_artifacts_base_url(
     )
 
 
-def _safe_sweep_artifact_path(output_dir: Path, display_name: str) -> Path | None:
+def _is_refused_sweep_name(display_name: str) -> bool:
+    """True when we decline to write this sweep aggregate artifact name.
+
+    Stricter than :func:`_is_refused_name`, which only inspects the leaf: every
+    component of a sweep artifact path must be a plain name, so a dotted or
+    traversing directory anywhere in the path is refused. Refused names are
+    advertised in listings but never downloaded, so they are skips, not
+    failures.
+    """
     relative = Path(display_name)
     if relative.is_absolute() or not relative.parts:
-        return None
+        return True
     if any(part in {"", ".", ".."} for part in relative.parts):
+        return True
+    return any(part.startswith(".") for part in relative.parts)
+
+
+def _safe_sweep_artifact_path(output_dir: Path, display_name: str) -> Path | None:
+    if _is_refused_sweep_name(display_name):
         return None
-    if any(part.startswith(".") for part in relative.parts):
-        return None
-    return output_dir / relative
+    return output_dir / Path(display_name)
 
 
 async def _list_sweep_operator_files(
@@ -632,6 +660,7 @@ async def _download_all_sweep_operator_files(
                 file_info=file_info,
                 output_dir=output_dir,
             ),
+            is_refused=_is_refused_sweep_name,
         )
 
 

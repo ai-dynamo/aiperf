@@ -18,6 +18,7 @@ from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
 from aiperf.kubernetes.console import LastBenchmarkInfo
 from aiperf.kubernetes.models import AIPerfJobInfo, JobSetInfo
 from aiperf.kubernetes.ui_dispatch import print_progress_message, print_realtime_metrics
+from tests.harness import fixed_width
 
 
 @asynccontextmanager
@@ -265,12 +266,9 @@ class TestListJobsCommand:
         """Test list shows found jobs."""
         from aiperf.kubernetes.console import console as _console
 
-        _console.width = 200
-        try:
+        with fixed_width(_console, 200):
             mock_kube_client.list_jobs.return_value = [_sample_job_info()]
             await list_jobs(manage_options=manage_options)
-        finally:
-            _console.width = None
 
         captured = capsys.readouterr()
         assert "aiperf-abc123" in captured.out
@@ -889,14 +887,11 @@ class TestListCommandWide:
         """Test list with wide output shows model column."""
         from aiperf.kubernetes.console import console as _console
 
-        _console.width = 200
-        try:
+        with fixed_width(_console, 200):
             mock_kube_client.list_jobs.return_value = [
                 _sample_job_info(phase="Completed")
             ]
             await list_jobs(manage_options=manage_options, wide=True)
-        finally:
-            _console.width = None
 
         captured = capsys.readouterr()
         assert "aiperf-abc123" in captured.out

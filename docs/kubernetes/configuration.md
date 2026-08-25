@@ -585,7 +585,7 @@ an explicit `kind`.
 | `guaranteed` | `requests == limits` for CPU and memory. | Guaranteed | Production benchmarks where pods must not be evicted under pressure and noisy-neighbor behavior is unacceptable. Use this mode when you have measured the controller's peak memory and want a hard ceiling. |
 | `none` | Neither `requests` nor `limits`. | BestEffort | Environments where CPU/memory admission control is disabled (e.g. CI `kind` clusters with tight node budgets, or when an external scheduler handles admission). The resource-dependent preflight checks ("Node Resources", "Per-Node Schedulability", "Resource Quotas", "Memory Estimation") are auto-skipped. |
 
-The mode applies to both controller-pod and worker-pod containers; there is no per-container override. OOMKill semantics follow the QoS class — `guaranteed` pods will not be evicted for resource pressure, `burstable` pods may be throttled, and `none`/BestEffort pods can be evicted first.
+The mode applies to both controller-pod and worker-pod containers; there is no per-container override. On an `AIPerfSweep` it also covers the sweep-controller pod (both its `sweep-controller` and `results-sidecar` containers), which is why `burstable` matters there: under `sweep.type: adaptive_search` that pod imports torch/BoTorch and grows to roughly 350 MiB after the first GP fit, well past its 512Mi request. OOMKill semantics follow the QoS class — `guaranteed` pods will not be evicted for resource pressure, `burstable` pods may be throttled, and `none`/BestEffort pods can be evicted first.
 
 ---
 

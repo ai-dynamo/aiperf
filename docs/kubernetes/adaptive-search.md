@@ -179,7 +179,7 @@ The CRD declares typed counters in `status`:
 | `status.maxTotalRuns` | Upper bound: `maxIterations * multiRun.numRuns`. |
 | `status.completedRuns` | Authoritative count of finished child `AIPerfJob`s. |
 | `status.failedRuns` | Authoritative failure count, tallied from child phases. `failurePolicy` decides whether that count aborts the sweep, it does not feed the count. |
-| `status.runEpoch` | Integer sweep-run key (`int64`) used in the on-disk path: epoch-seconds, optionally suffixed with six digits. A fractional creation timestamp contributes real microseconds; a whole-second Kubernetes timestamp contributes a deterministic UID-derived suffix so rapid same-name recreation cannot reuse an archive. |
+| `status.runEpoch` | Integer sweep-run key (`int64`) used in the on-disk path: epoch-seconds, optionally suffixed with six digits. A fractional creation timestamp contributes real microseconds; a whole-second Kubernetes timestamp contributes a deterministic UID-derived suffix so rapid same-name recreation cannot reuse an archive. A `creationTimestamp` that cannot yield such a key (anything before 1970, which makes epoch-seconds negative) is rejected at admission with a `Failed` phase rather than silently stored, because the key doubles as the results directory name. |
 
 `status` is a preserve-unknown object. `runStates`, `currentChildRef`,
 `currentCell`, and `aggregation` are declared there as open objects —

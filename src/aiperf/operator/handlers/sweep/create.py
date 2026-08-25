@@ -626,7 +626,11 @@ async def _create_sweep_controller_jobset(
     ``resource_mode`` is passed separately from ``template_spec`` because that
     dict is an ``exclude_unset=True`` dump: an unset ``resourceMode`` never
     appears in it, so the resolved value must come from the validated
-    ``AIPerfSweepSpec`` (which always carries the field default).
+    ``AIPerfSweepSpec`` (which always carries the field default). The literal
+    default here is only for direct callers; it must stay equal to
+    ``AIPerfSweepSpec.resource_mode``'s default, which
+    ``test_sweep_controller_jobset_default_matches_the_spec_field_default``
+    enforces.
 
     The pod runs two containers:
 
