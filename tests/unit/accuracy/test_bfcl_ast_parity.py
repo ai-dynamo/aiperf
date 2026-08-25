@@ -51,6 +51,7 @@ from aiperf.accuracy.benchmarks.bfcl_ast import (  # noqa: E402
 )
 from aiperf.accuracy.graders import _bfcl_compat  # noqa: E402
 from aiperf.accuracy.graders.tool_call_ast import (  # noqa: E402
+    CHECKER_MODEL_NAME,
     PARAM_TYPE_ERROR,
     PARAM_VALUE_ERROR,
     WRONG_TOOL,
@@ -179,7 +180,9 @@ _GOLDEN_CASES = [
 def _upstream_verdict(response, function, gold, category):
     """Run the exact upstream pipeline: decode, then check."""
     decoded = ast_parse(response, ReturnFormat.PYTHON)
-    return ast_checker(function, decoded, gold, Language.PYTHON, category, "aiperf")
+    return ast_checker(
+        function, decoded, gold, Language.PYTHON, category, CHECKER_MODEL_NAME
+    )
 
 
 class TestVerdictParity:
@@ -235,7 +238,7 @@ class TestCompatShimBinding:
             possible_answer=_WEATHER_GOLD,
             language="python",
             test_category="simple_python",
-            model_name="aiperf",
+            model_name=CHECKER_MODEL_NAME,
         )
         assert set(result) >= {"valid", "error"}
         assert result["valid"] is True
@@ -253,7 +256,7 @@ class TestCompatShimBinding:
             possible_answer=_WEATHER_GOLD,
             language="python",
             test_category="simple_python",
-            model_name="aiperf",
+            model_name=CHECKER_MODEL_NAME,
         )
         failing = _bfcl_compat.ast_check(
             func_description=_WEATHER_FUNCTION,
@@ -261,7 +264,7 @@ class TestCompatShimBinding:
             possible_answer=_WEATHER_GOLD,
             language="python",
             test_category="simple_python",
-            model_name="aiperf",
+            model_name=CHECKER_MODEL_NAME,
         )
         assert "error_type" not in passing
         assert failing["error_type"]
@@ -314,3 +317,108 @@ class TestBundledDataLayout:
             if not (_bfcl_compat.data_dir() / f"{prefix}_{category}.json").is_file()
         ]
         assert not missing
+
+
+class TestDottedFunctionNames:
+    """Dotted gold function names, the case that reaches upstream's registry.
+
+    ``convert_func_name`` indexes ``MODEL_CONFIG_MAPPING`` with a bare
+    subscript whenever the gold function name contains a dot, and it runs
+    unconditionally before the name match. Roughly a third of the gradeable
+    dataset has such a name, so an unregistered ``CHECKER_MODEL_NAME`` raises
+    ``KeyError`` there and the crash guard turns it into a wall of failed
+    records. Every fixture elsewhere in this file uses ``get_weather``, which
+    has no dot, so nothing else here can catch it.
+    """
+
+    _MATH_FUNCTION = [
+        {
+            "name": "math.factorial",
+            "description": "Calculate the factorial of a number.",
+            "parameters": {
+                "type": "dict",
+                "properties": {
+                    "number": {"type": "integer", "description": "The number."}
+                },
+                "required": ["number"],
+            },
+        }
+    ]
+    _MATH_GOLD = [{"math.factorial": {"number": [5]}}]
+
+    def test_checker_model_name_is_registered_upstream(self) -> None:
+        """The guard that would have caught this before it shipped."""
+        from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING
+
+        from aiperf.accuracy.graders.tool_call_ast import CHECKER_MODEL_NAME
+
+        assert CHECKER_MODEL_NAME in MODEL_CONFIG_MAPPING
+
+    def test_checker_model_name_leaves_dotted_names_untouched(self) -> None:
+        """``underscore_to_dot=True`` would rewrite ``math.factorial`` to
+        ``math_factorial`` and fail every dotted-name entry on the name match."""
+        from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING
+
+        from aiperf.accuracy.graders.tool_call_ast import CHECKER_MODEL_NAME
+
+        assert MODEL_CONFIG_MAPPING[CHECKER_MODEL_NAME].underscore_to_dot is False
+
+    @pytest.mark.asyncio
+    async def test_grade_dotted_function_name_matches_upstream(self) -> None:
+        upstream = _upstream_verdict(
+            "[math.factorial(number=5)]",
+            self._MATH_FUNCTION,
+            self._MATH_GOLD,
+            "simple_python",
+        )
+        result = await _grader().grade(
+            "[math.factorial(number=5)]",
+            _ground_truth("simple_python", self._MATH_FUNCTION, self._MATH_GOLD),
+        )
+        assert upstream["valid"] is True
+        assert result.correct is True
+        assert result.unparsed is False
+
+    @pytest.mark.asyncio
+    async def test_grade_dotted_name_from_the_bundled_dataset(self) -> None:
+        """``simple_python_1``'s gold function really is ``math.factorial``.
+
+        Reads the installed wheel rather than a local fixture, so a dataset
+        reshuffle that removes dotted names from this category is visible.
+        """
+        prefix = _bfcl_compat.version_prefix()
+        entries = {
+            orjson.loads(line)["id"]: orjson.loads(line)
+            for line in (_bfcl_compat.data_dir() / f"{prefix}_simple_python.json")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        }
+        answers = {
+            orjson.loads(line)["id"]: orjson.loads(line)["ground_truth"]
+            for line in (
+                _bfcl_compat.possible_answer_dir() / f"{prefix}_simple_python.json"
+            )
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        }
+        entry, gold = entries["simple_python_1"], answers["simple_python_1"]
+        assert any("." in name for call in gold for name in call)
+
+        # Build the call straight from the gold answer: this isolates the
+        # registry lookup from any text-rendering of the model's response.
+        decoded = [
+            {name: {k: v[0] for k, v in args.items() if v[0] != ""}}
+            for call in gold
+            for name, args in call.items()
+        ]
+        verdict = _bfcl_compat.ast_check(
+            func_description=entry["function"],
+            model_output=decoded,
+            possible_answer=gold,
+            language="python",
+            test_category="simple_python",
+            model_name=CHECKER_MODEL_NAME,
+        )
+        assert verdict["valid"] is True

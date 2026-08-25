@@ -60,11 +60,24 @@ ABSTAIN_CATEGORIES = frozenset({"irrelevance", "live_irrelevance"})
 #: the abstain set: a relevant tool is available, so refusing is the failure.
 RELEVANCE_CATEGORIES = frozenset({"live_relevance"})
 
-#: Model name handed to upstream's checker. It consults this only for a handful
-#: of model-specific leniencies; aiperf benchmarks arbitrary served models, so
-#: it deliberately passes a neutral name and takes the strict default path
-#: rather than opting into another model's exemptions.
-CHECKER_MODEL_NAME = "aiperf"
+#: Model key handed to upstream's checker. This MUST be a key registered in
+#: bfcl-eval's ``MODEL_CONFIG_MAPPING``: ``convert_func_name``
+#: (``ast_eval/ast_checker.py``) indexes that dict with a bare subscript — not
+#: ``.get`` — whenever a gold function name contains a dot, and it is called
+#: unconditionally before the name match. An unregistered value therefore
+#: raises ``KeyError`` on every dotted-name entry, which is roughly a third of
+#: the gradeable dataset (e.g. ``math.factorial`` in ``simple_python_1``).
+#: There is no "neutral name" that opts out of model-specific handling.
+#:
+#: ``gorilla-openfunctions-v2`` is a prompt-mode entry with
+#: ``underscore_to_dot=False``, so ``convert_func_name`` returns the gold name
+#: unchanged. That identity transform is what aiperf wants: BFCL Prompt mode
+#: shows the model the tool schemas verbatim and asks it to echo those names
+#: back, dots included, so rewriting them would break the comparison.
+#:
+#: Validated against the installed wheel in ``check_available`` so an upstream
+#: registry change fails in preflight rather than degrading grades silently.
+CHECKER_MODEL_NAME = "gorilla-openfunctions-v2"
 
 # Operator-facing buckets, normalized from upstream's "<family>:<detail>"
 # error_type strings. Upstream's inventory as of bfcl-eval 2026.3.23:
@@ -83,6 +96,7 @@ SHOULD_NOT_HAVE_CALLED = "should_not_have_called"
 SHOULD_HAVE_CALLED = "should_have_called"
 UNPARSED = "unparsed"
 UNCLASSIFIED = "unclassified"
+GRADER_ERROR = "grader_error"
 
 # Buckets keyed on the family (the part before the first colon).
 _FAMILY_BUCKETS = {
@@ -143,6 +157,33 @@ def _dumps(value: Any) -> str:
         return str(value)
 
 
+def _grader_error(response_text: str, possible_answer: Any) -> GradingResult:
+    """Result for a response the checker could not evaluate.
+
+    Deliberately **not** flagged ``unparsed``. The model may well have
+    formatted its call perfectly; the failure is on aiperf's side of the
+    boundary. Routing it into ``unparsed`` would corrupt the one column this
+    benchmark advertises as a model format-adherence rate, pointing operators
+    at their model when the fault is in the integration.
+
+    The verdict is still ``correct=False`` — the answer was never verified —
+    but it carries its own bucket, and ``_safe_check`` logs at warning level
+    so the run itself says something went wrong.
+    """
+    return GradingResult(
+        correct=False,
+        unparsed=False,
+        confidence=1.0,
+        reasoning=(
+            f"{GRADER_ERROR}: the AST checker raised on this record, so it "
+            f"could not be graded. This is an integration failure, not a model "
+            f"failure; see the warning log for the exception."
+        ),
+        extracted_answer=response_text[:500],
+        ground_truth=_dumps(possible_answer)[:500],
+    )
+
+
 def _grading_failure(
     response_text: str, ground_truth: str, reason: str
 ) -> GradingResult:
@@ -174,8 +215,16 @@ class ToolCallASTGrader(BaseGrader):
 
     @classmethod
     def check_available(cls) -> None:
-        """Raise if bfcl-eval is missing (see ``BaseGrader.check_available``)."""
+        """Raise if bfcl-eval is missing or unusable for grading.
+
+        Also validates ``CHECKER_MODEL_NAME`` against upstream's registry: an
+        unregistered key raises inside the checker on every dotted gold
+        function name, and the crash guard would turn that into a plausible
+        run full of failed records. Preflight is the only place it can still
+        be reported as what it is (see ``BaseGrader.check_available``).
+        """
         _bfcl_compat.require_bfcl()
+        _bfcl_compat.check_checker_model_key(CHECKER_MODEL_NAME)
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(run=run, **kwargs)
@@ -247,11 +296,7 @@ class ToolCallASTGrader(BaseGrader):
             test_category=test_category,
         )
         if result is None:
-            return _grading_failure(
-                response_text,
-                _dumps(possible_answer),
-                "the AST checker raised; see the debug log for the traceback",
-            )
+            return _grader_error(response_text, possible_answer)
         correct = bool(result.get("valid"))
         reasoning = (
             "correct"
@@ -300,9 +345,13 @@ class ToolCallASTGrader(BaseGrader):
                 model_name=CHECKER_MODEL_NAME,
             )
         except Exception as exc:
-            _log.debug(
-                "bfcl ast_checker raised on category %s: %s",
+            # Warning, not debug: this is aiperf's bug to fix, and the graded
+            # record alone cannot say so loudly enough.
+            _log.warning(
+                "bfcl ast_checker raised on category %s (record graded as "
+                "%s, not counted against the model's format-adherence rate): %s",
                 test_category,
+                GRADER_ERROR,
                 exc,
                 exc_info=True,
             )

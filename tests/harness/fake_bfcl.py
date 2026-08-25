@@ -211,6 +211,20 @@ def _call_kwargs(node: ast.Call) -> dict[str, Any]:
     return {kw.arg: ast.literal_eval(kw.value) for kw in node.keywords if kw.arg}
 
 
+#: The subset of upstream's MODEL_CONFIG_MAPPING keys these tests use. The real
+#: registry has 175; only membership matters for the dotted-name lookup.
+REGISTERED_MODEL_NAMES = frozenset({"gorilla-openfunctions-v2"})
+
+
+def _reject_unregistered_model_name(model_name: str, possible_answer: Any) -> None:
+    """Reproduce upstream's ``KeyError`` on an unregistered model key."""
+    if model_name in REGISTERED_MODEL_NAMES:
+        return
+    for gold in possible_answer or []:
+        if any("." in name for name in gold):
+            raise KeyError(model_name)
+
+
 def _result(valid: bool, error: str = "", error_type: str = "") -> dict[str, Any]:
     return {
         "valid": valid,
@@ -290,13 +304,23 @@ def ast_checker(
     possible_answer: Any,
     language: Any = None,
     test_category: str = "simple_python",
-    model_name: str = "aiperf",
+    model_name: str = "gorilla-openfunctions-v2",
 ) -> dict[str, Any]:
     """Verdict in upstream's shape for a decoded call list.
 
     Parallel categories are compared without regard to order, matching
     upstream's ``parallel_function_checker_no_order``.
+
+    Raises:
+        KeyError: when ``model_name`` is not a registered key and a gold
+            function name contains a dot. Upstream's ``convert_func_name``
+            indexes ``MODEL_CONFIG_MAPPING`` with a bare subscript in exactly
+            that case, so an unregistered key raises there. The fake models it
+            because the alternative — accepting any name — is what let an
+            unregistered key ship: the real oracle only runs in a ``[bfcl]``
+            environment, which CI does not build.
     """
+    _reject_unregistered_model_name(model_name, possible_answer)
     gold_calls = list(possible_answer or [])
     calls = list(model_output or [])
     if len(calls) != len(gold_calls):

@@ -143,6 +143,12 @@ def _patch_bfcl_compat_names(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_bfcl_compat, "bfcl_available", lambda: True)
     monkeypatch.setattr(_bfcl_compat, "require_bfcl", lambda: None)
     monkeypatch.setattr(_bfcl_compat, "check_version_pin", lambda: None)
+    # The real check resolves upstream's MODEL_CONFIG_MAPPING, which the fake
+    # does not ship. Tests that exercise the check itself restore the real
+    # function and supply their own registry.
+    monkeypatch.setattr(
+        _bfcl_compat, "check_checker_model_key", lambda model_name: None
+    )
     monkeypatch.setattr(_bfcl_compat, "installed_version", lambda: "fake")
     monkeypatch.setattr(
         _bfcl_compat, "version_prefix", lambda: fake_bfcl.VERSION_PREFIX

@@ -86,6 +86,10 @@ def _fake_bfcl(monkeypatch: pytest.MonkeyPatch) -> None:
     """Route ``_bfcl_compat`` at the fake harness (see module docstring)."""
     monkeypatch.setattr(_bfcl_compat, "require_bfcl", lambda: None)
     monkeypatch.setattr(_bfcl_compat, "bfcl_available", lambda: True)
+    # Resolves upstream's MODEL_CONFIG_MAPPING, which the fake does not ship.
+    monkeypatch.setattr(
+        _bfcl_compat, "check_checker_model_key", lambda model_name: None
+    )
 
     monkeypatch.setattr(_bfcl_compat, "decode_calls", fake_bfcl.decode_calls)
     monkeypatch.setattr(

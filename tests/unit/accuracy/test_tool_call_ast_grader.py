@@ -21,14 +21,19 @@ with the real checker is pinned separately in ``test_bfcl_ast_parity.py``.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import orjson
 import pytest
 from pytest import param
 
+from aiperf.accuracy.graders._bfcl_compat import (
+    check_checker_model_key as _real_check_checker_model_key,
+)
 from aiperf.accuracy.graders._bfcl_compat import require_bfcl as _real_require_bfcl
 from aiperf.accuracy.graders.tool_call_ast import (
+    GRADER_ERROR,
     PARAM_TYPE_ERROR,
     PARAM_VALUE_ERROR,
     UNCLASSIFIED,
@@ -335,11 +340,13 @@ class TestCheckerCrashSafety:
     """A raising checker must not take down the daemon record processor."""
 
     @pytest.mark.asyncio
-    async def test_grade_when_checker_raises_returns_unparsed_failure(
+    async def test_grade_when_checker_raises_returns_a_graded_record(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Grading runs in a daemon process; an unhandled raise there hangs the
-        parent waiting on records that never arrive."""
+        parent waiting on records that never arrive. The record comes back
+        marked ``grader_error`` — see ``TestGraderErrorIsNotAModelFailure`` for
+        why it must not be marked ``unparsed``."""
         from aiperf.accuracy.graders import _bfcl_compat
 
         def _explode(**_kwargs: Any) -> dict[str, Any]:
@@ -350,8 +357,7 @@ class TestCheckerCrashSafety:
         result = await _grader().grade("[get_weather(city='SF')]", _ground_truth())
 
         assert result.correct is False
-        assert result.unparsed is True
-        assert "AST checker raised" in result.reasoning
+        assert result.reasoning.startswith(f"{GRADER_ERROR}:")
 
     @pytest.mark.asyncio
     async def test_grade_with_null_possible_answer_does_not_raise(self) -> None:
@@ -464,3 +470,116 @@ class TestExplanationRendering:
         from aiperf.accuracy.graders.tool_call_ast import _dumps
 
         assert _dumps(object()).startswith("<object object")
+
+
+class TestCheckerModelKey:
+    """The checker model key must be one upstream's registry actually has.
+
+    Upstream's ``convert_func_name`` looks the key up with a bare dict
+    subscript for every dotted gold function name — about a third of the
+    gradeable dataset — so an unregistered key raises there. Because grading
+    is crash-guarded, the symptom is a run full of failed records rather than
+    an error, which is why this is checked in preflight instead.
+    """
+
+    def test_check_available_rejects_an_unregistered_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.accuracy.graders import _bfcl_compat
+
+        monkeypatch.setattr(
+            _bfcl_compat, "check_checker_model_key", _real_check_checker_model_key
+        )
+        monkeypatch.setattr(
+            _bfcl_compat,
+            "_resolve",
+            lambda candidates, what: {"registered-key": object()},
+        )
+        monkeypatch.setattr(
+            "aiperf.accuracy.graders.tool_call_ast.CHECKER_MODEL_NAME", "not-registered"
+        )
+
+        with pytest.raises(RuntimeError, match="not-registered"):
+            ToolCallASTGrader.check_available()
+
+    def test_check_available_accepts_a_registered_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.accuracy.graders import _bfcl_compat
+        from aiperf.accuracy.graders.tool_call_ast import CHECKER_MODEL_NAME
+
+        monkeypatch.setattr(
+            _bfcl_compat, "check_checker_model_key", _real_check_checker_model_key
+        )
+        monkeypatch.setattr(
+            _bfcl_compat,
+            "_resolve",
+            lambda candidates, what: {CHECKER_MODEL_NAME: object()},
+        )
+
+        ToolCallASTGrader.check_available()
+
+    @pytest.mark.asyncio
+    async def test_grade_dotted_function_name_is_not_reported_unparsed(self) -> None:
+        """The end-to-end symptom the unregistered key produced."""
+        dotted_function = [
+            {
+                "name": "math.factorial",
+                "description": "Factorial.",
+                "parameters": {
+                    "type": "dict",
+                    "properties": {"number": {"type": "integer", "description": "n"}},
+                    "required": ["number"],
+                },
+            }
+        ]
+        ground_truth = _ground_truth(
+            possible_answer=[{"math.factorial": {"number": [5]}}],
+            function=dotted_function,
+        )
+
+        result = await _grader().grade("[math.factorial(number=5)]", ground_truth)
+
+        assert result.correct is True
+        assert result.unparsed is False
+
+
+class TestGraderErrorIsNotAModelFailure:
+    """A checker crash must not land in the format-adherence column."""
+
+    @pytest.mark.asyncio
+    async def test_checker_crash_uses_its_own_bucket(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.accuracy.graders import _bfcl_compat
+
+        def _explode(**_kwargs: Any) -> dict[str, Any]:
+            raise KeyError("some-unregistered-key")
+
+        monkeypatch.setattr(_bfcl_compat, "ast_check", _explode)
+
+        result = await _grader().grade("[get_weather(city='SF')]", _ground_truth())
+
+        assert result.correct is False
+        # Not unparsed: the model's formatting was fine, ours was not.
+        assert result.unparsed is False
+        assert result.reasoning.startswith(f"{GRADER_ERROR}:")
+
+    @pytest.mark.asyncio
+    async def test_checker_crash_is_logged_at_warning(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Debug-level would leave an integration bug invisible in a normal run."""
+        from aiperf.accuracy.graders import _bfcl_compat
+
+        def _explode(**_kwargs: Any) -> dict[str, Any]:
+            raise KeyError("some-unregistered-key")
+
+        monkeypatch.setattr(_bfcl_compat, "ast_check", _explode)
+
+        with caplog.at_level(
+            logging.WARNING, logger="aiperf.accuracy.graders.tool_call_ast"
+        ):
+            await _grader().grade("[get_weather(city='SF')]", _ground_truth())
+
+        assert any(r.levelno >= logging.WARNING for r in caplog.records)

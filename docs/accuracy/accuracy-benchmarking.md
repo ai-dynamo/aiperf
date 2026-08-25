@@ -211,9 +211,10 @@ the point.** `Unparsed` counts responses from which no call list could be
 extracted at all — the model did not follow the required output format. (On
 the hallucination categories a non-empty response is graded as a call/no-call
 decision instead, so only an empty answer channel is `unparsed` there.)
-Accuracy counts, among the responses that were gradeable, how many gave the
-right answer. A decoded-but-wrong call is scored incorrect and **not**
-unparsed.
+Accuracy counts, among **all** responses, how many gave the right answer —
+unparsed records stay in its denominator, so the two rates are read against
+the same total rather than nested. A decoded-but-wrong call is scored
+incorrect and **not** unparsed.
 
 "The right answer" is category-dependent. For the AST categories it means the
 right call: correct function name, parameters and values. For the
@@ -237,6 +238,7 @@ extra tooling:
 | `should_have_called` | Emitted no call on a `live_relevance` question |
 | `unparsed` | No call list could be extracted. On the hallucination categories only an *empty* answer channel counts — a prose refusal is a valid answer there, whereas silence is not an abstention |
 | `unclassified` | An `error_type` this bfcl-eval version added that AIPerf does not yet bucket |
+| `grader_error` | The checker raised on this record, so it could not be graded. An **integration** failure, not a model one — deliberately kept out of `unparsed` so it cannot be mistaken for a formatting problem. Also logged at warning level |
 
 Parameter mismatches (right tool, wrong arguments) dominate tool-calling
 failures at scale, so `param_*` vs `wrong_tool` is usually the split worth
@@ -470,7 +472,7 @@ aiperf profile my-model --url http://localhost:8000 \
 | `lighteval_latex` | Same as `lighteval_expr` but the gold/prediction extractor uses lighteval's `LatexExtractionConfig` for `\boxed{...}` LaTeX answers (lighteval `latex_gold_metric`). Requires the `[accuracy]` extra. | MATH-500 |
 | `lighteval_gpqa` | Multiple-choice `A`-`D` index extraction via lighteval's `gpqa_metric` (`NativeLetters`), using the simple-evals template the GPQA-Diamond loader mirrors for parity. Requires the `[accuracy]` extra. | GPQA-Diamond |
 | `lighteval_gsm8k` | Extract the number after `####` from gold and the last number from the prediction (preferring a `####` marker when present); numeric comparison so `24` and `24.0` match (lighteval `quasi_exact_match_gsm8k`). Pure-regex — no lighteval install required. | GSM8K |
-| `tool_call_ast` | Decode the model's Prompt-mode response into BFCL's canonical `[{"func": {"param": "val"}}]` call list, then score it with bfcl-eval's deterministic `ast_checker` (function-name match, required-vs-optional parameters, strict types, accepted values, order-independent parallel calls). Hallucination categories are graded on whether a call was emitted at all, so a non-empty response there is never `unparsed` — only an empty answer channel is. On every other category `unparsed` means no call list was extractable — a format-adherence failure, not a wrong call. Failure modes are normalized into `wrong_tool` / `param_type_error` / `param_value_error` / `should_not_have_called` / `should_have_called` / `unparsed` / `unclassified` and prefixed onto the explanation. Requires the `[bfcl]` extra. | BFCL (`bfcl_ast`) |
+| `tool_call_ast` | Decode the model's Prompt-mode response into BFCL's canonical `[{"func": {"param": "val"}}]` call list, then score it with bfcl-eval's deterministic `ast_checker` (function-name match, required-vs-optional parameters, strict types, accepted values, order-independent parallel calls). Hallucination categories are graded on whether a call was emitted at all, so a non-empty response there is never `unparsed` — only an empty answer channel is. On every other category `unparsed` means no call list was extractable — a format-adherence failure, not a wrong call. Failure modes are normalized into `wrong_tool` / `param_type_error` / `param_value_error` / `should_not_have_called` / `should_have_called` / `unparsed` / `unclassified` / `grader_error` and prefixed onto the explanation. Requires the `[bfcl]` extra. | BFCL (`bfcl_ast`) |
 
 The `math` grader pipeline (aligned with `trt-llm-benchmark-recipe/src/accuracy/aime/`):
 

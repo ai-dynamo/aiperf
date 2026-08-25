@@ -101,9 +101,12 @@ Accuracy (irrelevance)             68.0%   Unparsed  0.0%
 
 Read the two columns separately:
 
-- **Accuracy** — of the responses that were gradeable, how many gave the right
-  answer.
-- **Unparsed** — how many responses contained no extractable call list at all.
+- **Accuracy** — of **all** responses, how many gave the right answer.
+- **Unparsed** — of all responses, how many contained no extractable call list.
+
+Both are computed over the same denominator: unparsed records stay in the
+accuracy total. In the table above, 88.0% and 2.5% are two slices of the same
+100% — 88.0% is *not* "of the 97.5% that parsed".
 
 A decoded-but-wrong call counts against accuracy and is **not** unparsed. A
 rising `Unparsed` rate as concurrency increases is a formatting/serving signal,
@@ -148,6 +151,7 @@ jq -r '.explanation | split(":")[0]' artifacts/*/accuracy_export.jsonl \
 | `should_have_called` | Emitted no call on a `live_relevance` question | Over-refusal — the mirror image of the row above |
 | `unparsed` | No call list could be extracted. On the hallucination categories only an *empty* answer channel counts, since a prose refusal is a valid answer there | Output format — truncation, prose wrapping, parser issues |
 | `unclassified` | An `error_type` this `bfcl-eval` version added that AIPerf does not yet bucket | An upstream version bump — worth reporting |
+| `grader_error` | The checker raised, so the record could not be graded | An AIPerf integration bug — check the warning log and report it |
 
 (`correct` is the remaining value, for a passing verdict.)
 

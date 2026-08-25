@@ -103,6 +103,9 @@ _LIVE_CATEGORY_CANDIDATES: tuple[tuple[str, str], ...] = (
 _VERSION_PREFIX_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("bfcl_eval.constants.category_mapping", "VERSION_PREFIX"),
 )
+_MODEL_CONFIG_CANDIDATES: tuple[tuple[str, str], ...] = (
+    ("bfcl_eval.constants.model_config", "MODEL_CONFIG_MAPPING"),
+)
 
 # Our canonical ``ast_check`` keyword -> the parameter names upstream has used
 # for it, tried in order against the live signature. The first entry of each
@@ -299,6 +302,39 @@ def single_turn_categories() -> tuple[str, ...]:
     non_live = _resolve(_NON_LIVE_CATEGORY_CANDIDATES, "the non-live category list")
     live = _resolve(_LIVE_CATEGORY_CANDIDATES, "the live category list")
     return tuple(non_live) + tuple(live)
+
+
+def check_checker_model_key(model_name: str) -> None:
+    """Verify ``model_name`` is a key upstream's checker will accept.
+
+    ``convert_func_name`` indexes ``MODEL_CONFIG_MAPPING`` with a bare
+    subscript whenever a gold function name contains a dot, and it runs
+    unconditionally before the function-name match. An unregistered key
+    therefore raises ``KeyError`` on roughly a third of the gradeable dataset
+    — and because grading is crash-guarded, that would surface as a pile of
+    failed records rather than as the integration error it is.
+
+    Checking it in preflight turns a silent, plausible-looking score into an
+    immediate ``ConfigurationError`` naming the exact cause.
+
+    Raises:
+        RuntimeError: when the key is absent from the installed registry.
+    """
+    mapping = _resolve(_MODEL_CONFIG_CANDIDATES, "the model-config registry")
+    if model_name in mapping:
+        return
+    raise RuntimeError(
+        f"bfcl_ast: the grader's checker model key {model_name!r} is not "
+        f"registered in the installed {DISTRIBUTION_NAME} "
+        f"{_version_for_message()} (MODEL_CONFIG_MAPPING has "
+        f"{len(mapping)} keys). Upstream's convert_func_name looks this key up "
+        f"with a bare dict subscript for every dotted gold function name, so "
+        f"grading would raise on roughly a third of the dataset. Pick another "
+        f"registered prompt-mode key whose config has underscore_to_dot=False "
+        f"and set CHECKER_MODEL_NAME in "
+        f"aiperf/accuracy/graders/tool_call_ast.py, or install the pinned "
+        f"version with ``uv pip install 'aiperf[bfcl]'``."
+    )
 
 
 def _language_enum(language: str) -> Any:
