@@ -1034,6 +1034,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self._system_message_for_phase(
                 system_message=session.conversation.system_message,
                 phase=credit.phase,
+                cache_bust_target=credit.cache_bust_target
+                if credit.cache_bust_marker is not None
+                else None,
             ),
         )
         self._maybe_warn_cache_bust_silent_drop(session, credit)
@@ -1337,9 +1340,29 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @staticmethod
     def _system_message_for_phase(
-        *, system_message: str | None, phase: CreditPhase
+        *,
+        system_message: str | None,
+        phase: CreditPhase,
+        cache_bust_target: CacheBustTarget | None,
     ) -> str | None:
+        """Prefix warmup system messages so warmup cannot reuse profiling's
+        prefix cache — unless cache-bust already owns prefix isolation.
+
+        Cache-bust is deliberately warmup-coherent: ``build_cache_bust_marker``
+        keeps the phase out of its digest and the marker ledger survives the
+        WARMUP -> PROFILING boundary, so a trajectory's warmup turn ``k_i`` and
+        its first profiling turn ``k_i+1`` share one marker and warmup PRIMES
+        the cache profiling then hits. Injecting this prefix in front of that
+        shared marker diverges the two prefixes at token 0, so warmup primes an
+        entry profiling never touches — the round-trip is spent for nothing.
+
+        Any non-NONE target already guarantees warmup cannot collide with
+        another trajectory's prefix (the marker digests per trajectory tree), so
+        standing down here costs no isolation.
+        """
         if phase != CreditPhase.WARMUP:
+            return system_message
+        if cache_bust_target not in (None, CacheBustTarget.NONE):
             return system_message
         if not system_message:
             return WARMUP_SYSTEM_MESSAGE_PREFIX
