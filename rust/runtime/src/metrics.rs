@@ -964,7 +964,7 @@ mod tests {
     }
 
     #[test]
-    fn spec_decode_acceptance_moves_from_observer_into_record() {
+    fn spec_decode_acceptance_is_retained_in_record() {
         let clock = Rc::new(SimClock::new());
         let observer = NativeMetricsObserver::new(clock, 0, MetricsConfig::default());
         let uuid = Uuid::from_u128(103);
