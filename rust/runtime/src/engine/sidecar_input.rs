@@ -786,7 +786,8 @@ mod tests {
             }])
             .unwrap_err();
 
-        assert!(error.to_string().contains("unknown field `worker_module`"));
+        let message = format!("{error:#}");
+        assert!(message.contains("unknown field `worker_module`"), "{message}");
     }
 
     #[test]
