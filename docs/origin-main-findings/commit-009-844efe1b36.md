@@ -12,13 +12,14 @@ which makes trace reconstruction reject the dataset.
 
 ## Native comparison
 
-**Status: applicable.** `rust/cli/src/synthesize/prefix.rs` already allocates
-L1 and L1.5 as whole blocks (`l1_blocks`, `l15_blocks`, and
-`prefix_blocks`). But `rust/cli/src/synthesize/synth.rs` currently initializes
-`fixed_prefix` from `layer1_tokens + layer1_5_tokens`. With a 64-token block,
-L1=1000 and L1.5=500 allocate 16 + 8 = 24 blocks (1536 tokens), while the
-current sampler starts L2 at token 1500. A small L2 draw can consequently make
-the final shared ID (block 23) a row's partial final block.
+**Status: applicable and ported.** Before this port,
+`rust/cli/src/synthesize/prefix.rs` already allocated L1 and L1.5 as whole
+blocks (`l1_blocks`, `l15_blocks`, and `prefix_blocks`), but
+`rust/cli/src/synthesize/synth.rs` initialized `fixed_prefix` from
+`layer1_tokens + layer1_5_tokens`. With a 64-token block, L1=1000 and L1.5=500
+allocate 16 + 8 = 24 blocks (1536 tokens), while the sampler started L2 at
+token 1500. A small L2 draw could consequently make the final shared ID (block
+23) a row's partial final block.
 
 The native correction is to expose the allocator's rounded prefix-token span
 and use it when sampling the initial context. This keeps session content past
@@ -36,3 +37,21 @@ wire-format change.
   bug and must not be retained as a compatibility contract.
 - Re-run the existing native Mooncake replay coverage to confirm generated
   `hash_ids` remain consumable by the Rust trace loader.
+
+## Port closure
+
+The actual upstream commit was incorporated by non-fast-forward merge
+`cb1d016398`. Native implementation commits `ca2866de374` and `2d93736053f`
+expose the allocator-owned rounded span, consume it in synthesis, refresh all
+three Python-oracle parity fixtures, and prove the 1537-token / 25-ID boundary
+including distinct shared and session-owned IDs.
+
+Validation passed: focused native synthesis (1 test), native synth parity (3
+tests), Mooncake replay (19 tests), and the upstream Python roundtrip/profile
+coverage (10 tests, 3 intentionally deselected). Python checks explicitly used
+`PYTHONPATH=/mnt/4tb/aiperf-origin-port-009/src`: the environment's editable
+install otherwise imported the concurrent shared checkout, where this port was
+not present, and produced a false 512-versus-96 shared-block failure. The
+worktree-pinned focused regression also passed. Scoped `rustfmt --check` and
+`git diff --check` passed; workspace-wide formatting remains blocked solely by
+unrelated `runtime/src/engine/sidecar_input.rs` churn.
