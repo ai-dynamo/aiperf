@@ -263,10 +263,13 @@ class TestResultsServerBoundaryRequests:
 class TestResultsServerEnvironmentAndStartup:
     """Validate base directory selection and lifespan-owned app state."""
 
-    def test_create_app_without_results_dir_uses_aiperf_results_dir_env(
+    def test_create_app_without_results_dir_uses_operator_results_setting(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("AIPERF_RESULTS_DIR", str(tmp_path / "env-results"))
+        env_results_dir = tmp_path / "env-results"
+        from aiperf.operator.environment import OperatorEnvironment
+
+        monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", env_results_dir)
         from aiperf.operator import results_server
 
         importlib.reload(results_server)
@@ -277,13 +280,16 @@ class TestResultsServerEnvironmentAndStartup:
             if getattr(route, "name", None) == "ui"
         )
 
-        assert tmp_path / "env-results" == results_server.RESULTS_DIR
+        assert env_results_dir == results_server.RESULTS_DIR
         assert Path(ui_mount.app.directory).name == "ui"
 
-    def test_create_app_explicit_results_dir_overrides_env_constant(
+    def test_create_app_explicit_results_dir_overrides_operator_setting(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("AIPERF_RESULTS_DIR", str(tmp_path / "env-results"))
+        env_results_dir = tmp_path / "env-results"
+        from aiperf.operator.environment import OperatorEnvironment
+
+        monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", env_results_dir)
         from aiperf.operator import results_server
 
         importlib.reload(results_server)
@@ -292,7 +298,7 @@ class TestResultsServerEnvironmentAndStartup:
         routes = collect_app_paths(app)
 
         assert "/api/v1/results" in routes
-        assert tmp_path / "env-results" == results_server.RESULTS_DIR
+        assert env_results_dir == results_server.RESULTS_DIR
 
     @pytest.mark.asyncio
     async def test_lifespan_initializes_readonly_db_and_kubernetes_holder_then_closes(
