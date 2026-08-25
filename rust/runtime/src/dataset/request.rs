@@ -1647,6 +1647,7 @@ fn resolve_turn_inner(
     let message_handles = body_message_handles(turn, store)?;
     let lowered_content = !turn.content.is_empty() && !message_handles.is_empty();
     let mut raw_messages = Vec::new();
+    let mut has_raw_messages = false;
     let mut lowered: Option<SmallVec<[Bytes; 1]>> = None;
     if lowered_content {
         let mut wires: SmallVec<[Bytes; 1]> = SmallVec::with_capacity(message_handles.len());
@@ -1660,6 +1661,7 @@ fn resolve_turn_inner(
         }
     }
     if let Some(handle) = turn.raw_messages {
+        has_raw_messages = true;
         match raw_value(store, handle, "raw_messages")? {
             Value::Array(messages) => raw_messages.extend(messages),
             _ => {
@@ -1674,7 +1676,7 @@ fn resolve_turn_inner(
         model: turn.model.as_ref().map(|model| model.as_str().to_string()),
         role: turn.role.as_ref().map(|role| role.as_str().to_string()),
         max_tokens: turn.max_tokens,
-        raw_messages: (!raw_messages.is_empty()).then_some(raw_messages),
+        raw_messages: (has_raw_messages || !raw_messages.is_empty()).then_some(raw_messages),
         raw_tools: raw_array(store, turn.tools, "tools")?,
         raw_system: raw_array(store, turn.raw_system, "raw_system")?,
         extra_body: raw_object(store, turn.extra_body, "extra_body")?,
@@ -2218,6 +2220,21 @@ mod tests {
             spliced.body.to_wire().unwrap(),
             b"{ \"messages\" : [ ], \"model\":\"authored\" ,\"stream\":true}\n"[..]
         );
+    }
+
+    #[test]
+    fn resolve_turn_preserves_explicit_empty_raw_messages() {
+        let mut pool = SegmentPool::new();
+        let raw = pool.intern_raw(None, Bytes::from_static(b"[]")).unwrap();
+        let turn = Turn {
+            raw_messages: Some(raw),
+            ..Turn::default()
+        };
+        let store = pool.freeze();
+
+        let resolved = resolve_turn(&store, &turn).unwrap();
+
+        assert_eq!(resolved.raw_messages, Some(Vec::new()));
     }
 
     #[test]

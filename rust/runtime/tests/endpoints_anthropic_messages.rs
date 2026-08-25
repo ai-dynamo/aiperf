@@ -89,7 +89,7 @@ fn extra_numeric_values_use_orjson_equivalent_wire_spelling() {
 }
 
 #[test]
-fn authored_empty_raw_messages_renders_the_synthetic_turn() {
+fn authored_empty_raw_messages_is_a_noop_delta() {
     let mut turn = text_turn("must be rendered");
     turn.role = Some(String::new());
     turn.model = Some(String::new());
@@ -100,10 +100,7 @@ fn authored_empty_raw_messages_renders_the_synthetic_turn() {
             .unwrap(),
     );
     assert_eq!(body["model"], "test-model");
-    assert_eq!(
-        body["messages"],
-        json!([{"role":"user","content":"must be rendered"}])
-    );
+    assert_eq!(body["messages"], json!([]));
 }
 
 #[test]

@@ -1178,9 +1178,7 @@ fn rendered_turn_messages(
         }
         match shape {
             PartShape::Responses => {
-                if let Some(raw_messages) = &turn.raw_messages
-                    && !raw_messages.is_empty()
-                {
+                if let Some(raw_messages) = &turn.raw_messages {
                     for item in raw_messages {
                         if !item
                             .as_object()
@@ -1200,9 +1198,7 @@ fn rendered_turn_messages(
                 }
             }
             PartShape::Chat | PartShape::Messages => {
-                if let Some(raw_messages) = &turn.raw_messages
-                    && !raw_messages.is_empty()
-                {
+                if let Some(raw_messages) = &turn.raw_messages {
                     out.extend(raw_messages.iter().cloned().map(RenderedMessage::Value));
                 } else {
                     out.push(RenderedMessage::Value(render_turn_message(turn, shape)?));
@@ -1361,9 +1357,7 @@ impl TurnMessageLowerer for ShapeLowerer {
         // output; rendered Responses messages receive `type:"message"`.
         let values: Vec<Value> = match self.shape {
             PartShape::Responses => {
-                if let Some(raw_messages) = &turn.raw_messages
-                    && !raw_messages.is_empty()
-                {
+                if let Some(raw_messages) = &turn.raw_messages {
                     raw_messages
                         .iter()
                         .filter(|item| {
@@ -1384,9 +1378,7 @@ impl TurnMessageLowerer for ShapeLowerer {
                 }
             }
             PartShape::Chat | PartShape::Messages => {
-                if let Some(raw_messages) = &turn.raw_messages
-                    && !raw_messages.is_empty()
-                {
+                if let Some(raw_messages) = &turn.raw_messages {
                     raw_messages.clone()
                 } else {
                     vec![render_turn_message(turn, self.shape)?]

@@ -42,6 +42,29 @@ fn chat_and_responses_message_fields_lead_the_dispatched_body() {
     );
 }
 
+#[test]
+fn empty_raw_message_delta_is_a_noop_for_chat_and_responses() {
+    let turn = Turn {
+        raw_messages: Some(Vec::new()),
+        texts: vec![Media::new(vec!["must not synthesize".into()])],
+        ..Turn::default()
+    };
+
+    let chat = plan_body(
+        ChatEndpoint
+            .format_payload(&request(EndpointType::Chat, vec![turn.clone()]))
+            .unwrap(),
+    );
+    assert_eq!(chat["messages"], json!([]));
+
+    let responses = plan_body(
+        ResponsesEndpoint
+            .format_payload(&request(EndpointType::Responses, vec![turn]))
+            .unwrap(),
+    );
+    assert_eq!(responses["input"], json!([]));
+}
+
 fn cfg(endpoint_type: EndpointType) -> EndpointConfig {
     EndpointConfig {
         endpoint_type,
