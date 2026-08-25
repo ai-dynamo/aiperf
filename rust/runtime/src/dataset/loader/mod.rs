@@ -126,6 +126,8 @@ pub struct LoadConfig {
     /// Optional bearer token for gated sources. It is never included in cache keys
     /// or diagnostics.
     pub bearer_token: Option<String>,
+    /// Root randomness used by loaders that must sample before composition.
+    pub rng_root: crate::rng::RngRoot,
 }
 
 /// Resolve a HuggingFace access token the way Python/`hf-hub` do: the
@@ -168,6 +170,7 @@ impl LoadConfig {
             options: Map::new(),
             fetcher: Arc::new(HttpDatasetFetcher::default()),
             bearer_token: resolve_hf_token(),
+            rng_root: crate::rng::RngRoot::new(None),
         }
     }
 
@@ -542,7 +545,9 @@ impl LoaderRegistry {
                 self.detect(&probe, &load_config.source.label())?
             }
         };
-        let mut rows = registration.loader.load(load_config).await?;
+        let mut effective_load_config = load_config.clone();
+        effective_load_config.rng_root = compose_config.rng_root;
+        let mut rows = registration.loader.load(&effective_load_config).await?;
         if let Some(max_rows) = load_config.max_rows {
             rows.truncate(max_rows);
         }
