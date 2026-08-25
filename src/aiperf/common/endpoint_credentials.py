@@ -31,6 +31,11 @@ class EndpointCredentialInjection:
     api_key: str | None
     """API key supplied through the private transport or compatibility alias."""
 
+    api_key_from_alias: bool
+    """True when ``api_key`` came from ``OPENAI_API_KEY`` rather than the
+    private ``AIPERF_INJECTED_API_KEY`` transport. Alias values are ambient
+    shell state, so they may only rehydrate an authored-then-redacted key."""
+
     headers: dict[str, str] | None
     """Credential-bearing headers decoded from the injected JSON object."""
 
@@ -79,6 +84,10 @@ def consume_endpoint_credentials() -> EndpointCredentialInjection:
     The private ``AIPERF_INJECTED_API_KEY`` name takes precedence over the
     ``OPENAI_API_KEY`` compatibility alias, which covers hand-replayed
     ``run_config.json`` files where only the conventional shell variable is set.
+    The alias is reported through ``api_key_from_alias`` so
+    :func:`apply_endpoint_credentials` can restrict it to rehydrating a key the
+    user actually authored: an ambient shell variable must never become the
+    credential of an endpoint that was configured without one.
 
     Every recognized variable — including ``OPENAI_API_KEY`` — is popped rather
     than read. The orchestrator resolves ``endpoint.api_key`` in the parent
@@ -96,6 +105,7 @@ def consume_endpoint_credentials() -> EndpointCredentialInjection:
     urls_raw = os.environ.pop(AIPERF_INJECTED_ENDPOINT_URLS, None)
     return EndpointCredentialInjection(
         api_key=(private_api_key if private_api_key_present else openai_api_key),
+        api_key_from_alias=not private_api_key_present,
         headers=parse_injected_dict(AIPERF_INJECTED_HEADERS, headers_raw),
         urls=parse_injected_str_list(AIPERF_INJECTED_ENDPOINT_URLS, urls_raw),
     )
@@ -109,16 +119,21 @@ def apply_endpoint_credentials(
 ) -> None:
     """Overlay injected endpoint credentials onto ``run`` in place.
 
-    Injected API keys fill only an unset or redacted config value, injected
-    headers override same-named authored headers, and injected URLs replace the
-    authored URL list. When ``require_resolved`` is true, raise ``ValueError``
-    if any redacted API key, sensitive header, or URL remains after the overlay.
+    An API key from the private ``AIPERF_INJECTED_API_KEY`` transport fills an
+    unset or redacted config value; one from the ``OPENAI_API_KEY``
+    compatibility alias fills only a redacted value, because the placeholder is
+    the sole proof that the user authored a key at all. Without that gate an
+    ambient shell variable would be sent as a Bearer token to an endpoint the
+    user never configured with credentials. Injected headers override
+    same-named authored headers, and injected URLs replace the authored URL
+    list. When ``require_resolved`` is true, raise ``ValueError`` if any
+    redacted API key, sensitive header, or URL remains after the overlay.
     """
     endpoint = run.cfg.endpoint
-    if credentials.api_key is not None and endpoint.api_key in {
-        None,
-        REDACTED_VALUE,
-    }:
+    fillable = (
+        {REDACTED_VALUE} if credentials.api_key_from_alias else {None, REDACTED_VALUE}
+    )
+    if credentials.api_key is not None and endpoint.api_key in fillable:
         endpoint.api_key = credentials.api_key
     if credentials.headers:
         endpoint.headers.update(credentials.headers)

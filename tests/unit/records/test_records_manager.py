@@ -321,6 +321,8 @@ class TestRecordsManagerMetricRecordDispatchErrors:
         manager._complete_credit_phases = set()
         manager._warned_missing_cache_reporting = False
         manager._failed_request_threshold = None
+        manager._failed_request_thresholds = {}
+        manager._failed_request_grace_floors = {}
         manager._failed_request_abort_triggered = False
         manager._skipped_context_overflow_counts_by_phase = {
             CreditPhase.WARMUP: 0,
@@ -1043,6 +1045,8 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager._all_records_received_phases = set()
     manager._warned_missing_cache_reporting = False
     manager._failed_request_threshold = None
+    manager._failed_request_thresholds = {}
+    manager._failed_request_grace_floors = {}
     manager._failed_request_abort_triggered = False
     manager._skipped_context_overflow_counts_by_phase = {
         CreditPhase.WARMUP: 0,
@@ -1059,6 +1063,7 @@ def _create_manager_for_timing_dispatch() -> RecordsManager:
 def _metric_records_message(
     phase: CreditPhase = CreditPhase.PROFILING,
     phase_index: int | None = None,
+    profiling_index: int | None = None,
 ) -> RecordsMessage:
     metadata = MetricRecordMetadata(
         session_num=17,
@@ -1070,6 +1075,7 @@ def _metric_records_message(
         record_processor_id="record-processor-rp-7f2a",
         benchmark_phase=phase,
         phase_index=phase_index,
+        profiling_index=profiling_index,
     )
     return RecordsMessage(
         service_id="record-processor-rp-7f2a",
@@ -1441,6 +1447,57 @@ class TestRecordsManagerTimingDispatch:
         )
         phase_trackers = manager._records_tracker._phase_trackers
         assert (CreditPhase.PROFILING, None) not in phase_trackers
+
+    @pytest.mark.asyncio
+    async def test_failed_request_abort_scopes_ratio_to_current_phase(self) -> None:
+        """A fully-failed second phase must abort despite a clean first phase.
+
+        ``--failed-request-threshold`` is a per-phase field, so aggregating
+        across every profiling-phase instance lets a large healthy phase mask a
+        later phase that is failing every request.
+        """
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker = RecordsTracker()
+        manager._failed_request_threshold = 0.5
+        manager._failed_request_grace_floor = 10
+        manager.service_id = "records-manager"
+        manager.warning = MagicMock()
+        manager.publish = AsyncMock()
+        request_error = ErrorDetails(
+            code=500,
+            type="ServerError",
+            message="inference failed",
+        )
+
+        for _ in range(20):
+            await manager._on_records(
+                _metric_records_message(phase_index=0, profiling_index=0)
+            )
+        assert not manager._failed_request_abort_triggered
+
+        for _ in range(12):
+            message = _metric_records_message(phase_index=1, profiling_index=1)
+            message.error = request_error
+            await manager._on_records(message)
+
+        assert manager._failed_request_abort_triggered
+        manager.publish.assert_awaited_once()
+        assert isinstance(manager.publish.await_args.args[0], ProfileCancelCommand)
+
+    @pytest.mark.asyncio
+    async def test_failed_request_threshold_read_from_owning_phase(self) -> None:
+        """Each profiling phase contributes its own threshold and grace floor."""
+        thresholds, grace_floors = (
+            records_manager_module.build_failed_request_abort_config(
+                [
+                    SimpleNamespace(failed_request_threshold=None, concurrency=64),
+                    SimpleNamespace(failed_request_threshold=0.5, concurrency=4),
+                ]
+            )
+        )
+
+        assert thresholds == {0: None, 1: 0.5}
+        assert grace_floors == {0: 64, 1: 10}
 
     @pytest.mark.asyncio
     async def test_trailing_named_warmup_defers_profiling_finalization(

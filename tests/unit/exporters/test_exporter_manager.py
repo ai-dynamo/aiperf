@@ -265,6 +265,146 @@ class TestExporterManager:
         assert server_metrics_json["data"]["benchmark_id"] == "bench"
 
     @pytest.mark.asyncio
+    async def test_phase_export_failure_keeps_later_phases_and_manifest(
+        self, output_config, mock_cfg
+    ) -> None:
+        """One failing phase must not orphan the other phases' artifacts.
+
+        The manifest is the only index the operator's completion handler can
+        use to recover exact per-phase counts, so it has to describe whatever
+        did get written -- while the failure itself still reaches the caller.
+        """
+        phase_records = [
+            PhaseProfileResults(
+                phase_index=index,
+                profiling_index=index,
+                phase_name=name,
+                phase_kind="profiling",
+                records=[
+                    MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ms",
+                        avg=12.0,
+                        count=1,
+                    )
+                ],
+                start_ns=1,
+                end_ns=2,
+                successful_request_count=1,
+                error_request_count=0,
+            )
+            for index, name in enumerate(("alpha", "beta", "gamma"))
+        ]
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=1,
+                end_ns=2,
+                completed=0,
+                phase_records=phase_records,
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+
+        original_write = manager._write_phase_export
+
+        async def flaky_write(*, manifest_entry, manifest_key, **kwargs) -> None:
+            if manifest_entry.get("phase_name") == "beta" and manifest_key == (
+                "metrics_csv"
+            ):
+                raise ValueError("csv boom")
+            await original_write(
+                manifest_entry=manifest_entry, manifest_key=manifest_key, **kwargs
+            )
+
+        manager._write_phase_export = flaky_write
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all", return_value=[]
+        ):
+            failures = await manager.export_data()
+
+        manifest_path = output_config / "phase_manifest.json"
+        assert manifest_path.exists()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert [entry["phase_name"] for entry in manifest["phases"]] == [
+            "alpha",
+            "beta",
+            "gamma",
+        ]
+        beta_entry = manifest["phases"][1]
+        assert beta_entry["metrics_json"] == "phases/beta/profile_export_aiperf.json"
+        assert "metrics_csv" not in beta_entry
+        assert beta_entry["successful_request_count"] == 1
+
+        for name in ("alpha", "gamma"):
+            phase_dir = output_config / "phases" / name
+            assert (phase_dir / "profile_export_aiperf.json").exists()
+            assert (phase_dir / "profile_export_aiperf.csv").exists()
+        assert not (
+            output_config / "phases" / "beta" / "profile_export_aiperf.csv"
+        ).exists()
+
+        assert len(failures) == 1
+        assert failures[0].exporter == "PhaseMetricArtifacts"
+        assert failures[0].is_deferred is False
+        assert "csv boom" in repr(failures[0].error)
+        assert "beta" in repr(failures[0].error)
+
+    @pytest.mark.asyncio
+    async def test_multiple_phase_export_failures_are_aggregated(
+        self, output_config, mock_cfg
+    ) -> None:
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=1,
+                end_ns=2,
+                completed=0,
+                phase_records=[
+                    PhaseProfileResults(
+                        phase_index=index,
+                        profiling_index=index,
+                        phase_name=name,
+                        phase_kind="profiling",
+                    )
+                    for index, name in enumerate(("alpha", "beta", "gamma"))
+                ],
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+
+        async def failing_write(*, manifest_entry, manifest_key, **kwargs) -> None:
+            if manifest_entry.get("phase_name") in {"alpha", "gamma"}:
+                raise OSError(f"disk full on {manifest_entry['phase_name']}")
+
+        manager._write_phase_export = failing_write
+        manager._write_phase_observability_export = AsyncMock()
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all", return_value=[]
+        ):
+            failures = await manager.export_data()
+
+        manifest = json.loads(
+            (output_config / "phase_manifest.json").read_text(encoding="utf-8")
+        )
+        assert [entry["phase_name"] for entry in manifest["phases"]] == [
+            "alpha",
+            "beta",
+            "gamma",
+        ]
+        assert len(failures) == 1
+        error = failures[0].error
+        assert isinstance(error, ExceptionGroup)
+        assert len(error.exceptions) == 2
+        assert "disk full on alpha" in repr(error)
+        assert "disk full on gamma" in repr(error)
+
+    @pytest.mark.asyncio
     async def test_write_phase_export_handles_disabled_and_failed_exporters(
         self, endpoint_config, output_config, mock_cfg
     ) -> None:

@@ -58,6 +58,29 @@ class TestBaseRouterContract:
         router = _ConcreteRouter(run=router_config)
         assert router.get_router() is not None
 
+    def test_subclass_without_comms_mixin_exposes_run(
+        self, router_config: BenchmarkRun
+    ) -> None:
+        # BaseRouter extends only AIPerfLifecycleMixin, whose kwargs chain
+        # terminates in BaseMixin and silently swallows unknown kwargs. Only
+        # CommunicationMixin assigns ``self.run``, so a router composed without
+        # a comms mixin would otherwise have no ``.run`` at all and raise
+        # AttributeError at request time (a live 500) rather than at
+        # construction. ``self.run`` is part of BaseRouter's contract.
+        router = _ConcreteRouter(run=router_config)
+        assert router.run is router_config
+
+    def test_subclass_with_comms_mixin_exposes_same_run(
+        self, router_config: BenchmarkRun
+    ) -> None:
+        # The comms-mixin path assigns ``self.run`` too; the base assignment
+        # must agree with it rather than clobber it with a different object.
+        from aiperf.api.routers.core import CoreRouter
+        from aiperf.api.routers.results import ResultsRouter
+
+        assert CoreRouter(run=router_config).run is router_config
+        assert ResultsRouter(run=router_config).run is router_config
+
 
 class TestComponentDependency:
     """Verify the component_dependency factory resolves from app.state."""

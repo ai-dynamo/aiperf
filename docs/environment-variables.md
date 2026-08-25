@@ -170,6 +170,7 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_X_SESSION_AFFINITY_FROM_CORRELATION_ID` | `True` | — | Also send X-Session-Affinity with the stable X-Correlation-ID value. |
 | `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID` | `False` | — | Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. This transport setting is the supported affinity path for the SGLang Model Gateway manual routing policy. |
 | `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID` | `False` | — | Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, plus X-Dynamo-Parent-Session-ID on subagent children. This transport setting is the supported affinity path for a Dynamo frontend running --router-session-affinity-ttl-secs, pinning every turn of a session to the replica holding its KV prefix. |
+| `AIPERF_HTTP_METRICS_SCRAPE_READ_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 3600.0 | Socket read timeout in seconds for metrics scrape sessions (server metrics and GPU telemetry). Bounds an endpoint that sends response headers and then stalls, which a connect-only timeout cannot detect. |
 | `AIPERF_HTTP_VIDEO_POLL_INTERVAL` | `0.1` | ≥ 0.001, ≤ 10.0 | Interval in seconds between status polls for async video generation jobs. Lower values provide faster completion detection but increase server load. Applies to the aiohttp transport. |
 
 ## LOGGING
@@ -262,6 +263,7 @@ Server metrics collection configuration. Controls server metrics collection freq
 | `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Seconds RecordsManager waits for the final server-metrics scrape command response. A timeout is non-fatal because the controller's result join remains the authoritative completion barrier. |
 | `AIPERF_SERVER_METRICS_CANCEL_RESULT_WAIT_SEC` | `5.0` | ≥ 0.0 | Bounded time (seconds) the SystemController waits on the cancel (Ctrl+C) path for the ServerMetricsManager's result message before proceeding to export. The normal completion path blocks on the server-metrics shutdown gate indefinitely, but the cancel path must not hang. Set to 0 to skip the wait entirely. |
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | `0.333` | ≥ 0.001, ≤ 300.0 | Server metrics collection interval in seconds (default: 333ms, ~3Hz) |
+| `AIPERF_SERVER_METRICS_SCRAPE_TIMEOUT` | `30.0` | ≥ 0.1, ≤ 600.0 | Hard bound in seconds on a single manager-initiated scrape (baseline, warmup boundary, and the final PROFILE_COMPLETE scrape). These scrapes are awaited inline on the completion and cancel paths, so an endpoint that stalls mid-response would otherwise block the terminal server-metrics result forever. |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for server metrics jsonl writer export results processor |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking server metrics endpoint reachability during init |
 | `AIPERF_SERVER_METRICS_SHUTDOWN_DELAY` | `5.0` | ≥ 1.0, ≤ 300.0 | Delay in seconds before shutting down server metrics service to allow command response transmission |

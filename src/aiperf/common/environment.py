@@ -862,6 +862,14 @@ class _HTTPSettings(BaseSettings):
         "--router-session-affinity-ttl-secs, pinning every turn of a session to the "
         "replica holding its KV prefix.",
     )
+    METRICS_SCRAPE_READ_TIMEOUT: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=30.0,
+        description="Socket read timeout in seconds for metrics scrape sessions "
+        "(server metrics and GPU telemetry). Bounds an endpoint that sends response "
+        "headers and then stalls, which a connect-only timeout cannot detect.",
+    )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
         le=10.0,
@@ -1186,6 +1194,16 @@ class _ServerMetricsSettings(BaseSettings):
         le=300.0,
         default=0.333,
         description="Server metrics collection interval in seconds (default: 333ms, ~3Hz)",
+    )
+    SCRAPE_TIMEOUT: float = Field(
+        ge=0.1,
+        le=600.0,
+        default=30.0,
+        description="Hard bound in seconds on a single manager-initiated scrape "
+        "(baseline, warmup boundary, and the final PROFILE_COMPLETE scrape). These "
+        "scrapes are awaited inline on the completion and cancel paths, so an "
+        "endpoint that stalls mid-response would otherwise block the terminal "
+        "server-metrics result forever.",
     )
     EXPORT_BATCH_SIZE: int = Field(
         ge=1,

@@ -1575,3 +1575,192 @@ class TestWarmupPhaseCompleteScrape:
 
         assert manager._active_phase is not None
         assert manager._active_phase.phase == CreditPhase.PROFILING
+
+
+class TestScrapeHangContainment:
+    """Manager-initiated scrapes must never block the terminal result."""
+
+    def _phase_start(
+        self, phase: CreditPhase, start_ns: int
+    ) -> CreditPhaseStartMessage:
+        return CreditPhaseStartMessage(
+            service_id="timing-manager",
+            stats=CreditPhaseStats(phase=phase, start_ns=start_ns),
+            config=CreditPhaseConfig(phase=phase, timing_mode=TimingMode.REQUEST_RATE),
+        )
+
+    def _phase_complete(
+        self, phase: CreditPhase, start_ns: int, end_ns: int
+    ) -> CreditPhaseCompleteMessage:
+        return CreditPhaseCompleteMessage(
+            service_id="timing-manager",
+            stats=CreditPhaseStats(
+                phase=phase, start_ns=start_ns, requests_end_ns=end_ns
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_profile_cancel_after_second_profiling_uses_active_window(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """profiling -> warmup -> profiling -> cancel must not reuse the first end."""
+        from aiperf.common.messages import ProfileCancelCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager._collectors = {}
+        manager.publish = AsyncMock()
+
+        await manager._on_credit_phase_start(
+            self._phase_start(CreditPhase.PROFILING, 1_000)
+        )
+        await manager._on_credit_phase_complete(
+            self._phase_complete(CreditPhase.PROFILING, 1_000, 2_000)
+        )
+        await manager._on_credit_phase_start(
+            self._phase_start(CreditPhase.WARMUP, 3_000)
+        )
+        await manager._on_credit_phase_complete(
+            self._phase_complete(CreditPhase.WARMUP, 3_000, 4_000)
+        )
+        await manager._on_credit_phase_start(
+            self._phase_start(CreditPhase.PROFILING, 5_000)
+        )
+
+        await manager._handle_profile_cancel_command(
+            ProfileCancelCommand(
+                service_id=manager.id, command=CommandType.PROFILE_CANCEL
+            )
+        )
+
+        context = accumulator.export_results.await_args.args[0]
+        assert context.start_ns == 1_000
+        assert context.end_ns >= 5_000, (
+            "the active profiling phase was truncated to the previous window end"
+        )
+
+    @pytest.mark.asyncio
+    async def test_profile_complete_publishes_when_final_scrape_hangs(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A headers-then-stall endpoint must not block the terminal result."""
+        from aiperf.common.messages import ProfileCompleteCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._scrape_timeout = 0.05
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+
+        never = asyncio.Event()
+
+        async def _hang() -> None:
+            await never.wait()
+
+        hanging = MagicMock()
+        hanging.collect_and_process_metrics = AsyncMock(side_effect=_hang)
+        hanging.stop = AsyncMock()
+        manager._collectors = {"http://stalled:8081/metrics": hanging}
+
+        await asyncio.wait_for(
+            manager._handle_profile_complete_command(
+                ProfileCompleteCommand(
+                    service_id=manager.id,
+                    command=CommandType.PROFILE_COMPLETE,
+                    end_ns=1,
+                )
+            ),
+            timeout=2.0,
+        )
+
+        manager.publish.assert_awaited_once()
+        assert manager._result_published is True
+
+    @pytest.mark.asyncio
+    async def test_warmup_complete_scrape_is_bounded(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A stalled warmup boundary scrape must not stall the phase handler."""
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._scrape_timeout = 0.05
+
+        never = asyncio.Event()
+
+        async def _hang() -> None:
+            await never.wait()
+
+        hanging = MagicMock()
+        hanging.collect_and_process_metrics = AsyncMock(side_effect=_hang)
+        healthy = MagicMock()
+        healthy.collect_and_process_metrics = AsyncMock()
+        manager._collectors = {
+            "http://stalled:8081/metrics": hanging,
+            "http://good:8081/metrics": healthy,
+        }
+
+        await asyncio.wait_for(
+            manager._on_credit_phase_complete(
+                self._phase_complete(CreditPhase.WARMUP, 1_000, 2_000)
+            ),
+            timeout=2.0,
+        )
+
+        healthy.collect_and_process_metrics.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_baseline_scrape_is_bounded(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A stalled baseline scrape must surface as an error, not a hang."""
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._scrape_timeout = 0.05
+
+        never = asyncio.Event()
+
+        async def _hang() -> None:
+            await never.wait()
+
+        hanging = MagicMock()
+        hanging.collect_and_process_metrics = AsyncMock(side_effect=_hang)
+        manager._collectors = {"http://stalled:8081/metrics": hanging}
+
+        with pytest.raises(RuntimeError):
+            await asyncio.wait_for(
+                manager.collect_baseline(
+                    PhaseBaselineRequestMessage(
+                        service_id="records-manager",
+                        phase_id="phase-0",
+                        phase_kind="warmup",
+                        phase_index=0,
+                        phase_name="warmup",
+                        kind=BaselineKind.START,
+                    )
+                ),
+                timeout=2.0,
+            )
+
+    @pytest.mark.asyncio
+    async def test_scrape_session_has_socket_read_timeout(self) -> None:
+        """The scrape session must bound stalled reads, not just connects."""
+        from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
+
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics"
+        )
+        with patch(
+            "aiperf.common.mixins.base_metrics_collector_mixin.create_tcp_connector",
+            MagicMock(),
+        ):
+            await collector._initialize_http_client()
+        try:
+            assert collector._session is not None
+            assert collector._session.timeout.sock_read is not None
+        finally:
+            await collector._session.close()

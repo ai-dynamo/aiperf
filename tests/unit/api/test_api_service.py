@@ -3,7 +3,11 @@
 
 """Tests for the FastAPI-based API service."""
 
+from __future__ import annotations
+
 import asyncio
+import errno
+import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,6 +21,7 @@ from aiperf.common.compression import (
     is_zstd_available,
     select_encoding,
 )
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import LifecycleState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.config import BenchmarkRun
@@ -850,6 +855,46 @@ class TestFastAPIServiceCORSMiddleware:
         assert "CORSMiddleware" not in middleware_names
 
 
+class _FakeProbeSocket:
+    """In-memory stand-in for ``socket.socket`` modelling a free port.
+
+    No real socket, address, or port is ever touched — unit tests must never
+    bind a live port.
+    """
+
+    #: When True, ``bind`` fails with EADDRINUSE unless SO_REUSEADDR was
+    #: enabled first — exactly what the kernel does for a port left in
+    #: TIME_WAIT by a previous process.
+    time_wait: bool = False
+
+    def __init__(self, family: int, type_: int) -> None:
+        self.family = family
+        self.type = type_
+        self.reuseaddr_set = False
+        self.bound: object | None = None
+
+    def setsockopt(self, level: int, optname: int, value: int) -> None:
+        if (level, optname) == (socket.SOL_SOCKET, socket.SO_REUSEADDR) and value:
+            self.reuseaddr_set = True
+
+    def bind(self, sockaddr: object) -> None:
+        if self.time_wait and not self.reuseaddr_set:
+            raise OSError(errno.EADDRINUSE, "Address already in use")
+        self.bound = sockaddr
+
+    def __enter__(self) -> _FakeProbeSocket:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+class _TimeWaitProbeSocket(_FakeProbeSocket):
+    """Fake socket whose port is stuck in TIME_WAIT."""
+
+    time_wait = True
+
+
 class TestFastAPIServiceStartStop:
     """Test _start_api_server and _stop_api_server."""
 
@@ -893,6 +938,49 @@ class TestFastAPIServiceStartStop:
             socket_mock.return_value.__enter__.return_value.bind = bind
             await mock_fastapi_service._start_api_server()
 
+    @pytest.mark.skipif(
+        IS_WINDOWS,
+        reason="asyncio only defaults reuse_address to True on POSIX; on Windows "
+        "SO_REUSEADDR would let the probe steal a live listener.",
+    )
+    @pytest.mark.asyncio
+    async def test_start_time_wait_port_probes_with_reuseaddr_and_succeeds(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """The probe must be no stricter than the bind uvicorn actually performs.
+
+        uvicorn's host/port path goes through ``loop.create_server(host=, port=)``,
+        which defaults ``reuse_address`` to True on POSIX. A probe without
+        ``SO_REUSEADDR`` therefore rejects a TIME_WAIT port that uvicorn would
+        bind fine, and the explicit-port branch turns that into a RuntimeError
+        that aborts the whole run.
+        """
+        created: list[_TimeWaitProbeSocket] = []
+
+        def _make_socket(family: int, type_: int) -> _TimeWaitProbeSocket:
+            probe = _TimeWaitProbeSocket(family, type_)
+            created.append(probe)
+            return probe
+
+        mock_server = MagicMock()
+        mock_server.serve = AsyncMock()
+
+        with (
+            patch("aiperf.api.api_service.socket.socket", _make_socket),
+            patch("aiperf.api.api_service.uvicorn.Config"),
+            patch("aiperf.api.api_service.uvicorn.Server", return_value=mock_server),
+        ):
+            await mock_fastapi_service._start_api_server()
+
+        assert len(created) == 1
+        assert created[0].reuseaddr_set, "probe must set SO_REUSEADDR before bind"
+        assert created[0].bound is not None
+        assert mock_fastapi_service._server is mock_server
+
+        mock_fastapi_service._server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await mock_fastapi_service._server_task
+
     @pytest.mark.asyncio
     async def test_start_implicit_port_bind_conflict_warns_and_skips_server(
         self,
@@ -927,6 +1015,7 @@ class TestFastAPIServiceStartStop:
         mock_server.serve = AsyncMock()
 
         with (
+            patch("aiperf.api.api_service.socket.socket", _FakeProbeSocket),
             patch("aiperf.api.api_service.uvicorn.Config"),
             patch("aiperf.api.api_service.uvicorn.Server", return_value=mock_server),
         ):

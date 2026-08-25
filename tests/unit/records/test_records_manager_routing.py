@@ -433,6 +433,35 @@ class TestFinalizeStreamExporters:
         assert mgr.error.call_count == 2
         assert [error.type for error in errors] == ["RuntimeError", "ValueError"]
 
+    @pytest.mark.asyncio
+    async def test_finalize_best_effort_exporter_error_is_not_fatal(self) -> None:
+        """A downed telemetry collector must not invalidate a complete artifact set.
+
+        ``OTelMetricsResultsProcessor.is_best_effort`` is honored on the dispatch
+        path; finalize must honor it too, or a dead OTel sidecar withholds
+        ``ResultsExportedMessage`` for a byte-perfect ``profile_export.json``.
+        """
+        best_effort = StubStreamExporter()
+        best_effort.is_best_effort = True
+        best_effort.finalize.side_effect = RuntimeError("collector unreachable")
+        durable = StubStreamExporter()
+        durable.finalize.side_effect = ValueError("half-written jsonl")
+        mgr = _make_finalize_manager_mock(
+            {
+                StreamExporterType.OTEL_METRICS_STREAMER: best_effort,
+                StreamExporterType.RECORD_EXPORT: durable,
+            },
+        )
+
+        errors = await mgr._finalize_stream_exporters()
+
+        assert [error.details["fatal"] for error in errors] == [False, True]
+        assert errors[0].details == {
+            "stage": "stream_export_finalize",
+            "exporter": str(StreamExporterType.OTEL_METRICS_STREAMER),
+            "fatal": False,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Tests: load_accumulators construction-failure policy

@@ -31,6 +31,14 @@ class BaseRouter(AIPerfLifecycleMixin):
         **kwargs,
     ) -> None:
         super().__init__(run=run, **kwargs)
+        # Only CommunicationMixin assigns ``self.run``, and BaseRouter's own
+        # MRO terminates in BaseMixin, which silently swallows unknown kwargs.
+        # Routers composed without a comms mixin (CoreRouter, StaticRouter)
+        # would otherwise have no ``.run`` at all and raise AttributeError at
+        # request time -- a 500 on a live endpoint instead of a construction
+        # error. Assigning here makes ``self.run`` part of the base contract;
+        # the comms path sets the identical object, so this never diverges.
+        self.run = run
 
     @abstractmethod
     def get_router(self) -> APIRouter:

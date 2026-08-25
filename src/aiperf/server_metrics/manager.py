@@ -176,6 +176,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         self._phase_started_after_profiling = False
         self._last_realtime_publish_ns = 0
         self._profile_complete_lock = asyncio.Lock()
+        self._scrape_timeout = Environment.SERVER_METRICS.SCRAPE_TIMEOUT
         self._load_server_metrics_processors()
 
         # Collect metrics from all endpoint URLs (for multi-URL load balancing)
@@ -433,6 +434,9 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             self._profiling_started = True
             self._profiling_start_ns = stats.start_ns
             self._last_profiling_phase = identity
+            # A new profiling phase owns the tail of the window again, so the
+            # previous phase's end must stop truncating the cancel-path result.
+            self._phase_started_after_profiling = False
             if self._profiling_window_start_ns is None:
                 self._profiling_window_start_ns = stats.start_ns
         else:
@@ -532,55 +536,65 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 )
                 return
 
-            if not self._collectors:
-                self.debug("Server Metrics: Already stopped, skipping final scrape")
-            elif self._should_capture_profile_complete_scrape():
-                flush_end_ns = (message.end_ns or time.time_ns()) + int(
-                    Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD * 1_000_000_000
-                )
-                remaining_seconds = (flush_end_ns - time.time_ns()) / 1_000_000_000
-                if remaining_seconds > 0:
-                    self.info(
-                        f"Waiting {remaining_seconds:.1f}s for server metrics flush period..."
-                    )
-                    await asyncio.sleep(remaining_seconds)
-
-                self.info(
-                    "Server Metrics: Profiling complete, capturing final metrics..."
-                )
-                final_phase = self._last_profiling_phase or _ServerMetricsPhaseIdentity(
-                    phase=CreditPhase.PROFILING,
-                    phase_name=str(CreditPhase.PROFILING),
-                    phase_kind="profiling",
-                )
-                for endpoint_url, collector in list(self._collectors.items()):
-                    try:
-                        await self._collect_and_process_metrics_for_phase(
-                            collector, final_phase
-                        )
-                        self.debug(
-                            lambda url=endpoint_url: (
-                                f"Server Metrics: Captured final state from {url}"
-                            )
-                        )
-                    except Exception as exc:  # noqa: BLE001 - one endpoint must not block others
-                        self.warning(
-                            f"Server Metrics: Failed to capture final state from {endpoint_url}: {exc}"
-                        )
-            else:
-                self.info(
-                    "Server Metrics: Skipping late profiling scrape because a later "
-                    "configured phase owns the current server state"
+            # The publish in the `finally` is the run's terminal result and the
+            # join barrier every other service waits on, so no scrape or
+            # collector-shutdown failure may skip it.
+            try:
+                await self._capture_profile_complete_scrape(message)
+                await self._stop_all_collectors()
+            finally:
+                await self._publish_server_metrics_result(
+                    start_ns=message.start_ns,
+                    end_ns=message.end_ns,
+                    warmup_start_ns=message.warmup_start_ns,
+                    warmup_end_ns=message.warmup_end_ns,
                 )
 
-            await self._stop_all_collectors()
+    async def _capture_profile_complete_scrape(
+        self, message: ProfileCompleteCommand
+    ) -> None:
+        """Scrape every endpoint one last time, attributed to the final profile."""
+        if not self._collectors:
+            self.debug("Server Metrics: Already stopped, skipping final scrape")
+            return
 
-            await self._publish_server_metrics_result(
-                start_ns=message.start_ns,
-                end_ns=message.end_ns,
-                warmup_start_ns=message.warmup_start_ns,
-                warmup_end_ns=message.warmup_end_ns,
+        if not self._should_capture_profile_complete_scrape():
+            self.info(
+                "Server Metrics: Skipping late profiling scrape because a later "
+                "configured phase owns the current server state"
             )
+            return
+
+        flush_end_ns = (message.end_ns or time.time_ns()) + int(
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD * 1_000_000_000
+        )
+        remaining_seconds = (flush_end_ns - time.time_ns()) / 1_000_000_000
+        if remaining_seconds > 0:
+            self.info(
+                f"Waiting {remaining_seconds:.1f}s for server metrics flush period..."
+            )
+            await asyncio.sleep(remaining_seconds)
+
+        self.info("Server Metrics: Profiling complete, capturing final metrics...")
+        final_phase = self._last_profiling_phase or _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.PROFILING,
+            phase_name=str(CreditPhase.PROFILING),
+            phase_kind="profiling",
+        )
+        for endpoint_url, collector in list(self._collectors.items()):
+            try:
+                await self._collect_and_process_metrics_for_phase(
+                    collector, final_phase
+                )
+                self.debug(
+                    lambda url=endpoint_url: (
+                        f"Server Metrics: Captured final state from {url}"
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - one endpoint must not block others
+                self.warning(
+                    f"Server Metrics: Failed to capture final state from {endpoint_url}: {exc}"
+                )
 
     def _should_capture_profile_complete_scrape(self) -> bool:
         """Return whether a late scrape can still belong to the last profile.
@@ -802,9 +816,18 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         collector: ServerMetricsDataCollector,
         phase: _ServerMetricsPhaseIdentity | None,
     ) -> None:
+        """Run one manager-initiated scrape, bounded so a stalled endpoint cannot hang.
+
+        The completion and cancel paths await these scrapes inline before the
+        terminal result is published, and the scrape session has no total
+        timeout, so an unbounded await here would strand the whole run.
+        """
         token = _SERVER_METRICS_SCRAPE_PHASE.set(phase)
         try:
-            await collector.collect_and_process_metrics()
+            await asyncio.wait_for(
+                collector.collect_and_process_metrics(),
+                timeout=self._scrape_timeout,
+            )
         finally:
             _SERVER_METRICS_SCRAPE_PHASE.reset(token)
 

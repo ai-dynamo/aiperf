@@ -494,26 +494,35 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Process a heartbeat message from a service. It will
         update the last seen timestamp and state of the service.
 
+        The last-seen timestamp is stamped on receipt rather than taken from
+        ``message.request_ns``: the sender stamps that in its own process, but
+        ``ServiceRegistry.get_stale_services`` compares against this process's
+        clock, so under Kubernetes a pod whose clock lags would be reaped
+        immediately. ``request_ns`` stays useful for latency diagnostics only.
+
+        The registry must also be the sole writer of ``last_seen_ns``/``state``:
+        ``service_id_map`` holds the very ``ServiceRunInfo`` the registry owns,
+        so mutating it here would pre-satisfy — and thereby defeat — the
+        ordering guard inside ``update_service``.
+
         Args:
             message: The heartbeat message to process
         """
         service_id = message.service_id
         service_type = message.service_type
-        timestamp = message.request_ns or time.time_ns()
+        timestamp = time.time_ns()
 
         # Update the last heartbeat timestamp if the component exists
-        try:
-            service_info = self.service_manager.service_id_map[service_id]
-            service_info.last_seen_ns = timestamp
-            service_info.state = message.state
-            ServiceRegistry.update_service(
-                service_id, service_type, timestamp, message.state
-            )
-            self.debug(lambda: f"Updated heartbeat for '{service_id}' to {timestamp}")
-        except Exception:
+        if service_id not in self.service_manager.service_id_map:
             self.warning(
                 f"Received heartbeat from unknown service: '{service_id}' ('{service_type}')"
             )
+            return
+
+        ServiceRegistry.update_service(
+            service_id, service_type, timestamp, message.state
+        )
+        self.debug(lambda: f"Updated heartbeat for '{service_id}' to {timestamp}")
 
     @on_message(MessageType.CREDITS_COMPLETE)
     async def _process_credits_complete_message(
@@ -542,6 +551,13 @@ class SystemController(SignalHandlerMixin, BaseService):
         ``os._exit(0)`` masks the failure — particularly visible when
         FixedScheduleStrategy rejects a dataset whose first-turn timestamp
         was filtered out by the offset window.
+
+        Only a *required* service's death cancels the run, mirroring the
+        optional/required split ``_on_service_reaped`` implements: every
+        service self-kills through this message, so an optional collector
+        (GPU telemetry, server metrics) failing mid-run would otherwise abort
+        an hour-long benchmark that could have completed with rows missing.
+        A sender we cannot identify is treated as required.
         """
         self.error(
             f"Received service error from '{message.service_id}': "
@@ -557,10 +573,24 @@ class SystemController(SignalHandlerMixin, BaseService):
         # A dead producer can no longer join its result domain; drop it from the
         # barrier so shutdown isn't blocked forever, then re-check readiness.
         self._result_join_coordinator.unregister_service(message.service_id)
-        if self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}:
+        if self._is_required_service(message.service_id) and (
+            self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}
+        ):
             await self._cancel_profiling()
             return
         await self._check_and_trigger_shutdown()
+
+    def _is_required_service(self, service_id: str) -> bool:
+        """Whether losing this service invalidates the run.
+
+        Unknown senders count as required: an unidentifiable failure is more
+        likely a control-plane service that died before or after its registry
+        entry existed than an optional collector.
+        """
+        info = self.service_manager.service_id_map.get(service_id)
+        if info is None:
+            return True
+        return info.service_type in self.required_services
 
     async def _on_service_reaped(
         self, service_id: str, reason: str, first_seen_ns: int | None
@@ -647,7 +677,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Process a generic service lifecycle status message.
 
         Updates the service registry with lifecycle state changes (initializing,
-        running, stopping, etc.).
+        running, stopping, etc.). Timestamp and ownership rules match
+        ``_process_heartbeat_message``: stamp on receipt with this process's
+        clock, and let the registry be the only writer of the shared
+        ``ServiceRunInfo``.
 
         Args:
             message: The status message to process
@@ -671,15 +704,10 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
             return
 
-        service_info = self.service_manager.service_id_map.get(service_id)
-        if service_info is None:
-            return
-
-        service_info.state = message.state
         ServiceRegistry.update_service(
             service_id,
             service_type,
-            message.request_ns or time.time_ns(),
+            time.time_ns(),
             message.state,
         )
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -109,6 +110,28 @@ ERROR_FATAL_DETAIL_KEY = "fatal"
 failure; ``False`` (or absent) means the error is diagnostic only -- report it,
 but never suppress an otherwise valid export because of it.
 """
+
+
+def build_failed_request_abort_config(
+    profiling_phases: Sequence[Any],
+) -> tuple[dict[int, float | None], dict[int, int]]:
+    """Map each profiling phase's index to its abort threshold and grace floor.
+
+    ``failed_request_threshold`` and ``concurrency`` are per-phase config fields
+    (``config/phases.py``), so a multi-phase run must evaluate each phase against
+    its own configuration rather than against the first phase's. Keys are
+    ``profiling_index`` values -- the index among profiling-kind phases carried
+    on every record's metadata -- not absolute phase indices.
+    """
+    thresholds: dict[int, float | None] = {}
+    grace_floors: dict[int, int] = {}
+    for profiling_index, phase in enumerate(profiling_phases):
+        thresholds[profiling_index] = phase.failed_request_threshold
+        concurrency = phase.concurrency
+        grace_floors[profiling_index] = max(
+            int(concurrency) if isinstance(concurrency, (int, float)) else 1, 10
+        )
+    return thresholds, grace_floors
 
 
 _LATENCY_LINE_LABELS: tuple[tuple[str, str], ...] = (
@@ -663,16 +686,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._accuracy_accumulator = self._accumulators.get(AccumulatorType.ACCURACY)
 
         # Failed-request abort threshold (AGENTIC_REPLAY, A5 #7): abort the run
-        # once the profiling failure ratio exceeds the configured threshold.
+        # once a profiling phase's failure ratio exceeds its configured
+        # threshold. Both the threshold and the concurrency-derived grace floor
+        # are per-phase fields, so they are resolved per profiling phase.
         profiling_phases = self.run.cfg.get_profiling_phases()
-        profiling_phase = profiling_phases[0] if profiling_phases else None
+        (
+            self._failed_request_thresholds,
+            self._failed_request_grace_floors,
+        ) = build_failed_request_abort_config(profiling_phases)
         self._failed_request_threshold: float | None = (
-            profiling_phase.failed_request_threshold if profiling_phase else None
+            self._failed_request_thresholds.get(0)
         )
-        conc_val = profiling_phase.concurrency if profiling_phase else None
-        self._failed_request_grace_floor = max(
-            int(conc_val) if isinstance(conc_val, (int, float)) else 1, 10
-        )
+        self._failed_request_grace_floor = self._failed_request_grace_floors.get(0, 10)
         self._failed_request_abort_triggered = False
         self._cancel_finalize_task: asyncio.Task | None = None
 
@@ -774,40 +799,73 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             handler_names = [handler.__class__.__name__ for handler in handlers]
             self.debug(lambda rt=record_type, hn=handler_names: f"  {rt} -> {hn}")
 
-    async def _maybe_trigger_failed_request_abort(self, phase: CreditPhase) -> None:
-        """Abort the run when the PROFILING failure rate exceeds the threshold.
+    def _resolve_failed_request_threshold(
+        self, profiling_index: int | None
+    ) -> float | None:
+        """Resolve the abort threshold owned by one concrete profiling phase."""
+        if profiling_index is None:
+            return self._failed_request_threshold
+        return self._failed_request_thresholds.get(
+            profiling_index, self._failed_request_threshold
+        )
 
-        No-op when ``--failed-request-threshold`` is unset, when this method
-        already fired once for this run, or when the total record count has
-        not yet crossed the grace floor (``max(concurrency, 10)``). Otherwise
-        broadcasts ProfileCancelCommand on the message bus -- the existing
-        cancel-path handlers in timing_manager, server_metrics manager, and
-        gpu_telemetry manager stop their work; this manager's own
+    def _resolve_failed_request_grace_floor(self, profiling_index: int | None) -> int:
+        """Resolve the grace floor owned by one concrete profiling phase."""
+        if profiling_index is None:
+            return self._failed_request_grace_floor
+        return self._failed_request_grace_floors.get(
+            profiling_index, self._failed_request_grace_floor
+        )
+
+    async def _maybe_trigger_failed_request_abort(
+        self,
+        phase: CreditPhase,
+        phase_index: int | None = None,
+        profiling_index: int | None = None,
+    ) -> None:
+        """Abort the run when a profiling phase's failure rate exceeds its threshold.
+
+        The ratio, the threshold and the grace floor are all scoped to the one
+        concrete phase instance the record belongs to: ``failed_request_threshold``
+        and ``concurrency`` are per-phase config fields, so aggregating across
+        every profiling phase would let a large healthy phase mask a later phase
+        that is failing every request (and vice versa).
+
+        No-op when ``--failed-request-threshold`` is unset for that phase, when
+        this method already fired once for this run, or when the phase's record
+        count has not yet crossed the grace floor (``max(concurrency, 10)``).
+        Otherwise broadcasts ProfileCancelCommand on the message bus -- the
+        existing cancel-path handlers in timing_manager, server_metrics manager,
+        and gpu_telemetry manager stop their work; this manager's own
         _on_profile_cancel_command marks the phase cancelled and finalizes
         results with cancelled=True.
         """
-        if self._failed_request_threshold is None:
+        threshold = self._resolve_failed_request_threshold(profiling_index)
+        if threshold is None:
             return
         if self._failed_request_abort_triggered:
             return
         if phase != CreditPhase.PROFILING:
             return
 
-        total = self._records_tracker.total_records_for_phase(phase)
-        if total < self._failed_request_grace_floor:
+        grace_floor = self._resolve_failed_request_grace_floor(profiling_index)
+        total = self._records_tracker.total_records_for_phase(phase, phase_index)
+        if total < grace_floor:
             return
 
-        error_records = self._records_tracker.error_records_for_phase(phase)
+        error_records = self._records_tracker.error_records_for_phase(
+            phase, phase_index
+        )
         rate = error_records / total if total > 0 else 0.0
-        if rate <= self._failed_request_threshold:
+        if rate <= threshold:
             return
 
         self._failed_request_abort_triggered = True
         self.warning(
             f"--failed-request-threshold exceeded: "
             f"{error_records}/{total} = {rate:.3f} > "
-            f"{self._failed_request_threshold:.3f} "
-            f"(grace floor {self._failed_request_grace_floor}). "
+            f"{threshold:.3f} "
+            f"(grace floor {grace_floor}, phase_index {phase_index}). "
             "Broadcasting ProfileCancelCommand to terminate the run."
         )
         command = ProfileCancelCommand(service_id=self.service_id)
@@ -908,7 +966,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 phase_index=message.metadata.phase_index,
             )
 
-        await self._maybe_trigger_failed_request_abort(phase)
+        await self._maybe_trigger_failed_request_abort(
+            phase,
+            phase_index=message.metadata.phase_index,
+            profiling_index=message.metadata.profiling_index,
+        )
 
         if (
             phase in self._complete_credit_phases
@@ -2038,7 +2100,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return_exceptions=True,
         )
         errors: list[ErrorDetails] = []
-        for (exp_type, _), result in zip(
+        for (exp_type, exporter), result in zip(
             self._stream_exporters.items(), results, strict=True
         ):
             if isinstance(result, BaseException):
@@ -2050,8 +2112,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                         exporter=str(exp_type),
                         # A half-written stream artifact makes the whole export
                         # set untrustworthy, so this is fatal rather than the
-                        # advisory diagnostics other stages emit.
-                        **{ERROR_FATAL_DETAIL_KEY: True},
+                        # advisory diagnostics other stages emit. Best-effort
+                        # exporters (streaming telemetry) are the exception: a
+                        # dead collector must not withhold an otherwise complete
+                        # artifact set, matching the dispatch-path policy.
+                        **{
+                            ERROR_FATAL_DETAIL_KEY: not getattr(
+                                exporter, "is_best_effort", False
+                            )
+                        },
                     )
                 )
         return errors

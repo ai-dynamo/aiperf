@@ -16,6 +16,7 @@ from typing import Generic, TypeVar
 
 import aiohttp
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -292,13 +293,17 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
 
         Called automatically during initialization phase.
         Creates an aiohttp ClientSession with appropriate timeout settings.
-        Uses connect timeout only (no total timeout) to allow long-running scrapes.
+        No total timeout, so a large exposition payload is never truncated, but
+        `sock_read` bounds the gap between response chunks: a connect-only
+        timeout cannot detect a server that sends headers and then stalls, and
+        the completion path awaits scrapes inline.
         Configures TraceConfig to capture HTTP timing events for precise correlation.
         Uses create_tcp_connector to apply standard socket settings including IP version.
         """
         timeout = aiohttp.ClientTimeout(
             total=None,  # No total timeout for ongoing scrapes
             connect=self._reachability_timeout,  # Fast connection timeout only
+            sock_read=Environment.HTTP.METRICS_SCRAPE_READ_TIMEOUT,
         )
         trace_config = self._create_trace_config()
         self._connector = _resolve_create_tcp_connector()()

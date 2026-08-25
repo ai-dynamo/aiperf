@@ -24,6 +24,7 @@ from aiperf.api.depends import ServiceDep, get_service
 from aiperf.api.routers.base_router import BaseRouter
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_start, on_stop
 from aiperf.plugin import plugins
@@ -172,6 +173,18 @@ class FastAPIService(BaseComponentService):
                 flags=socket.AI_PASSIVE,
             )[0]
             with socket.socket(family, socket.SOCK_STREAM) as probe:
+                # Match uvicorn's bind semantics exactly. Its host/port path
+                # goes through `loop.create_server(host=, port=)`, whose
+                # `reuse_address` defaults to True on POSIX and False
+                # elsewhere. Without SO_REUSEADDR the probe is strictly
+                # stricter than the bind it predicts, and a port left in
+                # TIME_WAIT by a previous run -- which uvicorn would bind
+                # fine -- aborts the benchmark below. Setting it on Windows
+                # would make the probe strictly looser instead (there
+                # SO_REUSEADDR permits stealing a live listener), so the
+                # branch mirrors asyncio rather than always enabling it.
+                if not IS_WINDOWS:
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 probe.bind(sockaddr)
         except OSError as e:
             msg = f"API server cannot bind {self._url_host}:{self.api_port}: {e}"
