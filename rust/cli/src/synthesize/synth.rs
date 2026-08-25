@@ -574,5 +574,7 @@ mod tests {
         let first_turn = &session.turns[0];
         assert_eq!(first_turn.input_length, 1537);
         assert_eq!(first_turn.hash_ids.len(), 25);
+        assert_eq!(&first_turn.hash_ids[..24], &(0..24).collect::<Vec<_>>());
+        assert_eq!(first_turn.hash_ids[24], 200_016);
     }
 }
