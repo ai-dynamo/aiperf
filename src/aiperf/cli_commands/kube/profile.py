@@ -13,7 +13,7 @@ from aiperf.cli_commands.kube._kube_common import (
     print_memory_estimate,
 )
 from aiperf.common.path_safety import safe_read_template_path
-from aiperf.config.flags.kube_cli_config import KubeCLIConfig
+from aiperf.config.flags.cli_config import KubeCLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.kube import KubeOptions
 
@@ -161,7 +161,7 @@ def _resolve_config(
     cli_config: KubeCLIConfig,
     config_file: Path | None,
 ) -> AIPerfConfig:
-    """Backwards-compatible alias for `_kube_common.resolve_config`."""
+    """Backwards-compatible alias for `aiperf.config.flags.resolver.resolve_config`."""
     return resolve_config(cli_config, config_file)
 
 

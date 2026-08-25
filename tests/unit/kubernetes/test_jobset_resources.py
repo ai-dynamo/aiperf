@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for pure helpers in aiperf.kubernetes.jobset_resources.
+"""Unit tests for pure helpers in aiperf.kubernetes.jobset_builder.
 
 Covers weighted-total splitting, CPU/memory formatting, worker-pod resource
 allocation (including the pinned record-processor CPU override), and health
@@ -13,7 +13,7 @@ import pytest
 from pytest import param
 
 from aiperf.kubernetes.environment import K8sEnvironment
-from aiperf.kubernetes.jobset_resources import (
+from aiperf.kubernetes.jobset_builder import (
     _compute_cpu_shares,
     allocate_worker_health_ports,
     format_mcpu,

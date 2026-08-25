@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from cyclopts import App, Parameter
 
 from aiperf.config import AIPerfConfig
-from aiperf.config.flags.kube_cli_config import KubeCLIConfig
+from aiperf.config.flags.cli_config import KubeCLIConfig
 from aiperf.config.kube import KubeOptions
 from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
 
