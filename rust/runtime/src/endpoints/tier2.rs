@@ -56,6 +56,10 @@ pub struct ImageGenerationEndpoint;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ImageEditEndpoint;
 
+/// OpenAI-compatible audio transcription endpoint.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AudioTranscriptionEndpoint;
+
 /// OpenAI/SGLang async video generation endpoint.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VideoGenerationEndpoint;
@@ -199,6 +203,25 @@ const IMAGE_EDIT_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     output_modalities: &[Modality::Image],
     metrics_title: "Image Edit Metrics",
     service_kind: "image_edit",
+};
+
+const AUDIO_TRANSCRIPTION_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
+    id: "audio_transcription",
+    aliases: &[],
+    description: "OpenAI audio transcription API",
+    endpoint_path: Some("/v1/audio/transcriptions"),
+    streaming_path: None,
+    supports_streaming: false,
+    produces_tokens: false,
+    tokenizes_input: true,
+    requires_raw_token_ids: false,
+    requires_form_data: true,
+    requires_polling: false,
+    requires_inline_media: true,
+    input_modalities: &[Modality::Audio],
+    output_modalities: &[Modality::Text],
+    metrics_title: "Audio Transcription Metrics",
+    service_kind: "audio_transcription",
 };
 
 const VIDEO_GENERATION_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
@@ -632,6 +655,43 @@ impl Endpoint for ImageEditEndpoint {
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
         parse_image_response(response, false)
+    }
+}
+
+impl Endpoint for AudioTranscriptionEndpoint {
+    fn descriptor(&self) -> &'static EndpointDescriptor {
+        &AUDIO_TRANSCRIPTION_DESCRIPTOR
+    }
+    fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
+        format_legacy_payload(self, request_info)
+    }
+    fn parse_response(&self, _response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        Ok(None)
+    }
+}
+
+impl PreparedEndpointBehavior for AudioTranscriptionEndpoint {
+    fn format_prepared_payload(
+        &self,
+        request: &PreparedRequest<'_>,
+        _config: &RawEndpointConfig,
+    ) -> EndpointResult<BodyPlan> {
+        let turn = request.turns().last().ok_or_else(|| {
+            EndpointError::InvalidRequest("audio transcription requires an audio turn".into())
+        })?;
+        let audio = turn
+            .images
+            .first()
+            .and_then(|_| None)
+            .or_else(|| turn.audios.first().and_then(|m| m.contents.first()))
+            .ok_or_else(|| {
+                EndpointError::InvalidRequest("audio transcription requires audio content".into())
+            })?;
+        let payload =
+            serde_json::json!({"file": {"b64_data": audio}, "model": request.primary_model_name()});
+        Ok(BodyPlan::from_object(payload.as_object().ok_or_else(
+            || EndpointError::InvalidRequest("audio payload is not an object".into()),
+        )?)?)
     }
 }
 
