@@ -163,7 +163,7 @@ aiperf profile \
     --request-rate 100 \
     --arrival-pattern constant \
     --benchmark-duration 60 \
-    --output-dir results/constant
+    --output-artifact-dir results/constant
 
 **Expected Output (Run 1):**
 ```
@@ -197,7 +197,7 @@ aiperf profile \
     --request-rate 100 \
     --arrival-pattern poisson \
     --benchmark-duration 60 \
-    --output-dir results/poisson
+    --output-artifact-dir results/poisson
 ```
 
 **Expected Output (Run 2):**
@@ -325,7 +325,7 @@ for smoothness in 2.0 1.0 0.7 0.5 0.3; do
         --arrival-pattern gamma \
         --arrival-smoothness $smoothness \
         --benchmark-duration 60 \
-        --output-dir results/smoothness_$smoothness
+        --output-artifact-dir results/smoothness_$smoothness
 done
 ```
 
