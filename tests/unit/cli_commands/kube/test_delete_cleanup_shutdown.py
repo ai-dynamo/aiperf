@@ -10,6 +10,7 @@ garbage-collects the JobSet and pods through ownerReferences.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,11 +21,46 @@ from pytest import param
 
 from aiperf.cli_commands.kube.cleanup import _is_terminal, cleanup
 from aiperf.cli_commands.kube.delete import delete
+from aiperf.cli_commands.kube.shutdown import shutdown
+from aiperf.kubernetes.environment import K8sEnvironment
 
 
 @asynccontextmanager
 async def _fake_client(**_: Any):
     yield MagicMock()
+
+
+@asynccontextmanager
+async def _fake_port_forward(*_: Any, **__: Any) -> AsyncIterator[int]:
+    yield 19090
+
+
+class _ShutdownResponse:
+    status = 200
+
+    async def text(self) -> str:
+        return ""
+
+    async def __aenter__(self) -> _ShutdownResponse:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+
+class _ShutdownSession:
+    def __init__(self) -> None:
+        self.post_timeout: object | None = None
+
+    def post(self, _url: str, *, timeout: object) -> _ShutdownResponse:
+        self.post_timeout = timeout
+        return _ShutdownResponse()
+
+    async def __aenter__(self) -> _ShutdownSession:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
 
 
 def _cr(name: str, phase: str) -> dict:
@@ -66,7 +102,7 @@ def _patched(
     namespace: str = "bench",
     core: MagicMock | None = None,
 ):
-    """Patch the cluster surface all three verbs share."""
+    """Patch the cluster surface `delete` and `cleanup` share."""
     core = core or MagicMock()
     with (
         patch("aiperf.kubernetes.client.k8s_client", _fake_client),
@@ -344,3 +380,33 @@ class TestConfirmAction:
 
         with patch("sys.stdin.isatty", return_value=False):
             assert confirm_action("Delete?") is False
+
+
+class TestShutdown:
+    @pytest.mark.asyncio
+    async def test_success_uses_request_timeout_setting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = _ShutdownSession()
+        monkeypatch.setattr(K8sEnvironment.RESULTS, "REQUEST_TIMEOUT_SECONDS", 35.0)
+
+        with (
+            patch("aiperf.kubernetes.client.k8s_client", _fake_client),
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
+                return_value=("job-1", "bench"),
+            ),
+            patch(
+                "aiperf.kubernetes.client_pods.find_controller_pod",
+                AsyncMock(return_value=("controller-0", "Running")),
+            ),
+            patch(
+                "aiperf.kubernetes.port_forward.port_forward_to_controller",
+                _fake_port_forward,
+            ),
+            patch("aiohttp.ClientSession", return_value=session),
+        ):
+            await shutdown("job-1")
+
+        assert session.post_timeout is not None
+        assert getattr(session.post_timeout, "total") == 35.0

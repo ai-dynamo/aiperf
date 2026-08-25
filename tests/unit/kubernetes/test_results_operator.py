@@ -22,6 +22,7 @@ import orjson
 import pytest
 from pytest import param
 
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.results_operator import (
     RESULTS_SERVER_PORT,
     _download_all_operator_files,
@@ -319,19 +320,24 @@ class TestVerifyOperatorHealth:
     """Verify operator health-check behavior."""
 
     @pytest.mark.asyncio
-    async def test_healthy_returns_true(self) -> None:
-        from unittest.mock import patch
-
+    async def test_healthy_uses_control_timeout_setting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = FakeSession({"http://localhost/healthz": [FakeResponse(status=200)]})
+        monkeypatch.setattr(
+            K8sEnvironment.RESULTS, "CONTROL_REQUEST_TIMEOUT_SECONDS", 17.0
+        )
         with (
-            patch("aiohttp.ClientSession", return_value=session),
+            patch("aiohttp.ClientSession", return_value=session) as client_session,
             patch(
                 "aiperf.transports.aiohttp_client.create_tcp_connector",
                 return_value=None,
             ),
         ):
             ok = await _verify_operator_health("http://localhost")
+
         assert ok is True
+        assert client_session.call_args.kwargs["timeout"].total == 17.0
 
     @pytest.mark.asyncio
     async def test_non_200_returns_false(self) -> None:

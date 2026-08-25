@@ -33,17 +33,13 @@ from aiperf.kubernetes.console import (
 from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
+from aiperf.operator.environment import OperatorEnvironment
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
 
 
-def _results_server_port() -> int:
-    """Read the configured operator results-server port."""
-    return int(os.environ.get("AIPERF_RESULTS_SERVER_PORT", "8081"))
-
-
-RESULTS_SERVER_PORT = _results_server_port()
+RESULTS_SERVER_PORT = OperatorEnvironment.RESULTS.SERVER_PORT
 _REDIRECT_STATUSES = {301, 302, 307, 308}
 
 
@@ -97,6 +93,22 @@ def _get_no_redirects(
         if "allow_redirects" not in str(e):
             raise
         return session.get(url, **kwargs)
+
+
+def _get_with_request_timeout(
+    session: aiohttp.ClientSession,
+    url: str,
+) -> object:
+    """Start a short result API request with its configured timeout."""
+    timeout = aiohttp.ClientTimeout(
+        total=K8sEnvironment.RESULTS.REQUEST_TIMEOUT_SECONDS
+    )
+    try:
+        return session.get(url, timeout=timeout)
+    except TypeError as e:
+        if "timeout" not in str(e):
+            raise
+        return session.get(url)
 
 
 async def _download_and_decompress(
@@ -302,7 +314,7 @@ async def _list_operator_files(
 ) -> list[dict] | None:
     list_url = _result_base_url(api_base, namespace, job_id, run)
     try:
-        async with session.get(list_url) as resp:
+        async with _get_with_request_timeout(session, list_url) as resp:
             if resp.status == 404:
                 print_error(f"No results stored for {namespace}/{job_id}")
                 return None
@@ -350,7 +362,7 @@ async def _resolve_operator_run(
 
     runs_url = f"{api_base}/api/v1/results/{namespace}/{job_id}/runs"
     try:
-        async with session.get(runs_url) as resp:
+        async with _get_with_request_timeout(session, runs_url) as resp:
             if resp.status == 404:
                 print_error(f"No runs found for {namespace}/{job_id}")
                 return None
@@ -518,7 +530,7 @@ async def _list_sweep_operator_files(
 ) -> list[dict] | None:
     list_url = _sweep_artifacts_base_url(api_base, namespace, sweep_name, run)
     try:
-        async with session.get(list_url) as resp:
+        async with _get_with_request_timeout(session, list_url) as resp:
             if resp.status == 404:
                 print_warning(
                     f"No aggregate artifacts stored for sweep {namespace}/{sweep_name} run {run}"

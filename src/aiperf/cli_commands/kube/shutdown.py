@@ -93,7 +93,7 @@ async def shutdown(
             session.post(
                 f"http://localhost:{port}/api/shutdown",
                 timeout=aiohttp.ClientTimeout(
-                    total=K8sEnvironment.RESULTS.CONTROL_REQUEST_TIMEOUT_SECONDS
+                    total=K8sEnvironment.RESULTS.REQUEST_TIMEOUT_SECONDS
                 ),
             ) as resp,
         ):

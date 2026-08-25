@@ -26,6 +26,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.results_markers import READY_MARKER_NAME
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.results_artifacts import (
     API_RESULTS_FILES_PATH,
     _download_all_artifacts,
@@ -33,6 +34,7 @@ from aiperf.kubernetes.results_artifacts import (
 )
 from aiperf.kubernetes.results_operator import (
     _download_all_operator_files,
+    _download_all_sweep_operator_files,
     _download_operator_file,
     _list_operator_files,
     _resolve_operator_run,
@@ -278,6 +280,8 @@ class TestOperatorApiDiscovery:
         monkeypatch.setenv("HTTP_PROXY", "http://corp-proxy.invalid:3128")
         monkeypatch.setenv("HTTPS_PROXY", "http://corp-proxy.invalid:3128")
         monkeypatch.setenv("AIPERF_KUBE_AUTH_TOKEN", "secret-token-not-for-localhost")
+        monkeypatch.setattr(K8sEnvironment.RESULTS, "REQUEST_TIMEOUT_SECONDS", 31.0)
+        monkeypatch.setattr(K8sEnvironment.RESULTS, "DOWNLOAD_TIMEOUT_SECONDS", 301.0)
         _RecordingClientSession.instances.clear()
 
         with (
@@ -297,8 +301,14 @@ class TestOperatorApiDiscovery:
         assert downloaded is not None
         assert downloaded.downloaded == [("metrics.json", 18)]
         [client] = _RecordingClientSession.instances
+        assert client.kwargs["timeout"].total == 301.0
         assert client.kwargs["auto_decompress"] is False
         assert client.kwargs.get("trust_env") is not True
+        assert [kwargs["timeout"].total for kwargs in client.session.get_kwargs[:2]] == [
+            31.0,
+            31.0,
+        ]
+        assert "timeout" not in client.session.get_kwargs[2]
         assert "headers" not in client.kwargs
         assert client.closed is True
         assert all(
@@ -460,8 +470,10 @@ class TestReservedFilenamesAndIdempotence:
 
     @pytest.mark.asyncio
     async def test_download_all_artifacts_skips_reserved_ready_marker_and_keeps_neighbor(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr(K8sEnvironment.RESULTS, "REQUEST_TIMEOUT_SECONDS", 32.0)
+        monkeypatch.setattr(K8sEnvironment.RESULTS, "DOWNLOAD_TIMEOUT_SECONDS", 302.0)
         session = _QueuedSession(
             {
                 "http://localhost:19090/api/results/list": [
@@ -480,18 +492,54 @@ class TestReservedFilenamesAndIdempotence:
             }
         )
 
-        with patch("aiohttp.ClientSession", return_value=session):
+        with patch("aiohttp.ClientSession", return_value=session) as client_session:
             downloaded = await _download_all_artifacts(
                 "http://localhost:19090", "llama3-latency", tmp_path
             )
 
         assert downloaded == [("metrics.json", 12)]
+        assert client_session.call_args.kwargs["timeout"].total == 302.0
+        assert session.get_kwargs[0]["timeout"].total == 32.0
+        assert "timeout" not in session.get_kwargs[1]
         assert (tmp_path / READY_MARKER_NAME).exists() is False
         assert (tmp_path / "metrics.json").read_bytes() == b'{"ok": true}'
         assert (
             "http://localhost:19090/api/results/files/.aiperf_results_ready.json"
             not in session.get_calls
         )
+
+    @pytest.mark.asyncio
+    async def test_download_all_sweep_files_uses_request_and_download_timeouts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(K8sEnvironment.RESULTS, "REQUEST_TIMEOUT_SECONDS", 33.0)
+        monkeypatch.setattr(K8sEnvironment.RESULTS, "DOWNLOAD_TIMEOUT_SECONDS", 303.0)
+        base = (
+            "http://localhost:31881/api/v1/sweeps/bench-prod/sweep-1/"
+            "epochs/1770000000/artifacts"
+        )
+        session = _QueuedSession(
+            {
+                base: [_Response(json_data={"files": [{"name": "aggregate.json"}]})],
+                f"{base}/aggregate.json": [_Response(body=b'{"ok": true}')],
+            }
+        )
+
+        with patch("aiohttp.ClientSession", return_value=session) as client_session:
+            outcome = await _download_all_sweep_operator_files(
+                api_base="http://localhost:31881",
+                namespace="bench-prod",
+                sweep_name="sweep-1",
+                output_dir=tmp_path,
+                run="1770000000",
+            )
+
+        assert outcome is not None
+        assert outcome.downloaded == [("aggregate.json", 12)]
+        assert (tmp_path / "aggregate.json").read_bytes() == b'{"ok": true}'
+        assert client_session.call_args.kwargs["timeout"].total == 303.0
+        assert session.get_kwargs[0]["timeout"].total == 33.0
+        assert "timeout" not in session.get_kwargs[1]
 
     @pytest.mark.asyncio
     async def test_download_all_operator_files_skips_bad_entry_and_downloads_neighbor(
