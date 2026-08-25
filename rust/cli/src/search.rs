@@ -556,8 +556,9 @@ pub fn op_str(op: SlaOp) -> &'static str {
 
 /// Build the SLA filter list for the `max-concurrency-under-sla` recipe from the
 /// CLI SLA flags: TTFT p95, inter-token p95
-/// (`--tpot-sla-ms`/`--itl-sla-ms` alias), e2e p99, error-rate p99 — in that
-/// order. An empty result means no SLA target was supplied.
+/// (`--tpot-sla-ms`/`--itl-sla-ms` alias), e2e p99, error-rate average — in that
+/// order. The error-rate CLI value is a fraction while the exported metric is
+/// in percentage points. An empty result means no SLA target was supplied.
 pub fn build_sla_filters(flags: &ProfileFlags) -> Vec<SlaFilter> {
     let mut filters = Vec::new();
     if let Some(ttft) = flags.ttft_sla_ms {
@@ -587,14 +588,18 @@ pub fn build_sla_filters(flags: &ProfileFlags) -> Vec<SlaFilter> {
         });
     }
     if let Some(err) = flags.error_rate_sla {
-        filters.push(SlaFilter {
-            metric_tag: "request_error_rate".into(),
-            stat: "p99".into(),
-            op: SlaOp::Lt,
-            threshold: err,
-        });
+        filters.push(error_rate_sla_filter(err));
     }
     filters
+}
+
+fn error_rate_sla_filter(fraction: f64) -> SlaFilter {
+    SlaFilter {
+        metric_tag: "request_error_rate".into(),
+        stat: "avg".into(),
+        op: SlaOp::Lt,
+        threshold: fraction * 100.0,
+    }
 }
 
 /// Resolve the concurrency search bounds and SLA filters shared by the
@@ -928,5 +933,14 @@ mod tests {
             logspace_int_steps(256.0, 32768.0, 8).unwrap(),
             vec![256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
         );
+    }
+
+    #[test]
+    fn error_rate_sla_uses_average_percentage_points() {
+        let filter = error_rate_sla_filter(0.05);
+
+        assert_eq!(filter.metric_tag, "request_error_rate");
+        assert_eq!(filter.stat, "avg");
+        assert_eq!(filter.threshold, 5.0);
     }
 }
