@@ -58,8 +58,8 @@ pub use media::{InlineMediaResolver, MediaResolver, PrefetchMediaResolver};
 pub use model::{
     AccuracyAssociation, BranchId, ContentGroup, Conversation, ConversationBranch,
     ConversationBranchMode, ConversationContextMode, ConversationMetadata, CorrelationId,
-    DagMetadata, DispatchTiming, MediaKind, ModelId, NodeId, PrerequisiteKind, SessionId, Turn,
-    TurnMetadata, TurnPrerequisite,
+    DagMetadata, DispatchTiming, MediaKind, ModelId, NodeId, PrerequisiteKind, RecordedOutcome,
+    SessionId, Turn, TurnMetadata, TurnPrerequisite,
 };
 pub use prompt::{
     CorpusPromptGeneratorFactory, GeneratedPrompt, PreparedCorpusPromptGeneratorFactory,

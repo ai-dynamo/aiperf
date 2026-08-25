@@ -34,7 +34,8 @@ use crate::dataset::loader::{
     DatasetLoader, DatasetProbe, DatasetSource, LoadConfig, RawRow, RowOrigin,
 };
 use crate::dataset::model::{
-    ContentGroup, Conversation, ConversationContextMode, MediaKind, SessionId, Turn,
+    ContentGroup, Conversation, ConversationContextMode, MediaKind, RecordedOutcome, SessionId,
+    Turn,
 };
 use crate::dataset::segment::SegmentPool;
 use crate::dataset::tokenizer::TextTokenizer;
@@ -71,6 +72,8 @@ struct BasetenRow {
     provided_session_id: Option<String>,
     poor_man_session_id: Option<String>,
     duration_e2e_ms: Option<f64>,
+    duration_ttft_ms: Option<f64>,
+    cached_tokens_reference: Option<u64>,
     block_size: Option<usize>,
     /// Normalized (min-subtracted, speedup-scaled) timestamp in ms. Cleared
     /// to `None` for closed-loop continuation turns once back-pressure
@@ -118,6 +121,8 @@ fn parse_row(value: &Value, origin: &impl std::fmt::Display) -> Result<BasetenRo
         .map(|values| values.iter().filter_map(Value::as_i64).collect())
         .unwrap_or_default();
     let duration_e2e_ms = field("duration_e2e_ms").and_then(Value::as_f64);
+    let duration_ttft_ms = field("duration_ttft_ms").and_then(Value::as_f64);
+    let cached_tokens_reference = field("cached_tokens_reference").and_then(Value::as_u64);
     let block_size = field("block_size")
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok());
@@ -130,6 +135,8 @@ fn parse_row(value: &Value, origin: &impl std::fmt::Display) -> Result<BasetenRo
         provided_session_id: stringify_session_value(field(COL_SESSION)),
         poor_man_session_id: stringify_session_value(field(COL_POOR_MAN_SESSION)),
         duration_e2e_ms,
+        duration_ttft_ms,
+        cached_tokens_reference,
         block_size,
         timestamp: Some(timestamp_start_unix_ms as f64),
         delay: None,
@@ -575,6 +582,8 @@ fn row_to_value(row: &BasetenRow) -> Value {
         "provided_session_id": row.provided_session_id,
         "poor_man_session_id": row.poor_man_session_id,
         "duration_e2e_ms": row.duration_e2e_ms,
+        "duration_ttft_ms": row.duration_ttft_ms,
+        "cached_tokens_reference": row.cached_tokens_reference,
         "block_size": row.block_size,
         "timestamp": row.timestamp,
         "output_length": row.output_length,
@@ -611,6 +620,10 @@ fn row_from_value(value: &Value) -> Result<BasetenRow> {
             .get("poor_man_session_id")
             .and_then(|value| value.as_str().map(str::to_string)),
         duration_e2e_ms: object.get("duration_e2e_ms").and_then(Value::as_f64),
+        duration_ttft_ms: object.get("duration_ttft_ms").and_then(Value::as_f64),
+        cached_tokens_reference: object
+            .get("cached_tokens_reference")
+            .and_then(Value::as_u64),
         block_size: object
             .get("block_size")
             .and_then(Value::as_u64)
@@ -783,6 +796,7 @@ impl Composer for BasetenTraceComposer {
                 let mut turn = Turn {
                     timestamp_ms: row.timestamp,
                     delay_ms: row.delay,
+                    recorded_outcome: recorded_outcome(row),
                     input_tokens: Some(row.input_tokens),
                     max_tokens: Some(capped_output_length),
                     extra_body: extra_body_handle,
@@ -801,6 +815,20 @@ impl Composer for BasetenTraceComposer {
         }
         Ok(conversations)
     }
+}
+
+fn recorded_outcome(row: &BasetenRow) -> Option<RecordedOutcome> {
+    if row.duration_e2e_ms.is_none()
+        && row.duration_ttft_ms.is_none()
+        && row.cached_tokens_reference.is_none()
+    {
+        return None;
+    }
+    Some(RecordedOutcome {
+        duration_e2e_ms: row.duration_e2e_ms,
+        duration_ttft_ms: row.duration_ttft_ms,
+        cached_tokens_reference: row.cached_tokens_reference,
+    })
 }
 
 fn apply_idle_gap_cap(rows: &mut [BasetenRow], cap_ms: Option<f64>) {
@@ -890,6 +918,8 @@ mod tests {
         output_tokens: i64,
         provided_session_id: &'static str,
         duration_e2e_ms: i64,
+        duration_ttft_ms: Option<i64>,
+        cached_tokens_reference: Option<i64>,
     }
 
     /// Write a minimal Baseten-shaped Parquet fixture (the required columns
@@ -905,6 +935,8 @@ mod tests {
                     REQUIRED INT64 output_tokens;
                     REQUIRED BYTE_ARRAY provided_session_id (UTF8);
                     REQUIRED INT64 duration_e2e_ms;
+                    OPTIONAL INT64 duration_ttft_ms;
+                    OPTIONAL INT64 cached_tokens_reference;
                 }",
             )
             .unwrap(),
@@ -993,6 +1025,36 @@ mod tests {
             .unwrap();
         column.close().unwrap();
 
+        let mut column = row_group.next_column().unwrap().unwrap();
+        let values = rows
+            .iter()
+            .filter_map(|row| row.duration_ttft_ms)
+            .collect::<Vec<_>>();
+        let definition_levels = rows
+            .iter()
+            .map(|row| i16::from(row.duration_ttft_ms.is_some()))
+            .collect::<Vec<_>>();
+        column
+            .typed::<Int64Type>()
+            .write_batch(&values, Some(&definition_levels), None)
+            .unwrap();
+        column.close().unwrap();
+
+        let mut column = row_group.next_column().unwrap().unwrap();
+        let values = rows
+            .iter()
+            .filter_map(|row| row.cached_tokens_reference)
+            .collect::<Vec<_>>();
+        let definition_levels = rows
+            .iter()
+            .map(|row| i16::from(row.cached_tokens_reference.is_some()))
+            .collect::<Vec<_>>();
+        column
+            .typed::<Int64Type>()
+            .write_batch(&values, Some(&definition_levels), None)
+            .unwrap();
+        column.close().unwrap();
+
         row_group.close().unwrap();
         writer.close().unwrap();
         path
@@ -1036,6 +1098,8 @@ mod tests {
                 output_tokens: 1,
                 provided_session_id: "s",
                 duration_e2e_ms: 0,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             }],
         );
         assert!(BasetenTraceDatasetLoader.can_load(&DatasetProbe {
@@ -1064,6 +1128,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "s1",
                     duration_e2e_ms: 200,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
                 FixtureRow {
                     timestamp_start_unix_ms: 3_000,
@@ -1072,6 +1138,8 @@ mod tests {
                     output_tokens: 0, // canceled request: output_tokens=0 floors to 1.
                     provided_session_id: "s2",
                     duration_e2e_ms: 100,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
             ],
         );
@@ -1111,6 +1179,8 @@ mod tests {
                 output_tokens: 100,
                 provided_session_id: "s1",
                 duration_e2e_ms: 0,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             }],
         );
         let mut registry = LoaderRegistry::new();
@@ -1154,6 +1224,8 @@ mod tests {
                 output_tokens: 4,
                 provided_session_id: "s1",
                 duration_e2e_ms: 0,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             }],
         );
         let mut options = Map::new();
@@ -1161,6 +1233,104 @@ mod tests {
         options.insert("force_min_tokens".into(), json!(false));
         let dataset = build(path, options).await;
         assert!(dataset.conversations()[0].turns[0].extra_body.is_none());
+    }
+
+    #[tokio::test]
+    async fn recorded_outcomes_survive_when_request_hints_are_disabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = write_fixture(
+            directory.path(),
+            &[FixtureRow {
+                timestamp_start_unix_ms: 0,
+                prompt: "hi",
+                input_tokens: 128,
+                output_tokens: 4,
+                provided_session_id: "s1",
+                duration_e2e_ms: 800,
+                duration_ttft_ms: Some(120),
+                cached_tokens_reference: Some(64),
+            }],
+        );
+        let mut options = Map::new();
+        options.insert("omit_kv_hints".into(), json!(true));
+        options.insert("force_min_tokens".into(), json!(false));
+
+        let dataset = build(path, options).await;
+        let turn = &dataset.conversations()[0].turns[0];
+        let outcome = turn.recorded_outcome.as_ref().unwrap();
+        assert_eq!(outcome.duration_e2e_ms, Some(800.0));
+        assert_eq!(outcome.duration_ttft_ms, Some(120.0));
+        assert_eq!(outcome.cached_tokens_reference, Some(64));
+        assert!(turn.extra_body.is_none());
+    }
+
+    #[tokio::test]
+    async fn recorded_outcomes_survive_closed_loop_replay() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = write_fixture(
+            directory.path(),
+            &[
+                FixtureRow {
+                    timestamp_start_unix_ms: 0,
+                    prompt: "turn one",
+                    input_tokens: 128,
+                    output_tokens: 5,
+                    provided_session_id: "shared",
+                    duration_e2e_ms: 200,
+                    duration_ttft_ms: Some(40),
+                    cached_tokens_reference: Some(0),
+                },
+                FixtureRow {
+                    timestamp_start_unix_ms: 1_000,
+                    prompt: "turn two",
+                    input_tokens: 192,
+                    output_tokens: 5,
+                    provided_session_id: "shared",
+                    duration_e2e_ms: 100,
+                    duration_ttft_ms: Some(30),
+                    cached_tokens_reference: Some(128),
+                },
+            ],
+        );
+        let mut options = Map::new();
+        options.insert("open_loop_replay".into(), json!(false));
+
+        let dataset = build(path, options).await;
+        let turns = &dataset.conversations()[0].turns;
+        assert_eq!(turns[1].delay_ms, Some(800.0));
+        let first = turns[0].recorded_outcome.as_ref().unwrap();
+        assert_eq!(first.duration_ttft_ms, Some(40.0));
+        assert_eq!(first.cached_tokens_reference, Some(0));
+        let second = turns[1].recorded_outcome.as_ref().unwrap();
+        assert_eq!(second.duration_ttft_ms, Some(30.0));
+        assert_eq!(second.cached_tokens_reference, Some(128));
+    }
+
+    #[tokio::test]
+    async fn missing_ttft_and_cached_outcomes_remain_absent() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = write_fixture(
+            directory.path(),
+            &[FixtureRow {
+                timestamp_start_unix_ms: 0,
+                prompt: "hi",
+                input_tokens: 1,
+                output_tokens: 1,
+                provided_session_id: "s",
+                duration_e2e_ms: 0,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
+            }],
+        );
+
+        let dataset = build(path, Map::new()).await;
+        let outcome = dataset.conversations()[0].turns[0]
+            .recorded_outcome
+            .as_ref()
+            .unwrap();
+        assert_eq!(outcome.duration_e2e_ms, Some(0.0));
+        assert_eq!(outcome.duration_ttft_ms, None);
+        assert_eq!(outcome.cached_tokens_reference, None);
     }
 
     #[tokio::test]
@@ -1176,6 +1346,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 50,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
                 FixtureRow {
                     timestamp_start_unix_ms: 500,
@@ -1184,6 +1356,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 50,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
             ],
         );
@@ -1209,6 +1383,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 200,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
                 FixtureRow {
                     timestamp_start_unix_ms: 1_000,
@@ -1217,6 +1393,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 100,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
             ],
         );
@@ -1244,6 +1422,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 50,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
                 FixtureRow {
                     timestamp_start_unix_ms: 500,
@@ -1252,6 +1432,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 50,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
             ],
         );
@@ -1288,6 +1470,8 @@ mod tests {
                     provided_session_id: p.map(str::to_string),
                     poor_man_session_id: m.map(str::to_string),
                     duration_e2e_ms: None,
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                     block_size: None,
                     timestamp: None,
                     delay: None,
@@ -1322,6 +1506,8 @@ mod tests {
                 provided_session_id: Some("a".into()),
                 poor_man_session_id: None,
                 duration_e2e_ms: None,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
                 block_size: None,
                 timestamp: Some(0.0),
                 delay: None,
@@ -1335,6 +1521,8 @@ mod tests {
                 provided_session_id: Some("a".into()),
                 poor_man_session_id: None,
                 duration_e2e_ms: None,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
                 block_size: None,
                 timestamp: Some(10.0),
                 delay: None,
@@ -1348,6 +1536,8 @@ mod tests {
                 provided_session_id: Some("b".into()),
                 poor_man_session_id: None,
                 duration_e2e_ms: None,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
                 block_size: None,
                 timestamp: Some(20.0),
                 delay: None,
@@ -1361,6 +1551,8 @@ mod tests {
                 provided_session_id: Some("c".into()),
                 poor_man_session_id: None,
                 duration_e2e_ms: None,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
                 block_size: None,
                 timestamp: Some(30.0),
                 delay: None,
