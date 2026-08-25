@@ -5,6 +5,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -47,8 +50,8 @@ from aiperf.operator.environment import (
         param(_SweepControllerSettings, "AIPERF_SWEEP_CONTROLLER_OPERATOR_API_REQUEST_TIMEOUT_SECONDS", "OPERATOR_API_REQUEST_TIMEOUT_SECONDS", "12", 12.0, id="operator-api-timeout"),
         param(_SweepControllerSettings, "AIPERF_SWEEP_CONTROLLER_OPERATOR_API_INITIAL_BACKOFF_SECONDS", "OPERATOR_API_INITIAL_BACKOFF_SECONDS", "0.75", 0.75, id="operator-api-backoff"),
         param(_SweepControllerSettings, "AIPERF_SWEEP_CONTROLLER_OPERATOR_API_BACKOFF_MULTIPLIER", "OPERATOR_API_BACKOFF_MULTIPLIER", "2.5", 2.5, id="operator-api-multiplier"),
-        param(_SweepControllerSettings, "AIPERF_SWEEP_CONTROLLER_RUNS_CAS_MAX_ATTEMPTS", "RUNS_CAS_MAX_ATTEMPTS", "9", 9, id="runs-cas"),
         param(_ReconcileSettings, "AIPERF_OPERATOR_RECONCILE_CONFLICT_RETRY_DELAY_SECONDS", "CONFLICT_RETRY_DELAY_SECONDS", "0.2", 0.2, id="reconcile-conflict"),
+        param(_ReconcileSettings, "AIPERF_OPERATOR_RECONCILE_RUNS_CAS_MAX_ATTEMPTS", "RUNS_CAS_MAX_ATTEMPTS", "9", 9, id="runs-cas"),
         param(_ReconcileSettings, "AIPERF_OPERATOR_RECONCILE_EVENT_RETRY_DELAY_SECONDS", "EVENT_RETRY_DELAY_SECONDS", "1.2", 1.2, id="reconcile-event"),
         param(_ReconcileSettings, "AIPERF_OPERATOR_RECONCILE_PERSISTENCE_RETRY_DELAY_SECONDS", "PERSISTENCE_RETRY_DELAY_SECONDS", "2.2", 2.2, id="reconcile-persistence"),
         param(_ReconcileSettings, "AIPERF_OPERATOR_RECONCILE_STATE_RETRY_DELAY_SECONDS", "STATE_RETRY_DELAY_SECONDS", "3.2", 3.2, id="reconcile-state"),
@@ -221,6 +224,40 @@ async def test_result_retry_policy_override_controls_backoff(
         )
 
     assert sleeps == [2.0, 4.0]
+
+
+def test_cleanup_timer_delay_overrides_reach_kopf_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kopf._core.intents import registries
+
+    from aiperf.operator import main as operator_main
+
+    isolated_registry = registries.OperatorRegistry()
+    with monkeypatch.context() as context:
+        context.setattr(
+            OperatorEnvironment.RESULTS, "CLEANUP_INITIAL_DELAY_SECONDS", 17.0
+        )
+        context.setattr(OperatorEnvironment.RESULTS, "CLEANUP_IDLE_SECONDS", 23.0)
+        context.setattr(
+            registries, "get_default_registry", lambda: isolated_registry
+        )
+        importlib.reload(operator_main)
+
+    timer = next(
+        handler
+        for handler in isolated_registry._spawning
+        if handler.fn is operator_main.cleanup_old_results
+    )
+    assert timer.initial_delay == 17.0
+    assert timer.idle == 23.0
+
+    restored_registry = registries.OperatorRegistry()
+    with monkeypatch.context() as context:
+        context.setattr(
+            registries, "get_default_registry", lambda: restored_registry
+        )
+        importlib.reload(operator_main)
 
 
 @pytest.mark.asyncio
@@ -418,9 +455,7 @@ async def test_runs_cas_and_event_delay_overrides_reach_retry_loop(
     append_patch = AsyncMock(return_value="retry")
     monkeypatch.setattr(_child_runs, "_read_runs_state", read_state)
     monkeypatch.setattr(_child_runs, "_append_run_entry_patch", append_patch)
-    monkeypatch.setattr(
-        OperatorEnvironment.SWEEP_CONTROLLER, "RUNS_CAS_MAX_ATTEMPTS", 2
-    )
+    monkeypatch.setattr(OperatorEnvironment.RECONCILE, "RUNS_CAS_MAX_ATTEMPTS", 2)
     monkeypatch.setattr(
         OperatorEnvironment.RECONCILE, "EVENT_RETRY_DELAY_SECONDS", 1.75
     )
@@ -436,6 +471,155 @@ async def test_runs_cas_and_event_delay_overrides_reach_retry_loop(
     assert read_state.await_count == 2
     assert append_patch.await_count == 2
     assert exc_info.value.delay == 1.75
+
+
+@pytest.mark.asyncio
+async def test_conflict_delay_override_reaches_event_status_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kubernetes_asyncio.client import ApiException
+
+    from aiperf.operator.handlers import monitor
+
+    patch_status = AsyncMock(
+        side_effect=ApiException(status=409, reason="resourceVersion conflict")
+    )
+    custom = SimpleNamespace(patch_namespaced_custom_object_status=patch_status)
+
+    @asynccontextmanager
+    async def fake_k8s_client() -> AsyncIterator[MagicMock]:
+        yield MagicMock(name="ApiClient")
+
+    monkeypatch.setattr(
+        OperatorEnvironment.RECONCILE, "CONFLICT_RETRY_DELAY_SECONDS", 0.375
+    )
+    monkeypatch.setattr(
+        monitor,
+        "_live_event_status_fence",
+        AsyncMock(return_value=({"status": {}}, "resource-version", Phase.RUNNING)),
+    )
+    monkeypatch.setattr(monitor, "k8s_client", fake_k8s_client)
+    monkeypatch.setattr(monitor.client, "CustomObjectsApi", lambda _api: custom)
+
+    with pytest.raises(kopf.TemporaryError) as exc_info:
+        await monitor._patch_event_status(
+            body={"metadata": {"name": "job", "uid": "job-uid"}},
+            namespace="ns",
+            name="job",
+            status_patch_builder=lambda _body: {"activeWorkers": 1},
+        )
+
+    assert exc_info.value.delay == 0.375
+    patch_status.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_persistence_delay_override_reaches_create_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aiperf.operator.handlers import create
+
+    monkeypatch.setattr(
+        OperatorEnvironment.RECONCILE, "PERSISTENCE_RETRY_DELAY_SECONDS", 2.25
+    )
+    monkeypatch.setattr(
+        create,
+        "save_job_spec_file",
+        AsyncMock(side_effect=OSError("PVC unavailable")),
+    )
+
+    with pytest.raises(kopf.TemporaryError) as exc_info:
+        await create._persist_spec_and_index(
+            {},
+            "ns",
+            "job",
+            "job-id",
+            body={"metadata": {"creationTimestamp": "2026-08-25T12:00:00Z"}},
+        )
+
+    assert exc_info.value.delay == 2.25
+
+
+@pytest.mark.asyncio
+async def test_create_harvest_delay_override_reaches_create_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from kubernetes_asyncio.client import ApiException
+
+    from aiperf.operator.handlers import create
+
+    monkeypatch.setattr(
+        OperatorEnvironment.RECONCILE,
+        "CREATE_HARVEST_RETRY_DELAY_SECONDS",
+        4.25,
+    )
+    monkeypatch.setattr(
+        create,
+        "_create_resources",
+        AsyncMock(side_effect=ApiException(status=503, reason="Unavailable")),
+    )
+    patch = MagicMock()
+    patch.status = {}
+
+    with pytest.raises(kopf.TemporaryError) as exc_info:
+        await create.on_create(
+            body={"metadata": {"name": "job", "uid": "job-uid"}},
+            spec={},
+            name="job",
+            namespace="ns",
+            uid="job-uid",
+            patch=patch,
+        )
+
+    assert exc_info.value.delay == 4.25
+
+
+@pytest.mark.asyncio
+async def test_ttl_delete_delay_override_reaches_sweep_reaper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kubernetes_asyncio
+    from kubernetes_asyncio.client import ApiException
+
+    import aiperf.kubernetes.client as kclient
+    from aiperf.operator.handlers.sweep import lifecycle
+
+    delete = AsyncMock(side_effect=ApiException(status=503, reason="Unavailable"))
+    custom = SimpleNamespace(delete_namespaced_custom_object=delete)
+    fake_k8s_module = SimpleNamespace(
+        CustomObjectsApi=lambda _api: custom,
+        V1Preconditions=lambda *, uid: SimpleNamespace(uid=uid),
+        V1DeleteOptions=lambda *, preconditions: SimpleNamespace(
+            preconditions=preconditions
+        ),
+    )
+
+    @asynccontextmanager
+    async def fake_k8s_client() -> AsyncIterator[MagicMock]:
+        yield MagicMock(name="ApiClient")
+
+    monkeypatch.setattr(
+        OperatorEnvironment.RECONCILE, "TTL_DELETE_RETRY_DELAY_SECONDS", 8.5
+    )
+    monkeypatch.setattr(kubernetes_asyncio, "client", fake_k8s_module)
+    monkeypatch.setattr(kclient, "k8s_client", fake_k8s_client)
+
+    with pytest.raises(kopf.TemporaryError) as exc_info:
+        await lifecycle.maybe_reap_finished(
+            body={
+                "metadata": {"name": "sweep", "namespace": "ns", "uid": "sweep-uid"},
+                "spec": {"ttlSecondsAfterFinished": 0},
+            },
+            status={
+                "phase": "Succeeded",
+                "completionTime": "2020-01-01T00:00:00Z",
+            },
+            name="sweep",
+            namespace="ns",
+        )
+
+    assert exc_info.value.delay == 8.5
+    delete.assert_awaited_once()
 
 
 def test_state_retry_override_reaches_identity_fence(

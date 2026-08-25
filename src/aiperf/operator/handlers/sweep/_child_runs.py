@@ -128,7 +128,7 @@ async def append_run_entry(
     from kubernetes_asyncio import client
 
     custom_objects = client.CustomObjectsApi(api)
-    max_attempts = OperatorEnvironment.SWEEP_CONTROLLER.RUNS_CAS_MAX_ATTEMPTS
+    max_attempts = OperatorEnvironment.RECONCILE.RUNS_CAS_MAX_ATTEMPTS
     for _attempt in range(max_attempts):
         (
             current_runs,

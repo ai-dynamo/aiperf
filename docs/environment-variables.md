@@ -579,6 +579,7 @@ Retry delays for kopf reconciliation categories.
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_OPERATOR_RECONCILE_CONFLICT_RETRY_DELAY_SECONDS` | `1.0` | ≥ 0, ≤ 300 | Delay before rebasing status after an optimistic-write conflict. |
+| `AIPERF_OPERATOR_RECONCILE_RUNS_CAS_MAX_ATTEMPTS` | `20` | ≥ 1, ≤ 100 | Maximum resourceVersion CAS attempts when appending status.runs. |
 | `AIPERF_OPERATOR_RECONCILE_EVENT_RETRY_DELAY_SECONDS` | `5.0` | ≥ 0, ≤ 300 | Delay before retrying a watch-event read or status write. |
 | `AIPERF_OPERATOR_RECONCILE_PERSISTENCE_RETRY_DELAY_SECONDS` | `10.0` | ≥ 0, ≤ 300 | Delay before retrying transient monitor or durable-state failures. |
 | `AIPERF_OPERATOR_RECONCILE_STATE_RETRY_DELAY_SECONDS` | `15.0` | ≥ 0, ≤ 300 | Delay before retrying identity-fenced state reconciliation. |
@@ -734,7 +735,6 @@ Sweep-controller pod settings. Used by the sweep-controller pod (`aiperf.sweep_c
 | `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_REQUEST_TIMEOUT_SECONDS` | `30.0` | > 0, ≤ 600 | Total timeout in seconds for one operator-API summary request. |
 | `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_INITIAL_BACKOFF_SECONDS` | `1.0` | ≥ 0, ≤ 60 | Initial backoff seconds after a transient operator-API failure. |
 | `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Operator-API retry backoff multiplier. |
-| `AIPERF_SWEEP_CONTROLLER_RUNS_CAS_MAX_ATTEMPTS` | `20` | ≥ 1, ≤ 100 | Maximum resourceVersion CAS attempts when appending status.runs. |
 | `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_DELETION_TIMEOUT_SECONDS` | `60.0` | > 0, ≤ 600 | Max seconds the sweep-controller will wait for a same-named AIPerfJob from a prior sweep run to finish cascade-deletion before raising ChildNameConflictError. Hit when a user deletes and recreates a sweep with the same name while old children are still terminating. |
 | `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_POLL_INTERVAL_SECONDS` | `2.0` | > 0, ≤ 30 | Poll interval (seconds) while waiting for a deleting same-named AIPerfJob to disappear. See STALE_CHILD_DELETION_TIMEOUT_SECONDS. |
 | `AIPERF_SWEEP_CONTROLLER_CANCEL_GRACE_SECONDS` | `120.0` | > 0, ≤ 3600 | Max seconds the sweep-controller will keep polling a child AIPerfJob for a terminal phase after requesting cancel before giving up and advancing the sweep. Bounds the post-cancel wait so a stuck child (stalled operator cancel path, wedged pod, repeatedly-failing JobSet delete) cannot wedge the whole sweep indefinitely. |

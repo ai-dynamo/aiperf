@@ -311,12 +311,6 @@ class _SweepControllerSettings(BaseSettings):
         le=10.0,
         description="Operator-API retry backoff multiplier.",
     )
-    RUNS_CAS_MAX_ATTEMPTS: int = Field(
-        default=20,
-        ge=1,
-        le=100,
-        description="Maximum resourceVersion CAS attempts when appending status.runs.",
-    )
     STALE_CHILD_DELETION_TIMEOUT_SECONDS: float = Field(
         default=60.0,
         gt=0,
@@ -405,6 +399,12 @@ class _ReconcileSettings(BaseSettings):
         ge=0,
         le=300,
         description="Delay before rebasing status after an optimistic-write conflict.",
+    )
+    RUNS_CAS_MAX_ATTEMPTS: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum resourceVersion CAS attempts when appending status.runs.",
     )
     EVENT_RETRY_DELAY_SECONDS: float = Field(
         default=5.0,
