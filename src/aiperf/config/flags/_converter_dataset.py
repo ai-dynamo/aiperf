@@ -565,6 +565,34 @@ def _apply_implicit_media_batch(d: dict[str, Any], cli: CLIConfig) -> None:
             media["batch_size"] = 1
 
 
+def apply_implicit_media_batch_override(
+    override: dict[str, Any], existing_dataset: dict[str, Any]
+) -> None:
+    """Materialize batch_size=1 for a media block the override newly shapes,
+    when neither the override nor the existing YAML dataset already carries
+    a batch_size for that modality.
+
+    ``_apply_implicit_media_batch`` is CLI-only-path behavior: applied
+    blindly as an override it would reset a YAML batch size the user never
+    mentioned. But when the YAML has no block for that modality at all,
+    there is nothing to protect, and the model default ``batch_size=0``
+    means "disabled" -- a media-shape flag (e.g. ``--image-width-mean``)
+    with no batch_size anywhere then resolves to an *included but empty*
+    modality instead of the batch size of 1 the CLI-only path applies for
+    the same flags, and the request silently degrades to text-only.
+    """
+    for media_key in ("images", "audio", "video"):
+        media = override.get(media_key)
+        if not media or "batch_size" in media:
+            continue
+        existing = existing_dataset.get(media_key)
+        if isinstance(existing, dict) and (
+            "batch_size" in existing or "batchSize" in existing
+        ):
+            continue
+        media["batch_size"] = 1
+
+
 # --- file-dataset incompatibility validation -----------------------------
 
 
