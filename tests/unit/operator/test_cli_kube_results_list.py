@@ -3,7 +3,7 @@
 """Unit tests for ``aiperf kube results list-runs``.
 
 The command opens an operator pod port-forward and hits
-``/api/v1/results/<ns>/<name>/runs``. Tests here mock the table renderer
+``/api/v1/results/<ns>/<name>/runs``. Tests here call the table renderer
 directly with fixture payloads, and mock the HTTP + port-forward chain for
 end-to-end command coverage.
 """
@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 
-from aiperf.cli_commands.kube._runs_render import print_runs_table
+from aiperf.cli_commands.kube.results import print_runs_table
 from aiperf.cli_commands.kube.results import _render_list_runs_payload, list_runs
 from aiperf.config.kube import KubeManageOptions
 from aiperf.kubernetes.console import LastBenchmarkInfo

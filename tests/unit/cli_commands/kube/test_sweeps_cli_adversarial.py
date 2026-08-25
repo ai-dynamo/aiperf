@@ -471,9 +471,7 @@ class TestSweepCommandPropagationAndOutput:
             "job_id": "latency-sweep-v03-t0",
             "runs": [{"run": "1770001234"}],
         }
-        with patch(
-            "aiperf.cli_commands.kube._runs_render.print_runs_table"
-        ) as mock_table:
+        with patch("aiperf.cli_commands.kube.results.print_runs_table") as mock_table:
             _render_list_runs_payload(payload, output=output, preview=False)
 
         captured = capsys.readouterr().out

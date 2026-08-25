@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
 from cyclopts import App, Parameter
 
 from aiperf.common.path_safety import safe_read_template_path
-from aiperf.config.flags.kube_cli_config import KubeCLIConfig
+from aiperf.config.flags.cli_config import KubeCLIConfig
 from aiperf.config.kube import KubeOptions
 from aiperf.kubernetes.cr_refs import AIPERF_SWEEP_KIND
 

@@ -31,7 +31,7 @@ and ``docs/dev/patterns.md`` § "Adding a New CLI Flag" for the recipe.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
@@ -4347,3 +4347,10 @@ class CLIConfig(BaseConfig):
     _gpu_telemetry_metrics_file: Path | None = None
 
     _server_metrics_urls: list[str] = []
+
+
+# The local worker-process limit does not apply to distributed Kubernetes
+# execution; KubeOptions.total_workers owns that surface instead.
+KubeCLIConfig: TypeAlias = Annotated[
+    CLIConfig, Parameter(parse=r"^(?!workers_max$).*$")
+]

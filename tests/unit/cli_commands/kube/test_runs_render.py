@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for `aiperf.cli_commands.kube._runs_render`.
+"""Tests for `aiperf.cli_commands.kube.results`.
 
 Two pure-rendering helpers:
 - `annotate_preview` mirrors server-side enforce_retention dry-run semantics:
@@ -50,7 +50,7 @@ class TestAnnotatePreview:
     """Mirrors server-side retention-policy dry-run."""
 
     def test_empty_runs_stamps_retention_only(self) -> None:
-        from aiperf.cli_commands.kube._runs_render import annotate_preview
+        from aiperf.cli_commands.kube.results import annotate_preview
 
         payload: dict[str, Any] = {"runs": []}
         annotate_preview(payload, {"retain_runs": 5, "retain_days": 7})
@@ -60,7 +60,7 @@ class TestAnnotatePreview:
 
     def test_count_keepers_protect_top_n_by_mtime(self) -> None:
         """retain_runs=2 keeps the two most-recent runs by mtime_epoch."""
-        from aiperf.cli_commands.kube._runs_render import annotate_preview
+        from aiperf.cli_commands.kube.results import annotate_preview
 
         runs = [
             _run(1, mtime_epoch=100),
@@ -78,7 +78,7 @@ class TestAnnotatePreview:
 
     def test_latest_epoch_always_protected(self) -> None:
         """latest_epoch is forced to would_delete=False even outside count keepers."""
-        from aiperf.cli_commands.kube._runs_render import annotate_preview
+        from aiperf.cli_commands.kube.results import annotate_preview
 
         runs = [
             _run(1, mtime_epoch=10),
@@ -97,7 +97,7 @@ class TestAnnotatePreview:
 
     def test_age_cutoff_does_not_override_count_keepers(self) -> None:
         """Age alone cannot delete runs retained by the count policy."""
-        from aiperf.cli_commands.kube._runs_render import annotate_preview
+        from aiperf.cli_commands.kube.results import annotate_preview
 
         now = int(time.time())
         day = 86400
@@ -117,7 +117,7 @@ class TestAnnotatePreview:
 
     def test_zero_retention_marks_everything_for_deletion(self) -> None:
         """retain_runs=0, retain_days=0 -> every non-latest run is would_delete=True."""
-        from aiperf.cli_commands.kube._runs_render import annotate_preview
+        from aiperf.cli_commands.kube.results import annotate_preview
 
         runs = [_run(1, mtime_epoch=10), _run(2, mtime_epoch=20)]
         payload = {"runs": runs, "latest_epoch": None}
@@ -127,7 +127,7 @@ class TestAnnotatePreview:
 
     def test_missing_runs_key_treated_as_empty(self) -> None:
         """Payload without 'runs' key is tolerated (returns no error)."""
-        from aiperf.cli_commands.kube._runs_render import annotate_preview
+        from aiperf.cli_commands.kube.results import annotate_preview
 
         payload: dict[str, Any] = {}
         annotate_preview(payload, {"retain_runs": 1, "retain_days": 1})
@@ -135,7 +135,7 @@ class TestAnnotatePreview:
 
     def test_runs_none_treated_as_empty(self) -> None:
         """payload['runs']=None must not raise."""
-        from aiperf.cli_commands.kube._runs_render import annotate_preview
+        from aiperf.cli_commands.kube.results import annotate_preview
 
         payload: dict[str, Any] = {"runs": None}
         annotate_preview(payload, {"retain_runs": 1, "retain_days": 0})
@@ -144,7 +144,7 @@ class TestAnnotatePreview:
 
     def test_missing_mtime_epoch_treated_as_zero(self) -> None:
         """Runs without mtime_epoch sort to the bottom (effectively 0)."""
-        from aiperf.cli_commands.kube._runs_render import annotate_preview
+        from aiperf.cli_commands.kube.results import annotate_preview
 
         runs = [
             {"epoch": 1, "mtime_epoch": 100},  # newer
@@ -168,7 +168,7 @@ class TestPrintRunsTable:
     """Render path: empty state vs table; preview adds extra column + footer."""
 
     def test_empty_runs_calls_print_info_with_namespace_and_job(self) -> None:
-        from aiperf.cli_commands.kube._runs_render import print_runs_table
+        from aiperf.cli_commands.kube.results import print_runs_table
 
         payload = {"runs": [], "namespace": "ns-a", "job_id": "job-1"}
         with (
@@ -186,7 +186,7 @@ class TestPrintRunsTable:
 
     def test_missing_namespace_and_job_id_default_to_empty(self) -> None:
         """payload without namespace/job_id uses empty strings in the message."""
-        from aiperf.cli_commands.kube._runs_render import print_runs_table
+        from aiperf.cli_commands.kube.results import print_runs_table
 
         payload: dict[str, Any] = {"runs": []}
         with patch("aiperf.kubernetes.console.print_info") as mock_info:
@@ -196,7 +196,7 @@ class TestPrintRunsTable:
         assert mock_info.call_args.args[0].endswith("/")
 
     def test_renders_table_with_rows_and_hint(self) -> None:
-        from aiperf.cli_commands.kube._runs_render import print_runs_table
+        from aiperf.cli_commands.kube.results import print_runs_table
 
         runs = [
             _run(
@@ -215,7 +215,7 @@ class TestPrintRunsTable:
         assert "aiperf kube results" in hint
 
     def test_preview_mode_adds_would_delete_column_and_footer(self) -> None:
-        from aiperf.cli_commands.kube._runs_render import print_runs_table
+        from aiperf.cli_commands.kube.results import print_runs_table
 
         runs = [
             _run(1, mtime_epoch=10, file_count=1, total_size_bytes=10),
@@ -243,7 +243,7 @@ class TestPrintRunsTable:
 
     def test_preview_mode_zero_days_uses_disabled_label(self) -> None:
         """retain_days=0 footer reads 'age policy disabled', not '0'."""
-        from aiperf.cli_commands.kube._runs_render import print_runs_table
+        from aiperf.cli_commands.kube.results import print_runs_table
 
         payload = {
             "runs": [_run(1, mtime_epoch=10)],
@@ -262,7 +262,7 @@ class TestPrintRunsTable:
 
     def test_preview_mode_missing_retention_still_renders(self) -> None:
         """When retention is absent on the payload, both values fall back to 0."""
-        from aiperf.cli_commands.kube._runs_render import print_runs_table
+        from aiperf.cli_commands.kube.results import print_runs_table
 
         payload = {
             "runs": [_run(1, mtime_epoch=10)],
@@ -289,7 +289,7 @@ class TestPrintRunsTable:
         self, is_latest: bool, expected_marker: bool
     ) -> None:
         """is_latest=True renders a green checkmark cell; False renders an empty cell."""
-        from aiperf.cli_commands.kube._runs_render import print_runs_table
+        from aiperf.cli_commands.kube.results import print_runs_table
 
         # We patch Table.add_row to capture the row tuple and inspect the
         # latest-cell value.
@@ -316,7 +316,7 @@ class TestPrintRunsTable:
 
     def test_unicode_namespace_and_job_id_in_empty_message(self) -> None:
         """Non-ASCII namespace/job_id passes through unchanged."""
-        from aiperf.cli_commands.kube._runs_render import print_runs_table
+        from aiperf.cli_commands.kube.results import print_runs_table
 
         payload = {"runs": [], "namespace": "ns-π", "job_id": "job-✓"}
         with patch("aiperf.kubernetes.console.print_info") as mock_info:
