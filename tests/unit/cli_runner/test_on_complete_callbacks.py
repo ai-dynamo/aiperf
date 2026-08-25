@@ -93,7 +93,7 @@ def _make_plan(
 @pytest.fixture(autouse=True)
 def _native_single_success():
     """Keep callback tests focused on callback policy, not process startup."""
-    with patch("aiperf.cli_runner._single_run._execute_native_run") as execute:
+    with patch("aiperf.cli_runner._single_run._execute_python_run") as execute:
         execute.return_value = RunResult(
             label="native",
             success=True,

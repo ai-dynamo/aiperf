@@ -17,30 +17,19 @@ if TYPE_CHECKING:
     from aiperf.orchestrator.models import RunResult
 
 
-def _execute_native_run(run: BenchmarkRun) -> RunResult:
-    """Execute one resolved run on the legacy pure-Python service mesh.
+def _execute_python_run(run: BenchmarkRun) -> RunResult:
+    """Resolve and execute one run on the in-process Python service mesh.
 
-    The Python frontend (``python -m aiperf.cli profile``) never bridges to the
-    native ``aiperf`` binary: it runs entirely in-process on the service mesh
-    (SystemController -> Worker/TimingManager/RecordsManager). The native
-    execution engine is reached only by invoking the ``aiperf`` binary directly.
-    """
-    return _execute_legacy_python_run(run)
-
-
-def _execute_legacy_python_run(run: BenchmarkRun) -> RunResult:
-    """Run the legacy pure-Python service mesh in-process for this one run.
-
-    Boots the ``SystemController`` (which spawns the Worker / TimingManager /
-    RecordsManager children) against the same ``BenchmarkRun`` the native path
-    consumes. ``bootstrap_and_run_service`` blocks until the mesh drains and
-    raises ``SystemExit(1)`` on service failure; a normal return means the run
-    completed and wrote its artifacts.
+    The Python frontend never launches the native ``aiperf`` binary. Resolution
+    must complete before the SystemController starts because the service mesh
+    consumes the resolved ``BenchmarkRun`` directly.
     """
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.config.resolution.resolvers import build_default_resolver_chain
     from aiperf.orchestrator.models import RunResult
     from aiperf.plugin.enums import ServiceType
 
+    build_default_resolver_chain().resolve_all(run)
     bootstrap_and_run_service(ServiceType.SYSTEM_CONTROLLER, run=run)
 
     return RunResult(
@@ -72,25 +61,25 @@ def _run_single_benchmark(
     setup_rich_logging(run)
     logger = AIPerfLogger(__name__)
 
-    logger.info("Starting native AIPerf run")
+    logger.info("Starting Python AIPerf run")
     try:
-        result = _execute_native_run(run)
+        result = _execute_python_run(run)
     except Exception:
-        logger.exception("Native AIPerf runner could not be started")
+        logger.exception("Python AIPerf runner could not be started")
         exit_code = 1
     else:
         exit_code = 0 if result.success else 1
         if result.success:
-            logger.info("Native AIPerf run completed")
+            logger.info("Python AIPerf run completed")
         else:
-            logger.error(f"Native AIPerf run failed: {result.error or 'unknown error'}")
+            logger.error(f"Python AIPerf run failed: {result.error or 'unknown error'}")
 
     if exit_code == 0 and on_complete:
         completed = CompletedRun(artifact_dir=run.artifact_dir)
         exit_code = _invoke_callbacks(on_complete, completed, exit_code, logger)
 
-    # Keep the established CLI termination contract. The benchmark itself has
-    # already completed in an isolated Rust child and all callbacks are flushed.
+    # Keep the established CLI termination contract after the Python service mesh
+    # has completed and all callbacks are flushed.
     import os as _os
     import sys
 

@@ -201,7 +201,7 @@ class TestRunSingleBenchmark:
 
     @patch("os._exit")
     @patch("aiperf.common.logging.setup_rich_logging")
-    @patch("aiperf.cli_runner._single_run._execute_native_run")
+    @patch("aiperf.cli_runner._single_run._execute_python_run")
     def test_simple_ui_runs_native_subprocess(
         self,
         mock_execute: Mock,
@@ -223,7 +223,7 @@ class TestRunSingleBenchmark:
         mock_exit.assert_called_once_with(0)
 
     @patch("os._exit")
-    @patch("aiperf.cli_runner._single_run._execute_native_run")
+    @patch("aiperf.cli_runner._single_run._execute_python_run")
     def test_native_failure_exits_nonzero(
         self,
         mock_execute: Mock,
@@ -464,15 +464,18 @@ class TestLocalPathUsesMesh:
     """The local execution path runs the pure-Python mesh, not the Rust bridge."""
 
     def test_single_run_executes_on_service_mesh(self, tmp_path: Path):
-        """``_execute_native_run`` boots the SystemController mesh in-process."""
+        """``_execute_python_run`` boots the SystemController mesh in-process."""
         from aiperf.cli_runner import _single_run
 
         run = _make_run(_make_config(), artifact_dir=tmp_path)
 
-        with patch(
-            "aiperf.common.bootstrap.bootstrap_and_run_service"
-        ) as mock_bootstrap:
-            result = _single_run._execute_native_run(run)
+        with (
+            patch("aiperf.config.resolution.resolvers.build_default_resolver_chain"),
+            patch(
+                "aiperf.common.bootstrap.bootstrap_and_run_service"
+            ) as mock_bootstrap,
+        ):
+            result = _single_run._execute_python_run(run)
 
         from aiperf.plugin.enums import ServiceType
 
@@ -496,9 +499,7 @@ class TestLocalPathUsesMesh:
 
         sentinel = object()
         with (
-            patch(
-                "aiperf.orchestrator.orchestrator.MultiRunOrchestrator", _Recorder
-            ),
+            patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator", _Recorder),
             # Override the autouse fixture's opaque patch with one that records
             # construction and returns a recognizable sentinel instance.
             patch(

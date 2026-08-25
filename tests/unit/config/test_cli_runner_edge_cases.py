@@ -214,7 +214,7 @@ class TestSingleRunErrorPaths:
         with patch("os._exit") as mock_exit:
             yield mock_exit
 
-    @patch("aiperf.cli_runner._single_run._execute_native_run")
+    @patch("aiperf.cli_runner._single_run._execute_python_run")
     @patch("aiperf.common.logging.setup_rich_logging")
     def test_native_runner_start_failure_exits(
         self,
@@ -232,7 +232,7 @@ class TestSingleRunErrorPaths:
         with pytest.raises(SystemExit):
             _run_single_benchmark(run)
 
-    @patch("aiperf.cli_runner._single_run._execute_native_run")
+    @patch("aiperf.cli_runner._single_run._execute_python_run")
     @patch("aiperf.common.logging.setup_rich_logging")
     def test_native_terminal_failure_exits_nonzero(
         self,
