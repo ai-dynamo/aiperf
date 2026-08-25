@@ -427,6 +427,21 @@ epoch-free, because they exist to tell a caller which epochs there are.
 - **`latest.txt` points at a missing directory** (corruption, manual delete):
   default-route requests return 404 until the next successful completion
   rewrites the pointer. Historical routes still work.
+- **A `creationTimestamp` that cannot produce a storable epoch is rejected at
+  admission.** `epoch_key_from_body` is arithmetic on `creationTimestamp`, so a
+  pre-1970 value yields a negative, `EPOCH_RE`-failing key
+  (`1969-04-25T18:22:03Z` -> `-21620277`). Because the epoch is a directory
+  name, an unstorable key would desync the two halves of the sweep harvest: the
+  sweep-controller pod writes to the epoch it receives verbatim in
+  `AIPERF_SWEEP_EPOCH`, while the operator reads
+  `<base>/<ns>/sweeps/<name>/<status.runEpoch>/`. `handlers/sweep/create.
+  _reject_unstorable_epoch` therefore gates the create handler on the same
+  `EPOCH_RE` every downstream directory scan and API route uses, and raises
+  `kopf.PermanentError` before RBAC or the JobSet is created. It is permanent
+  rather than temporary because `creationTimestamp` is immutable — recreate the
+  CR. The rejection lands on `status` (phase `Failed`, `ConfigValid=True`,
+  `Failed` reason `SweepRejected`) plus a `Warning` event, so it is visible to
+  `kubectl get`/`describe` and not only in operator logs.
 
 ### Runs/sweep index writes
 
@@ -770,7 +785,7 @@ Resource limits configured via `src/aiperf/kubernetes/environment.py`:
 
 The kopf operator registers sweep-lifecycle handlers in `src/aiperf/operator/main.py`. Seven registrations are on the parent `AIPerfSweep` CRD; one more watches child `AIPerfJob`s to roll their status up into the parent:
 
-- `@kopf.on.create AIPerfSweep` (handler in `handlers/sweep/create.py`) — validates the workload through the canonical Config-v2 mapping loader and `AIPerfSweepSpec`, computes `totalVariations`/`maxTotalRuns`, sets `status.runEpoch` to a collision-safe decimal key derived from `metadata.creationTimestamp` and immutable `metadata.uid`, provisions a namespace-scoped ServiceAccount/Role/RoleBinding for the sweep-controller pod, and creates a single-replica JobSet that runs `python -m aiperf.sweep_controller.main`.
+- `@kopf.on.create AIPerfSweep` (handler in `handlers/sweep/create.py`) — validates the workload through the canonical Config-v2 mapping loader and `AIPerfSweepSpec`, computes `totalVariations`/`maxTotalRuns`, sets `status.runEpoch` to a collision-safe decimal key derived from `metadata.creationTimestamp` and immutable `metadata.uid` (rejecting the CR outright if that key is not `EPOCH_RE`-storable — see "Edge cases" above), provisions a namespace-scoped ServiceAccount/Role/RoleBinding for the sweep-controller pod, and creates a single-replica JobSet that runs `python -m aiperf.sweep_controller.main`. The sweep-controller pod's two containers honour `spec.resourceMode`, including its unset `burstable` default; the resolved value is read off the validated `AIPerfSweepSpec` rather than the handler's `exclude_unset=True` dump, which omits unset fields.
 - `@kopf.on.update AIPerfSweep field=spec.cancel` (handler in `handlers/sweep/lifecycle.py`) — mirrors the cancel signal into `status.conditions[Cancelling]` and advances `status.observedGeneration`, including terminal/no-op updates, so GitOps clients can distinguish an acknowledged spec change. The sweep-controller pod observes `spec.cancel` directly via its own poll and propagates it to the current child.
 - `@kopf.on.update AIPerfSweep field=spec.ttlSecondsAfterFinished` — acknowledges the other mutable parent control immediately. The reaper timer reads the latest TTL; create-time execution fields are immutable after admission.
 - `@kopf.on.field AIPerfSweep field=status.aggregation.phase new=Complete` plus `@kopf.on.resume` — triggers `handlers/sweep/_aggregate_fetch.fetch_sweep_aggregate_to_disk` to pull the cross-variation aggregate off the sweep-controller's `emptyDir` results-sidecar before the JobSet is reaped, and resumes an interrupted harvest after an operator restart. The fetch reports `(downloaded, listed)` counts; a partial harvest (`downloaded < listed`) or a missing/unparsable `aggregate.json` raises `kopf.TemporaryError` so the JobSet — and with it the only other copy of the artifacts — stays alive for re-harvest. During commit, the operator materializes every child `sweep.json` backlink on its PVC from the canonical `children.json` manifest before status publication. Delayed callbacks carry the parent CR's immutable UID, verify the live parent and exact JobSet owner API version/kind/name/UID with `controller: true`, and publish status with a JSON Patch UID test before advancing `latest.txt` or the runs index. Only a full harvest with a parseable `aggregate.json` and durable child lineage on the PVC publishes the operator-backed `aggregateRef`, flips `resultsAvailable` to true, and deletes that exact JobSet with its resource UID as a delete precondition. A same-name replacement makes the old callback a no-op; transient reads and status-validation failures against the current owner retry.

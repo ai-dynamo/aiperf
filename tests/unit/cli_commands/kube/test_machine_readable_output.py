@@ -22,13 +22,13 @@ import orjson
 import pytest
 import yaml
 from pytest import param
-from rich.console import Console
 
 from aiperf.cli_commands.kube import preflight as preflight_cmd
 from aiperf.cli_commands.kube.profile_deploy import deploy_via_operator
 from aiperf.config.kube import KubeManageOptions, KubeOptions
 from aiperf.kubernetes import console as kube_console
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus, PreflightResults
+from tests.harness import fixed_console
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -45,7 +45,7 @@ LONG_IMAGE = (
 @pytest.fixture(autouse=True)
 def narrow_console(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Pin the kube console to 80 columns so a Rich-routed payload would wrap."""
-    monkeypatch.setattr(kube_console, "console", Console(width=80))
+    monkeypatch.setattr(kube_console, "console", fixed_console(80))
     yield
 
 

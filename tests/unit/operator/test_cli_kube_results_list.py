@@ -24,6 +24,7 @@ from aiperf.cli_commands.kube.results import (
 from aiperf.config.kube import KubeManageOptions
 from aiperf.kubernetes.console import LastBenchmarkInfo
 from aiperf.kubernetes.models import AIPerfJobInfo
+from tests.harness import fixed_width
 
 
 @pytest.fixture
@@ -63,11 +64,8 @@ class TestPrintRunsTable:
     def test_renders_all_rows(self, sample_payload: dict, capsys) -> None:
         from aiperf.kubernetes.console import console as _console
 
-        _console.width = 200
-        try:
+        with fixed_width(_console, 200):
             print_runs_table(sample_payload)
-        finally:
-            _console.width = None
 
         out = capsys.readouterr().out
         assert "EPOCH" in out
@@ -89,11 +87,8 @@ class TestPrintRunsTable:
     def test_marks_only_latest_row(self, sample_payload: dict, capsys) -> None:
         from aiperf.kubernetes.console import console as _console
 
-        _console.width = 200
-        try:
+        with fixed_width(_console, 200):
             print_runs_table(sample_payload)
-        finally:
-            _console.width = None
 
         out = capsys.readouterr().out
         # Checkmark rendered for exactly one row
@@ -198,16 +193,12 @@ async def test_list_runs_text_output_formats_table(
 
     from aiperf.kubernetes.console import console as _console
 
-    _console.width = 200
-    try:
-        with patch("aiohttp.ClientSession", new=session_cm):
-            await list_runs(
-                job_id="foo",
-                manage_options=KubeManageOptions(),
-                output="text",
-            )
-    finally:
-        _console.width = None
+    with fixed_width(_console, 200), patch("aiohttp.ClientSession", new=session_cm):
+        await list_runs(
+            job_id="foo",
+            manage_options=KubeManageOptions(),
+            output="text",
+        )
 
     out = capsys.readouterr().out
     assert "EPOCH" in out
@@ -230,11 +221,8 @@ def test_render_list_runs_json_does_not_wrap_long_strings(capsys) -> None:
         ],
     }
 
-    _console.width = 80
-    try:
+    with fixed_width(_console, 80):
         _render_list_runs_payload(payload, output="json", preview=False)
-    finally:
-        _console.width = None
 
     parsed = orjson.loads(capsys.readouterr().out)
     assert parsed == payload
@@ -249,16 +237,12 @@ async def test_list_runs_json_output_parseable(
 
     from aiperf.kubernetes.console import console as _console
 
-    _console.width = 200
-    try:
-        with patch("aiohttp.ClientSession", new=session_cm):
-            await list_runs(
-                job_id="foo",
-                manage_options=KubeManageOptions(),
-                output="json",
-            )
-    finally:
-        _console.width = None
+    with fixed_width(_console, 200), patch("aiohttp.ClientSession", new=session_cm):
+        await list_runs(
+            job_id="foo",
+            manage_options=KubeManageOptions(),
+            output="json",
+        )
 
     out = capsys.readouterr().out.strip()
     # Rich prints the JSON; strip leading/trailing whitespace, then parse
@@ -395,16 +379,12 @@ async def test_list_runs_text_output_includes_run_hint(
 
     from aiperf.kubernetes.console import console as _console
 
-    _console.width = 200
-    try:
-        with patch("aiohttp.ClientSession", new=session_cm):
-            await list_runs(
-                job_id="foo",
-                manage_options=KubeManageOptions(),
-                output="text",
-            )
-    finally:
-        _console.width = None
+    with fixed_width(_console, 200), patch("aiohttp.ClientSession", new=session_cm):
+        await list_runs(
+            job_id="foo",
+            manage_options=KubeManageOptions(),
+            output="text",
+        )
 
     out = capsys.readouterr().out
     assert "--run <epoch>" in out

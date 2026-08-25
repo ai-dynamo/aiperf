@@ -510,7 +510,9 @@ def _sweep_epoch_entry(path: Path, latest: str | None) -> RunEntry | None:
         mtime = int(path.stat().st_mtime)
         children = list(path.iterdir())
         file_count = len(children)
-        total_size_bytes = sum(child.stat().st_size for child in children if child.is_file())
+        total_size_bytes = sum(
+            child.stat().st_size for child in children if child.is_file()
+        )
     except OSError:
         return None
     return RunEntry(

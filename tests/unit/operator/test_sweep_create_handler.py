@@ -1256,6 +1256,28 @@ async def test_provision_rbac_role_grants_events_create_patch(monkeypatch):
 # ===========================================================================
 
 
+def test_sweep_controller_jobset_default_matches_the_spec_field_default() -> None:
+    """The builder's `resource_mode` fallback must not drift from the CRD default.
+
+    The production caller always passes the resolved value, so this literal only
+    serves direct callers -- but a silent disagreement with the model default is
+    precisely the failure this whole section exists to prevent. Pin them together
+    so changing `AIPerfSweepSpec.resource_mode`'s default fails here loudly
+    instead of quietly forking the two.
+    """
+    import inspect
+
+    from aiperf.kubernetes.crd_models import AIPerfSweepSpec
+
+    builder_default = (
+        inspect.signature(sweep_create._create_sweep_controller_jobset)
+        .parameters["resource_mode"]
+        .default
+    )
+
+    assert builder_default == AIPerfSweepSpec.model_fields["resource_mode"].default
+
+
 def _resources_by_container(body: dict) -> dict[str, dict]:
     pod_spec = _pod_spec_from_jobset(body)
     return {c["name"]: c.get("resources") for c in pod_spec["containers"]}

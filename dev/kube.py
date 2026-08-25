@@ -3762,11 +3762,6 @@ def cmd_remove_lora(
 def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
     import math
 
-    from aiperf.kubernetes.spec_converter import (
-        apply_k8s_runtime_config,
-        apply_worker_config,
-    )
-
     from aiperf.cli_commands.kube.profile import generate_benchmark_name
     from aiperf.config import AIPerfConfig
     from aiperf.config.kube import KubeOptions
@@ -3774,6 +3769,10 @@ def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
     from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
     from aiperf.kubernetes.environment import K8sEnvironment
     from aiperf.kubernetes.resources import KubernetesDeployment
+    from aiperf.kubernetes.spec_converter import (
+        apply_k8s_runtime_config,
+        apply_worker_config,
+    )
 
     if not dry_run:
         _require_kubectl_and_cluster()
