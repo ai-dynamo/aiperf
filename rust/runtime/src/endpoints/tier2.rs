@@ -665,8 +665,24 @@ impl Endpoint for AudioTranscriptionEndpoint {
     fn format_payload(&self, request_info: &RequestInfo) -> EndpointResult<BodyPlan> {
         format_legacy_payload(self, request_info)
     }
-    fn parse_response(&self, _response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
-        Ok(None)
+    fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
+        let text = response
+            .json
+            .as_ref()
+            .and_then(|v| v.get("text"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| response.raw.clone())
+            .ok_or_else(|| {
+                EndpointError::InvalidResponse("audio transcription response has no text".into())
+            })?;
+        let usage = response.json.as_ref().and_then(|v| v.get("usage")).cloned();
+        Ok(Some(ParsedResponse {
+            perf_ns: response.perf_ns,
+            data: Some(ResponseData::Text { text }),
+            usage,
+            sources: None,
+        }))
     }
 }
 
