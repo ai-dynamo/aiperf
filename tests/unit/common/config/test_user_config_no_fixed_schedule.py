@@ -67,5 +67,5 @@ class TestTraceDelayMutex:
         ],
     )  # fmt: skip
     def test_mutex(self, factory) -> None:
-        with pytest.raises(ValueError, match="cannot be used together"):
+        with pytest.raises(ValueError, match="mutually exclusive"):
             factory(ignore_trace_delays=True, use_think_time_only=True)

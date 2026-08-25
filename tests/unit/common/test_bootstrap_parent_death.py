@@ -3,7 +3,6 @@
 """The parent-death guard installs a kernel-level PR_SET_PDEATHSIG(SIGKILL) backstop so spawned services die when their controller does."""
 
 import os
-import platform
 import subprocess
 import sys
 import time
@@ -13,11 +12,12 @@ import pytest
 from pytest import param
 
 from aiperf.common.bootstrap import _install_parent_death_signal
+from aiperf.common.constants import IS_LINUX, IS_WINDOWS
 
-IS_LINUX = platform.system() == "Linux"
 PR_SET_PDEATHSIG = 1
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="signal.SIGKILL is unavailable on Windows")
 def test_install_parent_death_signal_arms_sigkill_on_linux():
     """On Linux it must call prctl(PR_SET_PDEATHSIG, SIGKILL)."""
     import signal
@@ -45,6 +45,7 @@ def test_install_parent_death_signal_noop_on_non_linux():
     cdll.assert_not_called()
 
 
+@pytest.mark.skipif(IS_WINDOWS, reason="signal.SIGKILL is unavailable on Windows")
 def test_install_parent_death_signal_exits_if_controller_already_died():
     """If our parent is no longer the controller, the controller died before the guard armed, so the child must exit itself."""
     fake_libc = mock.Mock()

@@ -19,6 +19,7 @@ from unittest.mock import patch
 import orjson
 import pytest
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset import mmap_cache
 from tests.unit.conftest import make_run_from_cli
@@ -1145,6 +1146,10 @@ class TestAcquireCacheLockBypassAndFallback:
             holder.release()
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        IS_WINDOWS,
+        reason="POSIX file-mode bits / umask are not honored on Windows",
+    )
     async def test_soft_file_lock_fallback_on_flock_unsupported(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
