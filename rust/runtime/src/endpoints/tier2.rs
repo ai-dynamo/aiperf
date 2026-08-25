@@ -711,6 +711,26 @@ impl PreparedEndpointBehavior for AudioTranscriptionEndpoint {
     }
 }
 
+#[cfg(test)]
+mod audio_transcription_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_empty_transcription_responses() {
+        let endpoint = AudioTranscriptionEndpoint;
+        for response in [
+            ServerResponse::from_json(1, serde_json::json!({})),
+            ServerResponse {
+                perf_ns: 1,
+                json: None,
+                raw: Some(String::new()),
+            },
+        ] {
+            assert!(endpoint.parse_response(&response).is_err());
+        }
+    }
+}
+
 impl PreparedEndpointBehavior for ImageEditEndpoint {
     fn format_prepared_payload(
         &self,
