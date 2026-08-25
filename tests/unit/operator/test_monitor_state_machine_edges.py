@@ -52,8 +52,8 @@ from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
 from aiperf.kubernetes.phase import Phase
 from aiperf.operator.client_cache import _reset_for_testing, request_cancellation
 from aiperf.operator.handlers.monitor import (
-    _CLAIM_TRUST_WINDOW_SEC,
     _check_job_timeout,
+    _claim_trust_window_sec,
     _fetch_jobset_or_reconcile,
     _handle_jobset_failed_condition,
     _handle_jobset_terminal_condition,
@@ -455,7 +455,7 @@ class TestJobTimeoutEscalation:
         with mock_patch("aiperf.operator.handlers.monitor.events.job_timeout"):
             result = await _check_job_timeout(
                 custom,
-                body=_body(claimed=True, claim_age_sec=_CLAIM_TRUST_WINDOW_SEC + 60),
+                body=_body(claimed=True, claim_age_sec=_claim_trust_window_sec() + 60),
                 status={"startTime": "2020-01-01T00:00:00Z"},
                 spec={"timeoutSeconds": 1.0},
                 namespace="ns",

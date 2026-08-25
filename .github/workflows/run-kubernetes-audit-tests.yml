@@ -113,7 +113,9 @@ jobs:
       - name: Run Kubernetes audit tests
         id: pytest
         shell: bash
-        run: make kubernetes-audit-tests-ci args='--k8s-skip-build ${{ inputs.pytest_args }}'
+        env:
+          PYTEST_ARGS: ${{ inputs.pytest_args }}
+        run: make kubernetes-audit-tests-ci args="--k8s-skip-build ${PYTEST_ARGS}"
         timeout-minutes: 165
 
       - name: Collect cluster diagnostics on failure

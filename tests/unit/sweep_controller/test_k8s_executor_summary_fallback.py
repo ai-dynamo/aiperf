@@ -158,7 +158,7 @@ async def test_pull_summary_refreshes_when_summary_and_epoch_unset(
 
     executor = _executor()
     # First refresh returns populated child — short-circuits before exhausting
-    # the SUMMARY_RACE_REFRESH_ATTEMPTS budget.
+    # the configured attempt budget.
     executor._try_read_child = AsyncMock(return_value=refreshed)  # type: ignore[method-assign]
     executor._fetch_summary_from_operator = AsyncMock()  # type: ignore[method-assign]
 
@@ -236,9 +236,10 @@ async def test_pull_summary_refresh_exhausted_returns_empty(
         result = await executor._pull_summary_metrics(initial)
 
     assert result == {}
-    # The retry exhausted: SUMMARY_RACE_REFRESH_ATTEMPTS reads were attempted.
-    assert executor._try_read_child.await_count == mod.SUMMARY_RACE_REFRESH_ATTEMPTS, (
-        f"expected {mod.SUMMARY_RACE_REFRESH_ATTEMPTS} refreshes, "
+    # The retry exhausted: the whole configured attempt budget was spent.
+    expected_attempts = mod._summary_race_refresh_attempts()
+    assert executor._try_read_child.await_count == expected_attempts, (
+        f"expected {expected_attempts} refreshes, "
         f"got {executor._try_read_child.await_count}"
     )
     # Final fallback was called once.
@@ -573,3 +574,49 @@ async def test_fetch_from_operator_strips_trailing_slash_from_base_url(
         "https://op.example:9091/api/v1/results/aiperf-benchmarks/sweep-x-v00-t0"
         "/runs/1700000000/profile_export"
     )
+
+
+@pytest.mark.asyncio
+async def test_settle_window_honours_configured_attempt_budget(monkeypatch) -> None:
+    """The settle budget is an operator-tunable, not a baked-in constant.
+
+    The operator-API fallback needs ``status.runEpoch``, so a settle window
+    shorter than the operator's completion handler loses the variation's
+    metrics entirely. Deployments with slow completion handlers must be able
+    to widen the window without a code change.
+    """
+    from aiperf.operator.environment import OperatorEnvironment
+    from aiperf.sweep_controller import k8s_executor as mod
+
+    monkeypatch.setattr(
+        OperatorEnvironment.SWEEP_CONTROLLER, "SUMMARY_RACE_REFRESH_ATTEMPTS", 2
+    )
+    monkeypatch.setattr(
+        OperatorEnvironment.SWEEP_CONTROLLER, "SUMMARY_RACE_REFRESH_SECONDS", 0.01
+    )
+    assert mod._summary_race_refresh_attempts() == 2
+    assert mod._summary_race_refresh_seconds() == 0.01
+
+    initial = _child(summary={}, run_epoch=None)
+    executor = _executor()
+    executor._try_read_child = AsyncMock(return_value=initial)  # type: ignore[method-assign]
+    executor._fetch_summary_from_operator = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    assert await executor._pull_summary_metrics(initial) == {}
+    assert executor._try_read_child.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_settle_window_default_covers_completion_handler() -> None:
+    """Default grace must exceed a monitor tick by a wide margin.
+
+    A 12s window (the pre-fix default) was routinely shorter than the
+    operator's completion handler — fetch retries, disk recovery, JobSet
+    delete, retention pass — and exhausting it collapses the SLA bracket to
+    ``observed: null`` because the operator-API fallback cannot run without
+    ``status.runEpoch``.
+    """
+    from aiperf.sweep_controller import k8s_executor as mod
+
+    grace = mod._summary_race_refresh_attempts() * mod._summary_race_refresh_seconds()
+    assert grace >= 30.0, f"settle grace too short for the completion handler: {grace}s"

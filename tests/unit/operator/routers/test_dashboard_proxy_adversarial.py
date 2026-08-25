@@ -336,9 +336,24 @@ class TestDashboardProxyUrlAndMounting:
             "next=%2Fapi%2Fv1%2Fjobs&space=a+b&literal=%252Fdashboard"
         )
 
-    def test_proxy_encoded_traversal_shape_does_not_fall_through_to_local_api(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        "path",
+        [
+            param("/dashboard/%2E%2E/api/v1/results", id="encoded-dotdot-upper"),
+            param("/dashboard/%2e%2e/admin/refresh", id="encoded-dotdot-lower"),
+            param("/dashboard/assets/%2e%2e/%2e%2e/admin/refresh", id="nested-dotdot"),
+            param("/dashboard/%2e/admin/refresh", id="encoded-single-dot"),
+        ],
+    )  # fmt: skip
+    def test_proxy_rejects_dot_segments_instead_of_normalizing_them(
+        self, monkeypatch: pytest.MonkeyPatch, path: str
     ) -> None:
+        """Dot segments must 400, never reach the sidecar.
+
+        yarl silently normalizes ``..`` away when aiohttp builds the request,
+        so forwarding such a path would escape the ``/dashboard/`` prefix and
+        reach unauthenticated sidecar routes like ``POST /admin/refresh``.
+        """
         app = _make_dashboard_proxy_app(monkeypatch)
 
         @app.get("/api/v1/results")
@@ -351,11 +366,23 @@ class TestDashboardProxyUrlAndMounting:
         )
 
         with TestClient(app) as client:
-            response = client.get("/dashboard/%2E%2E/api/v1/results")
+            response = client.get(path)
+
+        assert response.status_code == 400
+        assert captured.url is None
+
+    def test_proxy_allows_dots_inside_a_segment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only whole ``.``/``..`` segments are rejected; filenames keep their dots."""
+        app = _make_dashboard_proxy_app(monkeypatch)
+        captured = _install_fake_upstream(monkeypatch)
+
+        with TestClient(app) as client:
+            response = client.get("/dashboard/assets/app.min.js")
 
         assert response.status_code == 200
-        assert response.content == b"proxied-dashboard-path"
-        assert captured.url == "http://localhost:8082/dashboard/../api/v1/results"
+        assert captured.url == "http://localhost:8082/dashboard/assets/app.min.js"
 
     def test_results_server_mount_routes_dashboard_before_static_root(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

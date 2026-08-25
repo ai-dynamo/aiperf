@@ -19,12 +19,14 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.deployment import PodTemplateConfig
 from aiperf.kubernetes.constants import AIPerfLabels, Containers
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import AIPerfJobSetSpec, controller_dns_name
+from aiperf.kubernetes.jobset_helpers import build_security_context
 from aiperf.kubernetes.jobset_specs import AIPerfContainerSpec
 
 # ============================================================
@@ -334,32 +336,135 @@ class TestJobSetSpecResultsSidecarContract:
 class TestJobSetSpecPodTemplateMergeAndInvalidShapes:
     """PodTemplateConfig is a trust boundary for arbitrary K8s-native fragments."""
 
-    def test_pod_template_extra_pod_spec_overrides_typed_security_context_last(
+    def test_pod_template_extra_pod_spec_cannot_override_security_context(
         self,
     ) -> None:
-        template = PodTemplateConfig(
-            pod_security_context={"fsGroup": 2000},
+        """extraPodSpec is an escape hatch, not a hardening bypass."""
+        with pytest.raises(ValidationError, match="security-critical"):
+            PodTemplateConfig(
+                pod_security_context={"fsGroup": 2000},
+                extra_pod_spec={
+                    "securityContext": {"runAsNonRoot": False, "runAsUser": 0}
+                },
+            )
+
+    @pytest.mark.parametrize(
+        "key, value",
+        [
+            param("securityContext", {"runAsUser": 0}, id="securityContext"),
+            param("hostNetwork", True, id="hostNetwork"),
+            param("hostPID", True, id="hostPID"),
+            param("hostIPC", True, id="hostIPC"),
+            param("hostUsers", False, id="hostUsers"),
+            param("containers", [{"name": "evil", "image": "evil"}], id="containers"),
+        ],
+    )  # fmt: skip
+    def test_extra_pod_spec_denied_keys_rejected(self, key: str, value: Any) -> None:
+        """Every security-critical PodSpec key is refused at validation time."""
+        with pytest.raises(ValidationError, match=key):
+            PodTemplateConfig(extra_pod_spec={key: value})
+
+    def test_extra_pod_spec_denied_key_stripped_when_validation_bypassed(self) -> None:
+        """Renderer drops denied keys even if a template dodges validation.
+
+        ``model_construct`` skips validators, standing in for any construction
+        path that does not round-trip through CRD validation.
+        """
+        template = PodTemplateConfig.model_construct(
             extra_pod_spec={
-                "securityContext": {
-                    "runAsNonRoot": True,
-                    "runAsUser": 3000,
-                    "runAsGroup": 3000,
-                    "fsGroup": 3000,
-                    "seccompProfile": {"type": "RuntimeDefault"},
-                }
-            },
+                "securityContext": {"runAsNonRoot": False, "runAsUser": 0},
+                "hostPID": True,
+                "schedulingGates": [{"name": "bench-ready"}],
+            }
         )
 
         manifest = _manifest(pod_template=template)
         pod_spec = _pod_spec(_replicated_job(manifest, "controller"))
 
-        assert pod_spec["securityContext"] == {
-            "runAsNonRoot": True,
-            "runAsUser": 3000,
-            "runAsGroup": 3000,
-            "fsGroup": 3000,
-            "seccompProfile": {"type": "RuntimeDefault"},
-        }
+        assert pod_spec["securityContext"]["runAsNonRoot"] is True
+        assert pod_spec["securityContext"]["runAsUser"] == 1000
+        assert "hostPID" not in pod_spec
+        # Non-security keys still flow through the escape hatch.
+        assert pod_spec["schedulingGates"] == [{"name": "bench-ready"}]
+
+    def test_extra_pod_spec_allows_unmodeled_keys(self) -> None:
+        """The escape hatch keeps working for its intended purpose."""
+        template = PodTemplateConfig(
+            extra_pod_spec={"schedulingGates": [{"name": "bench-ready"}]}
+        )
+
+        manifest = _manifest(pod_template=template)
+        pod_spec = _pod_spec(_replicated_job(manifest, "controller"))
+
+        assert pod_spec["schedulingGates"] == [{"name": "bench-ready"}]
+
+    def test_pod_security_context_benign_override_merges_over_hardened_base(
+        self,
+    ) -> None:
+        """Non-escalating pod securityContext overrides still merge normally."""
+        template = PodTemplateConfig(pod_security_context={"fsGroup": 2000})
+
+        manifest = _manifest(pod_template=template)
+        pod_spec = _pod_spec(_replicated_job(manifest, "controller"))
+
+        assert pod_spec["securityContext"]["fsGroup"] == 2000
+        assert pod_spec["securityContext"]["runAsNonRoot"] is True
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            param({"privileged": True}, id="privileged"),
+            param({"allowPrivilegeEscalation": True}, id="allowPrivilegeEscalation"),
+            param({"runAsNonRoot": False}, id="runAsNonRoot-false"),
+            param({"runAsUser": 0}, id="runAsUser-root"),
+            param({"runAsGroup": 0}, id="runAsGroup-root"),
+        ],
+    )  # fmt: skip
+    def test_container_security_context_privilege_escalation_rejected(
+        self, override: dict[str, Any]
+    ) -> None:
+        """container_security_context cannot weaken the hardened container context."""
+        with pytest.raises(ValidationError, match="privilege-escalating"):
+            PodTemplateConfig(container_security_context=override)
+
+    def test_pod_security_context_privilege_escalation_rejected(self) -> None:
+        """pod_security_context is gated identically to the container one."""
+        with pytest.raises(ValidationError, match="privilege-escalating"):
+            PodTemplateConfig(pod_security_context={"runAsNonRoot": False})
+
+    def test_container_security_context_escalation_stripped_by_builder(self) -> None:
+        """build_security_context drops escalating values if validation is bypassed."""
+        template = PodTemplateConfig.model_construct(
+            container_security_context={
+                "privileged": True,
+                "allowPrivilegeEscalation": True,
+                "runAsUser": 0,
+                "readOnlyRootFilesystem": False,
+            }
+        )
+
+        ctx = build_security_context(template)
+
+        assert "privileged" not in ctx
+        assert ctx["allowPrivilegeEscalation"] is False
+        assert ctx["runAsUser"] == 1000
+        # Non-escalating overrides still apply.
+        assert ctx["readOnlyRootFilesystem"] is False
+
+    def test_container_security_context_benign_overrides_still_apply(self) -> None:
+        """Legitimate overrides are unaffected by the escalation gate."""
+        template = PodTemplateConfig(
+            container_security_context={
+                "readOnlyRootFilesystem": False,
+                "capabilities": {"add": ["NET_ADMIN"]},
+            }
+        )
+
+        ctx = build_security_context(template)
+
+        assert ctx["readOnlyRootFilesystem"] is False
+        assert ctx["capabilities"] == {"drop": ["ALL"], "add": ["NET_ADMIN"]}
+        assert ctx["runAsNonRoot"] is True
 
     @pytest.mark.parametrize(
         "resources",

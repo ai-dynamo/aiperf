@@ -110,7 +110,9 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     @app.on_event("startup")
     async def _start_initial_build() -> None:
-        asyncio.create_task(_build_and_swap(proxy, base_dir))
+        task = asyncio.create_task(_build_and_swap(proxy, base_dir))
+        app.state.dashboard_refresh_tasks.add(task)
+        task.add_done_callback(app.state.dashboard_refresh_tasks.discard)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

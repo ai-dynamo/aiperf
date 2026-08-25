@@ -850,10 +850,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.session_manager.set_default_context_mode(context_mode)
 
     async def _query_pod_dataset_state(self) -> GroupDatasetStateSnapshot | None:
-        """Fetch the current group-local dataset state from the WorkerGroupManager."""
-        if self.pod_lifecycle_dealer_client is None or not hasattr(
-            self.pod_lifecycle_dealer_client, "request"
-        ):
+        """Fetch the current group-local dataset state from the WorkerGroupManager.
+
+        ``request`` is part of ``StreamingDealerClientProtocol``, so it is not
+        feature-detected: a transport that cannot round-trip this query cannot
+        recover a missed dataset broadcast at all, and silently degrading to
+        ``None`` here would turn that into an unexplained startup hang.
+        """
+        if self.pod_lifecycle_dealer_client is None:
             return None
         try:
             response = await self.pod_lifecycle_dealer_client.request(
@@ -1014,7 +1018,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if self._pending_dataset_metadata is None:
             self.warning(
                 "Dataset download notification arrived before the dataset "
-                "configuration; ignoring, the configuration will open the client"
+                "configuration; ignoring. Recovery comes from the group "
+                "dataset-state poll (_retry_group_dataset_state_until_ready), "
+                "which asks this pod's WorkerGroupManager directly: in "
+                "Kubernetes mode DatasetConfiguredNotification only records "
+                "the pending metadata and does NOT open the client"
             )
             return
         await self._open_dataset_client(msg.client_metadata)
@@ -2049,10 +2057,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.task_stats.task_finished(record.valid)
 
         # Single egress point, so every record - success, error, and cancelled -
-        # carries the offset current at emit time once its minimum sample count
+        # carries the correction current at emit time once its minimum sample count
         # establishes a reliable estimate. Do NOT rewrite timestamp_ns here: it
         # anchors all exported timestamps and was set pre-request, so correcting
         # it in place would also shift it by the request latency.
+        #
+        # Stamps ``correction_ns``, NOT the raw ``offset_ns``: the raw min-filtered
+        # sample is ``clock_skew + min_transit``, so applying it would shift every
+        # exported timestamp one one-way hop earlier than true controller time and
+        # understate credit_to_start_latency by exactly the hop that metric exists
+        # to measure. ``correction_ns`` subtracts the pre-flight one-way estimate
+        # when one was measured, and degrades to the raw offset when it was not.
         #
         # Gated on the same flag that gates sampling in _schedule_credit_drop_task:
         # with no samples the tracker is never calibrated, so outside Kubernetes
@@ -2060,7 +2075,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # local records byte-identical while dropping a property call and an
         # attribute store from the per-record egress path.
         if self._tracks_clock_offset and self.clock_offset_tracker.is_calibrated:
-            record.clock_offset_ns = self.clock_offset_tracker.offset_ns
+            record.clock_offset_ns = self.clock_offset_tracker.correction_ns
 
         msg = InferenceResultsMessage(
             service_id=self.service_id,

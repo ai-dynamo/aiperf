@@ -37,4 +37,8 @@ def test_kubernetes_audit_ci_route_selects_serial_audit_suite() -> None:
     assert "-n 0" in recipe
     assert "schedule:" in workflow
     assert "workflow_dispatch:" in workflow
-    assert "make kubernetes-audit-tests-ci args='--k8s-skip-build" in workflow
+    assert 'make kubernetes-audit-tests-ci args="--k8s-skip-build' in workflow
+    # The dispatch input must reach the shell through env, never raw ${{ }}
+    # interpolation, which a quote in the input could break out of.
+    assert "PYTEST_ARGS: ${{ inputs.pytest_args }}" in workflow
+    assert "${{ inputs.pytest_args }}'" not in workflow

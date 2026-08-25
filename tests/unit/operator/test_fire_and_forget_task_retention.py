@@ -30,6 +30,11 @@ SITES = [
         "_refresh_task",
         id="dashboard-refresh",
     ),
+    param(
+        "src/aiperf/operator/dashboard_server.py",
+        "_build_and_swap",
+        id="dashboard-initial-build",
+    ),
 ]
 
 

@@ -406,7 +406,10 @@ async def _stream_zstd_to_gzip(file_path: Path) -> AsyncIterator[bytes]:
     gzip_obj = zlib.compressobj(level=6, wbits=31)
     dctx = zstandard.ZstdDecompressor()
 
-    with open(file_path, "rb") as f, dctx.stream_reader(f) as reader:
+    # zstandard's stream_reader needs a synchronous file object, so aiofiles is
+    # not usable here; offload the blocking open() the same way the read loop is.
+    handle = await asyncio.to_thread(file_path.open, "rb")
+    with handle, dctx.stream_reader(handle) as reader:
         while chunk := await asyncio.to_thread(reader.read, CHUNK_SIZE):
             gzip_chunk = gzip_obj.compress(chunk)
             if gzip_chunk:
@@ -423,7 +426,10 @@ async def _stream_zstd_decompress(file_path: Path) -> AsyncIterator[bytes]:
 
     dctx = zstandard.ZstdDecompressor()
 
-    with open(file_path, "rb") as f, dctx.stream_reader(f) as reader:
+    # zstandard's stream_reader needs a synchronous file object, so aiofiles is
+    # not usable here; offload the blocking open() the same way the read loop is.
+    handle = await asyncio.to_thread(file_path.open, "rb")
+    with handle, dctx.stream_reader(handle) as reader:
         while chunk := await asyncio.to_thread(reader.read, CHUNK_SIZE):
             yield chunk
 

@@ -90,6 +90,7 @@ from aiperf.operator.status import (
 
 logger = logging.getLogger(__name__)
 
+
 # How long a completion claim is allowed to suppress a failure stamp.
 #
 # ``Annotations.COMPLETION_CLAIMED`` is stamped on the CR's *metadata*, which is
@@ -101,14 +102,30 @@ logger = logging.getLogger(__name__)
 # the window where the success branch owns the CR and is still draining results
 # — so bound the trust to that window and treat an older or unparsable claim as
 # no evidence at all.
-_CLAIM_TRUST_WINDOW_SEC = 900.0
+#
+# The window is deliberately absolute rather than derived from
+# ``spec.timeoutSeconds``. Every ``try_claim_completion`` call site stamps the
+# claim only AFTER completion evidence (controller benchmark-complete
+# annotation, terminated control-plane container, or key export files already
+# on the PVC), so a live claim means the benchmark is done and the deadline is
+# moot; what remains is result draining, whose cost tracks artifact size, not
+# the benchmark deadline. Scaling the window down to a 30 s ``timeoutSeconds``
+# would therefore stamp FAILED over succeeded-but-still-draining runs — the
+# exact bug this gate exists to prevent. A handler that crashes after claiming
+# does not wait out this window either: ``_maybe_recover_orphan_claim`` runs
+# ahead of ``_check_job_timeout`` on every tick and re-drives
+# ``handle_completion`` as soon as ``_benchmark_appears_complete`` agrees.
+def _claim_trust_window_sec() -> float:
+    """Return the configured claim-trust window in seconds."""
+    return float(OperatorEnvironment.COMPLETION_CLAIM_TRUST_WINDOW_SECONDS)
 
 
 def _completion_claim_is_live(body: dict[str, Any], namespace: str) -> bool:
     """Return True if ``body`` carries a completion claim young enough to trust.
 
     A claim with no parsable timestamp carries no verifiable evidence and is
-    therefore not honoured; neither is one older than ``_CLAIM_TRUST_WINDOW_SEC``.
+    therefore not honoured; neither is one older than
+    ``OperatorEnvironment.COMPLETION_CLAIM_TRUST_WINDOW_SECONDS``.
     """
     if not is_completion_claimed(body):
         return False
@@ -120,12 +137,13 @@ def _completion_claim_is_live(body: dict[str, Any], namespace: str) -> bool:
             (body.get("metadata") or {}).get("name"),
         )
         return False
-    if age >= _CLAIM_TRUST_WINDOW_SEC:
+    window = _claim_trust_window_sec()
+    if age >= window:
         logger.warning(
             "Ignoring stale completion-claim annotation on %s (age %.0fs >= %.0fs)",
             (body.get("metadata") or {}).get("name"),
             age,
-            _CLAIM_TRUST_WINDOW_SEC,
+            window,
         )
         return False
     return True
@@ -1355,8 +1373,18 @@ async def _benchmark_appears_complete(
     Checked signals (in order, short-circuiting on first hit):
         1. Controller ``/api/progress`` reports ``is_complete=True``.
         2. The control-plane container in the controller pod is terminated.
+        3. The JobSet carries a terminal ``Completed``/``Failed`` condition.
 
-    Both signals are quick, read-only, and side-effect-free; if neither fires
+    Signal 3 is checked whether or not a controller pod still exists. A pod
+    outliving its control-plane container is normal (a sidecar without
+    ``restartPolicy: Always`` keeps the pod around, and the results sidecar is
+    exactly that), and in that state signals 1 and 2 can both stay silent: the
+    controller may die before pushing final progress, and ``terminated`` is read
+    from the control-plane container status which a sidecar-only pod may not yet
+    expose. Skipping the JobSet condition there left orphan-claim recovery
+    parked until the pod was reaped.
+
+    All signals are quick, read-only, and side-effect-free; if none fires
     we return False so callers can skip eager completion work (e.g.
     ``_recover_orphaned_completion_claim``) while the benchmark is still in
     flight. A return value of False therefore means "no evidence yet, try
@@ -1411,14 +1439,20 @@ async def _benchmark_appears_complete(
         )
     statuses = (pod.status.container_statuses or []) if pod.status else []
     controller_status = _container_status_by_name(statuses, Containers.CONTROL_PLANE)
-    if controller_status is None:
-        return False
     terminated = (
         controller_status.state.terminated
-        if controller_status.state and controller_status.state.terminated
+        if controller_status is not None
+        and controller_status.state
+        and controller_status.state.terminated
         else None
     )
-    return terminated is not None
+    if terminated is not None:
+        return True
+    # Pod alive but the control-plane container has not reported termination.
+    # The JobSet's own terminal condition is still authoritative — a sidecar
+    # can hold the pod open long past the benchmark, and the controller can
+    # exit without ever pushing ``is_complete``.
+    return await _jobset_has_terminal_condition(api, namespace, jobset_name, body=body)
 
 
 async def _recover_orphaned_completion_claim(

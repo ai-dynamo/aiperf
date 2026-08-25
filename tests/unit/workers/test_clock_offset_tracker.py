@@ -4,9 +4,14 @@
 
 The estimator is a minimum-sample filter over a sliding window (NTP clock-filter
 style, RFC 5905): every one-way sample carries network transit as *positive*
-bias, so the smallest sample in the window is the closest approximation of the
-true clock skew. These tests pin that behavior, including its asymmetry --
-positive outliers are rejected outright, negative ones are adopted.
+bias, so the smallest sample in the window is the smallest ``skew + transit``
+seen. These tests pin that behavior, including its asymmetry -- positive
+outliers are rejected outright, negative ones are adopted.
+
+They also pin the second stage: min filtering shrinks the transit term but never
+removes it, so ``correction_ns`` -- the only value that should ever be applied to
+a timestamp -- subtracts the pre-flight one-way RTT estimate on top. ``offset_ns``
+stays the raw sample.
 """
 
 import asyncio
@@ -85,6 +90,93 @@ def test_correct_timestamp_subtracts_offset():
     assert tracker.correct_timestamp(1_234) == 1_234
     tracker.observe(issued_at_ns=1_000, received_at_ns=6_000)
     assert tracker.correct_timestamp(10_000) == 5_000
+
+
+def test_correction_ns_is_none_before_any_sample():
+    tracker = ClockOffsetTracker()
+    assert tracker.correction_ns is None
+    # A baseline RTT alone is not a correction; there is nothing to correct yet.
+    tracker.baseline_rtt_ns = 2_000
+    tracker.estimated_one_way_ns = 1_000
+    assert tracker.correction_ns is None
+
+
+def test_correction_ns_falls_back_to_raw_offset_without_a_baseline_rtt():
+    """No RTT baseline means the transit term is unknown, not zero.
+
+    All probes timing out is a supported outcome (the worker announces readiness
+    anyway), so the correction must degrade to the raw sample rather than to
+    None -- a skew of seconds uncorrected is far worse than one left carrying a
+    sub-millisecond transit term.
+    """
+    tracker = ClockOffsetTracker()
+    tracker.observe(issued_at_ns=1_000, received_at_ns=6_000)
+    assert tracker.estimated_one_way_ns is None
+    assert tracker.correction_ns == tracker.offset_ns == 5_000
+
+
+def test_correction_ns_removes_the_estimated_one_way_transit():
+    """The applied correction is skew, not skew-plus-transit.
+
+    Regression: the worker used to stamp the raw ``offset_ns`` onto every
+    record. Because a one-way sample is ``skew + transit``, that shifted every
+    corrected timestamp one network hop EARLIER than true controller time, which
+    subtracts a whole delivery hop from ``credit_to_start_latency`` -- the
+    metric whose entire purpose is to measure that hop plus queueing.
+    """
+    tracker = ClockOffsetTracker()
+    tracker.observe(issued_at_ns=1_000, received_at_ns=6_000)
+    tracker.baseline_rtt_ns = 2_000
+    tracker.estimated_one_way_ns = 1_000
+
+    assert tracker.offset_ns == 5_000
+    assert tracker.correction_ns == 4_000
+    assert tracker.correction_ns == tracker.estimated_clock_skew_ns
+
+
+def test_correct_timestamp_recovers_true_controller_time_under_symmetric_transit():
+    """With a symmetric path the residual bias is zero, not one hop.
+
+    Ground truth here is exact: the worker clock leads by ``skew``, every credit
+    takes at least ``transit``, and the RTT probe sees ``2 * transit``. A worker
+    instant of ``W`` is controller instant ``W - skew``; the estimator must land
+    on that, not on ``W - skew - transit``.
+    """
+    tracker = ClockOffsetTracker()
+    skew_ns = 5_000_000
+    transit_ns = 400_000
+
+    issued = 1_000_000_000
+    for extra_delay_ns in (0, 250_000, 3_000_000):
+        tracker.observe(
+            issued_at_ns=issued,
+            received_at_ns=issued + skew_ns + transit_ns + extra_delay_ns,
+        )
+    tracker.baseline_rtt_ns = 2 * transit_ns
+    tracker.estimated_one_way_ns = transit_ns
+
+    worker_instant_ns = 2_000_000_000 + skew_ns
+    assert tracker.correct_timestamp(worker_instant_ns) == 2_000_000_000
+
+    # And the size of the bug the correction removes, in the same units.
+    tracker.estimated_one_way_ns = None
+    assert tracker.correct_timestamp(worker_instant_ns) == 2_000_000_000 - transit_ns
+
+
+def test_now_with_offset_reports_the_correction_that_would_be_applied():
+    """The second element must be the applied correction, not the raw sample.
+
+    They differ once a baseline RTT exists, and a caller that pairs the returned
+    timestamp with the raw offset would reintroduce the transit bias.
+    """
+    tracker = ClockOffsetTracker()
+    tracker.observe(issued_at_ns=1_000, received_at_ns=6_000)
+    tracker.baseline_rtt_ns = 2_000
+    tracker.estimated_one_way_ns = 1_000
+
+    now_ns, correction = tracker.now_with_offset()
+    assert correction == 4_000
+    assert now_ns - correction == tracker.correct_timestamp(now_ns)
 
 
 def test_update_uses_the_trackers_own_clock():

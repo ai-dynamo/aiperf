@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from typing import Any
 
+    from msgspec import Struct
+
     from aiperf.common.enums import LifecycleState
     from aiperf.common.models import (
         MessageCallbackMapT,
@@ -169,13 +171,21 @@ class StreamingRouterClientProtocol(CommunicationClientProtocol, Protocol):
 
     def register_receiver(
         self,
-        handler: Callable[[str, MessageT], Coroutine[Any, Any, None]],
+        handler: Callable[[str, MessageT], Coroutine[Any, Any, Struct | None]],
     ) -> None:
         """
         Register handler for incoming messages from DEALER clients.
 
+        The handler's return value selects the exchange pattern: returning
+        ``None`` is fire-and-forget streaming, while returning a ``Struct``
+        makes it request-reply -- the ROUTER sends that struct straight back to
+        the originating DEALER. ``request_to`` below is built on exactly that
+        reply, so the return type is part of the contract, not an artifact of
+        the implementation.
+
         Args:
             handler: Async function that takes (identity: str, message: Message)
+                and returns a reply struct, or None to stay fire-and-forget.
         """
         ...
 
@@ -231,6 +241,26 @@ class StreamingDealerClientProtocol(CommunicationClientProtocol, Protocol):
 
         Args:
             message: The message to send
+        """
+        ...
+
+    async def request(self, message: MessageT, timeout: float) -> Any:
+        """
+        Send a request to the ROUTER and await the reply correlated by ``rid``/``cid``.
+
+        The peer must echo the request's ``rid`` (or ``cid``) on its response.
+        Used by the worker-pod lifecycle channel for ``GroupPeerHello`` and
+        ``GroupDatasetStateQuery``; those recovery paths are part of the
+        declared contract rather than an optional extra, so implementations
+        must provide this and callers must not feature-detect it.
+
+        Args:
+            message: The request message; must carry a non-empty ``rid`` or ``cid``
+            timeout: Maximum seconds to wait for the reply
+
+        Raises:
+            ValueError: If ``message`` has neither ``rid`` nor ``cid`` to correlate on
+            TimeoutError: If no matching reply arrives within ``timeout``
         """
         ...
 

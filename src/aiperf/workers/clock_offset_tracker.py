@@ -13,17 +13,32 @@ as positive bias: ``sample = clock_skew + network_transit``.
 
 Minimum offset filtering (inspired by NTP's clock filter algorithm, RFC 5905) takes
 the smallest sample in a sliding window. The minimum has the least network delay,
-making it the closest approximation to the true clock skew.
+but it is still ``clock_skew + min_transit``, not the skew: min-filtering makes the
+transit term SMALL, never zero.
+
+That residual transit is removed separately. A pre-flight RTT measurement (ping/pong
+probes echoed verbatim by the credit ROUTER) yields ``estimated_one_way_ns =
+min_rtt // 2``, and ``correction_ns`` -- the value actually applied to timestamps --
+is ``offset_ns - estimated_one_way_ns``. Without that second term the correction
+shifts every worker timestamp EARLIER than true controller time by one one-way hop,
+which directly understates ``credit_to_start_latency`` (``request_start_ns -
+credit_issued_ns``), the very quantity that hop belongs to. On TCP loopback the
+uncorrected bias measures ~17us against a ~20us one-way estimate; cross-pod in a
+cluster both scale by two to three orders of magnitude, to the same order as the
+metric itself.
+
+The estimate assumes path symmetry and is measured on an idle channel at startup,
+so it is not exact -- it slightly overshoots when router turnaround dominates and
+undershoots under load. It is applied anyway because the uncorrected value carries a
+guaranteed one-directional bias, whereas the residual is smaller and unsigned. When
+no baseline RTT was established (all probes timed out), ``correction_ns`` falls back
+to the raw ``offset_ns`` -- the transit term is then unknown, not zero.
 
 Both the controller (CreditIssuer) and this tracker use a dual-clock bootstrap pattern:
 capture ``time.time_ns()`` once at startup as a wall-clock anchor, then derive all
 subsequent timestamps from ``time.perf_counter_ns()`` deltas. This makes both sides
 immune to NTP step corrections during the benchmark while keeping timestamps in the
 wall-clock domain for cross-machine comparison.
-
-An optional pre-flight RTT measurement (ping/pong probes) establishes baseline
-network latency at startup, allowing the offset to be decomposed into estimated
-clock skew and network transit for diagnostics.
 """
 
 import asyncio
@@ -43,8 +58,10 @@ class ClockOffsetTracker:
     """Tracks clock offset between controller and worker using minimum offset filtering.
 
     Uses a sliding window of recent offset measurements and selects the minimum
-    as the best estimate of clock skew. This rejects network jitter (which only
-    adds positive bias) rather than averaging it in.
+    as the best estimate of ``clock_skew + one_way_transit``. This rejects network
+    jitter (which only adds positive bias) rather than averaging it in. The
+    surviving transit term is then removed using the pre-flight baseline RTT; see
+    ``correction_ns``, which is the value callers should apply.
 
     Min filtering is asymmetric under drift: a *falling* true offset is picked up on
     the very next sample, but a *rising* one is only tracked once the window fully
@@ -64,7 +81,8 @@ class ClockOffsetTracker:
         controller_time_ns = tracker.correct_timestamp(worker_time_ns)
 
     Attributes:
-        offset_ns: Current best-estimate offset in nanoseconds (None before first sample).
+        offset_ns: Raw min-filtered sample, ``clock_skew + min_transit`` (None
+            before first sample). Use ``correction_ns`` to correct a timestamp.
         sample_count: Total number of offset measurements recorded.
         baseline_rtt_ns: Minimum RTT from pre-flight probes (None if not measured).
         estimated_one_way_ns: Half of baseline RTT (None if not measured).
@@ -127,7 +145,9 @@ class ClockOffsetTracker:
             received_at_ns: Wall-clock timestamp from this worker (credit receipt time).
 
         Returns:
-            The updated best-estimate offset in nanoseconds.
+            The updated raw min-filtered offset in nanoseconds. This still
+            includes one-way transit; see ``correction_ns`` for the value to
+            apply to a timestamp.
         """
         self._window.append(received_at_ns - issued_at_ns)
         self.sample_count += 1
@@ -143,7 +163,7 @@ class ClockOffsetTracker:
             issued_at_ns: Wall clock timestamp from the credit (controller time).
 
         Returns:
-            The updated best-estimate offset in nanoseconds.
+            The updated raw min-filtered offset in nanoseconds (see ``observe``).
         """
         return self.observe(issued_at_ns=issued_at_ns, received_at_ns=self._now_ns())
 
@@ -175,16 +195,35 @@ class ClockOffsetTracker:
             return None
         return self.offset_ns - self.estimated_one_way_ns
 
-    def now_with_offset(self) -> tuple[int, int | None]:
-        """Return the current monotonic wall-clock time and the offset used.
+    @property
+    def correction_ns(self) -> int | None:
+        """The offset to SUBTRACT from a worker timestamp to reach controller time.
 
-        Both values share the same clock read, so the offset is exactly the one
-        that would be needed to correct this timestamp to controller time.
+        This is the only value that should be applied to a timestamp or stamped
+        onto a record. It is ``estimated_clock_skew_ns`` when a baseline RTT was
+        measured, and the raw ``offset_ns`` otherwise.
+
+        The distinction matters: ``offset_ns`` is ``clock_skew + min_transit``, so
+        applying it directly biases corrected timestamps one one-way hop EARLIER
+        than true controller time. Subtracting ``estimated_one_way_ns`` cancels
+        that term to within the path-asymmetry error.
+
+        Returns None before the first sample.
+        """
+        skew = self.estimated_clock_skew_ns
+        return self.offset_ns if skew is None else skew
+
+    def now_with_offset(self) -> tuple[int, int | None]:
+        """Return the current monotonic wall-clock time and the correction used.
+
+        Both values share the same clock read, so the correction is exactly the
+        one that would be needed to convert this timestamp to controller time.
 
         Returns:
-            (now_ns, offset_ns) where offset_ns is None before the first sample.
+            (now_ns, correction_ns) where correction_ns is None before the first
+            sample.
         """
-        return self._now_ns(), self.offset_ns
+        return self._now_ns(), self.correction_ns
 
     def correct_timestamp(self, worker_timestamp_ns: int) -> int:
         """Convert a worker wall-clock timestamp to the controller's time frame.
@@ -193,12 +232,14 @@ class ClockOffsetTracker:
             worker_timestamp_ns: A wall-clock-domain timestamp from this worker.
 
         Returns:
-            The timestamp adjusted to controller time. Returns the input unchanged
-            if no offset has been measured yet.
+            The timestamp adjusted to controller time by subtracting
+            ``correction_ns``. Returns the input unchanged if no offset has been
+            measured yet.
         """
-        if self.offset_ns is None:
+        correction = self.correction_ns
+        if correction is None:
             return worker_timestamp_ns
-        return worker_timestamp_ns - self.offset_ns
+        return worker_timestamp_ns - correction
 
     # =========================================================================
     # Pre-flight RTT measurement

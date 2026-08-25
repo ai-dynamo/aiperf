@@ -220,6 +220,32 @@ class _SweepControllerSettings(BaseSettings):
         "(stalled operator cancel path, wedged pod, repeatedly-failing JobSet "
         "delete) cannot wedge the whole sweep indefinitely.",
     )
+    SUMMARY_RACE_REFRESH_ATTEMPTS: int = Field(
+        default=15,
+        ge=0,
+        le=200,
+        description="How many times the sweep-controller re-reads a terminal "
+        "child AIPerfJob whose ``status.summary`` AND ``status.runEpoch`` are "
+        "both still unset before giving up on its metrics. The operator's "
+        "completion handler stamps both fields from a code path that is not "
+        "atomic with the phase write, so a fast child (concurrency=1, few "
+        "requests) routinely reaches Completed first. This window must cover "
+        "the whole completion handler — results fetch + retries, disk "
+        "recovery, JobSet delete, retention pass — because the operator-API "
+        "fallback needs ``status.runEpoch`` and short-circuits without it. "
+        "Exhausting the window collapses that variation's SLA bracket to "
+        "``observed: null``, so err long: the loop exits the instant either "
+        "field lands, and only a genuinely stuck completion pays the full "
+        "wait. Set 0 to disable the settle loop entirely.",
+    )
+    SUMMARY_RACE_REFRESH_SECONDS: float = Field(
+        default=2.0,
+        gt=0,
+        le=60,
+        description="Delay between the child re-reads controlled by "
+        "SUMMARY_RACE_REFRESH_ATTEMPTS. Attempts x this delay is the total "
+        "grace granted to the operator's summary/runEpoch write.",
+    )
     CHILD_MISSING_TIMEOUT_SECONDS: float = Field(
         default=300.0,
         gt=0,
@@ -343,6 +369,35 @@ class _OperatorEnvironment(BaseSettings):
         gt=0,
         le=120,
         description="Seconds to wait for all pre-flight checks to complete",
+    )
+    CLIENT_CACHE_MAX_ENTRIES: int = Field(
+        default=200,
+        ge=1,
+        le=100000,
+        description="Upper bound on each process-wide kopf handler cache in "
+        "``aiperf.operator.client_cache`` (cached ProgressClients, unset "
+        "cancellation events, latched completion-claim timestamps). Eviction "
+        "is FIFO/LRU per cache and is loss-tolerant by construction: a "
+        "ProgressClient is re-created on demand, a SET cancellation flag is "
+        "never evicted, and a claim timestamp falls back to the durable "
+        "COMPLETION_CLAIMED annotation on the CR. Raise it on operators that "
+        "reconcile more than this many AIPerfJobs concurrently.",
+    )
+    COMPLETION_CLAIM_TRUST_WINDOW_SECONDS: float = Field(
+        default=900.0,
+        gt=0,
+        description="How long (seconds, measured from the claim timestamp) the "
+        "``aiperf.nvidia.com/completion-claimed`` annotation may suppress the "
+        "``spec.timeoutSeconds`` FAILED stamp and the 'JobSet not found' FAILED "
+        "stamp in the monitor. The annotation lives on CR metadata, which any "
+        "AIPerfJob editor can write, so trusting it without bound would let a "
+        "forged or orphaned value disable terminal-phase enforcement forever. "
+        "Deliberately NOT derived from ``spec.timeoutSeconds``: the window has "
+        "to cover post-benchmark result draining (fetch + retries + retention), "
+        "which is unrelated to — and routinely longer than — a short benchmark "
+        "deadline, and a claim is only ever stamped after completion evidence. "
+        "Crash-after-claim converges through orphan-claim recovery on the next "
+        "monitor tick rather than through this window.",
     )
     CONFIGMAP_PROPAGATION_DELAY_SECONDS: float = Field(
         default=10.0,

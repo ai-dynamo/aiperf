@@ -65,24 +65,38 @@ TERMINAL_PHASES = frozenset(
     {"Completed", "Succeeded", "Failed", "Cancelled", "PartiallyFailed"}
 )
 DEFAULT_POLL_INTERVAL_SECONDS = 5.0
-# When ``_pull_summary_metrics`` reads a terminal-Completed child but neither
-# ``status.summary`` nor ``status.runEpoch`` is populated yet, refresh the CR
-# this many times with this delay before falling back. The operator's monitor
-# tick / completion handler can land AFTER ``phase=Completed`` is observed on
-# the sweep-controller side — fast adaptive probes (e.g. concurrency=1, low
-# request count) finish in seconds and routinely race the operator reconcile.
-# Without this, the bracket collapses to ``observed: null`` because both the
-# primary read and the operator-API fallback (which needs ``runEpoch``) come
-# up empty.
-SUMMARY_RACE_REFRESH_ATTEMPTS = 6
-SUMMARY_RACE_REFRESH_SECONDS = 2.0
 _RECOVERY_SUMMARY_CONCURRENCY = 8
+
+
+def _summary_race_refresh_attempts() -> int:
+    """Return how many times to re-read a terminal child awaiting its summary.
+
+    When ``_pull_summary_metrics`` reads a terminal-Completed child but neither
+    ``status.summary`` nor ``status.runEpoch`` is populated yet, refresh the CR
+    this many times (spaced by ``_summary_race_refresh_seconds()``) before
+    falling back. The operator's monitor tick / completion handler can land
+    AFTER ``phase=Completed`` is observed on the sweep-controller side — fast
+    adaptive probes (e.g. concurrency=1, low request count) finish in seconds
+    and routinely race the operator reconcile. Exhausting the window is NOT
+    softened by the operator-API fallback: that fallback keys off
+    ``status.runEpoch`` and short-circuits when it is absent, so the bracket
+    collapses to ``observed: null``. Tunable via
+    ``AIPERF_SWEEP_CONTROLLER_SUMMARY_RACE_REFRESH_ATTEMPTS``.
+    """
+    from aiperf.operator.environment import OperatorEnvironment
+
+    return int(OperatorEnvironment.SWEEP_CONTROLLER.SUMMARY_RACE_REFRESH_ATTEMPTS)
+
+
+def _summary_race_refresh_seconds() -> float:
+    """Return the delay between child re-reads in the summary settle loop."""
+    from aiperf.operator.environment import OperatorEnvironment
+
+    return float(OperatorEnvironment.SWEEP_CONTROLLER.SUMMARY_RACE_REFRESH_SECONDS)
 
 
 __all__ = [
     "DEFAULT_POLL_INTERVAL_SECONDS",
-    "SUMMARY_RACE_REFRESH_ATTEMPTS",
-    "SUMMARY_RACE_REFRESH_SECONDS",
     "RUN_IDENTITY_ANNOTATION",
     "SWEEP_LABEL",
     "SWEEP_RUN_EPOCH_LABEL",
@@ -1273,9 +1287,14 @@ class K8sChildJobExecutor(RunExecutor):
         from a separate code path that isn't atomic with the phase write.
         Without this re-read, fast adaptive probes (concurrency=1, few
         requests) collapse the SLA bracket to ``observed: null`` because both
-        primary AND fallback see empty state. Six refreshes × 2s = 12s grace
-        is enough to absorb a missed monitor tick (5s default) without
-        meaningfully slowing the orchestrator.
+        primary AND fallback see empty state. The grace is
+        ``SUMMARY_RACE_REFRESH_ATTEMPTS x SUMMARY_RACE_REFRESH_SECONDS``
+        (see ``_summary_race_refresh_attempts``) and has to cover the operator's
+        whole completion handler — fetch + retries, disk recovery, JobSet
+        delete, retention pass — not just a missed monitor tick, because the
+        fallback below cannot run at all without ``status.runEpoch``. The loop
+        exits the instant either field lands, so only a genuinely stuck
+        completion pays the full wait.
 
         ``status.summary`` mixes JsonMetricResult-shaped per-tag dicts with
         bolted-on top-level scalars (``total_requests``, ``error_rate``); the
@@ -1302,7 +1321,7 @@ class K8sChildJobExecutor(RunExecutor):
         # the primary read AND the operator-API fallback need at least one of
         # those, so re-read the CR a few times before giving up. We exit the
         # loop the moment either field is populated; the first hit short-
-        # circuits the worst-case 12s wait.
+        # circuits the full settle window.
         if settle and not status.get("runEpoch"):
             settled_child, summary = await self._settle_child_summary(
                 child, expected_child_uid=expected_child_uid
@@ -1346,8 +1365,10 @@ class K8sChildJobExecutor(RunExecutor):
     ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
         """Refresh one exact child until summary or run epoch is available."""
         name = child["metadata"]["name"]
-        for attempt in range(SUMMARY_RACE_REFRESH_ATTEMPTS):
-            await asyncio.sleep(SUMMARY_RACE_REFRESH_SECONDS)
+        attempts = _summary_race_refresh_attempts()
+        delay = _summary_race_refresh_seconds()
+        for attempt in range(attempts):
+            await asyncio.sleep(delay)
             refreshed = await self._try_read_child(name)
             if refreshed is None:
                 break
@@ -1364,7 +1385,7 @@ class K8sChildJobExecutor(RunExecutor):
             self._last_resolved_child = child
             status = child.get("status") or {}
             summary = status.get("summary") or {}
-            elapsed = (attempt + 1) * SUMMARY_RACE_REFRESH_SECONDS
+            elapsed = (attempt + 1) * delay
             if summary:
                 logger.info(
                     f"child {name}: status.summary populated after {elapsed:.0f}s grace"

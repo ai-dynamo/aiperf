@@ -11,6 +11,10 @@ Sign convention (get this wrong and correction doubles the error instead of
 removing it): a sample is ``received - issued``, so a worker clock running
 *ahead* of the controller yields a *positive* offset, and ``correct_timestamp``
 SUBTRACTS -- ``controller_time = worker_time - offset``.
+
+What is stamped is ``ClockOffsetTracker.correction_ns``, not the raw
+``offset_ns``: the raw sample is ``skew + transit``, so stamping it biases every
+exported controller-frame timestamp one network hop early.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -29,6 +33,11 @@ def test_offset_sign_round_trips_a_known_skew() -> None:
     each raw sample, so the min-filtered estimate is the smallest sample (6 ms).
     A sign flip returns 2_012_000_000 -- double the 6 ms error rather than
     removing it -- not 2_000_000_000.
+
+    No baseline RTT is measured here, so the 1 ms transit term survives into the
+    correction; the worker instant chosen is offset by that same 1 ms so the
+    arithmetic still closes. ``test_transit_estimate_removes_the_one_way_bias``
+    below covers the case where the transit term IS estimated and removed.
     """
     tracker = ClockOffsetTracker()
     skew_ns = 5_000_000
@@ -223,3 +232,80 @@ async def test_kubernetes_worker_stamps_offset_after_clock_calibrates() -> None:
     await Worker._send_inference_result_message(worker, record)
 
     assert record.clock_offset_ns == 2_500
+
+
+@pytest.mark.asyncio
+async def test_worker_stamps_the_transit_corrected_offset_not_the_raw_sample() -> None:
+    """The worker must stamp ``correction_ns``, never the raw ``offset_ns``.
+
+    Regression: stamping ``offset_ns`` shipped ``skew + min_transit``, so
+    ``RequestRecord.controller_timestamp_ns`` landed one one-way hop before true
+    controller time on every Kubernetes record.
+    """
+    from aiperf.workers.worker import Worker
+
+    worker = MagicMock(spec=Worker)
+    worker.clock_offset_tracker = ClockOffsetTracker()
+    worker._tracks_clock_offset = True
+    for _ in range(5):
+        worker.clock_offset_tracker.observe(issued_at_ns=1_000, received_at_ns=3_500)
+    worker.clock_offset_tracker.baseline_rtt_ns = 1_000
+    worker.clock_offset_tracker.estimated_one_way_ns = 500
+    worker.task_stats = MagicMock()
+    worker.execute_async = MagicMock()
+    worker.inference_results_push_client = AsyncMock()
+    worker.service_id = "worker-7f2a"
+
+    record = RequestRecord()
+    await Worker._send_inference_result_message(worker, record)
+
+    assert worker.clock_offset_tracker.offset_ns == 2_500
+    assert record.clock_offset_ns == 2_000
+
+
+@pytest.mark.asyncio
+async def test_credit_to_start_latency_keeps_the_delivery_hop_it_measures() -> None:
+    """End to end: the exported controller-frame start must not lose the hop.
+
+    ``credit_to_start_latency`` is ``request_start_ns - credit_issued_ns``, and
+    the delivery hop is part of that wait by definition. Stamping the raw
+    ``offset_ns`` subtracted the hop out of it -- here that would report 1.0 ms
+    of a genuine 1.4 ms wait, and a wait shorter than one hop would go negative
+    and be clamped to zero downstream.
+    """
+    from aiperf.workers.worker import Worker
+
+    skew_ns = 5_000_000
+    transit_ns = 400_000
+    issued_at_ns = 1_000_000_000
+    queue_wait_ns = 1_000_000  # worker-side wait after the credit lands
+
+    worker = MagicMock(spec=Worker)
+    worker.clock_offset_tracker = ClockOffsetTracker()
+    worker._tracks_clock_offset = True
+    for _ in range(5):
+        worker.clock_offset_tracker.observe(
+            issued_at_ns=issued_at_ns,
+            received_at_ns=issued_at_ns + skew_ns + transit_ns,
+        )
+    worker.clock_offset_tracker.baseline_rtt_ns = 2 * transit_ns
+    worker.clock_offset_tracker.estimated_one_way_ns = transit_ns
+    worker.task_stats = MagicMock()
+    worker.execute_async = MagicMock()
+    worker.inference_results_push_client = AsyncMock()
+    worker.service_id = "worker-7f2a"
+
+    # Worker stamps its own clock when it starts the request.
+    worker_start_ns = issued_at_ns + skew_ns + transit_ns + queue_wait_ns
+    record = RequestRecord(timestamp_ns=worker_start_ns)
+    await Worker._send_inference_result_message(worker, record)
+
+    true_wait_ns = transit_ns + queue_wait_ns
+    assert record.controller_timestamp_ns - issued_at_ns == true_wait_ns
+
+    # The pre-fix behavior, for contrast: one whole hop short.
+    raw = RequestRecord(
+        timestamp_ns=worker_start_ns,
+        clock_offset_ns=worker.clock_offset_tracker.offset_ns,
+    )
+    assert raw.controller_timestamp_ns - issued_at_ns == true_wait_ns - transit_ns

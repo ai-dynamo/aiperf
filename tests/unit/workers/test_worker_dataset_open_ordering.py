@@ -116,3 +116,32 @@ async def test_non_kubernetes_worker_opens_immediately() -> None:
     assert [m.data_file_path for m in worker.opened] == [
         Path("/controller/dataset.dat")
     ]
+
+
+@pytest.mark.asyncio
+async def test_download_before_config_warning_names_the_real_recovery_path() -> None:
+    """The out-of-order warning must not promise a recovery that cannot happen.
+
+    ``_on_dataset_downloaded`` only runs in Kubernetes mode, and in that mode
+    ``_on_dataset_configured`` records the metadata and returns without opening
+    anything. The recovery is the group dataset-state poll
+    (``_retry_group_dataset_state_until_ready``), which asks this pod's
+    WorkerGroupManager directly.
+    """
+    worker = _FakeWorker(is_kubernetes=True, pod_index="0")
+    warnings: list[str] = []
+    worker.warning = warnings.append  # type: ignore[method-assign]
+
+    # No DatasetConfiguredNotification seen yet.
+    await Worker._on_dataset_downloaded(
+        worker,
+        DatasetDownloadedNotification(
+            service_id="wgm", client_metadata=_metadata("pod"), pod_index="0"
+        ),
+    )
+
+    assert worker.opened == []
+    assert len(warnings) == 1
+    message = warnings[0]
+    assert "_retry_group_dataset_state_until_ready" in message
+    assert "the configuration will open the client" not in message

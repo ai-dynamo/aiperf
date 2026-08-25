@@ -3,6 +3,7 @@
 """Unit tests for aiperf.kubernetes.spec_converter module."""
 
 import copy
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -446,6 +447,43 @@ class TestApplyWorkerConfig:
 
         assert runtime["workers"] == 11
         assert num_pods * runtime["workers_per_pod"] == 11
+
+    def test_non_divisible_total_warns_about_single_pod_collapse(
+        self, minimal_aiperfjob_spec: dict[str, Any], caplog
+    ) -> None:
+        """The collapse to one pod contradicts the --total-workers help text.
+
+        It is deliberate (a JobSet has no partial final replica), but silently
+        putting 25 workers on one pod when the user asked for a spread is the
+        kind of surprise that only shows up as a saturated node.
+        """
+        config = AIPerfJobSpecConverter(
+            minimal_aiperfjob_spec, "test-job", "default"
+        ).to_aiperf_config()
+
+        with caplog.at_level(
+            logging.WARNING, logger="aiperf.kubernetes.spec_converter"
+        ):
+            num_pods = apply_worker_config(config, 25)
+
+        assert num_pods == 1
+        assert config.benchmark.runtime.workers_per_pod == 25
+        assert "single pod" in caplog.text
+
+    def test_divisible_total_does_not_warn(
+        self, minimal_aiperfjob_spec: dict[str, Any], caplog
+    ) -> None:
+        config = AIPerfJobSpecConverter(
+            minimal_aiperfjob_spec, "test-job", "default"
+        ).to_aiperf_config()
+
+        with caplog.at_level(
+            logging.WARNING, logger="aiperf.kubernetes.spec_converter"
+        ):
+            num_pods = apply_worker_config(config, 50)
+
+        assert num_pods == 5
+        assert "single pod" not in caplog.text
 
     def test_record_processors_set(
         self, minimal_aiperfjob_spec: dict[str, Any]
