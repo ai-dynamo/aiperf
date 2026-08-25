@@ -182,3 +182,48 @@ class TestNoErrorsAtAll:
         out, _ = await run_report(controller)
 
         assert "Error Summary" not in out
+
+
+class TestRenderFailureIsolation:
+    """A failure while rendering the table must not hide the exit-error panel.
+
+    Both callers print the exit-error panel and the log-file path immediately
+    after the table. Those are the operator's remaining diagnostics on a run
+    that already failed, so a rendering error must not take them down with it.
+    """
+
+    @pytest.fixture
+    def controller(self, system_controller):
+        system_controller._profile_results = make_profile_results(
+            records=[make_record()],
+            successful=0,
+            errors=100,
+            error_summary=summary(message="body with [/INST] in it"),
+        )
+        system_controller._telemetry_results = None
+        system_controller._server_metrics_results = None
+        return system_controller
+
+    async def test_server_markup_renders_and_panel_survives(self, controller):
+        """End to end: hostile server text renders, and the panel still prints."""
+        out, _ = await run_report(controller)
+
+        assert "[/INST]" in out
+        assert "Log File" in out
+
+    async def test_panel_survives_arbitrary_exporter_failure(self, controller):
+        """Even an unrelated crash in the exporter must not eat the panel."""
+        recorder = Console(record=True, width=200)
+        with (
+            patch("aiperf.controller.system_controller.Console", return_value=recorder),
+            patch("aiperf.controller.system_controller.ExporterManager"),
+            patch(
+                "aiperf.controller.system_controller.ConsoleErrorExporter",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            await controller._print_post_benchmark_info_and_metrics()
+
+        out = recorder.export_text()
+        assert "Log File" in out
+        assert len(controller._exit_errors) == 1

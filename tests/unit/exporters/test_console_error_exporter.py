@@ -115,3 +115,45 @@ class TestConsoleErrorExporter:
         out = render(make_results([make_error(**kwargs)]))
 
         assert "N/A" in out
+
+
+class TestMarkupSafety:
+    """Server-controlled text must never be parsed as Rich console markup.
+
+    ``ErrorDetails.type`` and ``.message`` carry the response reason and body
+    verbatim, so a server can put arbitrary bracketed text in them.
+    """
+
+    def test_stray_closing_tag_does_not_raise(self):
+        """A closing tag with no opener used to raise MarkupError."""
+        out = render(
+            make_results(
+                [make_error(message='{"error":"unexpected closing tag [/INST]"}')]
+            )
+        )
+
+        assert "[/INST]" in out
+
+    def test_opening_tag_is_not_swallowed(self):
+        """An opening tag used to render as an empty Message cell."""
+        out = render(make_results([make_error(message="[not a tag]")]))
+
+        assert "[not a tag]" in out
+
+    def test_markup_in_type_is_literal(self):
+        out = render(make_results([make_error(type="[/oops]", message="body")]))
+
+        assert "[/oops]" in out
+
+    def test_style_markup_is_not_interpreted(self):
+        """A server sending style tags must not colour our output."""
+        out = render(make_results([make_error(message="[red]not really red[/red]")]))
+
+        assert "[red]not really red[/red]" in out
+
+    def test_na_placeholders_still_render(self):
+        """The intentional [dim]N/A[/dim] placeholders must keep working."""
+        out = render(make_results([make_error(code=None, type=None)]))
+
+        assert "N/A" in out
+        assert "[dim]" not in out

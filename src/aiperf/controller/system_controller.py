@@ -1109,20 +1109,28 @@ class SystemController(SignalHandlerMixin, BaseService):
         if not results.error_summary:
             return
 
-        console = Console()
-        if console.width < 100:
-            console.width = 100
+        try:
+            console = Console()
+            if console.width < 100:
+                console.width = 100
 
-        exporter = ConsoleErrorExporter(
-            ExporterConfig(
-                results=results,
-                cfg=self.run.cfg,
-                telemetry_results=self._telemetry_results,
-                server_metrics_results=self._server_metrics_results,
-                run=self.run,
+            exporter = ConsoleErrorExporter(
+                ExporterConfig(
+                    results=results,
+                    cfg=self.run.cfg,
+                    telemetry_results=self._telemetry_results,
+                    server_metrics_results=self._server_metrics_results,
+                    run=self.run,
+                )
             )
-        )
-        await exporter.export(console)
+            await exporter.export(console)
+        except Exception:
+            # A rendering failure here must never suppress the exit-error panel
+            # and log-file path that the callers print immediately after. On a
+            # run where every request failed those are the operator's remaining
+            # diagnostics, and ``ExporterManager`` gives this same exporter
+            # equivalent isolation on the normal path.
+            self.exception("Failed to render the error summary table")
 
     def _inject_accuracy_results_into_records(self) -> None:
         """Materialize the dedicated-channel accuracy summary into the profile records.
