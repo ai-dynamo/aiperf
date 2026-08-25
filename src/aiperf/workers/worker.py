@@ -257,10 +257,13 @@ def _find_effective_raw_system(turn_list: list[Turn]) -> list[dict] | None:
 
     Mirrors ``base_endpoint._latest_turn_attr``: walks ``turn_list`` from the
     end and returns the first non-None ``raw_system``. Only ``MessagesEndpoint``
-    reads this field, and there it OUTRANKS both the conversation-level
-    ``system_message`` string and any system-role ``raw_messages`` entry — so a
-    ``SYSTEM_*`` marker written to either of those would be silently dropped
-    from the wire whenever a turn carries ``raw_system``.
+    reads this field, and there it outranks any system-role ``raw_messages``
+    entry — so a ``SYSTEM_*`` marker written to ``raw_messages`` would be
+    silently dropped from the wire whenever a turn carries ``raw_system``.
+
+    It does NOT outrank a conversation-level ``system_message``: that is
+    prepended as ``system`` block 0, ahead of these blocks. Callers must
+    therefore prefer ``system_message`` when both are present.
     """
     for turn in reversed(turn_list):
         if turn.raw_system is not None:
@@ -476,14 +479,20 @@ def _apply_system_target_cache_bust(
     :func:`_effective_prefix_turns`). Four sub-paths, ordered to match how the
     endpoint resolves the system field on the wire — marking a lower-precedence
     carrier would leave the bytes that actually ship unchanged:
-      1. ``raw_system`` present on any turn: it outranks both ``system_message``
-         and system-role ``raw_messages`` in ``MessagesEndpoint``, so the marker
-         goes there. Resolved over ``all_turns`` (not the prefix slice) because
-         ``_latest_turn_attr`` ignores ``reset_context``.
-      2. Conversation-level ``system_message`` present: marker applied every
+      1. Conversation-level ``system_message`` present: marker applied every
          turn (string mutation re-applied per credit). Unaffected by
          ``reset_context`` — the ``system_message`` rides on ``RequestInfo`` and
          is re-emitted every turn independent of ``build_messages``' reset.
+         Checked first because every system-aware endpoint now places it at or
+         ahead of the other carriers: ``MessagesEndpoint`` makes it ``system``
+         block 0 in front of ``raw_system``, and ``ChatEndpoint`` merges it into
+         the front of a leading system ``raw_messages`` entry. Marking a later
+         carrier would leave a constant leading block the server can still
+         prefix-hit on, which is exactly what ``SYSTEM_PREFIX`` must prevent.
+      2. ``raw_system`` present on any turn, with no ``system_message``: it
+         outranks system-role ``raw_messages`` in ``MessagesEndpoint``, so the
+         marker goes there. Resolved over ``all_turns`` (not the prefix slice)
+         because ``_latest_turn_attr`` ignores ``reset_context``.
       3. ``raw_messages`` first dict has ``role=="system"``: marker injected
          into the first system message of the prefix slice.
       4. No system anywhere -> first-user-turn fallback: marker injected
@@ -493,12 +502,12 @@ def _apply_system_target_cache_bust(
 
     Returns the (possibly modified) ``system_message``.
     """
+    if system_message is not None:
+        return _apply_cache_bust_to_system_message(system_message, marker, target)
     raw_system_blocks = _find_effective_raw_system(all_turns)
     if raw_system_blocks is not None:
         _inject_marker_into_raw_system(raw_system_blocks, marker, is_prefix=is_prefix)
         return system_message
-    if system_message is not None:
-        return _apply_cache_bust_to_system_message(system_message, marker, target)
     raw_system = _find_first_system_message(prefix_turns)
     if raw_system is not None:
         _inject_marker_into_raw_messages(raw_system, marker, is_prefix=is_prefix)

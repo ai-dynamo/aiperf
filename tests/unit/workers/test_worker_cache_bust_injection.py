@@ -303,23 +303,26 @@ def test_system_target_injects_into_raw_system_blocks(target, marker, expected):
     assert session.turn_list[-1].raw_system == expected
 
 
-def test_raw_system_outranks_conversation_system_message():
-    """``raw_system`` wins over ``system_message`` on the wire, so marking the
-    string instead would ship unchanged system bytes."""
+def test_conversation_system_message_outranks_raw_system():
+    """``system_message`` becomes ``system`` block 0, ahead of ``raw_system``.
+
+    MessagesEndpoint prepends it as a leading text block, so it -- not
+    ``raw_system[0]`` -- is the first system content on the wire. Marking
+    ``raw_system`` instead would leave a constant leading block that the server
+    can still prefix-hit on, defeating SYSTEM_PREFIX.
+    """
     session = _make_raw_system_session(
-        [{"type": "text", "text": "sys"}], system_message="ignored-on-wire"
+        [{"type": "text", "text": "sys"}], system_message="on-wire-first"
     )
     credit = _make_credit(
         target=CacheBustTarget.SYSTEM_PREFIX, marker=_PREFIX_MARKER, turn_index=0
     )
 
-    out = _apply_cache_bust(session, credit, system_message="ignored-on-wire")
+    out = _apply_cache_bust(session, credit, system_message="on-wire-first")
 
-    assert out == "ignored-on-wire"
-    assert session.turn_list[-1].raw_system[0] == {
-        "type": "text",
-        "text": _PREFIX_MARKER.strip(),
-    }
+    assert out == _PREFIX_MARKER + "on-wire-first"
+    # raw_system is the lower-precedence carrier and must be left alone.
+    assert session.turn_list[-1].raw_system == [{"type": "text", "text": "sys"}]
 
 
 def test_raw_system_outranks_system_role_raw_messages():
