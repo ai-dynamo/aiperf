@@ -82,8 +82,10 @@ struct ScriptRequest<'a> {
 
 /// Run `aiperf slurm generate` with the arguments following `generate`.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
-    let cli = GenerateCli::try_parse_from(std::iter::once("aiperf slurm generate".to_owned()).chain(args.iter().cloned()))
-        .map_err(|error| anyhow::anyhow!("{}", error.render().ansi()))?;
+    let cli = GenerateCli::try_parse_from(
+        std::iter::once("aiperf slurm generate".to_owned()).chain(args.iter().cloned()),
+    )
+    .map_err(|error| anyhow::anyhow!("{}", error.render().ansi()))?;
     let script = build_sbatch_script(&ScriptRequest {
         config: &cli.config,
         cells: cli.cells,
@@ -123,9 +125,8 @@ fn build_sbatch_script(request: &ScriptRequest<'_>) -> anyhow::Result<String> {
         "--cells must be >= 1 (got {})",
         request.cells
     );
-    let config = std::fs::canonicalize(request.config).map_err(|_| {
-        anyhow::anyhow!("config file does not exist: {}", request.config.display())
-    })?;
+    let config = std::fs::canonicalize(request.config)
+        .map_err(|_| anyhow::anyhow!("config file does not exist: {}", request.config.display()))?;
 
     let ntasks = u64::from(request.cells) + 1;
     let nodes = request.nodes.map_or(ntasks, u64::from);

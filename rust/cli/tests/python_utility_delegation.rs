@@ -45,10 +45,17 @@ fn recorded_arguments(record: &Path) -> Vec<String> {
 fn plot_delegates_to_the_python_utility_entry_point() {
     let directory = tempfile::tempdir().expect("create fixture directory");
     let record = directory.path().join("argv");
-    let output = run(&["plot", "report.json"], &recording_python(directory.path()), &record);
+    let output = run(
+        &["plot", "report.json"],
+        &recording_python(directory.path()),
+        &record,
+    );
 
     assert_eq!(output.status.code(), Some(23));
-    assert_eq!(recorded_arguments(&record), ["-m", "aiperf", "plot", "report.json"]);
+    assert_eq!(
+        recorded_arguments(&record),
+        ["-m", "aiperf", "plot", "report.json"]
+    );
     assert_eq!(output.stderr, b"delegated\n");
 }
 
@@ -61,7 +68,14 @@ fn slurm_generate_is_native_and_never_starts_python() {
     let absolute = fs::canonicalize(&config).expect("canonical config path");
 
     let output = run(
-        &["slurm", "generate", "--config", config.to_str().expect("utf-8 path"), "--cells", "2"],
+        &[
+            "slurm",
+            "generate",
+            "--config",
+            config.to_str().expect("utf-8 path"),
+            "--cells",
+            "2",
+        ],
         &recording_python(directory.path()),
         &record,
     );
@@ -91,7 +105,10 @@ fn slurm_generate_is_native_and_never_starts_python() {
 fn help_and_completion_are_explicit_python_utility_routes() {
     let directory = tempfile::tempdir().expect("create fixture directory");
     let interpreter = recording_python(directory.path());
-    for arguments in [["--help"].as_slice(), ["--install-completion", "bash"].as_slice()] {
+    for arguments in [
+        ["--help"].as_slice(),
+        ["--install-completion", "bash"].as_slice(),
+    ] {
         let record = directory.path().join(format!("argv-{}", arguments[0]));
         let output = run(arguments, &interpreter, &record);
 
@@ -100,6 +117,17 @@ fn help_and_completion_are_explicit_python_utility_routes() {
         expected.extend(arguments.iter().map(|argument| (*argument).to_string()));
         assert_eq!(recorded_arguments(&record), expected);
     }
+}
+
+#[test]
+fn version_is_native_and_never_starts_python() {
+    let directory = tempfile::tempdir().expect("create fixture directory");
+    let record = directory.path().join("argv");
+    let output = run(&["--version"], &recording_python(directory.path()), &record);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, format!("{}\n", env!("CARGO_PKG_VERSION")).as_bytes());
+    assert!(!record.exists(), "Python test double was invoked");
 }
 
 #[test]
@@ -129,6 +157,9 @@ fn service_and_unknown_commands_refuse_without_starting_python() {
             "stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(!record.exists(), "Python test double was invoked for {arguments:?}");
+        assert!(
+            !record.exists(),
+            "Python test double was invoked for {arguments:?}"
+        );
     }
 }
