@@ -21,8 +21,8 @@ pub fn exec_python_utility(argv: &[String]) -> anyhow::Result<i32> {
 /// The caller selects only a fixed shim name from the native command router.
 pub fn exec_rust_shim(python: &Path, shim: &str, argv: &[String]) -> anyhow::Result<i32> {
     let mut arguments = Vec::with_capacity(argv.len() + 1);
-    arguments.push(shim);
-    arguments.extend(argv);
+    arguments.push(shim.to_owned());
+    arguments.extend(argv.iter().cloned());
     exec_python_module(python, "aiperf.rust_shims", &arguments)
 }
 
