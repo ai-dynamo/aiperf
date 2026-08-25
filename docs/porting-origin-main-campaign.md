@@ -27,7 +27,7 @@ Sol plan, TDD evidence, verification, and the required Graham review.
 | Order | Upstream commit | Subject | Status | Evidence |
 | --- | --- | --- | --- | --- |
 | 1 | `817a8d84ddb9` | fix(accuracy): grade LCB codegen in an out-of-process worker (#1145) (#1175) | complete | Merge `1c03271dac3e`; port commits `63eb01a355`, `e62454bfcd`, and `9e859f6110`; Graham approved. Focused Python verification: 53 passed, 2 skipped, 2 deselected. Rust evaluator-worker verification: 7 passed. |
-| 2 | `0883bd1aee` | chore: bump aiperf version to 0.12.0 (#1194) | pending | — |
+| 2 | `0883bd1aee` | chore: bump aiperf version to 0.12.0 (#1194) | not-applicable | Merge `9596121af1` has upstream as second parent. The upstream change is Python package/mock-server/docs version metadata only; native crates own independent versions and no runtime behavior changed. |
 | 3 | `34b2be2ee1` | feat: support Speculative Decoding metrics in AIPerf (#1153) | pending | — |
 | 4 | `6db948524e` | fix: uncaught valueerror in sagemaker loader (#1199) | pending | — |
 | 5 | `ce715ae849` | fix(agentic): preserve trace think time with global idle guard (#1201) | pending | — |
@@ -151,3 +151,20 @@ read `requirements/accuracy-worker.txt`, although ancestor `f117f41388` had
 deleted that file and `_dependency_lock_digest()` returns `None` for an absent
 lock. The test now asserts that established absence behavior and retains the
 independent locked-package handshake assertion.
+
+## Per-commit record: 0883bd1aee55
+
+### Upstream intent and Rust comparison
+
+This version bump updates Python package and mock-server metadata plus two
+Python-facing documentation pages. The native CLI, runtime, and Rust mock
+server declare their versions in independent Cargo manifests. No native
+runtime, protocol, artifact, or crate release behavior is part of this commit.
+
+### Merge evidence and decision
+
+`9596121af17440f03f3f552cda5e80b0294e559a` is a two-parent non-fast-forward
+merge with `0883bd1aee552472124aa710e4cf067b7b77cddb` as its second parent.
+The already-recorded individual finding is
+`docs/origin-main-findings/early-002-030.md` section 002. No Rust feature,
+spec, Sol plan, or test change is applicable to this metadata-only merge.
