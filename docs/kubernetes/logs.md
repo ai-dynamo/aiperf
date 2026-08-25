@@ -34,6 +34,7 @@ aiperf kube logs [JOB_ID] [OPTIONS]
 | `-o`, `--output` | `Path` | *(stdout)* | Write logs to a directory instead of printing. See [bulk dump](#bulk-dump-to-disk). |
 | `-v`, `--variation` | `int` | unset | When `JOB_ID` names an `AIPerfSweep`, the child variation index (`0`..`199`). Resolves to `<sweep>-v<idx:02d>`. |
 | `-t`, `--trial` | `int` | unset | Trial index (`0`..`9`) within a sweep variation, resolving to `<sweep>-v<idx:02d>-t<trial>`. Requires `-v`. |
+| `--ignore-not-found` | flag | `false` | Exit `0` instead of `1` when the target benchmark does not exist. Mirrors `kubectl`'s flag of the same name. See [exit codes](#exit-codes). |
 | `-n`, `--namespace` | `str` | `aiperf-benchmarks` (or cached) | Namespace that holds the AIPerfJob. Composite flag from `KubeManageOptions`. |
 | `--kubeconfig` | `str` | `$KUBECONFIG` / `~/.kube/config` | kubeconfig file to use. Composite flag from `KubeManageOptions`. |
 | `--kube-context` | `str` | current context | kubeconfig context to use. Composite flag from `KubeManageOptions`. |
@@ -188,14 +189,23 @@ aiperf kube logs <JOB_ID> -o ./triage-2026-04-22
 
 With `-o <DIR>`:
 
-- The CLI creates `<DIR>/logs/` if it does not exist.
+- The CLI creates `<DIR>/logs/` on the first pod it is about to write.
+  Nothing is created when the label selector matches no pods.
 - For every pod matching the job label, it shells out to
   `kubectl logs -n <NAMESPACE> <POD_NAME> --all-containers=true --prefix`
   (forwarding `--kubeconfig` / `--context` when set) and writes the
   stdout to `<DIR>/logs/<POD_NAME>.log`.
-- Prints `Logs saved to <DIR>/logs/` when the walk finishes. The message
-  is unconditional, so it also appears when no pods matched and nothing
-  was written.
+- The closing line reports what actually reached disk:
+
+  ```text
+  Saved logs for 7 of 8 pod(s) to ./triage-2026-04-22/logs/
+  ```
+
+  A pod that produced no file emits its own warning first, carrying the
+  `kubectl logs` exit code and stderr — for example
+  `Could not save logs -- worker-0-0: kubectl logs exited 1: container has not
+  started`. When no pod produced a file at all, the closing line is a warning
+  (`No logs written to ...`), never a success.
 
 Notes on the bulk dump path specifically:
 
@@ -212,20 +222,49 @@ Notes on the bulk dump path specifically:
 
 ---
 
+## Exit codes
+
+`logs` follows the [target-addressing exit-code
+convention](./workflow.md#exit-code-convention-for-target-addressing-commands):
+it narrates what it found rather than gating on it, with one exception — a
+target that cannot be addressed at all is an error.
+
+| Scenario | Exit code |
+|---|---|
+| Logs printed or written | `0` |
+| Pods matched but a container produced no output | `0` |
+| Job exists, but its pods have been garbage-collected | `0` |
+| `--container` matched no container on any pod | `0` |
+| No AIPerfJob, AIPerfSweep or JobSet with that name exists | `1` |
+| No `JOB_ID` given and no last-benchmark record on disk | `1` |
+| Any of the above two, with `--ignore-not-found` | `0` |
+
+This makes `aiperf kube logs <ID> >/dev/null` usable as a CI existence check,
+while a completed job whose pods have aged out still succeeds.
+
+---
+
 ## Troubleshooting
 
-### `No pods found for job ID: <JOB_ID>`
+### `No pods found for <JOB_ID> in namespace <NS>`
 
 The job label selector built by `job_selector` in
 `src/aiperf/kubernetes/client_selectors.py`
-(`app=aiperf,aiperf.nvidia.com/job-id=<JOB_ID>`) matched nothing in the
-namespace. Usually one of:
+(`app=aiperf,aiperf.nvidia.com/job-id=<JOB_ID>`) matched nothing, but the
+benchmark itself still exists, so the command exits `0`. Almost always the
+JobSet has been garbage-collected by TTL: once the pods are gone, their logs
+are gone from the API server too. Check the CR phase with
+`aiperf kube list --watch`, and pull the run's captured output with
+`aiperf kube results` instead.
+
+### `No AIPerf job found with ID: <JOB_ID>`
+
+Nothing named `<JOB_ID>` exists in the resolved namespace — no AIPerfJob, no
+AIPerfSweep, and no bare JobSet — so the command exits `1`. Usually one of:
 
 - The job ID is wrong (typo, stale cache). Run `aiperf kube list` to
   see live jobs.
-- The JobSet has already been garbage-collected by TTL. Check the
-  AIPerfJob CR phase with `aiperf kube list --watch`; once the CR and
-  its JobSet are removed, pod logs are gone from the API server.
+- The CR was deleted (`aiperf kube delete`, or namespace teardown).
 - `--namespace` points at the wrong namespace. The default is
   `aiperf-benchmarks`.
 

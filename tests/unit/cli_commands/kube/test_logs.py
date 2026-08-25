@@ -125,7 +125,32 @@ class TestLogsOutputDirectory:
         mock_print_pod.assert_awaited_once()
 
     async def test_unresolved_job_id_returns_without_fetching(self) -> None:
-        """If resolve_job_id_and_namespace returns None, logs exits cleanly."""
+        """An unaddressable target fetches nothing and fails the shell."""
+        opts = KubeManageOptions()
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
+                return_value=None,
+            ),
+            patch(
+                "aiperf.cli_commands.kube.logs._save_logs_to_directory",
+                new=AsyncMock(),
+            ) as mock_save,
+            patch(
+                "aiperf.cli_commands.kube.logs._print_pod_logs",
+                new=AsyncMock(),
+            ) as mock_print_pod,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await logs(manage_options=opts)
+
+        mock_save.assert_not_awaited()
+        mock_print_pod.assert_not_awaited()
+        assert exc_info.value.code == 1
+
+    async def test_unresolved_job_id_with_ignore_not_found_exits_zero(self) -> None:
+        """--ignore-not-found still fetches nothing but leaves the exit code at 0."""
         opts = KubeManageOptions()
 
         with (
@@ -142,7 +167,7 @@ class TestLogsOutputDirectory:
                 new=AsyncMock(),
             ) as mock_print_pod,
         ):
-            await logs(manage_options=opts)
+            await logs(manage_options=opts, ignore_not_found=True)
 
         mock_save.assert_not_awaited()
         mock_print_pod.assert_not_awaited()
@@ -151,14 +176,26 @@ class TestLogsOutputDirectory:
 class TestLogsSaveHelper:
     """Tests for `_save_logs_to_directory`."""
 
-    async def test_creates_output_dir_and_invokes_save_pod_logs(
+    async def test_invokes_save_pod_logs_and_reports_files_written(
         self, tmp_path: Path, capsys: Any
     ) -> None:
-        """Output dir is created and `save_pod_logs` is awaited with creds."""
+        """`save_pod_logs` is awaited and the success line counts real files.
+
+        The helper no longer pre-creates the output directory: leaving an empty
+        tree behind a success line was the Finding-10 defect, so directory
+        creation now belongs to `save_pod_logs`, which only runs it when there
+        is something to write.
+        """
         from aiperf.cli_commands.kube.logs import _save_logs_to_directory
+        from aiperf.kubernetes.logs import SavedPodLogs
 
         out_dir = tmp_path / "new-dir" / "nested"
         opts = KubeManageOptions(kubeconfig="/tmp/kc", kube_context="dev")
+        saved = SavedPodLogs(
+            logs_dir=out_dir / "logs",
+            pods_matched=2,
+            files_written=["ctrl-0.log", "worker-0.log"],
+        )
 
         from contextlib import asynccontextmanager
 
@@ -170,15 +207,15 @@ class TestLogsSaveHelper:
             patch("aiperf.kubernetes.client.k8s_client", new=_fake_client),
             patch(
                 "aiperf.kubernetes.logs.save_pod_logs",
-                new=AsyncMock(),
+                new=AsyncMock(return_value=saved),
             ) as mock_save,
         ):
-            await _save_logs_to_directory("jid", "ns", out_dir, opts)
+            found = await _save_logs_to_directory("jid", "ns", out_dir, opts)
 
-        assert out_dir.is_dir()
+        assert found is True
         mock_save.assert_awaited_once()
-        # success line goes through kube_console
-        assert "Logs saved to" in capsys.readouterr().out
+        # outcome line goes through kube_console and names what was written
+        assert "Saved logs for 2 of 2 pod(s)" in capsys.readouterr().out
 
 
 class TestLogStreamingThroughKubeConsole:

@@ -564,7 +564,6 @@ amplification — at ISL+OSL=173K the queue reaches 10x `conc_per_rp`. Options:
   factor — increasing `workers_per_pod` alone does not move the number.
 - Bump the worker pod's memory limit (`AIPERF_K8S_WORKER_POD_MEMORY`) to the
   estimator's `recommended_limit_mib`.
-
 - Lower `benchmark.runtime.record_processors_per_pod`. This packs fewer RPs into
   each pod, and the estimate follows it: at the default scale factor, dropping
   from one RP per worker to a single RP on a 4-worker pod removes roughly 975 MiB

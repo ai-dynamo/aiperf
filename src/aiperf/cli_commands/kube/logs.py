@@ -5,11 +5,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from cyclopts import App, Parameter
 
 from aiperf.config.kube import KubeManageOptions
+
+if TYPE_CHECKING:
+    from aiperf.kubernetes.logs import SavedPodLogs
 
 app = App(name="logs")
 
@@ -111,7 +114,7 @@ async def _report_missing_pods(api: Any, job_id: str, namespace: str) -> bool:
     return False
 
 
-def _report_saved_logs(saved: Any, output: Path) -> None:
+def _report_saved_logs(saved: SavedPodLogs, output: Path) -> None:
     """Print an outcome line that matches what actually reached disk.
 
     An unconditional success line hides both a wholly empty dump and a partial

@@ -465,11 +465,17 @@ class TestAttachCommand:
     async def test_attach_job_not_found(
         self, mock_kube_client, manage_options, capsys
     ) -> None:
-        """Test attach when job is not found via resolve_job."""
+        """Test attach when job is not found via resolve_job.
+
+        Still prints the actionable error the test originally guarded, and now
+        also fails the shell so `attach` can gate CI.
+        """
         mock_kube_client.find_job.return_value = None
         mock_kube_client.find_jobset.return_value = None
-        await attach(job_id="nonexistent", manage_options=manage_options)
+        with pytest.raises(SystemExit) as exc_info:
+            await attach(job_id="nonexistent", manage_options=manage_options)
 
+        assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "No AIPerf job found" in captured.out
 
@@ -708,14 +714,22 @@ class TestLogsCommandAdditional:
     async def test_logs_returns_early_when_no_job_found(
         self, mock_kube_client, capsys
     ) -> None:
-        """Test logs returns early when no job_id and no last benchmark."""
+        """Test logs when no job_id and no last benchmark.
+
+        Still prints the actionable error the test originally guarded. No target
+        could be addressed at all, so the shell now sees a failure too.
+        """
         manage_options = KubeManageOptions()
 
-        with patch(
-            "aiperf.kubernetes.cli_helpers.get_last_benchmark", return_value=None
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers.get_last_benchmark", return_value=None
+            ),
+            pytest.raises(SystemExit) as exc_info,
         ):
             await logs(manage_options=manage_options)
 
+        assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "No job_id specified" in captured.out
 

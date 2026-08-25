@@ -7,7 +7,8 @@ Focus is on:
 - `attach` callable signature accepts the documented flags
 - end-to-end: monkeypatched cli_helpers.resolve_job + kube_attach.attach_to_benchmark
   receive the right kwargs and propagation of manage_options/port works
-- when resolve_job returns None, attach_to_benchmark is never called
+- when resolve_job returns None, attach_to_benchmark is never called and the
+  command exits 1 unless --ignore-not-found was passed
 - underlying errors surface through cli_utils.exit_on_error as SystemExit
 """
 
@@ -160,8 +161,29 @@ class TestAttachDispatch:
         assert mock_resolve.await_args.args[1] is None
 
     @pytest.mark.asyncio
-    async def test_unresolved_job_skips_attach(self) -> None:
-        """resolve_job returning None must short-circuit before attach_to_benchmark."""
+    async def test_unresolved_job_skips_attach_and_exits_nonzero(self) -> None:
+        """resolve_job returning None short-circuits attach and fails the shell."""
+        from aiperf.cli_commands.kube.attach import attach
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "aiperf.kubernetes.attach.attach_to_benchmark",
+                new=AsyncMock(),
+            ) as mock_attach,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await attach(job_id="missing")
+
+        mock_attach.assert_not_awaited()
+        assert exc_info.value.code == 1
+
+    @pytest.mark.asyncio
+    async def test_unresolved_job_with_ignore_not_found_exits_zero(self) -> None:
+        """--ignore-not-found keeps the short-circuit but suppresses the exit code."""
         from aiperf.cli_commands.kube.attach import attach
 
         with (
@@ -174,7 +196,7 @@ class TestAttachDispatch:
                 new=AsyncMock(),
             ) as mock_attach,
         ):
-            await attach(job_id="missing")
+            await attach(job_id="missing", ignore_not_found=True)
 
         mock_attach.assert_not_awaited()
 
