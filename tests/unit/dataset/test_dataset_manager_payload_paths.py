@@ -205,6 +205,89 @@ def _raw_conversation(session_id: str = "raw1", num_turns: int = 1) -> Conversat
     )
 
 
+def _make_system_prompt_run(prompt: str = "VERBATIM-SYS") -> BenchmarkRun:
+    return make_run_from_cli(
+        CLIConfig(model_names=["test-model"], system_prompt=prompt)
+    )
+
+
+class TestRejectSystemPromptForRawPayload:
+    """A verbatim system prompt cannot ride on datasets that author payloads.
+
+    ``inference_client`` ships ``Turn.raw_payload`` byte-for-byte and never
+    calls ``format_payload``, the only place ``system_message`` becomes wire
+    bytes -- so without this gate the prompt is composed, cached, and silently
+    never sent.
+    """
+
+    def _manager(self, run: BenchmarkRun) -> DatasetManager:
+        return DatasetManager(run=run, service_id="dm-test")
+
+    def test_no_system_prompt_allows_raw_payload(self) -> None:
+        dm = self._manager(_make_synthetic_run())
+        dm._reject_system_prompt_for_raw_payload([_raw_conversation()])
+
+    def test_system_prompt_without_raw_payload_is_allowed(self) -> None:
+        dm = self._manager(_make_system_prompt_run())
+        dm._reject_system_prompt_for_raw_payload([_single_turn_conversation()])
+
+    def test_system_prompt_with_raw_payload_raises(self) -> None:
+        dm = self._manager(_make_system_prompt_run())
+        with pytest.raises(ValueError, match="raw_payload"):
+            dm._reject_system_prompt_for_raw_payload([_raw_conversation()])
+
+    def test_error_names_the_flag_and_the_way_out(self) -> None:
+        dm = self._manager(_make_system_prompt_run())
+        with pytest.raises(ValueError) as excinfo:
+            dm._reject_system_prompt_for_raw_payload([_raw_conversation()])
+
+        message = str(excinfo.value)
+        assert "--system-prompt/--system-prompt-file" in message
+        assert "inputs_json" in message
+        assert "multi_turn" in message
+
+    def test_partially_raw_dataset_raises(self) -> None:
+        """The mixed shape falls back to the CONVERSATION mmap format and never
+        reaches ``_select_mmap_format``'s PAYLOAD_BYTES guard, but its raw turns
+        are still dispatched verbatim -- so ``any``, not ``all``."""
+        dm = self._manager(_make_system_prompt_run())
+        conversations = [_single_turn_conversation(), _raw_conversation()]
+
+        with pytest.raises(ValueError, match="raw_payload"):
+            dm._reject_system_prompt_for_raw_payload(conversations)
+
+    def test_preformatted_payloads_are_not_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Payloads synthesized by ``_preformat_payloads`` go through
+        ``format_payload`` with ``system_message`` attached, so they carry the
+        prompt correctly. Ordering the gate after pre-formatting would reject
+        this working run -- pin the ordering, not just the predicate.
+        """
+        monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", True)
+        dm = self._manager(_make_system_prompt_run())
+        conversations = [_single_turn_conversation()]
+        conversations[0].system_message = "VERBATIM-SYS"
+
+        dm._reject_system_prompt_for_raw_payload(conversations)
+        dm._preformat_payloads(conversations)
+
+        # The synthesized payload really does carry the system message, which
+        # is why this run must be allowed to proceed.
+        payload = conversations[0].turns[0].raw_payload
+        assert payload is not None
+        assert payload["messages"][0] == {
+            "role": "system",
+            "content": "VERBATIM-SYS",
+        }
+
+        # ...and running the same gate afterwards would now reject it. That is
+        # the whole reason the call site sits before _preformat_payloads; if it
+        # ever moves, this assertion documents what breaks.
+        with pytest.raises(ValueError, match="raw_payload"):
+            dm._reject_system_prompt_for_raw_payload(conversations)
+
+
 class TestPreformatPayloads:
     """Opt-in pre-encoding of structured conversations to raw_payload."""
 
