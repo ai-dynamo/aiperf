@@ -35,6 +35,22 @@ _ECHO_OK = """
         sys.stdout.buffer.flush()
 """
 
+_ECHO_DETAIL = """
+    import sys, orjson
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        req = orjson.loads(line)
+        resp = {
+            "id": req["id"],
+            "ok": True,
+            "metrics": {"pass@1": 0.5, "detail": {"pass@1": {"0": 1.0}}},
+        }
+        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+        sys.stdout.buffer.flush()
+"""
+
 
 # Worker that records overlap: writes "BUSY" markers around a small delay so a
 # second concurrent request would interleave if not serialized.
@@ -74,6 +90,18 @@ class TestHappyPath:
             pid1 = worker._proc.pid  # type: ignore[union-attr]
             await worker.grade_codegen([{"input_output": "{}"}], [["y"]], timeout=30)
             assert worker._proc.pid == pid1  # type: ignore[union-attr]
+        finally:
+            await worker.aclose()
+
+    async def test_grade_preserves_nested_detail_from_real_worker_boundary(
+        self, tmp_path
+    ) -> None:
+        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_DETAIL))
+        try:
+            metrics = await worker.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=30
+            )
+            assert metrics["detail"]["pass@1"] == {"0": 1.0}
         finally:
             await worker.aclose()
 

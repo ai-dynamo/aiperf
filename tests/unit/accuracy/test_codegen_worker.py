@@ -29,6 +29,12 @@ def _fake_codegen_list_pass(*_args: Any, **_kwargs: Any) -> tuple[dict[str, Any]
     return {"pass@1": [1.0]}, {}
 
 
+def _fake_codegen_detail_pass(
+    *_args: Any, **_kwargs: Any
+) -> tuple[dict[str, Any], Any]:
+    return {"pass@1": 0.5, "detail": {"pass@1": {0: 1.0, 1: 0.0}}}, {}
+
+
 class TestHandleRequest:
     def test_ok_request_returns_metrics_with_id(self) -> None:
         req = {
@@ -50,6 +56,22 @@ class TestHandleRequest:
         resp = worker.handle_request(req, _fake_codegen_list_pass)
         assert resp["ok"] is True
         assert resp["metrics"]["pass@1"] == [1.0]
+
+    def test_nested_detail_scores_cross_jsonl_boundary(self) -> None:
+        req = {
+            "id": 11,
+            "evaluation_sample": [{"input_output": "{}"}],
+            "generated_code": [["x"]],
+        }
+        resp = worker.handle_request(req, _fake_codegen_detail_pass)
+        assert resp == {
+            "id": 11,
+            "ok": True,
+            "metrics": {
+                "pass@1": 0.5,
+                "detail": {"pass@1": {"0": 1.0, "1": 0.0}},
+            },
+        }
 
     def test_codegen_exception_becomes_error_response(self) -> None:
         req = {

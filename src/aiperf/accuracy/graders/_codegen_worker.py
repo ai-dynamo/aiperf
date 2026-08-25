@@ -86,7 +86,17 @@ def _coerce_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     than falling back to 0.0. Genuinely non-numeric values are dropped."""
     coerced: dict[str, Any] = {}
     for key, value in metrics.items():
-        if isinstance(value, list) and all(_is_number(x) for x in value):
+        if key == "detail" and isinstance(value, dict):
+            pass_at_1 = value.get("pass@1")
+            if isinstance(pass_at_1, dict):
+                scores = {
+                    str(index): float(score)
+                    for index, score in pass_at_1.items()
+                    if _is_number(score)
+                }
+                if scores:
+                    coerced[key] = {"pass@1": scores}
+        elif isinstance(value, list) and all(_is_number(x) for x in value):
             coerced[key] = [float(x) for x in value]
         elif not isinstance(value, list) and _is_number(value):
             coerced[key] = float(value)

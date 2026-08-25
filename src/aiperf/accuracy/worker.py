@@ -405,7 +405,7 @@ class AccuracyWorker:
                     f"canonical Lighteval LCB omitted detail.pass@1: {metrics!r}"
                 )
             for batch_index, (position, snippet) in enumerate(evaluated_positions):
-                raw_score = detail.get(batch_index)
+                raw_score = detail.get(str(batch_index), detail.get(batch_index))
                 if isinstance(raw_score, bool) or not isinstance(
                     raw_score, int | float
                 ):

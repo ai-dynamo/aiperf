@@ -337,8 +337,8 @@ async def test_livecodebench_delegates_one_request_per_batch_and_reuses_child(
     child = SimpleNamespace(
         grade_codegen=AsyncMock(
             side_effect=[
-                {"pass@1": 0.5, "detail": {"pass@1": {0: 0.0, 1: 1.0}}},
-                {"pass@1": 1.0, "detail": {"pass@1": {0: 1.0}}},
+                {"pass@1": 0.5, "detail": {"pass@1": {"0": 0.0, "1": 1.0}}},
+                {"pass@1": 1.0, "detail": {"pass@1": {"0": 1.0}}},
             ]
         ),
         aclose=AsyncMock(),
