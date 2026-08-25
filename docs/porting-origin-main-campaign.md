@@ -60,7 +60,7 @@ implementation, test run, or review.
 | 32 | `1b34de0637` | warmup-isolation cache-bust | complete | applicable | Merged in `137b2f641d`; native phase-gated cache-bust target selection is covered by 12 runtime tests. |
 | 33 | `37467dc38c` | force content parts | complete | applicable | Merged in `73e1ab0761`; native bootstrap-captured endpoint policy and focused test coverage are green. |
 | 34 | `00ba1c5db3` | audio transcription | pending | applicable | New multipart endpoint, parser, and mock route. |
-| 35 | `03c9c6ddc5` | LCB grading concurrency | pending | applicable | Delegation/detail are present; upstream multiplexing and unconditional group reaping remain open. |
+| 35 | `03c9c6ddc5` | LCB grading concurrency | rust-porting | applicable | Native response-id demultiplexing, pending-request faulting, unconditional process-group reaping, and a real Rust-launched subprocess regression are implemented; exact ancestry and final review are pending. |
 | 36 | `6480e5467f` | synthesis YAML overrides | pending | applicable | Flag-only support exists; CLI-over-YAML overlay is absent. |
 | 37 | `23ed221c3d` | CI speed | pending | not-applicable | CI-only work. |
 | 38 | `c26fe88bd8` | AgentX FAQ | pending | not-applicable | Documentation only. |

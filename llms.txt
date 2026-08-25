@@ -304,6 +304,9 @@ truth/private tests never cross the JSONL protocol. The evaluator protocol rejec
 unknown static-response fields and restricts static prompts to `{role, content}`; stateful
 agent/tool messages retain role-specific fields losslessly. The worker redirects
 ambient fd 1 output to stderr and native v2 records its source/lock identity.
+The Rust supervisor serializes only JSONL writes, demultiplexes out-of-order
+replies by request id, faults all pending waiters when the reader breaks, and on
+Unix reaps the evaluator's complete process group even after its leader exits.
 
 ## Stateful agentic accuracy
 
