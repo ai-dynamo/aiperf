@@ -1428,9 +1428,7 @@ class TestFastAPIServiceStartStop:
         api_run.cfg.runtime.api_port = None
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
-            type(
-                "_Fake", (), {"HOST": "0.0.0.0", "PORT": 8080, "CORS_ORIGINS": []}
-            )(),
+            type("_Fake", (), {"HOST": "0.0.0.0", "PORT": 8080, "CORS_ORIGINS": []})(),
         )
         service = FastAPIService(run=api_run, service_id="api-implicit-port")
         bind = MagicMock(side_effect=OSError("address already in use"))
