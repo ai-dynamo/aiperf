@@ -64,6 +64,9 @@ export AIPERF_RUNTIME_ENGINE ?= rust
 
 PROJECT_NAME ?= AIPerf
 
+# Set COV=0 to skip coverage instrumentation (used in CI for non-coverage legs).
+COV ?= 1
+
 # The path to the virtual environment
 VENV_PATH ?= .venv
 # The python version to use
@@ -139,7 +142,7 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest-xdist.
-	$(activate_venv) && pytest tests/unit -n auto -m 'not integration and not performance and not component_integration and not slow' $(args)
+	$(activate_venv) && pytest tests/unit -n auto --dist=worksteal -m 'not integration and not performance and not component_integration and not slow' $(args)
 
 test-zmq: #? run the real-socket zmq transport tests (real libzmq, no looptime).
 	$(activate_venv) && pytest tests/zmq --no-looptime $(args)
@@ -172,7 +175,7 @@ check-agent-files-sync: #? verify AGENTS.md, CLAUDE.md, .github/copilot-instruct
 	$(activate_venv) && python tools/check_agent_files_sync.py
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
+	$(activate_venv) && pytest tests/unit -n auto --dist=worksteal --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
 
 install: install-app install-mock-server #? install the project (editable) and the native Rust mock-server command.
 
@@ -372,15 +375,21 @@ test-all: #? run all tests (unit, component integration, and integration).
 
 test-ci: #? run the tests using pytest-xdist for CI.
 	@printf "$(bold)$(blue)Running unit and component integration tests (CI mode)...$(reset)\n"
-	@# Run unit tests first with coverage
+	@# Run unit tests first, optionally with coverage
 	@printf "$(bold)$(blue)Running unit tests...$(reset)\n"
-	@$(activate_venv) && pytest tests/unit -n auto --cov=src/aiperf --cov-branch --cov-report= -m 'not performance and not stress and not slow' --tb=short $(args) || exit_code=$$?; \
+	@$(activate_venv) && pytest tests/unit -n auto --dist=worksteal \
+	  $$([ "$(COV)" = "1" ] && echo "--cov=src/aiperf --cov-branch --cov-report=" || true) \
+	  -m 'not performance and not stress and not slow' --tb=short $(args) || exit_code=$$?; \
 	# Run real-socket zmq transport tests (real time + real sockets, no looptime) regardless of unit result \
 	printf "$(bold)$(blue)Running zmq real-transport tests...$(reset)\n"; \
-	$(activate_venv) && pytest tests/zmq --cov=src/aiperf --cov-branch --cov-append --cov-report= -m 'not performance and not stress and not slow' --no-looptime --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
+	$(activate_venv) && pytest tests/zmq \
+	  $$([ "$(COV)" = "1" ] && echo "--cov=src/aiperf --cov-branch --cov-append --cov-report=" || true) \
+	  -m 'not performance and not stress and not slow' --no-looptime --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
 	# Run component integration tests with coverage append regardless of unit test result \
 	printf "$(bold)$(blue)Running component integration tests...$(reset)\n"; \
-	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration -n auto --cov=src/aiperf --cov-branch --cov-append --cov-report=html --cov-report=xml --cov-report=term -m 'not performance and not stress and not slow' -v --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
+	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration -n auto --dist=worksteal \
+	  $$([ "$(COV)" = "1" ] && echo "--cov=src/aiperf --cov-branch --cov-append --cov-report=html --cov-report=xml --cov-report=term" || true) \
+	  -m 'not performance and not stress and not slow' -v --tb=short $(args) || exit_code=$$((exit_code + $$?)); \
 	if [[ $$exit_code -eq 0 ]]; then \
 		printf "$(bold)$(green)AIPerf unit and component integration tests (CI mode) passed!$(reset)\n"; \
 	else \
@@ -426,12 +435,12 @@ integration-tests-slow test-integration-slow: #? run only the slow-marked integr
 
 component-integration-tests test-component-integration: #? run component integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running Fake Component Integration tests...$(reset)\n"
-	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'component_integration and not stress and not performance and not slow' -n auto --tb=short $(args)
+	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'component_integration and not stress and not performance and not slow' -n auto --dist=worksteal --tb=short $(args)
 	@printf "$(bold)$(green)AIPerf Fake Component Integration tests passed!$(reset)\n"
 
 component-integration-tests-ci test-component-integration-ci: #? run component integration tests with with AIPerf Mock Server for CI (parallel, verbose, no performance and no ffmpeg tests).
 	@printf "$(bold)$(blue)Running Fake Component Integration tests (CI mode)...$(reset)\n"
-	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'component_integration and not performance and not ffmpeg and not stress and not slow' -n auto -v --tb=long $(args)
+	$(activate_venv) && MALLOC_ARENA_MAX=2 pytest tests/component_integration/ -m 'component_integration and not performance and not ffmpeg and not stress and not slow' -n auto --dist=worksteal -v --tb=long $(args)
 	@printf "$(bold)$(green)AIPerf Fake Component Integration tests (CI mode) passed!$(reset)\n"
 
 component-integration-tests-verbose test-component-integration-verbose: #? run component integration tests with verbose output with AIPerf Mock Server.
