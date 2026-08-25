@@ -1159,9 +1159,17 @@ class CLIConfig(BaseConfig):
         CacheBustTarget,
         Field(
             description=(
-                "Where (and how) to inject a per-conversation cache-bust marker. "
-                "Prefix variants prepend at token 0 (most aggressive); "
-                "suffix variants append after existing content. "
+                "Where (and how) to inject a cache-bust marker. Two families: "
+                "(1) RID targets (system_prefix, system_suffix, first_turn_prefix, "
+                "first_turn_suffix) — inject a per-trajectory unique SHA-256 digest "
+                "marker that is identical across warmup and profiling, so warmup KV-cache "
+                "work transfers to profiling while preventing cross-trajectory cache sharing. "
+                "Prefix variants prepend at token 0; suffix variants append after existing "
+                "content. "
+                "(2) Warmup-isolation targets (warmup_isolation_system, "
+                "warmup_isolation_first_turn) — inject a constant '[warmup]' marker only "
+                "during the WARMUP phase; profiling sees no marker (fully cold start or "
+                "system-pre-warmed). Incompatible with agentic_replay timing mode. "
                 "'none' disables the feature (default)."
             ),
         ),

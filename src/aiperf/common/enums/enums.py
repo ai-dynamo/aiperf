@@ -243,6 +243,8 @@ class CacheBustTarget(CaseInsensitiveStrEnum):
     SYSTEM_SUFFIX = "system_suffix"
     FIRST_TURN_PREFIX = "first_turn_prefix"
     FIRST_TURN_SUFFIX = "first_turn_suffix"
+    WARMUP_ISOLATION_SYSTEM = "warmup_isolation_system"
+    WARMUP_ISOLATION_FIRST_TURN = "warmup_isolation_first_turn"
 
 
 class PromptCorpus(CaseInsensitiveStrEnum):
