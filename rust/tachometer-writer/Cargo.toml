@@ -1,0 +1,27 @@
+[package]
+name = "tachometer-writer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Arrow and parquet writer for Tachometer artifacts"
+repository = "https://github.com/ai-dynamo/aiperf"
+
+[dependencies]
+arrow.workspace = true
+parquet.workspace = true
+tokio.workspace = true
+object_store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+bytes.workspace = true
+futures = "0.3"
+log.workspace = true
+rayon = "1.10"
+polars = { version = "0.46", features = ["lazy", "parquet", "ipc", "dtype-full", "streaming"] }
+
+[dev-dependencies]
+tempfile = "3.8"

@@ -72,6 +72,10 @@ Synthesize a dataset workload.
 
 Validate a benchmark artifact.
 
+### [`watch`](#aiperf-watch)
+
+Watch Prometheus endpoints and write Tachometer parquet artifacts.
+
 <hr/>
 
 ## `aiperf --install-completion`
@@ -3468,3 +3472,51 @@ Artifact format to validate.
 ### `--input` `<str>` _(Required)_
 
 Path to the artifact file.
+
+<hr/>
+
+## `aiperf watch`
+
+Watch Prometheus endpoints and write Tachometer parquet artifacts.
+
+This command delegates the scraper runtime to the vendored Rust implementation. A config file is the preferred interface for production runs; the direct endpoint flags remain available for debugging.
+
+#### `--config` `<str>`
+
+Tachometer TOML config file. Mutually exclusive with --endpoint.
+
+#### `--endpoint`, `--empty-endpoint` `<list>`
+
+Prometheus endpoint in NAME=URL form. May be repeated.
+
+#### `--freq` `<float>`
+
+Polling frequency in Hz for --endpoint mode.
+<br/>_Default: `0.2`_
+
+#### `--storage` `<str>`
+
+Output storage path for --endpoint mode.
+
+#### `--rows-per-parquet` `<int>`
+
+Number of rows per intermediate parquet file.
+<br/>_Default: `1000000`_
+
+#### `--save-interval` `<int>`
+
+Interval in seconds between Arrow checkpoint saves.
+<br/>_Default: `5`_
+
+#### `--filter`, `--empty-filter` `<list>`
+
+Metric filter name. May be repeated.
+
+#### `--local-dir` `<str>`
+
+Local directory for intermediate Tachometer files.
+
+#### `--sync-interval` `<int>`
+
+Interval in seconds between remote sync attempts.
+<br/>_Default: `0`_
