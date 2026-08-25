@@ -46,8 +46,9 @@ _ALLOWED_JSON_STRINGIFY_EFFECT_DEPS = {
 
 # Module-singleton listeners live for the app lifetime; component listeners must clean up.
 _ALLOWED_APP_LIFETIME_LISTENERS = {
-    ("lib/router.js", 69),
-    ("lib/router.js", 70),
+    # Shifted from 69/70 when router-helpers.js was folded into router.js.
+    ("lib/router.js", 79),
+    ("lib/router.js", 80),
     ("lib/theme-switch.js", 78),
 }
 

@@ -65,57 +65,6 @@ def _result_base_url(
     return base
 
 
-def _get_no_redirects(
-    session: aiohttp.ClientSession,
-    url: str,
-    **kwargs: object,
-) -> object:
-    """Start a GET request without following redirects, with test-double fallback."""
-    try:
-        return session.get(url, allow_redirects=False, **kwargs)
-    except TypeError as e:
-        if "allow_redirects" not in str(e):
-            raise
-        return session.get(url, **kwargs)
-
-
-async def _download_and_decompress(
-    resp: aiohttp.ClientResponse, dest_path: Path, content_encoding: str
-) -> None:
-    import zlib
-
-    if content_encoding == "zstd":
-        import zstandard
-
-        dctx = zstandard.ZstdDecompressor()
-        decompressor = dctx.decompressobj()
-    elif content_encoding == "gzip":
-        decompressor = zlib.decompressobj(wbits=31)
-    else:
-        decompressor = None
-
-    temp_path = dest_path.with_name(f".{dest_path.name}.{uuid.uuid4().hex}.tmp")
-    replaced = False
-    try:
-        async with aiofiles.open(temp_path, "wb") as f:
-            async for chunk in resp.content.iter_chunked(
-                Environment.COMPRESSION.CHUNK_SIZE
-            ):
-                if decompressor is not None:
-                    chunk = decompressor.decompress(chunk)
-                if chunk:
-                    await f.write(chunk)
-            if decompressor is not None:
-                remaining = decompressor.flush()
-                if remaining:
-                    await f.write(remaining)
-        await asyncio.to_thread(os.replace, temp_path, dest_path)
-        replaced = True
-    finally:
-        if not replaced:
-            await asyncio.to_thread(temp_path.unlink, missing_ok=True)
-
-
 async def _download_operator_file(
     session: aiohttp.ClientSession,
     *,
