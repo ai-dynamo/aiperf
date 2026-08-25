@@ -398,23 +398,27 @@ async def _stream_zstd_raw(file_path: Path) -> AsyncIterator[bytes]:
             yield chunk
 
 
-async def _stream_zstd_to_gzip(file_path: Path) -> AsyncIterator[bytes]:
-    """Decompress zstd, recompress as gzip (streaming)."""
-    import zlib
-
+async def _iter_zstd_decompressed(file_path: Path) -> AsyncIterator[bytes]:
+    """Yield decompressed zstd content without blocking the event loop."""
     import zstandard
-
-    gzip_obj = zlib.compressobj(level=Environment.COMPRESSION.GZIP_LEVEL, wbits=31)
-    dctx = zstandard.ZstdDecompressor()
 
     # zstandard's stream_reader needs a synchronous file object, so aiofiles is
     # not usable here; offload the blocking open() the same way the read loop is.
     handle = await asyncio.to_thread(file_path.open, "rb")
-    with handle, dctx.stream_reader(handle) as reader:
+    with handle, zstandard.ZstdDecompressor().stream_reader(handle) as reader:
         while chunk := await asyncio.to_thread(reader.read, CHUNK_SIZE):
-            gzip_chunk = gzip_obj.compress(chunk)
-            if gzip_chunk:
-                yield gzip_chunk
+            yield chunk
+
+
+async def _stream_zstd_to_gzip(file_path: Path) -> AsyncIterator[bytes]:
+    """Decompress zstd, recompress as gzip (streaming)."""
+    import zlib
+
+    gzip_obj = zlib.compressobj(level=Environment.COMPRESSION.GZIP_LEVEL, wbits=31)
+    async for chunk in _iter_zstd_decompressed(file_path):
+        gzip_chunk = gzip_obj.compress(chunk)
+        if gzip_chunk:
+            yield gzip_chunk
 
     final = gzip_obj.flush()
     if final:
@@ -423,16 +427,8 @@ async def _stream_zstd_to_gzip(file_path: Path) -> AsyncIterator[bytes]:
 
 async def _stream_zstd_decompress(file_path: Path) -> AsyncIterator[bytes]:
     """Decompress zstd on the fly."""
-    import zstandard
-
-    dctx = zstandard.ZstdDecompressor()
-
-    # zstandard's stream_reader needs a synchronous file object, so aiofiles is
-    # not usable here; offload the blocking open() the same way the read loop is.
-    handle = await asyncio.to_thread(file_path.open, "rb")
-    with handle, dctx.stream_reader(handle) as reader:
-        while chunk := await asyncio.to_thread(reader.read, CHUNK_SIZE):
-            yield chunk
+    async for chunk in _iter_zstd_decompressed(file_path):
+        yield chunk
 
 
 def _serve_zst_file(
