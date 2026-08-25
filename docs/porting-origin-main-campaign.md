@@ -37,7 +37,7 @@ implementation, test run, or review.
 | 9 | `844efe1b36` | full synthesis prefix blocks | complete | applicable | Merged in `cb1d016398`; native implementation preserves whole prefix blocks and both synthesize-to-profile mock-server E2Es are green. |
 | 10 | `ffc943a9fe` | FFmpeg CVE bump | complete | shared-product-action | Merged in `830f579589`; coupled FFmpeg 8.1.2 attribution contract test is green and reviews approved. Test-image build reached FFmpeg then exposed the unrelated missing `COPY contracts` wheel-builder defect; no rebuilt-image claim. |
 | 11 | `d55ae21d34` | ShareGPT tutorial timeout | merged | not-applicable | Merged in `4d52f494e3`; documentation-only cold-cache timeout guidance, no native test candidate. Closure: `docs/origin-main-findings/commit-011-d55ae21d34.md`. |
-| 12 | `8148999496` | LCB trust_remote_code | pending | already-covered | Rust-launched Python uses a script-free pinned loader; tokenizer policy is not the relevant evidence. |
+| 12 | `8148999496` | LCB trust_remote_code | complete | already-covered | Merged in `abd532d4b9`; the Rust-launched evaluator uses its script-free pinned raw-file loader. Upstream has no integration/E2E test to port. Closure: `docs/origin-main-findings/commit-012-8148999496.md`. |
 | 13 | `d32f4bb98e` | canonical spec-decode metrics | pending | applicable | Generic token fields exist; full canonical/vLLM model does not. |
 | 14 | `4fe3ff7154` | cache-bust enables wrapping | pending | already-covered | Native graph wrap policy has this rule. |
 | 15 | `2eb04aa2f8` | MMVU docs memory | pending | not-applicable | Documentation only. |
