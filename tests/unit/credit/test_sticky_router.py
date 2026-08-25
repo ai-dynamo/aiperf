@@ -865,6 +865,106 @@ class TestStickyCreditRouterStickySessionReassignment:
         assert router._sticky_sessions["session-X"].worker_id == "worker-2"
 
 
+def _make_no_request_credit(
+    credit_id: int = 1, corr_id: str = "vc-corr", num_turns: int = 1
+) -> Credit:
+    return Credit(
+        id=credit_id,
+        phase=CreditPhase.PROFILING,
+        conversation_id="conv-vc",
+        x_correlation_id=corr_id,
+        turn_index=0,
+        num_turns=num_turns,
+        issued_at_ns=0,
+        no_request=True,
+    )
+
+
+class TestStickyCreditRouterNoRequestShortCircuit:
+    """Virtual (no_request) orchestrator credits must never reach a worker; the
+    router synthesizes the CreditReturn in-process and feeds it to the same
+    return-consumer callback a real worker return would hit."""
+
+    async def test_no_request_credit_does_not_select_worker_or_wire_send(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+
+        captured: list[tuple[str, object]] = []
+
+        async def on_return(worker_id: str, credit_return) -> None:
+            captured.append((worker_id, credit_return))
+
+        router.set_return_callback(on_return)
+
+        before_in_flight = router._workers["worker-1"].in_flight_credits
+        before_active = set(router._workers["worker-1"].active_credit_ids)
+
+        credit = _make_no_request_credit(credit_id=7, corr_id="vc-1")
+        await router.send_credit(credit)
+        # Dispatch is decoupled via execute_async; let the scheduled task run.
+        await asyncio.sleep(0)
+
+        # (a) no worker selected, no wire send
+        router._router_client.send_to.assert_not_called()
+        # (b) per-worker load structures untouched
+        assert router._workers["worker-1"].in_flight_credits == before_in_flight
+        assert set(router._workers["worker-1"].active_credit_ids) == before_active
+        assert credit.id not in router._workers["worker-1"].active_credit_ids
+        # no sticky session created
+        assert "vc-1" not in router._sticky_sessions
+
+        # (c) return callback invoked with a synthesized CreditReturn
+        assert len(captured) == 1
+        worker_id, credit_return = captured[0]
+        assert worker_id == ""
+        assert credit_return.credit is credit
+        assert credit_return.cancelled is False
+        assert credit_return.error is None
+        assert credit_return.first_token_sent is False
+
+    async def test_no_request_credit_synthesized_with_zero_workers(
+        self, benchmark_run
+    ) -> None:
+        """The short-circuit sits above the empty-workers check, so a no_request
+        credit is synthesized even with no workers registered."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+
+        captured: list[object] = []
+
+        async def on_return(worker_id: str, credit_return) -> None:
+            captured.append(credit_return)
+
+        router.set_return_callback(on_return)
+
+        credit = _make_no_request_credit(credit_id=9, corr_id="vc-2")
+        # Must not raise "No workers available".
+        await router.send_credit(credit)
+        await asyncio.sleep(0)
+
+        router._router_client.send_to.assert_not_called()
+        assert len(captured) == 1
+        assert captured[0].credit is credit
+
+    async def test_normal_credit_still_goes_through_worker(self, benchmark_run) -> None:
+        """Regression guard: a no_request=False credit still selects a worker,
+        tracks the sent credit, and wire-sends."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+
+        credit = make_credit(id=1, corr_id="normal-corr", num_turns=1)
+        await router.send_credit(credit)
+
+        router._router_client.send_to.assert_called_once()
+        assert router._router_client.send_to.call_args[0][0] == "worker-1"
+        assert router._workers["worker-1"].in_flight_credits == 1
+        assert credit.id in router._workers["worker-1"].active_credit_ids
+
+
 class TestStickyCreditRouterWorkerReadiness:
     """Tests for the worker-readiness barrier that prevents the startup race
     where the first credit is issued before any worker has registered."""
@@ -1287,3 +1387,33 @@ class TestStickyCreditRouterDAGChildren:
 
         assert "root" in router._sticky_sessions
         assert router._workers["worker-A"].active_sessions == 1
+
+
+class TestVirtualReturnFatalError:
+    """A failing request-free virtual-return callback must be forwarded to the
+    fatal-error sink (so the phase surfaces it) instead of being swallowed."""
+
+    async def test_virtual_return_failure_forwarded_to_fatal_sink(
+        self, benchmark_run
+    ) -> None:
+        from aiperf.credit.messages import CreditReturn
+
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+
+        async def failing_return(worker_id, credit_return):
+            raise RuntimeError("intercept blew up")
+
+        router.set_return_callback(failing_return)
+        captured: list[BaseException] = []
+        router.set_fatal_error_callback(captured.append)
+
+        credit = make_credit(id=1, corr_id="c", turn=0, num_turns=1)
+        await router._fire_virtual_return(
+            CreditReturn(
+                credit=credit, cancelled=False, error=None, first_token_sent=False
+            )
+        )
+
+        assert len(captured) == 1
+        assert isinstance(captured[0], RuntimeError)
+        assert "intercept blew up" in str(captured[0])

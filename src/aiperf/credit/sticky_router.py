@@ -281,6 +281,7 @@ class StickyCreditRouter(CommunicationMixin):
         self._on_first_token_callback: (
             Callable[[FirstToken], Awaitable[None]] | None
         ) = None
+        self._on_fatal_error: Callable[[BaseException], None] | None = None
 
         # Sticky sessions: routing_key -> _StickyEntry
         # Routes all turns of a conversation (and DAG children pinned to it) to the
@@ -316,6 +317,17 @@ class StickyCreditRouter(CommunicationMixin):
         """Set callback for credit returns (enables concurrency control)."""
         self._on_return_callback = callback
 
+    def set_fatal_error_callback(
+        self, callback: Callable[[BaseException], None]
+    ) -> None:
+        """Register a sink for fatal request-free control-node failures.
+
+        Called (synchronously) when a detached virtual-return callback raises,
+        so the failure can be recorded on the phase and surfaced instead of
+        being logged and swallowed.
+        """
+        self._on_fatal_error = callback
+
     def set_first_token_callback(
         self, callback: Callable[[FirstToken], Awaitable[None]]
     ) -> None:
@@ -347,6 +359,27 @@ class StickyCreditRouter(CommunicationMixin):
                 "(tunable via AIPERF_SERVICE_START_TIMEOUT); cannot start credit issuance"
             ) from exc
 
+    async def _fire_virtual_return(self, credit_return: CreditReturn) -> None:
+        """Deliver a synthesized no_request CreditReturn to the return consumer.
+
+        Runs as a detached task (scheduled via ``execute_async``). On failure the
+        error is logged AND forwarded to the fatal-error sink so it surfaces to
+        the phase (which re-raises it) instead of only reaching asyncio's default
+        "Task exception was never retrieved" handler -- otherwise a failure on the
+        spawn-dispatch path (``intercept``) would become an opaque phase-timeout
+        hang with the graph silently stuck.
+        """
+        try:
+            await self._on_return_callback("", credit_return)
+        except Exception as e:
+            self.exception(
+                lambda: f"virtual no_request return callback failed for credit "
+                f"{credit_return.credit.id} (x_correlation_id="
+                f"{credit_return.credit.x_correlation_id})"
+            )
+            if self._on_fatal_error is not None:
+                self._on_fatal_error(e)
+
     async def send_credit(self, credit: Credit) -> None:
         """Determine the worker based on sticky sessions or least-loaded and send the credit to the worker.
 
@@ -355,11 +388,36 @@ class StickyCreditRouter(CommunicationMixin):
         - Updates the worker load and sticky sessions
         - Sends the credit to the worker
         """
-        if not self._workers:
-            raise RuntimeError("No workers available for routing")
-
         if not credit.x_correlation_id:
             raise RuntimeError("x_correlation_id must be set in Credit")
+
+        if credit.no_request:
+            credit_return = CreditReturn(
+                credit=credit, cancelled=False, error=None, first_token_sent=False
+            )
+            # Virtual orchestrator credit: never goes to a worker. Synthesize the
+            # return in-process and hand it to the same return consumer a worker
+            # return would hit, so slot release + BranchOrchestrator.intercept
+            # (spawn firing) run identically. No _track_credit_sent/_returned here:
+            # this credit never touches per-worker load, so tracking it would
+            # desync in_flight_credits and trip the return-underflow error.
+            #
+            # Schedule DECOUPLED (not awaited inline): if this send_credit is
+            # reached from inside BranchOrchestrator.intercept (which holds
+            # _parent_locks[corr]), awaiting the callback here would re-enter
+            # on_credit_return -> intercept and can deadlock the non-reentrant
+            # asyncio.Lock when correlations collide, and risks unbounded
+            # synchronous recursion. Deferring to a later event-loop turn matches
+            # the exact semantics of the ZMQ worker round-trip we are replacing.
+            if self._on_return_callback is None:
+                raise RuntimeError(
+                    "return callback not set; cannot short-circuit no_request credit"
+                )
+            self.execute_async(self._fire_virtual_return(credit_return))
+            return
+
+        if not self._workers:
+            raise RuntimeError("No workers available for routing")
 
         # DAG children pin to their parent's worker; otherwise pin to self.
         routing_key = credit.parent_correlation_id or credit.x_correlation_id
