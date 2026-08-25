@@ -14,10 +14,10 @@ from __future__ import annotations
 import asyncio
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from aiperf.kubernetes.console import (
+    format_age,
     get_last_benchmark,
     print_action,
     print_error,
@@ -29,28 +29,6 @@ if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
 
     from aiperf.kubernetes.models import AIPerfJobInfo, AIPerfSweepInfo
-
-
-def format_age(created: str) -> str:
-    """Format a Kubernetes timestamp as a human-readable age string.
-
-    Args:
-        created: ISO timestamp from Kubernetes (e.g., "2024-01-15T10:30:00Z").
-
-    Returns:
-        Age string like "5s", "10m", or "2h".
-    """
-    if not created:
-        return "Unknown"
-    created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-    age_seconds = max((datetime.now(UTC) - created_dt).total_seconds(), 0)
-    if age_seconds < 60:
-        return f"{int(age_seconds)}s"
-    if age_seconds < 3600:
-        return f"{int(age_seconds / 60)}m"
-    if age_seconds < 86400:
-        return f"{int(age_seconds / 3600)}h"
-    return f"{int(age_seconds / 86400)}d"
 
 
 def resolve_job_id_and_namespace(
