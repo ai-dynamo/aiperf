@@ -347,7 +347,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 
 #### `--endpoint-type` `<str>`
 
-Endpoint dialect identifier compiled into the selected aiperf runner. Common stock identifiers include `chat`, `messages`, and `responses`; custom runner distributions may add more.
+Endpoint dialect identifier compiled into the selected aiperf runner. Common stock identifiers include `audio_transcription`, `chat`, `messages`, and `responses`; custom runner distributions may add more.
 <br/>_Constraints: min: 1_
 <br/>_Default: `chat`_
 
@@ -1919,8 +1919,8 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 
 #### `--endpoint-type` `<str>`
 
-Endpoint dialect identifier compiled into the selected aiperf runner. Common stock identifiers include `chat`, `messages`, and `responses`; custom runner distributions may add more.
-<br/>_Constraints: min: 1_
+Endpoint dialect identifier compiled into the selected aiperf runner. Common stock identifiers include `audio_transcription`, `chat`, `messages`, and `responses`; custom runner distributions may add more.
+<br/>_Constraints: min: 1
 <br/>_Default: `chat`_
 
 #### `--streaming`
