@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import importlib
 import sys
+from types import MappingProxyType
 
-_SHIM_MODULES = {
-    "live-streaming": "aiperf.rust_shims.live_streaming_worker",
-    "slurm-generate": "aiperf.rust_shims.slurm.generate",
-}
+_SHIM_MODULES = MappingProxyType(
+    {
+        "live-streaming": "aiperf.rust_shims.live_streaming_worker",
+        "slurm-generate": "aiperf.rust_shims.slurm.generate",
+    }
+)
 
 
 def main(arguments: list[str] | None = None) -> int:
