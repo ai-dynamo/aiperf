@@ -59,7 +59,10 @@ purpose for each, so an agent knows which file to open for a given question.
 - **Source organization:** Rust execution truth is `rust/`; Python frontend
   truth includes `src/aiperf/config`, `src/aiperf/orchestrator`, and
   `src/aiperf/cli_runner`. The old controller/service/ZMQ implementation under
-  `src/` remains legacy and is not an alternate hot path.
+  `src/` remains legacy and is not an alternate hot path. Planned
+  `docs/specs/rust-python-shim-boundary.md` centralizes Python adapters used only
+  by native Rust features under `src/aiperf/rust_shims/` behind opt-in external
+  process contracts, while retaining independent Rust and Python profile paths.
 - **Kubernetes control-plane isolation:** `docs/specs/kubernetes-control-plane-isolation.md`
   defines the shipped `native-k8s/v1` boundary: Rust owns the public `aiperf kube`
   CLI and native controller/cell/results-sidecar roles; the independently packaged
