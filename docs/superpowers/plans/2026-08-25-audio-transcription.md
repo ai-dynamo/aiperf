@@ -17,4 +17,4 @@
   deduplicate during shared-history integration.
 - [x] Run focused runtime, mock-server, and real-binary E2E coverage with the
   isolated shared target.
-- [ ] Complete final Graham review with no Important or Critical findings.
+- [x] Complete final Graham review with no Important or Critical findings.

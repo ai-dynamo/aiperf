@@ -32,3 +32,6 @@ Validation uses `sccache` with
 - focused runtime endpoint tests: 5 passed;
 - focused mock-server integration tests: 2 passed;
 - real-binary audio-transcription E2E: 13 passed.
+
+Final Graham re-review: approved with no Critical or Important findings after
+two passes over the complete Rust branch diff.
