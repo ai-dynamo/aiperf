@@ -10,7 +10,7 @@ Focuses on:
 - cancellation conflict behavior and merge-patch wire shape
 
 Out of scope: manifest construction and pod/resource helpers; see sibling
-``test_jobset_resources.py`` and ``test_jobset_builder.py`` for those contracts.
+``test_jobset_resources.py`` and ``test_jobset_manifest_builders.py`` for those contracts.
 """
 
 from __future__ import annotations

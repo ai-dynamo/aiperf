@@ -328,9 +328,9 @@ securityContext:
 This context is applied to:
 
 - The five control-plane containers in the controller pod
-  (`jobset_builder.py:193`)
-- The event-bus proxy sidecar (`jobset_builder.py:244`)
-- The results-serving sidecar (`jobset_builder.py:271`)
+  (`jobset.py`)
+- The event-bus proxy sidecar (`jobset.py`)
+- The results-serving sidecar (`jobset.py`)
 - Each worker and record-processor container
 
 ### Overriding via `podTemplate.containerSecurityContext`

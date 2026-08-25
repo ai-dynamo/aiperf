@@ -633,7 +633,7 @@ async def _create_sweep_controller_jobset(
     * ``sweep-controller`` — the orchestrator that drives child AIPerfJobs and
       writes the cross-variation aggregate to ``/results``.
     * ``results-sidecar`` — same image, separate command. Mirrors the AIPerfJob
-      controller pod's harvest pattern (``jobset_builder._create_results_sidecar``):
+      controller pod's harvest pattern (``jobset.AIPerfJobSetSpec._create_results_sidecar``):
       reads from the shared ``/results`` emptyDir, exposes the file tree over
       HTTP at ``:RESULTS_SIDECAR_PORT/api/results/{list,files/<path>}``, gated
       by the ``.aiperf_results_ready.json`` marker the orchestrator writes after
@@ -739,7 +739,7 @@ async def _create_sweep_controller_jobset(
         "ports": [{"containerPort": sidecar_port, "name": "results"}],
     }
     if resource_mode != "none":
-        # Mirrors jobset_builder._create_results_sidecar, which has always
+        # Mirrors jobset.AIPerfJobSetSpec._create_results_sidecar, which has always
         # resolved these; this copy carried no resources at all.
         sidecar["resources"] = K8sEnvironment.RESULTS_SIDECAR.to_k8s_resources(
             burstable=resource_mode == "burstable"

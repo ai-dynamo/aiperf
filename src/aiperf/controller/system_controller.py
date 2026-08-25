@@ -301,7 +301,7 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
 
         The operator stamps ``AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED`` into the
         control-plane container (see
-        ``aiperf.kubernetes.jobset_builder.AIPerfJobSetBuilder._create_control_plane_containers``).
+        ``aiperf.kubernetes.jobset.AIPerfJobSetSpec._create_control_plane_containers``).
         Any non-Kubernetes run returns False, so the multiprocessing path keeps
         hosting all three proxies exactly as before.
         """

@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for aiperf.kubernetes.jobset_builder.
+"""Unit tests for the manifest fragment builders on AIPerfJobSetSpec.
 
-Exercises the internal _JobSetManifestBuilder: its resolvers for workers/
-record-processors per pod, container factories (control plane, worker,
-event-bus proxy, results sidecar), and the assembled replicated-job specs.
+Exercises the spec's resolvers for workers/record-processors per pod,
+container factories (control plane, worker, event-bus proxy, results
+sidecar), and the assembled replicated-job specs.
 """
 
 from __future__ import annotations
@@ -20,11 +20,10 @@ from aiperf.kubernetes.constants import Containers
 from aiperf.kubernetes.enums import RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import AIPerfJobSetSpec
-from aiperf.kubernetes.jobset_builder import _JobSetManifestBuilder
 
 
 def _make_spec(**kwargs: Any) -> AIPerfJobSetSpec:
-    """Build an AIPerfJobSetSpec with sensible defaults for builder tests."""
+    """Build an AIPerfJobSetSpec with sensible defaults for these tests."""
     defaults: dict[str, Any] = {
         "name": "bench",
         "namespace": "default",
@@ -39,14 +38,14 @@ class TestResolveWorkersPerPod:
     """_resolve_workers_per_pod falls back to Environment.WORKER default."""
 
     def test_uses_spec_override(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec(workers_per_pod=12))
-        assert builder._resolve_workers_per_pod() == 12
+        spec = _make_spec(workers_per_pod=12)
+        assert spec._resolve_workers_per_pod() == 12
 
     def test_falls_back_to_environment_default(self) -> None:
-        """When workers_per_pod is None, the builder uses the shared Environment default."""
-        builder = _JobSetManifestBuilder(_make_spec(workers_per_pod=None))
+        """When workers_per_pod is None, the spec uses the shared Environment default."""
+        spec = _make_spec(workers_per_pod=None)
         assert (
-            builder._resolve_workers_per_pod()
+            spec._resolve_workers_per_pod()
             == Environment.WORKER.DEFAULT_WORKERS_PER_POD
         )
 
@@ -55,33 +54,25 @@ class TestResolveRecordProcessorsPerPod:
     """Record processors default to workers_per_pod // scale_factor (min 1)."""
 
     def test_explicit_value_wins(self) -> None:
-        builder = _JobSetManifestBuilder(
-            _make_spec(workers_per_pod=10, record_processors_per_pod=4)
-        )
-        assert builder._resolve_record_processors_per_pod() == 4
+        spec = _make_spec(workers_per_pod=10, record_processors_per_pod=4)
+        assert spec._resolve_record_processors_per_pod() == 4
 
     def test_derived_from_workers_and_scale_factor(self) -> None:
         """Default: max(1, workers_per_pod // RECORD_PROCESSOR_SCALE_FACTOR)."""
         scale = K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR
         workers = scale * 3
-        builder = _JobSetManifestBuilder(
-            _make_spec(workers_per_pod=workers, record_processors_per_pod=None)
-        )
-        assert builder._resolve_record_processors_per_pod() == 3
+        spec = _make_spec(workers_per_pod=workers, record_processors_per_pod=None)
+        assert spec._resolve_record_processors_per_pod() == 3
 
     def test_minimum_is_one_even_for_tiny_worker_counts(self) -> None:
         """One worker should still produce at least one record processor."""
-        builder = _JobSetManifestBuilder(
-            _make_spec(workers_per_pod=1, record_processors_per_pod=None)
-        )
-        assert builder._resolve_record_processors_per_pod() == 1
+        spec = _make_spec(workers_per_pod=1, record_processors_per_pod=None)
+        assert spec._resolve_record_processors_per_pod() == 1
 
     def test_zero_explicit_value_is_respected(self) -> None:
         """Setting record_processors_per_pod=0 must not be overridden by the min-1 floor."""
-        builder = _JobSetManifestBuilder(
-            _make_spec(workers_per_pod=10, record_processors_per_pod=0)
-        )
-        assert builder._resolve_record_processors_per_pod() == 0
+        spec = _make_spec(workers_per_pod=10, record_processors_per_pod=0)
+        assert spec._resolve_record_processors_per_pod() == 0
 
 
 class TestResolvePodResources:
@@ -89,20 +80,20 @@ class TestResolvePodResources:
 
     def test_none_mode_returns_none(self) -> None:
         """resource_mode='none' is an escape hatch: emit no requests/limits."""
-        builder = _JobSetManifestBuilder(_make_spec(resource_mode="none"))
-        assert builder._resolve_pod_resources("SYSTEM_CONTROLLER") is None
+        spec = _make_spec(resource_mode="none")
+        assert spec._resolve_pod_resources("SYSTEM_CONTROLLER") is None
 
     def test_guaranteed_mode_has_matching_requests_and_limits(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec(resource_mode="guaranteed"))
-        resources = builder._resolve_pod_resources("SYSTEM_CONTROLLER")
+        spec = _make_spec(resource_mode="guaranteed")
+        resources = spec._resolve_pod_resources("SYSTEM_CONTROLLER")
         assert resources is not None
         assert "requests" in resources
         assert "limits" in resources
         assert resources["requests"] == resources["limits"]
 
     def test_burstable_mode_omits_limits(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec(resource_mode="burstable"))
-        resources = builder._resolve_pod_resources("SYSTEM_CONTROLLER")
+        spec = _make_spec(resource_mode="burstable")
+        resources = spec._resolve_pod_resources("SYSTEM_CONTROLLER")
         assert resources is not None
         assert "requests" in resources
         assert "limits" not in resources
@@ -115,12 +106,12 @@ class TestPodTemplateEnvValue:
         spec = _make_spec(
             pod_template=PodTemplateConfig(env=[{"name": "MY_KEY", "value": "42"}])
         )
-        builder = _JobSetManifestBuilder(spec)
-        assert builder._pod_template_env_value("MY_KEY") == "42"
+        spec = spec
+        assert spec._pod_template_env_value("MY_KEY") == "42"
 
     def test_returns_none_when_absent(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec())
-        assert builder._pod_template_env_value("MISSING") is None
+        spec = _make_spec()
+        assert spec._pod_template_env_value("MISSING") is None
 
     def test_ignores_non_string_values_like_value_from(self) -> None:
         """valueFrom-style env entries have no 'value' string; treat as not-set."""
@@ -134,38 +125,38 @@ class TestPodTemplateEnvValue:
                 ]
             )
         )
-        builder = _JobSetManifestBuilder(spec)
-        assert builder._pod_template_env_value("FROM_SECRET") is None
+        spec = spec
+        assert spec._pod_template_env_value("FROM_SECRET") is None
 
 
 class TestCreateEventBusProxyContainer:
     """Event-bus proxy sidecar exposes the three expected ports."""
 
     def test_container_name_and_image(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec())
-        container = builder._create_event_bus_proxy_container()
+        spec = _make_spec()
+        container = spec._create_event_bus_proxy_container()
         assert container.name == Containers.EVENT_BUS_PROXY
         assert container.image == "aiperf:latest"
 
     def test_ports_include_health_and_pubsub(self) -> None:
         """Health + pub-frontend (5663) + sub-backend (5664) ports must be declared."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        container = builder._create_event_bus_proxy_container()
+        spec = _make_spec()
+        container = spec._create_event_bus_proxy_container()
         port_names = {p["name"] for p in container.ports}
         assert port_names == {"health", "pub-frontend", "sub-backend"}
 
     def test_args_invoke_event_bus_proxy(self) -> None:
         """CLI args must select the event_bus proxy kind."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        container = builder._create_event_bus_proxy_container()
+        spec = _make_spec()
+        container = spec._create_event_bus_proxy_container()
         assert container.args[0] == "proxy"
         assert "event_bus" in container.args
         assert "--health-port" in container.args
 
     def test_env_omits_pod_index(self) -> None:
         """Controller sidecar is single-replica so AIPERF_POD_INDEX is not injected."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        container = builder._create_event_bus_proxy_container()
+        spec = _make_spec()
+        container = spec._create_event_bus_proxy_container()
         names = {item["name"] for item in container.env}
         assert "AIPERF_POD_INDEX" not in names
 
@@ -175,8 +166,8 @@ class TestCreateResultsSidecar:
 
     def test_mounts_results_readonly_only(self) -> None:
         """Results sidecar must mount /results read-only (no IPC/datasets)."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        container = builder._create_results_sidecar()
+        spec = _make_spec()
+        container = spec._create_results_sidecar()
         by_name = {m["name"]: m for m in container.volume_mounts}
         assert "results" in by_name
         assert by_name["results"]["readOnly"] is True
@@ -184,8 +175,8 @@ class TestCreateResultsSidecar:
         assert "datasets" not in by_name
 
     def test_env_sets_results_dir(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec())
-        container = builder._create_results_sidecar()
+        spec = _make_spec()
+        container = spec._create_results_sidecar()
         env = {item["name"]: item["value"] for item in container.env}
         assert env["AIPERF_RESULTS_DIR"] == "/results"
         assert env["AIPERF_RESULTS_SIDECAR_PORT"] == str(
@@ -194,8 +185,8 @@ class TestCreateResultsSidecar:
 
     def test_command_uses_python_module_entry(self) -> None:
         """Sidecar runs as a python -m invocation, not the aiperf CLI."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        container = builder._create_results_sidecar()
+        spec = _make_spec()
+        container = spec._create_results_sidecar()
         assert container.command == [
             "python",
             "-m",
@@ -207,8 +198,8 @@ class TestCreateControlPlaneContainers:
     """Control-plane pod contains exactly the five mandatory services."""
 
     def test_five_mandatory_containers_present(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec())
-        containers = builder._create_control_plane_containers()
+        spec = _make_spec()
+        containers = spec._create_control_plane_containers()
         names = [c.name for c in containers]
         assert names == [
             Containers.CONTROL_PLANE,
@@ -219,10 +210,10 @@ class TestCreateControlPlaneContainers:
         ]
 
     def test_operator_managed_gate_is_set_on_benchmark_services(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec())
+        spec = _make_spec()
         containers = [
-            *builder._create_control_plane_containers(),
-            *builder.create_worker_containers("controller.ns.svc.cluster.local"),
+            *spec._create_control_plane_containers(),
+            *spec.create_worker_containers("controller.ns.svc.cluster.local"),
         ]
 
         for container in containers:
@@ -231,10 +222,10 @@ class TestCreateControlPlaneContainers:
 
     def test_records_manager_has_no_probes(self) -> None:
         """Records manager opts out of all probes; it manages its own lifecycle."""
-        builder = _JobSetManifestBuilder(_make_spec())
+        spec = _make_spec()
         records = next(
             c
-            for c in builder._create_control_plane_containers()
+            for c in spec._create_control_plane_containers()
             if c.name == Containers.RECORDS_MANAGER
         )
         assert records.startup_probe is None
@@ -247,10 +238,10 @@ class TestCreateControlPlaneContainers:
         It needs a dedicated health port because an unset one falls back to
         8080, which the control-plane container already binds.
         """
-        builder = _JobSetManifestBuilder(_make_spec())
+        spec = _make_spec()
         api = next(
             c
-            for c in builder._create_control_plane_containers()
+            for c in spec._create_control_plane_containers()
             if c.name == Containers.API
         )
         port_names = {p["name"] for p in api.ports}
@@ -270,21 +261,21 @@ class TestCreateControlPlaneContainers:
         silence. Asserting the var on every control-plane container prevents
         that gap from reopening when new services are added.
         """
-        builder = _JobSetManifestBuilder(_make_spec())
-        for c in builder._create_control_plane_containers():
+        spec = _make_spec()
+        for c in spec._create_control_plane_containers():
             env = {item["name"]: item["value"] for item in c.env if "value" in item}
             assert env.get("AIPERF_UI_REALTIME_METRICS_ENABLED") == "true", (
                 f"container {c.name} missing AIPERF_UI_REALTIME_METRICS_ENABLED"
             )
 
     def test_controller_services_receive_exact_aiperfjob_uid(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec(job_uid="uid-bench-abc"))
+        spec = _make_spec(job_uid="uid-bench-abc")
 
-        for container in builder._create_control_plane_containers():
+        for container in spec._create_control_plane_containers():
             env = {item["name"]: item.get("value") for item in container.env}
             assert env["AIPERF_JOB_UID"] == "uid-bench-abc"
 
-        for container in builder.create_worker_containers("controller.ns.svc"):
+        for container in spec.create_worker_containers("controller.ns.svc"):
             env_names = {item["name"] for item in container.env}
             assert "AIPERF_JOB_UID" not in env_names
 
@@ -326,13 +317,11 @@ class TestCreateOptionalManagerContainers:
         expected_names: list[str],
     ) -> None:
         """GPU and server-metrics containers must only appear when enabled."""
-        builder = _JobSetManifestBuilder(
-            _make_spec(
-                gpu_telemetry_enabled=gpu_enabled,
-                server_metrics_enabled=server_enabled,
-            )
+        spec = _make_spec(
+            gpu_telemetry_enabled=gpu_enabled,
+            server_metrics_enabled=server_enabled,
         )
-        containers = builder._create_optional_manager_containers()
+        containers = spec._create_optional_manager_containers()
         assert [c.name for c in containers] == expected_names
 
 
@@ -341,10 +330,8 @@ class TestCreateControllerContainers:
 
     def test_results_sidecar_always_last(self) -> None:
         """Results sidecar must be last so earlier containers declare probes before it."""
-        builder = _JobSetManifestBuilder(
-            _make_spec(gpu_telemetry_enabled=False, server_metrics_enabled=False)
-        )
-        containers = builder.create_controller_containers()
+        spec = _make_spec(gpu_telemetry_enabled=False, server_metrics_enabled=False)
+        containers = spec.create_controller_containers()
         assert containers[-1].name == Containers.RESULTS_SIDECAR
 
     def test_event_bus_proxy_prepended_when_enabled(self) -> None:
@@ -352,8 +339,8 @@ class TestCreateControllerContainers:
         original = K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED
         K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED = True
         try:
-            builder = _JobSetManifestBuilder(_make_spec())
-            containers = builder.create_controller_containers()
+            spec = _make_spec()
+            containers = spec.create_controller_containers()
             assert containers[0].name == Containers.EVENT_BUS_PROXY
         finally:
             K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED = original
@@ -362,8 +349,8 @@ class TestCreateControllerContainers:
         original = K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED
         K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED = False
         try:
-            builder = _JobSetManifestBuilder(_make_spec())
-            containers = builder.create_controller_containers()
+            spec = _make_spec()
+            containers = spec.create_controller_containers()
             names = [c.name for c in containers]
             assert Containers.EVENT_BUS_PROXY not in names
         finally:
@@ -382,8 +369,8 @@ class TestCreateControllerContainers:
         original = K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED
         K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED = enabled
         try:
-            builder = _JobSetManifestBuilder(_make_spec())
-            containers = builder.create_controller_containers()
+            spec = _make_spec()
+            containers = spec.create_controller_containers()
             control_plane = next(
                 c for c in containers if c.name == Containers.CONTROL_PLANE
             )
@@ -414,15 +401,13 @@ class TestHealthPortUniqueness:
 
     def test_controller_pod_health_ports_are_unique(self) -> None:
         """Regression: the api container had no --health-port and raced control-plane on 8080."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        ports = self._health_ports(builder.create_controller_containers())
+        spec = _make_spec()
+        ports = self._health_ports(spec.create_controller_containers())
         assert len(ports) == len(set(ports)), f"duplicate health ports: {ports}"
 
     def test_worker_pod_health_ports_are_unique(self) -> None:
-        builder = _JobSetManifestBuilder(
-            _make_spec(workers_per_pod=3, record_processors_per_pod=2)
-        )
-        ports = self._health_ports(builder.create_worker_containers("controller"))
+        spec = _make_spec(workers_per_pod=3, record_processors_per_pod=2)
+        ports = self._health_ports(spec.create_worker_containers("controller"))
         assert len(ports) == len(set(ports)), f"duplicate health ports: {ports}"
 
 
@@ -432,8 +417,8 @@ class TestCreateWorkerContainers:
     def test_container_counts_match_resolved_shape(self) -> None:
         """1 worker-group-manager + workers_per_pod workers + record processors."""
         spec = _make_spec(workers_per_pod=3, record_processors_per_pod=2)
-        builder = _JobSetManifestBuilder(spec)
-        containers = builder.create_worker_containers("controller.svc")
+        spec = spec
+        containers = spec.create_worker_containers("controller.svc")
         # 1 manager + 3 workers + 2 record processors = 6 total
         assert len(containers) == 6
         assert containers[0].name == "worker-group-manager"
@@ -451,8 +436,8 @@ class TestCreateWorkerContainers:
     def test_each_worker_has_unique_health_port(self) -> None:
         """Workers share a network namespace so health ports must not collide."""
         spec = _make_spec(workers_per_pod=4, record_processors_per_pod=2)
-        builder = _JobSetManifestBuilder(spec)
-        containers = builder.create_worker_containers("controller.svc")
+        spec = spec
+        containers = spec.create_worker_containers("controller.svc")
         health_ports = []
         for c in containers:
             for p in c.ports:
@@ -463,8 +448,8 @@ class TestCreateWorkerContainers:
     def test_controller_host_injected_for_worker_containers(self) -> None:
         """Every worker container must see the controller DNS name via env."""
         spec = _make_spec(workers_per_pod=2, record_processors_per_pod=1)
-        builder = _JobSetManifestBuilder(spec)
-        containers = builder.create_worker_containers("controller.bench.svc")
+        spec = spec
+        containers = spec.create_worker_containers("controller.bench.svc")
         for c in containers:
             host_env = next(
                 (e for e in c.env if e["name"] == "AIPERF_K8S_ZMQ_CONTROLLER_HOST"),
@@ -476,8 +461,8 @@ class TestCreateWorkerContainers:
     def test_all_worker_probes_skipped(self) -> None:
         """Worker containers skip every probe since the manager handles lifecycle."""
         spec = _make_spec(workers_per_pod=2, record_processors_per_pod=1)
-        builder = _JobSetManifestBuilder(spec)
-        for c in builder.create_worker_containers("controller.svc"):
+        spec = spec
+        for c in spec.create_worker_containers("controller.svc"):
             assert c.startup_probe is None
             assert c.liveness_probe is None
             assert c.readiness_probe is None
@@ -485,8 +470,8 @@ class TestCreateWorkerContainers:
     def test_worker_service_ids_include_pod_index_placeholder(self) -> None:
         """Service IDs reference $(AIPERF_POD_INDEX) for kubelet substitution."""
         spec = _make_spec(workers_per_pod=2, record_processors_per_pod=1)
-        builder = _JobSetManifestBuilder(spec)
-        containers = builder.create_worker_containers("controller.svc")
+        spec = spec
+        containers = spec.create_worker_containers("controller.svc")
         worker_0 = next(c for c in containers if c.name == "worker-0")
         service_id = worker_0.args[worker_0.args.index("--service-id") + 1]
         assert "$(AIPERF_POD_INDEX)" in service_id
@@ -494,10 +479,8 @@ class TestCreateWorkerContainers:
 
     def test_worker_group_manager_id_is_stable_across_replacement(self) -> None:
         """A replacement pod must reclaim the predecessor's registry identity."""
-        builder = _JobSetManifestBuilder(
-            _make_spec(workers_per_pod=2, record_processors_per_pod=1)
-        )
-        manager = builder.create_worker_containers("controller.svc")[0]
+        spec = _make_spec(workers_per_pod=2, record_processors_per_pod=1)
+        manager = spec.create_worker_containers("controller.svc")[0]
 
         service_id = manager.args[manager.args.index("--service-id") + 1]
         assert service_id == "worker_group_manager_$(AIPERF_POD_INDEX)"
@@ -508,33 +491,33 @@ class TestBuildControllerReplicatedJob:
 
     def test_replicas_is_always_one(self) -> None:
         """Controller is singleton; replicas must be exactly 1."""
-        builder = _JobSetManifestBuilder(_make_spec(worker_replicas=10))
-        job = builder.build_controller_replicated_job(volumes=[])
+        spec = _make_spec(worker_replicas=10)
+        job = spec.build_controller_replicated_job(volumes=[])
         assert job.replicas == 1
 
     def test_restart_policy_is_never(self) -> None:
         """Controller uses Never so a crashed controller fails the job, not restarts in place."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        job = builder.build_controller_replicated_job(volumes=[])
+        spec = _make_spec()
+        job = spec.build_controller_replicated_job(volumes=[])
         assert job.restart_policy == RestartPolicy.NEVER
 
     def test_backoff_limit_from_environment(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec())
-        job = builder.build_controller_replicated_job(volumes=[])
+        spec = _make_spec()
+        job = spec.build_controller_replicated_job(volumes=[])
         assert job.backoff_limit == K8sEnvironment.JOBSET.CONTROLLER_BACKOFF_LIMIT
 
     def test_prometheus_annotations_attached(self) -> None:
         """Prometheus scrape/port/path annotations must be on the controller pod."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        job = builder.build_controller_replicated_job(volumes=[])
+        spec = _make_spec()
+        job = spec.build_controller_replicated_job(volumes=[])
         ann = job.extra_annotations
         assert ann["prometheus.io/scrape"] == "true"
         assert ann["prometheus.io/port"] == str(K8sEnvironment.PORTS.API_SERVICE)
         assert ann["prometheus.io/path"] == "/metrics"
 
     def test_job_id_propagated_to_replicated_job(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec(job_id="run-42"))
-        job = builder.build_controller_replicated_job(volumes=[])
+        spec = _make_spec(job_id="run-42")
+        job = spec.build_controller_replicated_job(volumes=[])
         assert job.job_id == "run-42"
 
 
@@ -542,23 +525,23 @@ class TestBuildWorkerReplicatedJob:
     """Worker replicated-job uses the spec's worker_replicas and on-failure restart."""
 
     def test_replicas_from_spec(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec(worker_replicas=5))
-        job = builder.build_worker_replicated_job(
+        spec = _make_spec(worker_replicas=5)
+        job = spec.build_worker_replicated_job(
             volumes=[], controller_dns="controller.bench.svc"
         )
         assert job.replicas == 5
 
     def test_restart_policy_is_on_failure(self) -> None:
         """Workers restart on failure so transient faults don't fail the whole job."""
-        builder = _JobSetManifestBuilder(_make_spec())
-        job = builder.build_worker_replicated_job(
+        spec = _make_spec()
+        job = spec.build_worker_replicated_job(
             volumes=[], controller_dns="controller.svc"
         )
         assert job.restart_policy == RestartPolicy.ON_FAILURE
 
     def test_backoff_limit_from_environment(self) -> None:
-        builder = _JobSetManifestBuilder(_make_spec())
-        job = builder.build_worker_replicated_job(
+        spec = _make_spec()
+        job = spec.build_worker_replicated_job(
             volumes=[], controller_dns="controller.svc"
         )
         assert job.backoff_limit == K8sEnvironment.JOBSET.WORKER_BACKOFF_LIMIT
@@ -574,8 +557,8 @@ class TestBuildWorkerReplicatedJob:
         self, keep_failed_pods: bool, expected_ttl: int | None
     ) -> None:
         """When keep_failed_pods=False, workers must be garbage-collected immediately."""
-        builder = _JobSetManifestBuilder(_make_spec(keep_failed_pods=keep_failed_pods))
-        job = builder.build_worker_replicated_job(
+        spec = _make_spec(keep_failed_pods=keep_failed_pods)
+        job = spec.build_worker_replicated_job(
             volumes=[], controller_dns="controller.svc"
         )
         assert job.job_ttl_seconds == expected_ttl
@@ -583,8 +566,8 @@ class TestBuildWorkerReplicatedJob:
     def test_volumes_are_passed_through(self) -> None:
         """Input volumes must appear verbatim on the replicated-job spec."""
         volumes = [{"name": "custom", "emptyDir": {}}]
-        builder = _JobSetManifestBuilder(_make_spec())
-        job = builder.build_worker_replicated_job(
+        spec = _make_spec()
+        job = spec.build_worker_replicated_job(
             volumes=volumes, controller_dns="controller.svc"
         )
         assert job.volumes == volumes
@@ -607,8 +590,8 @@ class TestSplitWorkerPodResourcesWiring:
                 ]
             ),
         )
-        builder = _JobSetManifestBuilder(spec)
-        result = builder._split_worker_pod_resources(
+        spec = spec
+        result = spec._split_worker_pod_resources(
             worker_count=2, record_processor_count=1
         )
         # Last entry is the record processor container
@@ -618,8 +601,8 @@ class TestSplitWorkerPodResourcesWiring:
     def test_returns_none_per_container_when_budget_absent(self) -> None:
         """resource_mode='none' propagates None through to each container slot."""
         spec = _make_spec(resource_mode="none")
-        builder = _JobSetManifestBuilder(spec)
-        result = builder._split_worker_pod_resources(
+        spec = spec
+        result = spec._split_worker_pod_resources(
             worker_count=2, record_processor_count=1
         )
         assert result == [None, None, None, None]
