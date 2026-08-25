@@ -48,6 +48,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.finite import FiniteFloat
 from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
@@ -72,7 +73,7 @@ class _AccuracySettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
 
-    CANCEL_RESULT_WAIT_SEC: float = Field(
+    CANCEL_RESULT_WAIT_SEC: FiniteFloat = Field(
         default=5.0,
         ge=0.0,
         description="Bounded time (seconds) the SystemController waits on the "
@@ -1171,7 +1172,7 @@ class _ServerMetricsSettings(BaseSettings):
         "command response. A timeout is non-fatal because the controller's result "
         "join remains the authoritative completion barrier.",
     )
-    CANCEL_RESULT_WAIT_SEC: float = Field(
+    CANCEL_RESULT_WAIT_SEC: FiniteFloat = Field(
         default=5.0,
         ge=0.0,
         description="Bounded time (seconds) the SystemController waits on the "
