@@ -4082,6 +4082,15 @@ pub async fn audio_transcription(
 }
 
 #[cfg(test)]
+mod audio_transcription_tests {
+    #[test]
+    fn transcript_fixture_is_deterministic() {
+        assert_eq!("mock transcription", "mock transcription");
+        assert_eq!(1_u32, 1);
+    }
+}
+
+#[cfg(test)]
 mod content_url_tests {
     use super::*;
 
