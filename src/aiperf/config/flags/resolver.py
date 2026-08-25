@@ -239,6 +239,16 @@ def build_cli_overrides(
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table
 
+    # random_seed is an envelope key distinct from the dataset's own seed
+    # field (written by build_dataset onto the dataset block, which only
+    # feeds SessionIDGenerator). AIPerfConfig.random_seed is what
+    # resolve_run_seed threads into rng.init(...) for every child service
+    # process, so every other rng.derive(...) consumer -- synthetic prompt
+    # content, media generation, per-conversation turn shaping -- needs it
+    # too, matching _assemble_optional on the CLI-only path.
+    if "random_seed" in cli.model_fields_set:
+        out["random_seed"] = cli.random_seed
+
     # Service-runtime CLI flags (--ui, --log-level, --verbose, ZMQ knobs)
     # land on RuntimeConfig / LoggingConfig in AIPerfConfig. build_logging_runtime
     # already gates on cli.model_fields_set, so YAML defaults stay
