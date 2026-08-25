@@ -598,17 +598,19 @@ async def _create_or_skip_409(
                 except ApiException as identity_error:
                     raise kopf.TemporaryError(
                         f"waiting for stale resource replacement: {identity_error.reason}",
-                        delay=15,
+                        delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
                     ) from identity_error
                 except ForeignResourceOwnershipError as identity_error:
                     raise kopf.PermanentError(str(identity_error)) from identity_error
             return
         raise kopf.TemporaryError(
-            f"apiserver rejected create ({e.status}): {e.reason}", delay=30
+            f"apiserver rejected create ({e.status}): {e.reason}",
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from e
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         raise kopf.TemporaryError(
-            f"apiserver unreachable during create: {e}", delay=30
+            f"apiserver unreachable during create: {e}",
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from e
 
 
@@ -863,15 +865,17 @@ async def _create_or_skip_409_custom(
             except ApiException as identity_error:
                 raise kopf.TemporaryError(
                     f"waiting for stale JobSet replacement: {identity_error.reason}",
-                    delay=15,
+                    delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
                 ) from identity_error
             except ForeignResourceOwnershipError as identity_error:
                 raise kopf.PermanentError(str(identity_error)) from identity_error
             return
         raise kopf.TemporaryError(
-            f"apiserver rejected JobSet create ({e.status}): {e.reason}", delay=30
+            f"apiserver rejected JobSet create ({e.status}): {e.reason}",
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from e
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         raise kopf.TemporaryError(
-            f"apiserver unreachable during JobSet create: {e}", delay=30
+            f"apiserver unreachable during JobSet create: {e}",
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from e

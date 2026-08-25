@@ -98,9 +98,7 @@ def test_two_consecutive_unknown_snapshots_evict() -> None:
 def test_configured_confirmation_poll_count_is_honored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        K8sEnvironment.POD_MONITOR, "UNHEALTHY_CONFIRMATION_POLLS", 3
-    )
+    monkeypatch.setattr(K8sEnvironment.POD_MONITOR, "UNHEALTHY_CONFIRMATION_POLLS", 3)
     monitor = _Monitor()
 
     _observe(monitor, PodPhase.UNKNOWN)

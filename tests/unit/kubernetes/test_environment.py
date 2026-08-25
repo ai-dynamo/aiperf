@@ -337,18 +337,14 @@ class TestK8sLifecycleEnvironment:
         monkeypatch.setenv(
             "AIPERF_K8S_CONTROLLER_POD_READY_POLL_INTERVAL_SECONDS", "2.75"
         )
-        monkeypatch.setenv(
-            "AIPERF_K8S_CREDENTIAL_RETRY_BACKOFF_MULTIPLIER", "3.5"
-        )
+        monkeypatch.setenv("AIPERF_K8S_CREDENTIAL_RETRY_BACKOFF_MULTIPLIER", "3.5")
         monkeypatch.setenv(
             "AIPERF_K8S_PORT_FORWARD_API_PROBE_REQUEST_TIMEOUT_SECONDS", "8.5"
         )
         monkeypatch.setenv("AIPERF_K8S_PROGRESS_STREAM_WS_MAX_RETRIES", "17")
         monkeypatch.setenv("AIPERF_K8S_WATCH_DEFAULT_TIMEOUT_SECONDS", "901")
         monkeypatch.setenv("AIPERF_K8S_WATCHDOG_EVENT_CHECK_INTERVAL_TICKS", "8")
-        monkeypatch.setenv(
-            "AIPERF_K8S_POD_MONITOR_UNHEALTHY_CONFIRMATION_POLLS", "4"
-        )
+        monkeypatch.setenv("AIPERF_K8S_POD_MONITOR_UNHEALTHY_CONFIRMATION_POLLS", "4")
 
         assert _ControllerPodReadySettings().POLL_INTERVAL_SECONDS == 2.75
         assert _CredentialRetrySettings().BACKOFF_MULTIPLIER == 3.5

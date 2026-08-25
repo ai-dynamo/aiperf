@@ -241,5 +241,8 @@ class TestDashboardCommand:
             await dashboard(manage_options=manage_options)
 
         assert mock_start.call_count == 3
-        assert [await_call.args[0] for await_call in sleep.await_args_list] == [4.0, 10.0]
+        assert [await_call.args[0] for await_call in sleep.await_args_list] == [
+            4.0,
+            10.0,
+        ]
         mock_browser.assert_called_once_with("http://localhost:54321")

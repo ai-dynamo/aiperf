@@ -536,3 +536,61 @@ def test_retain_days_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     from aiperf.operator.environment import _ResultsSettings
 
     assert _ResultsSettings().RETAIN_DAYS == 90
+
+
+class TestReloadIsolationGuard:
+    """The autouse conftest guard must leave no orphaned singleton behind.
+
+    A reload rebinds ``environment.OperatorEnvironment`` to a new instance.
+    Any module that binds the singleton at import time and is first imported
+    (or itself reloaded) inside that window captures the new instance, so
+    restoring only the ``environment`` attribute strands it: a later
+    ``monkeypatch.setattr`` on the reachable object is invisible to the code
+    reading the orphan. That produced a serial-only failure in
+    ``test_results_server_routes.py``, masked under ``-n auto`` because xdist
+    rarely puts the reloading test and the victim in one process.
+
+    The tests below must run in order: the first creates the hazard, the rest
+    assert the guard cleaned it up. Asserting inside a single test would be
+    tautological, because the guard only runs at teardown.
+    """
+
+    def test_a_reload_then_import_a_consumer_inside_the_window(self) -> None:
+        """Reload, then force a consumer to bind the post-reload instance."""
+        import importlib
+
+        from aiperf.operator import environment as env_mod
+
+        importlib.reload(env_mod)
+        importlib.reload(
+            importlib.import_module("aiperf.operator.routers.mutating_auth")
+        )
+
+    def test_b_every_module_agrees_on_the_live_singleton(self) -> None:
+        """No ``aiperf`` module may be left bound to an orphaned instance."""
+        import importlib
+        import sys
+
+        live = importlib.import_module("aiperf.operator.environment")
+        stale = sorted(
+            name
+            for name, module in sys.modules.items()
+            if name.startswith("aiperf.")
+            and module is not None
+            and getattr(module, "OperatorEnvironment", live.OperatorEnvironment)
+            is not live.OperatorEnvironment
+        )
+        assert stale == [], f"modules bound to a stale singleton: {stale}"
+
+    def test_c_patch_after_reload_is_visible_to_the_auth_read_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A patch on the reachable singleton must reach ``mutating_auth``."""
+        import importlib
+
+        from aiperf.operator.routers import mutating_auth
+
+        live = importlib.import_module("aiperf.operator.environment")
+        monkeypatch.setattr(live.OperatorEnvironment, "MUTATING_ROUTES_ENABLED", True)
+
+        assert mutating_auth._mutating_routes_enabled() is True

@@ -295,13 +295,12 @@ only the base cell.
    (default: `aiperf-benchmarks`). Applying this minimal manifest is
    idempotent, so the complete generated stream also works when the target
    namespace does not exist yet.
-2. `rbac.authorization.k8s.io/v1` `Role` — grants the controller pod:
-   full CRUD on `configmaps`; get/list/watch/create/delete on
-   `services` and `endpoints`; get/list/watch/create/patch on
-   `events`; read on `pods`, `pods/log`, and `jobs`; full CRUD on
-   `jobsets` with read on `jobsets/status`; and
-   get/list/watch/patch/update on `aiperfjobs` /
-   `aiperfjobs/status`.
+2. `rbac.authorization.k8s.io/v1` `Role` — grants the benchmark pods
+   get/list/watch on `configmaps`, `services`, `endpoints`, `events`,
+   `pods`, `pods/log`, `jobs`, and `jobsets/status`, plus
+   get/list/watch/**patch** on `jobsets` and on `aiperfjobs` /
+   `aiperfjobs/status`. `patch` is the only write verb; the pods share one
+   ServiceAccount, so nothing here can create, replace, or delete an object.
 3. `rbac.authorization.k8s.io/v1` `RoleBinding` — binds the Role to
    the pods' ServiceAccount (default: `default`).
 4. `v1` `ConfigMap` named `aiperf-<job_id>-config`, containing a single

@@ -86,7 +86,6 @@ class ProgressClient:
 
     WORKERS_ENDPOINT = "/api/workers"
     PROGRESS_ENDPOINT = "/api/progress"
-    TIMEOUT_SECONDS = 10.0  # Increased for slow networks
 
     def __init__(
         self,
@@ -142,7 +141,9 @@ class ProgressClient:
         """Enter async context and create HTTP session."""
         connector = create_tcp_connector()
         self._session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.TIMEOUT_SECONDS),
+            timeout=aiohttp.ClientTimeout(
+                total=OperatorEnvironment.PROGRESS.REQUEST_TIMEOUT_SECONDS
+            ),
             connector=connector,
         )
         return self
@@ -668,7 +669,9 @@ class ProgressClient:
         # would reject the response with a 400 error.
         async with (
             aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=300.0),
+                timeout=aiohttp.ClientTimeout(
+                    total=OperatorEnvironment.RESULTS.DOWNLOAD_TIMEOUT_SECONDS
+                ),
                 connector=self._session.connector,
                 connector_owner=False,
                 auto_decompress=False,
@@ -741,7 +744,7 @@ class ProgressClient:
         self,
         controller_host: str,
         dest_dir: Path,
-        max_concurrent: int = 5,
+        max_concurrent: int | None = None,
     ) -> list[str]:
         """Download all available result files from the controller pod.
 
@@ -754,7 +757,8 @@ class ProgressClient:
             controller_host: see class docstring.
             dest_dir: Destination directory (created if missing). Each file's
                 relative path from the server is preserved beneath it.
-            max_concurrent: Maximum concurrent downloads. Defaults to 5.
+            max_concurrent: Maximum concurrent downloads. Defaults to
+                ``OperatorEnvironment.RESULTS.DOWNLOAD_MAX_CONCURRENCY``.
 
         Returns:
             List of successfully downloaded filenames (server-side relative
@@ -776,7 +780,12 @@ class ProgressClient:
             return []
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        semaphore = asyncio.Semaphore(max_concurrent)
+        concurrency = (
+            max_concurrent
+            if max_concurrent is not None
+            else OperatorEnvironment.RESULTS.DOWNLOAD_MAX_CONCURRENCY
+        )
+        semaphore = asyncio.Semaphore(concurrency)
 
         async def _download_one(file_info: dict[str, Any]) -> str | None:
             filename = file_info["name"]

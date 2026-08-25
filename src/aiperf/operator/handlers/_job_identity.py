@@ -22,6 +22,7 @@ from aiperf.kubernetes.cr_refs import (
     JOBSET_PLURAL,
     JOBSET_VERSION,
 )
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.status import StatusBuilder
 
 logger = logging.getLogger(__name__)
@@ -74,12 +75,12 @@ async def current_aiperfjob_body(
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: identity read failed "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: identity read failed: {exc}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
 
     metadata = parent.get("metadata") or {}
@@ -107,7 +108,7 @@ async def current_aiperfjob_resource_version(
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: identity read returned no "
             "metadata.resourceVersion; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         )
     return str(resource_version)
 
@@ -137,12 +138,12 @@ async def owned_aiperfjob_jobset_uid(
         raise kopf.TemporaryError(
             f"JobSet {namespace}/{jobset_name}: identity read failed "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"JobSet {namespace}/{jobset_name}: identity read failed: {exc}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
 
     return aiperfjob_jobset_uid(
@@ -185,7 +186,7 @@ def aiperfjob_jobset_uid(
     if jobset_uid is None:
         raise kopf.TemporaryError(
             f"JobSet {jobset_name}: identity read returned no metadata.uid; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         )
     return str(jobset_uid)
 
@@ -253,13 +254,13 @@ async def delete_owned_aiperfjob_jobset(
         raise kopf.TemporaryError(
             f"JobSet {namespace}/{jobset_name}: delete failed after {context} "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"JobSet {namespace}/{jobset_name}: delete failed after {context}: "
             f"{exc}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     return True
 

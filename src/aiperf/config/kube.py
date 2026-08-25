@@ -92,7 +92,10 @@ def _coerce_tolerations(value: Any) -> list[dict[str, Any]]:
         return [_string_keyed_map(value, "tolerations")]
     if isinstance(value, str):
         parsed = _parse_json_cli_value(
-            value.strip(), "tolerations", "JSON object or array"
+            value.strip(),
+            "--tolerations",
+            'JSON object or array, e.g. \'{"key": "nvidia.com/gpu", '
+            '"operator": "Exists"}\'',
         )
         return _coerce_tolerations(parsed)
     if isinstance(value, list):
@@ -100,7 +103,10 @@ def _coerce_tolerations(value: Any) -> list[dict[str, Any]]:
         for item in value:
             tolerations.extend(_coerce_tolerations(item))
         return tolerations
-    raise ValueError("tolerations must be a JSON object or array")
+    raise ValueError(
+        "--tolerations must be a JSON object or array of objects, e.g. "
+        '\'{"key": "nvidia.com/gpu", "operator": "Exists"}\''
+    )
 
 
 def _string_map(value: dict[Any, Any], field_name: str) -> dict[str, str]:
@@ -130,6 +136,39 @@ class SecretMountConfig(BaseModel):
     mount_path: str = Field(description="Path to mount the secret")
     sub_path: str | None = Field(
         default=None, description="Specific key to mount (optional)"
+    )
+
+
+def _coerce_secret_mounts(value: Any) -> list[dict[str, Any] | SecretMountConfig]:
+    """Coerce CLI/Python secret-mount input into the Kubernetes list shape.
+
+    Accepts the same shapes ``--tolerations`` does -- a lone JSON object, a JSON
+    array of objects, or repeated tokens -- so the two secret/placement flags do
+    not carry different contracts behind identical-looking spellings.
+    """
+    if value is None:
+        return []
+    if isinstance(value, SecretMountConfig):
+        return [value]
+    if isinstance(value, dict):
+        return [_string_keyed_map(value, "secret_mounts")]
+    if isinstance(value, str):
+        return _coerce_secret_mounts(
+            _parse_json_cli_value(
+                value.strip(),
+                "--secret-mounts",
+                'JSON object or array, e.g. \'{"name": "llm-api-key", '
+                '"mount_path": "/etc/secrets"}\'',
+            )
+        )
+    if isinstance(value, list):
+        mounts: list[dict[str, Any] | SecretMountConfig] = []
+        for item in value:
+            mounts.extend(_coerce_secret_mounts(item))
+        return mounts
+    raise ValueError(
+        "--secret-mounts must be a JSON object or array of objects, e.g. "
+        '\'{"name": "llm-api-key", "mount_path": "/etc/secrets"}\''
     )
 
 
@@ -301,14 +340,28 @@ class KubeOptions(KubeManageOptions):
     # Metadata
     annotations: Annotated[
         dict[str, str],
-        Field(description="Additional pod annotations"),
-        CLIParameter(name="--annotations", group=_KubeGroups.K8S_METADATA),
+        Field(
+            description="Additional pod annotations (KEY=VALUE, JSON object, or "
+            "--annotations.KEY VALUE)"
+        ),
+        CLIParameter(
+            name="--annotations",
+            group=_KubeGroups.K8S_METADATA,
+            n_tokens=-1,
+        ),
     ] = {}
 
     labels: Annotated[
         dict[str, str],
-        Field(description="Additional pod labels"),
-        CLIParameter(name="--labels", group=_KubeGroups.K8S_METADATA),
+        Field(
+            description="Additional pod labels (KEY=VALUE, JSON object, or "
+            "--labels.KEY VALUE)"
+        ),
+        CLIParameter(
+            name="--labels",
+            group=_KubeGroups.K8S_METADATA,
+            n_tokens=-1,
+        ),
     ] = {}
 
     # Secrets and credentials
@@ -320,22 +373,42 @@ class KubeOptions(KubeManageOptions):
 
     env_vars: Annotated[
         dict[str, str],
-        Field(description="Extra environment variables (key: value)"),
-        CLIParameter(name="--env-vars", group=_KubeGroups.K8S_SECRETS),
+        Field(
+            description="Extra environment variables (NAME=value, JSON object, or "
+            "--env-vars.NAME value)"
+        ),
+        CLIParameter(
+            name="--env-vars",
+            group=_KubeGroups.K8S_SECRETS,
+            n_tokens=-1,
+        ),
     ] = {}
 
     env_from_secrets: Annotated[
         dict[str, str],
         Field(
-            description="Environment variables from secrets (ENV_NAME: secret_name/key)"
+            description="Environment variables from secrets "
+            "(ENV_NAME=secret_name/key, JSON object, or "
+            "--env-from-secrets.ENV_NAME secret_name/key)"
         ),
-        CLIParameter(name="--env-from-secrets", group=_KubeGroups.K8S_SECRETS),
+        CLIParameter(
+            name="--env-from-secrets",
+            group=_KubeGroups.K8S_SECRETS,
+            n_tokens=-1,
+        ),
     ] = {}
 
     secret_mounts: Annotated[
         list[SecretMountConfig],
-        Field(description="Secret volume mounts"),
-        CLIParameter(name="--secret-mounts", group=_KubeGroups.K8S_SECRETS),
+        BeforeValidator(_coerce_secret_mounts),
+        Field(
+            description="Secret volume mounts as JSON object/array or repeated JSON values"
+        ),
+        CLIParameter(
+            name="--secret-mounts",
+            group=_KubeGroups.K8S_SECRETS,
+            n_tokens=-1,
+        ),
     ] = []
 
     service_account: Annotated[

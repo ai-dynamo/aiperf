@@ -568,9 +568,7 @@ class TestWatchdogThresholdEnvBinding:
         from aiperf.kubernetes.watchdog import BenchmarkWatchdog
 
         monkeypatch.setattr(K8sEnvironment.WATCHDOG, "EVENT_CHECK_INTERVAL_TICKS", 7)
-        monkeypatch.setattr(
-            K8sEnvironment.WATCHDOG, "RESOURCE_CHECK_INTERVAL_TICKS", 9
-        )
+        monkeypatch.setattr(K8sEnvironment.WATCHDOG, "RESOURCE_CHECK_INTERVAL_TICKS", 9)
         wd = BenchmarkWatchdog(object(), "ns")
         env = K8sEnvironment.WATCHDOG
         assert wd.poll_interval == env.POLL_INTERVAL_SECONDS

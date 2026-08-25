@@ -198,48 +198,68 @@ class RBACSpec(AIPerfBaseModel):
     service_account: str = Field(default="default", description="Service account name")
 
     # RBAC rules required by AIPerf pods, organized by resource type.
+    #
+    # Controller and worker pods share one ServiceAccount, so every verb here is
+    # held by every benchmark pod. Write verbs are therefore restricted to the
+    # exact operations a pod performs: annotation/status `patch` on its own
+    # AIPerfJob and JobSet. In particular there is no `create` on `jobsets` --
+    # that verb let any compromised pod launch a JobSet, and thus run arbitrary
+    # containers, under the same identity. Read-only `get/list/watch` is kept on
+    # the resources a pod may need to inspect. Widening this set requires a
+    # matching widening of `benchmark-rbac.yaml`, which
+    # `test_helm_benchmark_rbac_is_subset_of_rbac_spec` enforces as a subset.
     _RULES: ClassVar[list[dict[str, Any]]] = [
-        # AIPerfJob CRs: Controller pod reads config and patches completion status
+        # AIPerfJob CRs: controller pod reads config and patches completion
+        # status. No `update` (PUT): nothing in a pod replaces a whole CR, and
+        # PUT would let a pod rewrite `spec`, not just `status`.
         {
             "apiGroups": [AIPERF_GROUP],
             "resources": ["aiperfjobs", "aiperfjobs/status"],
-            "verbs": ["get", "list", "watch", "patch", "update"],
+            "verbs": ["get", "list", "watch", "patch"],
         },
-        # ConfigMaps: Full CRUD for config storage
+        # ConfigMaps: read-only. The run config reaches pods as a kubelet-mounted
+        # volume, so no pod calls the ConfigMap API; write verbs would let one
+        # job rewrite another job's config in a shared namespace.
         {
             "apiGroups": [""],
             "resources": ["configmaps"],
-            "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
+            "verbs": ["get", "list", "watch"],
         },
-        # Pods and logs: Read-only for monitoring and debugging
+        # Pods and logs: read-only for peer discovery, the heartbeat watchdog,
+        # and debugging.
         {
             "apiGroups": [""],
             "resources": ["pods", "pods/log"],
             "verbs": ["get", "list", "watch"],
         },
-        # Services and endpoints: Read + create/delete for networking
+        # Services and endpoints: read-only. The headless Service for pod DNS is
+        # created by the JobSet controller via `network.enableDNSHostnames`, not
+        # by any pod.
         {
             "apiGroups": [""],
             "resources": ["services", "endpoints"],
-            "verbs": ["get", "list", "watch", "create", "delete"],
+            "verbs": ["get", "list", "watch"],
         },
-        # Events: Read + create for operator diagnostics
+        # Events: read-only for the watchdog's pod-event correlation. Pods do not
+        # emit Events; the operator does, under its own ClusterRole.
         {
             "apiGroups": [""],
             "resources": ["events"],
-            "verbs": ["get", "list", "watch", "create", "patch"],
+            "verbs": ["get", "list", "watch"],
         },
-        # Jobs: Read-only for status monitoring
+        # Jobs: read-only for status monitoring
         {
             "apiGroups": ["batch"],
             "resources": ["jobs"],
             "verbs": ["get", "list", "watch"],
         },
-        # JobSets: Full lifecycle management for jobsets, read-only for status
+        # JobSets: read plus annotation `patch` from the controller pod's API
+        # container. No `create`/`update`/`delete` -- JobSet creation and deletion
+        # belong to the operator, which holds them in its own ClusterRole.
         {
             "apiGroups": ["jobset.x-k8s.io"],
             "resources": ["jobsets"],
-            "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
+            "verbs": ["get", "list", "watch", "patch"],
         },
         {
             "apiGroups": ["jobset.x-k8s.io"],

@@ -324,6 +324,16 @@ def _convert_schema(
 
     if "type" in schema:
         result["type"] = schema["type"]
+    elif schema.get("x-kubernetes-preserve-unknown-fields"):
+        # An ``Any``-typed field whose author explicitly marked it polymorphic
+        # (``json_schema_extra``) really does accept a scalar, a list, or an
+        # object — ``UserFile.content`` needs a bare string for ``format: text``
+        # and a dict/list/scalar otherwise. Defaulting to ``type: object`` here
+        # would reject the string and list forms at admission, so emit a
+        # typeless preserve-unknown leaf and tag it so
+        # ``_ensure_type_on_preserve_unknown`` leaves it alone.
+        result["x-kubernetes-preserve-unknown-fields"] = True
+        result[_MIXED_UNION_SENTINEL] = True
     else:
         # Pydantic emits an empty/no-type schema for ``Any``-typed fields and
         # for some discriminated-union leaves. K8s structural schemas reject

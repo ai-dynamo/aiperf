@@ -199,8 +199,8 @@ async def _fetch_with_progress_aware_retry(
     description: str,
     is_cancelled: Callable[[], bool] | None = None,
     cancellation_event: asyncio.Event | None = None,
-    max_delay: float = 30.0,
-    backoff_multiplier: float = 2.0,
+    max_delay: float | None = None,
+    backoff_multiplier: float | None = None,
     stagnation_limit: int = _NO_PROGRESS_STAGNATION_LIMIT,
 ) -> ControllerFetchResult:
     """Retry ``fetch_once`` until it returns, or until no progress has been
@@ -224,6 +224,10 @@ async def _fetch_with_progress_aware_retry(
     blocking a CR deletion behind a full stagnation window.
     """
     del job_id  # accepted for API symmetry with fetch_results_with_retry
+    if max_delay is None:
+        max_delay = OperatorEnvironment.RESULTS.RETRY_MAX_DELAY_SECONDS
+    if backoff_multiplier is None:
+        backoff_multiplier = OperatorEnvironment.RESULTS.RETRY_BACKOFF_MULTIPLIER
     delay = initial_delay
     attempt = 0
     no_progress_streak = 0

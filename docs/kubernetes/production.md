@@ -215,11 +215,22 @@ kubectl create secret generic llm-api-key \
   --from-literal=api-key='sk-...' \
   -n aiperf-benchmarks
 
-# Reference it as an environment variable. --env-from-secrets is a mapping flag:
-# name the pod variable after the dot, and pass `<secret>/<key>` as the value.
+# Reference it as an environment variable. Name the pod variable, and pass
+# `<secret>/<key>` as its value.
 aiperf kube profile ... \
   --env-from-secrets.OPENAI_API_KEY llm-api-key/api-key
 ```
+
+`--env-from-secrets` is a mapping flag and accepts three equivalent spellings.
+`--annotations`, `--labels`, and `--env-vars` accept the same three:
+
+```bash
+--env-from-secrets.OPENAI_API_KEY llm-api-key/api-key   # dot-notation
+--env-from-secrets OPENAI_API_KEY=llm-api-key/api-key   # KEY=VALUE
+--env-from-secrets '{"OPENAI_API_KEY": "llm-api-key/api-key"}'  # JSON object
+```
+
+Repeat the flag to set more than one entry.
 
 Endpoint credentials are transported out of band from the benchmark
 ConfigMap. AIPerf writes only redacted placeholders to `run_config.json`, then
@@ -258,8 +269,9 @@ aiperf kube profile ... \
   --secret-mounts '{"name": "tls-cert", "mount_path": "/certs/ca.pem", "sub_path": "ca.pem"}'
 ```
 
-Each mount is a separate JSON object; repeat `--secret-mounts` for more than one.
-A JSON array covering several mounts in one token is rejected.
+`--secret-mounts` accepts the same shapes `--tolerations` does: a single JSON
+object, a JSON array covering several mounts in one token, or the flag repeated
+once per mount.
 
 ---
 
@@ -435,6 +447,20 @@ discovery, and the explicit namespaces are treated as pre-provisioned: the CLI
 does not issue Namespace-create requests. A tenant therefore needs permission
 to create `AIPerfJob` resources in its namespace, not permission to read CRDs or
 create namespaces.
+
+The per-job Role grants no create, update, or delete verbs, so a compromised
+benchmark pod cannot launch workloads of its own. What it retains inside its
+namespace is read access to pod, ConfigMap, Service, Endpoint, Event, and Job
+metadata, plus `patch` on its own AIPerfJob and JobSet — which is why a
+namespace per team, rather than a shared benchmark namespace, is still the
+tenancy boundary. See
+[RBAC and Security](rbac-security.md#operator-created-per-job-role).
+
+If cluster policy forbids chart-managed cluster-scoped RBAC, install with
+`rbac.create=false`, `serviceAccount.create=false`, an explicit
+`serviceAccount.name`, and `tests.enabled=false`; that combination emits zero
+`ClusterRole`/`ClusterRoleBinding` objects. See
+[Eliminating all cluster-scoped RBAC](rbac-security.md#eliminating-all-cluster-scoped-rbac).
 
 ### Resource Quotas
 

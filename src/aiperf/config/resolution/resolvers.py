@@ -119,7 +119,7 @@ class ArtifactDirResolver:
                 materialize_user_files,
             )
 
-            run_meta = _derive_run_meta(artifact_dir)
+            run_meta = run.run_meta or _derive_run_meta(artifact_dir)
             context = build_user_file_context(
                 run.cfg,
                 run_meta,

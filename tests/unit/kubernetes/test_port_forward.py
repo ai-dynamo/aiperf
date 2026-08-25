@@ -115,9 +115,7 @@ async def test_monitor_pod_liveness_uses_configured_interval(
 async def test_wait_for_api_ready_uses_configured_probe_interval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        K8sEnvironment.PORT_FORWARD, "API_PROBE_INTERVAL_SECONDS", 1.75
-    )
+    monkeypatch.setattr(K8sEnvironment.PORT_FORWARD, "API_PROBE_INTERVAL_SECONDS", 1.75)
     proc = _make_mock_process()
     unavailable = AsyncMock()
     unavailable.status = 503

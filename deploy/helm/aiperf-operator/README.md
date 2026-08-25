@@ -34,6 +34,7 @@ All values are documented inline in [`values.yaml`](./values.yaml). Common overr
 | `ingress.enabled` | Expose the results-server HTTP API outside the cluster. |
 | `networkPolicy.enabled` | Lock down the operator pod's ingress/egress. |
 | `dashboard.enabled` | Add the Plotly Dash sidecar (off by default). results-server reverse-proxies `/dashboard/*` to it on `dashboard.port` (8082). |
+| `tests.enabled` | Default `true`: render the `helm test` hook pods plus the dedicated test ServiceAccount, Role, RoleBinding, ClusterRole, and ClusterRoleBinding. Set `false` to render none of them — this is the only way to make the chart emit zero cluster-scoped RBAC, because the CRD check reads cluster-scoped resources. Deliberately independent of `rbac.create`; see [`helm test` and cluster-scoped RBAC](#helm-test-and-cluster-scoped-rbac). |
 | `tests.image.repository` / `.tag` | Image used by `helm test` hook pods. Defaults to `alpine/k8s:1.33.11` (provides `kubectl` + `curl`). |
 
 ## Release name guidance
@@ -86,6 +87,21 @@ Both use a dedicated test `ServiceAccount` (`…-tests`) with minimal RBAC: `get
 
 Hook pods carry only `helm.sh/hook-delete-policy: before-hook-creation`, so they persist after the run and are deleted at the start of the next `helm test`. Use `helm test … --logs` to stream output, or `kubectl logs` the `Completed` / `Failed` pods any time before the next test run.
 
+### `helm test` and cluster-scoped RBAC
+
+`rbac.create=false` suppresses the operator's own `ClusterRole` and `ClusterRoleBinding`, but not the test hooks' — the `…-tests` `ClusterRole`/`ClusterRoleBinding` still render, because pre-provisioning operator RBAC out-of-band says nothing about the chart's smoke-test scaffolding. Use `tests.enabled=false` to drop them:
+
+```bash
+helm template aiperf-operator deploy/helm/aiperf-operator -n aiperf-system \
+  --set rbac.create=false \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aiperf-operator-sa \
+  --set tests.enabled=false \
+  | grep -c '^kind: Cluster'   # -> 0
+```
+
+`tests.enabled` gates the hook Pods and their RBAC together, so you never get Pods referencing a ServiceAccount that was not created. Keeping `helm test` and reaching zero cluster-scoped RBAC are mutually exclusive: `…-test-crd` runs `kubectl get crd`, and CustomResourceDefinitions are cluster-scoped. With the hooks off, verify the install out-of-band with `kubectl get crd aiperfjobs.aiperf.nvidia.com aiperfsweeps.aiperf.nvidia.com` and `aiperf kube preflight`.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -95,3 +111,4 @@ Hook pods carry only `helm.sh/hook-delete-policy: before-hook-creation`, so they
 | Operator pod stuck `ImagePullBackOff` | `image.repository` / `image.tag` not reachable from the cluster | Check `imagePullSecrets`; preload with `kind load docker-image` on kind clusters. |
 | Benchmark-pod image (CRD `spec.image` default) and operator image differ | `defaults.image` set explicitly to a different image | Either unset `defaults.image` (empty → computed from `image.*`) or set both to match. |
 | `helm test --logs` returns `unable to get pod logs` | Previous chart versions annotated test RBAC as `helm.sh/hook: test`, causing Helm to try fetching logs for non-Pod resources | Fixed in current chart — test RBAC is a regular resource. No action on a fresh install. |
+| `helm test` prints `TEST SUITE: None` and exits 0 | Release was installed or upgraded with `tests.enabled=false`, so no `helm.sh/hook: test` Pod is in the deployed revision | Expected. `helm upgrade --set tests.enabled=true` if you want the hooks, or run the equivalent checks out-of-band (see [`helm test` and cluster-scoped RBAC](#helm-test-and-cluster-scoped-rbac)). |

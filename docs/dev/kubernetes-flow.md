@@ -192,14 +192,28 @@ The Role rules are the `_RULES` class-var on `RBACSpec` in
 
 | API group | Resources | Verbs |
 |---|---|---|
-| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | get, list, watch, patch, update |
-| `""` (core) | `configmaps` | get, list, watch, create, update, patch, delete |
+| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | get, list, watch, patch |
+| `""` (core) | `configmaps` | get, list, watch |
 | `""` (core) | `pods`, `pods/log` | get, list, watch |
-| `""` (core) | `services`, `endpoints` | get, list, watch, create, delete |
-| `""` (core) | `events` | get, list, watch, create, patch |
+| `""` (core) | `services`, `endpoints` | get, list, watch |
+| `""` (core) | `events` | get, list, watch |
 | `batch` | `jobs` | get, list, watch |
-| `jobset.x-k8s.io` | `jobsets` | get, list, watch, create, update, patch, delete |
+| `jobset.x-k8s.io` | `jobsets` | get, list, watch, patch |
 | `jobset.x-k8s.io` | `jobsets/status` | get, list, watch |
+
+`patch` on `aiperfjobs`/`aiperfjobs/status` and `jobsets` is the only write verb
+in the set, because controller and worker pods share one ServiceAccount and the
+projected token is mounted in every container — so a worker inherits whatever
+the controller holds. Everything a pod actually writes is an annotation or
+`status` JSON-patch on its own AIPerfJob and JobSet. `create` on `jobsets` was
+removed: it let any pod launch a JobSet, and therefore run arbitrary containers,
+under the benchmark ServiceAccount.
+
+Two tests keep this pinned and keep the Python and Helm copies in sync:
+`TestRBACSpecLeastPrivilege` and `test_helm_benchmark_rbac_is_subset_of_rbac_spec`,
+both in `tests/unit/kubernetes/test_resources.py`. The chart's benchmark Role
+(`deploy/helm/aiperf-operator/templates/benchmark-rbac.yaml`) must stay a subset
+of `_RULES`, so widening one without the other fails CI.
 
 ## 4. Inter-Pod Communication
 
@@ -755,9 +769,23 @@ aiperf kube profile \
   --env-from-secrets.OPENAI_API_KEY llm-api-key/api-key
 ```
 
-`--env-from-secrets` is a mapping flag and must use dot-notation
-(`--env-from-secrets.KEY value`). The `KEY=VALUE` spelling aborts with an
-`IndexError` from cyclopts before any AIPerf code runs.
+`--env-from-secrets` is a mapping flag. All three spellings are equivalent:
+dot-notation (`--env-from-secrets.KEY value`), `KEY=VALUE`
+(`--env-from-secrets KEY=value`), and a JSON object
+(`--env-from-secrets '{"KEY": "value"}'`). The same applies to `--annotations`,
+`--labels`, and `--env-vars`.
+
+Only dot-notation is native to cyclopts. A bare token on a mapping-typed field
+reaches `Argument._json` with an empty `keys` tuple and raises
+`IndexError: tuple index out of range` — an upstream defect present in both
+cyclopts 4.23.2 and 5.0.0b1. `normalize_mapping_flag_tokens`
+(`src/aiperf/cli_commands/kube/_mapping_flags.py`) is registered as the `kube`
+app's cyclopts `config` callable, which runs after token parsing and before
+conversion. It re-keys bare `KEY=VALUE` and JSON-object tokens into the keyed
+tokens cyclopts expects, and raises a usage error naming every accepted
+spelling for anything else. Adding a new mapping-typed CLI field anywhere under
+`aiperf kube` is covered automatically; pair it with `n_tokens=-1` so repeating
+the flag accumulates entries instead of raising `RepeatArgumentError`.
 
 Sensitive endpoint fields never rely on the ConfigMap copy. JSON
 serialization redacts them, and `aiperf service --benchmark-run` restores them
@@ -767,6 +795,18 @@ variables. Generation and operator reconciliation fail closed when the
 corresponding `valueFrom.secretKeyRef` mapping is absent.
 `aiperf service` requires `--benchmark-run` and never resolves per-container
 benchmark flags.
+
+Anything the pre-bootstrap resolver chain would normally produce must therefore
+either travel inside the serialized run or be rendered from it.
+`artifacts.user_files` works this way: the declared entries ride along in
+`run_config.json`, and `aiperf.kubernetes.user_files.materialize_serialized_run_user_files`
+renders them once, in the `system_controller` container, before the benchmark
+starts. Because the pod's `artifacts.dir` is the fixed `/results` mount and
+carries neither the run epoch nor the AIPerfJob name, `handlers/create.py`
+freezes a `RunMeta` (epoch key, job name, namespace) into the serialized run for
+the template context; locally that field stays `None` and `ArtifactDirResolver`
+derives it from the resolved artifact dir. See
+[`docs/kubernetes/user-files.md`](../kubernetes/user-files.md).
 
 ### Environment Variables
 

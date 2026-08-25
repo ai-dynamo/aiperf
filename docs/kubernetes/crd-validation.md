@@ -78,6 +78,14 @@ spec:
       type: concurrency
 ```
 
+One more node is deliberately typeless for the same reason:
+`spec.benchmark.artifacts.userFiles[].content`. A user file's body is a bare
+string for `format: text` and a dict/list/scalar otherwise, so no single
+`type:` matches every legal value. The node carries
+`x-kubernetes-preserve-unknown-fields: true` with no `type`, and the
+format↔content pairing is enforced by the `UserFile` Pydantic validators on
+reconcile. `path` and `content` stay structurally `required`.
+
 You **cannot** mix the two forms for the same slot — the operator's
 `normalize_before_validation` raises a Pydantic ``ValueError`` on reconcile
 (`status.phase=Failed` with `'dataset' cannot be used with 'datasets'. Use
@@ -199,6 +207,7 @@ reconcile (they are also run client-side by `aiperf kube validate`):
 | `_require_sweep_on_aiperfsweep` (`kubernetes/crd_models.py`) | AIPerfSweep requires a `sweep` block (mirrors the `has(self.sweep)` CEL rule) |
 | `_reject_non_finite_sweep_knobs` (`kubernetes/crd_models.py`) | rejects NaN/inf on `sweep.cooldownSeconds`, `sweep.plateauThreshold`, `sweep.slaWarmupSeconds` |
 | `_reject_repeated_iteration_with_convergence` (`kubernetes/crd_models.py`) | AIPerfSweep rejects `sweep.iterationOrder='repeated'` together with `multiRun.convergence` |
+| `_resolve_format` / `_validate_path` (`config/user_files.py`) | `artifacts.userFiles[]` format↔content pairing (`text` needs a string, `json`/`yaml` need structured content) and path safety (relative, no `..`, no control chars) — `content` is typeless in the CRD so CEL cannot type-check it |
 
 > There is no `validate_datasets_unique_names` or `validate_dataset_references`
 > validator — dataset-name presence is checked by `parse_datasets_input` and

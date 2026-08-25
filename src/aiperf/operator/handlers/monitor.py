@@ -477,7 +477,7 @@ async def _reconcile_missing_jobset(
     # (e.g. claim never set because monitor took a different branch),
     # re-read the CR after a short delay to give the success handler's
     # phase patch a chance to land.
-    await asyncio.sleep(2)
+    await asyncio.sleep(OperatorEnvironment.MONITOR.MISSING_JOBSET_SETTLE_DELAY_SECONDS)
 
     try:
         fresh = await custom.get_namespaced_custom_object(
@@ -1930,7 +1930,7 @@ async def _claim_startup_failure(
             raise kopf.TemporaryError(
                 f"AIPerfJob {namespace}/{context.parent_name}: startup failure "
                 f"claim failed ({exc.status}: {exc.reason})",
-                delay=5,
+                delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
             ) from exc
         current = await _live_startup_deadline_parent(
             namespace=namespace,
@@ -1950,13 +1950,13 @@ async def _claim_startup_failure(
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{context.parent_name}: startup failure "
             "claim raced an unrelated writer; retrying",
-            delay=1,
+            delay=OperatorEnvironment.RECONCILE.CONFLICT_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{context.parent_name}: startup failure "
             f"claim failed: {exc}",
-            delay=5,
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from exc
     if not isinstance(claimed, dict):
         return None
@@ -2264,7 +2264,9 @@ async def monitor_progress(
         # so an API failure there would escape _timer and add this handler to
         # memory.forever_stopped, permanently killing the timer for this job.
         patch.clear()
-        raise kopf.TemporaryError(str(e), delay=10) from e
+        raise kopf.TemporaryError(
+            str(e), delay=OperatorEnvironment.RECONCILE.PERSISTENCE_RETRY_DELAY_SECONDS
+        ) from e
     except Exception:
         logger.exception(f"Unexpected error monitoring {namespace}/{name}")
         # Same rationale as the transient-error branch above: clear partial patch
@@ -2328,7 +2330,7 @@ async def _live_event_status_fence(
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: event identity read returned no "
             "metadata.resourceVersion; retrying",
-            delay=5,
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         )
     return live_body, str(resource_version), str(live_phase)
 
@@ -2422,17 +2424,17 @@ async def _patch_event_status(
             raise kopf.TemporaryError(
                 f"AIPerfJob {namespace}/{name}: event status changed while "
                 f"committing ({exc.status}: {exc.reason}); rebasing",
-                delay=1,
+                delay=OperatorEnvironment.RECONCILE.CONFLICT_RETRY_DELAY_SECONDS,
             ) from exc
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: event status patch failed "
             f"({exc.status}): {exc.reason}",
-            delay=5,
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: event status patch failed: {exc}",
-            delay=5,
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from exc
 
 

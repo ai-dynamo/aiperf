@@ -260,8 +260,8 @@ When using `aiperf kube profile`, you can set deployment options via CLI flags. 
 | `--priority-class` | `spec.scheduling.priorityClass` | - | Kueue priority class |
 | `--image-pull-secrets` | `spec.podTemplate.imagePullSecrets` | `[]` | Pull secret names |
 | `--env-vars` | `spec.podTemplate.env` | `{}` | Non-sensitive extra env vars |
-| `--env-from-secrets` | `spec.podTemplate.env` | `{}` | Env vars from Kubernetes Secrets as `ENV_NAME: secret_name/key`; required for endpoint API keys, sensitive headers, and credentialed URLs |
-| `--secret-mounts` | `spec.podTemplate.volumes` + `volumeMounts` | `[]` | Secret volume mounts (`{name, mount_path, sub_path}`) |
+| `--env-from-secrets` | `spec.podTemplate.env` | `{}` | Env vars from Kubernetes Secrets as `ENV_NAME=secret_name/key`; required for endpoint API keys, sensitive headers, and credentialed URLs |
+| `--secret-mounts` | `spec.podTemplate.volumes` + `volumeMounts` | `[]` | Secret volume mounts (`{name, mount_path, sub_path}`) as a JSON object, a JSON array, or the flag repeated |
 | `--annotations` | `spec.podTemplate.annotations` | `{}` | Extra pod annotations |
 | `--labels` | `spec.podTemplate.labels` | `{}` | Extra pod labels |
 | `--service-account` | `spec.podTemplate.serviceAccountName` | - | Pod service account |
@@ -274,6 +274,11 @@ When using `aiperf kube profile`, you can set deployment options via CLI flags. 
 | `--skip-endpoint-check` | - | `false` | Skip endpoint health check |
 | `--no-wait` | - | `false` | Don't wait for pods ready |
 | `--attach-port` | - | 0 (ephemeral) | Local port for port-forward |
+
+The four map-valued flags — `--annotations`, `--labels`, `--env-vars`, and
+`--env-from-secrets` — each accept three equivalent spellings: `--labels
+tier=gold`, `--labels.tier gold`, and `--labels '{"tier": "gold"}'`. Repeat the
+flag for additional entries.
 
 Benchmark CLI flags use the same precedence for plain AIPerf config files and
 `AIPerfJob` CR input: explicitly passed flags override YAML, while omitted CLI
@@ -492,6 +497,26 @@ kueue:
 ```
 
 See [Kueue Integration](kueue.md) for the full gang-scheduling walkthrough.
+
+### `helm test` hooks
+
+```yaml
+tests:
+  # Renders the two `helm test` hook Pods (CRD check, operator health check)
+  # and the dedicated ServiceAccount / Role / RoleBinding / ClusterRole /
+  # ClusterRoleBinding they run under. All five RBAC objects and both Pods are
+  # gated together, so disabling this never leaves a Pod pointing at a
+  # ServiceAccount that was not created.
+  enabled: true
+```
+
+Set `tests.enabled=false` when cluster policy forbids chart-managed
+cluster-scoped RBAC. `test-crd-installed` reads cluster-scoped
+CustomResourceDefinitions, so its `ClusterRole` cannot be narrowed to a
+namespace — this is the only way to make the chart emit zero `ClusterRole` and
+`ClusterRoleBinding` objects. `helm test` then prints `TEST SUITE: None` and
+exits 0. It is a separate flag from `rbac.create` on purpose; see
+[Eliminating all cluster-scoped RBAC](rbac-security.md#eliminating-all-cluster-scoped-rbac).
 
 ---
 

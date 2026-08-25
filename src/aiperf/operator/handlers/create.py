@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -22,6 +23,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from aiperf.common.endpoint_credentials import validate_kubernetes_credential_transport
 from aiperf.common.redact import redact_string, redact_url
 from aiperf.config.loader import ConfigurationError
+from aiperf.config.user_files import RunMeta
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.cr_refs import (
     JOBSET_GROUP,
@@ -153,6 +155,22 @@ async def _check_endpoint_reachable(
         )
 
 
+def _run_meta_for(body: dict[str, Any], name: str, namespace: str) -> RunMeta:
+    """Freeze the ``artifacts.user_files`` render identity for this run.
+
+    Reuses the epoch key the results layout assigns the run's PVC directory, so
+    a ``{{ epoch }}`` template resolves to the directory the artifacts are
+    actually archived under. A body with no usable ``creationTimestamp`` (only
+    reachable from hand-built bodies) falls back to wall-clock seconds rather
+    than failing creation over a template variable.
+    """
+    try:
+        epoch = epoch_key_from_body(body)
+    except (KeyError, TypeError, ValueError):
+        epoch = str(int(time.time()))
+    return RunMeta(epoch=epoch, job_name=name, namespace=namespace)
+
+
 def _build_deployment(
     spec: dict[str, Any],
     name: str,
@@ -160,6 +178,7 @@ def _build_deployment(
     job_id: str,
     *,
     job_uid: str | None = None,
+    run_meta: RunMeta | None = None,
 ) -> tuple[KubernetesDeployment, int]:
     """Convert raw spec into a KubernetesDeployment. Returns (deployment, total_workers)."""
     converter = AIPerfJobSpecConverter(spec, name, namespace, job_id=job_id)
@@ -179,6 +198,7 @@ def _build_deployment(
         ),
         run_id=job_id,
         namespace=namespace,
+        run_meta=run_meta,
     )
     validate_kubernetes_credential_transport(
         run.cfg.endpoint, deploy_config.pod_template.env
@@ -349,7 +369,8 @@ async def _persist_spec_and_index(
     ) as e:
         logger.warning(f"Transient persistence failure for {namespace}/{name}: {e}")
         raise kopf.TemporaryError(
-            f"Persisting job spec/index failed: {e}", delay=10
+            f"Persisting job spec/index failed: {e}",
+            delay=OperatorEnvironment.RECONCILE.PERSISTENCE_RETRY_DELAY_SECONDS,
         ) from e
 
 
@@ -455,7 +476,12 @@ async def _create_resources(
         return {}
 
     deployment, total_workers = _build_deployment(
-        spec, name, namespace, job_id, job_uid=uid
+        spec,
+        name,
+        namespace,
+        job_id,
+        job_uid=uid,
+        run_meta=_run_meta_for(body, name, namespace),
     )
     deploy_config = deployment.deployment
     config = deployment.config
@@ -568,7 +594,8 @@ async def on_create(
     except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(f"Transient error creating AIPerfJob {namespace}/{name}: {e}")
         raise kopf.TemporaryError(
-            f"Transient error creating AIPerfJob {namespace}/{name}: {e}", delay=30
+            f"Transient error creating AIPerfJob {namespace}/{name}: {e}",
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from e
     except Exception as e:
         logger.exception(f"Failed to create AIPerfJob {namespace}/{name}")

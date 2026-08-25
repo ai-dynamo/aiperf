@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config import BenchmarkConfig
 from aiperf.config.gpu_telemetry import GpuTelemetryConfig
@@ -240,6 +241,68 @@ class TestArtifactDirResolver:
         real_run = _make_run(real_cfg.benchmark, artifact_dir=real_dir)
         ArtifactDirResolver().resolve(real_run)
         assert (real_dir / "input_config.json").exists()
+
+    @pytest.mark.parametrize(
+        "supply_run_meta,expected_job_name,expected_epoch",
+        [
+            param(False, "real", None, id="local_derives_meta_from_artifact_dir"),
+            param(True, "bench-job", "1714069323", id="supplied_meta_wins"),
+        ],
+    )  # fmt: skip
+    def test_resolve_user_files_context_prefers_supplied_run_meta(
+        self, tmp_path, supply_run_meta, expected_job_name, expected_epoch
+    ):
+        """``BenchmarkRun.run_meta`` overrides path-derived identity when set.
+
+        The Kubernetes launcher freezes a RunMeta into the serialized run
+        because every pod's artifact dir is the fixed ``/results`` mount. Local
+        runs leave it None and must keep deriving from the resolved dir.
+        """
+        from aiperf.config.loader import load_config_from_string
+        from aiperf.config.user_files import RunMeta
+
+        yaml_str = """
+            benchmark:
+              artifacts:
+                user_files:
+                  - path: notes.md
+                    format: text
+                    content: "{{ job_name }}|{{ epoch }}"
+              models:
+                - test/model
+              endpoint:
+                type: chat
+                urls: ["http://localhost:8000"]
+              datasets:
+                - name: default
+                  type: synthetic
+                  entries: 10
+                  prompts:
+                    isl: 32
+                    osl: 16
+              phases:
+                - name: profiling
+                  type: concurrency
+                  requests: 10
+                  concurrency: 1
+        """
+        run_dir = tmp_path / "real"
+        cfg = load_config_from_string(yaml_str)
+        cfg.benchmark.artifacts.dir = run_dir
+        run = _make_run(cfg.benchmark, artifact_dir=run_dir)
+        if supply_run_meta:
+            run.run_meta = RunMeta(
+                epoch="1714069323", job_name="bench-job", namespace="bench-ns"
+            )
+
+        ArtifactDirResolver().resolve(run)
+
+        job_name, epoch = (run_dir / "notes.md").read_text().split("|")
+        assert job_name == expected_job_name
+        if expected_epoch is None:
+            assert epoch.isdigit()
+        else:
+            assert epoch == expected_epoch
 
     def test_user_centric_default_artifact_name_uses_current_fields(self, tmp_path):
         config = BenchmarkConfig(

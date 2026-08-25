@@ -221,7 +221,9 @@ async def watch_job(
     from aiperf.kubernetes.console import logger as cli_logger
     from aiperf.kubernetes.watchdog import BenchmarkWatchdog, K8sWatchdogSource
 
-    timeout = K8sEnvironment.WATCH.DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
+    timeout = (
+        K8sEnvironment.WATCH.DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
+    )
     async with k8s_client(kubeconfig=kubeconfig, context=kube_context) as api:
         source = K8sWatchdogSource(api)
         custom = client.CustomObjectsApi(api)

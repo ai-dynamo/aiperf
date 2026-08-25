@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.sweep import _child_runs
 from aiperf.operator.handlers.sweep._child_phase_buckets import (
     _api_or_new,
@@ -216,8 +217,6 @@ def _build_rollup_status_patch(
     that has to stay disjoint from the sweep-controller's fields) directly
     unit-testable.
     """
-    from aiperf.operator.environment import OperatorEnvironment
-
     body_patch: dict[str, Any] = {
         "metadata": {"uid": sweep_uid},
         "status": {
@@ -378,11 +377,12 @@ async def _read_current_child(
             return None
         raise kopf.TemporaryError(
             f"apiserver rejected child identity read ({exc.status}): {exc.reason}",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
-            f"apiserver unreachable during child identity read: {exc}", delay=15
+            f"apiserver unreachable during child identity read: {exc}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     if not _is_owned_child(
         child,
@@ -405,7 +405,6 @@ async def _ingest_sweep_aggregate(namespace: str, sweep_name: str) -> None:
     """
     try:
         from aiperf.operator import runs_index
-        from aiperf.operator.environment import OperatorEnvironment
         from aiperf.operator.results_layout import resolve_sweep_dir
     except ImportError as exc:  # pragma: no cover - defensive
         logger.warning("runs_index unavailable for sweep aggregate ingest: %s", exc)
@@ -479,7 +478,7 @@ async def _patch_parent_status(
                 if not isinstance(resource_version, str):
                     raise kopf.TemporaryError(
                         f"AIPerfSweep {namespace}/{name} has no resourceVersion",
-                        delay=15,
+                        delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
                     )
                 patch_body = {
                     **body,
@@ -500,11 +499,13 @@ async def _patch_parent_status(
             # Parent CR was deleted between rollup and patch; not retryable.
             return
         raise kopf.TemporaryError(
-            f"apiserver rejected status patch ({e.status}): {e.reason}", delay=15
+            f"apiserver rejected status patch ({e.status}): {e.reason}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from e
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         raise kopf.TemporaryError(
-            f"apiserver unreachable during status patch: {e}", delay=15
+            f"apiserver unreachable during status patch: {e}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from e
 
 
@@ -550,11 +551,13 @@ async def _read_parent_status(
         if e.status == 404:
             return None
         raise kopf.TemporaryError(
-            f"apiserver rejected status read ({e.status}): {e.reason}", delay=15
+            f"apiserver rejected status read ({e.status}): {e.reason}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from e
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         raise kopf.TemporaryError(
-            f"apiserver unreachable during status read: {e}", delay=15
+            f"apiserver unreachable during status read: {e}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from e
     if expected_uid is not None:
         current_uid = (cr.get("metadata") or {}).get("uid")
@@ -644,9 +647,11 @@ async def _conditional_phase_set(
         if e.status == 404:
             return
         raise kopf.TemporaryError(
-            f"apiserver rejected phase patch ({e.status}): {e.reason}", delay=15
+            f"apiserver rejected phase patch ({e.status}): {e.reason}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from e
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         raise kopf.TemporaryError(
-            f"apiserver unreachable during phase patch: {e}", delay=15
+            f"apiserver unreachable during phase patch: {e}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from e

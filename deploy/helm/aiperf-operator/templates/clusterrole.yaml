@@ -101,6 +101,11 @@ rules:
 # argued anywhere in the history; it is recorded here only as the constraint the
 # handler design must satisfy. Widening it is a deliberate change to the
 # operator's blast radius in every benchmark namespace, not a bug fix.
+#
+# Mechanically guarded by
+# tests/unit/kubernetes/test_helm_rbac_adversarial.py::TestOperatorClusterRoleLeastPrivilege
+# ::test_clusterrole_pods_restart_event_path_is_read_only, which renders this
+# chart and asserts {create,delete,patch,update} stay disjoint from this rule.
 - apiGroups: [""]
   resources: ["pods", "pods/log"]
   verbs: ["get", "list", "watch"]

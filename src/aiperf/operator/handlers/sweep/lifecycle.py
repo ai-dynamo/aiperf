@@ -15,6 +15,7 @@ from typing import Any
 
 import kopf
 
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.sweep._child_phase_buckets import _is_owned_child
 
 __all__ = ["acknowledge_ttl_update", "cancel", "maybe_reap_finished", "on_delete"]
@@ -181,13 +182,13 @@ async def on_delete(
                     raise kopf.TemporaryError(
                         "apiserver rejected cooperative-cancel patch for "
                         f"{namespace}/{child_name} ({e.status}): {e.reason}",
-                        delay=15,
+                        delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
                     ) from e
                 except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
                     raise kopf.TemporaryError(
                         "apiserver unreachable during cooperative-cancel patch for "
                         f"{namespace}/{child_name}: {e}",
-                        delay=15,
+                        delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
                     ) from e
     except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(
@@ -304,9 +305,11 @@ async def maybe_reap_finished(
         if e.status in (404, 409):
             return
         raise kopf.TemporaryError(
-            f"apiserver rejected TTL delete ({e.status}): {e.reason}", delay=60
+            f"apiserver rejected TTL delete ({e.status}): {e.reason}",
+            delay=OperatorEnvironment.RECONCILE.TTL_DELETE_RETRY_DELAY_SECONDS,
         ) from e
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         raise kopf.TemporaryError(
-            f"apiserver unreachable during TTL delete: {e}", delay=60
+            f"apiserver unreachable during TTL delete: {e}",
+            delay=OperatorEnvironment.RECONCILE.TTL_DELETE_RETRY_DELAY_SECONDS,
         ) from e

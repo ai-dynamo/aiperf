@@ -559,6 +559,7 @@ Timer settings for the kopf monitor handler.
 |----------------------|---------|-------------|-------------|
 | `AIPERF_OPERATOR_MONITOR_INTERVAL` | `10.0` | > 0, ≤ 3600 | Seconds between progress checks |
 | `AIPERF_OPERATOR_MONITOR_INITIAL_DELAY` | `5.0` | ≥ 0, ≤ 300 | Seconds before first progress check after job creation |
+| `AIPERF_OPERATOR_MONITOR_MISSING_JOBSET_SETTLE_DELAY_SECONDS` | `2.0` | ≥ 0, ≤ 60 | Seconds to wait before re-reading an AIPerfJob whose JobSet disappeared, allowing a concurrent completion status patch to settle. |
 
 ## OPERATORPROGRESS
 
@@ -567,8 +568,22 @@ Operator progress-client retry settings. Used by ``aiperf.operator.progress_clie
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_OPERATOR_PROGRESS_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Max retry attempts on transient progress-API failures. |
+| `AIPERF_OPERATOR_PROGRESS_REQUEST_TIMEOUT_SECONDS` | `10.0` | > 0, ≤ 300 | Total timeout in seconds for an ordinary progress-API request. |
 | `AIPERF_OPERATOR_PROGRESS_INITIAL_BACKOFF_SEC` | `0.5` | > 0, ≤ 60 | Initial backoff (seconds) between progress-API retries. |
 | `AIPERF_OPERATOR_PROGRESS_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Multiplicative backoff factor between progress-API retries. |
+
+## OPERATORRECONCILE
+
+Retry delays for kopf reconciliation categories.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OPERATOR_RECONCILE_CONFLICT_RETRY_DELAY_SECONDS` | `1.0` | ≥ 0, ≤ 300 | Delay before rebasing status after an optimistic-write conflict. |
+| `AIPERF_OPERATOR_RECONCILE_EVENT_RETRY_DELAY_SECONDS` | `5.0` | ≥ 0, ≤ 300 | Delay before retrying a watch-event read or status write. |
+| `AIPERF_OPERATOR_RECONCILE_PERSISTENCE_RETRY_DELAY_SECONDS` | `10.0` | ≥ 0, ≤ 300 | Delay before retrying transient monitor or durable-state failures. |
+| `AIPERF_OPERATOR_RECONCILE_STATE_RETRY_DELAY_SECONDS` | `15.0` | ≥ 0, ≤ 300 | Delay before retrying identity-fenced state reconciliation. |
+| `AIPERF_OPERATOR_RECONCILE_CREATE_HARVEST_RETRY_DELAY_SECONDS` | `30.0` | ≥ 0, ≤ 600 | Delay before retrying resource creation or sweep-result harvest. |
+| `AIPERF_OPERATOR_RECONCILE_TTL_DELETE_RETRY_DELAY_SECONDS` | `60.0` | ≥ 0, ≤ 3600 | Delay before retrying an expired AIPerfSweep deletion. |
 
 ## OTEL
 
@@ -617,6 +632,14 @@ Results fetching and storage settings.
 | `AIPERF_RESULTS_K8S_INIT_TIMEOUT_SEC` | `10.0` | > 0, ≤ 120 | Seconds the results-server waits for its Kubernetes client to initialize at startup before giving up and serving PVC-only. The live-job endpoints need a cluster, but every results, sweeps, and artifact route reads the disk, so an unreachable apiserver must degrade the server rather than prevent it from starting. |
 | `AIPERF_RESULTS_MAX_RETRIES` | `5` | ≥ 0, ≤ 50 | Max retries when fetching results from controller |
 | `AIPERF_RESULTS_RETRY_DELAY` | `2.0` | ≥ 0, ≤ 60 | Seconds between result fetch retries |
+| `AIPERF_RESULTS_DOWNLOAD_TIMEOUT_SECONDS` | `300.0` | > 0, ≤ 3600 | Total timeout in seconds for one controller result-file download. |
+| `AIPERF_RESULTS_DOWNLOAD_MAX_CONCURRENCY` | `5` | ≥ 1, ≤ 128 | Maximum result files downloaded concurrently from one controller. |
+| `AIPERF_RESULTS_RETRY_MAX_DELAY_SECONDS` | `30.0` | ≥ 0, ≤ 600 | Maximum backoff delay in seconds between result-fetch attempts. |
+| `AIPERF_RESULTS_RETRY_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Multiplicative backoff factor between result-fetch attempts. |
+| `AIPERF_RESULTS_CLEANUP_INTERVAL_SECONDS` | `86400.0` | > 0, ≤ 604800 | Seconds between job and sweep result-retention passes. |
+| `AIPERF_RESULTS_CLEANUP_INITIAL_DELAY_SECONDS` | `3600.0` | ≥ 0, ≤ 604800 | Seconds before the first per-job result-retention pass. |
+| `AIPERF_RESULTS_CLEANUP_IDLE_SECONDS` | `3600.0` | ≥ 0, ≤ 604800 | Minimum idle seconds before a per-job result-retention timer runs. |
+| `AIPERF_RESULTS_GZIP_MINIMUM_SIZE_BYTES` | `500` | ≥ 0, ≤ 1048576 | Minimum response size in bytes compressed by the results API. |
 | `AIPERF_RESULTS_TTL_DAYS` | `30` | ≥ 0, ≤ 3650 | Days to keep results before cleanup (0 = never clean) |
 | `AIPERF_RESULTS_COMPRESS_ON_DISK` | `True` | — | Store downloaded result files as zstd-compressed (.zst) on disk |
 | `AIPERF_RESULTS_RETAIN_RUNS` | `10` | ≥ 1, ≤ 10000 | Max per-run result dirs to keep under <namespace>/<name>/ before retention trimming. Applied after every successful completion; the just-written epoch is always protected from deletion. |
@@ -704,6 +727,14 @@ Sweep-controller pod settings. Used by the sweep-controller pod (`aiperf.sweep_c
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
+| `AIPERF_SWEEP_CONTROLLER_CHILD_POLL_INTERVAL_SECONDS` | `5.0` | > 0, ≤ 300 | Seconds between child AIPerfJob terminal-phase polls. |
+| `AIPERF_SWEEP_CONTROLLER_CANCEL_POLL_INTERVAL_SECONDS` | `10.0` | > 0, ≤ 300 | Seconds between parent AIPerfSweep cancellation-flag polls. |
+| `AIPERF_SWEEP_CONTROLLER_RECOVERY_SUMMARY_CONCURRENCY` | `8` | ≥ 1, ≤ 128 | Maximum concurrent child-summary fetches during sweep recovery. |
+| `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_MAX_ATTEMPTS` | `3` | ≥ 1, ≤ 20 | Maximum attempts to fetch one child summary from the operator API. |
+| `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_REQUEST_TIMEOUT_SECONDS` | `30.0` | > 0, ≤ 600 | Total timeout in seconds for one operator-API summary request. |
+| `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_INITIAL_BACKOFF_SECONDS` | `1.0` | ≥ 0, ≤ 60 | Initial backoff seconds after a transient operator-API failure. |
+| `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Operator-API retry backoff multiplier. |
+| `AIPERF_SWEEP_CONTROLLER_RUNS_CAS_MAX_ATTEMPTS` | `20` | ≥ 1, ≤ 100 | Maximum resourceVersion CAS attempts when appending status.runs. |
 | `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_DELETION_TIMEOUT_SECONDS` | `60.0` | > 0, ≤ 600 | Max seconds the sweep-controller will wait for a same-named AIPerfJob from a prior sweep run to finish cascade-deletion before raising ChildNameConflictError. Hit when a user deletes and recreates a sweep with the same name while old children are still terminating. |
 | `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_POLL_INTERVAL_SECONDS` | `2.0` | > 0, ≤ 30 | Poll interval (seconds) while waiting for a deleting same-named AIPerfJob to disappear. See STALE_CHILD_DELETION_TIMEOUT_SECONDS. |
 | `AIPERF_SWEEP_CONTROLLER_CANCEL_GRACE_SECONDS` | `120.0` | > 0, ≤ 3600 | Max seconds the sweep-controller will keep polling a child AIPerfJob for a terminal phase after requesting cancel before giving up and advancing the sweep. Bounds the post-cancel wait so a stuck child (stalled operator cancel path, wedged pod, repeatedly-failing JobSet delete) cannot wedge the whole sweep indefinitely. |

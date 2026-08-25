@@ -229,14 +229,14 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     )
 
     # Analytics and job-listing payloads are highly repetitive JSON, so the
-    # operator UI pays a large transfer cost without compression. The 500-byte
-    # floor keeps /healthz and other tiny responses uncompressed.
+    # operator UI pays a large transfer cost without compression. The configured
+    # size floor keeps /healthz and other tiny responses uncompressed.
     # The default compression level of 6 is the standard "sweet spot": level 9
     # costs 2-4x CPU for under 2% additional size reduction, which is pure
     # event-loop time. Operators can tune that tradeoff through the shared setting.
     app.add_middleware(
         GZipMiddleware,
-        minimum_size=500,
+        minimum_size=OperatorEnvironment.RESULTS.GZIP_MINIMUM_SIZE_BYTES,
         compresslevel=Environment.COMPRESSION.GZIP_LEVEL,
     )
 

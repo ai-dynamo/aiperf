@@ -37,9 +37,9 @@ Direct mode still uses:
   controller pod plus N worker pods).
 - The same `ConfigMap` containing the run config.
 - The same per-namespace `Role` / `RoleBinding` (`RBACSpec`), which grants the
-  benchmark's ServiceAccount read/watch on pods, pod logs, and jobs; full CRUD
-  on ConfigMaps and JobSets; create/delete on Services and Endpoints; and
-  create/patch on Events — all scoped to the benchmark namespace. The
+  benchmark's ServiceAccount read/watch on pods, pod logs, jobs, ConfigMaps,
+  Services, Endpoints, and Events, plus `patch` on JobSets — all scoped to the
+  benchmark namespace, and with no create, update, or delete verb anywhere. The
   `aiperfjobs` rule is included too and is simply inert without the CRD.
 - The same live attach workflow (`aiperf kube attach`), which streams
   WebSocket progress through a port-forward to the controller pod.

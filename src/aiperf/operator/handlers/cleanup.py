@@ -33,8 +33,6 @@ from aiperf.operator.results_layout import (
 
 logger = logging.getLogger(__name__)
 
-SWEEP_RESULTS_CLEANUP_INTERVAL_SECONDS = 86400.0
-
 
 async def cleanup_old_results(
     body: dict[str, Any],

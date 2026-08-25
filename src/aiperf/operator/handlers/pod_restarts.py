@@ -34,6 +34,7 @@ from aiperf.kubernetes.cr_refs import (
 )
 from aiperf.operator import events
 from aiperf.operator.client_cache import _warned_pod_restarts, job_key
+from aiperf.operator.environment import OperatorEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ def _owner_lookup_failure(
         return None
     raise kopf.TemporaryError(
         f"Pod owner lookup for {namespace}/{jobset_name} failed: {exc}; retrying",
-        delay=5,
+        delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
     ) from exc
 
 

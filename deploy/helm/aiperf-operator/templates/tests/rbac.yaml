@@ -3,7 +3,14 @@
 {{- /* ServiceAccount + minimal RBAC for `helm test` hook pods. These are
        regular chart-managed resources (not test-phase hooks) so that
        `helm test --logs` only iterates the actual Pod hooks. They also
-       get cleaned up by `helm uninstall` alongside the rest of the release. */ -}}
+       get cleaned up by `helm uninstall` alongside the rest of the release.
+
+       Gated on `tests.enabled`, not `rbac.create`: this is the chart's own
+       smoke-test scaffolding, and it is gated together with the hook Pods in
+       the sibling templates so disabling one never leaves the other dangling.
+       `tests.enabled=false` is what a "no chart-managed cluster-scoped RBAC"
+       policy needs, because the CRD check is inherently cluster-scoped. */ -}}
+{{- if .Values.tests.enabled }}
 {{- $testSA := include "aiperf-operator.testServiceAccountName" . }}
 apiVersion: v1
 kind: ServiceAccount
@@ -41,6 +48,9 @@ subjects:
 - kind: ServiceAccount
   name: {{ $testSA }}
   namespace: {{ .Release.Namespace }}
+{{- /* Cluster-scoped: `kubectl get crd` cannot be namespace-scoped. This is the
+       only cluster-scoped RBAC the chart emits when rbac.create=false, and
+       tests.enabled=false is the documented way to eliminate it. */}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -71,3 +81,4 @@ subjects:
 - kind: ServiceAccount
   name: {{ $testSA }}
   namespace: {{ .Release.Namespace }}
+{{- end }}

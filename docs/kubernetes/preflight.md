@@ -218,12 +218,20 @@ time handlers run). On CLI failure, the remaining checks are skipped.
 - **Fix**: bind a Role or ClusterRole granting the listed verbs on the namespace.
   The operator Helm chart installs these by default
   (`deploy/helm/aiperf-operator/templates/clusterrole.yaml` and
-  `benchmark-rbac.yaml`); the benchmark-pod Role is also built in code by
-  `RBACSpec._RULES` in `src/aiperf/kubernetes/resources.py`.
+  `benchmark-rbac.yaml`).
 
 Operator permission set (15 verbs over 8 resources): configmaps, roles,
 rolebindings, pods, pods/log, events (all core / rbac), jobsets, jobsets/status
 (jobset group). CLI requires a subset of 8.
+
+`SelfSubjectAccessReview` reviews *the caller's* identity, so this check covers
+the operator ServiceAccount (operator path) or your kubeconfig user (CLI path).
+It does not probe the benchmark pods' ServiceAccount, whose narrower Role is
+built separately in code by `RBACSpec._RULES` in
+`src/aiperf/kubernetes/resources.py` — see
+[RBAC and Security](rbac-security.md#operator-created-per-job-role). In
+particular, `create jobsets` appearing in the list above is a requirement on the
+caller, never on a benchmark pod.
 
 ## Check catalog — Tier 3 (concurrent, infra)
 

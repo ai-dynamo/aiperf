@@ -6,7 +6,13 @@ from __future__ import annotations
 
 from cyclopts import App
 
-app = App(name="kube", help="Kubernetes deployment and management commands")
+from aiperf.cli_commands.kube._mapping_flags import normalize_mapping_flag_tokens
+
+app = App(
+    name="kube",
+    help="Kubernetes deployment and management commands",
+    config=(normalize_mapping_flag_tokens,),
+)
 
 app.command(
     "aiperf.cli_commands.kube.init:app",
