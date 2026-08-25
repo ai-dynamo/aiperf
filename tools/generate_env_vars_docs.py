@@ -127,7 +127,9 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
                 elif kw.arg == "description" and isinstance(kw.value, ast.Constant):
                     description = normalize_text(kw.value.value)
                 elif kw.arg == "validation_alias":
-                    if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    if isinstance(kw.value, ast.Constant) and isinstance(
+                        kw.value.value, str
+                    ):
                         env_aliases.append(kw.value.value)
                     elif (
                         isinstance(kw.value, ast.Call)
@@ -137,7 +139,8 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
                         env_aliases.extend(
                             arg.value
                             for arg in kw.value.args
-                            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                            if isinstance(arg, ast.Constant)
+                            and isinstance(arg.value, str)
                         )
                 elif kw.arg in constraint_map:
                     constraints.append(
