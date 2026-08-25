@@ -8,6 +8,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from aiperf.common.enums import ServerMetricsDiscoveryMode
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.kubernetes._memory_estimator.constants import (
     _DEFAULT_GPU_METRICS,
@@ -78,6 +79,9 @@ class MemoryEstimationParams:
 
     server_metrics_enabled: bool
     """Whether the server metrics manager container is deployed."""
+
+    server_metrics_discovery_enabled: bool
+    """Whether Kubernetes discovery can add server metrics endpoints."""
 
     num_gpus: int
     """Estimated total GPUs across DCGM endpoints."""
@@ -156,6 +160,11 @@ class MemoryEstimationParams:
             connections_per_worker=connections_per_worker,
             gpu_telemetry_enabled=bench.gpu_telemetry.enabled,
             server_metrics_enabled=bench.server_metrics.enabled,
+            server_metrics_discovery_enabled=(
+                bench.server_metrics.enabled
+                and bench.server_metrics.discovery.mode
+                != ServerMetricsDiscoveryMode.DISABLED
+            ),
             num_gpus=est_gpus,
             gpu_sample_interval_s=Environment.GPU.COLLECTION_INTERVAL,
             num_gpu_metrics=_DEFAULT_GPU_METRICS,
@@ -215,9 +224,20 @@ def _derive_gpu_telemetry(config: BenchmarkConfig) -> int:
         return 0
     from aiperf.common.environment import Environment
 
+    collector = config.gpu_telemetry.collector
+    from aiperf.plugin import plugins
+
+    if plugins.get_gpu_telemetry_collector_metadata(collector).is_local:
+        return 4
+
     endpoints = [
         *Environment.GPU.DEFAULT_DCGM_ENDPOINTS,
-        *(config.gpu_telemetry.urls or []),
+        *(
+            f"{url.rstrip('/')}/metrics"
+            if not url.rstrip("/").endswith("/metrics")
+            else url.rstrip("/")
+            for url in (config.gpu_telemetry.urls or [])
+        ),
     ]
     return len(dict.fromkeys(endpoints)) * 4
 

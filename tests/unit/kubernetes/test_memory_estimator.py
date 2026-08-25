@@ -574,6 +574,7 @@ def _make_params(**overrides: object) -> MemoryEstimationParams:
         connections_per_worker=500,
         gpu_telemetry_enabled=True,
         server_metrics_enabled=True,
+        server_metrics_discovery_enabled=False,
         num_gpus=0,
         gpu_sample_interval_s=1.0,
         num_gpu_metrics=12,
@@ -656,13 +657,20 @@ class TestMemoryEstimator:
             avg_isl=params.avg_isl_tokens,
             avg_osl=params.avg_osl_tokens,
             streaming=params.streaming,
-            concurrency_per_rp=6,
+            concurrency_per_rp=5,
         )
 
         assert workers.variable_mib == pytest.approx(expected_worker.variable_mib * 3)
         assert processors.variable_mib == pytest.approx(
             expected_processor.variable_mib * 2
         )
+
+    def test_server_metrics_discovery_warns_about_unmodeled_endpoints(self) -> None:
+        est = MemoryEstimator(
+            _make_params(server_metrics_discovery_enabled=True)
+        ).estimate()
+
+        assert any("discovery may add endpoints" in warning for warning in est.warnings)
 
     def test_multi_turn_warning_uses_busiest_worker(self) -> None:
         threshold = MemoryEstimator(
@@ -810,6 +818,7 @@ class TestFromConfig:
         assert params.num_models == 1
         assert params.gpu_telemetry_enabled
         assert params.server_metrics_enabled
+        assert params.server_metrics_discovery_enabled
         assert params.gpu_sample_interval_s == Environment.GPU.COLLECTION_INTERVAL
         assert (
             params.server_metrics_scrape_interval_s
