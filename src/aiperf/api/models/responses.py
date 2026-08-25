@@ -3,19 +3,18 @@
 
 """Shared FastAPI response models.
 
-Consolidated here so both the legacy ``api.py`` router and the per-component
-routers (``progress.py``, ``workers.py``, ``results.py``) can agree on a
-single schema for OpenAPI and response validation.
+Consolidated here so the per-component routers (``progress.py``,
+``workers.py``, ``results.py``) can agree on a single schema for OpenAPI and
+response validation.
 """
 
 from __future__ import annotations
 
 from pydantic import Field
 
-from aiperf.common.enums import CaseInsensitiveStrEnum, SystemState
+from aiperf.common.enums import SystemState
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.common.models import AIPerfBaseModel, WorkerGroupStats, WorkerStats
-from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.controller.system_controller_models import AggregateWorkerStatus
 
 
@@ -85,22 +84,3 @@ class WorkersResponse(AIPerfBaseModel):
     )
 
 
-class BenchmarkStatus(CaseInsensitiveStrEnum):
-    """Status of a benchmark run."""
-
-    RUNNING = "running"
-    COMPLETE = "complete"
-    CANCELLED = "cancelled"
-    INCOMPLETE = "incomplete"
-
-
-class BenchmarkResultsResponse(AIPerfBaseModel):
-    """Final benchmark results response."""
-
-    status: BenchmarkStatus = Field(
-        description="Benchmark status: running, complete, cancelled, or incomplete "
-        "(the run terminated without ever publishing final results)"
-    )
-    results: ProcessRecordsResult | None = Field(
-        default=None, description="Final benchmark results if complete"
-    )

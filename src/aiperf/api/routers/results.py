@@ -18,14 +18,17 @@ from aiofiles import os as aio_os
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from aiperf.api.models.responses import BenchmarkResultsResponse, BenchmarkStatus
-from aiperf.api.models.results import ResultFileInfo, ResultsListResponse
-from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.compression import (
-    CompressionEncoding,
-    select_encoding,
-    stream_file_compressed,
+from aiperf.api.models.results import (
+    BenchmarkResultsResponse,
+    BenchmarkStatus,
+    ResultsListResponse,
 )
+from aiperf.api.results_files import (
+    build_result_file_response,
+    list_result_files,
+    resolve_result_file_or_404,
+)
+from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import MessageType
 from aiperf.common.environment import Environment
@@ -33,12 +36,6 @@ from aiperf.common.hooks import on_message
 from aiperf.common.messages import BenchmarkCompleteMessage, ProcessAllResultsMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models.record_models import ProcessRecordsResult
-from aiperf.common.results_markers import (
-    CHECKPOINTS_DIR_NAME,
-    READY_MARKER_NAME,
-    _is_processing,
-    ready_marker_path,
-)
 from aiperf.config.artifacts import OutputDefaults
 
 ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
@@ -78,15 +75,6 @@ def _commit_uploaded_file(temporary_path: Path, destination_path: Path) -> None:
         os.fsync(directory_descriptor)
     finally:
         os.close(directory_descriptor)
-
-
-_CONTENT_TYPES: dict[str, str] = {
-    ".json": "application/json",
-    ".jsonl": "application/x-ndjson",
-    ".csv": "text/csv",
-    ".parquet": "application/vnd.apache.parquet",
-    ".txt": "text/plain",
-}
 
 
 class ResultsRouter(MessageBusClientMixin, BaseRouter):
@@ -168,41 +156,12 @@ async def list_results(component: ResultsDep) -> ResultsListResponse:
     ``write_ready_marker`` commits, so a partial export never reads as a
     result set. Checkpoint artifacts under ``checkpoints/`` are listed
     recursively regardless of readiness because they are written
-    incrementally by design. Names are relative to the artifact directory
-    and sorted; the readiness marker itself is never listed.
+    incrementally by design. Listing is top-level only (plus checkpoints)
+    because this artifact directory also holds non-result subdirectories
+    such as the worker upload staging area.
     """
-    results_dir = component.run.cfg.artifacts.artifact_directory
-    if not await aio_os.path.exists(results_dir):
-        return ResultsListResponse()
-
-    def _list_files() -> list[ResultFileInfo]:
-        files: list[ResultFileInfo] = []
-
-        if ready_marker_path(results_dir).is_file():
-            files.extend(
-                ResultFileInfo(name=entry.name, size=entry.stat().st_size)
-                for entry in results_dir.iterdir()
-                if entry.is_file() and entry.name != READY_MARKER_NAME
-            )
-
-        cp_dir = results_dir / CHECKPOINTS_DIR_NAME
-        if cp_dir.is_dir():
-            files.extend(
-                ResultFileInfo(
-                    name=entry.relative_to(results_dir).as_posix(),
-                    size=entry.stat().st_size,
-                )
-                for entry in cp_dir.rglob("*")
-                if entry.is_file()
-            )
-
-        return sorted(files, key=lambda f: f.name)
-
-    files = await asyncio.to_thread(_list_files)
-    return ResultsListResponse(
-        files=files,
-        ready=ready_marker_path(results_dir).is_file(),
-        processing=_is_processing(results_dir),
+    return await list_result_files(
+        component.run.cfg.artifacts.artifact_directory, recursive=False
     )
 
 
@@ -212,60 +171,15 @@ async def get_result_file(
 ) -> StreamingResponse:
     """Download a result file by name.
 
-    Paths escaping the artifact directory are rejected with 400. Top-level
-    files 404 until the readiness marker commits, so consumers cannot read a
-    half-written export; checkpoint artifacts under ``checkpoints/`` bypass
-    that gate. The marker file itself is never served.
+    Paths escaping the artifact directory and marker names are rejected with
+    400. Top-level files 404 until the readiness marker commits, so consumers
+    cannot read a half-written export; checkpoint artifacts under
+    ``checkpoints/`` bypass that gate.
     """
-    artifact_dir = component.run.cfg.artifacts.artifact_directory
-    file_path = (artifact_dir / filename).resolve()
-    artifact_dir_resolved = artifact_dir.resolve()
-
-    if not file_path.is_relative_to(artifact_dir_resolved):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if file_path.name == READY_MARKER_NAME:
-        raise HTTPException(
-            status_code=404, detail=f"Result file not found: {filename}"
-        )
-
-    is_checkpoint = file_path.relative_to(artifact_dir_resolved).parts[:1] == (
-        CHECKPOINTS_DIR_NAME,
+    file_path = await resolve_result_file_or_404(
+        component.run.cfg.artifacts.artifact_directory, filename
     )
-    if not ready_marker_path(artifact_dir).is_file() and not is_checkpoint:
-        processing_detail = (
-            " export still processing;" if _is_processing(artifact_dir) else ""
-        )
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Results not ready for {artifact_dir.name};{processing_detail} "
-                f"marker file {READY_MARKER_NAME} not present — retry after completion"
-            ),
-        )
-
-    if not await aio_os.path.isfile(file_path):
-        raise HTTPException(
-            status_code=404, detail=f"Result file not found: {filename}"
-        )
-
-    accept_encoding = request.headers.get("accept-encoding")
-    encoding = select_encoding(accept_encoding, default=CompressionEncoding.IDENTITY)
-    content_type = _CONTENT_TYPES.get(
-        file_path.suffix.lower(), "application/octet-stream"
-    )
-
-    headers: dict[str, str] = {
-        "Content-Disposition": f'attachment; filename="{file_path.name}"',
-        "X-Filename": file_path.name,
-    }
-    if encoding != CompressionEncoding.IDENTITY:
-        headers["Content-Encoding"] = encoding
-
-    return StreamingResponse(
-        stream_file_compressed(file_path, encoding),
-        media_type=content_type,
-        headers=headers,
-    )
+    return build_result_file_response(file_path, request)
 
 
 @results_router.post("/api/results/upload/{filename:path}", status_code=201)

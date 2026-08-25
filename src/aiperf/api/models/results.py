@@ -6,14 +6,18 @@
 These models are used by both the in-process results router
 (``aiperf.api.routers.results``) and the standalone controller-side results
 sidecar (``aiperf.kubernetes.results_sidecar``); defining them in one place
-keeps the two HTTP surfaces contractually identical.
+keeps the two HTTP surfaces contractually identical. The final-results payload
+(``BenchmarkStatus`` / ``BenchmarkResultsResponse``) lives here too, next to
+the file-listing schema it is served alongside.
 """
 
 from __future__ import annotations
 
 from pydantic import Field
 
+from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.common.models.record_models import ProcessRecordsResult
 
 
 class ResultFileInfo(AIPerfBaseModel):
@@ -36,4 +40,23 @@ class ResultsListResponse(AIPerfBaseModel):
     processing: bool = Field(
         default=False,
         description="Whether the controller has marked result export as in progress.",
+    )
+
+
+class BenchmarkStatus(CaseInsensitiveStrEnum):
+    """Status of a benchmark run."""
+
+    RUNNING = "running"
+    COMPLETE = "complete"
+    CANCELLED = "cancelled"
+
+
+class BenchmarkResultsResponse(AIPerfBaseModel):
+    """Final benchmark results response."""
+
+    status: BenchmarkStatus = Field(
+        description="Benchmark status: running, complete, or cancelled"
+    )
+    results: ProcessRecordsResult | None = Field(
+        default=None, description="Final benchmark results if complete"
     )
