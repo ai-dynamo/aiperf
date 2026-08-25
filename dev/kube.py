@@ -3762,7 +3762,7 @@ def cmd_remove_lora(
 def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
     import math
 
-    from aiperf.operator.spec_converter import (
+    from aiperf.kubernetes.spec_converter import (
         apply_k8s_runtime_config,
         apply_worker_config,
     )
