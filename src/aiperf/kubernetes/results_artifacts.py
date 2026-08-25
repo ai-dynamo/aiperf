@@ -30,7 +30,10 @@ from aiperf.kubernetes.console import (
 )
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
-from aiperf.kubernetes.results_operator_common import _REDIRECT_STATUSES, _get_no_redirects
+from aiperf.kubernetes.results_operator_common import (
+    _REDIRECT_STATUSES,
+    _get_no_redirects,
+)
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -40,6 +43,8 @@ if TYPE_CHECKING:
 
 API_RESULTS_FILES_PATH = "/api/results/files"
 API_RESULTS_LIST_PATH = "/api/results/list"
+
+
 async def _response_json(response: aiohttp.ClientResponse) -> dict:
     """Parse JSON from aiohttp responses and lightweight test doubles."""
     try:
