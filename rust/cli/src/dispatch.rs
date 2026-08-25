@@ -7,6 +7,55 @@ use crate::{
     profile, results_sidecar, serve, slurm, speed_bench, synthesize, validate,
 };
 
+const PUBLIC_COMMANDS: &[&str] = &[
+    "profile",
+    "config",
+    "graph",
+    "kube",
+    "eval",
+    "serve",
+    "controller",
+    "cell",
+    "aggregator",
+    "slurm",
+    "results-sidecar",
+    "analyze-trace",
+    "compare",
+    "chat",
+    "validate",
+    "speed-bench-report",
+    "synthesize",
+    "metrics",
+    "analyze",
+    "plot",
+    "plugins",
+];
+
+fn print_help() {
+    println!(
+        "AIPerf {}\n\nUsage: aiperf <COMMAND> [ARGS...]\n\nCommands:\n  {}\n\nPython utilities: analyze, plot, plugins\n\nOptions:\n  -h, --help                       Print help\n  -V, --version                    Print version\n      --install-completion <SHELL> Print completion script for bash, zsh, or fish",
+        env!("CARGO_PKG_VERSION"),
+        PUBLIC_COMMANDS.join("\n  "),
+    );
+}
+
+fn print_completion(shell: &str) -> anyhow::Result<()> {
+    let commands = PUBLIC_COMMANDS.join(" ");
+    match shell {
+        "bash" => println!(
+            "_aiperf() {{\n    local commands=\"{commands}\"\n    COMPREPLY=( $(compgen -W \"$commands\" -- \"${{COMP_WORDS[COMP_CWORD]}}\") )\n}}\ncomplete -F _aiperf aiperf"
+        ),
+        "zsh" => println!(
+            "#compdef aiperf\n\n_arguments '1:command:({commands})'"
+        ),
+        "fish" => println!(
+            "complete -c aiperf -f\ncomplete -c aiperf -n '__fish_use_subcommand' -a '{commands}'"
+        ),
+        _ => anyhow::bail!("unsupported completion shell `{shell}`; supported shells are bash, zsh, and fish"),
+    }
+    Ok(())
+}
+
 /// Route arguments with the program name removed and return the process exit code.
 pub fn run(argv: &[String]) -> anyhow::Result<i32> {
     match argv.first().map(String::as_str) {
@@ -35,9 +84,24 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
         Some("speed-bench-report") => speed_bench::run(&argv[1..]),
         Some("synthesize") => synthesize::run(&argv[1..]),
         Some("metrics") => metrics_list::run(&argv[1..]),
-        Some("analyze" | "plot" | "plugins") | None => delegate::exec_python_utility(argv),
-        Some("-h" | "--help") if argv.len() == 1 => delegate::exec_python_utility(argv),
-        Some("--install-completion") => delegate::exec_python_utility(argv),
+        None => {
+            print_help();
+            Ok(0)
+        }
+        Some("-h" | "--help") if argv.len() == 1 => {
+            print_help();
+            Ok(0)
+        }
+        Some("--install-completion") => {
+            let shell = argv
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("--install-completion requires a shell"))?;
+            if argv.len() != 2 {
+                anyhow::bail!("--install-completion accepts exactly one shell");
+            }
+            print_completion(shell)?;
+            Ok(0)
+        }
         Some("-V" | "--version") => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(0)

@@ -25,8 +25,8 @@ the branch.
   through the Python profile command.
 - `aiperf-python profile` and `python -m aiperf profile` retain a Python
   execution path.
-- Rust delegates only `analyze`, `plot`, `plugins`, and root help/completion,
-  all through `python -m aiperf`.
+- Rust delegates only `analyze`, `plot`, and `plugins`, all through
+  `python -m aiperf`; root help and completion stay native.
 - `service` and unknown public commands refuse before any Python process starts.
 - The live-streaming worker is the one native Rust feature with a Python
   support implementation; it runs through `python -m aiperf.rust_shims
