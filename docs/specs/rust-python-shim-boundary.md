@@ -25,12 +25,14 @@ the branch.
   through the Python profile command.
 - `aiperf-python profile` and `python -m aiperf profile` retain a Python
   execution path.
-- Rust delegates only `analyze`, `plot`, `plugins`, root help/completion, and
-  `slurm generate`; the first three and root utility cases use `python -m aiperf`,
-  while `slurm generate` uses `python -m aiperf.rust_shims slurm-generate`.
+- Rust delegates only `analyze`, `plot`, `plugins`, and root help/completion,
+  all through `python -m aiperf`.
 - `service` and unknown public commands refuse before any Python process starts.
-- Some native Rust features currently have Python support implementations,
-  including the live-streaming worker and SLURM generation.
+- The live-streaming worker is the one native Rust feature with a Python
+  support implementation; it runs through `python -m aiperf.rust_shims
+  live-streaming`.
+- `aiperf slurm generate` is native Rust
+  (`rust/cli/src/slurm/generate.rs`): no `slurm` subcommand reaches Python.
 
 ## Future requirements
 
@@ -69,7 +71,6 @@ Initial lift-and-shift candidates are:
 | Current location | Central destination | Contract owner |
 |---|---|---|
 | `src/aiperf/post_processors/native_streaming_worker.py` | `src/aiperf/rust_shims/live_streaming_worker.py` | native live-streaming launcher |
-| `src/aiperf/cli_commands/slurm/` | `src/aiperf/rust_shims/slurm/` | explicit SLURM-generation utility shim |
 | `src/aiperf/config/templates/dynosim_offline_replay.yaml` | `src/aiperf/rust_shims/assets/dynosim_offline_replay.yaml` | Rust embedded-template build input |
 
 `src/aiperf/entrypoint.py` remains outside `rust_shims`: it is concise shared
@@ -96,7 +97,7 @@ explicitly freezes or retires its generated fixtures.
 
 1. Add the isolated `aiperf-rust-shim` launcher and tests for its allowlist,
    deferred import, argument forwarding, stdio contract, and exit propagation.
-2. Lift live-streaming support and SLURM generation into `rust_shims` without
+2. Lift live-streaming support into `rust_shims` without
    changing their externally visible contracts; retain only concise compatibility
    wrappers where required.
 3. Repoint native Rust invocation sites to the launcher process and exact shim
@@ -127,5 +128,6 @@ explicitly freezes or retires its generated fixtures.
   configuration and launch.
 - `src/aiperf/post_processors/native_streaming_worker.py` — current
   native-oriented Python streaming worker.
-- `src/aiperf/cli_commands/slurm/generate.py` — current Python SLURM generator.
+- `rust/cli/src/slurm/generate.rs` — the native sbatch generator that replaced
+  the Python SLURM shim.
 - `src/aiperf/cli_runner/_single_run.py` — Python-native profile bootstrap.

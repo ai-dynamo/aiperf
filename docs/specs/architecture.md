@@ -27,10 +27,9 @@ only to refuse unavailable hierarchical aggregation.
 
 Native commands include `profile`, `config`, `controller`, `cell`,
 `aggregator`, `results-sidecar`, `analyze-trace`, `chat`, `validate`,
-`speed-bench-report`, and `synthesize`. Only `analyze`, `plot`, `plugins`, root
-help/completion, and `slurm generate` delegate to external Python utility
-processes; `slurm generate` uses the fixed `aiperf.rust_shims slurm-generate`
-contract. `service` and unknown public commands refuse rather than starting the
+`speed-bench-report`, and `synthesize`. Only `analyze`, `plot`, `plugins`, and root
+help/completion delegate to external Python utility processes; both `slurm`
+subcommands (`run` and `generate`) are native. `service` and unknown public commands refuse rather than starting the
 Python product runtime.
 
 `aiperf-mock-server` is a separately launched benchmark and test target; it is

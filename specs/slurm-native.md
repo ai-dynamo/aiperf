@@ -40,8 +40,8 @@ the `SLURM_*` environment once and dispatches:
 The command sets the `AIPERF_CELL_*` environment every downstream stage reads
 (`AIPERF_CELL_LAUNCHER=slurm`, `AIPERF_CELL_COUNT`, `AIPERF_CELL_ID`,
 `AIPERF_CELL_CONTROLLER_ADDR`, `AIPERF_CONTROLLER_PORT`) — exactly where the k8s
-operator would inject it. Any `slurm` subcommand other than `run` (i.e. `generate`)
-delegates to the Python CLI.
+operator would inject it. Both `slurm` subcommands — `run` and `generate` — are
+native; no `slurm` invocation reaches Python.
 
 ### Topology mapping
 
@@ -87,7 +87,7 @@ controller*, not the partition/merge math.
 
 ### Job-script generation
 
-`aiperf slurm generate` (Python, `src/aiperf/cli_commands/slurm/`) emits an sbatch
+`aiperf slurm generate` (native, `rust/cli/src/slurm/generate.rs`) emits an sbatch
 script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
 `#SBATCH --ntasks=N+1` (one controller task plus N cell tasks), exports
 `AIPERF_CELL_LAUNCHER=slurm` and `AIPERF_CONTROLLER_PORT`, and ends with the single
@@ -128,8 +128,8 @@ script mirroring `aiperf kube generate`'s ergonomics. `--cells N` requests
   (`cross_host = is_k8s || is_slurm`) and `controller_bind_and_endpoint`.
 - `rust/cli/src/slurm.rs` and `rust/cli/src/dispatch.rs` — the `aiperf slurm run`
   rank dispatch and routing.
-- `src/aiperf/cli_commands/slurm/` — the `aiperf slurm generate` sbatch generator
-  and `tests/unit/cli_commands/test_slurm_generate.py`.
+- `rust/cli/src/slurm/generate.rs` — the `aiperf slurm generate` sbatch generator
+  and its script-text unit tests.
 - `rust/e2e-tests/scripts/slurm_sim.sh` — the loopback multi-cell (3-task) SLURM-allocation
   simulation, and `rust/e2e-tests/scripts/slurm_sim_single_cell.sh` — the single-cell
   (2-task) variant.
