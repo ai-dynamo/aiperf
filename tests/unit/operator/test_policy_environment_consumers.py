@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -114,6 +115,83 @@ async def test_progress_request_timeout_override_reaches_aiohttp(
 
 
 @pytest.mark.asyncio
+async def test_result_download_timeout_override_reaches_aiohttp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from aiperf.operator import progress_client as progress_mod
+
+    captured: dict[str, Any] = {}
+
+    class FakeResponse:
+        status = 404
+
+        async def __aenter__(self) -> FakeResponse:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+    class FakeSession:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        async def __aenter__(self) -> FakeSession:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        def get(self, _url: str, **_kwargs: Any) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DOWNLOAD_TIMEOUT_SECONDS", 23.0)
+    monkeypatch.setattr(progress_mod.aiohttp, "ClientSession", FakeSession)
+    client = progress_mod.ProgressClient()
+    client._session = SimpleNamespace(connector=object())  # type: ignore[assignment]
+
+    downloaded = await client._stream_result_file(
+        "http://controller/result", "result.json", tmp_path / "result.json"
+    )
+
+    assert downloaded is False
+    assert captured["timeout"].total == 23.0
+
+
+@pytest.mark.asyncio
+async def test_result_download_concurrency_override_reaches_semaphore(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from aiperf.operator import progress_client as progress_mod
+
+    limits: list[int] = []
+    real_semaphore = asyncio.Semaphore
+
+    def capture_semaphore(limit: int) -> asyncio.Semaphore:
+        limits.append(limit)
+        return real_semaphore(limit)
+
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DOWNLOAD_MAX_CONCURRENCY", 3)
+    monkeypatch.setattr(progress_mod.asyncio, "Semaphore", capture_semaphore)
+    monkeypatch.setattr(
+        progress_mod.ProgressClient,
+        "get_results_list",
+        AsyncMock(return_value=[{"name": "result.json"}]),
+    )
+    monkeypatch.setattr(
+        progress_mod.ProgressClient,
+        "download_result_file",
+        AsyncMock(return_value=True),
+    )
+
+    downloaded = await progress_mod.ProgressClient().download_all_results(
+        "controller", tmp_path
+    )
+
+    assert downloaded == ["result.json"]
+    assert limits == [3]
+
+
+@pytest.mark.asyncio
 async def test_result_retry_policy_override_controls_backoff(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -143,6 +221,30 @@ async def test_result_retry_policy_override_controls_backoff(
         )
 
     assert sleeps == [2.0, 4.0]
+
+
+@pytest.mark.asyncio
+async def test_sweep_cleanup_interval_override_reaches_retention_wait(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from aiperf.operator import main as operator_main
+
+    timeouts: list[float | None] = []
+
+    async def capture_wait_for(_awaitable: Any, *, timeout: float | None) -> None:
+        timeouts.append(timeout)
+        _awaitable.close()
+        raise asyncio.CancelledError
+
+    bootstrap_task = asyncio.create_task(asyncio.sleep(0))
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "CLEANUP_INTERVAL_SECONDS", 321.0)
+    monkeypatch.setattr(operator_main.cleanup, "reconcile_sweep_results", AsyncMock())
+    monkeypatch.setattr(operator_main.asyncio, "wait_for", capture_wait_for)
+
+    with pytest.raises(asyncio.CancelledError):
+        await operator_main._run_sweep_results_retention(tmp_path, bootstrap_task)
+
+    assert timeouts == [321.0]
 
 
 @pytest.mark.asyncio
@@ -225,6 +327,9 @@ async def test_sweep_child_poll_override_reaches_sleep(
     from aiperf.sweep_controller import k8s_executor as executor_mod
 
     executor = object.__new__(executor_mod.K8sChildJobExecutor)
+    executor.sweep_uid = "sweep-uid"
+    executor.sweep_name = "sweep"
+    executor.sweep_run_epoch = "1770000000"
     monkeypatch.setattr(
         executor_mod.K8sChildJobExecutor,
         "_try_read_child",
