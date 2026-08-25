@@ -2054,10 +2054,7 @@ mod tests {
     #[test]
     fn scenario_agentx_legacy_idle_caps_fail_or_record_unsafe_override() {
         for (flag, message) in [
-            (
-                "--trace-idle-gap-cap-seconds",
-                "per-trace request timing",
-            ),
+            ("--trace-idle-gap-cap-seconds", "per-trace request timing"),
             ("--inter-turn-delay-cap-seconds", "per-turn delay cap"),
         ] {
             run_on_big_stack(move || {
