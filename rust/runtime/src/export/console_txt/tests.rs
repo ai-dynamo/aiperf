@@ -62,6 +62,40 @@ fn dist_entry(unit: &str, avg: f64) -> MetricEntry {
     }
 }
 
+fn labeled_gauge(
+    labels: BTreeMap<String, String>,
+    endpoint_url: &str,
+    avg: ReportValue,
+    min: ReportValue,
+    max: ReportValue,
+    p50: ReportValue,
+    p90: ReportValue,
+) -> MetricSeries {
+    MetricSeries {
+        labels: Some(labels),
+        endpoint_url: Some(endpoint_url.to_string()),
+        stats: ReportStats::Distribution(ReportDistributionStats {
+            count: Some(10),
+            avg: Some(avg),
+            min: Some(min),
+            max: Some(max),
+            std: None,
+            percentiles: BTreeMap::from([("p50".to_string(), p50), ("p90".to_string(), p90)]),
+        }),
+        timeslices: Vec::new(),
+    }
+}
+
+fn server_metric_entry(series: Vec<MetricSeries>) -> MetricEntry {
+    MetricEntry {
+        metric_type: "gauge",
+        unit: "ratio".to_string(),
+        group: "server",
+        higher_is_better: true,
+        series,
+    }
+}
+
 fn error(code: Option<u16>, error_type: &str, message: &str, count: usize) -> ReportError {
     ReportError {
         code,
@@ -284,6 +318,192 @@ fn no_api_error_warnings_on_empty_report() {
 }
 
 #[test]
+fn sglang_speculative_table_filters_model_and_leader_ranks() {
+    let mut report = empty_report();
+    report.server_metrics.insert(
+        "sglang:spec_accept_rate".to_string(),
+        server_metric_entry(vec![
+            labeled_gauge(
+                BTreeMap::from([("model_name".to_string(), "Test-Model".to_string())]),
+                "http://leader:8000/metrics",
+                ReportValue::Finite(0.695),
+                ReportValue::Finite(0.5),
+                ReportValue::Finite(0.9),
+                ReportValue::Finite(0.7),
+                ReportValue::Finite(0.86),
+            ),
+            labeled_gauge(
+                BTreeMap::from([("model_name".to_string(), "other-model".to_string())]),
+                "http://other:8000/metrics",
+                ReportValue::Finite(0.999),
+                ReportValue::Finite(0.999),
+                ReportValue::Finite(0.999),
+                ReportValue::Finite(0.999),
+                ReportValue::Finite(0.999),
+            ),
+            labeled_gauge(
+                BTreeMap::from([
+                    ("model_name".to_string(), "test-model".to_string()),
+                    ("pp_rank".to_string(), "1".to_string()),
+                ]),
+                "http://pp:8000/metrics",
+                ReportValue::Finite(0.888),
+                ReportValue::Finite(0.888),
+                ReportValue::Finite(0.888),
+                ReportValue::Finite(0.888),
+                ReportValue::Finite(0.888),
+            ),
+            labeled_gauge(
+                BTreeMap::from([
+                    ("model_name".to_string(), "test-model".to_string()),
+                    ("tp_rank".to_string(), "1".to_string()),
+                ]),
+                "http://tp:8000/metrics",
+                ReportValue::Finite(0.888),
+                ReportValue::Finite(0.888),
+                ReportValue::Finite(0.888),
+                ReportValue::Finite(0.888),
+                ReportValue::Finite(0.888),
+            ),
+        ]),
+    );
+    report.server_metrics.insert(
+        "sglang:spec_accept_length".to_string(),
+        server_metric_entry(vec![labeled_gauge(
+            BTreeMap::from([("model_name".to_string(), "test-model".to_string())]),
+            "http://leader:8000/metrics",
+            ReportValue::Finite(2.78),
+            ReportValue::Finite(1.5),
+            ReportValue::Finite(4.0),
+            ReportValue::Finite(2.75),
+            ReportValue::Finite(3.8),
+        )]),
+    );
+    let cfg = ConsoleTxtExportConfig {
+        model_names: vec!["test-model".to_string()],
+        ..ConsoleTxtExportConfig::default()
+    };
+
+    let text = render_console_txt(&report, &cfg);
+    assert!(text.contains("NVIDIA AIPerf | Server Metrics: Speculative Decoding"));
+    assert!(text.contains("Accept Rate (%)"));
+    assert!(text.contains("69.5"));
+    assert!(text.contains("50.0"));
+    assert!(text.contains("90.0"));
+    assert!(text.contains("70.0"));
+    assert!(text.contains("86.0"));
+    assert!(text.contains("Accept Length"));
+    assert!(text.contains("2.78"));
+    assert!(text.contains("1.50"));
+    assert!(text.contains("4.00"));
+    assert!(text.contains("2.75"));
+    assert!(text.contains("3.80"));
+    assert!(!text.contains("99.9"));
+    assert!(!text.contains("88.8"));
+}
+
+#[test]
+fn sglang_speculative_table_preserves_distinct_finite_series() {
+    let mut report = empty_report();
+    report.server_metrics.insert(
+        "sglang:spec_accept_rate".to_string(),
+        server_metric_entry(vec![
+            labeled_gauge(
+                BTreeMap::from([
+                    ("model_name".to_string(), "test-model".to_string()),
+                    ("dp_rank".to_string(), "0".to_string()),
+                    ("common".to_string(), "same".to_string()),
+                ]),
+                "http://host-a:8000/metrics",
+                ReportValue::Finite(0.6),
+                ReportValue::Finite(0.5),
+                ReportValue::Finite(0.7),
+                ReportValue::Finite(0.6),
+                ReportValue::Finite(0.65),
+            ),
+            labeled_gauge(
+                BTreeMap::from([
+                    ("model_name".to_string(), "test-model".to_string()),
+                    ("dp_rank".to_string(), "1".to_string()),
+                    ("common".to_string(), "same".to_string()),
+                ]),
+                "http://host-b:8000/metrics",
+                ReportValue::Finite(0.8),
+                ReportValue::Finite(0.7),
+                ReportValue::Finite(0.9),
+                ReportValue::Finite(0.8),
+                ReportValue::Finite(0.85),
+            ),
+            labeled_gauge(
+                BTreeMap::from([
+                    ("model_name".to_string(), "test-model".to_string()),
+                    ("dp_rank".to_string(), "2".to_string()),
+                    ("common".to_string(), "same".to_string()),
+                ]),
+                "http://host-c:8000/metrics",
+                ReportValue::NonFinite,
+                ReportValue::Finite(0.7),
+                ReportValue::Finite(0.9),
+                ReportValue::Finite(0.8),
+                ReportValue::Finite(0.85),
+            ),
+        ]),
+    );
+    let cfg = ConsoleTxtExportConfig {
+        model_names: vec!["test-model".to_string()],
+        ..ConsoleTxtExportConfig::default()
+    };
+
+    let text = render_console_txt(&report, &cfg);
+    assert!(text.contains("endpoint=host-a:8000"));
+    assert!(text.contains("endpoint=host-b:8000"));
+    assert!(text.contains("dp_rank=0"));
+    assert!(text.contains("dp_rank=1"));
+    assert!(text.contains("60.0"));
+    assert!(text.contains("80.0"));
+    assert!(!text.contains("common=same"));
+    assert!(!text.contains("host-c"));
+}
+
+#[test]
+fn sglang_speculative_activity_uses_rate_only_without_length() {
+    let mut report = empty_report();
+    let labels = BTreeMap::from([("model_name".to_string(), "test-model".to_string())]);
+    report.server_metrics.insert(
+        "sglang:spec_accept_rate".to_string(),
+        server_metric_entry(vec![labeled_gauge(
+            labels.clone(),
+            "http://leader:8000/metrics",
+            ReportValue::Finite(0.6),
+            ReportValue::Finite(0.5),
+            ReportValue::Finite(0.7),
+            ReportValue::Finite(0.6),
+            ReportValue::Finite(0.65),
+        )]),
+    );
+    let cfg = ConsoleTxtExportConfig {
+        model_names: vec!["test-model".to_string()],
+        ..ConsoleTxtExportConfig::default()
+    };
+
+    assert!(render_console_txt(&report, &cfg).contains("Speculative Decoding"));
+
+    report.server_metrics.insert(
+        "sglang:spec_accept_length".to_string(),
+        server_metric_entry(vec![labeled_gauge(
+            labels,
+            "http://leader:8000/metrics",
+            ReportValue::Finite(0.0),
+            ReportValue::Finite(0.0),
+            ReportValue::Finite(0.0),
+            ReportValue::Finite(0.0),
+            ReportValue::Finite(0.0),
+        )]),
+    );
+    assert!(!render_console_txt(&report, &cfg).contains("Speculative Decoding"));
+}
+
+#[test]
 fn error_summary_table_absent_without_errors() {
     assert!(error_summary_table(&empty_report(), 140).is_none());
 }
@@ -360,6 +580,7 @@ fn full_render_regression() {
         dev: false,
         title: "NVIDIA AIPerf | LLM Metrics".to_string(),
         metrics,
+        model_names: Vec::new(),
     };
     let text = render_console_txt(&report, &cfg);
     // Structural expectations that must hold regardless of box layout.
@@ -410,6 +631,7 @@ fn websocket_lag_rows_render_only_when_present() {
         dev: false,
         title: "NVIDIA AIPerf | LLM Metrics".to_string(),
         metrics,
+        model_names: Vec::new(),
     };
 
     let text = render_console_txt(&report, &cfg);

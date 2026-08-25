@@ -434,6 +434,8 @@ pub struct SglangMetrics {
     pub CACHE_HIT_RATE: Gauge,
     pub NUM_USED_TOKENS: IntGauge,
     pub TOKEN_USAGE: Gauge,
+    pub SPEC_ACCEPT_RATE: GaugeVec,
+    pub SPEC_ACCEPT_LENGTH: GaugeVec,
     pub CACHED_TOKENS: IntCounter,
     pub PROMPT_TOKENS: IntCounter,
     pub GENERATION_TOKENS: IntCounter,
@@ -484,6 +486,22 @@ impl SglangMetrics {
             .unwrap(),
             TOKEN_USAGE: Gauge::with_opts(Opts::new("sglang:token_usage", "The token usage."))
                 .unwrap(),
+            SPEC_ACCEPT_RATE: GaugeVec::new(
+                Opts::new(
+                    "sglang:spec_accept_rate",
+                    "The speculative decoding draft acceptance rate.",
+                ),
+                &["model_name", "pp_rank", "tp_rank"],
+            )
+            .unwrap(),
+            SPEC_ACCEPT_LENGTH: GaugeVec::new(
+                Opts::new(
+                    "sglang:spec_accept_length",
+                    "The speculative decoding accepted draft length.",
+                ),
+                &["model_name", "pp_rank", "tp_rank"],
+            )
+            .unwrap(),
             CACHED_TOKENS: IntCounter::with_opts(Opts::new(
                 "sglang:cached_tokens",
                 "The number of cached prefix tokens (prefix cache hits).",
@@ -538,6 +556,8 @@ impl SglangMetrics {
             m.CACHE_HIT_RATE,
             m.NUM_USED_TOKENS,
             m.TOKEN_USAGE,
+            m.SPEC_ACCEPT_RATE,
+            m.SPEC_ACCEPT_LENGTH,
             m.CACHED_TOKENS,
             m.PROMPT_TOKENS,
             m.GENERATION_TOKENS,
@@ -546,6 +566,12 @@ impl SglangMetrics {
             m.E2E_REQUEST_LATENCY_SECONDS,
             m.TIME_TO_FIRST_TOKEN_SECONDS,
         );
+        m.SPEC_ACCEPT_RATE
+            .with_label_values(&["mock-model", "0", "0"])
+            .set(0.75);
+        m.SPEC_ACCEPT_LENGTH
+            .with_label_values(&["mock-model", "0", "0"])
+            .set(2.5);
         m
     }
 }

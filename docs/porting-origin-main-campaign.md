@@ -28,7 +28,7 @@ implementation, test run, or review.
 | ---: | --- | --- | --- | --- | --- |
 | 1 | `817a8d84ddb9` | LCB out-of-process grading | complete | applicable | Merged in `1c03271dac3e`; native delegation/reaping/detail commits and verification below. Later concurrency parity is tracked by #35. |
 | 2 | `0883bd1aee` | version 0.12.0 | merged | not-applicable | Python metadata/docs only. |
-| 3 | `34b2be2ee1` | SGLang speculative metrics | merged | applicable | Native speed-bench recognition is not profile console-exporter parity. |
+| 3 | `34b2be2ee1` | SGLang speculative metrics | complete | applicable | Merged in `4d076c660f`; native console policy/renderer/mock/E2E commits and verification below. Graham approved. |
 | 4 | `6db948524e` | SageMaker malformed timestamp | merged | already-covered | Native loader returns validation error. |
 | 5 | `ce715ae849` | agentic think-time idle guard | complete | applicable | Merged in `6e8da730e8`; native scenario default/lock port in `ad4c2a54f4`, `6e78b41d35`, and `729c59f64a`; Graham approved. |
 | 6 | `93b6223373` | telemetry field rename | complete | applicable | Merged in `4ab850c79d`; native artifact migration and custom-prefix closure in `726fcb614b`, `4763b53f0f`, and `978bc93fea`; Graham approved. |
@@ -111,6 +111,58 @@ reported 7 passed using a target directory under `/mnt/4tb`.
 This closes the original out-of-process-worker port. It does not assert that
 later upstream request multiplexing and leader-exit descendant reaping (#35)
 are equivalent; those are separately pending.
+
+## Per-commit record: 34b2be2ee115
+
+### Upstream intent and Rust comparison
+
+Upstream adds a dedicated SGLang speculative-decoding console table with
+configured-model and scheduler-leader selection, per-series identity,
+finite-summary enforcement, percent-only display scaling, and inactive-gauge
+suppression. Native server-metric collection already retained the required
+gauges, labels, endpoints, and summaries, while the native SPEED-Bench reader
+recognized their names only for explicit report generation. Ordinary native
+profile console output did not consume server metrics, so an applicable Rust
+port was required.
+
+### Merge and implementation evidence
+
+`4d076c660f31d9a9bf66f839867c3b9737e1a0ba` is the existing two-parent merge
+whose second parent is exact upstream commit
+`34b2be2ee1159cc7e6985e027027791d18dad693`; no new upstream merge was added.
+The finding and design record landed in `456801aa8a`. Internal configured-model
+projection landed in `debc81e3ef`; the native console renderer landed in
+`67fd3896f9`; deterministic native mock gauges and real-profile Rust E2E coverage
+landed in `91aae2ee05`, with exact row/cell assertions in `ae7c592f99`; and
+`475352c0d3` records the mock fixture in its operating reference.
+
+The renderer preserves case-insensitive configured-model matching,
+absent-or-zero PP/TP leader selection, endpoint and varying-label distinctions,
+finite avg/min/max/p50/p90 summaries, one-decimal percent display for raw rate
+ratios, two-decimal accepted lengths, and length-first inactivity suppression.
+It borrows `NativeReport`, so the raw server-metrics exports remain unchanged.
+
+### Verification and review
+
+The exact upstream commit adds one Python unit-test module and no integration or
+E2E test. The native strengthening launches the pinned real Rust `aiperf`
+binary against the in-process Rust mock, verifies exact `75.0`/`2.50` console
+row cells, and separately verifies raw JSON rate `0.75` plus the model and
+leader labels.
+
+Fresh verification with `/usr/bin/sccache` and a Cargo target under `/mnt/4tb`
+reported 24 console tests, 7 config-export tests, 1 native profile E2E, and 3
+mock Prometheus tests passed. Debug CLI/mock and release CLI builds passed;
+runtime all-target engine Clippy exited successfully. Scoped formatting and the
+complete range diff check passed; the only workspace-format result is an
+unrelated pre-existing `sidecar_input.rs:787` wrapping difference.
+
+Independent task and whole-range reviews are clean after their focused fixes.
+The final systems review reports zero Critical, Important, or Minor findings
+and ends `GRAHAM APPROVED`. The specification is
+`docs/specs/2026-08-25-native-sglang-speculative-console.md`; detailed evidence
+lives in
+`.superpowers/sdd/2026-08-25-native-sglang-speculative-console/`.
 
 ## Per-commit record: ce715ae849e5
 

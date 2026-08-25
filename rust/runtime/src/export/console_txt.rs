@@ -5,9 +5,9 @@
 //!
 //! Output is rendered at the configured width, independent of terminal width.
 //! Sections appear in this order: API-error panels, error summary, grouped
-//! metrics, usage-discrepancy warning, and OSL-mismatch warning. Warning bodies,
-//! table cells, blank-line prefixes, box glyphs, wrapping, and omission rules are
-//! byte-stable.
+//! metrics, speculative-decoding metrics, usage-discrepancy warning, and
+//! OSL-mismatch warning. Warning bodies, table cells, blank-line prefixes, box
+//! glyphs, wrapping, and omission rules are byte-stable.
 //!
 //! Metric metadata supplies each tag's header, group, display order, and flags.
 //! Tags absent from that metadata render under their raw names in the default
@@ -24,7 +24,7 @@ use std::path::Path;
 
 mod cell_widths;
 
-use crate::export::{ExportConfig, Exporter};
+use crate::export::{ExportConfig, Exporter, normalize_endpoint_display};
 use crate::metrics_core::{
     MetricConsoleGroup, MetricEntry, MetricSeries, NativeReport, ReportStats, ReportValue,
 };
@@ -60,6 +60,9 @@ pub struct ConsoleTxtExportConfig {
     /// group under the raw tag, sort last, and carry no filtering flags.
     #[serde(default)]
     pub metrics: BTreeMap<String, ConsoleMetricMeta>,
+    /// Configured model names used to select model-labeled server metrics.
+    #[serde(default)]
+    pub model_names: Vec<String>,
 }
 
 impl Default for ConsoleTxtExportConfig {
@@ -70,6 +73,7 @@ impl Default for ConsoleTxtExportConfig {
             dev: false,
             title: "NVIDIA AIPerf".to_string(),
             metrics: BTreeMap::new(),
+            model_names: Vec::new(),
         }
     }
 }
@@ -151,6 +155,9 @@ pub(crate) fn render_console_txt(report: &NativeReport, cfg: &ConsoleTxtExportCo
     if let Some(tables) = metrics_tables(report, cfg, width) {
         blocks.push((2, tables));
     }
+    if let Some(table) = speculative_decoding_table(report, cfg, width) {
+        blocks.push((2, table));
+    }
     if let Some(warning) = detect_usage_discrepancy(report) {
         blocks.push((1, warning_panel(&warning, width)));
     }
@@ -218,16 +225,21 @@ fn comma_int(n: i64) -> String {
     format!("{sign}{}", group_thousands(&n.unsigned_abs().to_string()))
 }
 
-/// Format a number with comma-grouped thousands and two fixed decimals.
-fn comma_2dp(v: f64) -> String {
+/// Format a number with comma-grouped thousands and fixed decimal precision.
+fn comma_fixed(v: f64, precision: usize) -> String {
     let sign = if v.is_sign_negative() && v != 0.0 {
         "-"
     } else {
         ""
     };
-    let s = format!("{:.2}", v.abs());
-    let (int, frac) = s.split_once('.').unwrap_or((s.as_str(), "00"));
+    let s = format!("{:.precision$}", v.abs());
+    let (int, frac) = s.split_once('.').unwrap_or((s.as_str(), ""));
     format!("{sign}{}.{frac}", group_thousands(int))
+}
+
+/// Format a number with comma-grouped thousands and two fixed decimals.
+fn comma_2dp(v: f64) -> String {
+    comma_fixed(v, 2)
 }
 
 /// Format integer-valued thresholds without a trailing decimal.
@@ -491,6 +503,46 @@ const GROUP_ORDER: &[MetricConsoleGroup] = &[
 /// Stat column order.
 const STAT_KEYS: &[&str] = &["avg", "min", "max", "p99", "p90", "p50", "std"];
 
+const SGLANG_SPEC_ACCEPT_RATE: &str = "sglang:spec_accept_rate";
+const SGLANG_SPEC_ACCEPT_LENGTH: &str = "sglang:spec_accept_length";
+const SGLANG_MODEL_LABEL: &str = "model_name";
+const SGLANG_PP_RANK_LABEL: &str = "pp_rank";
+const SGLANG_TP_RANK_LABEL: &str = "tp_rank";
+
+/// Display policy for one SGLang speculative-decoding metric family.
+struct SpeculativeMetricDisplay {
+    source: &'static str,
+    row_name: &'static str,
+    scale: f64,
+    precision: usize,
+}
+
+const SPECULATIVE_DECODING_METRICS: &[SpeculativeMetricDisplay] = &[
+    SpeculativeMetricDisplay {
+        source: SGLANG_SPEC_ACCEPT_RATE,
+        row_name: "Accept Rate (%)",
+        scale: 100.0,
+        precision: 1,
+    },
+    SpeculativeMetricDisplay {
+        source: SGLANG_SPEC_ACCEPT_LENGTH,
+        row_name: "Accept Length",
+        scale: 1.0,
+        precision: 2,
+    },
+];
+
+/// One model- and rank-selected server metric series.
+struct SelectedSpeculativeSeries<'a> {
+    series: &'a MetricSeries,
+    endpoint: String,
+}
+
+/// One rendered speculative-decoding row.
+struct SpeculativeDecodingRow {
+    cells: Vec<String>,
+}
+
 /// A metric row prepared for the table: the projected `display_order` (for the
 /// stable sort) plus the rendered cells.
 struct MetricRow {
@@ -583,6 +635,203 @@ pub(crate) fn metrics_tables(
     } else {
         Some(blocks.join("\n"))
     }
+}
+
+/// Render active, model-matched SGLang speculative-decoding gauge summaries.
+fn speculative_decoding_table(
+    report: &NativeReport,
+    cfg: &ConsoleTxtExportConfig,
+    width: usize,
+) -> Option<String> {
+    if cfg.model_names.is_empty() {
+        return None;
+    }
+    let [rate_metric, length_metric] = SPECULATIVE_DECODING_METRICS else {
+        return None;
+    };
+
+    let rate_series = select_speculative_series(report, &cfg.model_names, rate_metric.source);
+    let length_series = select_speculative_series(report, &cfg.model_names, length_metric.source);
+    let activity_series = if length_series.is_empty() {
+        &rate_series
+    } else {
+        &length_series
+    };
+    if !activity_series.iter().any(|selected| {
+        let ReportStats::Distribution(stats) = &selected.series.stats else {
+            return false;
+        };
+        stats
+            .max
+            .as_ref()
+            .and_then(value_f64)
+            .is_some_and(|value| value.is_finite() && value > 0.0)
+    }) {
+        return None;
+    }
+
+    let mut rows = Vec::new();
+    for (metric, series) in [rate_metric, length_metric]
+        .into_iter()
+        .zip([&rate_series, &length_series])
+    {
+        for (index, selected) in series.iter().enumerate() {
+            let ReportStats::Distribution(stats) = &selected.series.stats else {
+                continue;
+            };
+            let values = [
+                scaled_report_value(stats.avg.as_ref(), metric.scale),
+                scaled_report_value(stats.min.as_ref(), metric.scale),
+                scaled_report_value(stats.max.as_ref(), metric.scale),
+                scaled_report_value(stats.percentiles.get("p50"), metric.scale),
+                scaled_report_value(stats.percentiles.get("p90"), metric.scale),
+            ];
+            let [Some(avg), Some(min), Some(max), Some(p50), Some(p90)] = values else {
+                continue;
+            };
+            let suffix = speculative_series_suffix(series, index);
+            let row_name = if suffix.is_empty() {
+                metric.row_name.to_string()
+            } else {
+                format!("{} ({suffix})", metric.row_name)
+            };
+            rows.push(SpeculativeDecodingRow {
+                cells: vec![
+                    row_name,
+                    comma_fixed(avg, metric.precision),
+                    comma_fixed(min, metric.precision),
+                    comma_fixed(max, metric.precision),
+                    comma_fixed(p50, metric.precision),
+                    comma_fixed(p90, metric.precision),
+                ],
+            });
+        }
+    }
+    if rows.is_empty() {
+        return None;
+    }
+
+    let table_rows: Vec<Vec<String>> = rows.into_iter().map(|row| row.cells).collect();
+    Some(render_table(
+        "NVIDIA AIPerf | Server Metrics: Speculative Decoding",
+        &["Metric", "mean", "min", "max", "p50", "p90"],
+        &table_rows,
+        &[
+            Justify::Left,
+            Justify::Right,
+            Justify::Right,
+            Justify::Right,
+            Justify::Right,
+            Justify::Right,
+        ],
+        width,
+    ))
+}
+
+/// Select SGLang leader series for one server metric family.
+fn select_speculative_series<'a>(
+    report: &'a NativeReport,
+    model_names: &[String],
+    source: &str,
+) -> Vec<SelectedSpeculativeSeries<'a>> {
+    let Some(entry) = report.server_metrics.get(source) else {
+        return Vec::new();
+    };
+
+    let mut selected = Vec::new();
+    for series in &entry.series {
+        let ReportStats::Distribution(_) = &series.stats else {
+            continue;
+        };
+        let Some(labels) = series.labels.as_ref() else {
+            continue;
+        };
+        let Some(model_name) = labels.get(SGLANG_MODEL_LABEL) else {
+            continue;
+        };
+        if !model_names
+            .iter()
+            .any(|configured| configured.to_lowercase() == model_name.to_lowercase())
+        {
+            continue;
+        }
+        if labels
+            .get(SGLANG_PP_RANK_LABEL)
+            .is_some_and(|rank| rank != "0")
+            || labels
+                .get(SGLANG_TP_RANK_LABEL)
+                .is_some_and(|rank| rank != "0")
+        {
+            continue;
+        }
+        selected.push(SelectedSpeculativeSeries {
+            series,
+            endpoint: normalize_endpoint_display(series.endpoint_url.as_deref().unwrap_or("")),
+        });
+    }
+    selected
+}
+
+/// Return a display-only suffix that distinguishes one selected series.
+fn speculative_series_suffix(series: &[SelectedSpeculativeSeries<'_>], index: usize) -> String {
+    if series.len() <= 1 {
+        return String::new();
+    }
+    let current = &series[index];
+    let Some(labels) = current.series.labels.as_ref() else {
+        return format!("series={}", index + 1);
+    };
+    let mut parts = Vec::new();
+    if series
+        .iter()
+        .any(|other| other.endpoint != current.endpoint)
+    {
+        parts.push(format!("endpoint={}", current.endpoint));
+    }
+    if let Some(model_name) = labels.get(SGLANG_MODEL_LABEL)
+        && label_value_differs(series, index, SGLANG_MODEL_LABEL, model_name)
+    {
+        parts.push(format!("{SGLANG_MODEL_LABEL}={model_name}"));
+    }
+    for (label, value) in labels {
+        if matches!(
+            label.as_str(),
+            SGLANG_MODEL_LABEL | SGLANG_PP_RANK_LABEL | SGLANG_TP_RANK_LABEL
+        ) || !label_value_differs(series, index, label, value)
+        {
+            continue;
+        }
+        parts.push(format!("{label}={value}"));
+    }
+    if parts.is_empty() {
+        parts.push(format!("series={}", index + 1));
+    }
+    parts.join(", ")
+}
+
+/// Whether another selected series has a different value for one label.
+fn label_value_differs(
+    series: &[SelectedSpeculativeSeries<'_>],
+    index: usize,
+    label: &str,
+    value: &str,
+) -> bool {
+    series.iter().enumerate().any(|(other_index, other)| {
+        other_index != index
+            && other
+                .series
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get(label))
+                .is_none_or(|other_value| other_value != value)
+    })
+}
+
+/// Extract a finite report value and apply presentation-only scaling.
+fn scaled_report_value(value: Option<&ReportValue>, scale: f64) -> Option<f64> {
+    let value = value.and_then(value_f64)?;
+    let scaled = value * scale;
+    scaled.is_finite().then_some(scaled)
 }
 
 /// Map a configured console-group value onto the enum. Unknown values are hidden.

@@ -1498,6 +1498,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         &benchmark_id,
         input_config.clone(),
         serde_json::json!({}),
+        &inputs.model_names,
     );
     // The per-record OTLP sink is unavailable under sketch retention.
     if let Some(url) = &inputs.otel_url

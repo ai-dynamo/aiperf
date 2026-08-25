@@ -83,10 +83,13 @@ the newer fills for external-cache / CPU-offload / preemption metrics.)
 
 `sglang:gen_throughput`, `sglang:num_queue_reqs`, `sglang:num_running_reqs`,
 `sglang:cache_hit_rate`, `sglang:num_used_tokens`, `sglang:token_usage`,
+`sglang:spec_accept_rate`, `sglang:spec_accept_length`,
 `sglang:cached_tokens`, `sglang:prompt_tokens`, `sglang:generation_tokens`,
 `sglang:num_retracted_reqs`, `sglang:queue_time_seconds`, `sglang:e2e_request_latency_seconds`,
 `sglang:time_to_first_token_seconds`. (`cached_tokens`, `num_retracted_reqs`, and the token
-counters are the newer SGLang counters.)
+counters are the newer SGLang counters.) The speculative gauges expose one
+deterministic leader fixture: `model_name="mock-model"`, `pp_rank="0"`,
+`tp_rank="0"`, raw acceptance-rate `0.75`, and accepted-length `2.5`.
 
 ## TensorRT-LLM dialect (`/trtllm/metrics`)
 
