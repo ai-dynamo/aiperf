@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.cli_commands.slurm.generate import build_sbatch_script, generate
+from aiperf.cli import app as cli_app
+from aiperf.rust_shims.__main__ import main as shim_main
+from aiperf.rust_shims.slurm.generate import build_sbatch_script, generate
 
 
 @pytest.fixture
@@ -111,6 +113,34 @@ def test_generate_stdout(config_path: Path, capsys: pytest.CaptureFixture) -> No
     captured = capsys.readouterr()
     assert captured.out.startswith("#!/bin/bash\n")
     assert "#SBATCH --ntasks=3" in captured.out
+
+
+def test_shim_launcher_generates_script(config_path: Path, capsys: pytest.CaptureFixture) -> None:
+    assert shim_main(["slurm-generate", "--config", str(config_path), "--cells", "2"]) == 0
+
+    captured = capsys.readouterr()
+    assert "#SBATCH --ntasks=3" in captured.out
+
+
+def test_python_slurm_command_routes_to_shim(config_path: Path, tmp_path: Path) -> None:
+    output = tmp_path / "job.sbatch"
+
+    assert (
+        cli_app(
+            [
+                "slurm",
+                "generate",
+                "--config",
+                str(config_path),
+                "--cells",
+                "2",
+                "--output",
+                str(output),
+            ]
+        )
+        is None
+    )
+    assert "#SBATCH --ntasks=3" in output.read_text()
 
 
 def test_generate_missing_config_exits(tmp_path: Path) -> None:

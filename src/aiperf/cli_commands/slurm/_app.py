@@ -9,7 +9,7 @@ from cyclopts import App
 app = App(name="slurm", help="SLURM job-script generation for native cellular runs")
 
 app.command(
-    "aiperf.cli_commands.slurm.generate:app",
+    "aiperf.rust_shims.slurm.generate:app",
     name="generate",
     help="Generate an sbatch job script for a native cellular AIPerf benchmark",
 )

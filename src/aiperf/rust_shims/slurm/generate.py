@@ -167,3 +167,10 @@ def generate(
         output.write_text(script)
     else:
         sys.stdout.write(script)
+
+
+def main(arguments: list[str] | None = None) -> int:
+    """Run the SLURM-generation shim with explicitly supplied arguments."""
+    argv = sys.argv[1:] if arguments is None else list(arguments)
+    result = app(argv)
+    return 0 if result is None else result
