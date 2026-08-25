@@ -45,13 +45,13 @@ fn print_completion(shell: &str) -> anyhow::Result<()> {
         "bash" => println!(
             "_aiperf() {{\n    local commands=\"{commands}\"\n    COMPREPLY=( $(compgen -W \"$commands\" -- \"${{COMP_WORDS[COMP_CWORD]}}\") )\n}}\ncomplete -F _aiperf aiperf"
         ),
-        "zsh" => println!(
-            "#compdef aiperf\n\n_arguments '1:command:({commands})'"
-        ),
+        "zsh" => println!("#compdef aiperf\n\n_arguments '1:command:({commands})'"),
         "fish" => println!(
             "complete -c aiperf -f\ncomplete -c aiperf -n '__fish_use_subcommand' -a '{commands}'"
         ),
-        _ => anyhow::bail!("unsupported completion shell `{shell}`; supported shells are bash, zsh, and fish"),
+        _ => anyhow::bail!(
+            "unsupported completion shell `{shell}`; supported shells are bash, zsh, and fish"
+        ),
     }
     Ok(())
 }
@@ -110,7 +110,7 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
             "aiperf service is unavailable from the native binary; use `aiperf-python service`"
         ),
         _ => anyhow::bail!(
-            "unsupported native aiperf command; supported delegated utilities are analyze, plot, plugins, --help, and --install-completion"
+            "unsupported native aiperf command; supported Python utilities are analyze, plot, and plugins"
         ),
     }
 }
