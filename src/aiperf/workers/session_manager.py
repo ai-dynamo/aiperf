@@ -193,6 +193,7 @@ class UserSessionManager:
         self._cache: OrderedDict[str, UserSession] = OrderedDict()
         self._default_context_mode: ConversationContextMode | None = None
         self._cap_warning_shown: bool = False
+        self._pinned_overflow_warning_shown: bool = False
 
     @property
     def default_context_mode(self) -> ConversationContextMode | None:
@@ -307,12 +308,20 @@ class UserSessionManager:
         """Trim the cache back to ``max_sessions``, least-recently-used first.
 
         Only reached once the cap is exceeded, which does not happen for
-        realistic session counts (see DEFAULT_MAX_SESSIONS). Eviction is pure
-        LRU and therefore *can* drop a session whose conversation is still
-        in flight, so the one-shot warning names the cap: at that point the
-        run is either leaking abandoned sessions or genuinely running more
-        concurrent conversations than the bound allows, and both want the
-        operator's attention rather than silent turn failures.
+        realistic session counts (see DEFAULT_MAX_SESSIONS), so the scan cost
+        here never touches the ``store`` hot path.
+
+        Pinned sessions are skipped. A FORK parent still holding
+        ``fork_refcount`` references, or one waiting on
+        ``pending_fork_eviction``, is the exact context its children are about
+        to seed from; dropping it would silently hand those children an empty
+        history. Any other session is fair game, but eviction is still pure LRU
+        and *can* drop a conversation that is merely in flight -- the worker
+        would rebuild it from the dataset without its captured assistant
+        responses -- so the one-shot warning names the cap: the run is either
+        leaking abandoned sessions or genuinely running more concurrent
+        conversations than the bound allows, and both want the operator's
+        attention rather than silent turn failures.
         """
         if not self._cap_warning_shown:
             self._cap_warning_shown = True
@@ -321,8 +330,24 @@ class UserSessionManager:
                 "least-recently-used sessions. In-flight multi-turn "
                 "conversations may lose their history."
             )
-        while len(self._cache) > self._max_sessions:
-            self._cache.popitem(last=False)
+        # list() so the cache can be mutated while walking it, oldest first.
+        for x_correlation_id in list(self._cache):
+            if len(self._cache) <= self._max_sessions:
+                return
+            session = self._cache[x_correlation_id]
+            if session.fork_refcount > 0 or session.pending_fork_eviction:
+                continue
+            del self._cache[x_correlation_id]
+        if len(self._cache) > self._max_sessions and (
+            not self._pinned_overflow_warning_shown
+        ):
+            self._pinned_overflow_warning_shown = True
+            _logger.warning(
+                f"Session cache is over its {self._max_sessions}-entry cap with "
+                f"{len(self._cache)} entries and every remaining session pinned by "
+                "a pending FORK child; keeping them resident rather than breaking "
+                "those children's context."
+            )
 
     def get(self, x_correlation_id: str) -> UserSession | None:
         """

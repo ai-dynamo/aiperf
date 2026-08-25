@@ -114,10 +114,15 @@ class WorkerLoad:
     total_errors_reported: int = 0
     in_flight_credits: int = 0
     last_heartbeat_ns: int = 0
-    """Wall-clock of the last service heartbeat observed for this worker; 0
-    until one arrives. Published on its own timer by the worker service
-    independently of request work, so it is the only signal here that separates
-    a dead worker from a slow one. Drives ``evict_stale_workers``."""
+    """Wall-clock of the last service heartbeat observed for this worker.
+
+    Seeded to registration time by ``_register_worker`` so the staleness clock
+    starts running immediately: heartbeats are published on a timer that fires
+    seconds after the worker announces itself dispatchable, and a 0 here reads
+    as "never seen" and disables eviction for that worker entirely. Published
+    on its own timer by the worker service independently of request work, so it
+    is the only signal here that separates a dead worker from a slow one.
+    Drives ``evict_stale_workers``."""
     active_credit_ids: set[int] = field(default_factory=set)
     active_sessions: int = 0  # Sticky sessions assigned to this worker
     active_session_ids: set[str] = field(default_factory=set)
@@ -811,6 +816,13 @@ class StickyCreditRouter(CommunicationMixin):
         Late-joining workers initialize:
         - virtual_sent_credits to average (prevents thundering herd on credits)
         - last_sent_at_ns to current time (prevents winning all timestamp tie-breaks)
+        - last_heartbeat_ns to current time, so the staleness clock starts at
+          registration. A worker is dispatchable and accepting credits from the
+          moment it announces itself, but its first heartbeat only lands one
+          heartbeat interval later; leaving the field at 0 made
+          ``evict_stale_workers`` read "never heartbeated" as "immortal", so a
+          worker that died inside that window was never evicted and the run hung
+          waiting for returns that could not arrive.
         """
         if worker_id in self._terminally_lost_workers:
             self.warning(
@@ -830,6 +842,7 @@ class StickyCreditRouter(CommunicationMixin):
                 worker_id=worker_id,
                 virtual_sent_credits=avg_virtual,
                 last_sent_at_ns=time.perf_counter_ns(),
+                last_heartbeat_ns=time.time_ns(),
             )
             if self.is_trace_enabled:
                 self.trace(
@@ -870,15 +883,13 @@ class StickyCreditRouter(CommunicationMixin):
         count because workers register over time; comparing against the
         request would trip during a normal ramp-up.
         """
-        self._peak_worker_count = max(
-            getattr(self, "_peak_worker_count", 0), len(self._workers)
-        )
+        self._peak_worker_count = max(self._peak_worker_count, len(self._workers))
 
     def check_worker_floor(self, min_fraction: float) -> str | None:
         """Return a reason string when too few workers remain, else None."""
         if min_fraction <= 0:
             return None
-        peak = getattr(self, "_peak_worker_count", 0)
+        peak = self._peak_worker_count
         if peak <= 0:
             return None
         alive = len(self._workers)
@@ -923,10 +934,11 @@ class StickyCreditRouter(CommunicationMixin):
         Idle-worker removal remains non-terminal because no active work is lost.
 
         Returns the evicted worker ids. ``stale_after_s <= 0`` disables the
-        check; a worker whose heartbeat has never been observed (nothing wired
-        up the subscription, or it has not sent its first one yet) is never
-        evicted, so a missing liveness feed degrades to no eviction rather than
-        to evicting everybody.
+        check. ``last_heartbeat_ns`` is seeded at registration, so a worker that
+        dies before its first heartbeat still ages out; a 0 here means the load
+        entry was built outside ``_register_worker`` and is skipped, so a
+        missing liveness feed degrades to no eviction rather than to evicting
+        everybody.
         """
         if stale_after_s <= 0:
             return []

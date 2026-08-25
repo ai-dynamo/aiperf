@@ -182,7 +182,13 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._buffer = []
         # Shield so a cancel between detaching the buffer and the write
         # completing can't silently drop the records we already drained.
-        await asyncio.shield(self._flush_buffer(buffer_to_flush))
+        # Record rather than propagate, matching the in-flight drain above, so
+        # every failure route out of this barrier raises the same RuntimeError
+        # instead of leaking a raw OSError for a direct-flush failure only.
+        try:
+            await asyncio.shield(self._flush_buffer(buffer_to_flush))
+        except Exception as e:
+            self._record_write_error(e, "final flush failed")
         if self._write_error is not None:
             raise RuntimeError(
                 f"JSONL writer failed before artifact finalization: {self.output_file}"

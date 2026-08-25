@@ -457,6 +457,63 @@ class TestExporterManager:
         mlflow_instance.export.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_cancelled_exporter_is_reported_as_a_failure(
+        self, sample_records, mock_cfg
+    ) -> None:
+        """A shutdown-race cancellation leaves a partial artifact, not a success."""
+        started = asyncio.Event()
+        never = asyncio.Event()
+
+        async def _never_finishes() -> None:
+            started.set()
+            await never.wait()
+
+        instance = MagicMock()
+        instance.export = AsyncMock(side_effect=_never_finishes)
+        instance.is_deferred = False
+        entry = MagicMock()
+        entry.name = "slow_exporter"
+
+        manager = _make_manager(sample_records, mock_cfg)
+
+        async def _cancel_when_started() -> None:
+            await started.wait()
+            for task in list(manager._tasks):
+                task.cancel()
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[(entry, MagicMock(return_value=instance))],
+        ):
+            canceller = asyncio.create_task(_cancel_when_started())
+            failures = await manager.export_data()
+            await canceller
+
+        assert len(failures) == 1
+        assert failures[0].exporter == instance.__class__.__name__
+        assert isinstance(failures[0].error, asyncio.CancelledError)
+        assert failures[0].is_deferred is False
+
+    @pytest.mark.asyncio
+    async def test_cancelled_deferred_exporter_keeps_deferred_flag(
+        self, sample_records, mock_cfg
+    ) -> None:
+        """Cancellation must not blur the local/deferred artifact distinction."""
+        manager = _make_manager(sample_records, mock_cfg)
+
+        async def _cancelled() -> None:
+            raise asyncio.CancelledError
+
+        instance = MagicMock()
+        instance.export = AsyncMock(side_effect=_cancelled)
+
+        failures = await manager._run_data_exporters([instance], is_deferred=True)
+
+        assert len(failures) == 1
+        assert failures[0].is_deferred is True
+        assert isinstance(failures[0].error, asyncio.CancelledError)
+
+    @pytest.mark.asyncio
     async def test_export_console(
         self, endpoint_config, output_config, sample_records, mock_cfg
     ):
@@ -504,6 +561,62 @@ class TestExporterManager:
         ):
             mock_class.assert_called_once()
             mock_instance.export.assert_awaited_once()
+
+
+class TestIncompleteResultsWarning:
+    """``ProfileResults.is_complete`` must reach a human, not just the model."""
+
+    def _manager_with_results(self, mock_cfg, **result_kwargs: Any) -> ExporterManager:
+        return ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=0,
+                end_ns=0,
+                completed=0,
+                **result_kwargs,
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_incomplete_results_warn_on_console_and_in_artifact(
+        self, mock_cfg
+    ) -> None:
+        manager = self._manager_with_results(
+            mock_cfg,
+            is_complete=False,
+            incomplete_reason="Record aggregation stalled at 24 of 1200 records",
+        )
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[],
+        ):
+            out = io.StringIO()
+            await manager.export_console(Console(file=out, force_terminal=False))
+
+        rendered = out.getvalue()
+        assert "INCOMPLETE RESULTS" in rendered
+        assert "24 of 1200 records" in rendered
+
+        txt_path = manager._run.cfg.artifacts.profile_export_console_txt_file
+        artifact = txt_path.read_text(encoding="utf-8")
+        assert "INCOMPLETE RESULTS" in artifact
+        assert "24 of 1200 records" in artifact
+
+    @pytest.mark.asyncio
+    async def test_complete_results_render_no_warning(self, mock_cfg) -> None:
+        manager = self._manager_with_results(mock_cfg)
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all",
+            return_value=[],
+        ):
+            out = io.StringIO()
+            await manager.export_console(Console(file=out, force_terminal=False))
+
+        assert "INCOMPLETE RESULTS" not in out.getvalue()
 
 
 class TestExportConsoleArtifactAndStyling:

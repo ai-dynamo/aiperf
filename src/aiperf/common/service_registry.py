@@ -443,6 +443,7 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         self.info(
             f"Waiting for {service_type.title()} services to be registered ({registered}/{expected})..."
         )
+        started = time.perf_counter()
         try:
             await asyncio.wait_for(event.wait(), timeout)
         except TimeoutError:
@@ -452,9 +453,12 @@ class _ServiceRegistry(AIPerfLoggerMixin):
             )
         self._raise_on_failure()
         if not self.all_types_registered(service_type):
+            # Report the time actually spent waiting, not the nominal window:
+            # this path fires on a premature wake, and claiming the full
+            # timeout sends an operator hunting a slow start that never was.
             self._raise_timeout(
                 f"Not all {service_type.title()} services registered after waking",
-                timeout,
+                time.perf_counter() - started,
             )
 
     async def wait_for_ids(
@@ -473,6 +477,7 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         ids = frozenset(service_ids)
         event = self._id_events.setdefault(ids, asyncio.Event())
         self.info(f"Waiting for {len(service_ids)} services to be registered...")
+        started = time.perf_counter()
         try:
             await asyncio.wait_for(event.wait(), timeout)
         except TimeoutError:
@@ -484,9 +489,10 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         self._raise_on_failure()
         if not self.all_ids_registered(service_ids):
             missing_ids = [sid for sid in service_ids if not self.is_registered(sid)]
+            # Actual elapsed, not the nominal window -- see wait_for_type.
             self._raise_timeout(
                 f"Not all service IDs registered after waking: {missing_ids}",
-                timeout,
+                time.perf_counter() - started,
             )
 
     async def _wait_with_progress(
@@ -502,6 +508,7 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         """
         elapsed = 0.0
         interval = self._PROGRESS_LOG_INTERVAL
+        started = time.perf_counter()
 
         while not event.is_set():
             remaining = None if timeout is None else max(0, timeout - elapsed)
@@ -519,9 +526,10 @@ class _ServiceRegistry(AIPerfLoggerMixin):
 
         self._raise_on_failure()
         if not self.all_registered():
+            # Actual elapsed, not the nominal window -- see wait_for_type.
             self._raise_timeout(
                 f"Not all services registered after waking ({description})",
-                timeout,
+                time.perf_counter() - started,
             )
 
     # -- Failure/timeout raising and diagnostics --

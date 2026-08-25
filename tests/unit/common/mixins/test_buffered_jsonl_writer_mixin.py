@@ -147,9 +147,15 @@ class TestBufferedJSONLWriterMixin:
         real_write = writer._file_handle.write
         writer._file_handle.write = AsyncMock(side_effect=OSError("disk full"))
 
-        with pytest.raises(OSError, match="disk full"):
+        # Every failure route out of the finalization barrier raises the same
+        # RuntimeError, with the underlying write error kept as __cause__.
+        with pytest.raises(
+            RuntimeError, match="failed before artifact finalization"
+        ) as excinfo:
             await writer.flush_buffer()
 
+        assert isinstance(excinfo.value.__cause__, OSError)
+        assert "disk full" in str(excinfo.value.__cause__)
         assert len(writer._buffer) == 1
         assert writer._write_error is not None
         writer._file_handle.write = real_write

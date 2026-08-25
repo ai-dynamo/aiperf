@@ -262,7 +262,13 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
 
     @on_stop
     async def _stop_service_manager(self) -> None:
-        await self.shutdown_all_services()
+        try:
+            await self.shutdown_all_services()
+        finally:
+            # Services going silent after teardown are expected, not deaths.
+            # Set in a finally so a partial or failed shutdown still suppresses
+            # the watchdog rather than reaping the services it just stopped.
+            self._shutdown_complete = True
 
     async def run_services(
         self, service_types: dict[ServiceTypeT, int]

@@ -46,8 +46,9 @@ NS = 1_000_000_000
 def _router(*, workers: dict[str, float], in_flight: int = 1, heartbeat: bool = True):
     """Build a router with the given worker_id -> seconds-since-last-heartbeat.
 
-    Workers hold ``in_flight`` credits each. ``heartbeat=False`` models a worker
-    whose heartbeat has never been observed.
+    Workers hold ``in_flight`` credits each. ``heartbeat=False`` models a load
+    entry built without going through ``_register_worker`` (which seeds the
+    clock), i.e. no liveness feed at all.
     """
     router = StickyCreditRouter.__new__(StickyCreditRouter)
     now = time.time_ns()
@@ -64,6 +65,7 @@ def _router(*, workers: dict[str, float], in_flight: int = 1, heartbeat: bool = 
     router._on_return_callback = None
     router._on_worker_lost = None
     router._on_worker_count_changed = None
+    router._peak_worker_count = 0
     router._worker_available_event = MagicMock()
     router.warning = MagicMock()
     router.error = MagicMock()
@@ -132,10 +134,44 @@ class TestStaleWorkerEviction:
         router.warning.assert_called()
 
     def test_worker_with_no_heartbeat_yet_is_not_evicted(self):
-        """No liveness feed (nothing wired it up, or the first heartbeat has
-        not landed) degrades to no eviction, never to evicting everybody."""
+        """A load entry built outside ``_register_worker`` has no liveness feed
+        at all, and that degrades to no eviction, never to evicting everybody.
+        Registration itself seeds the clock -- see
+        ``test_worker_that_died_before_its_first_heartbeat_is_evicted``."""
         router = _router(workers={"w-new": 9999.0}, heartbeat=False)
         assert router.evict_stale_workers(stale_after_s=60.0) == []
+
+    def test_registration_seeds_the_staleness_clock(self):
+        """``last_heartbeat_ns`` must be non-zero the instant a worker joins."""
+        router = _router(workers={})
+        router._register_worker("w-new")
+        assert router._workers["w-new"].last_heartbeat_ns > 0
+
+    def test_worker_that_died_before_its_first_heartbeat_is_evicted(self):
+        """THE gap: a worker is dispatchable and taking credits from the moment
+        it announces itself, but its first heartbeat lands one heartbeat
+        interval later. While ``last_heartbeat_ns`` sat at 0 the eviction guard
+        read that as "immortal" rather than "never seen", so a worker killed in
+        that window was never dropped -- and it could not be rescued by an
+        earlier heartbeat either, because ``note_worker_heartbeat`` discards
+        heartbeats for workers not yet in the routing pool. Its credits never
+        returned, and a ``--request-count`` run waits for those returns with no
+        deadline, so the run hung with nothing naming the cause."""
+        router = _router(workers={})
+        long_dead = time.time_ns() - int(300 * NS)
+        with patch.object(time, "time_ns", return_value=long_dead):
+            router._register_worker("w-stillborn")
+
+        assert router.evict_stale_workers(stale_after_s=60.0) == ["w-stillborn"]
+        assert "w-stillborn" not in router._workers
+
+    def test_heartbeat_before_registration_is_discarded(self):
+        """Documents why seeding at registration is the only fix available:
+        heartbeats that arrive while the worker is merely connected cannot
+        pre-seed the clock."""
+        router = _router(workers={})
+        router.note_worker_heartbeat("w-not-yet-registered")
+        assert "w-not-yet-registered" not in router._workers
 
     def test_disabled_when_threshold_is_zero(self):
         router = _router(workers={"w-dead": 9999.0})

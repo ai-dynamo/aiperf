@@ -1791,6 +1791,64 @@ class TestRedactUrl:
         url = "https://host/v1?token_count=128&monkey=capuchin&email=a@b.com"
         assert redact_url(url) == url
 
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            param(
+                "http://h/v1?api_key=secret",
+                f"http://h/v1?api_key={REDACTED_VALUE}",
+                id="plain-name",
+            ),
+            param(
+                "http://h/v1?api%5Fkey=secret",
+                f"http://h/v1?api%5Fkey={REDACTED_VALUE}",
+                id="encoded-underscore",
+            ),
+            param(
+                "http://h/v1?%61pi_key=secret",
+                f"http://h/v1?%61pi_key={REDACTED_VALUE}",
+                id="encoded-leading-letter",
+            ),
+            param(
+                "http://h/v1?x%2Damz%2Dsignature=secret",
+                f"http://h/v1?x%2Damz%2Dsignature={REDACTED_VALUE}",
+                id="encoded-hyphens-aws-signature",
+            ),
+            param(
+                "http://h/v1?api+key=secret",
+                f"http://h/v1?api+key={REDACTED_VALUE}",
+                id="plus-encoded-space",
+            ),
+            param(
+                "http://h/v1?model=llama&%74oken=secret#frag",
+                f"http://h/v1?model=llama&%74oken={REDACTED_VALUE}#frag",
+                id="encoded-name-mid-query-with-fragment",
+            ),
+        ],
+    )  # fmt: skip
+    def test_percent_encoded_sensitive_parameter_names_are_redacted(
+        self, url: str, expected: str
+    ) -> None:
+        """A server percent-decodes the parameter name before dispatching, so
+        every encoding of ``api_key`` names the same parameter and must redact.
+        """
+        assert redact_url(url) == expected
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("http://h/v1?mon%6Bey=capuchin", id="encoded-monkey"),
+            param("http://h/v1?token%5Fcount=128", id="encoded-token-count"),
+            param("http://h/v1?%6Dodel=llama", id="encoded-model"),
+            param("http://h/v1?%FF%FEkey=x", id="undecodable-octets"),
+        ],
+    )  # fmt: skip
+    def test_percent_encoded_nonsensitive_parameters_are_untouched(
+        self, url: str
+    ) -> None:
+        """Decoding must not normalize or rewrite parameters we do not redact."""
+        assert redact_url(url) == url
+
 
 class TestRedactEndpointSpec:
     """Tests for credential-safe CR and Python benchmark configuration copies."""

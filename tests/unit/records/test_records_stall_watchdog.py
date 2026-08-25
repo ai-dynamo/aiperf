@@ -127,6 +127,28 @@ class TestRecordStallWatchdog:
         assert mgr.error.called, "a stalled run must say so"
 
     @pytest.mark.asyncio
+    async def test_finalizing_stamps_the_incomplete_reason(self) -> None:
+        """The degradation must outlive the log stream.
+
+        ``_incomplete_reason`` is what ``_process_records`` turns into
+        ``ProfileResults.is_complete=False`` / ``incomplete_reason``, which the
+        ExporterManager renders as a console banner (see
+        ``tests/unit/exporters/test_exporter_manager.py``).
+        """
+        mgr = _manager(credits_complete=True, total_records=24)
+        mgr._incomplete_reason = None
+        await _tick(mgr)
+        overdue = int(
+            (Environment.RECORD.COMPLETION_STALL_TIMEOUT + 1) * NANOS_PER_SECOND
+        )
+        mgr._stall_last_progress_ns -= overdue
+        await _tick(mgr)
+
+        assert mgr._incomplete_reason is not None
+        assert "24" in mgr._incomplete_reason
+        assert "1200" in mgr._incomplete_reason
+
+    @pytest.mark.asyncio
     async def test_timeout_zero_disables_the_watchdog(self, monkeypatch) -> None:
         mgr = _manager(credits_complete=True, total_records=24)
         monkeypatch.setattr(Environment.RECORD, "COMPLETION_STALL_TIMEOUT", 0.0)

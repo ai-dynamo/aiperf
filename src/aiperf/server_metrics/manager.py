@@ -163,6 +163,12 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         self._result_published = False
         self._profiling_started = False
         self._profiling_start_ns: int | None = None
+        # Run-level result window, kept separately from `_profiling_start_ns`
+        # (which tracks only the phase currently scraping). The cancel path has
+        # no command-supplied window, so these are its only source of truth.
+        self._profiling_window_start_ns: int | None = None
+        self._warmup_window_start_ns: int | None = None
+        self._warmup_window_end_ns: int | None = None
         self._last_realtime_publish_ns = 0
         self._profile_complete_lock = asyncio.Lock()
         self._load_server_metrics_processors()
@@ -422,9 +428,15 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             self._profiling_started = True
             self._profiling_start_ns = stats.start_ns
             self._last_profiling_phase = identity
+            if self._profiling_window_start_ns is None:
+                self._profiling_window_start_ns = stats.start_ns
         else:
             self._profiling_started = False
             self._profiling_start_ns = None
+            if (
+                stats.phase_kind == "warmup" or stats.phase == CreditPhase.WARMUP
+            ) and self._warmup_window_start_ns is None:
+                self._warmup_window_start_ns = stats.start_ns
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(
@@ -449,6 +461,9 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         is_profiling = (
             stats.phase_kind == "profiling" or stats.phase == CreditPhase.PROFILING
         )
+        if is_warmup:
+            end_ns = stats.requests_end_ns or time.time_ns()
+            self._warmup_window_end_ns = max(self._warmup_window_end_ns or 0, end_ns)
         if is_warmup and self._collectors:
             self.info(
                 "Server Metrics: Warmup complete, capturing final warmup metrics..."
@@ -578,17 +593,28 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         Called when user cancels profiling or an error occurs during profiling.
         Waits for flush period to allow metrics to finalize, then stops collectors.
 
+        The cancel command carries no result window, so the window recorded from
+        the credit-phase messages is used instead. Publishing a null window would
+        collapse to ``start_ns=0`` downstream, which excludes no warmup sample and
+        folds warmup traffic into the reported profiling deltas.
+
         Args:
             message: Profile cancel command from SystemController
         """
         async with self._profile_complete_lock:
             await self._stop_all_collectors()
             if not self._result_published:
+                cancel_ns = time.time_ns()
+                start_ns = self._profiling_window_start_ns
+                if start_ns is None and self._warmup_window_start_ns is not None:
+                    # Cancelled before any profiling phase began: anchor the
+                    # (empty) profiling window past warmup rather than at 0.
+                    start_ns = self._warmup_window_end_ns or cancel_ns
                 await self._publish_server_metrics_result(
-                    start_ns=None,
-                    end_ns=None,
-                    warmup_start_ns=None,
-                    warmup_end_ns=None,
+                    start_ns=start_ns,
+                    end_ns=cancel_ns,
+                    warmup_start_ns=self._warmup_window_start_ns,
+                    warmup_end_ns=self._warmup_window_end_ns,
                 )
 
     @on_stop

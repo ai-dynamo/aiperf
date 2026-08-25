@@ -680,6 +680,42 @@ class TestServiceBaseUrl:
 
         assert mock_fastapi_service._base_url == "http://127.0.0.1:9999"
 
+    def test_base_url_ipv6_literal_is_bracketed(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """IPv6 literals must be bracketed or the URL is unparsable."""
+        mock_fastapi_service.api_host = "::1"
+        mock_fastapi_service.api_port = 8080
+
+        assert mock_fastapi_service._base_url == "http://[::1]:8080"
+
+    def test_base_url_ipv6_unspecified_is_bracketed(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """The IPv6 wildcard bind address is a literal too."""
+        mock_fastapi_service.api_host = "::"
+        mock_fastapi_service.api_port = 8080
+
+        assert mock_fastapi_service._base_url == "http://[::]:8080"
+
+    def test_base_url_ipv6_already_bracketed_not_double_wrapped(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """A user who already bracketed the host must not get [[::1]]."""
+        mock_fastapi_service.api_host = "[::1]"
+        mock_fastapi_service.api_port = 8080
+
+        assert mock_fastapi_service._base_url == "http://[::1]:8080"
+
+    def test_base_url_hostname_is_not_bracketed(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """Registered hostnames never contain a colon, so they pass through."""
+        mock_fastapi_service.api_host = "aiperf.example.com"
+        mock_fastapi_service.api_port = 80
+
+        assert mock_fastapi_service._base_url == "http://aiperf.example.com:80"
+
 
 class TestInfoLabelsCache:
     """Test the info labels caching behavior."""

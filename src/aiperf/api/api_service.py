@@ -83,9 +83,24 @@ class FastAPIService(BaseComponentService):
             self.attach_child_lifecycle(router)
 
     @property
+    def _url_host(self) -> str:
+        """Host formatted for embedding in a URL authority.
+
+        RFC 3986 requires IPv6 literals to be bracketed, otherwise the colons in
+        the address are indistinguishable from the port separator and
+        ``http://::1:8080`` is not a parseable URL. Detecting a literal by the
+        presence of a colon is sufficient here because registered hostnames and
+        IPv4 literals can never contain one.
+        """
+        host = self.api_host
+        if ":" in host and not host.startswith("["):
+            return f"[{host}]"
+        return host
+
+    @property
     def _base_url(self) -> str:
         """Get the base URL for the API server."""
-        return f"http://{self.api_host}:{self.api_port}"
+        return f"http://{self._url_host}:{self.api_port}"
 
     def _create_app(self) -> FastAPI:
         """Create the FastAPI application with all routes."""
@@ -159,7 +174,7 @@ class FastAPIService(BaseComponentService):
             with socket.socket(family, socket.SOCK_STREAM) as probe:
                 probe.bind(sockaddr)
         except OSError as e:
-            msg = f"API server cannot bind {self.api_host}:{self.api_port}: {e}"
+            msg = f"API server cannot bind {self._url_host}:{self.api_port}: {e}"
             if explicit_port:
                 # User-explicit --api-port: fail the service start so the run
                 # aborts instead of proceeding with no reachable API.

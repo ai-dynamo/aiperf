@@ -73,20 +73,25 @@ def parse_injected_str_list(name: str, raw: str | None) -> list[str] | None:
     return decoded
 
 
-def consume_endpoint_credentials(
-    *, allow_openai_api_key: bool = False
-) -> EndpointCredentialInjection:
+def consume_endpoint_credentials() -> EndpointCredentialInjection:
     """Pop, validate, and return endpoint credential environment variables.
 
     The private ``AIPERF_INJECTED_API_KEY`` name takes precedence over the
-    ``OPENAI_API_KEY`` compatibility alias. Popping prevents services spawned
-    by this process from inheriting plaintext credentials unnecessarily.
+    ``OPENAI_API_KEY`` compatibility alias, which covers hand-replayed
+    ``run_config.json`` files where only the conventional shell variable is set.
+
+    Every recognized variable — including ``OPENAI_API_KEY`` — is popped rather
+    than read. The orchestrator resolves ``endpoint.api_key`` in the parent
+    process (YAML ``${OPENAI_API_KEY}`` substitution and CLI parsing both happen
+    there) and forwards the resolved value through ``AIPERF_INJECTED_API_KEY``,
+    so nothing downstream of this call needs the raw variable. Leaving it in
+    place would publish a common shell credential to every spawned service and
+    to ``/proc/<pid>/environ``. Popping mutates only this process's environment,
+    never the user's shell.
     """
     private_api_key_present = AIPERF_INJECTED_API_KEY in os.environ
     private_api_key = os.environ.pop(AIPERF_INJECTED_API_KEY, None)
-    openai_api_key = (
-        os.environ.pop(OPENAI_API_KEY, None) if allow_openai_api_key else None
-    )
+    openai_api_key = os.environ.pop(OPENAI_API_KEY, None)
     headers_raw = os.environ.pop(AIPERF_INJECTED_HEADERS, None)
     urls_raw = os.environ.pop(AIPERF_INJECTED_ENDPOINT_URLS, None)
     return EndpointCredentialInjection(

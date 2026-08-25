@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the process-wide service registry and its async waiting mixin."""
 
+import asyncio
+import time
+
 import pytest
 
 from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus
@@ -246,3 +249,52 @@ def test_escalate_dead_services_promotes_recoverable_failure(
 
     with pytest.raises(ServiceProcessDiedError, match="worker_0_0"):
         registry._raise_on_failure()
+
+
+@pytest.mark.asyncio
+async def test_retracted_failure_does_not_latch_wait_for_type(
+    registry: _ServiceRegistry,
+) -> None:
+    """A cleared failure must not leave wait_for_type returning instantly.
+
+    ``fail_service(fatal=True)`` force-sets every registration event so blocked
+    callers re-check and see the failure. When the failure is then retracted by
+    a replacement registration, ``_disarm_stale_waiters`` has to clear those
+    events again -- otherwise the next wait wakes on the stale ``set()`` and
+    reports a registration timeout that never elapsed.
+    """
+    registry.expect_services({ServiceType.WORKER: 2})
+
+    with pytest.raises(ServiceRegistrationTimeoutError):
+        await registry.wait_for_type(ServiceType.WORKER, timeout=0.01)
+
+    registry.fail_service("worker_0_1", ServiceType.WORKER, fatal=True)
+    assert registry._type_events[ServiceType.WORKER].is_set()
+
+    _register(registry, "worker_0_1", seen_ns=2)
+    assert not registry._type_events[ServiceType.WORKER].is_set()
+
+    started = time.perf_counter()
+    with pytest.raises(ServiceRegistrationTimeoutError) as excinfo:
+        await registry.wait_for_type(ServiceType.WORKER, timeout=0.05)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed >= 0.05
+    assert excinfo.value.timeout_sec == 0.05
+
+
+@pytest.mark.asyncio
+async def test_premature_wake_reports_elapsed_not_nominal_timeout(
+    registry: _ServiceRegistry,
+) -> None:
+    """The after-waking branch must not claim a window that never elapsed."""
+    registry.expect_services({ServiceType.WORKER: 2})
+    event = registry._type_events.setdefault(ServiceType.WORKER, asyncio.Event())
+    event.set()
+
+    with pytest.raises(ServiceRegistrationTimeoutError) as excinfo:
+        await registry.wait_for_type(ServiceType.WORKER, timeout=600.0)
+
+    assert "after waking" in str(excinfo.value)
+    assert excinfo.value.timeout_sec is not None
+    assert excinfo.value.timeout_sec < 600.0

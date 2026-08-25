@@ -73,7 +73,9 @@ def main() -> None:
         sys.exit(1)
 
     # Pop (don't just read) so child processes the benchmark spawns
-    # don't inherit the secret. Restore onto the loaded config below.
+    # don't inherit the secret -- this consumes OPENAI_API_KEY too, which the
+    # parent has already resolved into endpoint.api_key. Restore onto the
+    # loaded config below.
     # Parsing of the JSON-encoded vars is deferred into the try block so
     # malformed payloads surface via the structured error envelope rather
     # than an unguarded JSONDecodeError.

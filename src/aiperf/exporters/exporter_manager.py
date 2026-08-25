@@ -185,6 +185,18 @@ class ExporterManager(AIPerfLoggerMixin):
         failures: list[ExporterFailure] = []
         for name, task in batch:
             if task.cancelled():
+                # A cancelled export (shutdown race) leaves its artifact absent or
+                # truncated. Reporting it as a failure keeps the controller from
+                # announcing a clean completion over a partial artifact set.
+                failures.append(
+                    ExporterFailure(
+                        exporter=name,
+                        error=asyncio.CancelledError(
+                            f"Exporter {name} was cancelled before it finished exporting"
+                        ),
+                        is_deferred=is_deferred,
+                    )
+                )
                 continue
             error = task.exception()
             if error is not None:
@@ -474,6 +486,7 @@ class ExporterManager(AIPerfLoggerMixin):
 
     async def _run_console_exporters(self, console: Console) -> None:
         """Run every registered console exporter, rendering into `console`."""
+        self._render_incomplete_results_warning(console)
         for exporter_entry, ExporterClass in plugins.iter_all(
             PluginType.CONSOLE_EXPORTER
         ):
@@ -497,6 +510,25 @@ class ExporterManager(AIPerfLoggerMixin):
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+    def _render_incomplete_results_warning(self, console: Console) -> None:
+        """Warn the user when these results are known to be incomplete.
+
+        ``ProfileResults.is_complete`` is otherwise invisible in the console
+        output, so a run degraded by the record-stall watchdog would render an
+        ordinary metrics table and read as a clean (much slower) benchmark.
+        """
+        if self._results.is_complete:
+            return
+        reason = self._results.incomplete_reason or "reason not recorded"
+        console.print("\n")
+        console.print(
+            "[bold red]NVIDIA AIPerf | INCOMPLETE RESULTS[/bold red]\n"
+            f"[yellow]{reason}[/yellow]\n"
+            "[yellow]These metrics were computed over a subset of the run and "
+            "must not be compared against complete runs.[/yellow]"
+        )
+        console.file.flush()
 
     async def _write_console_txt(self, recording_console: Console) -> None:
         """Write the recorded console output to a plain-text file."""

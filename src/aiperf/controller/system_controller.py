@@ -1300,10 +1300,9 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _announce_benchmark_complete(self) -> None:
         """Tell the API service the benchmark is over.
 
-        The results endpoint reports "running" until this arrives, and
-        POST /api/shutdown -- the operator's graceful-exit handshake -- answers
-        409 until the same flag is set. Without the announcement every
-        completion fell through to the operator's hard pod-delete fallback.
+        The results endpoint reports "running" until this arrives, so without
+        the announcement a client polling ``/api/results`` never observes a
+        terminal status and keeps polling until the listener goes away.
         """
         if not self._api_enabled:
             return
