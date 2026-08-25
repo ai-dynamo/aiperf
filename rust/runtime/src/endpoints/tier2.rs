@@ -672,7 +672,7 @@ impl Endpoint for AudioTranscriptionEndpoint {
             .and_then(|v| v.get("text"))
             .and_then(Value::as_str)
             .map(str::to_owned)
-            .or_else(|| response.raw.clone())
+            .or_else(|| response.raw.clone().filter(|value| !value.is_empty()))
             .ok_or_else(|| {
                 EndpointError::InvalidResponse("audio transcription response has no text".into())
             })?;
