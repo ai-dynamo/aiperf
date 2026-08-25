@@ -1799,11 +1799,11 @@ class TestDownloadAllResults:
     async def test_download_all_results_default_max_concurrent(
         self, tmp_path: Path
     ) -> None:
-        """Test download_all_results uses default max_concurrent=5."""
+        """Test download_all_results defers its default to the environment."""
         import inspect
 
         sig = inspect.signature(ProgressClient.download_all_results)
-        assert sig.parameters["max_concurrent"].default == 5
+        assert sig.parameters["max_concurrent"].default is None
 
     @pytest.mark.asyncio
     async def test_download_all_results_handles_mixed_exceptions(
