@@ -498,6 +498,15 @@ pub struct MockServerConfig {
     #[arg(long, env = "MOCK_SERVER_FIXED_OUTPUT_TOKENS")]
     pub fixed_output_tokens: Option<usize>,
 
+    /// Emits a deterministic vLLM speculative-decoding acceptance fixture on
+    /// OpenAI-compatible chat responses. Disabled by default.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_SPEC_DECODE_ACCEPTANCE",
+        default_value_t = false
+    )]
+    pub spec_decode_acceptance: bool,
+
     /// Enables test-only WebSocket routes.
     #[arg(
         long,

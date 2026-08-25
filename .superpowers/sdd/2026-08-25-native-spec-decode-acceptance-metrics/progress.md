@@ -29,7 +29,7 @@ Ruling: concrete phase-index selection applies to exact row masks, sketch keys, 
 - Task 1: completed, GREEN, and independently approved
 - Task 2: completed, GREEN, and independently approved
 - Task 3: completed, GREEN, and independently approved
-- Task 4: pending
+- Task 4: implementation GREEN; independent review pending
 
 Task 1: dispatch fallback — `spawn_agent` was denied because the root thread's other port agents occupied the team limit. Per the SDD skill's harness-denial rule, implementation proceeds inline; an independent task review remains required before Task 2.
 
@@ -83,3 +83,14 @@ Task 3 review: APPROVED at
 (30/30), full exporter neighborhood (121/121), processed-record neighborhood
 (10/10), formatting, and commit-range diff check. No findings remain, and Task
 4 may begin.
+
+Task 4 receipt: see `task-4-report.md`. The opt-in mock handler tests passed
+2/2 and the default-disabled byte-serialization compatibility regression passed
+1/1. The first real-profile run carried the exact summary and per-record values
+but caught that the embedded default metric catalog did not group the new
+metrics, so the console histogram was absent. A default-profile catalog
+regression reproduced that defect (0/1, missing default console metadata); the
+catalog-only fix passed 1/1, and the rebuilt native binary then passed the full
+present/absent E2E file 14/14. JSON validation, formatting, and diff hygiene
+also pass. Task 4 and the adjacent Task 3 default-catalog wiring remain gated
+on scoped independent review.

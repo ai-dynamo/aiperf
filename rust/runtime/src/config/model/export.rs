@@ -536,6 +536,48 @@ mod tests {
     }
 
     #[test]
+    fn default_profile_metadata_groups_canonical_spec_decode_metrics() {
+        let export = Export::build(
+            "chat",
+            &[],
+            "benchmark",
+            serde_json::json!({}),
+            serde_json::json!({}),
+            &[],
+        );
+        for (tag, order) in [
+            ("spec_decode_acceptance_length", 5000),
+            ("spec_decode_token_weighted_acceptance_length", 5010),
+            ("spec_decode_draft_acceptance_rate", 5020),
+            ("spec_decode_overall_draft_acceptance_rate", 5025),
+            ("spec_decode_accepted_per_verified", 5030),
+            ("spec_decode_steps", 5040),
+        ] {
+            let meta = export
+                .console_txt
+                .metrics
+                .get(tag)
+                .unwrap_or_else(|| panic!("missing default console metadata for {tag}"));
+            assert_eq!(meta.group, "spec_decode", "group for {tag}");
+            assert_eq!(meta.display_order, Some(order), "display order for {tag}");
+        }
+        for tag in [
+            "spec_decode_accepted_draft_tokens",
+            "spec_decode_draft_tokens",
+            "total_spec_decode_steps",
+            "total_accepted_draft_tokens",
+            "total_draft_tokens",
+        ] {
+            let meta = export
+                .console_txt
+                .metrics
+                .get(tag)
+                .unwrap_or_else(|| panic!("missing default console metadata for {tag}"));
+            assert_eq!(meta.group, "none", "group for {tag}");
+        }
+    }
+
+    #[test]
     fn chat_title() {
         assert_eq!(console_title("chat"), "NVIDIA AIPerf | LLM Metrics");
         assert_eq!(console_title("dynosim_offline"), "NVIDIA AIPerf");
