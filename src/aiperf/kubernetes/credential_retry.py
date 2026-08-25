@@ -9,6 +9,8 @@ import sys
 from kubernetes_asyncio.client.exceptions import ApiException
 from rich.markup import escape
 
+from aiperf.kubernetes.environment import K8sEnvironment
+
 _AUTH_ERROR_FRAGMENTS = (
     "cannot refresh without refresh-token",
     "no valid id-token",
@@ -69,7 +71,11 @@ def is_kubectl_authentication_error(
 
 def credential_retry_delay(attempt: int) -> float:
     """Return capped exponential delay for a zero-based retry attempt."""
-    return min(2.0 * (2**attempt), 15.0)
+    settings = K8sEnvironment.CREDENTIAL_RETRY
+    return min(
+        settings.INITIAL_BACKOFF_SECONDS * (settings.BACKOFF_MULTIPLIER**attempt),
+        settings.MAX_BACKOFF_SECONDS,
+    )
 
 
 def print_credential_wait(context: str | None) -> None:

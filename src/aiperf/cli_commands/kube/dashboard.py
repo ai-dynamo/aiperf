@@ -148,6 +148,7 @@ async def _serve_dashboard(
     import webbrowser
 
     from aiperf.kubernetes.console import print_info, print_success, print_warning
+    from aiperf.kubernetes.environment import K8sEnvironment
     from aiperf.kubernetes.port_forward import (
         _drain_stream,
         cleanup_port_forward,
@@ -155,8 +156,10 @@ async def _serve_dashboard(
     )
     from aiperf.kubernetes.results import RESULTS_SERVER_PORT
 
-    initial_backoff = 1.0
-    max_backoff = 30.0
+    settings = K8sEnvironment.PORT_FORWARD
+    initial_backoff = settings.RECONNECT_INITIAL_BACKOFF_SECONDS
+    backoff_multiplier = settings.RECONNECT_BACKOFF_MULTIPLIER
+    max_backoff = settings.RECONNECT_MAX_BACKOFF_SECONDS
 
     bound_port: int | None = None
     backoff = initial_backoff
@@ -178,7 +181,7 @@ async def _serve_dashboard(
                     f"Port-forward failed: {exc}. Retrying in {backoff:.0f}s..."
                 )
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
+                backoff = min(backoff * backoff_multiplier, max_backoff)
                 pod_name = await _refresh_operator_pod(
                     manage_options, operator_namespace, fallback=pod_name
                 )
@@ -219,7 +222,7 @@ async def _serve_dashboard(
                 manage_options, operator_namespace, fallback=pod_name
             )
             await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, max_backoff)
+            backoff = min(backoff * backoff_multiplier, max_backoff)
 
     except (asyncio.CancelledError, KeyboardInterrupt):
         pass

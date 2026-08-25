@@ -20,6 +20,7 @@ from pytest import param
 from aiperf.kubernetes.controller._pod_monitoring_mixin import PodMonitoringMixin
 from aiperf.kubernetes.controller.kubernetes_pod_helpers import PodInfo
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 
 
 class _Monitor(PodMonitoringMixin):
@@ -92,6 +93,22 @@ def test_two_consecutive_unknown_snapshots_evict() -> None:
 
     assert monitor.failed_pods == ["0"]
     assert monitor._pods["0"].failed is True
+
+
+def test_configured_confirmation_poll_count_is_honored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        K8sEnvironment.POD_MONITOR, "UNHEALTHY_CONFIRMATION_POLLS", 3
+    )
+    monitor = _Monitor()
+
+    _observe(monitor, PodPhase.UNKNOWN)
+    _observe(monitor, PodPhase.UNKNOWN)
+    assert monitor.failed_pods == []
+
+    _observe(monitor, PodPhase.UNKNOWN)
+    assert monitor.failed_pods == ["0"]
 
 
 @pytest.mark.parametrize(

@@ -1360,10 +1360,15 @@ class TestWaitForControllerPodReady:
             ]
         )
 
-        # Fast-forward sleeps
-        async def _fast_sleep(_: float) -> None:
-            return None
+        delays: list[float] = []
 
+        async def _fast_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr(
+            "aiperf.kubernetes.client_pods.K8sEnvironment.CONTROLLER_POD_READY.POLL_INTERVAL_SECONDS",
+            2.75,
+        )
         monkeypatch.setattr("aiperf.kubernetes.client.asyncio.sleep", _fast_sleep)
 
         with patch(
@@ -1374,6 +1379,7 @@ class TestWaitForControllerPodReady:
                 api, "default", "j-1", timeout=300
             )
         assert result == "ctrl-0"
+        assert delays == [2.75]
 
     @pytest.mark.asyncio
     async def test_times_out(self, monkeypatch) -> None:

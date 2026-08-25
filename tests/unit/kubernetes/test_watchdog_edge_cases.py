@@ -561,10 +561,16 @@ class TestWatchdogThresholdEnvBinding:
     AIPERF_K8S_WATCH_* CR-poll settings.
     """
 
-    def test_defaults_come_from_environment(self):
+    def test_defaults_come_from_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from aiperf.kubernetes.environment import K8sEnvironment
         from aiperf.kubernetes.watchdog import BenchmarkWatchdog
 
+        monkeypatch.setattr(K8sEnvironment.WATCHDOG, "EVENT_CHECK_INTERVAL_TICKS", 7)
+        monkeypatch.setattr(
+            K8sEnvironment.WATCHDOG, "RESOURCE_CHECK_INTERVAL_TICKS", 9
+        )
         wd = BenchmarkWatchdog(object(), "ns")
         env = K8sEnvironment.WATCHDOG
         assert wd.poll_interval == env.POLL_INTERVAL_SECONDS
@@ -572,6 +578,8 @@ class TestWatchdogThresholdEnvBinding:
         assert wd.pending_threshold == env.PENDING_THRESHOLD_SECONDS
         assert wd.pending_critical_threshold == env.PENDING_CRITICAL_THRESHOLD_SECONDS
         assert wd.crashloop_threshold == env.CRASHLOOP_RESTART_THRESHOLD
+        assert wd._event_check_interval == 7
+        assert wd._resource_check_interval == 9
 
     def test_explicit_kwargs_still_win(self):
         from aiperf.kubernetes.watchdog import BenchmarkWatchdog

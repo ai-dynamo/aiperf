@@ -12,6 +12,7 @@ import pytest
 from aiperf.cli_commands.kube.dashboard import dashboard
 from aiperf.config.kube import KubeManageOptions
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.results import RESULTS_SERVER_PORT
 
 
@@ -204,15 +205,27 @@ class TestDashboardCommand:
         # Second call pins the local port that kubectl handed back (54321).
         assert mock_start.call_args_list[1][0][2] == 54321
 
-    async def test_dashboard_retries_on_start_failure(
-        self, patched_k8s: AsyncMock, manage_options: KubeManageOptions
+    async def test_dashboard_retries_with_configured_backoff(
+        self,
+        patched_k8s: AsyncMock,
+        manage_options: KubeManageOptions,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A RuntimeError from start_port_forward triggers a backoff and retry."""
+        """Port-forward retries use the configured multiplier and cap."""
+        settings = K8sEnvironment.PORT_FORWARD
+        monkeypatch.setattr(settings, "RECONNECT_INITIAL_BACKOFF_SECONDS", 4.0)
+        monkeypatch.setattr(settings, "RECONNECT_BACKOFF_MULTIPLIER", 3.0)
+        monkeypatch.setattr(settings, "RECONNECT_MAX_BACKOFF_SECONDS", 10.0)
         success_proc = _make_proc()
         mock_start = AsyncMock(
-            side_effect=[RuntimeError("kubectl refused"), (success_proc, 54321)]
+            side_effect=[
+                RuntimeError("kubectl refused"),
+                RuntimeError("kubectl still refused"),
+                (success_proc, 54321),
+            ]
         )
         mock_cleanup = AsyncMock()
+        sleep = AsyncMock()
         with (
             patch(
                 "aiperf.kubernetes.port_forward.start_port_forward",
@@ -223,10 +236,10 @@ class TestDashboardCommand:
                 new=mock_cleanup,
             ),
             patch("webbrowser.open") as mock_browser,
-            patch("asyncio.sleep", new=AsyncMock()),
+            patch("asyncio.sleep", new=sleep),
         ):
             await dashboard(manage_options=manage_options)
 
-        assert mock_start.call_count == 2
-        # Browser opens only once, on the first successful connect.
+        assert mock_start.call_count == 3
+        assert [await_call.args[0] for await_call in sleep.await_args_list] == [4.0, 10.0]
         mock_browser.assert_called_once_with("http://localhost:54321")

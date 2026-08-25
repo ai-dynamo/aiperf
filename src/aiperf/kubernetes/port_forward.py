@@ -66,11 +66,16 @@ async def _monitor_pod_liveness(
     pod_name: str,
     proc: asyncio.subprocess.Process,
     *,
-    check_interval: float = 10.0,
+    check_interval: float | None = None,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> None:
     """Background task: kill port-forward if pod disappears."""
+    check_interval = (
+        K8sEnvironment.PORT_FORWARD.POD_LIVENESS_INTERVAL_SECONDS
+        if check_interval is None
+        else check_interval
+    )
     cmd_base = ["kubectl", "get", "pod", pod_name, "-n", namespace, "-o", "name"]
     if kubeconfig:
         cmd_base.extend(["--kubeconfig", kubeconfig])
@@ -373,7 +378,7 @@ async def start_port_forward(
 async def _wait_for_api_ready(
     local_port: int,
     proc: asyncio.subprocess.Process,
-    check_interval: float = 1.0,
+    check_interval: float | None = None,
 ) -> None:
     """Wait for the API service to respond to HTTP requests.
 
@@ -384,6 +389,11 @@ async def _wait_for_api_ready(
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
+    check_interval = (
+        K8sEnvironment.PORT_FORWARD.API_PROBE_INTERVAL_SECONDS
+        if check_interval is None
+        else check_interval
+    )
     url = f"http://127.0.0.1:{local_port}/health"
 
     # Give kubectl a moment to establish the tunnel
@@ -391,7 +401,10 @@ async def _wait_for_api_ready(
 
     connector = create_tcp_connector()
     async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=5), connector=connector
+        timeout=aiohttp.ClientTimeout(
+            total=K8sEnvironment.PORT_FORWARD.API_PROBE_REQUEST_TIMEOUT_SECONDS
+        ),
+        connector=connector,
     ) as session:
         while True:
             # Check if port-forward process died

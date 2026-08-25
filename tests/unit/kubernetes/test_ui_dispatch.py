@@ -14,9 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import MessageType
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.ui_dispatch import (
     API_WS_PATH,
-    WS_MAX_RETRIES,
     WS_MESSAGE_TYPES,
     print_progress_message,
     print_realtime_metrics,
@@ -50,9 +50,6 @@ class TestConstants:
 
     def test_ws_message_types_length(self) -> None:
         assert len(WS_MESSAGE_TYPES) == 6
-
-    def test_ws_max_retries_value(self) -> None:
-        assert WS_MAX_RETRIES == 10
 
     def test_api_ws_path_value(self) -> None:
         assert API_WS_PATH == "/ws"
@@ -375,7 +372,10 @@ class TestStreamProgress:
         mock_print_step: MagicMock,
         mock_logger: MagicMock,
         mock_stream_api: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(K8sEnvironment.PROGRESS_STREAM, "WS_MAX_RETRIES", 17)
+
         await stream_progress("ws://localhost:9090/ws")
 
         mock_print_step.assert_called_once_with("Streaming progress...")
@@ -383,7 +383,7 @@ class TestStreamProgress:
         _, kwargs = mock_stream_api.call_args
         assert mock_stream_api.call_args[0][0] == "ws://localhost:9090/ws"
         assert kwargs["message_types"] == WS_MESSAGE_TYPES
-        assert kwargs["max_retries"] == WS_MAX_RETRIES
+        assert kwargs["max_retries"] == 17
 
     @pytest.mark.asyncio
     @patch(_STREAM_FROM_API, new_callable=AsyncMock)

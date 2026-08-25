@@ -72,7 +72,7 @@ async def stream_progress_from_api(
     ws_url: str,
     on_message: Callable[[dict], Awaitable[bool]],
     message_types: list[str],
-    max_retries: int = 10,
+    max_retries: int | None = None,
 ) -> None:
     """Stream progress messages from the controller API WebSocket with auto-reconnection.
 
@@ -110,6 +110,11 @@ async def stream_progress_from_api(
             The original ``aiohttp.ClientError`` / ``TimeoutError``
             is preserved as ``__cause__``.
     """
+    max_retries = (
+        K8sEnvironment.PROGRESS_STREAM.WS_MAX_RETRIES
+        if max_retries is None
+        else max_retries
+    )
     retry_count = 0
     backoff = _WS_INITIAL_BACKOFF
 

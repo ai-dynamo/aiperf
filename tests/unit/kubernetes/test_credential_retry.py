@@ -17,6 +17,7 @@ from aiperf.kubernetes.credential_retry import (
     is_kubeconfig_authentication_error,
     is_kubectl_authentication_error,
 )
+from aiperf.kubernetes.environment import K8sEnvironment
 
 
 @pytest.mark.parametrize(
@@ -94,12 +95,17 @@ def test_interactive_wait_requires_input_and_output_ttys() -> None:
         assert interactive_credential_wait_enabled() is True
 
 
-def test_credential_retry_delay_caps_at_fifteen_seconds() -> None:
-    assert [credential_retry_delay(attempt) for attempt in range(6)] == [
-        2.0,
-        4.0,
-        8.0,
-        15.0,
-        15.0,
-        15.0,
+def test_credential_retry_delay_uses_configured_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = K8sEnvironment.CREDENTIAL_RETRY
+    monkeypatch.setattr(settings, "INITIAL_BACKOFF_SECONDS", 3.0)
+    monkeypatch.setattr(settings, "BACKOFF_MULTIPLIER", 3.0)
+    monkeypatch.setattr(settings, "MAX_BACKOFF_SECONDS", 20.0)
+
+    assert [credential_retry_delay(attempt) for attempt in range(4)] == [
+        3.0,
+        9.0,
+        20.0,
+        20.0,
     ]
