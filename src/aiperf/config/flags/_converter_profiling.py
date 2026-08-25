@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import gzip
+import math
 import zlib
 from typing import TYPE_CHECKING, Any
 
@@ -169,21 +170,26 @@ def _profiling_phase_type(
         return PhaseType.FIXED_SCHEDULE
 
     user_centric_needed = "users" in search_dims
+    user_centric_selected = cli.user_centric_rate is not None or user_centric_needed
     rate_shape_needed = bool(set(search_dims) & _RATE_SHAPE_SEARCH_FIELDS)
 
     # UserCentricPhase has no 'smoothness' field and GammaPhase has no
     # 'users' field -- no phase type can satisfy both, unlike users+rate
     # (UserCentricPhase legitimately has rate/rate_ramp/rate_series too,
-    # inherited from RatePhaseConfig).
-    if user_centric_needed and "smoothness" in search_dims:
+    # inherited from RatePhaseConfig). Gated on user_centric_selected (not
+    # just user_centric_needed) so an explicit --user-centric-rate without
+    # a 'users' dimension is caught too: it still resolves to USER_CENTRIC,
+    # which still has no 'smoothness' field for a searched 'smoothness'
+    # dimension to land on.
+    if user_centric_selected and "smoothness" in search_dims:
         raise ValueError(
-            "--search-space targets both 'users' (a user-centric-shaped "
-            "benchmark) and 'smoothness' (a gamma-shaped benchmark). A "
-            "benchmark can only have one shape at a time -- search these in "
-            "separate runs."
+            "--search-space targets 'smoothness' (a gamma-shaped benchmark), "
+            "but --user-centric-rate (or a 'users' dimension) selects a "
+            "user-centric-shaped benchmark. A benchmark can only have one "
+            "shape at a time -- search these in separate runs."
         )
 
-    if cli.user_centric_rate is not None or user_centric_needed:
+    if user_centric_selected:
         return PhaseType.USER_CENTRIC
     if (
         cli.request_rate is not None
@@ -253,7 +259,7 @@ def _apply_search_space_shape_seeds(
                 "'users:1,50:int'), not ':real' -- the number of simulated "
                 "users must be a whole number."
             )
-        if users_lo < 1:
+        if not math.isfinite(users_lo) or users_lo < 1:
             raise ValueError(
                 f"--search-space 'users' lower bound must be >= 1 (got "
                 f"{users_lo!r}); the number of simulated users can't be "
@@ -271,7 +277,7 @@ def _apply_search_space_shape_seeds(
         has_base_rate = "rate" in prof or "rate_series" in prof
         if "rate" in search_dims:
             rate_lo, _rate_kind = search_dims["rate"]
-            if rate_lo <= 0:
+            if not math.isfinite(rate_lo) or rate_lo <= 0:
                 raise ValueError(
                     f"--search-space 'rate' lower bound must be > 0 (got "
                     f"{rate_lo!r}); rate must be positive."

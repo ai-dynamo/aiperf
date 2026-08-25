@@ -896,6 +896,46 @@ class TestSearchSpacePhaseShapeInference:
         with pytest.raises(ValueError, match="only have one shape"):
             build_profiling(user)
 
+    def test_explicit_user_centric_rate_and_smoothness_raises_clear_conflict_error(
+        self,
+    ) -> None:
+        """The same conflict as 'users'+'smoothness', but triggered via an
+        explicit --user-centric-rate instead of a 'users' search-space
+        dimension -- either way the phase resolves to USER_CENTRIC, which
+        still has no 'smoothness' field. Previously only the 'users'-in-
+        search-space trigger was checked, so this combo built a
+        USER_CENTRIC phase that would only fail later, at the planner."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only have one shape"):
+            build_profiling(user)
+
+    def test_rate_nan_lower_bound_raises_clear_error(self) -> None:
+        """A NaN lower bound bypasses 'rate_lo <= 0' (NaN comparisons are
+        always False), so it must be explicitly rejected with
+        math.isfinite() rather than silently seeding prof["rate"] = nan."""
+        loadgen = CLIConfig(
+            search_space=["rate:nan,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_users_nan_lower_bound_raises_clear_error(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:nan,50:int"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
     def test_explicit_request_rate_still_wins_without_search_space(self) -> None:
         """Regression guard: explicit --request-rate path (no search-space)
         is unaffected by the new inference logic."""
