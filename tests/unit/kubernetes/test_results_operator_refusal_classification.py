@@ -16,7 +16,7 @@ Two shapes are covered:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
@@ -24,6 +24,7 @@ from pytest import param
 
 from aiperf.kubernetes import results_operator as sweeps
 from aiperf.kubernetes.results_operator import (
+    _accepts_kwarg,
     _collect_downloads,
     _get_no_redirects,
     _get_with_request_timeout,
@@ -148,76 +149,73 @@ class TestCollectDownloadsClassification:
 # ============================================================
 
 
-class _TypeErrorSession:
-    """Test double whose ``get`` rejects the control kwargs."""
+class _NarrowSession:
+    """Test double whose ``get`` accepts neither control kwarg."""
 
-    def __init__(self, message: str) -> None:
-        self._message = message
+    def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def get(self, url: str, **kwargs: object) -> str:
-        if kwargs:
-            self.calls.append(dict(kwargs))
-            raise TypeError(self._message)
-        self.calls.append({})
+    def get(self, url: str, headers: dict[str, str] | None = None) -> str:
+        self.calls.append({"headers": headers})
         return url
 
 
-class _RejectingClientSession(aiohttp.ClientSession):
-    """Real client whose ``get`` raises the same shape of ``TypeError``."""
+class _WideSession:
+    """Test double whose ``get`` accepts arbitrary keywords."""
 
-    def __init__(self, message: str) -> None:
-        super().__init__()
-        self._message = message
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
 
-    def get(self, url: str, **kwargs: object) -> str:  # type: ignore[override]
-        raise TypeError(self._message)
+    def get(self, url: str, **kwargs: object) -> str:
+        self.calls.append(dict(kwargs))
+        return url
 
 
 class TestRequestControlFallbacks:
     """Test-double fallbacks must never relax controls on a real client."""
 
-    def test_no_redirect_fallback_applies_to_test_double(self) -> None:
-        session = _TypeErrorSession(
-            "get() got an unexpected keyword argument 'allow_redirects'"
-        )
+    def test_real_client_session_accepts_both_controls(self) -> None:
+        """A real client always takes the kwarg path, so controls always apply."""
+        assert _accepts_kwarg(aiohttp.ClientSession.get, "allow_redirects") is True
+        assert _accepts_kwarg(aiohttp.ClientSession.get, "timeout") is True
+
+    def test_narrow_signature_drops_control_kwargs(self) -> None:
+        assert _accepts_kwarg(_NarrowSession().get, "allow_redirects") is False
+        assert _accepts_kwarg(_NarrowSession().get, "timeout") is False
+
+    def test_unreadable_signature_is_assumed_to_accept(self) -> None:
+        assert _accepts_kwarg(MagicMock(), "allow_redirects") is True
+
+    def test_no_redirect_fallback_applies_to_narrow_double(self) -> None:
+        session = _NarrowSession()
+
+        assert _get_no_redirects(session, "http://x", headers={"A": "b"}) == "http://x"
+        assert session.calls == [{"headers": {"A": "b"}}]
+
+    def test_no_redirect_passes_control_to_wide_double(self) -> None:
+        session = _WideSession()
 
         assert _get_no_redirects(session, "http://x") == "http://x"
-        assert session.calls == [{"allow_redirects": False}, {}]
+        assert session.calls == [{"allow_redirects": False}]
 
-    def test_timeout_fallback_applies_to_test_double(self) -> None:
-        session = _TypeErrorSession(
-            "get() got an unexpected keyword argument 'timeout'"
-        )
+    def test_timeout_fallback_applies_to_narrow_double(self) -> None:
+        session = _NarrowSession()
+
+        assert _get_with_request_timeout(session, "http://x") == "http://x"
+        assert session.calls == [{"headers": None}]
+
+    def test_timeout_passes_control_to_wide_double(self) -> None:
+        session = _WideSession()
 
         assert _get_with_request_timeout(session, "http://x") == "http://x"
         assert list(session.calls[0]) == ["timeout"]
-        assert session.calls[1] == {}
 
-    def test_unrelated_type_error_still_propagates(self) -> None:
-        session = _TypeErrorSession("unhashable type: 'dict'")
+    def test_type_error_from_inside_get_is_not_swallowed(self) -> None:
+        """A same-named TypeError raised deeper in the stack must propagate."""
+
+        class _Exploding:
+            def get(self, url: str, **kwargs: object) -> str:
+                raise TypeError("allow_redirects: unhashable type: 'dict'")
 
         with pytest.raises(TypeError, match="unhashable"):
-            _get_no_redirects(session, "http://x")
-
-    @pytest.mark.asyncio
-    async def test_no_redirect_does_not_retry_on_real_client_session(self) -> None:
-        session = _RejectingClientSession(
-            "get() got an unexpected keyword argument 'allow_redirects'"
-        )
-        try:
-            with pytest.raises(TypeError, match="allow_redirects"):
-                _get_no_redirects(session, "http://x")
-        finally:
-            await session.close()
-
-    @pytest.mark.asyncio
-    async def test_timeout_does_not_retry_on_real_client_session(self) -> None:
-        session = _RejectingClientSession(
-            "get() got an unexpected keyword argument 'timeout'"
-        )
-        try:
-            with pytest.raises(TypeError, match="timeout"):
-                _get_with_request_timeout(session, "http://x")
-        finally:
-            await session.close()
+            _get_no_redirects(_Exploding(), "http://x")

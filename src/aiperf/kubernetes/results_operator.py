@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -81,45 +82,54 @@ def _is_refused_name(display_name: str) -> bool:
     )
 
 
+def _accepts_kwarg(get: Callable[..., object], name: str) -> bool:
+    """Whether ``get`` can be passed ``name`` as a keyword argument.
+
+    Asking up front replaces catching ``TypeError`` around the call: a real
+    client always accepts these kwargs, so the request controls they carry can
+    never be dropped by a same-named ``TypeError`` raised from deeper inside
+    the stack. Anything whose signature cannot be read is assumed to accept.
+    """
+    try:
+        parameters = inspect.signature(get).parameters
+    except (TypeError, ValueError):
+        return True
+    return any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            param.name == name
+            and param.kind
+            in (
+                inspect.Parameter.KEYWORD_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        )
+        for param in parameters.values()
+    )
+
+
 def _get_no_redirects(
     session: aiohttp.ClientSession,
     url: str,
     **kwargs: object,
 ) -> object:
-    """Start a GET request without redirects, including test-double fallback.
-
-    The fallback exists only for stand-in sessions whose ``get`` does not accept
-    the kwarg; a real :class:`aiohttp.ClientSession` re-raises so the
-    no-redirect control can never be silently dropped.
-    """
-    try:
+    """Start a GET request without redirects, including test-double fallback."""
+    if _accepts_kwarg(session.get, "allow_redirects"):
         return session.get(url, allow_redirects=False, **kwargs)
-    except TypeError as e:
-        if isinstance(session, aiohttp.ClientSession) or "allow_redirects" not in str(
-            e
-        ):
-            raise
-        return session.get(url, **kwargs)
+    return session.get(url, **kwargs)
 
 
 def _get_with_request_timeout(
     session: aiohttp.ClientSession,
     url: str,
 ) -> object:
-    """Start a short result API request with its configured timeout.
-
-    As with :func:`_get_no_redirects`, a real :class:`aiohttp.ClientSession`
-    re-raises rather than retrying without the timeout.
-    """
+    """Start a short result API request with its configured timeout."""
     timeout = aiohttp.ClientTimeout(
         total=K8sEnvironment.RESULTS.REQUEST_TIMEOUT_SECONDS
     )
-    try:
+    if _accepts_kwarg(session.get, "timeout"):
         return session.get(url, timeout=timeout)
-    except TypeError as e:
-        if isinstance(session, aiohttp.ClientSession) or "timeout" not in str(e):
-            raise
-        return session.get(url)
+    return session.get(url)
 
 
 async def _download_and_decompress(
