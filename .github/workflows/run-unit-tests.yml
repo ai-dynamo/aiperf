@@ -169,9 +169,17 @@ jobs:
       run: |
         make ci-install PYTHON_VERSION=3.13
         uv pip install --torch-backend cpu -e ".[botorch]"
-    - name: Run BoTorch GP regression tests
+    # Split across two steps rather than two lines of one ``run:``. ``run:``
+    # executes under ``bash -e``, so a failure in the first file would abort
+    # the step and the slow suite would never run. ``!cancelled()`` on the
+    # second overrides the implicit ``success()`` so both suites always
+    # report -- matching the Windows tiers above.
+    - name: Run BoTorch GP kernel regression tests
       run: |
         uv run pytest -n auto --dist=worksteal \
           tests/unit/orchestrator/search_planner/test_botorch_kernel.py
+    - name: Run BoTorch GP candidates_func regression tests (slow)
+      if: ${{ !cancelled() }}
+      run: |
         uv run pytest -n auto --dist=worksteal -m slow \
           tests/unit/orchestrator/search_planner/test_optuna_dsp_kernel.py
