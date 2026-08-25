@@ -637,7 +637,7 @@ fn array_value_to_json(array: &dyn arrow::array::Array, row: usize) -> Result<Va
 #[cfg(feature = "parquet")]
 fn selected_session_column(source: &ColumnarSource) -> Result<Option<&'static str>> {
     let requested = match std::env::var("AIPERF_DATASET_BASETEN_SESSION_COLUMN") {
-        Ok(value) => match value.trim() {
+        Ok(value) => match value.as_str() {
             COL_SESSION => COL_SESSION,
             COL_POOR_MAN_SESSION => COL_POOR_MAN_SESSION,
             other => {
