@@ -63,6 +63,9 @@ from aiperf.operator.client_cache import (
     try_claim_completion,
 )
 from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.handlers._completion_fetch import (
+    _split_downloaded as _split_downloaded_results,
+)
 from aiperf.operator.handlers._completion_retry import _claim_age_seconds
 from aiperf.operator.handlers._job_identity import (
     StaleAIPerfJobCallback,
@@ -174,7 +177,6 @@ _STRUCTURAL_SCHEDULING_MARKERS = (
     "volume node affinity conflict",
 )
 KEY_RESULT_FILES = DEFAULT_KEY_EXPORT_NAMES.names
-CHECKPOINTS_PREFIX = "checkpoints/"
 STARTUP_ISSUE_STATUS_KEY = "startupIssue"
 
 
@@ -967,18 +969,6 @@ def _update_worker_counts(
                 )
 
     return workers_ready, workers_succeeded, total_workers
-
-
-def _split_downloaded_results(paths: list[str]) -> tuple[list[str], list[str]]:
-    """Split downloaded result paths into final exports and checkpoint files."""
-    final_files: list[str] = []
-    checkpoint_files: list[str] = []
-    for path in paths:
-        if path.startswith(CHECKPOINTS_PREFIX):
-            checkpoint_files.append(path)
-        else:
-            final_files.append(path)
-    return final_files, checkpoint_files
 
 
 # Phases from which the results-sidecar completion path may still fire. A run

@@ -583,9 +583,7 @@ class TestSweepArtifactEncoding:
         from aiperf.kubernetes.results_operator import _download_sweep_operator_file
 
         session = _Session(_Response(body=b"should-not-download"))
-        with patch(
-            "aiperf.kubernetes.results_operator_sweeps.print_warning"
-        ) as mock_warning:
+        with patch("aiperf.kubernetes.results_operator.print_warning") as mock_warning:
             result = await _download_sweep_operator_file(
                 session,
                 api_base="http://operator",
