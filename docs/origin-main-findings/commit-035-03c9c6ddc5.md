@@ -27,13 +27,27 @@ is part of the native implementation commit.
 
 | Upstream behavior | Native evidence |
 | --- | --- |
-| Concurrent client calls complete and replies are correlated by id rather than position (`TestConcurrency`) | `accuracy_core::worker::tests::grade_batch_demuxes_out_of_order_responses` and `runtime/tests/accuracy_worker_native_path.rs::native_worker_demuxes_out_of_order_grades_and_reaps_descendants` issue two simultaneous requests and receive reversed replies. |
-| Reader EOF or protocol failure faults pending work (`TestConcurrency::test_fault_cancels_all_pending_futures` and malformed-reader cases) | `accuracy_core::worker::tests::worker_exit_is_infrastructure_error` exercises the real reader EOF path; the reader drains every registered oneshot through `fault_pending_requests`. |
-| Cleanup kills the group even if the worker leader is already exiting (`_kill` coverage) | `accuracy_core::worker::tests::shutdown_reaps_worker_process_group_descendants` and the native-path integration spawn a descendant, accept graceful leader shutdown, and assert that the descendant no longer exists. |
-| Worker-side queued-request batching and per-problem metric reconstruction (`TestHandleBatch`, `TestRunWorkerLoopBatch`, and the real LCB component test) | Python-worker-specific and already inside the canonical evaluator delegated by commit #1. The Rust port preserves its ordered batch protocol and does not duplicate Lighteval metric reconstruction in Rust. |
-| Cancellation, timeout, stale-id, and spawn/close races in `CodegenGradingWorker` | Python-client-specific lifecycle policy, not a second Rust implementation target. Rust's applicable boundary is typed reader failure and session reap; its native tests exercise those effects through an actual subprocess rather than accepting Python tests as integration parity. |
+| Concurrent client calls complete and replies are correlated by id rather than position (`TestConcurrency`) | `accuracy_core::worker::tests::grade_batch_demuxes_out_of_order_responses` issues two simultaneous requests through the supervisor transport, receives reversed replies from a real subprocess, and binds each result to its request id. |
+| Reader EOF or protocol failure faults pending and later work (`TestConcurrency::test_fault_cancels_all_pending_futures` and malformed-reader cases) | `accuracy_core::worker::tests::worker_exit_is_infrastructure_error` exercises reader EOF, while `reader_fault_before_request_rejects_the_next_request` proves an idle reader failure is retained rather than leaving the next request parked. |
+| Cleanup kills the group even if the worker leader is already exiting (`_kill` coverage) | `shutdown_reaps_worker_process_group_descendants`, `drop_signals_worker_process_group_descendants`, and `runtime/tests/accuracy_worker_native_path.rs::native_worker_grades_batch_and_reaps_descendants` spawn a real descendant and prove both graceful and drop cleanup signal the owned process group. |
+| Worker-side queued-request batching and per-problem metric reconstruction (`TestHandleBatch`, `TestRunWorkerLoopBatch`, and the real LCB component test) | Python-worker-specific and already inside the canonical evaluator delegated by commit #1. `native_worker_grades_batch_and_reaps_descendants` sends an actual two-item batch through the public Rust evaluator seam; Rust does not duplicate Lighteval metric reconstruction. |
+| Cancellation, timeout, stale-id, and spawn/close races in `CodegenGradingWorker` | Python-client-specific restart/deadline policy, not a second Rust implementation target. Rust's applicable lifecycle boundary is covered by typed reader failure, `rejected_shutdown_faults_the_session`, drop-time group signalling, and real subprocess integration; Python tests are not accepted as native integration parity. |
 
 ## Verification and review
 
-The authoritative commands and final Graham verdict are recorded in the
-campaign ledger when the exact ancestry merge and review are complete.
+Native implementation commits are `b0fe2a85d5` and `e1dd5d49f1`; the exact
+two-parent ancestry merge is `7cd1a5bf29`, whose second parent is the full
+upstream id and whose tree equals its first parent's tree. Graham's first pass
+found three Important lifecycle defects: idle reader faults were not retained,
+drop killed only the leader, and a rejected shutdown acknowledgement left a
+reusable session. Commit `429050fbf0` fixes all three. A full corrected-range
+re-review found zero Critical or Important findings: **GRAHAM APPROVED**.
+
+Verification after the fixes:
+
+- `cargo test -p aiperf-runtime --features engine --lib accuracy_core::worker`:
+  12 passed, 0 failed.
+- `cargo test -p aiperf-runtime --features engine --test accuracy_worker_native_path`:
+  1 passed, 0 failed.
+- `cargo fmt --all -- --check`, `tools/check_agent_files_sync.py`,
+  `tools/check_docs_current.py`, and exact-range whitespace checks: passed.

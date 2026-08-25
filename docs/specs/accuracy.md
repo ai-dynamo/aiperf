@@ -40,16 +40,19 @@ projection (see [runner-protocol.md](runner-protocol.md)).
 a dedicated reader task through an `id -> oneshot sender` table. Replies may
 arrive in any order; each waiter receives only the response carrying its request
 id. EOF, malformed JSON, missing ids, and read failures drain the table with one
-typed infrastructure error so no submitted request remains parked behind a dead
-reader. The application-facing `AccuracyEvaluator` remains the sequential
+typed infrastructure error and retain that failure for later submissions, so no
+request can remain parked behind a reader that failed while the table was idle.
+The application-facing `AccuracyEvaluator` remains the sequential
 control-plane trait; the supervisor transport itself is safe for overlapping
 grade requests.
 
-On Unix the evaluator starts a new session. Shutdown and fault cleanup close its
-stdin, wait for the leader within a finite deadline, send `SIGKILL` to the whole
-process group even when the leader has already exited, and wait until the group
-is absent. This prevents Lighteval sandbox descendants from surviving their
-owned evaluator session. Non-Unix cleanup retains child-only process handling.
+On Unix the evaluator starts a new session. Async shutdown and fault cleanup
+close its stdin, wait for the leader within a finite deadline, send `SIGKILL` to
+the whole process group even when the leader has already exited, and wait until
+the group is absent. Synchronous drop aborts the reader tasks and signals that
+same process group instead of killing only the leader. This prevents Lighteval
+sandbox descendants from surviving their owned evaluator session. Non-Unix
+cleanup retains child-only process handling.
 
 ### Sharded capture, single grade
 
@@ -96,5 +99,5 @@ the public CLI.
   and `rust/cli/src/model/config.rs` (`cfg.accuracy` serialization).
 - `rust/runtime/src/engine/execute.rs` (shard capture and single-grade join).
 - `rust/e2e-tests/tests/test_accuracy_mock.rs`.
-- `rust/runtime/tests/accuracy_worker_native_path.rs` (real subprocess response
-  demultiplexing and Unix descendant reaping).
+- `rust/runtime/tests/accuracy_worker_native_path.rs` (real subprocess batch
+  grading and Unix descendant reaping).

@@ -60,9 +60,9 @@
 
 **Interfaces:**
 - Consumes: public `PythonEvaluator::spawn`, the evaluator protocol, and the completed #32/#33 cache-bust/endpoint policy fields.
-- Produces: a real Rust-launched subprocess test covering reversed replies and descendant reap under `--features engine`.
+- Produces: a real Rust-launched subprocess test covering public two-item batch grading and descendant reap under `--features engine`; reversed-reply demultiplexing stays in the real-subprocess unit test where the private transport can be driven concurrently without adding a test-only public API.
 
-- [x] Add the integration fixture module and assertions for two request identities plus descendant disappearance.
+- [x] Add the integration fixture module and assertions for two public batch items plus descendant disappearance.
 - [x] Run the engine-focused build, repair the #33 endpoint policy path through a `pub(crate)` re-export, and initialize #32's `cache_bust_target` in the engine test fixture.
 - [x] Run `cargo test -p aiperf-runtime --features engine --lib accuracy_core::worker` and observe 9 passing tests.
 - [x] Run `cargo test -p aiperf-runtime --features engine --test accuracy_worker_native_path` and observe 1 passing test.
@@ -80,8 +80,8 @@
 - Consumes: exact upstream commit `03c9c6ddc5e6227782e53ded177f1227d332af48` and the code range `df4237e7ce..HEAD`.
 - Produces: a two-parent merge, upstream-to-native test mapping, verification receipt, and zero unresolved Graham findings.
 
-- [ ] Commit the spec, plan, and upstream semantic test map.
-- [ ] Create an `ours`-tree merge whose exact second parent is `03c9c6ddc5e6227782e53ded177f1227d332af48`; verify the merge changes no tree paths.
-- [ ] Perform two Graham passes over every changed Rust hunk, fix every validated Critical/Important finding, and re-review the corrected range.
-- [ ] Re-run the focused engine unit and native integration commands, formatting, docs checks, and exact-range diff checks.
-- [ ] Record the concrete commit ids, counts, and final review verdict in the campaign ledger.
+- [x] Commit the spec, plan, and upstream semantic test map.
+- [x] Create an `ours`-tree merge whose exact second parent is `03c9c6ddc5e6227782e53ded177f1227d332af48`; verify the merge changes no tree paths.
+- [x] Perform two Graham passes over every changed Rust hunk, fix every validated Critical/Important finding, and re-review the corrected range.
+- [x] Re-run the focused engine unit and native integration commands, formatting, docs checks, and exact-range diff checks.
+- [x] Record the concrete commit ids, counts, and final review verdict in the campaign ledger.
