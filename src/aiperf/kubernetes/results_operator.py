@@ -114,25 +114,6 @@ async def _download_operator_file(
         return None
 
 
-async def _verify_operator_health(api_base: str) -> bool:
-    from aiperf.transports.aiohttp_client import create_tcp_connector
-
-    timeout = aiohttp.ClientTimeout(
-        total=K8sEnvironment.RESULTS.CONTROL_REQUEST_TIMEOUT_SECONDS
-    )
-    connector = create_tcp_connector()
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-        try:
-            async with session.get(f"{api_base}/healthz") as resp:
-                if resp.status != 200:
-                    print_error("Operator results server not healthy")
-                    return False
-        except aiohttp.ClientError as e:
-            print_error(f"Could not connect to operator results server: {e}")
-            return False
-    return True
-
-
 async def _list_operator_files(
     session: aiohttp.ClientSession,
     *,
