@@ -112,7 +112,8 @@ pub struct Turn {
     /// Exact validated input token IDs for a token-native endpoint.
     #[serde(default)]
     pub raw_token_ids: Option<Vec<u32>>,
-    /// Preformatted OpenAI-compatible messages spliced verbatim when non-empty.
+    /// Preformatted OpenAI-compatible messages spliced verbatim when present;
+    /// an explicit empty list is a no-op delta.
     pub raw_messages: Option<Vec<Value>>,
     /// Preformatted OpenAI-compatible tools.
     pub raw_tools: Option<Vec<Value>>,
