@@ -48,7 +48,7 @@ implementation, test run, or review.
 | 20 | `446d2cd4b3` | empty raw_messages delta | complete | applicable | Merged in `38cba410fd`; native endpoint behavior and integration coverage reviewed. |
 | 21 | `20eb25626a` | docstring policy | complete | not-applicable | Merged in `c56a407c25`; contributor-doc guidance only. |
 | 22 | `1d1829540b` | structured cache-bust | complete | already-covered | Merged in `7bb2f67882`; native structured coverage reviewed. |
-| 23 | `fc7bbf3bdd` | DAG branches | pending | already-covered | Graph-IR is the replacement architecture; needs behavior-level regression only. |
+| 23 | `fc7bbf3bdd` | DAG branches | complete | already-covered | Merged in `26c5f285d9`; native Graph-IR/AgentX branch and join regression reviewed. |
 | 24 | `f8c8e36533` | BranchStats test | pending | not-applicable | Test-only Python correction. |
 | 25 | `5a24e0d7c7` | average error-rate SLA | pending | applicable | Search still projects p99/unscaled fractional threshold; pair with #48. |
 | 26 | `093038afab` | JSON-array endpoint responses | pending | already-covered | Native typed array parsers cover the contract. |
