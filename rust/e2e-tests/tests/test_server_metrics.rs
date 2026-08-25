@@ -146,10 +146,24 @@ async fn sglang_speculative_console() {
         console.contains("NVIDIA AIPerf | Server Metrics: Speculative Decoding"),
         "speculative console table missing:\n{console}"
     );
-    assert!(console.contains("Accept Rate (%)"));
-    assert!(console.contains("75.0"));
-    assert!(console.contains("Accept Length"));
-    assert!(console.contains("2.50"));
+    let row_cells = |metric: &str| {
+        console
+            .lines()
+            .find(|line| line.contains(metric))
+            .expect("speculative metric row exists")
+            .split('│')
+            .map(str::trim)
+            .filter(|cell| !cell.is_empty())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        row_cells("Accept Rate (%)"),
+        ["Accept Rate (%)", "75.0", "75.0", "75.0", "75.0", "75.0"]
+    );
+    assert_eq!(
+        row_cells("Accept Length"),
+        ["Accept Length", "2.50", "2.50", "2.50", "2.50", "2.50"]
+    );
 
     let server_metrics = server_metrics_json(&r);
     let rate_series = server_metrics["metrics"]["sglang:spec_accept_rate"]["series"]
