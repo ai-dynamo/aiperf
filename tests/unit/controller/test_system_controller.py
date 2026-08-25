@@ -17,7 +17,7 @@ from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.messages.service_messages import BaseServiceErrorMessage
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.system_controller import SystemController
-from aiperf.plugin.enums import AccuracyBenchmarkType
+from aiperf.plugin.enums import AccuracyBenchmarkType, ServiceType
 from tests.unit.controller.conftest import MockTestException
 
 
@@ -76,6 +76,45 @@ class TestSystemController:
         assert mock_service_manager.wait_for_all_services_registration.called
         assert system_controller._start_profiling_all_services.called
         assert system_controller._profile_configure_all_services.called
+
+    @pytest.mark.asyncio
+    async def test_dispatchable_pod_wait_uses_configured_grace_period(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from aiperf.controller import system_controller as system_controller_module
+
+        service_manager = MagicMock()
+        service_manager.service_map = {
+            ServiceType.WORKER_GROUP_MANAGER: ["wgm-0", "wgm-1"]
+        }
+        system_controller.service_manager = service_manager
+        monkeypatch.setattr(system_controller, "_is_kubernetes", lambda: True)
+        monkeypatch.setattr(
+            system_controller, "_ready_worker_pod_count", MagicMock(return_value=1)
+        )
+        warning = MagicMock()
+        monkeypatch.setattr(system_controller, "warning", warning)
+        monkeypatch.setattr(Environment.DATASET, "CONFIGURATION_TIMEOUT", 100.0)
+        monkeypatch.setattr(
+            Environment.WORKER, "DISPATCHABLE_POD_GRACE_PERIOD_SECONDS", 11.0
+        )
+        monkeypatch.setattr(Environment.WORKER, "STATUS_SUMMARY_INTERVAL", 0.625)
+        sleep = AsyncMock()
+        monkeypatch.setattr(
+            system_controller_module,
+            "time",
+            MagicMock(perf_counter=MagicMock(side_effect=[100.0, 107.0, 111.0])),
+        )
+        monkeypatch.setattr(
+            system_controller_module, "asyncio", MagicMock(sleep=sleep)
+        )
+
+        await system_controller._wait_for_dispatchable_worker_pods()
+
+        sleep.assert_awaited_once_with(0.625)
+        assert "after 11.0s" in warning.call_args.args[0]
 
     @pytest.mark.asyncio
     async def test_service_error_aborts_active_profiling(

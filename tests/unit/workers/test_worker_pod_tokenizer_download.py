@@ -17,6 +17,7 @@ import tarfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 import zstandard
@@ -105,6 +106,55 @@ async def test_503_then_success(tmp_path: Path) -> None:
         )
         assert state["requests"] == 3
     assert (out / "tokenizer.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_retry_backoff_and_timeout_use_runtime_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = _make_bundle({"tokenizer.json": b"{}"})
+    fetch = AsyncMock(side_effect=[None, None, bundle])
+    sleep = AsyncMock()
+    session = MagicMock()
+    session_context = MagicMock()
+    session_context.__aenter__ = AsyncMock(return_value=session)
+    session_context.__aexit__ = AsyncMock(return_value=None)
+    client_session = MagicMock(return_value=session_context)
+    monkeypatch.setattr(worker_pod_tokenizer_download, "_fetch_bundle", fetch)
+    monkeypatch.setattr(worker_pod_tokenizer_download.asyncio, "sleep", sleep)
+    monkeypatch.setattr(
+        worker_pod_tokenizer_download, "create_tcp_connector", MagicMock()
+    )
+    monkeypatch.setattr(
+        worker_pod_tokenizer_download.aiohttp, "ClientSession", client_session
+    )
+    monkeypatch.setattr(
+        worker_pod_tokenizer_download.Environment.TOKENIZER,
+        "DOWNLOAD_INITIAL_BACKOFF_SECONDS",
+        0.75,
+    )
+    monkeypatch.setattr(
+        worker_pod_tokenizer_download.Environment.TOKENIZER,
+        "DOWNLOAD_MAX_BACKOFF_SECONDS",
+        1.0,
+    )
+    monkeypatch.setattr(
+        worker_pod_tokenizer_download.Environment.TOKENIZER,
+        "DOWNLOAD_REQUEST_TIMEOUT_SECONDS",
+        17.5,
+    )
+
+    out = await download_tokenizer(
+        api_base_url="http://operator",
+        name="gpt2",
+        dest_root=tmp_path,
+        max_retries=3,
+        logger=logging.getLogger("test"),
+    )
+
+    assert (out / "tokenizer.json").exists()
+    assert sleep.await_args_list == [call(0.75), call(1.0)]
+    assert client_session.call_args.kwargs["timeout"].total == 17.5
 
 
 @pytest.mark.asyncio

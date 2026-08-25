@@ -84,7 +84,7 @@ class TestWorkerFloor:
 
 class TestRouterDoesNotDecideTheBreach:
     @pytest.mark.asyncio
-    async def test_evict_stale_workers_task_stale_heartbeat_evicts_via_warning_not_error(
+    async def test_breach_is_left_for_timing_manager(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Eviction is reported at WARNING; the floor breach is left for TimingManager (never ERROR)."""
