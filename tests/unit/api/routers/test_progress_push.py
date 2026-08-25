@@ -508,7 +508,7 @@ async def test_push_aiperfjob_status_current_phase_is_a_key_of_emitted_phases(
     """currentPhase must always resolve inside the phases map it ships with.
 
     A phase that has started but not yet sent a request wins the
-    most-recently-started comparison while ``_build_phase_progress`` drops it,
+    most-recently-started comparison while ``build_phase_progress`` drops it,
     so the push has to emit a zeroed entry rather than a dangling pointer.
     """
     from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats

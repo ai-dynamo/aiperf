@@ -40,6 +40,8 @@ from aiperf.controller.system_controller_models import (
     AggregateWorkerStatus,
     build_aggregate_worker_status,
 )
+from aiperf.kubernetes.crd_models import build_phase_progress
+from aiperf.kubernetes.phase import as_phase
 
 ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
 
@@ -663,16 +665,14 @@ def _build_phases_payload(
     winner while being dropped from the map, so a zeroed entry is emitted for
     it here rather than loosening the shared builder.
     """
-    from aiperf.operator.handlers.monitor import _build_phase_progress
-
     phases_data: dict[str, Any] = {}
     for name, stats in phases.items():
-        if phase_progress := _build_phase_progress(stats):
+        if phase_progress := build_phase_progress(stats):
             phases_data[name] = phase_progress.to_k8s_dict()
 
     current_phase = _current_phase_name(phases)
     if current_phase is not None and current_phase not in phases_data:
-        zeroed = _build_phase_progress(phases[current_phase], allow_empty=True)
+        zeroed = build_phase_progress(phases[current_phase], allow_empty=True)
         if zeroed is None:
             return phases_data, None
         phases_data[current_phase] = zeroed.to_k8s_dict()
@@ -711,7 +711,6 @@ async def _write_status_patch(
     from kubernetes_asyncio.client.exceptions import ApiException
 
     from aiperf.kubernetes.cr_refs import AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION
-    from aiperf.operator.handlers.monitor import _as_phase
 
     ref = {
         "group": AIPERF_GROUP,
@@ -730,7 +729,7 @@ async def _write_status_patch(
         )
         return
 
-    if _as_phase(observed_phase).is_terminal:
+    if as_phase(observed_phase).is_terminal:
         logger.debug(
             "Skipping status push for %s/%s: CR is already terminal (%s)",
             namespace,
