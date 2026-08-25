@@ -106,6 +106,7 @@ read the record for the subsystem you are touching.
 | [telemetry.md](telemetry.md) | Side-channel measurement: GPU telemetry, server metrics, and network latency, feeding values into the metrics seam. |
 | [native-gpu-telemetry.md](native-gpu-telemetry.md) | Planned explicit native NVML and AMD SMI collectors over the existing Rust GPU telemetry source, phase-boundary, and accumulation seams, with no automatic fallback. |
 | [exporters.md](exporters.md) | The native output plane: the typed report core and the static set of `Exporter` sinks behind one trait. |
+| [2026-08-25-native-sglang-speculative-console.md](2026-08-25-native-sglang-speculative-console.md) | Approved native profile-console port for SGLang speculative-decoding gauges: configured-model and leader-rank selection, distinct endpoint/label rows, finite summaries, percent display scaling, and inactive-gauge suppression. |
 | [dataset-analysis.md](dataset-analysis.md) | Built `--dry-run` analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse (ideal and finite-capacity), and the real execution timeline (concurrency, throughput, backlog) distilled from a dry run's records, emitted as `dataset_analysis.{txt,json,csv,html}`. |
 | [accuracy.md](accuracy.md) | The Rust dispatch/capture vs pinned-Python grading split, the injected evaluator seam, and sharded capture with a single grade. |
 

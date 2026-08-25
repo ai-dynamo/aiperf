@@ -767,6 +767,10 @@ Measurement and output:
   phase-boundary, and accumulation seams, with no automatic fallback.
 - [`docs/specs/exporters.md`](docs/specs/exporters.md) — the typed report core and the
   static set of `Exporter` sinks behind one trait.
+- [`docs/specs/2026-08-25-native-sglang-speculative-console.md`](docs/specs/2026-08-25-native-sglang-speculative-console.md) —
+  approved native profile-console port for SGLang speculative-decoding gauges:
+  configured-model and leader-rank selection, distinct endpoint/label rows,
+  finite summaries, percent display scaling, and inactive-gauge suppression.
 - [`docs/specs/accuracy.md`](docs/specs/accuracy.md) — the Rust dispatch/capture vs
   pinned-Python grading split, the injected evaluator seam, and sharded capture
   with a single grade.
