@@ -1242,6 +1242,62 @@ class TestProfileCompleteAndCancel:
         assert context.warmup_start_ns == 1_000
         assert context.warmup_end_ns == 2_000
 
+    @pytest.mark.asyncio
+    async def test_profile_cancel_after_profiling_excludes_a_later_warmup(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A phase that starts after profiling ended must stay out of the window.
+
+        Ending at the cancel timestamp would fold the later warmup's traffic
+        into the reported profiling deltas.
+        """
+        from aiperf.common.messages import ProfileCancelCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager._collectors = {}
+        manager.publish = AsyncMock()
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.PROFILING, start_ns=1_000),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING, timing_mode=TimingMode.REQUEST_RATE
+                ),
+            )
+        )
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.PROFILING, start_ns=1_000, requests_end_ns=2_000
+                ),
+            )
+        )
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP, start_ns=3_000),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP, timing_mode=TimingMode.REQUEST_RATE
+                ),
+            )
+        )
+
+        await manager._handle_profile_cancel_command(
+            ProfileCancelCommand(
+                service_id=manager.id, command=CommandType.PROFILE_CANCEL
+            )
+        )
+
+        context = accumulator.export_results.await_args.args[0]
+        assert context.start_ns == 1_000
+        assert context.end_ns == 2_000, "the later warmup leaked into profiling"
+
 
 class TestLifecycleHooks:
     """Test lifecycle hook handlers."""
