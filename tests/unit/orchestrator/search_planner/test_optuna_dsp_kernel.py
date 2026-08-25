@@ -35,7 +35,7 @@ def _capture_built_models(monkeypatch, captured: list):
     real_cls = botorch.models.SingleTaskGP
 
     class _Spy(real_cls):
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args: object, **kwargs: object) -> None:
             super().__init__(*args, **kwargs)
             captured.append(self)
 
