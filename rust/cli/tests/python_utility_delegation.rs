@@ -125,8 +125,14 @@ fn version_is_native_and_never_starts_python() {
     let record = directory.path().join("argv");
     let output = run(&["--version"], &recording_python(directory.path()), &record);
 
+    let product: toml::Value = toml::from_str(include_str!("../../../pyproject.toml"))
+        .expect("parse packaged product metadata");
+    let product_version = product["project"]["version"]
+        .as_str()
+        .expect("packaged product version");
+
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(output.stdout, format!("{}\n", env!("CARGO_PKG_VERSION")).as_bytes());
+    assert_eq!(output.stdout, format!("{product_version}\n").as_bytes());
     assert!(!record.exists(), "Python test double was invoked");
 }
 
