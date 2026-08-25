@@ -474,7 +474,12 @@ async def aiperf_runner(
                     _killpg(process, signal.SIGKILL)
                     stdout = ""
                     stderr = ""
-            raise RuntimeError(f"AIPerf timed out after {timeout}s") from e
+            diagnostics = ""
+            if stdout:
+                diagnostics += f"\nSTDOUT:\n{stdout}"
+            if stderr:
+                diagnostics += f"\nSTDERR:\n{stderr}"
+            raise RuntimeError(f"AIPerf timed out after {timeout}s{diagnostics}") from e
 
         return AIPerfRunnerResult(
             exit_code=process.returncode or 0,

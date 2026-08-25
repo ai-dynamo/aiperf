@@ -133,3 +133,58 @@ def test_iterations_emit_objective_values_vector(tmp_path: Path):
     write_search_history(tmp_path, history, cfg)
     payload = json.loads((tmp_path / "search_history.json").read_text())
     assert payload["iterations"][0]["objective_values"] == [10.0, 5.0]
+
+
+def test_multi_objective_config_with_length_one_vectors(tmp_path: Path):
+    """A 1-D planner under a 2-objective config must not crash the sweep.
+
+    Only the Optuna planner writes a full objective vector; monotonic.py,
+    smooth_isotonic.py and multi_tier_planner.py all hard-code a length-1
+    objective_values. _pareto_front indexed objective_values[i] blindly, so
+    the IndexError escaped orchestrator.py -- which has no try/except around
+    it -- and killed the adaptive sweep after its first scored iteration,
+    losing the trajectory file with it.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=10.0,
+            objective_values=[10.0],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=20.0,
+            objective_values=[20.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    # The comparable objective still orders them: 20 beats 10 on maximize.
+    assert [t["iteration_idx"] for t in payload["best_trials"]] == [1]
+
+
+def test_multi_objective_with_absent_vectors(tmp_path: Path):
+    """objective_values is Optional; the scalar mirror must carry index 0."""
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=10.0,
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=20.0,
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    assert [t["iteration_idx"] for t in payload["best_trials"]] == [1]

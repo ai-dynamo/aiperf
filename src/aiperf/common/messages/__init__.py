@@ -51,14 +51,17 @@ from aiperf.common.messages.network_latency_messages import (
 )
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
+    BenchmarkCompleteMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
+    ResultsExportedMessage,
+    SystemStateChangedMessage,
 )
 from aiperf.common.messages.server_metrics_messages import (
     ProcessServerMetricsResultMessage,
-    ServerMetricsRecordMessage,
+    RealtimeServerMetricsMessage,
     ServerMetricsStatusMessage,
 )
 from aiperf.common.messages.service_messages import (
@@ -82,6 +85,7 @@ from aiperf.common.messages.worker_messages import (
 
 __all__ = [
     "AllRecordsReceivedMessage",
+    "BenchmarkCompleteMessage",
     "BaseServiceErrorMessage",
     "BaseServiceMessage",
     "BaseStatusMessage",
@@ -125,13 +129,15 @@ __all__ = [
     "RegisterServiceCommand",
     "RegistrationMessage",
     "RequiresRequestNSMixin",
-    "ServerMetricsRecordMessage",
+    "ResultsExportedMessage",
+    "RealtimeServerMetricsMessage",
     "ServerMetricsStatusMessage",
     "ShutdownCommand",
     "ShutdownWorkersCommand",
     "SpawnWorkersCommand",
     "StartRealtimeTelemetryCommand",
     "StatusMessage",
+    "SystemStateChangedMessage",
     "TargetedServiceMessage",
     "TelemetryRecordsMessage",
     "TelemetryStatusMessage",

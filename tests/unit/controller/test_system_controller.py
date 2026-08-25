@@ -13,6 +13,7 @@ from aiperf.common.enums import (
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.messages.command_messages import CommandErrorResponse
+from aiperf.common.messages.service_messages import BaseServiceErrorMessage
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import AccuracyBenchmarkType
@@ -74,6 +75,26 @@ class TestSystemController:
         assert mock_service_manager.wait_for_all_services_registration.called
         assert system_controller._start_profiling_all_services.called
         assert system_controller._profile_configure_all_services.called
+
+    @pytest.mark.asyncio
+    async def test_service_error_aborts_active_profiling(
+        self, system_controller: SystemController
+    ) -> None:
+        """A service-reported fatal error must cancel the whole active benchmark."""
+        from aiperf.common.enums import SystemState
+
+        system_controller._system_state = SystemState.PROFILING
+        system_controller._cancel_profiling = AsyncMock()
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+
+        await system_controller._process_service_error_message(
+            BaseServiceErrorMessage(
+                service_id="timing-manager",
+                error=ErrorDetails(message="worker floor breached"),
+            )
+        )
+
+        system_controller._cancel_profiling.assert_awaited_once()
 
 
 class TestSystemControllerExitScenarios:
@@ -432,6 +453,51 @@ class TestStopHookHardening:
             mock_exit.assert_called_once()
             # exit code reflects the recorded error
             assert mock_exit.call_args[0][0] == 1
+
+    @pytest.mark.asyncio
+    async def test_stop_hook_exports_before_message_bus_shutdown(
+        self,
+        system_controller: SystemController,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """ResultsExported must be publishable while the API subscriber is alive."""
+        order: list[str] = []
+        system_controller._exit_errors = []
+        system_controller._set_system_state = AsyncMock()
+        system_controller.ui = AsyncMock()
+        system_controller.service_manager = mock_service_manager
+        system_controller.proxy_manager = AsyncMock()
+        system_controller.comms = AsyncMock()
+        system_controller._print_post_benchmark_info_and_metrics = AsyncMock(
+            side_effect=lambda: order.append("export")
+        )
+        system_controller._announce_benchmark_complete = AsyncMock(
+            side_effect=lambda: order.append("benchmark_complete")
+        )
+        system_controller.publish = AsyncMock(
+            side_effect=lambda _message: order.append("shutdown_broadcast")
+        )
+        mock_service_manager.shutdown_all_services.side_effect = lambda: order.append(
+            "services_stopped"
+        )
+        system_controller.comms.stop.side_effect = lambda: order.append("comms_stopped")
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.asyncio.sleep",
+                new=AsyncMock(),
+            ),
+            patch("aiperf.controller.system_controller.os._exit"),
+        ):
+            await system_controller._stop_system_controller()
+
+        assert order == [
+            "export",
+            "benchmark_complete",
+            "shutdown_broadcast",
+            "services_stopped",
+            "comms_stopped",
+        ]
 
 
 class TestAccuracyTemperatureWarning:

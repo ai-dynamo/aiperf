@@ -206,6 +206,104 @@ class ProxyError(AIPerfError):
     """Exception raised when a proxy encounters an error."""
 
 
+class ServiceProcessDiedError(AIPerfError):
+    """Raised when a managed service subprocess exits before it was asked to stop.
+
+    Names the service, its type, and (when the OS reported one) its exit code
+    or terminating signal, so the controller can distinguish a crash or OOM
+    kill from a clean shutdown without re-reading process tables.
+
+    Example:
+        >>> raise ServiceProcessDiedError(
+        ...     service_id="worker_0_a1b2", service_type="worker", exit_code=-9
+        ... )
+        Traceback (most recent call last):
+        aiperf.common.exceptions.ServiceProcessDiedError: Service process
+        'worker_0_a1b2' (worker) died unexpectedly with exit code -9 (likely
+        killed by signal 9, e.g. an out-of-memory kill or an external SIGKILL)
+    """
+
+    def __init__(
+        self,
+        *,
+        service_id: str,
+        service_type: "ServiceTypeT",
+        exit_code: int | None = None,
+    ) -> None:
+        self.service_id = service_id
+        self.service_type = service_type
+        self.exit_code = exit_code
+        if exit_code is None:
+            cause = (
+                "no exit code was reported, which usually means the process was "
+                "reaped elsewhere or the handle was closed before it was waited on"
+            )
+        elif exit_code < 0:
+            cause = (
+                f"likely killed by signal {-exit_code}, e.g. an out-of-memory kill "
+                f"or an external SIGKILL"
+            )
+        else:
+            cause = (
+                "likely an unhandled exception during startup or a failed "
+                "dependency connection; check the service's own log output"
+            )
+        detail = "" if exit_code is None else f" with exit code {exit_code}"
+        super().__init__(
+            f"Service process {service_id!r} ({service_type}) died unexpectedly"
+            f"{detail} ({cause})"
+        )
+
+
+class ServiceRegistrationTimeoutError(AIPerfError, TimeoutError):
+    """Raised when not every expected service registered before the startup deadline.
+
+    Carries the registered/expected counts and the per-service-type shortfall
+    so the operator can report exactly which pods never came up, rather than a
+    bare "timed out". Also a ``TimeoutError`` so callers that only care about
+    the timeout class can catch it generically.
+
+    Example:
+        >>> raise ServiceRegistrationTimeoutError(
+        ...     registered=6, expected=8, timeout_sec=120.0, missing={"worker": 2}
+        ... )
+        Traceback (most recent call last):
+        aiperf.common.exceptions.ServiceRegistrationTimeoutError: Only 6 of 8
+        services registered within 120.0s; still missing: worker x2 (likely a
+        service that crashed on startup, a pod that never scheduled, or a
+        message-bus address the service could not reach)
+    """
+
+    def __init__(
+        self,
+        *,
+        registered: int,
+        expected: int,
+        timeout_sec: float | None,
+        missing: dict[str, int],
+        context: str | None = None,
+    ) -> None:
+        self.registered = registered
+        self.expected = expected
+        self.timeout_sec = timeout_sec
+        self.missing = missing
+        self.context = context
+        missing_detail = (
+            ", ".join(f"{name} x{count}" for name, count in sorted(missing.items()))
+            or "unknown service types"
+        )
+        # A caller waiting on specific service IDs knows names the aggregate
+        # counts cannot express ("ghost"), so its own description leads.
+        prefix = f"{context}. " if context else ""
+        window = "with no timeout" if timeout_sec is None else f"within {timeout_sec}s"
+        super().__init__(
+            f"{prefix}Only {registered} of {expected} services registered "
+            f"{window}; still missing: {missing_detail} (likely a service "
+            f"that crashed on startup, a pod that never scheduled, or a "
+            f"message-bus address the service could not reach)"
+        )
+
+
 class ShutdownError(AIPerfError):
     """Exception raised when a service encounters an error while shutting down."""
 

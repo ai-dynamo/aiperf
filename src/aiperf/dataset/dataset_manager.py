@@ -62,7 +62,6 @@ from aiperf.plugin.enums import (
     DatasetBackingStoreType,
     PhaseType,
     PluginType,
-    ServiceRunType,
 )
 from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
@@ -74,6 +73,26 @@ if TYPE_CHECKING:
         DatasetClientStoreProtocol,
     )
     from aiperf.plugin.schema.schemas import EndpointMetadata
+
+
+def _dataset_generation_of(client_metadata: DatasetClientMetadata) -> str | None:
+    """Derive a stable identity for the dataset a client metadata describes.
+
+    Worker pods compare this against the generation of the files they already
+    downloaded to decide whether a re-download is needed, so it must change
+    whenever the dataset is rebuilt. The mmap run directory name carries the
+    benchmark id and is created fresh per build, which is exactly that.
+
+    Example:
+        >>> _dataset_generation_of(meta)  # data_file_path=/aiperf/datasets/aiperf_mmap_bench-7f2a/dataset.dat
+        'aiperf_mmap_bench-7f2a'
+
+    Returns None for client stores that expose no file layout.
+    """
+    data_file_path = getattr(client_metadata, "data_file_path", None)
+    if data_file_path is None:
+        return None
+    return Path(data_file_path).parent.name
 
 
 class DatasetManager(ReplyClientMixin, BaseComponentService):
@@ -109,11 +128,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache: list[str] = []
         self.dataset_configured = asyncio.Event()
 
-        # In Kubernetes mode, use compress_only to stream directly to compressed files.
-        # This avoids creating large uncompressed files on the control plane.
-        # WorkerPodManagers will download compressed files and decompress locally.
-        # KUBERNETES is an optional service-run plugin, so probe via getattr.
-        self._compress_only = self._is_kubernetes_run()
+        self._compress_only = False
 
         # The backing store is created in _configure_dataset once the mmap
         # format (CONVERSATION vs PAYLOAD_BYTES) is known, or in
@@ -133,14 +148,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # writes under the same key the lookup would have used.
         self._cache_key_for_run: str | None = None
         self._cache_hit_used: bool = False
-
-    def _is_kubernetes_run(self) -> bool:
-        """Return whether the optional KUBERNETES service-run plugin is active."""
-        kubernetes_run_type = getattr(ServiceRunType, "KUBERNETES", None)
-        return (
-            kubernetes_run_type is not None
-            and self.run.cfg.runtime.service_run_type == kubernetes_run_type
-        )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -861,6 +868,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 service_id=self.service_id,
                 metadata=self.dataset_metadata,
                 client_metadata=client_metadata,
+                benchmark_generation=self.run.benchmark_id,
+                dataset_generation=_dataset_generation_of(client_metadata),
             )
         )
 
@@ -974,15 +983,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         mmap_metadata = self._backing_store.get_client_metadata()
         self.info(f"Backing store finalized: {mmap_metadata}")
 
-        # In Kubernetes mode, workers wait for DatasetDownloadedNotification from
-        # WorkerPodManager which provides local file paths. We still send mmap_metadata
-        # which has the control plane paths (ignored by workers in Kubernetes mode).
         client_metadata: DatasetClientMetadata = mmap_metadata
-        if self._is_kubernetes_run():
-            self.info(
-                "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
-                "from WorkerPodManager before accessing dataset"
-            )
 
         sampling_strategy = getattr(default_dataset, "sampling", None)
         self.dataset_metadata = DatasetMetadata(
@@ -998,13 +999,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # Note: dataset_configured event is set in _configure_dataset_client_and_free_memory()
         # after the dataset client is initialized, to avoid a race condition where fallback
         # requests arrive before the client is ready.
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-                metadata=self.dataset_metadata,
-                client_metadata=client_metadata,
-            )
+        notification = DatasetConfiguredNotification(
+            service_id=self.service_id,
+            metadata=self.dataset_metadata,
+            client_metadata=client_metadata,
+            benchmark_generation=self.run.benchmark_id,
+            dataset_generation=_dataset_generation_of(client_metadata),
         )
+        await self.publish(notification)
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

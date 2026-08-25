@@ -3,11 +3,12 @@
 
 """Core API router for AIPerf API.
 
-Provides config, run-identity, health, and readiness endpoints.
+Provides config, run-identity, health, readiness, and shutdown endpoints.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -20,9 +21,12 @@ from aiperf.config.config import BenchmarkConfig
 
 core_router = APIRouter()
 
+# Strong references to in-flight fire-and-forget shutdown tasks.
+_SHUTDOWN_TASKS: set[asyncio.Task[None]] = set()
+
 
 class CoreRouter(BaseRouter):
-    """Config, run-identity, health, and readiness endpoints."""
+    """Config, run-identity, health, readiness, and shutdown endpoints."""
 
     def get_router(self) -> APIRouter:
         return core_router

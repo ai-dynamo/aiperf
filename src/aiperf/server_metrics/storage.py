@@ -171,6 +171,7 @@ class ServerMetricsTimeSeries:
                     timestamp_ns,
                     sample,
                     phase=record.benchmark_phase,
+                    phase_index=record.phase_index,
                 )
 
     def __len__(self) -> int:
@@ -243,6 +244,7 @@ _INITIAL_CAPACITY = 256
 _PHASE_NONE = np.int8(0)
 _PHASE_WARMUP = np.int8(1)
 _PHASE_PROFILING = np.int8(2)
+_PHASE_INDEX_NONE = np.int32(-1)
 
 
 def _phase_code(phase: CreditPhase | None) -> np.int8:
@@ -292,6 +294,7 @@ class ScalarTimeSeries:
         self._timestamps: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int64)
         self._values: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
         self._phase_codes: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int8)
+        self._phase_indices: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int32)
         self._size: int = 0
 
     def append(
@@ -300,6 +303,7 @@ class ScalarTimeSeries:
         sample: MetricSample,
         *,
         phase: CreditPhase | None = None,
+        phase_index: int | None = None,
     ) -> None:
         """Append a sample, maintaining sorted order by timestamp.
 
@@ -332,22 +336,29 @@ class ScalarTimeSeries:
             new_ts = np.empty(new_cap, dtype=np.int64)
             new_val = np.empty(new_cap, dtype=np.float64)
             new_phase_codes = np.empty(new_cap, dtype=np.int8)
+            new_phase_indices = np.empty(new_cap, dtype=np.int32)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_val[: self._size] = self._values[: self._size]
             new_phase_codes[: self._size] = self._phase_codes[: self._size]
-            self._timestamps, self._values, self._phase_codes = (
+            new_phase_indices[: self._size] = self._phase_indices[: self._size]
+            self._timestamps, self._values, self._phase_codes, self._phase_indices = (
                 new_ts,
                 new_val,
                 new_phase_codes,
+                new_phase_indices,
             )
 
         phase_code = _phase_code(phase)
+        concrete_phase_index = (
+            _PHASE_INDEX_NONE if phase_index is None else np.int32(phase_index)
+        )
 
         # Fast path: in-order append (99.9% of cases)
         if self._size == 0 or timestamp_ns >= self._timestamps[self._size - 1]:
             self._timestamps[self._size] = timestamp_ns
             self._values[self._size] = sample.value
             self._phase_codes[self._size] = phase_code
+            self._phase_indices[self._size] = concrete_phase_index
             self._size += 1
             return
 
@@ -363,11 +374,15 @@ class ScalarTimeSeries:
         self._phase_codes[idx + 1 : self._size + 1] = self._phase_codes[
             idx : self._size
         ]
+        self._phase_indices[idx + 1 : self._size + 1] = self._phase_indices[
+            idx : self._size
+        ]
 
         # Insert at correct position
         self._timestamps[idx] = timestamp_ns
         self._values[idx] = sample.value
         self._phase_codes[idx] = phase_code
+        self._phase_indices[idx] = concrete_phase_index
         self._size += 1
 
     @property
@@ -396,6 +411,10 @@ class ScalarTimeSeries:
     def get_phase_mask(self, phase: CreditPhase | None) -> NDArray[np.bool_]:
         """Return a boolean mask selecting samples recorded in ``phase``."""
         return self._phase_codes[: self._size] == _phase_code(phase)
+
+    def get_phase_index_mask(self, phase_index: int) -> NDArray[np.bool_]:
+        """Return a mask selecting one concrete named phase instance."""
+        return self._phase_indices[: self._size] == phase_index
 
     def __len__(self) -> int:
         """Number of stored samples.
@@ -538,6 +557,7 @@ class HistogramTimeSeries:
         self._sums: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
         self._counts: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
         self._phase_codes: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int8)
+        self._phase_indices: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int32)
         self._size: int = 0
         self._bucket_les: tuple[str, ...] | None = None
         self._bucket_counts: np.ndarray | None = None
@@ -550,6 +570,7 @@ class HistogramTimeSeries:
         sample: MetricSample,
         *,
         phase: CreditPhase | None = None,
+        phase_index: int | None = None,
     ) -> None:
         """Append a histogram sample, maintaining sorted order by timestamp.
 
@@ -605,19 +626,25 @@ class HistogramTimeSeries:
             new_sums = np.empty(new_cap, dtype=np.float64)
             new_counts = np.empty(new_cap, dtype=np.float64)
             new_phase_codes = np.empty(new_cap, dtype=np.int8)
+            new_phase_indices = np.empty(new_cap, dtype=np.int32)
             new_buckets = np.empty((new_cap, len(self._bucket_les)), dtype=np.float64)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_sums[: self._size] = self._sums[: self._size]
             new_counts[: self._size] = self._counts[: self._size]
             new_phase_codes[: self._size] = self._phase_codes[: self._size]
+            new_phase_indices[: self._size] = self._phase_indices[: self._size]
             new_buckets[: self._size] = self._bucket_counts[: self._size]
             self._timestamps = new_ts
             self._sums = new_sums
             self._counts = new_counts
             self._phase_codes = new_phase_codes
+            self._phase_indices = new_phase_indices
             self._bucket_counts = new_buckets
 
         phase_code = _phase_code(phase)
+        concrete_phase_index = (
+            _PHASE_INDEX_NONE if phase_index is None else np.int32(phase_index)
+        )
 
         # Fast path: in-order append (99.9% of cases)
         if self._size == 0 or timestamp_ns >= self._timestamps[self._size - 1]:
@@ -625,6 +652,7 @@ class HistogramTimeSeries:
             self._sums[self._size] = sample.sum or 0.0
             self._counts[self._size] = sample.count or 0.0
             self._phase_codes[self._size] = phase_code
+            self._phase_indices[self._size] = concrete_phase_index
             self._bucket_counts[self._size] = bucket_row
             self._size += 1
             return
@@ -641,6 +669,9 @@ class HistogramTimeSeries:
         self._phase_codes[idx + 1 : self._size + 1] = self._phase_codes[
             idx : self._size
         ]
+        self._phase_indices[idx + 1 : self._size + 1] = self._phase_indices[
+            idx : self._size
+        ]
         self._bucket_counts[idx + 1 : self._size + 1] = self._bucket_counts[
             idx : self._size
         ]
@@ -650,6 +681,7 @@ class HistogramTimeSeries:
         self._sums[idx] = sample.sum or 0.0
         self._counts[idx] = sample.count or 0.0
         self._phase_codes[idx] = phase_code
+        self._phase_indices[idx] = concrete_phase_index
         self._bucket_counts[idx] = bucket_row
         self._size += 1
 
@@ -743,6 +775,10 @@ class HistogramTimeSeries:
     def get_phase_mask(self, phase: CreditPhase | None) -> NDArray[np.bool_]:
         """Return a boolean mask selecting samples recorded in ``phase``."""
         return self._phase_codes[: self._size] == _phase_code(phase)
+
+    def get_phase_index_mask(self, phase_index: int) -> NDArray[np.bool_]:
+        """Return a mask selecting one concrete named phase instance."""
+        return self._phase_indices[: self._size] == phase_index
 
     @property
     def bucket_les(self) -> tuple[str, ...]:

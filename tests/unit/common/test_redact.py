@@ -1672,7 +1672,7 @@ class TestAioHttpTraceRedaction:
 
 
 class TestRedactUrl:
-    """Tests for redact_url() — strip userinfo from URLs without false positives."""
+    """Tests for redact_url() credential removal without false positives."""
 
     @pytest.mark.parametrize(
         "url,expected",
@@ -1762,7 +1762,35 @@ class TestRedactUrl:
         """
         assert redact_url(uri) == expected
 
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            param(
+                "https://host/v1?api_key=sk-secret&model=llama",
+                f"https://host/v1?api_key={REDACTED_VALUE}&model=llama",
+                id="api-key",
+            ),
+            param(
+                "https://host/v1?region=us&X-Amz-Signature=deadbeef",
+                f"https://host/v1?region=us&X-Amz-Signature={REDACTED_VALUE}",
+                id="signed-url",
+            ),
+            param(
+                "https://user:pass@host/v1?token=secret#fragment",
+                f"https://{REDACTED_VALUE}@host/v1?token={REDACTED_VALUE}#fragment",
+                id="userinfo-and-token",
+            ),
+        ],
+    )  # fmt: skip
+    def test_sensitive_query_parameters_are_redacted(
+        self, url: str, expected: str
+    ) -> None:
+        assert redact_url(url) == expected
 
-# =============================================================================
-# Log filter redaction
-# =============================================================================
+    def test_similarly_named_noncredential_query_parameters_are_unchanged(self) -> None:
+        url = "https://host/v1?token_count=128&monkey=capuchin&email=a@b.com"
+        assert redact_url(url) == url
+
+
+class TestRedactEndpointSpec:
+    """Tests for credential-safe CR and Python benchmark configuration copies."""

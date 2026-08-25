@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Results router component -- owns final results state and /api/results endpoints."""
@@ -11,58 +11,24 @@ from typing import Annotated, Any
 from aiofiles import os as aio_os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import Field
 
+from aiperf.api.models.responses import BenchmarkResultsResponse, BenchmarkStatus
+from aiperf.api.models.results import ResultFileInfo, ResultsListResponse
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.compression import (
     CompressionEncoding,
     select_encoding,
     stream_file_compressed,
 )
-from aiperf.common.enums import CaseInsensitiveStrEnum, MessageType
+from aiperf.common.enums import MessageType
 from aiperf.common.hooks import on_message
-from aiperf.common.messages import ProcessRecordsResultMessage
+from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
-from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.record_models import ProcessRecordsResult
 
 ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
 
 results_router = APIRouter(tags=["Results"])
-
-
-class BenchmarkStatus(CaseInsensitiveStrEnum):
-    """Status of a benchmark run."""
-
-    RUNNING = "running"
-    COMPLETE = "complete"
-    CANCELLED = "cancelled"
-
-
-class BenchmarkResultsResponse(AIPerfBaseModel):
-    """Final benchmark results response."""
-
-    status: BenchmarkStatus = Field(
-        description="Benchmark status: running, complete, or cancelled"
-    )
-    results: ProcessRecordsResult | None = Field(
-        default=None, description="Final benchmark results if complete"
-    )
-
-
-class ResultFileInfo(AIPerfBaseModel):
-    """Metadata for a single result file."""
-
-    name: str = Field(description="Filename of the result artifact")
-    size: int = Field(description="File size in bytes")
-
-
-class ResultsListResponse(AIPerfBaseModel):
-    """Response for listing available result files."""
-
-    files: list[ResultFileInfo] = Field(
-        default_factory=list, description="Available result files"
-    )
 
 
 _CONTENT_TYPES: dict[str, str] = {
@@ -85,18 +51,23 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
     def get_router(self) -> APIRouter:
         return results_router
 
-    @on_message(MessageType.PROCESS_RECORDS_RESULT)
-    async def _on_process_records_result(
-        self, message: ProcessRecordsResultMessage
-    ) -> None:
+    @on_message(MessageType.PROCESS_ALL_RESULTS)
+    async def _on_process_all_results(self, message: ProcessAllResultsMessage) -> None:
         self._final_results = message.results
+
+    @on_message(MessageType.BENCHMARK_COMPLETE)
+    async def _on_benchmark_complete(self, message: Any) -> None:
+        # Results files have been exported to disk by the time this message
+        # arrives (the controller exports BEFORE publishing this message).
+        # Only now do we report "complete" to external consumers so they
+        # can safely fetch all result files.
         self._benchmark_complete = True
 
 
 @results_router.get("/api/results", response_model=BenchmarkResultsResponse)
 async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
     """Get final benchmark results."""
-    if component._final_results is None:
+    if not component._benchmark_complete or component._final_results is None:
         return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
 
     status = (
@@ -109,20 +80,28 @@ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
 
 @results_router.get("/api/results/list", response_model=ResultsListResponse)
 async def list_results(component: ResultsDep) -> ResultsListResponse:
-    """List all available result files in the artifacts directory."""
+    """List available result files in the artifacts directory.
+
+    Mirrors the readiness gate enforced by the controller's results sidecar:
+    until the ``.aiperf_results_ready.json`` marker is written, only
+    ``checkpoints/`` artifacts are listed. This prevents the operator from
+    fetching partial top-level exports during sub-second benchmarks where the
+    fetch can race the controller's export pipeline.
+    """
     results_dir = component.run.cfg.artifacts.artifact_directory
     if not await aio_os.path.exists(results_dir):
         return ResultsListResponse()
 
     def _list_files() -> list[ResultFileInfo]:
-        return sorted(
-            (
-                ResultFileInfo(name=e.name, size=e.stat().st_size)
-                for e in results_dir.iterdir()
-                if e.is_file()
-            ),
-            key=lambda f: f.name,
+        files: list[ResultFileInfo] = []
+
+        files.extend(
+            ResultFileInfo(name=entry.name, size=entry.stat().st_size)
+            for entry in results_dir.iterdir()
+            if entry.is_file()
         )
+
+        return sorted(files, key=lambda f: f.name)
 
     files = await asyncio.to_thread(_list_files)
     return ResultsListResponse(files=files)
@@ -132,13 +111,18 @@ async def list_results(component: ResultsDep) -> ResultsListResponse:
 async def get_result_file(
     component: ResultsDep, request: Request, filename: str
 ) -> StreamingResponse:
-    """Download a result file by name."""
+    """Download a result file by name.
+
+    Until the readiness marker is present, only files under ``checkpoints/``
+    are downloadable. This mirrors the sidecar's gate so the primary endpoint
+    cannot serve partial exports during the controller's sub-second export race.
+    """
     artifact_dir = component.run.cfg.artifacts.artifact_directory
     file_path = (artifact_dir / filename).resolve()
+    artifact_dir_resolved = artifact_dir.resolve()
 
-    if not file_path.is_relative_to(artifact_dir.resolve()):
+    if not file_path.is_relative_to(artifact_dir_resolved):
         raise HTTPException(status_code=400, detail="Invalid filename")
-
     if not await aio_os.path.isfile(file_path):
         raise HTTPException(
             status_code=404, detail=f"Result file not found: {filename}"

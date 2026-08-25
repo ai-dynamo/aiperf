@@ -75,6 +75,8 @@ class _LoaderHost(Protocol):
 
 def load_accumulators(
     host: _LoaderHost,
+    *,
+    excluded_record_types: set[str] | None = None,
 ) -> dict[AccumulatorType, AccumulatorProtocol]:
     """Instantiate all enabled ``ACCUMULATOR`` plugins for ``host``.
 
@@ -92,6 +94,9 @@ def load_accumulators(
     """
     accumulators: dict[AccumulatorType, AccumulatorProtocol] = {}
     for entry in plugins.iter_entries(PluginType.ACCUMULATOR):
+        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
+        if excluded_record_types and excluded_record_types.intersection(record_types):
+            continue
         try:
             AccumulatorClass = plugins.get_class(PluginType.ACCUMULATOR, entry.name)
             accumulator = AccumulatorClass(
@@ -118,6 +123,8 @@ def load_accumulators(
 
 def load_stream_exporters(
     host: _LoaderHost,
+    *,
+    excluded_record_types: set[str] | None = None,
 ) -> dict[StreamExporterType, StreamExporterProtocol]:
     """Instantiate all enabled ``STREAM_EXPORTER`` plugins for ``host``.
 
@@ -128,6 +135,9 @@ def load_stream_exporters(
     """
     exporters: dict[StreamExporterType, StreamExporterProtocol] = {}
     for entry in plugins.iter_entries(PluginType.STREAM_EXPORTER):
+        record_types = entry.metadata.get("record_types", []) if entry.metadata else []
+        if excluded_record_types and excluded_record_types.intersection(record_types):
+            continue
         try:
             ExporterClass = plugins.get_class(PluginType.STREAM_EXPORTER, entry.name)
             exporter = ExporterClass(
@@ -235,17 +245,16 @@ def stream_exporters_for_record_type(
 
 async def generate_realtime_metrics(
     accumulators: list[AccumulatorProtocol],
-    timeout: float = 30.0,
     phase: CreditPhase = CreditPhase.PROFILING,
     phase_index: int | None = None,
 ) -> list[MetricResult]:
     """Generate the real-time metrics for the profile run.
 
-    Runs every accumulator's ``summarize`` in parallel with a short timeout
-    and flattens the results to a single list of ``MetricResult``. Tolerates
-    accumulators that return either ``AccumulatorMetricsSummary`` (with a
-    ``.results`` dict-of-MetricResult) or a plain ``list[MetricResult]`` —
-    GPU telemetry / server metrics accumulators return list shape.
+    Runs every accumulator's ``summarize`` and flattens the results to a
+    single list of ``MetricResult``. Tolerates accumulators that return
+    either ``AccumulatorMetricsSummary`` (with a ``.results``
+    dict-of-MetricResult) or a plain ``list[MetricResult]`` — GPU telemetry /
+    server metrics accumulators return list shape.
 
     The realtime view is scoped to ``phase`` (PROFILING by default) so warmup
     records never dilute the live counts/throughput; the final export path
@@ -253,10 +262,7 @@ async def generate_realtime_metrics(
     """
     ctx = SummaryContext(phase=phase, phase_index=phase_index)
     results = await asyncio.gather(
-        *[
-            asyncio.wait_for(acc.summarize(ctx), timeout=timeout)
-            for acc in accumulators
-        ],
+        *[acc.summarize(ctx) for acc in accumulators],
         return_exceptions=True,
     )
     flat: list[MetricResult] = []

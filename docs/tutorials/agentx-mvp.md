@@ -367,6 +367,12 @@ Before AIPerf measures anything, it runs a **warmup phase** that primes the
 server's KV cache. This isn't the generic AIPerf warmup — it's a
 trajectory-based warmup specific to the agentic-replay scheduler.
 
+Because the scheduler synthesizes this phase rather than reading it from your
+`phases:` list, it reports under the reserved name `agentic.warmup` in logs,
+progress output, and exported artifacts. The `.` is what makes
+the name reserved: phase names you declare must match
+`^[A-Za-z_][A-Za-z0-9_-]*$`, so no phase of yours can ever collide with it.
+
 Here's the picture. You set `--concurrency 100`. The scheduler builds 100
 active trajectory lanes, drawing traces from the dataset sampler. Filling more
 lanes than distinct loaded roots requires `--allow-dataset-wrap` or an active

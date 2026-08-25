@@ -414,6 +414,11 @@ class PhaseProfileResults(AIPerfBaseModel):
         default_factory=list,
         description="Non-fatal server metrics warnings for phase artifact export.",
     )
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description="DAG branch orchestration counters scoped to this concrete "
+        "phase. None when the phase did not use a branch orchestrator.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -450,6 +455,19 @@ class ProfileResults(AIPerfBaseModel):
     was_cancelled: bool = Field(
         default=False,
         description="Whether the profile run was cancelled early",
+    )
+    is_complete: bool = Field(
+        default=True,
+        description="Whether every expected record was aggregated into these "
+        "results. False when the run was finalized without them -- e.g. the "
+        "record-stall watchdog gave up waiting, or result finalization failed "
+        "outright. Metrics in an incomplete result are computed over a subset "
+        "of the run and must not be compared against complete runs.",
+    )
+    incomplete_reason: str | None = Field(
+        default=None,
+        description="Human-readable explanation of why the results are "
+        "incomplete. None when ``is_complete`` is True.",
     )
     successful_request_count: int = Field(
         default=0,
@@ -1560,7 +1578,10 @@ class ParsedResponseRecord:
 
     @cached_property
     def timestamp_ns(self) -> int:
-        """Get the wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns)."""
+        """Wall-clock request timestamp in nanoseconds.
+
+        DO NOT USE FOR LATENCY CALCULATIONS (perf-counter deltas own that).
+        """
         return self.request.timestamp_ns
 
     # TODO: How do we differentiate the end of the request vs the time of the last response?

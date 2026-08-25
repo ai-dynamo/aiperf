@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 from aiperf.common.mixins import (
     ProgressTrackerMixin,
     RealtimeMetricsMixin,
@@ -37,8 +39,8 @@ class BaseAIPerfUI(
             '''Callback for records progress updates.'''
             pass
 
-        @on_requests_phase_progress
-        def _on_requests_phase_progress(self, phase_progress: CombinedPhaseStats):
+        @on_phase_progress
+        def _on_phase_progress(self, phase_stats: CombinedPhaseStats):
             '''Callback for requests phase progress updates.'''
             pass
 
@@ -53,3 +55,8 @@ class BaseAIPerfUI(
             pass
     ```
     """
+
+    def __init__(self, **kwargs: Any) -> None:
+        # The UI runs in the controller process and uses the controller-owned
+        # communication singleton. Stopping the UI must not stop that shared bus.
+        super().__init__(manage_comms_lifecycle=False, **kwargs)

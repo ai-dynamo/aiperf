@@ -253,11 +253,16 @@ class BenchmarkPlan(BaseModel):
         """True when an adaptive outer loop (BO) is configured.
 
         Distinct from is_sweep (which checks for a multi-variation grid).
-        Sweep-aware code paths continue to branch on is_sweep without change;
-        outer-loop dispatch is handled separately in
+        Outer-loop dispatch is handled separately in
         MultiRunOrchestrator.execute. Both can be False (single-point run).
         Both being True cannot arise from build_benchmark_plan, which emits
         a single config for adaptive_search runs.
+
+        Note that not every sweep-aware path branches on is_sweep alone:
+        cli_runner._aggregation_dispatch routes on ``is_sweep or
+        is_adaptive_search``, because a BO run visits distinct points that
+        must be aggregated per-variation rather than pooled into one
+        confidence aggregate.
         """
         return isinstance(self.sweep, AdaptiveSearchSweep)
 

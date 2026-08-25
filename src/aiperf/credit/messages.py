@@ -75,14 +75,33 @@ class CreditsCompleteMessage(BaseServiceMessage):
 # =============================================================================
 
 
-class WorkerReady(Struct, frozen=True, kw_only=True, tag_field="t", tag="wr"):
-    """Worker announces readiness to receive credits.
+class WorkerConnected(Struct, frozen=True, kw_only=True, tag_field="t", tag="wc"):
+    """Worker announces that its return path is connected.
 
-    Sent by worker immediately after connecting to router.
-    Router uses this to add worker to load balancing pool.
+    Sent by worker after establishing the credit/return channels.
+    Router tracks the worker as connected but does not route credits yet.
+
+    Connectivity and dispatchability are deliberately separate: in
+    Kubernetes the worker is connected long before its pod-local dataset
+    exists, and a worker without a dataset cannot serve a credit. Routing on
+    connectivity alone hands credits to a worker that fails every one of
+    them, silently, and the RecordsManager barrier then waits forever for
+    records that never arrive.
     """
 
     worker_id: str
+    """Unique worker service identifier."""
+
+
+class WorkerDispatchable(Struct, frozen=True, kw_only=True, tag_field="t", tag="wd"):
+    """Worker announces readiness to receive routed credits.
+
+    Sent by worker after startup gates complete. Router uses this to add the
+    worker to the routing pool.
+    """
+
+    worker_id: str
+    """Unique worker service identifier."""
 
 
 class WorkerShutdown(Struct, frozen=True, kw_only=True, tag_field="t", tag="ws"):
@@ -153,9 +172,14 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
     phase_index: int | None = None
 
 
+# =============================================================================
+# Time Synchronization Messages (pre-flight RTT measurement)
+# =============================================================================
+
+
 # Union type for decoding worker -> router messages
 WorkerToRouterMessage: TypeAlias = (
-    WorkerReady | WorkerShutdown | CreditReturn | FirstToken
+    WorkerConnected | WorkerDispatchable | WorkerShutdown | CreditReturn | FirstToken
 )
 
 # =============================================================================

@@ -232,8 +232,10 @@ Record processing and export configuration. Controls batch sizes, processor scal
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_RECORD_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for record export results processor |
+| `AIPERF_RECORD_COMPLETION_STALL_TIMEOUT` | `300.0` | ≥ 0.0, ≤ 86400.0 | Seconds of ZERO record progress, after all credits are complete, before the RecordsManager stops waiting and finalizes the run as degraded. The completion barrier is event-driven: it needs one record per completed request, so a request that completes without ever emitting a record leaves the barrier permanently short and nothing re-triggers it. This bounds that into a loud failure instead of an unbounded hang. The timer measures time since the last record arrived, not total elapsed, so legitimately slow aggregation is never cut short. Set 0 to disable. |
+| `AIPERF_RECORD_COMPLETION_STALL_CHECK_INTERVAL` | `10.0` | > 0.0, ≤ 3600.0 | Seconds between record-progress stall checks after credits complete. |
 | `AIPERF_RECORD_RAW_EXPORT_BATCH_SIZE` | `10` | ≥ 1, ≤ 1000000 | Batch size for raw record writer processor |
-| `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers |
+| `AIPERF_RECORD_PROCESSOR_SCALE_FACTOR` | `4` | ≥ 1, ≤ 100 | Scale factor for number of record processors to spawn based on worker count. Formula: 1 record processor for every X workers. The default of 4 is the ratio the Kubernetes pod-sizing design was built around, alongside ~500 concurrent connections per worker; see RuntimeConfig.record_processors_per_pod |
 | `AIPERF_RECORD_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 0.1, ≤ 600.0 | Interval in seconds between records progress report messages |
 | `AIPERF_RECORD_PROCESS_RECORDS_TIMEOUT` | `300.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for processing record results |
 | `AIPERF_RECORD_STRIP_PAYLOAD_BYTES` | `None` | — | Tri-state control for omitting canonical request payload bytes from RecordContext after a request is sent, which substantially reduces record-pipeline memory for very large prompts. None (default) auto-detects: bytes are stripped only when no downstream record consumer needs them (client-side input tokenization disabled, no synthetic image/audio/video inputs, and raw payload export off). True forces stripping even when a consumer wants the bytes, disabling client-side input tokenization, media counting from request bodies, and raw request payload export. False always retains them. Auto-detection does not see media embedded in custom dataset payloads under server-token-count mode; set False explicitly for that case. |
@@ -257,6 +259,7 @@ Server metrics collection configuration. Controls server metrics collection freq
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | `2.0` | ≥ 0.0, ≤ 30.0 | Time in seconds to continue collecting metrics after profiling completes, allowing server-side metrics to flush/finalize before shutting down (default: 2.0s) |
+| `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Seconds RecordsManager waits for the final server-metrics scrape command response. A timeout is non-fatal because the controller's result join remains the authoritative completion barrier. |
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | `0.333` | ≥ 0.001, ≤ 300.0 | Server metrics collection interval in seconds (default: 333ms, ~3Hz) |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for server metrics jsonl writer export results processor |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking server metrics endpoint reachability during init |
@@ -276,12 +279,15 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL` | `30.0` | ≥ 0.0, ≤ 100000.0 | Interval in seconds between warmup progress heartbeat log messages. Set to 0 to disable. |
 | `AIPERF_SERVICE_DISABLE_UVLOOP` | `False` | — | Disable uvloop and use default asyncio event loop instead |
 | `AIPERF_SERVICE_HEARTBEAT_INTERVAL` | `5.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between heartbeat messages for component services |
+| `AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD` | `3` | ≥ 1, ≤ 100 | Consecutive heartbeat intervals a registered service may miss before the watchdog suspects it. A service is only failed after appearing stale on two consecutive watchdog ticks, so worst-case detection is HEARTBEAT_INTERVAL * (threshold + 1) seconds. |
+| `AIPERF_SERVICE_FAILURE_SHUTDOWN_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 300.0 | Wall-clock cap on the shutdown path inside AIPerfLifecycleMixin._fail. If cleanup (on_stop hooks, task cancellation) does not complete within this window after a failed on_init/on_start transition, the wedged shutdown is logged and the failure is reported normally, so the traceback and artifact export are not discarded. |
 | `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `600.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile configure command |
 | `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile start command |
 | `AIPERF_SERVICE_PROFILE_CANCEL_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile cancel command |
 | `AIPERF_SERVICE_REGISTRATION_INTERVAL` | `1.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between registration attempts for component services |
 | `AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS` | `10` | ≥ 1, ≤ 100000 | Maximum number of registration attempts before giving up |
 | `AIPERF_SERVICE_REGISTRATION_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for service registration |
+| `AIPERF_SERVICE_REGISTRATION_PROGRESS_LOG_INTERVAL` | `5.0` | ≥ 0.1, ≤ 100000.0 | Interval in seconds between 'still waiting for services to register' progress logs emitted by the service registry while blocked |
 | `AIPERF_SERVICE_START_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for service start operations. Also bounds the per-phase wait for the first worker to register with the credit router before credit issuance begins; exceeding it fails the phase. |
 | `AIPERF_SERVICE_TASK_CANCEL_TIMEOUT_SHORT` | `2.0` | ≥ 1.0, ≤ 100000.0 | Maximum time in seconds to wait for simple tasks to complete when cancelling |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_ENABLED` | `True` | — | Enable event loop health monitoring to detect blocked event loops. When enabled, TimingManager and Worker services periodically check if the event loop is responsive and log warnings when latency exceeds the threshold. |
@@ -348,8 +354,10 @@ Worker management and auto-scaling configuration. Controls worker pool sizing, h
 | `AIPERF_WORKER_HIGH_LOAD_CPU_USAGE` | `85.0` | ≥ 50.0, ≤ 100.0 | CPU usage percentage threshold for considering a worker under high load |
 | `AIPERF_WORKER_HIGH_LOAD_RECOVERY_TIME` | `5.0` | ≥ 0.1, ≤ 1000.0 | Time in seconds from last high load before worker is considered recovered |
 | `AIPERF_WORKER_MAX_WORKERS_CAP` | `32` | ≥ 1, ≤ 10000 | Absolute maximum number of workers to spawn, regardless of CPU count |
+| `AIPERF_WORKER_MIN_ALIVE_FRACTION` | `0.0` | ≥ 0.0, ≤ 1.0 | Fail the benchmark when the number of dispatchable workers remains below this fraction of the peak ever registered for one worker staleness interval. TimingManager evaluates the count after worker deregistration, so Kubernetes replacement pods can become dispatchable before a transient loss is fatal. 0 disables the check. |
 | `AIPERF_WORKER_STALE_TIME` | `10.0` | ≥ 0.1, ≤ 1000.0 | Time in seconds from last status report before worker is considered stale |
 | `AIPERF_WORKER_STATUS_SUMMARY_INTERVAL` | `0.5` | ≥ 0.1, ≤ 1000.0 | Interval in seconds between worker status summary messages |
+| `AIPERF_WORKER_RAW_RECORD_UPLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds to wait for worker pods to upload raw record files to the controller API after benchmark completion. |
 
 ## ZMQ
 

@@ -177,7 +177,12 @@ class WorkerManager(BaseComponentService):
         self.debug("Checking worker status")
 
         for _, info in self.worker_infos.items():
-            if (time.time_ns() - (info.last_update_ns or 0)) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
+            # A worker that has never reported has last_update_ns None/0, which
+            # would otherwise measure as an infinite gap and flash STALE for
+            # every worker at startup before its first health message lands.
+            if not info.last_update_ns:
+                continue
+            if (time.time_ns() - info.last_update_ns) / NANOS_PER_SECOND > Environment.WORKER.STALE_TIME:  # fmt: skip
                 info.status = WorkerStatus.STALE
 
     @background_task(

@@ -9,9 +9,10 @@ substitution and Jinja2 rendering. Body fields (models, endpoint, datasets,
 phases, ...) live under the ``benchmark:`` key; envelope-level keys include
 ``variables``, ``sweep``, ``multi_run``, and ``random_seed``.
 
-Exports include ``load_config``, ``load_config_from_string``, ``load_config_dict``,
-``load_config_from_env``, ``validate_config_file``, ``merge_configs``, and helpers
-for env substitution and Jinja expansion.
+Exports include ``load_config``, ``load_config_from_string``,
+``load_config_dict``, ``load_config_dict_with_raw_envelope``,
+``load_config_from_env``, ``validate_config_file``, ``merge_configs``, and
+helpers for env substitution and Jinja expansion.
 
 Example:
     >>> from aiperf.config import load_config
@@ -69,7 +70,9 @@ if TYPE_CHECKING:
         dump_config,
         load_config,
         load_config_dict,
+        load_config_dict_with_raw_envelope,
         load_config_from_env,
+        load_config_from_mapping,
         load_config_from_string,
         merge_configs,
         save_config,
@@ -90,7 +93,9 @@ _LAZY_EXPORTS = {
     "dump_config": "aiperf.config.loader.core",
     "load_config": "aiperf.config.loader.core",
     "load_config_dict": "aiperf.config.loader.core",
+    "load_config_dict_with_raw_envelope": "aiperf.config.loader.core",
     "load_config_from_env": "aiperf.config.loader.core",
+    "load_config_from_mapping": "aiperf.config.loader.core",
     "load_config_from_string": "aiperf.config.loader.core",
     "merge_configs": "aiperf.config.loader.core",
     "save_config": "aiperf.config.loader.core",
@@ -123,7 +128,9 @@ __all__ = [
     "load_benchmark_plan",
     "load_config",
     "load_config_from_env",
+    "load_config_from_mapping",
     "load_config_dict",
+    "load_config_dict_with_raw_envelope",
     "load_config_from_string",
     "dump_config",
     "save_config",

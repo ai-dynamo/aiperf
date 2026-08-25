@@ -3,8 +3,9 @@
 
 """Streaming ROUTER client for bidirectional communication with DEALER clients."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import msgspec
 import zmq
@@ -12,17 +13,23 @@ from msgspec import Struct
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_stop
+from aiperf.common.models.base_models import msgspec_enc_hook
 from aiperf.credit.messages import WorkerToRouterMessage
 from aiperf.zmq.fd_reader import FdEdgeReader
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
-# Pre-created encoder/decoder for performance (caches schema)
-_encoder = msgspec.msgpack.Encoder()
-_decoder = msgspec.msgpack.Decoder(WorkerToRouterMessage)
+# Shared encoder (stateless, safe to reuse across instances). enc_hook only
+# fires for types msgspec cannot encode natively, so it costs nothing on the
+# happy path and turns an unencodable field into a correct value instead of a
+# TypeError mid-send.
+_encoder = msgspec.msgpack.Encoder(enc_hook=msgspec_enc_hook)
 
-WorkerToRouterHandler: TypeAlias = Callable[
-    [str, WorkerToRouterMessage], Awaitable[None]
-]
+WorkerToRouterHandler: TypeAlias = Callable[[str, Any], Awaitable[Struct | None]]
+"""Receiver signature: ``(identity, message) -> Struct | None``.
+
+Returning ``None`` is fire-and-forget streaming; returning a ``Struct`` makes the
+exchange request-reply -- the ROUTER sends it straight back to the originating
+DEALER. The message type is whatever ``decode_type`` selected, hence ``Any``."""
 
 
 class ZMQStreamingRouterClient(BaseZMQClient):
@@ -62,7 +69,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
     Example:
     ```python
         from aiperf.common.structs import (
-            Credit, WorkerReady, WorkerShutdown, CreditReturn
+            Credit, WorkerDispatchable, WorkerShutdown, CreditReturn
         )
 
         # Create via comms (recommended - handles lifecycle management)
@@ -73,7 +80,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
         async def handle_message(identity: str, message: WorkerToRouterMessage) -> None:
             match message:
-                case WorkerReady():
+                case WorkerDispatchable():
                     await register_worker(identity)
                 case WorkerShutdown():
                     await unregister_worker(identity)
@@ -98,7 +105,9 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         address: str,
         bind: bool = True,
         socket_ops: dict | None = None,
+        *,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
         **kwargs,
     ) -> None:
         """
@@ -110,6 +119,10 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             socket_ops: Additional socket options to set
             additional_bind_address: Optional second address to bind to for dual-bind mode
                 (e.g., IPC + TCP in Kubernetes). Only used when bind=True.
+            decode_type: msgspec type (or tagged union) used to decode incoming
+                messages. Defaults to ``WorkerToRouterMessage`` -- the credit
+                plane's union -- so existing call sites are unaffected. The
+                worker-pod lifecycle channel passes ``PeerToGroupManagerMessage``.
             **kwargs: Additional arguments passed to BaseZMQClient
         """
         super().__init__(
@@ -119,6 +132,9 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             socket_ops,
             additional_bind_address=additional_bind_address,
             **kwargs,
+        )
+        self._decoder = msgspec.msgpack.Decoder(
+            WorkerToRouterMessage if decode_type is None else decode_type
         )
         self._receiver_handler: WorkerToRouterHandler | None = None
         self._msg_count: int = 0
@@ -130,7 +146,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         Register handler for incoming messages from DEALER clients.
 
         The handler will be called for each message received, with the DEALER's
-        identity and the decoded message (WorkerReady | WorkerShutdown | CreditReturn).
+        identity and the decoded message (WorkerDispatchable | WorkerShutdown | CreditReturn).
 
         Args:
             handler: Async function that takes (identity: str, message: WorkerToRouterMessage)
@@ -161,14 +177,55 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         payload = identity
         while self.socket.getsockopt(zmq.RCVMORE):
             payload = zmq.Socket.recv(self.socket, flags=zmq.NOBLOCK)
-        return identity.decode("utf-8"), _decoder.decode(payload)
+        return identity.decode("utf-8"), self._decoder.decode(payload)
 
-    def _dispatch_router(self, item: tuple[str, WorkerToRouterMessage]) -> None:
+    def _dispatch_router(self, item: tuple[str, Any]) -> None:
         identity, message = item
-        if self._receiver_handler is not None:
-            self.execute_async(self._receiver_handler(identity, message))
-        else:
+        if self._receiver_handler is None:
             self.warning(f"Received {type(message).__name__} but no handler registered")
+            return
+        self.execute_async(self._dispatch_message(identity, message))
+
+    async def _dispatch_message(self, identity: str, message: Any) -> None:
+        """Run the receiver handler and reply when it returns a Struct.
+
+        BEHAVIOR NOTE: both the handler call and the reply send contain their
+        exceptions rather than letting them propagate. This dispatch runs inside
+        the FD-reader drain loop that serves *every* peer on this ROUTER, so one
+        misbehaving handler must not take the socket down for the others. The
+        exception is logged with the message type and originating identity.
+        Callers that need failures to surface must handle them in the handler.
+        """
+        try:
+            response = await self._receiver_handler(identity, message)  # type: ignore[misc]
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - receiver handler boundary, must not crash ROUTER loop
+            # CONTAINED ON PURPOSE: this coroutine is fired from the FD-reader
+            # drain loop that multiplexes every peer on this ROUTER. Letting a
+            # single handler's exception escape would surface as an unhandled
+            # task error and leave the other peers' traffic unserved, so it is
+            # logged with enough context to identify the offending peer and
+            # message instead. Handlers that need failures to be fatal must act
+            # on them themselves.
+            self.exception(
+                f"Exception in handler for {type(message).__name__} "
+                f"from {identity}: {e!r}"
+            )
+            return
+
+        if response is None:
+            return
+        try:
+            await self.send_to(identity, response)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - send boundary, must not crash ROUTER dispatcher
+            # Same containment rationale as above. A DEALER that disconnected
+            # between receive and reply is the expected cause (EHOSTUNREACH /
+            # ENOTCONN); the ROUTER socket stays valid for every other peer.
+            self.exception(f"Failed to send response to {identity}: {e!r}")
+            await self._recover_from_send_failure(identity, e)
 
     def _send_one_router(self, frames: tuple[bytes, bytes]) -> None:
         """Synchronous NOBLOCK multipart send for the FD-driver.
@@ -190,6 +247,42 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             self.socket, identity, flags=zmq.NOBLOCK | zmq.SNDMORE, copy=False
         )
         zmq.Socket.send(self.socket, payload, flags=zmq.NOBLOCK, copy=False)
+
+    # A departed DEALER: the ROUTER stays valid for every other peer.
+    _PEER_GONE_ERRNOS = frozenset({zmq.EHOSTUNREACH, zmq.ENOTCONN})
+
+    async def _recover_from_send_failure(self, identity: str, error: Exception) -> None:
+        """Log a send failure that a departed peer explains; nothing else is actionable.
+
+        There is deliberately no socket-rebuild path here. In libzmq 4.3.5 EFSM
+        is raised only by the REQ/REP state machines and the security
+        mechanisms (``req.cpp``, ``rep.cpp``, ``null_mechanism.cpp``,
+        ``gssapi_server.cpp``) -- never by ROUTER -- and ``router_t::xsend``
+        returns -1 only when ROUTER_MANDATORY is set, which this codebase never
+        sets. A ROUTER send therefore cannot wedge the socket's state machine.
+        """
+        if self.stop_requested or not isinstance(error, zmq.ZMQError):
+            return
+
+        if error.errno in self._PEER_GONE_ERRNOS:
+            self.warning(
+                f"Peer {identity} unreachable (errno={error.errno}), dropping "
+                "response; ROUTER socket remains valid"
+            )
+
+    def _start_fd_reader(self) -> None:
+        """Build and start the edge-triggered FD reader for the current socket."""
+        self._fd_reader = FdEdgeReader(
+            socket=self.socket,
+            recv_one=self._recv_one_router,
+            dispatch=self._dispatch_router,
+            batch_limit=self._yield_interval,
+            send_one=self._send_one_router,
+            on_error=lambda e: self.exception(
+                f"Exception draining router socket for {self.client_id}: {e!r}"
+            ),
+        )
+        self._fd_reader.start()
 
     async def send_to(self, identity: str, struct: Struct) -> None:
         """
@@ -222,20 +315,10 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         Background task for receiving messages from DEALER clients.
 
         Runs continuously until stop is requested. Decodes messages as
-        WorkerToRouterMessage (WorkerReady | WorkerShutdown | CreditReturn) using msgpack.
+        WorkerToRouterMessage (WorkerDispatchable | WorkerShutdown | CreditReturn) using msgpack.
         """
         self.debug("Streaming ROUTER receiver task started")
 
         # Always drive the ROUTER off its raw FD: edge-triggered NOBLOCK multipart
         # drain on recv, sync NOBLOCK on send (the driver owns both directions).
-        self._fd_reader = FdEdgeReader(
-            socket=self.socket,
-            recv_one=self._recv_one_router,
-            dispatch=self._dispatch_router,
-            batch_limit=self._yield_interval,
-            send_one=self._send_one_router,
-            on_error=lambda e: self.exception(
-                f"Exception draining router socket for {self.client_id}: {e!r}"
-            ),
-        )
-        self._fd_reader.start()
+        self._start_fd_reader()

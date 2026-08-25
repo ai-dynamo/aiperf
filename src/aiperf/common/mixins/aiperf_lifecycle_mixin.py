@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     InvalidStateError,
     LifecycleOperationError,
@@ -123,8 +124,17 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         await self._set_state(transient_state)
         self.debug(lambda: f"{transient_state.title()} {self}")
+        # Startup transitions must fail-fast: continuing to run later hooks
+        # after an earlier one aborted produces a half-started service (e.g.
+        # background tasks spawned after a PUB/SUB probe already failed) that
+        # survives as a silent zombie container. Stop transitions stay
+        # best-effort so cleanup errors don't mask each other.
+        fail_fast = transient_state in (
+            LifecycleState.INITIALIZING,
+            LifecycleState.STARTING,
+        )
         try:
-            await self.run_hooks(hook_type, reverse=reverse)
+            await self.run_hooks(hook_type, reverse=reverse, fail_fast=fail_fast)
             await self._set_state(final_state)
             self.debug(lambda: f"{self} is now {final_state.title()}")
             event.set()
@@ -290,7 +300,20 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             )
         if self.state != LifecycleState.STOPPING:
             self.debug(f"Stopping {self} due to failure")
-            await self.stop()
+            # Bound the shutdown: a blocked on_stop hook (a cancelled ZMQ
+            # client stuck in a C-extension recv) otherwise turns a failed
+            # service into a silent zombie that keeps its container alive.
+            # We are already on the failure path, so losing cleanup state
+            # beats never exiting -- but only in a container. See
+            # ``_hard_exit_on_wedged_shutdown``.
+            timeout = Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
+            try:
+                await asyncio.wait_for(self.stop(), timeout=timeout)
+            except TimeoutError:
+                self.error(
+                    f"Shutdown after failure did not complete in {timeout}s; "
+                    f"continuing teardown and reporting the failure"
+                )
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 

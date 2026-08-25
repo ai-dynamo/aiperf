@@ -10,16 +10,17 @@ for real-time ZMQ message forwarding.
 from __future__ import annotations
 
 import asyncio
+import socket
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import HTTPConnection
 from starlette_compress import CompressMiddleware
 
 from aiperf import __version__ as aiperf_version
+from aiperf.api.depends import ServiceDep, get_service
 from aiperf.api.routers.base_router import BaseRouter
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
@@ -31,18 +32,12 @@ from aiperf.plugin.enums import PluginType, ServiceType
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 
-def get_service(conn: HTTPConnection) -> FastAPIService:
-    """Get FastAPIService from app state. Works for both HTTP and WebSocket."""
-    service = getattr(conn.app.state, "service", None)
-    if service is None:
-        raise RuntimeError("Service not initialized in app.state")
-    return service
-
-
-ServiceDep = Annotated["FastAPIService", Depends(get_service)]
+# Re-exported from `aiperf.api.depends` so existing imports of
+# `get_service` / `ServiceDep` from `aiperf.api.api_service` keep working.
+__all__ = ["FastAPIService", "ServiceDep", "get_service", "main"]
 
 
 class FastAPIService(BaseComponentService):
@@ -65,7 +60,9 @@ class FastAPIService(BaseComponentService):
         )
 
         self.api_host = run.cfg.runtime.api_host or Environment.API_SERVER.HOST
-        self.api_port = run.cfg.runtime.api_port or Environment.API_SERVER.PORT
+        self.api_port = (
+            self._api_port or run.cfg.runtime.api_port or Environment.API_SERVER.PORT
+        )
         self.cors_origins = Environment.API_SERVER.CORS_ORIGINS
 
         self._server: uvicorn.Server | None = None
@@ -138,6 +135,26 @@ class FastAPIService(BaseComponentService):
             raise ValueError(
                 "API port is not configured. Set --api-port or AIPERF_API_SERVER_PORT."
             )
+        # Pre-bind probe: catch port conflicts BEFORE uvicorn schedules the
+        # async serve() task. Without this, bind failure surfaces inside an
+        # asyncio task done-callback after credits have already drained, and
+        # the run silently "succeeds" with no API. There is a TOCTOU race
+        # vs uvicorn's actual bind, but it's tight enough that "port already
+        # bound" failures are caught reliably for the user-explicit case.
+        explicit_port = (
+            self._api_port is not None or self.run.cfg.runtime.api_port is not None
+        )
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind((self.api_host, self.api_port))
+        except OSError as e:
+            msg = f"API server cannot bind {self.api_host}:{self.api_port}: {e}"
+            if explicit_port:
+                # User-explicit --api-port; surface as fatal so the controller
+                # aborts via process-monitor → pod_failure_abort_event.
+                raise RuntimeError(msg) from e
+            self.warning(f"{msg}; continuing without API server.")
+            return
         config = uvicorn.Config(
             self.app,
             host=self.api_host,

@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-
 # This is a command-line tool Makefile for the AIPerf project.
 #
 # It is being used to support common development workflow commands without
@@ -13,7 +12,6 @@
 # of the development environment, or to even work at all. Users are encouraged
 # to read the source code and documentation for more information on how to use
 # the project.
-
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
 		test coverage clean install install-app docker docker-run first-time-setup \
@@ -29,7 +27,6 @@
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
 		check-agent-files-sync
-
 
 # Include user-defined environment variables
 -include .env.mk
@@ -74,7 +71,6 @@ italic := $(shell tput sitm)
 dim := $(shell tput dim)
 
 .DEFAULT_GOAL := help
-
 
 help: #? show this help
 	@$(MAKE) internal-help --no-print-directory
@@ -220,9 +216,16 @@ first-time-setup: #? convenience command to setup the environment for the first 
 	@printf "$(bold)$(green)Generating plugin overloads...$(reset)\n"
 	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory generate-plugin-overloads
 
-	@# Install pre-commit hooks
-	@printf "$(bold)$(green)Installing pre-commit hooks...$(reset)\n"
-	$(activate_venv) && pre-commit install --install-hooks
+	@# Install pre-commit hooks. Skipped when core.hooksPath is set: pre-commit
+	@# refuses to install in that case, and overwriting a custom hooks dir would
+	@# silently reintroduce its unstaged-changes stash.
+	@if git config --get core.hooksPath >/dev/null 2>&1; then \
+		printf "$(bold)$(green)Custom core.hooksPath set - skipping pre-commit install, installing hook envs only...$(reset)\n"; \
+		$(activate_venv) && pre-commit install-hooks; \
+	else \
+		printf "$(bold)$(green)Installing pre-commit hooks...$(reset)\n"; \
+		$(activate_venv) && pre-commit install --install-hooks; \
+	fi
 
 	@# Print a success message
 	@printf "$(bold)$(green)Done!$(reset)\n"

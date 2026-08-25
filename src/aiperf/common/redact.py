@@ -170,6 +170,21 @@ _STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@
 # X-User-Email:alice@example.com`` or ``--mlflow-tag owner:alice@acme.com``.
 _STRAY_BARE_USERINFO_PATTERN = re.compile(r"(^|[\s'\"])([^\s:@'\"/?#]+:[^\s@'\"/?#]+)@")
 
+# Query parameters that conventionally carry credentials. Match the complete
+# parameter name so ordinary values such as ``token_count`` and ``monkey`` are
+# preserved. The replacement is deliberately textual rather than parse/rebuild:
+# URL parsing helpers can normalize escaping, parameter ordering, and path bytes.
+_SENSITIVE_URL_QUERY_PARAMETER_PATTERN = re.compile(
+    r"([?&])((?:"
+    r"api[-_]?key|apikey|key|token|access[-_]?token|auth[-_]?token|"
+    r"bearer[-_]?token|id[-_]?token|refresh[-_]?token|secret|"
+    r"client[-_]?secret|password|passwd|credential|access[-_]?key[-_]?id|"
+    r"awsaccesskeyid|sig|signature|x-amz-signature|x-amz-security-token|"
+    r"x-amz-credential|x-goog-signature|x-goog-credential"
+    r"))=([^&#]*)",
+    re.IGNORECASE,
+)
+
 # Flag tokens that open a ``consume_multiple=True`` URL-value window. Only
 # these flags have the multi-value leak — ``--otel-url`` / ``--mlflow-tracking-uri``
 # take a single value and are already covered by ``_URL_FLAG_PATTERN``.
@@ -322,7 +337,7 @@ def build_cli_command() -> str:
 
 
 def redact_url(url: str) -> str:
-    """Strip userinfo (user:password@) from a URL to prevent credential leakage.
+    """Redact credentials in URL userinfo and sensitive query parameters.
 
     Handles URIs of any scheme (http, https, postgresql, mysql, sqlite, file,
     etc.) plus bare ``user:pass@host`` URLs. Returns the URL unchanged if no
@@ -340,10 +355,7 @@ def redact_url(url: str) -> str:
         r"\1" + REDACTED_VALUE + "@",
         url,
     )
-    # Once a scheme is present, do not fall through to the bare-userinfo regex:
-    # that regex matches on ``^[^@:]+:[^@]+@`` which would eat ``https://host/?a@b``
-    # starting from the ``https:`` prefix.
-    if result != url or "://" in url:
-        return result
-    # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
-    return re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", url)
+    if result == url and "://" not in url:
+        # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
+        result = re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", result)
+    return _SENSITIVE_URL_QUERY_PARAMETER_PATTERN.sub(rf"\1\2={REDACTED_VALUE}", result)

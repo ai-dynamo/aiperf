@@ -43,12 +43,13 @@ class TestFlatShapeRejection:
 
         cfg = load_config_from_string(flat, substitute_env=False)
         assert cfg.benchmark.models.items[0].name == "test/model"
-        # Deprecation warning should fire pointing at the migrate tool.
+        # Deprecation warning should explain the permanent manual edit.
         warnings = [
             r
             for r in caplog.records
             if "flat shape" in r.getMessage()
-            and "migrate_config_yaml.py" in r.getMessage()
+            and "nesting those keys under `benchmark:`" in r.getMessage()
+            and "docs/tutorials/yaml-config.md" in r.getMessage()
         ]
         assert warnings, "expected deprecation warning for flat-shape YAML"
 

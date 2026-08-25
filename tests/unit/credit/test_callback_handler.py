@@ -211,6 +211,66 @@ class TestPhaseRegistration:
         mock_concurrency.release_session_slot.assert_called_once_with(1)
         mock_concurrency.release_prefill_slot.assert_called_once_with(1)
 
+    async def test_same_kind_phase_orchestrators_route_and_detach_independently(
+        self,
+        callback_handler,
+        mock_concurrency,
+        mock_lifecycle,
+        mock_stop_checker,
+    ):
+        """A later named phase must not replace a seamless phase still draining."""
+        orchestrators = [MagicMock(), MagicMock()]
+        strategies = [MagicMock(), MagicMock()]
+        progresses = [MagicMock(), MagicMock()]
+        for phase_index in range(2):
+            orchestrator = orchestrators[phase_index]
+            orchestrator.intercept = AsyncMock(return_value=True)
+            orchestrator.has_pending_branch_work.return_value = False
+            orchestrator.get_branch_ids.return_value = []
+            strategy = strategies[phase_index]
+            strategy.handle_credit_return = AsyncMock()
+            progress = progresses[phase_index]
+            progress.all_credits_returned_event = asyncio.Event()
+            progress.increment_returned.return_value = False
+            progress.check_all_returned_or_cancelled.return_value = False
+            callback_handler.register_phase(
+                phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+                progress=progress,
+                lifecycle=mock_lifecycle,
+                stop_checker=mock_stop_checker,
+                strategy=strategy,
+            )
+            callback_handler.set_branch_orchestrator(
+                orchestrator,
+                phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+            )
+
+        phase_zero_credit = make_credit(phase_index=0, conversation_id="phase-zero")
+        phase_one_credit = make_credit(phase_index=1, conversation_id="phase-one")
+        await callback_handler.on_credit_return(
+            "worker-0", make_credit_return(phase_zero_credit)
+        )
+        await callback_handler.on_credit_return(
+            "worker-1", make_credit_return(phase_one_credit)
+        )
+
+        orchestrators[0].intercept.assert_awaited_once_with(phase_zero_credit)
+        orchestrators[1].intercept.assert_awaited_once_with(phase_one_credit)
+
+        callback_handler.set_branch_orchestrator(
+            None,
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+        )
+        assert callback_handler._orchestrator_for(0, CreditPhase.PROFILING) is None
+        assert (
+            callback_handler._orchestrator_for(1, CreditPhase.PROFILING)
+            is orchestrators[1]
+        )
+        orchestrators[0].set_drain_observer.assert_called_with(None)
+
 
 # =============================================================================
 # Test: Credit Return - Basic Flow

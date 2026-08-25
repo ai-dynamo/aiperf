@@ -85,6 +85,10 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         # without exposing it to the timeout-cancel branch that would defeat
         # ``asyncio.shield``.
         self._periodic_flush_in_flight: asyncio.Task | None = None
+        # Preserve the first write failure so the explicit artifact-finalize
+        # barrier can fail closed even when an earlier background flush logged
+        # the exception and later retries happened to succeed.
+        self._write_error: Exception | None = None
 
     @on_init
     async def _open_file(self) -> None:
@@ -149,6 +153,8 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 task.add_done_callback(self._flush_tasks.discard)
 
         except Exception as e:
+            if self._write_error is None:
+                self._write_error = e
             self.error(f"Failed to write record: {e!r}")
 
     async def flush_buffer(self) -> None:
@@ -157,11 +163,35 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         Public counterpart to ``_flush_buffer``: swaps out the live buffer and
         writes all pending records. Safe to call when the buffer is empty.
         """
+        # Drain detached batch writes first. Their tasks can finish and remove
+        # themselves from the tracking set while we await, so snapshot in a
+        # loop until no task remains.
+        while self._flush_tasks:
+            self._record_flush_failures(
+                await asyncio.gather(*list(self._flush_tasks), return_exceptions=True)
+            )
+        if (in_flight := self._periodic_flush_in_flight) is not None:
+            # Record rather than propagate the raw error: the barrier check
+            # below turns it into the RuntimeError callers expect.
+            try:
+                await asyncio.shield(in_flight)
+            except Exception as e:
+                self._record_write_error(e, "in-flight periodic flush failed")
+
         buffer_to_flush = self._buffer
         self._buffer = []
         # Shield so a cancel between detaching the buffer and the write
         # completing can't silently drop the records we already drained.
         await asyncio.shield(self._flush_buffer(buffer_to_flush))
+        if self._write_error is not None:
+            raise RuntimeError(
+                f"JSONL writer failed before artifact finalization: {self.output_file}"
+            ) from self._write_error
+        if self._buffer:
+            raise RuntimeError(
+                f"JSONL writer still has {len(self._buffer)} unflushed record(s): "
+                f"{self.output_file}"
+            )
 
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:
         """Write buffered records to disk using bulk write.
@@ -176,10 +206,14 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             return
         async with self._file_lock:
             if self._file_handle is None:
-                self.error(
+                error = RuntimeError(
                     f"Tried to flush buffer, but file handle is not open: {self.output_file}"
                 )
-                return
+                self._buffer = buffer_to_flush + self._buffer
+                if self._write_error is None:
+                    self._write_error = error
+                self.error(str(error))
+                raise error
 
             try:
                 self.debug(lambda: f"Flushing {len(buffer_to_flush)} records to file")
@@ -190,7 +224,30 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 await self._file_handle.flush()
                 self._last_flush_monotonic = time.monotonic()
             except Exception as e:
+                self._buffer = buffer_to_flush + self._buffer
+                if self._write_error is None:
+                    self._write_error = e
                 self.exception(f"Failed to flush buffer: {e!r}")
+                raise
+
+    def _record_write_error(self, error: BaseException, context: str) -> None:
+        """Remember a write failure without aborting the caller.
+
+        Shutdown paths must always reach the file-handle close, so they drain
+        flush tasks defensively instead of letting a raised ``OSError`` unwind
+        them. Keeping the first failure in ``_write_error`` is what preserves
+        the fail-closed contract: ``flush_buffer`` (the artifact-finalization
+        barrier) still raises for it even though teardown completed.
+        """
+        if self._write_error is None and isinstance(error, Exception):
+            self._write_error = error
+        self.error(f"JSONL writer {context}: {error!r}")
+
+    def _record_flush_failures(self, results: list) -> None:
+        """Record failures drained from a ``gather(..., return_exceptions=True)``."""
+        for result in results:
+            if isinstance(result, BaseException):
+                self._record_write_error(result, "pending flush task failed")
 
     @on_start
     async def _start_periodic_flush(self) -> None:
@@ -289,7 +346,13 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
 
         if (in_flight := self._periodic_flush_in_flight) is not None:
             # Never cancel: that would defeat the shield and drop the batch.
-            await in_flight
+            # A raised write error is recorded, not propagated, because this
+            # runs as the first statement of the @on_stop hook -- unwinding
+            # here would skip the final flush and leave the handle open.
+            try:
+                await in_flight
+            except Exception as e:
+                self._record_write_error(e, "in-flight periodic flush failed")
             if self._periodic_flush_in_flight is in_flight:
                 self._periodic_flush_in_flight = None
 
@@ -303,7 +366,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         try:
             await self._flush_buffer(buffer_to_flush)
         except Exception as e:
-            self.error(f"Failed to flush remaining buffer during shutdown: {e}")
+            self._record_write_error(e, "failed to flush remaining buffer at shutdown")
 
         async with self._file_lock:
             if self._file_handle is not None:
@@ -347,9 +410,16 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         # waited on nor cancelled here.
         if self._flush_tasks:
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(*list(self._flush_tasks)),
-                    timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+                # return_exceptions so one failed batch write cannot unwind the
+                # hook before the remaining buffer is flushed and the handle is
+                # closed. The failure is recorded for the finalization barrier.
+                self._record_flush_failures(
+                    await asyncio.wait_for(
+                        asyncio.gather(
+                            *list(self._flush_tasks), return_exceptions=True
+                        ),
+                        timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+                    )
                 )
             except TimeoutError:
                 self.warning(

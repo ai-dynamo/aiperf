@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 import orjson
 import pytest
 
@@ -90,6 +93,57 @@ async def test_conversation_format_returns_none_for_payload_bytes(
     conversation = client.get_conversation("conv-1")
     assert conversation.session_id == "conv-1"
 
+    client.close()
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_conversation_reads_do_not_share_mmap_cursor(
+    tmp_path, monkeypatch
+):
+    """Executor reads use independent slices instead of the mmap file position."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+    store = MemoryMapDatasetBackingStore(benchmark_id="test_concurrent_reads")
+    await store.initialize()
+    await store.add_conversation(
+        "conv-1", Conversation(session_id="conv-1", turns=[Turn(role="user")])
+    )
+    await store.add_conversation(
+        "conv-2", Conversation(session_id="conv-2", turns=[Turn(role="user")])
+    )
+    await store.finalize()
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(
+        metadata.data_file_path,
+        metadata.index_file_path,
+    )
+
+    original_mmap = client.data_mmap
+    raw_data = bytes(original_mmap[:])
+    read_barrier = Barrier(2)
+
+    class ConcurrentSliceProbe:
+        def __getitem__(self, key: slice) -> bytes:
+            read_barrier.wait(timeout=5)
+            return raw_data[key]
+
+        def seek(self, offset: int) -> None:
+            raise AssertionError(f"shared mmap cursor seek attempted: {offset}")
+
+        def read(self, size: int) -> bytes:
+            raise AssertionError(f"shared mmap cursor read attempted: {size}")
+
+    client.data_mmap = ConcurrentSliceProbe()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(client.get_conversation, ("conv-1", "conv-2")))
+    finally:
+        client.data_mmap = original_mmap
+
+    assert [conversation.session_id for conversation in results] == [
+        "conv-1",
+        "conv-2",
+    ]
     client.close()
     await store.stop()
 

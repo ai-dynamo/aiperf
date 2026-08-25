@@ -19,15 +19,12 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset.resolver import DatasetResolver
 
+_EPOCH_RE = re.compile(r"^\d{9,11}$")
+
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.config.user_files import RunMeta
 
-# 9-11 digits covers epoch-seconds from 1973 (10^9) through 5138 (10^11),
-# which comfortably brackets any realistic AIPerfJob creation timestamp.
-# Inlined from aiperf.operator.results_layout to keep the config package
-# free of operator/kubernetes imports.
-_EPOCH_RE = re.compile(r"^\d{9,11}$")
 
 __all__ = [
     "ArtifactDirResolver",

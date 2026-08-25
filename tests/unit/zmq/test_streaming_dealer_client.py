@@ -12,7 +12,7 @@ import zmq
 
 from aiperf.common.enums import CreditPhase, LifecycleState
 from aiperf.common.exceptions import NotInitializedError
-from aiperf.credit.messages import RouterToWorkerMessage, WorkerReady
+from aiperf.credit.messages import RouterToWorkerMessage, WorkerDispatchable
 from aiperf.credit.structs import Credit
 from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 
@@ -153,7 +153,7 @@ class TestZMQStreamingDealerClientSend:
 
             mock_socket._sync_send.assert_called_once()
             sent_data = mock_socket._sync_send.call_args[0][0]
-            decoded = msgspec.msgpack.decode(sent_data, type=WorkerReady)
+            decoded = msgspec.msgpack.decode(sent_data, type=WorkerDispatchable)
             assert decoded.worker_id == sample_worker_ready.worker_id
 
     @pytest.mark.asyncio
@@ -163,7 +163,7 @@ class TestZMQStreamingDealerClientSend:
         """Test sending multiple structs."""
         async with streaming_dealer_test_helper.create_client() as client:
             mock_socket = client.socket
-            structs = [WorkerReady(worker_id=f"worker-{i}") for i in range(3)]
+            structs = [WorkerDispatchable(worker_id=f"worker-{i}") for i in range(3)]
 
             for struct in structs:
                 await client.send(struct)
@@ -418,6 +418,40 @@ class TestZMQStreamingDealerClientEdgeCases:
             for i, credit in enumerate(received):
                 assert isinstance(credit, Credit)
                 assert credit.id == i
+
+    @pytest.mark.asyncio
+    async def test_multi_frame_message_decodes_the_first_frame(
+        self, streaming_dealer_test_helper, sample_credit
+    ):
+        """A DEALER socket strips the routing identity, so frame 1 IS the
+        payload -- unlike the ROUTER counterpart, whose frame 1 is the identity
+        it must skip. Copying the ROUTER's "keep the last frame" drain here
+        would decode a trailing frame instead of the message. No live trigger
+        today (the router sends exactly ``(identity, payload)``), so this pins
+        the shape before a second frame is ever added.
+        """
+        received = []
+        received_event = asyncio.Event()
+
+        streaming_dealer_test_helper.setup_mock_socket(
+            recv_multipart_side_effect=[
+                [msgspec.msgpack.encode(sample_credit), b"future-trailing-frame"]
+            ]
+        )
+
+        async def test_handler(message: RouterToWorkerMessage) -> None:
+            received.append(message)
+            received_event.set()
+
+        async with streaming_dealer_test_helper.create_client() as client:
+            client.register_receiver(test_handler)
+            await client.start()
+
+            await asyncio.wait_for(received_event.wait(), timeout=2.0)
+
+        assert len(received) == 1
+        assert isinstance(received[0], Credit)
+        assert received[0].id == sample_credit.id
 
     @pytest.mark.parametrize(
         "identity",
