@@ -140,6 +140,10 @@ fn service_and_unknown_commands_refuse_without_starting_python() {
             "aiperf service is unavailable from the native binary",
         ),
         (
+            ["--help", "service"].as_slice(),
+            "unsupported native aiperf command",
+        ),
+        (
             ["definitely-unknown"].as_slice(),
             "unsupported native aiperf command",
         ),

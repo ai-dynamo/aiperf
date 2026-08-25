@@ -41,6 +41,8 @@ fn exec_python_module(python: &Path, module: &str, argv: &[String]) -> anyhow::R
         .arg(module)
         .args(argv)
         .status()
-        .map_err(|error| anyhow::anyhow!("failed to delegate to `{}`: {error}", python.display()))?;
+        .map_err(|error| {
+            anyhow::anyhow!("failed to delegate to `{}`: {error}", python.display())
+        })?;
     Ok(status.code().unwrap_or(1))
 }

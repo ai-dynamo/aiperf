@@ -35,10 +35,12 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
         Some("speed-bench-report") => speed_bench::run(&argv[1..]),
         Some("synthesize") => synthesize::run(&argv[1..]),
         Some("metrics") => metrics_list::run(&argv[1..]),
-        Some("analyze" | "plot" | "plugins")
-        | None
-        | Some("-h" | "--help" | "--install-completion") => {
-            delegate::exec_python_utility(argv)
+        Some("analyze" | "plot" | "plugins") | None => delegate::exec_python_utility(argv),
+        Some("-h" | "--help") if argv.len() == 1 => delegate::exec_python_utility(argv),
+        Some("--install-completion") => delegate::exec_python_utility(argv),
+        Some("-V" | "--version") => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            Ok(0)
         }
         Some("service") => anyhow::bail!(
             "aiperf service is unavailable from the native binary; use `aiperf-python service`"
