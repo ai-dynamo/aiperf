@@ -136,7 +136,8 @@ def test_python_slurm_command_routes_to_shim(config_path: Path, tmp_path: Path) 
                 "2",
                 "--output",
                 str(output),
-            ]
+            ],
+            result_action="return_value",
         )
         is None
     )

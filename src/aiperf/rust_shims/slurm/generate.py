@@ -172,5 +172,5 @@ def generate(
 def main(arguments: list[str] | None = None) -> int:
     """Run the SLURM-generation shim with explicitly supplied arguments."""
     argv = sys.argv[1:] if arguments is None else list(arguments)
-    result = app(argv)
+    result = app(argv, result_action="return_value")
     return 0 if result is None else result
