@@ -242,6 +242,26 @@ Controller progress heartbeat policy shared with the operator.
 | `AIPERF_K8S_CONTROLLER_HEARTBEAT_INTERVAL_SECONDS` | `10.0` | > 0.0, ≤ 600.0 | Interval in seconds between controller progress heartbeats |
 | `AIPERF_K8S_CONTROLLER_HEARTBEAT_EXPIRY_SECONDS` | `30.0` | > 0.0, ≤ 3600.0 | Seconds without a controller progress heartbeat before expiry. Must be at least twice INTERVAL_SECONDS. |
 
+## K8SCONTROLLERPODREADY
+
+Controller pod readiness polling policy.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_CONTROLLER_POD_READY_TIMEOUT_SECONDS` | `300.0` | > 0.0, ≤ 86400.0 | Maximum seconds to wait for the controller pod to reach Running. |
+| `AIPERF_K8S_CONTROLLER_POD_READY_POLL_INTERVAL_SECONDS` | `2.0` | > 0.0, ≤ 300.0 | Seconds between controller pod readiness polls. |
+| `AIPERF_K8S_CONTROLLER_POD_READY_STATUS_LOG_INTERVAL_SECONDS` | `10.0` | > 0.0, ≤ 3600.0 | Seconds between controller pod readiness status log lines. |
+
+## K8SCREDENTIALRETRY
+
+Retry policy for recoverable Kubernetes credential failures.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_CREDENTIAL_RETRY_INITIAL_BACKOFF_SECONDS` | `2.0` | > 0.0, ≤ 3600.0 | Initial delay before retrying a Kubernetes credential failure. |
+| `AIPERF_K8S_CREDENTIAL_RETRY_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 100.0 | Multiplier applied after each Kubernetes credential retry. |
+| `AIPERF_K8S_CREDENTIAL_RETRY_MAX_BACKOFF_SECONDS` | `15.0` | > 0.0, ≤ 3600.0 | Maximum delay between Kubernetes credential retries. |
+
 ## K8SDATASETMANAGER
 
 Dataset Manager container CPU and memory (Guaranteed QoS).
@@ -313,6 +333,14 @@ JobSet-level configuration.
 | `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` | `''` | — | Operator-side default for Kueue gang-scheduling. When the AIPerfJob CR's spec.scheduling.queue_name is unset, the JobSet manifest falls back to this value. When non-empty, the JobSet gets the kueue.x-k8s.io/queue-name label, which Kueue's JobSet integration uses to admit the workload as a unit (gang-scheduling: controller + all worker pods admitted atomically, or none). Safe to leave unset on clusters without Kueue — the label is then never added. Set to e.g. 'aiperf-lq' on clusters where Kueue is installed and a LocalQueue of that name exists in the benchmark namespace. |
 | `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_PRIORITY_CLASS` | `''` | — | Operator-side default for Kueue WorkloadPriorityClass. Companion to KUEUE_DEFAULT_QUEUE_NAME. When unset, the JobSet gets no kueue.x-k8s.io/priority-class label and Kueue's default fairness applies. |
 
+## K8SPODMONITOR
+
+Controller-side worker pod health confirmation policy.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_POD_MONITOR_UNHEALTHY_CONFIRMATION_POLLS` | `2` | ≥ 1, ≤ 100 | Consecutive Unknown-phase polls required before reaping pod services. |
+
 ## K8SPORT
 
 Container port assignments.
@@ -346,6 +374,12 @@ Tunables for ``aiperf.kubernetes.port_forward`` kubectl-based forwards.
 | `AIPERF_K8S_PORT_FORWARD_API_RETRY_DELAY_SECONDS` | `2.0` | ≥ 0.1, ≤ 30.0 | Seconds to back off between port-forward restart attempts while the API isn't ready. |
 | `AIPERF_K8S_PORT_FORWARD_API_MAX_RETRIES` | `10` | ≥ 0, ≤ 50 | Maximum number of port-forward restarts before giving up on the API readiness probe. |
 | `AIPERF_K8S_PORT_FORWARD_PROCESS_CLEANUP_TIMEOUT_SECONDS` | `5.0` | ≥ 0.1, ≤ 60.0 | Seconds to wait for graceful kubectl termination before escalating to SIGKILL. |
+| `AIPERF_K8S_PORT_FORWARD_POD_LIVENESS_INTERVAL_SECONDS` | `10.0` | > 0.0, ≤ 3600.0 | Seconds between checks that a forwarded pod still exists. |
+| `AIPERF_K8S_PORT_FORWARD_API_PROBE_INTERVAL_SECONDS` | `1.0` | > 0.0, ≤ 300.0 | Seconds between forwarded API readiness probes. |
+| `AIPERF_K8S_PORT_FORWARD_API_PROBE_REQUEST_TIMEOUT_SECONDS` | `5.0` | > 0.0, ≤ 600.0 | Per-request timeout for forwarded API readiness probes. |
+| `AIPERF_K8S_PORT_FORWARD_RECONNECT_INITIAL_BACKOFF_SECONDS` | `1.0` | > 0.0, ≤ 3600.0 | Initial delay before reconnecting a persistent port-forward. |
+| `AIPERF_K8S_PORT_FORWARD_RECONNECT_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 100.0 | Multiplier applied after each persistent port-forward reconnect. |
+| `AIPERF_K8S_PORT_FORWARD_RECONNECT_MAX_BACKOFF_SECONDS` | `30.0` | > 0.0, ≤ 3600.0 | Maximum delay between persistent port-forward reconnects. |
 
 ## K8SPROGRESSSTREAM
 
@@ -356,6 +390,7 @@ Tunables for ``aiperf.kubernetes.progress_stream`` WebSocket reconnects.
 | `AIPERF_K8S_PROGRESS_STREAM_WS_INITIAL_BACKOFF_SECONDS` | `1.0` | ≥ 0.1, ≤ 60.0 | Initial reconnect backoff after a WebSocket transport error. |
 | `AIPERF_K8S_PROGRESS_STREAM_WS_MAX_BACKOFF_SECONDS` | `30.0` | ≥ 1.0, ≤ 300.0 | Cap on the exponential reconnect backoff. |
 | `AIPERF_K8S_PROGRESS_STREAM_WS_HEARTBEAT_SECONDS` | `30` | ≥ 1, ≤ 300 | Seconds between aiohttp WebSocket heartbeats. |
+| `AIPERF_K8S_PROGRESS_STREAM_WS_MAX_RETRIES` | `10` | ≥ 1, ≤ 100 | Maximum WebSocket reconnection attempts before failing. |
 
 ## K8SRECORDSMANAGER
 
@@ -434,6 +469,8 @@ Thresholds for ``aiperf.kubernetes.watchdog`` pod-health heuristics. These were 
 | `AIPERF_K8S_WATCHDOG_PENDING_THRESHOLD_SECONDS` | `30.0` | ≥ 1.0, ≤ 3600.0 | Seconds a pod startup blocker may remain stable before the CLI watchdog or operator raises a warning. |
 | `AIPERF_K8S_WATCHDOG_PENDING_CRITICAL_THRESHOLD_SECONDS` | `90.0` | ≥ 1.0, ≤ 3600.0 | Seconds a pod startup blocker may remain stable before escalation to critical. The operator fails only known non-recoverable image, configuration, crash-loop, or structural scheduling blockers; capacity-related scheduling remains retryable. |
 | `AIPERF_K8S_WATCHDOG_CRASHLOOP_RESTART_THRESHOLD` | `2` | ≥ 1, ≤ 100 | Container restart count at which a crash-loop warning is raised and the operator may treat a stable CrashLoopBackOff as terminal. |
+| `AIPERF_K8S_WATCHDOG_EVENT_CHECK_INTERVAL_TICKS` | `3` | ≥ 1, ≤ 1000 | Watchdog ticks between Kubernetes event checks. |
+| `AIPERF_K8S_WATCHDOG_RESOURCE_CHECK_INTERVAL_TICKS` | `6` | ≥ 1, ≤ 1000 | Watchdog ticks between pod resource-usage checks. |
 
 ## K8SWATCH
 
@@ -441,7 +478,9 @@ CLI AIPerfJob CR polling and logging configuration.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_WATCH_DEFAULT_TIMEOUT_SECONDS` | `600` | ≥ 1, ≤ 86400 | Default maximum seconds to watch an AIPerfJob for completion. |
 | `AIPERF_K8S_WATCH_CR_POLL_INTERVAL_SECONDS` | `2.0` | > 0.0, ≤ 300.0 | Seconds between AIPerfJob CR status polls |
+| `AIPERF_K8S_WATCH_NOT_FOUND_WARNING_GRACE_SECONDS` | `30.0` | ≥ 0.0, ≤ 3600.0 | Seconds before warning that the watched AIPerfJob CR is missing. |
 | `AIPERF_K8S_WATCH_NOT_FOUND_RETRY_INTERVAL_SECONDS` | `5.0` | > 0.0, ≤ 300.0 | Seconds to wait before retrying a missing AIPerfJob CR |
 | `AIPERF_K8S_WATCH_CR_STATUS_LOG_INTERVAL_SECONDS` | `10.0` | > 0.0, ≤ 3600.0 | Seconds between AIPerfJob CR status log lines |
 

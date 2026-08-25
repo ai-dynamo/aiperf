@@ -109,3 +109,22 @@ def test_credential_retry_delay_uses_configured_backoff(
         20.0,
         20.0,
     ]
+
+
+@pytest.mark.parametrize(
+    "attempt",
+    [
+        param(155, id="float-overflow-boundary"),
+        param(156, id="after-float-overflow-boundary"),
+    ],
+)  # fmt: skip
+def test_credential_retry_delay_caps_before_exponent_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+    attempt: int,
+) -> None:
+    settings = K8sEnvironment.CREDENTIAL_RETRY
+    monkeypatch.setattr(settings, "INITIAL_BACKOFF_SECONDS", 1.0)
+    monkeypatch.setattr(settings, "BACKOFF_MULTIPLIER", 100.0)
+    monkeypatch.setattr(settings, "MAX_BACKOFF_SECONDS", 3600.0)
+
+    assert credential_retry_delay(attempt) == 3600.0

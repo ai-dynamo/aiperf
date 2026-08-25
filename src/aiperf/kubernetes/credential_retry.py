@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -72,10 +73,19 @@ def is_kubectl_authentication_error(
 def credential_retry_delay(attempt: int) -> float:
     """Return capped exponential delay for a zero-based retry attempt."""
     settings = K8sEnvironment.CREDENTIAL_RETRY
-    return min(
-        settings.INITIAL_BACKOFF_SECONDS * (settings.BACKOFF_MULTIPLIER**attempt),
-        settings.MAX_BACKOFF_SECONDS,
-    )
+    initial = settings.INITIAL_BACKOFF_SECONDS
+    multiplier = settings.BACKOFF_MULTIPLIER
+    maximum = settings.MAX_BACKOFF_SECONDS
+    if multiplier == 1.0:
+        return initial
+
+    power_log = attempt * math.log(multiplier)
+    delay_log = math.log(initial) + power_log
+    if delay_log >= math.log(maximum):
+        return maximum
+    if power_log >= math.log(sys.float_info.max):
+        return math.exp(delay_log)
+    return initial * (multiplier**attempt)
 
 
 def print_credential_wait(context: str | None) -> None:

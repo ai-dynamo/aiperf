@@ -51,6 +51,7 @@ from aiperf.kubernetes.client import (
     wait_for_controller_pod_ready,
 )
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.models import PodSummary
 
 # ============================================================
@@ -1380,6 +1381,50 @@ class TestWaitForControllerPodReady:
             )
         assert result == "ctrl-0"
         assert delays == [2.75]
+
+    @pytest.mark.asyncio
+    async def test_status_log_interval_uses_configured_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        api = MagicMock()
+        mock_core = MagicMock()
+        mock_core.list_namespaced_pod = AsyncMock(
+            side_effect=[
+                _pod_list([_make_v1pod(name="ctrl-0", phase="Pending")]),
+                _pod_list([_make_v1pod(name="ctrl-0", phase="Running")]),
+            ]
+        )
+        times = iter((0.0, 4.0, 4.0))
+        fake_loop = MagicMock()
+        fake_loop.time.side_effect = times
+        info = MagicMock()
+
+        monkeypatch.setattr(
+            K8sEnvironment.CONTROLLER_POD_READY,
+            "STATUS_LOG_INTERVAL_SECONDS",
+            3.5,
+        )
+        monkeypatch.setattr(
+            "aiperf.kubernetes.client_pods.asyncio.get_running_loop",
+            MagicMock(return_value=fake_loop),
+        )
+        monkeypatch.setattr(
+            "aiperf.kubernetes.client_pods.asyncio.sleep", AsyncMock()
+        )
+        monkeypatch.setattr("aiperf.kubernetes.client_pods.logger.info", info)
+
+        with patch(
+            "aiperf.kubernetes.client_pods.client.CoreV1Api",
+            return_value=mock_core,
+        ):
+            result = await wait_for_controller_pod_ready(
+                api, "default", "j-1", timeout=300
+            )
+
+        assert result == "ctrl-0"
+        info.assert_called_once_with(
+            "Controller pod %s: %s (%.0fs)", "ctrl-0", PodPhase.PENDING, 4.0
+        )
 
     @pytest.mark.asyncio
     async def test_times_out(self, monkeypatch) -> None:
