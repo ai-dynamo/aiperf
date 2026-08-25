@@ -54,20 +54,6 @@ __all__ = [
     "format_estimate",
 ]
 
-# Private helpers re-exported for the unit tests.
-_PRIVATE_REEXPORTS = (
-    _ceil_pow2,
-    _estimate_dataset_manager,
-    _estimate_fixed_service,
-    _estimate_gpu_telemetry,
-    _estimate_record_processor,
-    _estimate_records_manager,
-    _estimate_server_metrics,
-    _estimate_worker,
-    _mib,
-)
-
-
 def estimate_memory(
     config: AIPerfConfig,
     total_workers: int = 10,

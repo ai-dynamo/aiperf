@@ -54,10 +54,6 @@ _SERVICE_BASE_MIB: dict[str, int] = {
 _ZMQ_PROXY_MIB = 5
 _NUM_ZMQ_PROXIES = 3
 
-# RecordsManager: per-worker tracking overhead in RecordsTracker
-# (WorkerProcessingStats per worker, not per request)
-_BYTES_PER_WORKER_TRACKING = 256
-
 # Wrapper-class overhead atop a numpy-backed time-series array
 # (``ColumnStore`` columns, ``GpuMetricTimeSeries``, ``ScalarTimeSeries``,
 # ``HistogramTimeSeries``). At fully-filled capacity the wrapper class adds
@@ -144,9 +140,6 @@ _TEXT_RESPONSE_BYTES_PER_TOKEN = 4  # ~4 chars per token in response body
 # (Turn alone 1576 B, Text alone 592 B), plus 4.01 B/token of prompt text.
 _TURN_BASE_BYTES = 2240  # Turn + Text Pydantic overhead
 _TURN_BYTES_PER_TOKEN = 4  # ~4 chars per input token
-
-# Multi-turn session state: per-token in conversation history
-_BYTES_PER_SESSION_TOKEN = 4
 
 # Mmap index entry per conversation
 _MMAP_INDEX_ENTRY_BYTES = 16
