@@ -189,6 +189,25 @@ class StreamingRouterClientProtocol(CommunicationClientProtocol, Protocol):
         """
         ...
 
+    async def request_to(self, identity: str, message: MessageT, timeout: float) -> Any:
+        """
+        Send a request to one DEALER and await the reply correlated by ``cid``.
+
+        The peer must echo the request's ``cid`` on its response. Used by the
+        worker-pod lifecycle channel to fan a ``GroupPeerCommand`` out to sibling
+        containers and collect each ``GroupPeerCommandAck``.
+
+        Args:
+            identity: The DEALER client's identity (routing key)
+            message: The request message; must carry a non-empty ``cid``
+            timeout: Maximum seconds to wait for the reply
+
+        Raises:
+            ValueError: If ``message`` has no ``cid`` to correlate on
+            TimeoutError: If no matching reply arrives within ``timeout``
+        """
+        ...
+
 
 @runtime_checkable
 class StreamingDealerClientProtocol(CommunicationClientProtocol, Protocol):

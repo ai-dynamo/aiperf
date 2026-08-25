@@ -4,6 +4,8 @@
 
 import re
 from collections.abc import Sequence
+from copy import deepcopy
+from typing import Any
 from urllib.parse import unquote_plus
 
 REDACTED_VALUE = "<redacted>"
@@ -394,3 +396,38 @@ def redact_url(url: str) -> str:
         # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
         result = re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", result)
     return _redact_sensitive_query_parameters(result)
+
+
+def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Return a credential-safe copy of a CR spec or benchmark configuration.
+
+    Kubernetes CRs use the public ``apiKey`` spelling while Python model dumps
+    may use ``api_key``. Both shapes cross persistence and API boundaries, so
+    the canonical redactor intentionally handles both without normalizing the
+    rest of the user-authored document.
+    """
+    redacted = deepcopy(spec)
+    benchmark = redacted.get("benchmark", redacted)
+    if not isinstance(benchmark, dict):
+        return redacted
+    endpoint = benchmark.get("endpoint")
+    if not isinstance(endpoint, dict):
+        return redacted
+
+    for key in ("apiKey", "api_key"):
+        if endpoint.get(key) is not None:
+            endpoint[key] = REDACTED_VALUE
+
+    headers = endpoint.get("headers")
+    if isinstance(headers, dict):
+        endpoint["headers"] = redact_headers(headers) or {}
+
+    for key in ("urls", "url"):
+        urls = endpoint.get(key)
+        if isinstance(urls, str):
+            endpoint[key] = redact_url(urls)
+        elif isinstance(urls, list):
+            endpoint[key] = [
+                redact_url(url) if isinstance(url, str) else url for url in urls
+            ]
+    return redacted

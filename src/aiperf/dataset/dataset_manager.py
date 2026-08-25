@@ -62,6 +62,7 @@ from aiperf.plugin.enums import (
     DatasetBackingStoreType,
     PhaseType,
     PluginType,
+    ServiceRunType,
 )
 from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
@@ -128,7 +129,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache: list[str] = []
         self.dataset_configured = asyncio.Event()
 
-        self._compress_only = False
+        # In Kubernetes mode, use compress_only to stream directly to compressed files.
+        # This avoids creating large uncompressed files on the control plane.
+        # WorkerPodManagers will download compressed files and decompress locally.
+        # KUBERNETES is an optional service-run plugin, so probe via getattr.
+        self._compress_only = self._is_kubernetes_run()
 
         # The backing store is created in _configure_dataset once the mmap
         # format (CONVERSATION vs PAYLOAD_BYTES) is known, or in
@@ -148,6 +153,15 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # writes under the same key the lookup would have used.
         self._cache_key_for_run: str | None = None
         self._cache_hit_used: bool = False
+        self._dataset_rebroadcast_task: asyncio.Task[None] | None = None
+
+    def _is_kubernetes_run(self) -> bool:
+        """Return whether the optional KUBERNETES service-run plugin is active."""
+        kubernetes_run_type = getattr(ServiceRunType, "KUBERNETES", None)
+        return (
+            kubernetes_run_type is not None
+            and self.run.cfg.runtime.service_run_type == kubernetes_run_type
+        )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -983,7 +997,15 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         mmap_metadata = self._backing_store.get_client_metadata()
         self.info(f"Backing store finalized: {mmap_metadata}")
 
+        # In Kubernetes mode, workers wait for DatasetDownloadedNotification from
+        # WorkerPodManager which provides local file paths. We still send mmap_metadata
+        # which has the control plane paths (ignored by workers in Kubernetes mode).
         client_metadata: DatasetClientMetadata = mmap_metadata
+        if self._is_kubernetes_run():
+            self.info(
+                "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
+                "from WorkerPodManager before accessing dataset"
+            )
 
         sampling_strategy = getattr(default_dataset, "sampling", None)
         self.dataset_metadata = DatasetMetadata(
@@ -1007,6 +1029,42 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             dataset_generation=_dataset_generation_of(client_metadata),
         )
         await self.publish(notification)
+        self._start_dataset_rebroadcast(notification)
+
+    def _start_dataset_rebroadcast(
+        self, notification: DatasetConfiguredNotification
+    ) -> None:
+        """Re-announce the dataset for a bounded window so late pods catch up.
+
+        Kubernetes only. This notification is the sole way a WorkerGroupManager
+        learns a dataset exists, and it is a plain pub/sub broadcast: a worker
+        pod whose containers subscribe after it fires receives nothing, never
+        downloads, and its workers can never become dispatchable. Sibling pods
+        in a JobSet routinely start seconds apart, so that window is real.
+
+        Re-announcing is safe because every consumer is idempotent on the
+        repeat: the WorkerGroupManager short-circuits once the dataset is
+        downloaded, and a Kubernetes Worker defers to the pod-local download.
+        Restricted to Kubernetes precisely because the local-mode Worker path
+        re-opens its dataset client on each notification.
+        """
+        if not self._is_kubernetes_run():
+            return
+        self._dataset_rebroadcast_task = self.execute_async(
+            self._rebroadcast_dataset_configured(notification)
+        )
+
+    async def _rebroadcast_dataset_configured(
+        self, notification: DatasetConfiguredNotification
+    ) -> None:
+        """Re-publish the dataset notification on an interval, then stop."""
+        interval = Environment.DATASET.REBROADCAST_INTERVAL
+        deadline = time.perf_counter() + Environment.DATASET.REBROADCAST_WINDOW
+        while time.perf_counter() < deadline:
+            await asyncio.sleep(interval)
+            if self.stop_requested:
+                return
+            await self.publish(notification)
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

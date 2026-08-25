@@ -89,6 +89,10 @@ class CommAddress(CaseInsensitiveStrEnum):
 
 
 class CommandType(CaseInsensitiveStrEnum):
+    FINALIZE_ARTIFACTS = "finalize_artifacts"
+    """Flush and durably publish artifacts before service communication stops."""
+    GET_POD_STATES = "get_pod_states"
+    """Return the SystemController's authoritative worker-pod state snapshot."""
     REALTIME_METRICS = "realtime_metrics"
     PROCESS_RECORDS = "process_records"
     PROFILE_CANCEL = "profile_cancel"
@@ -96,10 +100,18 @@ class CommandType(CaseInsensitiveStrEnum):
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
     REGISTER_SERVICE = "register_service"
+    REPORT_WORKER_STATUS_SUMMARY = "report_worker_status_summary"
+    """Controller -> worker-group request for an immediate status summary,
+    instead of waiting for the next periodic ``_worker_summary_loop`` tick."""
     SHUTDOWN = "shutdown"
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
+    ABORT = "abort"
+    """Signal sibling pod peers (workers/record-processors) to exit the process
+    with a non-zero status so kubelet restarts them. Used by WorkerGroupManager
+    when its own lifecycle failed -- a clean SHUTDOWN would let siblings exit 0
+    and leave the pod permanently half-dead at 1/13 Ready."""
 
 
 class CommandResponseStatus(CaseInsensitiveStrEnum):
@@ -438,6 +450,7 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
+    DATASET_DOWNLOADED_NOTIFICATION = "dataset_downloaded_notification"
     DATASET_CONFIGURATION_FAILED = "dataset_configuration_failed"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
@@ -463,7 +476,10 @@ class MessageType(CaseInsensitiveStrEnum):
     TELEMETRY_STATUS = "telemetry_status"
     SERVER_METRICS_STATUS = "server_metrics_status"
     NETWORK_LATENCY_RECORD = "network_latency_record"
+    WORKER_GROUP_STATS = "worker_group_stats"
     WORKER_HEALTH = "worker_health"
+    WORKER_POD_STATE = "worker_pod_state"
+    WORKER_STARTUP_STATE = "worker_startup_state"
     WORKER_STATUS_SUMMARY = "worker_status_summary"
 
 

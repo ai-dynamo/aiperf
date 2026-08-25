@@ -167,8 +167,11 @@ class TestProcessResultFailureSurface:
         ctrl._server_metrics_results = None
         ctrl._result_join_coordinator = MagicMock()
         ctrl._check_and_trigger_shutdown = AsyncMock()
-        # Aggregation diagnostics stay log-only; see
+        # The results-ready marker asserted below is a Kubernetes artifact, so
+        # this exercises the operator path, where aggregation diagnostics do
+        # reach _exit_errors. Locally they stay log-only; see
         # tests/unit/controller/test_advisory_record_diagnostics.py.
+        ctrl._is_kubernetes = MagicMock(return_value=True)
         error = ErrorDetails(
             type="OSError",
             message="stream flush disk full",
@@ -191,19 +194,29 @@ class TestProcessResultFailureSurface:
         )
 
         assert ctrl._export_failed is False
-        # Aggregation diagnostics stay advisory on a local run: they are logged
-        # but never promoted to _exit_errors, so a telemetry-drain timeout on a
-        # complete result set still exits 0.
-        assert ctrl._exit_errors == []
+        assert len(ctrl._exit_errors) == 1
+        assert ctrl._exit_errors[0].operation == "process_records"
+        assert ctrl._exit_errors[0].service_id == "records-manager"
+        assert ctrl._exit_errors[0].error_details == error
         ctrl._check_and_trigger_shutdown.assert_awaited_once()
 
         ctrl.service_id = "system_controller"
         ctrl._was_cancelled = False
         ctrl.run = MagicMock()
         ctrl.warning = MagicMock()
-        ctrl.publish = AsyncMock()
-        await ctrl._announce_results_exported()
+        with (
+            patch(
+                "aiperf.controller.system_controller.write_ready_marker"
+            ) as write_ready_marker,
+            patch(
+                "aiperf.kubernetes.completion_signal.signal_benchmark_complete",
+                AsyncMock(),
+            ),
+        ):  # fmt: skip
+            ctrl.publish = AsyncMock()
+            await ctrl._announce_results_exported()
 
+        write_ready_marker.assert_called_once()
         ctrl.publish.assert_awaited_once()
 
 

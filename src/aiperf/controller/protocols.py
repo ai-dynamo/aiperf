@@ -72,3 +72,21 @@ class LocalProcessServiceManagerProtocol(ServiceManagerProtocol, Protocol):
     """Capability exposed by managers that own local service processes."""
 
     multi_process_info: list[MultiProcessRunInfo]
+
+
+@runtime_checkable
+class KubernetesServiceManagerProtocol(ServiceManagerProtocol, Protocol):
+    """Kubernetes-only pod-health capability used by the controller."""
+
+    pod_failure_abort_event: asyncio.Event
+    """Set when failed worker pods breach the configured abort threshold."""
+    pod_failure_abort_reason: str
+    """Human-readable explanation for a set ``pod_failure_abort_event``."""
+
+    async def check_pods_healthy(self) -> None:
+        """Verify all tracked worker pods are healthy before profiling starts."""
+        ...
+
+    def get_pod_summary(self) -> dict[str, str]:
+        """Map worker-pod index to a human-readable status string."""
+        ...

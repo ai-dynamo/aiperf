@@ -7,7 +7,10 @@ import time
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import orjson
 
 from aiperf.accuracy.models import AccuracySummary, ProcessAccuracyResult
 from aiperf.common.accumulator_protocols import (
@@ -30,7 +33,10 @@ from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
+    CommandAcknowledgedResponse,
+    CommandErrorResponse,
     DatasetConfiguredNotification,
+    FinalizeArtifactsCommand,
     NetworkLatencyRecordMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
@@ -62,6 +68,7 @@ from aiperf.common.models import (
     TimesliceResult,
     WorkerProcessingStats,
 )
+from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
 from aiperf.common.types import MetricTagT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
@@ -83,12 +90,17 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     AccumulatorType,
     PluginType,
+    ServiceType,
     StreamExporterType,
     UIType,
 )
 from aiperf.records import records_manager_processing
 from aiperf.records.dataset_gate import await_dataset_configured
 from aiperf.records.error_tracker import ErrorTracker
+from aiperf.records.records_manager_export import (
+    build_checkpoint_snapshot,
+    write_json_file_atomic,
+)
 from aiperf.records.records_manager_processing import (
     LoadedAnalyzer,
     generate_realtime_metrics,
@@ -488,6 +500,48 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     def _check_all_records_received(self, phase: CreditPhase) -> bool:
         """Check record completion for a phase kind."""
         return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
+
+    @background_task(
+        interval=lambda self: Environment.RECORD.CHECKPOINT_INTERVAL,
+        immediate=False,
+    )
+    async def _write_partial_checkpoint_task(self) -> None:
+        """Persist an in-flight progress snapshot for live inspection.
+
+        Kubernetes only: the sidecar and the operator's liveness heuristic are
+        the two readers, and neither exists locally. Skipped entirely when the
+        interval is 0.
+        """
+        if Environment.RECORD.CHECKPOINT_INTERVAL <= 0 or not self._is_kubernetes_run():
+            # Returning early only skips one iteration, and the background loop
+            # sleeps for the interval it is given -- an interval of 0 means the
+            # loop would spin tight on asyncio.sleep(0) for the whole run.
+            # Neither condition can change after startup, so end the task.
+            self.debug("Partial checkpoint task is disabled; stopping it")
+            raise asyncio.CancelledError("partial checkpoint task disabled")
+
+        snapshot = build_checkpoint_snapshot(self._records_tracker)
+        if snapshot["total_records"] == self._last_checkpoint_records:
+            return  # nothing moved; leave the file (and its mtime) alone
+        self._last_checkpoint_records = snapshot["total_records"]
+
+        path = (
+            Path(self.run.cfg.artifacts.dir)
+            / CHECKPOINTS_DIR_NAME
+            / "profile_export_partial.json"
+        )
+        try:
+            await asyncio.to_thread(
+                write_json_file_atomic, path, orjson.dumps(snapshot)
+            )
+        except OSError as e:  # noqa: BLE001 - a checkpoint is advisory; never fail the run
+            self.warning(f"Failed to write partial checkpoint: {e!r}")
+            return
+        self.debug(lambda: f"Wrote partial checkpoint to {path}")
+
+    def _is_kubernetes_run(self) -> bool:
+        """True when this process runs under the Kubernetes service manager."""
+        return str(self.run.cfg.runtime.service_run_type).lower() == "kubernetes"
 
     @background_task(
         interval=lambda self: Environment.RECORD.COMPLETION_STALL_CHECK_INTERVAL,
@@ -1239,6 +1293,38 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug("Server metrics completion command returned, processing now...")
         await self._process_results(phase=phase, cancelled=cancelled)
         self.info("_finalize_and_process_results completed")
+
+    async def _finalize_record_processor_artifacts(self) -> None:
+        """Wait for the controller's exact record-processor durability barrier."""
+        command = FinalizeArtifactsCommand(
+            service_id=self.service_id,
+            target_service_type=ServiceType.SYSTEM_CONTROLLER,
+            request_ns=time.time_ns(),
+        )
+        response = await self.send_command_and_wait_for_response(
+            command,
+            timeout=(
+                Environment.WORKER.RAW_RECORD_UPLOAD_TIMEOUT
+                + Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT
+            ),
+        )
+        if (
+            isinstance(response, CommandAcknowledgedResponse)
+            and response.command == CommandType.FINALIZE_ARTIFACTS
+        ):
+            self.debug("Record-processor artifacts finalized")
+            return
+        if isinstance(response, CommandErrorResponse):
+            raise RuntimeError(
+                f"Record-processor artifact finalization failed: {response.error}"
+            )
+        if isinstance(response, ErrorDetails):
+            raise RuntimeError(
+                f"Record-processor artifact finalization timed out: {response}"
+            )
+        raise RuntimeError(
+            f"Unexpected record-processor artifact finalization response: {response!r}"
+        )
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(
@@ -2230,6 +2316,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
         self.info("Processing records results...")
 
+        await self._finalize_record_processor_artifacts()
         telemetry_drain_errors = await self._await_telemetry_ingest_complete()
 
         # Deliver the run-level mean network RTT before summarize() so

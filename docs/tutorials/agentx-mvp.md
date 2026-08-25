@@ -369,7 +369,7 @@ trajectory-based warmup specific to the agentic-replay scheduler.
 
 Because the scheduler synthesizes this phase rather than reading it from your
 `phases:` list, it reports under the reserved name `agentic.warmup` in logs,
-progress output, and exported artifacts. The `.` is what makes
+progress output, and the Kubernetes `AIPerfJob` status. The `.` is what makes
 the name reserved: phase names you declare must match
 `^[A-Za-z_][A-Za-z0-9_-]*$`, so no phase of yours can ever collide with it.
 

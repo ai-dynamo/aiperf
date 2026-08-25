@@ -36,6 +36,8 @@ from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
+    TimePing,
+    TimePong,
     WorkerConnected,
     WorkerDispatchable,
     WorkerShutdown,
@@ -798,11 +800,13 @@ class StickyCreditRouter(CommunicationMixin):
                 if self._on_first_token_callback:
                     # Forward TTFT to orchestrator so it can release the prefill slot.
                     await self._on_first_token_callback(message)
+            case TimePing():
+                await self._handle_time_ping(worker_id, message)
             case WorkerConnected():
                 # Connectivity is NOT dispatchability. The worker's return path
-                # is up, but its dataset may not be open yet; registering here
-                # would route credits to a worker that fails every one of them.
-                # Wait for WorkerDispatchable.
+                # is up, but in Kubernetes its pod-local dataset may not exist
+                # yet; registering here would route credits to a worker that
+                # fails every one of them. Wait for WorkerDispatchable.
                 self._connected_workers.add(worker_id)
             case WorkerDispatchable():
                 self._connected_workers.add(worker_id)
@@ -822,6 +826,24 @@ class StickyCreditRouter(CommunicationMixin):
                 )
             case _:
                 self.warning(f"Unknown message type: {type(message).__name__}")
+
+    async def _handle_time_ping(self, worker_id: str, message: TimePing) -> None:
+        """Echo a TimePing back as a TimePong on the credit channel.
+
+        Both fields are echoed verbatim so the worker computes RTT entirely
+        against its own clock; the router's clock never enters the measurement,
+        which is what makes the baseline immune to cross-machine skew. The
+        reply rides the same ROUTER socket credits use, so the measured latency
+        reflects the queuing real credits will see.
+
+        Does not register the worker: a probing worker is not yet dispatchable,
+        and adding it to the load table here would route credits to a worker
+        still in startup.
+        """
+        await self._router_client.send_to(
+            worker_id,
+            TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
+        )
 
     def _register_worker(self, worker_id: str) -> None:
         """Register worker for routing, create WorkerLoad entry.

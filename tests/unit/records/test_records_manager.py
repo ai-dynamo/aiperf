@@ -1663,6 +1663,7 @@ class TestRecordsManagerAnalyzerMetrics:
 
         manager._process_results_lock = asyncio.Lock()
         manager._processed_results = {}
+        manager._finalize_record_processor_artifacts = AsyncMock()
         manager._await_telemetry_ingest_complete = AsyncMock(return_value=[])
 
         result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
@@ -1679,6 +1680,33 @@ class TestRecordsManagerAnalyzerMetrics:
             "output_tokens_per_joule",
         }
         stub_analyzer.analyze.assert_awaited_once()
+        manager._finalize_record_processor_artifacts.assert_awaited_once()
+
+
+class TestRecordsManagerArtifactFinalization:
+    @pytest.mark.asyncio
+    async def test_profile_cancel_waits_for_artifact_barrier(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.service_id = "records-manager-test"
+        manager.warning = MagicMock()
+        manager.debug = MagicMock()
+        manager.info = MagicMock()
+        manager._records_tracker = MagicMock()
+        manager._process_results_lock = asyncio.Lock()
+        manager._processed_results = {}
+        manager._finalize_record_processor_artifacts = AsyncMock(
+            side_effect=RuntimeError("artifact barrier failed")
+        )
+
+        with pytest.raises(RuntimeError, match="artifact barrier failed"):
+            await manager._on_profile_cancel_command(
+                ProfileCancelCommand(service_id="system-controller")
+            )
+
+        manager._records_tracker.mark_phase_cancelled.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        manager._finalize_record_processor_artifacts.assert_awaited_once()
 
 
 class TestMidRunCacheReportingHint:

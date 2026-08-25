@@ -18,6 +18,7 @@ run's plots reproducible without the original envelope or the user's
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from pathlib import Path
@@ -109,3 +110,33 @@ def build_auto_plot_callback(
             _warn_auto_plot_failed(artifact_dir, exc)
 
     return _callback
+
+
+async def run_auto_plot_async(
+    *,
+    artifact_dir: Path,
+    plot_required: bool,
+    plot_envelope: PlotEnvelopeConfig | None = None,
+    input_paths: list[Path] | None = None,
+    output_dir: Path | None = None,
+) -> None:
+    """Render plots off the event loop for Kubernetes completion paths.
+
+    ``artifact_dir`` owns the materialized plot envelope and ``plots/`` output.
+    ``input_paths`` may point elsewhere, which lets the sweep controller read
+    its full aggregate tree while keeping generated artifacts under the durable
+    parent-sweep epoch directory.
+    """
+    artifact_dir = Path(artifact_dir)
+    try:
+        await asyncio.to_thread(
+            _run_auto_plot,
+            artifact_dir=artifact_dir,
+            plot_envelope=plot_envelope,
+            input_paths=input_paths,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        if plot_required:
+            raise
+        _warn_auto_plot_failed(artifact_dir, exc)

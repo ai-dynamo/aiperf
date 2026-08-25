@@ -60,7 +60,29 @@ async def test_finalize_local_artifacts_local_failure_logs_and_continues() -> No
 
 
 @pytest.mark.asyncio
-async def test_finalize_local_artifacts_cancellation_always_propagates() -> None:
+async def test_finalize_local_artifacts_kubernetes_failure_fails_closed() -> None:
+    """A partial artifact set under the operator must surface as a failure."""
+    bad = _child("raw_record_writer", RuntimeError("orjson: unserializable value"))
+    good = _child("accuracy_writer", None)
+    processor = _make_processor(kubernetes=True, children=[bad, good])
+
+    with pytest.raises(ExceptionGroup) as excinfo:
+        await RecordProcessor._finalize_local_artifacts(processor)
+
+    assert "Failed to finalize 1 record artifact writer(s)" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kubernetes",
+    [
+        param(False, id="local"),
+        param(True, id="kubernetes"),
+    ],
+)  # fmt: skip
+async def test_finalize_local_artifacts_cancellation_always_propagates(
+    kubernetes: bool,
+) -> None:
     """Cancellation is shutdown, not a degraded artifact; never swallow it."""
     child = _child("raw_record_writer", asyncio.CancelledError())
     processor = _make_processor(children=[child])

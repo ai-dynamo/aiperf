@@ -23,10 +23,14 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import (
+    CommandType,
+    ExportLevel,
     LifecycleState,
     SystemState,
 )
 from aiperf.common.messages import (
+    CommandAcknowledgedResponse,
+    FinalizeArtifactsCommand,
     ProcessRecordsResultMessage,
     RegisterServiceCommand,
 )
@@ -94,6 +98,7 @@ class TestAggregationErrorsDoNotDiscardTheExport:
     @pytest.mark.parametrize(
         "kubernetes,expected_operations",
         [
+            param(True, ["process_records"], id="kubernetes_fails_closed"),
             param(False, [], id="local_stays_advisory"),
         ],
     )  # fmt: skip
@@ -130,6 +135,35 @@ class TestAggregationErrorsDoNotDiscardTheExport:
         assert [
             e.operation for e in system_controller._exit_errors
         ] == expected_operations
+
+    @pytest.mark.asyncio
+    async def test_a_run_with_aggregation_errors_still_writes_its_export(
+        self, system_controller: SystemController
+    ) -> None:
+        """The C3 headline: one diagnostic must not delete the whole export.
+
+        Before the fix ``_stop_system_controller`` gated the export on
+        ``not self._exit_errors``, so this produced no profile_export.csv/.json,
+        no console summary, no auto-plot and no ready marker.
+
+        Driven through the Kubernetes path, where aggregation diagnostics do
+        force a non-zero exit; locally they stay advisory, which the sibling
+        test below covers.
+        """
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+        system_controller._is_kubernetes = MagicMock(return_value=True)
+        await system_controller._on_process_records_result_message(
+            ProcessRecordsResultMessage(
+                service_id="records_manager",
+                results=_records_result(ErrorDetails(message="one bad record")),
+            )
+        )
+
+        exit_code = await _run_stop_hook(system_controller)
+
+        system_controller._print_post_benchmark_info_and_metrics.assert_awaited_once()
+        system_controller._print_exit_errors_and_log_file.assert_called_once()
+        assert exit_code == 1, "a degraded run must not report success"
 
     @pytest.mark.asyncio
     async def test_a_local_run_with_only_advisory_diagnostics_exits_zero(
@@ -514,3 +548,186 @@ class TestEvictedProducersReachTheOutcome:
             system_controller.service_manager.service_map[ServiceType.RECORD_PROCESSOR]
             == []
         )
+        assert "record_processor_2" in system_controller._reaped_service_ids
+
+
+class TestFinalizeArtifactsIsReportable:
+    """H9: a finalize failure must be a reported failure, never a hang."""
+
+    @pytest.mark.asyncio
+    async def test_finalize_skips_reaped_record_processors(
+        self, system_controller: SystemController
+    ) -> None:
+        """A dead peer would otherwise burn a full command timeout, then raise."""
+        system_controller._is_kubernetes = MagicMock(return_value=False)
+        alive = MagicMock(
+            service_id="record_processor_0", service_type=ServiceType.RECORD_PROCESSOR
+        )
+        dead = MagicMock(
+            service_id="record_processor_1", service_type=ServiceType.RECORD_PROCESSOR
+        )
+        system_controller.service_manager.service_id_map = {
+            "record_processor_0": alive,
+            "record_processor_1": dead,
+        }
+        system_controller._reaped_service_ids.add("record_processor_1")
+
+        targeted: list[list[str]] = []
+
+        async def respond(command, service_ids, timeout):  # noqa: ANN001, ARG001
+            targeted.append(list(service_ids))
+            return [
+                CommandAcknowledgedResponse.from_command_message(command, service_id)
+                for service_id in service_ids
+            ]
+
+        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            side_effect=respond
+        )
+
+        await system_controller._handle_finalize_artifacts_command(
+            FinalizeArtifactsCommand(service_id="records_manager")
+        )
+
+        assert targeted == [["record_processor_0"]]
+        assert system_controller._exit_errors == []
+
+    @pytest.mark.asyncio
+    async def test_finalize_failure_is_recorded_without_being_raised(
+        self, system_controller: SystemController
+    ) -> None:
+        """Recording is what carries the failure, not the exception.
+
+        The caller may drop the response, so the exit code must not depend on
+        it. Locally the barrier no longer raises -- the writers were already
+        flushed by ProfileCompleteCommand, so aborting the export here would
+        discard a complete result set over a missing ack.
+        """
+        system_controller._is_kubernetes = MagicMock(return_value=False)
+        system_controller.service_manager.service_id_map = {}
+
+        await system_controller._handle_finalize_artifacts_command(
+            FinalizeArtifactsCommand(service_id="records_manager")
+        )
+
+        assert [e.operation for e in system_controller._exit_errors] == [
+            "finalize_artifacts"
+        ]
+
+
+class TestRawFinalizeHonoursThePodLossTolerance:
+    """H10: the finalize barrier and the abort threshold must agree."""
+
+    @pytest.fixture
+    def k8s_controller(self) -> SystemController:
+        # Built field-by-field rather than from the shared fixture: the real
+        # BenchmarkRun's artifacts config rejects assignment, and this barrier
+        # only reads export_level and the pod topology.
+        ctrl = SystemController.__new__(SystemController)
+        ctrl.run = MagicMock()
+        ctrl.run.cfg.artifacts.export_level = ExportLevel.RAW
+        ctrl._is_kubernetes = MagicMock(return_value=True)
+        ctrl._k8s_topology = MagicMock(num_worker_pods=4)
+        ctrl.service_id = "system_controller"
+        ctrl._exit_errors = []
+        ctrl._export_failed = False
+        ctrl._reaped_service_ids = set()
+        ctrl.info = MagicMock()
+        ctrl.warning = MagicMock()
+        ctrl.error = MagicMock()
+        return ctrl
+
+    @pytest.mark.asyncio
+    async def test_a_tolerated_pod_loss_still_finalizes_the_survivors(
+        self, k8s_controller: SystemController
+    ) -> None:
+        """4 pods, 1 lost = 25% < the 50% abort threshold, so the run continues.
+
+        Before the fix the exact-equality check failed the barrier without ever
+        contacting the three healthy pods.
+        """
+        registered = [
+            MagicMock(service_id=f"worker_group_manager_{i}") for i in range(3)
+        ]
+        targeted: list[list[str]] = []
+
+        async def respond(command, service_ids, timeout):  # noqa: ANN001, ARG001
+            targeted.append(list(service_ids))
+            return [
+                CommandAcknowledgedResponse.from_command_message(command, service_id)
+                for service_id in service_ids
+            ]
+
+        k8s_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            side_effect=respond
+        )
+        with patch(
+            "aiperf.controller.system_controller.ServiceRegistry.get_services",
+            return_value=registered,
+        ):
+            await k8s_controller._finalize_kubernetes_raw_artifacts()
+
+        assert targeted == [
+            [
+                "worker_group_manager_0",
+                "worker_group_manager_1",
+                "worker_group_manager_2",
+            ]
+        ]
+        # Tolerated, but not silent: readiness is still published while the run
+        # is marked degraded.
+        assert k8s_controller._export_failed is False
+        assert [e.operation for e in k8s_controller._exit_errors] == [
+            "finalize_raw_artifacts_degraded"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_loss_beyond_the_threshold_still_fails_closed(
+        self, k8s_controller: SystemController
+    ) -> None:
+        """4 pods, 3 lost = 75% >= threshold: withhold readiness, contact nobody."""
+        k8s_controller.send_command_and_wait_for_all_responses = AsyncMock()
+        with patch(
+            "aiperf.controller.system_controller.ServiceRegistry.get_services",
+            return_value=[MagicMock(service_id="worker_group_manager_0")],
+        ):
+            await k8s_controller._finalize_kubernetes_raw_artifacts()
+
+        k8s_controller.send_command_and_wait_for_all_responses.assert_not_awaited()
+        assert k8s_controller._export_failed is True
+        assert [e.operation for e in k8s_controller._exit_errors] == [
+            "finalize_raw_artifacts"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_losing_every_worker_group_fails_closed(
+        self, k8s_controller: SystemController
+    ) -> None:
+        """A barrier with no members left proves nothing, at any threshold."""
+        k8s_controller.send_command_and_wait_for_all_responses = AsyncMock()
+        with (
+            patch(
+                "aiperf.controller.system_controller.ServiceRegistry.get_services",
+                return_value=[],
+            ),
+            patch(
+                "aiperf.common.environment.Environment.POD.FAILURE_ABORT_THRESHOLD_PERCENT",
+                0.0,
+            ),
+        ):  # fmt: skip
+            await k8s_controller._finalize_kubernetes_raw_artifacts()
+
+        k8s_controller.send_command_and_wait_for_all_responses.assert_not_awaited()
+        assert k8s_controller._export_failed is True
+
+
+def _finalize_command() -> FinalizeArtifactsCommand:
+    return FinalizeArtifactsCommand(
+        service_id="records_manager",
+        target_service_type=ServiceType.RECORD_PROCESSOR,
+    )
+
+
+def test_finalize_command_type_is_stable() -> None:
+    """Guards the ACK matching in ``_raw_artifact_finalize_response_error``."""
+    assert _finalize_command().command == CommandType.FINALIZE_ARTIFACTS

@@ -70,8 +70,9 @@ FROM base AS wheel-builder
 
 WORKDIR /workspace
 
-# Copy the entire application
+# Copy every source path consumed by the wheel build
 COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
+COPY deploy/helm/aiperf-operator/ /workspace/deploy/helm/aiperf-operator/
 
 # Build the wheel
 RUN uv build --wheel --out-dir /dist
@@ -107,14 +108,32 @@ RUN mkdir -p /opt/licenses/dpkg \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Build ffmpeg with libvpx (VP9), libvorbis and libopus. A default build ships
-# hundreds of codecs; AIPerf only encodes VP8/VP9 with Vorbis or Opus, so
-# --disable-everything plus this allowlist keeps the set minimal, and
+# Build ffmpeg with libvpx (VP9), libvorbis and libopus.
+#
+# ENABLE_FFMPEG=0 skips the from-source compile entirely. This is the single
+# longest step in the image build (dominant under QEMU cross-arch emulation,
+# where it can exceed the rest of the build combined), and ffmpeg is only
+# needed for synthetic audio/video dataset generation. Builds that will never
+# exercise those workloads -- operator/controller images, CI smoke images --
+# can skip it. The stage still creates /opt/ffmpeg/{bin,lib} so the runtime
+# stage's unconditional `COPY --from=env-builder /opt/ffmpeg` stays valid;
+# the directories are simply empty, and aiperf's ffmpeg probe degrades to
+# "unavailable" at runtime rather than failing at import.
+#
+# When it is built, the codec set is deliberately minimal. A default build
+# ships hundreds of codecs; AIPerf only encodes VP8/VP9 with Vorbis or Opus, so
+# --disable-everything plus the allowlist below keeps the set small, and
 # --disable-autodetect stops configure linking stray dev packages. The artifact
 # still exceeds the lists: muxers add aac_adtstoasc (not an AAC codec), and
 # --enable-ffmpeg adds 18 filters. Verify with `ffmpeg -encoders`, not `-codecs`.
 ARG FFMPEG_VERSION=8.1.2
-RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
+ARG ENABLE_FFMPEG=1
+RUN if [ "${ENABLE_FFMPEG}" != "1" ]; then \
+        echo "ENABLE_FFMPEG=${ENABLE_FFMPEG}: skipping ffmpeg build"; \
+        mkdir -p /opt/ffmpeg/bin /opt/ffmpeg/lib /opt/licenses/ffmpeg; \
+        exit 0; \
+    fi; \
+    wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cd ffmpeg-${FFMPEG_VERSION} \
     && ./configure \
@@ -193,19 +212,27 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
     && chown -R 1000:1000 /app \
     && chmod -R 755 /app
 
-# Install only the runtime dependencies using uv. --no-default-groups excludes
-# the PEP 735 dev group (hypothesis, pre-commit) so dev-only tooling does not
-# leak into the runtime image; the test/dev extras are not installed here either.
-COPY pyproject.toml .
-RUN uv sync --active --no-install-project --no-default-groups
+# Install the lock-resolved runtime dependencies using uv. --no-default-groups
+# excludes the PEP 735 dev group (hypothesis, pre-commit) so dev-only tooling
+# does not leak into the runtime image; the test/dev extras are not installed
+# here either.
+COPY pyproject.toml uv.lock .
+RUN uv sync --active --locked --no-install-project --no-default-groups --extra botorch
 
-# Copy the rest of the application
+# Copy the rest of the application.
+#
+# The [botorch] extra (optuna-integration, botorch, gpytorch, torch) ships in the
+# runtime image so cluster-side adaptive search gets the GP-backed sampler.
+# Without it BayesianSearchPlanner silently degrades to Optuna's TPE sampler at
+# runtime -- the search still runs, so the only signal is a WARNING buried in the
+# sweep-controller log.
+#
+# The botorch dependency set, including torch, is resolved from uv.lock so the
+# image build cannot select a newer incompatible release from an index.
 COPY --from=wheel-builder /dist /dist
-RUN uv pip install /dist/aiperf-*.whl \
+RUN WHEEL=$(ls /dist/aiperf-*.whl) \
+    && uv pip install --no-deps "aiperf[botorch] @ file://${WHEEL}" \
     && rm -rf /dist /workspace/pyproject.toml
-
-# Remove setuptools as it is not needed for the runtime image
-RUN uv pip uninstall setuptools
 
 # Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
 RUN mkdir -p /opt/tiktoken_cache \

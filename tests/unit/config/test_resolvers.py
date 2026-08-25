@@ -820,6 +820,16 @@ class TestDeriveRunMeta:
         assert meta.job_name == "myjob"
         assert meta.namespace == ""
 
+    def test_operator_uid_suffixed_run_key_is_operator_layout(
+        self, _clear_namespace_env
+    ):
+        """A 16-digit uid-suffixed run key is the shape the operator emits today."""
+        from aiperf.config.resolution.resolvers import _derive_run_meta
+
+        meta = _derive_run_meta(Path("/artifacts/myns/myjob/1714000000123456"))
+        assert meta.epoch == "1714000000123456"
+        assert meta.job_name == "myjob"
+
     def test_local_layout(self, _clear_namespace_env):
         """Non-epoch leaf -> local layout: epoch=wall-clock, job_name=leaf."""
         from aiperf.config.resolution.resolvers import _derive_run_meta

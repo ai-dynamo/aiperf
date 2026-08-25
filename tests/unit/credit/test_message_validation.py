@@ -14,6 +14,9 @@ from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
+    RouterToWorkerMessage,
+    TimePing,
+    TimePong,
     WorkerConnected,
     WorkerDispatchable,
     WorkerShutdown,
@@ -207,6 +210,8 @@ class TestCreditContextValidation:
         param(WorkerShutdown, "ws", id="worker-shutdown"),
         param(CreditReturn, "cr", id="credit-return"),
         param(FirstToken, "ft", id="first-token"),
+        param(TimePing, "tp", id="time-ping"),
+        param(TimePong, "tpo", id="time-pong"),
         param(CancelCredits, "cc", id="cancel-credits"),
     ],
 )  # fmt: skip
@@ -214,3 +219,27 @@ def test_credit_tag_values_are_stable_wire_constants(cls: type, tag: str) -> Non
     """Tags and the tag field are wire format: renaming one breaks running workers."""
     assert cls.__struct_config__.tag == tag
     assert cls.__struct_config__.tag_field == "t"
+
+
+def test_time_ping_in_worker_to_router_union():
+    """TimePing decodes through the union it is actually sent on."""
+    ping = TimePing(sequence=3, sent_at_ns=1_234_567)
+    decoded = msgspec.msgpack.decode(
+        msgspec.msgpack.encode(ping), type=WorkerToRouterMessage
+    )
+
+    assert isinstance(decoded, TimePing)
+    assert decoded.sequence == ping.sequence
+    assert decoded.sent_at_ns == ping.sent_at_ns
+
+
+def test_time_pong_in_router_to_worker_union():
+    """TimePong decodes through the union it is actually sent on."""
+    pong = TimePong(sequence=3, sent_at_ns=1_234_567)
+    decoded = msgspec.msgpack.decode(
+        msgspec.msgpack.encode(pong), type=RouterToWorkerMessage
+    )
+
+    assert isinstance(decoded, TimePong)
+    assert decoded.sequence == pong.sequence
+    assert decoded.sent_at_ns == pong.sent_at_ns

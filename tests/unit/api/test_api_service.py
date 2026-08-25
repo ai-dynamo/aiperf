@@ -16,6 +16,8 @@ from pytest import param
 from starlette.testclient import TestClient
 
 from aiperf.api.api_service import FastAPIService, main
+from aiperf.api.routers.static import _read_static
+from aiperf.api.routers.websocket import WebSocketManager
 from aiperf.common.compression import (
     CompressionEncoding,
     is_zstd_available,
@@ -31,8 +33,221 @@ from .conftest import (
     create_test_app,
     make_latency_metric,
     make_metric_result,
+    make_mock_websocket,
     make_process_records_result,
 )
+
+
+class TestWebSocketManager:
+    """Test WebSocketManager functionality."""
+
+    def test_add_and_remove_client(self) -> None:
+        """Test adding and removing clients."""
+        manager = WebSocketManager()
+        ws = MagicMock()
+
+        manager.add("client-1", ws)
+        assert manager.client_count == 1
+
+        removed_subs = manager.remove("client-1")
+        assert manager.client_count == 0
+        assert removed_subs == set()
+
+    def test_remove_returns_subscriptions(self) -> None:
+        """Test that remove returns the client's subscriptions."""
+        manager = WebSocketManager()
+        ws = MagicMock()
+
+        manager.add("client-1", ws)
+        manager.subscribe("client-1", ["topic_a", "topic_b"])
+
+        removed_subs = manager.remove("client-1")
+        assert removed_subs == {"topic_a", "topic_b"}
+
+    def test_remove_nonexistent_client(self) -> None:
+        """Test removing a client that doesn't exist."""
+        manager = WebSocketManager()
+        removed_subs = manager.remove("nonexistent")
+        assert removed_subs == set()
+
+    def test_subscribe_and_unsubscribe(self) -> None:
+        """Test subscription management."""
+        manager = WebSocketManager()
+        ws = MagicMock()
+
+        manager.add("client-1", ws)
+        manager.subscribe("client-1", ["topic_a", "topic_b"])
+
+        all_subs = manager.all_subscriptions()
+        assert "topic_a" in all_subs
+        assert "topic_b" in all_subs
+
+        manager.unsubscribe("client-1", ["topic_a"])
+        all_subs = manager.all_subscriptions()
+        assert "topic_a" not in all_subs
+        assert "topic_b" in all_subs
+
+    def test_subscribe_nonexistent_client(self) -> None:
+        """Test subscribing for a nonexistent client does nothing."""
+        manager = WebSocketManager()
+        manager.subscribe("nonexistent", ["topic"])
+        assert manager.all_subscriptions() == set()
+
+    def test_unsubscribe_nonexistent_client(self) -> None:
+        """Test unsubscribing for a nonexistent client does nothing."""
+        manager = WebSocketManager()
+        manager.unsubscribe("nonexistent", ["topic"])
+        # Should not raise
+
+    def test_all_subscriptions_empty(self) -> None:
+        """Test all_subscriptions with no clients."""
+        manager = WebSocketManager()
+        assert manager.all_subscriptions() == set()
+
+    def test_all_subscriptions_multiple_clients(self) -> None:
+        """Test all_subscriptions aggregates across clients."""
+        manager = WebSocketManager()
+        ws1, ws2 = MagicMock(), MagicMock()
+
+        manager.add("client-1", ws1)
+        manager.add("client-2", ws2)
+        manager.subscribe("client-1", ["topic_a"])
+        manager.subscribe("client-2", ["topic_b", "topic_c"])
+
+        all_subs = manager.all_subscriptions()
+        assert all_subs == {"topic_a", "topic_b", "topic_c"}
+
+    def test_all_subscriptions_with_overlap(self) -> None:
+        """Test all_subscriptions deduplicates overlapping subscriptions."""
+        manager = WebSocketManager()
+        ws1, ws2 = MagicMock(), MagicMock()
+
+        manager.add("client-1", ws1)
+        manager.add("client-2", ws2)
+        manager.subscribe("client-1", ["topic_a", "topic_b"])
+        manager.subscribe("client-2", ["topic_b", "topic_c"])
+
+        all_subs = manager.all_subscriptions()
+        assert all_subs == {"topic_a", "topic_b", "topic_c"}
+
+    @pytest.mark.asyncio
+    async def test_broadcast_to_subscribed_clients(self) -> None:
+        """Test broadcasting to subscribed clients."""
+        manager = WebSocketManager()
+        ws1 = AsyncMock()
+        ws2 = AsyncMock()
+
+        manager.add("client-1", ws1)
+        manager.add("client-2", ws2)
+        manager.subscribe("client-1", ["realtime_metrics"])
+        manager.subscribe("client-2", ["other"])
+
+        msg = MagicMock()
+        msg.message_type = "realtime_metrics"
+        msg.model_dump_json.return_value = '{"data": "test"}'
+        sent = await manager.broadcast(msg)
+        assert sent == 1
+        ws1.send_text.assert_called_once()
+        ws2.send_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_wildcard(self) -> None:
+        """Test wildcard subscription receives all messages."""
+        manager = WebSocketManager()
+        ws = AsyncMock()
+
+        manager.add("client-1", ws)
+        manager.subscribe("client-1", ["*"])
+
+        msg = MagicMock()
+        msg.message_type = "any_message_type"
+        msg.model_dump_json.return_value = '{"data": "test"}'
+        sent = await manager.broadcast(msg)
+        assert sent == 1
+        ws.send_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_empty_snapshot(self) -> None:
+        """Test broadcast with no clients returns 0."""
+        manager = WebSocketManager()
+        msg = MagicMock()
+        msg.message_type = "topic"
+        msg.model_dump_json.return_value = '{"data": "test"}'
+        sent = await manager.broadcast(msg)
+        assert sent == 0
+
+    @pytest.mark.asyncio
+    async def test_broadcast_no_subscribers(self) -> None:
+        """Test broadcast when no clients are subscribed to the topic."""
+        manager = WebSocketManager()
+        ws = AsyncMock()
+
+        manager.add("client-1", ws)
+        manager.subscribe("client-1", ["other_topic"])
+
+        msg = MagicMock()
+        msg.message_type = "unsubscribed_topic"
+        msg.model_dump_json.return_value = '{"data": "test"}'
+        sent = await manager.broadcast(msg)
+        assert sent == 0
+        ws.send_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_removes_failed_client(self) -> None:
+        """Test that broadcast removes clients that fail to send."""
+        manager = WebSocketManager()
+        ws = make_mock_websocket(send_side_effect=Exception("Connection lost"))
+
+        manager.add("client-1", ws)
+        manager.subscribe("client-1", ["topic"])
+
+        msg = MagicMock()
+        msg.message_type = "topic"
+        msg.model_dump_json.return_value = '{"data": "test"}'
+        sent = await manager.broadcast(msg)
+        assert sent == 0
+        assert manager.client_count == 0
+
+    @pytest.mark.asyncio
+    async def test_close_all(self) -> None:
+        """Test closing all WebSocket connections."""
+        from starlette.websockets import WebSocketState
+
+        manager = WebSocketManager()
+        ws1, ws2 = AsyncMock(), AsyncMock()
+        ws1.client_state = WebSocketState.CONNECTED
+        ws2.client_state = WebSocketState.CONNECTED
+
+        manager.add("client-1", ws1)
+        manager.add("client-2", ws2)
+
+        await manager.close_all()
+
+        ws1.close.assert_called_once()
+        ws2.close.assert_called_once()
+        assert manager.client_count == 0
+
+    @pytest.mark.asyncio
+    async def test_close_all_empty(self) -> None:
+        """Test closing all with no clients does nothing."""
+        manager = WebSocketManager()
+        await manager.close_all()
+        # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_close_all_already_disconnected(self) -> None:
+        """Test closing connections that are already disconnected."""
+        from starlette.websockets import WebSocketState
+
+        manager = WebSocketManager()
+        ws = AsyncMock()
+        ws.client_state = WebSocketState.DISCONNECTED
+
+        manager.add("client-1", ws)
+        await manager.close_all()
+
+        ws.close.assert_not_called()
+        assert manager.client_count == 0
 
 
 class TestOrjsonResponse:
@@ -310,6 +525,129 @@ class TestResultsEndpoint:
         assert records[0]["p99"] == 250.0
 
 
+class TestStaticFileServing:
+    """Test static file serving with path traversal protection."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            param("../secret.txt", id="parent-dir"),
+            param("../../etc/passwd", id="etc-passwd"),
+            param("static/../../../secret.txt", id="nested-traversal"),
+            param("foo/../../../etc/passwd", id="deep-traversal"),
+        ],
+    )  # fmt: skip
+    async def test_path_traversal_blocked(self, filename: str) -> None:
+        """Test that path traversal attempts are blocked with 400."""
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _read_static(filename)
+        assert exc_info.value.status_code == 400
+        assert "Invalid filename" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_file_returns_404(self) -> None:
+        """Test that non-existent files return 404."""
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _read_static("nonexistent.html")
+        assert exc_info.value.status_code == 404
+
+
+class TestWebSocketEndpoint:
+    """Test WebSocket endpoint functionality."""
+
+    def test_websocket_subscribe(
+        self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """Test WebSocket subscribe message."""
+        mock_fastapi_service._ensure_zmq_subscriptions = AsyncMock()
+
+        with api_test_client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {"type": "subscribe", "message_types": ["realtime_metrics"]}
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "subscribed"
+            assert "realtime_metrics" in response["message_types"]
+
+    def test_websocket_subscribe_multiple_types(
+        self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """Test WebSocket subscribe to multiple message types."""
+        mock_fastapi_service._ensure_zmq_subscriptions = AsyncMock()
+
+        with api_test_client.websocket_connect("/ws") as websocket:
+            websocket.send_json(
+                {
+                    "type": "subscribe",
+                    "message_types": ["realtime_metrics", "worker_status"],
+                }
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "subscribed"
+            assert set(response["message_types"]) == {
+                "realtime_metrics",
+                "worker_status",
+            }
+
+    def test_websocket_unsubscribe(
+        self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """Test WebSocket unsubscribe message."""
+        mock_fastapi_service._ensure_zmq_subscriptions = AsyncMock()
+
+        with api_test_client.websocket_connect("/ws") as websocket:
+            # Subscribe first
+            websocket.send_json(
+                {"type": "subscribe", "message_types": ["realtime_metrics"]}
+            )
+            websocket.receive_json()
+
+            # Unsubscribe
+            websocket.send_json(
+                {"type": "unsubscribe", "message_types": ["realtime_metrics"]}
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "unsubscribed"
+            assert "realtime_metrics" in response["message_types"]
+
+    def test_websocket_ping_pong(self, api_test_client: TestClient) -> None:
+        """Test WebSocket ping/pong."""
+        with api_test_client.websocket_connect("/ws") as websocket:
+            websocket.send_json({"type": "ping"})
+            response = websocket.receive_json()
+            assert response["type"] == "pong"
+
+    def test_websocket_invalid_json(self, api_test_client: TestClient) -> None:
+        """Test WebSocket handles invalid JSON gracefully."""
+        with api_test_client.websocket_connect("/ws") as websocket:
+            websocket.send_text("not valid json")
+            response = websocket.receive_json()
+            assert response["type"] == "error"
+            assert "Invalid JSON" in response["message"]
+
+    @pytest.mark.parametrize(
+        "invalid_text",
+        [
+            param("not valid json", id="plain-text"),
+            param("{incomplete", id="incomplete-json"),
+            param("{'single': 'quotes'}", id="single-quotes"),
+        ],
+    )  # fmt: skip
+    def test_websocket_various_invalid_json(
+        self, api_test_client: TestClient, invalid_text: str
+    ) -> None:
+        """Test WebSocket handles various forms of invalid JSON."""
+        with api_test_client.websocket_connect("/ws") as websocket:
+            websocket.send_text(invalid_text)
+            response = websocket.receive_json()
+            assert response["type"] == "error"
+
+
 class TestCreateTestApp:
     """Test the create_test_app factory and dependency injection patterns."""
 
@@ -564,9 +902,12 @@ class TestResultsListEndpoint:
         """Test listing results with files in directory."""
         from unittest.mock import MagicMock
 
+        from aiperf.common.results_markers import write_ready_marker
+
         # Create test files
         (tmp_path / "metrics.json").write_text('{"test": 1}')
         (tmp_path / "records.jsonl").write_text('{"id": 1}')
+        write_ready_marker(tmp_path)
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
@@ -596,6 +937,9 @@ class TestResultsFileEndpoints:
         """Test returns 404 for nonexistent file."""
         from unittest.mock import MagicMock
 
+        from aiperf.common.results_markers import write_ready_marker
+
+        write_ready_marker(tmp_path)
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
         mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
@@ -613,8 +957,11 @@ class TestResultsFileEndpoints:
         """Test file streams content with correct headers."""
         from unittest.mock import MagicMock
 
+        from aiperf.common.results_markers import write_ready_marker
+
         test_file = tmp_path / "profile_export.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
+        write_ready_marker(tmp_path)
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
@@ -637,6 +984,9 @@ class TestResultsFileEndpoints:
         """Test path traversal attempts are rejected."""
         from unittest.mock import MagicMock
 
+        from aiperf.common.results_markers import write_ready_marker
+
+        write_ready_marker(tmp_path)
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
         mock_fastapi_service._routers["results"].run.cfg.artifacts = mock_output
@@ -653,8 +1003,11 @@ class TestResultsFileEndpoints:
         """Test result file endpoint supports gzip compression."""
         from unittest.mock import MagicMock
 
+        from aiperf.common.results_markers import write_ready_marker
+
         test_file = tmp_path / "metrics.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
+        write_ready_marker(tmp_path)
 
         mock_output = MagicMock()
         mock_output.artifact_directory = tmp_path
@@ -666,6 +1019,90 @@ class TestResultsFileEndpoints:
         )
         assert response.status_code == 200
         assert response.headers["content-encoding"] == "gzip"
+
+
+class TestWebSocketBroadcast:
+    """Test broadcasting messages via WebSocketManager.
+
+    Exercises the standalone manager — the FastAPIService no longer owns a
+    ws_manager attribute (that lives on WebSocketRouter).
+    """
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_to_subscribers(
+        self, websocket_manager: WebSocketManager
+    ) -> None:
+        """Test that messages are broadcast to subscribed WebSocket clients."""
+        from aiperf.common.enums import LifecycleState
+        from aiperf.common.messages import HeartbeatMessage
+
+        mock_ws = AsyncMock()
+        websocket_manager.add("client-1", mock_ws)
+        websocket_manager.subscribe("client-1", ["heartbeat"])
+
+        message = HeartbeatMessage(
+            service_id="test",
+            service_type="worker",
+            state=LifecycleState.RUNNING,
+        )
+
+        await websocket_manager.broadcast(message)
+
+        mock_ws.send_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_no_subscribers(
+        self, websocket_manager: WebSocketManager
+    ) -> None:
+        """Test broadcast with no subscribers does not raise."""
+        from aiperf.common.enums import LifecycleState
+        from aiperf.common.messages import HeartbeatMessage
+
+        message = HeartbeatMessage(
+            service_id="test",
+            service_type="worker",
+            state=LifecycleState.RUNNING,
+        )
+
+        sent = await websocket_manager.broadcast(message)
+        assert sent == 0
+
+
+class TestStaticPageEndpoints:
+    """Test the static page serving endpoints."""
+
+    def test_index_page_returns_html(
+        self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """Test index page serves HTML."""
+        from unittest.mock import patch
+
+        with patch(
+            "aiperf.api.routers.static._read_static",
+            return_value="<html>Index</html>",
+        ):
+            response = api_test_client.get("/")
+            assert response.status_code == 200
+            assert "text/html" in response.headers["content-type"]
+
+    def test_dashboard_page_returns_html(
+        self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """Test dashboard page serves HTML."""
+        from unittest.mock import patch
+
+        with patch(
+            "aiperf.api.routers.static._read_static",
+            return_value="<html>Dashboard</html>",
+        ):
+            response = api_test_client.get("/dashboard")
+            assert response.status_code == 200
+            assert "text/html" in response.headers["content-type"]
+
+
+# =============================================================================
+# Service properties
+# =============================================================================
 
 
 class TestServiceBaseUrl:
@@ -991,7 +1428,9 @@ class TestFastAPIServiceStartStop:
         api_run.cfg.runtime.api_port = None
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
-            type("_Fake", (), {"HOST": "0.0.0.0", "PORT": 8080, "CORS_ORIGINS": []})(),
+            type(
+                "_Fake", (), {"HOST": "0.0.0.0", "PORT": 8080, "CORS_ORIGINS": []}
+            )(),
         )
         service = FastAPIService(run=api_run, service_id="api-implicit-port")
         bind = MagicMock(side_effect=OSError("address already in use"))

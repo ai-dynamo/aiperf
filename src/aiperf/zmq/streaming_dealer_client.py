@@ -121,6 +121,9 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         self._decoder = (
             _decoder if decode_type is None else msgspec.msgpack.Decoder(decode_type)
         )
+
+        # Futures for in-flight request() calls, keyed by the request's rid/cid.
+        self._pending_requests: dict[str, asyncio.Future[Any]] = {}
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.STREAMING_DEALER_YIELD_INTERVAL
         self._fd_reader: FdEdgeReader | None = None
@@ -143,11 +146,21 @@ class ZMQStreamingDealerClient(BaseZMQClient):
 
     @on_stop
     async def _clear_receiver(self) -> None:
-        """Clear receiver handler on stop."""
+        """Clear receiver handler and pending requests on stop.
+
+        Cancelling the pending futures is load-bearing: the socket is going
+        away, so a reply can never arrive: an awaiter left pending here blocks
+        until the process is killed. The ROUTER counterpart cancels the same
+        way.
+        """
         if self._fd_reader is not None:
             self._fd_reader.stop()
             self._fd_reader = None
         self._receiver_handler = None
+        for future in self._pending_requests.values():
+            if not future.done():
+                future.cancel()
+        self._pending_requests.clear()
 
     def _recv_one_dealer(self) -> RouterToWorkerMessage:
         """Synchronous NOBLOCK multipart recv + decode for the FD-reader drain.
@@ -169,6 +182,16 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         return self._decoder.decode(payload)
 
     def _dispatch_dealer(self, message: RouterToWorkerMessage) -> None:
+        # Request-reply: a reply carrying the rid/cid of a pending request
+        # resolves that future instead of going to the streaming handler. The
+        # match is a synchronous dict lookup so it stays inside the FD drain.
+        if self._pending_requests:
+            key = getattr(message, "rid", None) or getattr(message, "cid", None)
+            if key and key in self._pending_requests:
+                future = self._pending_requests.pop(key)
+                if not future.done():
+                    future.set_result(message)
+                return
         if self._receiver_handler is not None:
             self.execute_async(self._receiver_handler(message))
         else:
@@ -219,6 +242,37 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             await self._send_direct_with_retry(data)
         if self.is_trace_enabled:
             self.trace(f"Sent struct: {struct}")
+
+    async def request(self, struct: Struct, timeout: float) -> Any:
+        """Send a request and await the response matched by ``rid``/``cid``.
+
+        The struct must carry an ``rid`` or ``cid`` attribute; the ROUTER's
+        reply with the same key resolves the returned future (see
+        ``_dispatch_dealer``). Other messages dispatch normally to the receiver
+        handler.
+
+        Args:
+            struct: The request struct to send (must have ``rid`` or ``cid``).
+            timeout: Maximum time to wait for a response, in seconds.
+
+        Returns:
+            The decoded response struct.
+
+        Raises:
+            ValueError: If the struct carries neither ``rid`` nor ``cid``.
+            TimeoutError: If no response is received within ``timeout``.
+        """
+        key = getattr(struct, "rid", None) or getattr(struct, "cid", None)
+        if key is None:
+            raise ValueError("request() requires a struct with 'rid' or 'cid'")
+
+        future: asyncio.Future[Any] = asyncio.Future()
+        self._pending_requests[key] = future
+        try:
+            await self.send(struct)
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._pending_requests.pop(key, None)
 
     @background_task(immediate=True, interval=None)
     async def _streaming_dealer_receiver(self) -> None:

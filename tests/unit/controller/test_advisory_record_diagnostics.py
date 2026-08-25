@@ -70,6 +70,7 @@ def _advisory_message() -> ProcessRecordsResultMessage:
     "run_type,expect_exit_errors",
     [
         param(ServiceRunType.MULTIPROCESSING, False, id="local_stays_advisory"),
+        param(ServiceRunType.KUBERNETES, True, id="kubernetes_fails_closed"),
     ],
 )  # fmt: skip
 async def test_on_process_records_result_message_advisory_errors_gated_by_run_type(
