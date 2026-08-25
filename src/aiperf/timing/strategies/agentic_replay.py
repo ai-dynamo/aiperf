@@ -238,6 +238,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         )
         self._system_idle_jump_count = 0
         self._system_idle_seconds_skipped = 0.0
+        self._system_idle_started_at: float | None = None
+        if self._system_idle_gap_cap_seconds is not None:
+            self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
         # Idle-gap cap (ms) for the t* boundary the load-time warp can't see (t*
         # is the sampling instant, not a request). Consumed two ways:
         #   - WARMUP: clamps each warmup lead so priming doesn't start hours
@@ -436,14 +439,28 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         # pulled forward by the replay idle guard.
         if self._accelerated_warmup_started:
             return
+        # Credit returns start a new idle interval. Scheduler-drain callbacks
+        # recheck the same interval after a scheduled turn is barrier-retained.
+        follows_request_return = in_flight_requests is not None
         if in_flight_requests is None:
             if self._progress is None:
                 return
             in_flight_requests = self._progress.in_flight
-        if in_flight_requests > 0 or self.scheduler.running_count > 0:
+        if in_flight_requests > 0:
+            self._system_idle_started_at = None
+            return
+        now = time.monotonic()
+        if follows_request_return or self._system_idle_started_at is None:
+            self._system_idle_started_at = now
+        if self.scheduler.running_count > 0:
             return
 
-        shifted = self.scheduler.cap_pending_delay(self._system_idle_gap_cap_seconds)
+        idle_elapsed = max(0.0, now - self._system_idle_started_at)
+        remaining_idle_budget = max(
+            0.0, self._system_idle_gap_cap_seconds - idle_elapsed
+        )
+
+        shifted = self.scheduler.cap_pending_delay(remaining_idle_budget)
         if shifted <= 0:
             return
         self._system_idle_jump_count += 1
@@ -791,6 +808,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def finalize_phase(self) -> None:
         """Persist the drained accelerated-warmup DAG for profiling."""
         if self._system_idle_gap_cap_seconds is not None:
+            self.scheduler.set_drain_observer(None)
             self.info(
                 "Global system-idle cap summary: "
                 f"limit={self._system_idle_gap_cap_seconds:g}s, "
