@@ -4060,15 +4060,39 @@ pub async fn audio_transcription(
         return Err(e);
     }
     let mut has_file = false;
+    let mut language: Option<String> = None;
+    let mut temperature: Option<f64> = None;
     while let Ok(Some(field)) = multipart.next_field().await {
-        if field.name() == Some("file") {
-            has_file = !field
-                .bytes()
-                .await
-                .map_err(|_| anyhow::anyhow!("invalid audio multipart field"))?
-                .is_empty();
-        } else {
-            let _ = field.bytes().await;
+        match field.name() {
+            Some("file") => {
+                has_file = !field
+                    .bytes()
+                    .await
+                    .map_err(|_| AppError {
+                        status: StatusCode::BAD_REQUEST,
+                        message: "invalid audio multipart field".into(),
+                        retry_after: None,
+                    })?
+                    .is_empty();
+            }
+            Some("language") => {
+                language = Some(field.text().await.map_err(|_| AppError {
+                    status: StatusCode::BAD_REQUEST,
+                    message: "invalid audio language field".into(),
+                    retry_after: None,
+                })?);
+            }
+            Some("temperature") => {
+                let value = field.text().await.map_err(|_| AppError {
+                    status: StatusCode::BAD_REQUEST,
+                    message: "invalid audio temperature field".into(),
+                    retry_after: None,
+                })?;
+                temperature = value.parse::<f64>().ok();
+            }
+            _ => {
+                let _ = field.bytes().await;
+            }
         }
     }
     if !has_file {
@@ -4078,7 +4102,17 @@ pub async fn audio_transcription(
             retry_after: None,
         });
     }
-    Ok(Json(json!({"text": "mock transcription", "usage": {"input_tokens": 1}})).into_response())
+    let mut body = json!({
+        "text": "mock transcription",
+        "usage": {"input_tokens": 1}
+    });
+    if let Some(language) = language {
+        body["language"] = Value::String(language);
+    }
+    if let Some(temperature) = temperature {
+        body["temperature"] = json!(temperature);
+    }
+    Ok(Json(body).into_response())
 }
 
 #[cfg(test)]

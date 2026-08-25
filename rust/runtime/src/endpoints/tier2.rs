@@ -690,7 +690,7 @@ impl PreparedEndpointBehavior for AudioTranscriptionEndpoint {
     fn format_prepared_payload(
         &self,
         request: &PreparedRequest<'_>,
-        _config: &RawEndpointConfig,
+        config: &RawEndpointConfig,
     ) -> EndpointResult<BodyPlan> {
         let turn = request.turns().last().ok_or_else(|| {
             EndpointError::InvalidRequest("audio transcription requires an audio turn".into())
@@ -703,11 +703,16 @@ impl PreparedEndpointBehavior for AudioTranscriptionEndpoint {
             .ok_or_else(|| {
                 EndpointError::InvalidRequest("audio transcription requires audio content".into())
             })?;
-        let payload =
-            serde_json::json!({"file": {"b64_data": audio}, "model": request.primary_model_name()});
-        Ok(BodyPlan::from_object(payload.as_object().ok_or_else(
-            || EndpointError::InvalidRequest("audio payload is not an object".into()),
-        )?)?)
+        let mut payload = json!({
+            "file": build_audio_file_field(audio)?,
+            "model": request.primary_model_name(),
+        })
+        .as_object()
+        .expect("audio transcription payload is an object")
+        .clone();
+        merge_audio_transcription_extra(&mut payload, config.extra.as_ref());
+        merge_audio_transcription_extra(&mut payload, turn.extra_body.as_ref());
+        Ok(BodyPlan::from_object(&payload)?)
     }
 }
 
@@ -825,6 +830,7 @@ fn parse_image_response(
 }
 
 const RESERVED_IMAGE_EDIT_KEYS: [&str; 4] = ["prompt", "image", "url", "mask"];
+const RESERVED_AUDIO_TRANSCRIPTION_KEYS: [&str; 2] = ["file", "model"];
 
 fn merge_image_edit_extra(payload: &mut Map<String, Value>, extra: Option<&Map<String, Value>>) {
     let Some(extra) = extra else {
@@ -832,6 +838,20 @@ fn merge_image_edit_extra(payload: &mut Map<String, Value>, extra: Option<&Map<S
     };
     for (key, value) in extra {
         if !RESERVED_IMAGE_EDIT_KEYS.contains(&key.as_str()) {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn merge_audio_transcription_extra(
+    payload: &mut Map<String, Value>,
+    extra: Option<&Map<String, Value>>,
+) {
+    let Some(extra) = extra else {
+        return;
+    };
+    for (key, value) in extra {
+        if !RESERVED_AUDIO_TRANSCRIPTION_KEYS.contains(&key.as_str()) {
             payload.insert(key.clone(), value.clone());
         }
     }
@@ -877,6 +897,60 @@ fn build_image_file_field(content: &str) -> EndpointResult<Value> {
     Ok(json!({
         "b64_data": b64,
         "filename": format!("image.{filename_subtype}"),
+        "content_type": content_type
+    }))
+}
+
+fn build_audio_file_field(content: &str) -> EndpointResult<Value> {
+    let (content_type, filename, b64) = if let Some(rest) = content.strip_prefix("data:") {
+        let (header, b64) = rest.split_once(',').ok_or_else(|| {
+            EndpointError::InvalidRequest(
+                "malformed data URL for audio content (missing comma)".into(),
+            )
+        })?;
+        let mime = header
+            .split_once(';')
+            .map(|(mime, _)| mime)
+            .filter(|mime| mime.starts_with("audio/") && !mime.is_empty())
+            .ok_or_else(|| {
+                EndpointError::InvalidRequest(
+                    "audio data URL must declare an audio/* media type".into(),
+                )
+            })?;
+        let extension = mime
+            .split_once('/')
+            .map_or("bin", |(_, subtype)| subtype)
+            .split_once('+')
+            .map_or_else(
+                || mime.split_once('/').map_or("bin", |(_, value)| value),
+                |(base, _)| base,
+            );
+        (
+            mime.to_string(),
+            format!("audio.{extension}"),
+            b64.to_string(),
+        )
+    } else if let Some((format, b64)) = content.split_once(',') {
+        let (content_type, filename) = match format.to_ascii_lowercase().as_str() {
+            "wav" => ("audio/wav", "audio.wav"),
+            "mp3" => ("audio/mpeg", "audio.mp3"),
+            _ => ("application/octet-stream", "audio.bin"),
+        };
+        (
+            content_type.to_string(),
+            filename.to_string(),
+            b64.to_string(),
+        )
+    } else {
+        (
+            "application/octet-stream".to_string(),
+            "audio.bin".to_string(),
+            content.to_string(),
+        )
+    };
+    Ok(json!({
+        "b64_data": b64,
+        "filename": filename,
         "content_type": content_type
     }))
 }
