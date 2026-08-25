@@ -108,9 +108,9 @@ def parse_sla_filter(value: str) -> SLAFilter:
         parse_sla_filter("time_to_first_token:p95:lt:200")
         # -> SLAFilter(metric_tag='time_to_first_token', stat='p95',
         #              op='lt', threshold=200.0)
-        parse_sla_filter("request_error_rate:p99:lt:0.05")
-        # -> SLAFilter(metric_tag='request_error_rate', stat='p99',
-        #              op='lt', threshold=0.05)
+        parse_sla_filter("request_error_rate:avg:lt:1")
+        # -> SLAFilter(metric_tag='request_error_rate', stat='avg',
+        #              op='lt', threshold=1.0)
 
     Raises:
         TypeError: when the value has the wrong colon count, an unknown stat

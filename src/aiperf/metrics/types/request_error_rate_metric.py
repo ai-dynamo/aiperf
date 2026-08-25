@@ -12,11 +12,16 @@ from aiperf.metrics.types.request_count_metric import RequestCountMetric
 class RequestErrorRateMetric(BaseDerivedMetric[float]):
     """Percentage of completed requests that ended in error.
 
-    Reads :class:`ErrorRequestCountMetric` and :class:`RequestCountMetric`
-    so latency percentiles (computed on successes only) can be read alongside
-    the operational error rate. Pair with the ``adj_*`` percentile band on
-    flagged latency metrics (see ``MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS``)
-    for a full picture of failure-contaminated tail behavior.
+    Uses :class:`RequestCountMetric` for valid requests and
+    :class:`ErrorRequestCountMetric` for failed requests. Because
+    ``ErrorRequestCountMetric`` carries ``MetricFlags.ERROR_ONLY``, clean runs
+    omit it instead of emitting zero; an omitted error count is therefore treated
+    as zero.
+
+    Latency percentiles are computed on successful requests only. Read this metric
+    alongside the ``adj_*`` percentile band on metrics flagged with
+    ``MetricFlags.PERCENTILE_INCLUDES_FAILED_REQUESTS`` for a fuller picture of
+    failure-contaminated tail behavior.
 
     See https://github.com/ai-dynamo/aiperf/issues/688.
     """
@@ -28,12 +33,7 @@ class RequestErrorRateMetric(BaseDerivedMetric[float]):
     unit = GenericMetricUnit.PERCENT
     display_order = 1080
     flags = MetricFlags.NO_INDIVIDUAL_RECORDS
-    required_metrics = frozenset(
-        {
-            RequestCountMetric.tag,
-            ErrorRequestCountMetric.tag,
-        }
-    )
+    required_metrics = frozenset({RequestCountMetric.tag})
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:
         successes = int(metric_results.get_or_raise(RequestCountMetric))
