@@ -21,7 +21,7 @@
 //! `--trace-session-sample-ratio` whole-session subsampling is ported.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -56,6 +56,7 @@ pub struct BasetenTraceComposer;
 const COL_TIME: &str = "timestamp_start_unix_ms";
 const COL_SESSION: &str = "provided_session_id";
 const COL_POOR_MAN_SESSION: &str = "poor_man_session_id";
+const PARQUET_BATCH_SIZE: usize = 128;
 
 fn required_columns() -> [&'static str; 4] {
     [COL_TIME, "prompt", "input_tokens", "output_tokens"]
@@ -405,67 +406,223 @@ impl ReplayOptions {
 }
 
 #[cfg(feature = "parquet")]
-fn read_parquet_rows(path: &Path) -> Result<Vec<Value>> {
-    use parquet::file::reader::{FileReader, SerializedFileReader};
+#[derive(Debug, Clone, Copy)]
+enum ColumnarKind {
+    Parquet,
+    ArrowIpc,
+}
 
-    let file = std::fs::File::open(path).map_err(|error| {
-        DatasetError::Validation(format!("failed to open {}: {error}", path.display()))
-    })?;
-    let reader = SerializedFileReader::new(file).map_err(|error| {
-        DatasetError::Validation(format!(
-            "failed to open {} as Parquet: {error}",
-            path.display()
-        ))
-    })?;
-    let rows = reader.get_row_iter(None).map_err(|error| {
-        DatasetError::Validation(format!(
-            "failed to read Parquet rows from {}: {error}",
-            path.display()
-        ))
-    })?;
-    rows.map(|row| {
-        row.map(|row| row.to_json_value()).map_err(|error| {
-            DatasetError::Validation(format!(
-                "failed to decode a Parquet row from {}: {error}",
-                path.display()
-            ))
+#[cfg(feature = "parquet")]
+#[derive(Debug)]
+struct ColumnarSource {
+    path: PathBuf,
+    file: std::fs::File,
+    kind: ColumnarKind,
+    schema: arrow::datatypes::SchemaRef,
+}
+
+#[cfg(feature = "parquet")]
+impl ColumnarSource {
+    fn open(path: &Path) -> Result<Self> {
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+        let kind = match path.extension().and_then(|suffix| suffix.to_str()) {
+            Some("parquet") => ColumnarKind::Parquet,
+            Some("arrow" | "ipc") => ColumnarKind::ArrowIpc,
+            _ => {
+                return Err(DatasetError::Validation(format!(
+                    "unsupported Baseten columnar file {}",
+                    path.display()
+                )));
+            }
+        };
+        let file = std::fs::File::open(path).map_err(|error| {
+            DatasetError::Validation(format!("failed to open {}: {error}", path.display()))
+        })?;
+        let metadata_file = file.try_clone().map_err(|error| {
+            DatasetError::Validation(format!("failed to inspect {}: {error}", path.display()))
+        })?;
+        let schema = match kind {
+            ColumnarKind::Parquet => ParquetRecordBatchReaderBuilder::try_new(metadata_file)
+                .map_err(|error| {
+                    DatasetError::Validation(format!(
+                        "failed to open {} as Parquet: {error}",
+                        path.display()
+                    ))
+                })?
+                .schema()
+                .clone(),
+            ColumnarKind::ArrowIpc => {
+                arrow::ipc::reader::FileReader::try_new_buffered(metadata_file, None)
+                    .map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to open {} as Arrow IPC: {error}",
+                            path.display()
+                        ))
+                    })?
+                    .schema()
+            }
+        };
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            kind,
+            schema,
         })
-    })
-    .collect()
+    }
+
+    fn has_columns(&self, columns: &[&str]) -> bool {
+        columns
+            .iter()
+            .all(|column| self.schema.index_of(column).is_ok())
+    }
+
+    fn for_each_batch(
+        &self,
+        columns: &[&str],
+        mut visit: impl FnMut(arrow::record_batch::RecordBatch) -> Result<()>,
+    ) -> Result<()> {
+        use parquet::arrow::{ProjectionMask, arrow_reader::ParquetRecordBatchReaderBuilder};
+
+        let indices = columns
+            .iter()
+            .map(|column| {
+                self.schema.index_of(column).map_err(|_| {
+                    DatasetError::Validation(format!(
+                        "{} is missing required column {column}",
+                        self.path.display()
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let file = self.file.try_clone().map_err(|error| {
+            DatasetError::Validation(format!("failed to read {}: {error}", self.path.display()))
+        })?;
+        match self.kind {
+            ColumnarKind::Parquet => {
+                let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|error| {
+                    DatasetError::Validation(format!(
+                        "failed to read Parquet metadata from {}: {error}",
+                        self.path.display()
+                    ))
+                })?;
+                let projection = ProjectionMask::roots(builder.parquet_schema(), indices);
+                let reader = builder
+                    .with_batch_size(PARQUET_BATCH_SIZE)
+                    .with_projection(projection)
+                    .build()
+                    .map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to build Parquet reader for {}: {error}",
+                            self.path.display()
+                        ))
+                    })?;
+                for batch in reader {
+                    visit(batch.map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to decode Parquet batch from {}: {error}",
+                            self.path.display()
+                        ))
+                    })?)?;
+                }
+            }
+            ColumnarKind::ArrowIpc => {
+                let reader = arrow::ipc::reader::FileReader::try_new_buffered(file, Some(indices))
+                    .map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to build Arrow IPC reader for {}: {error}",
+                            self.path.display()
+                        ))
+                    })?;
+                for batch in reader {
+                    visit(batch.map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to decode Arrow IPC batch from {}: {error}",
+                            self.path.display()
+                        ))
+                    })?)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "parquet")]
+fn columnar_schema_has_columns(path: &Path, columns: &[&str]) -> bool {
+    ColumnarSource::open(path).is_ok_and(|source| source.has_columns(columns))
 }
 
 #[cfg(not(feature = "parquet"))]
-fn read_parquet_rows(path: &Path) -> Result<Vec<Value>> {
+fn columnar_schema_has_columns(_path: &Path, _columns: &[&str]) -> bool {
+    false
+}
+
+#[cfg(feature = "parquet")]
+fn array_value_to_json(array: &dyn arrow::array::Array, row: usize) -> Result<Value> {
+    use arrow::datatypes::DataType;
+
+    if array.is_null(row) {
+        return Ok(Value::Null);
+    }
+    let rendered = arrow::util::display::array_value_to_string(array, row).map_err(|error| {
+        DatasetError::Validation(format!("failed to render Arrow value: {error}"))
+    })?;
+    match array.data_type() {
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => Ok(Value::String(rendered)),
+        DataType::Boolean
+        | DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64
+        | DataType::Float16
+        | DataType::Float32
+        | DataType::Float64
+        | DataType::List(_)
+        | DataType::LargeList(_)
+        | DataType::FixedSizeList(_, _) => serde_json::from_str(&rendered).map_err(|error| {
+            DatasetError::Validation(format!("failed to convert Arrow value {rendered}: {error}"))
+        }),
+        _ => Ok(Value::String(rendered)),
+    }
+}
+
+#[cfg(feature = "parquet")]
+fn read_columnar_rows(path: &Path) -> Result<Vec<Value>> {
+    let source = ColumnarSource::open(path)?;
+    let columns = source
+        .schema
+        .fields()
+        .iter()
+        .map(|field| field.name().as_str())
+        .collect::<Vec<_>>();
+    let mut rows = Vec::new();
+    source.for_each_batch(&columns, |batch| {
+        for row in 0..batch.num_rows() {
+            let mut object = Map::with_capacity(batch.num_columns());
+            for (field, array) in batch.schema().fields().iter().zip(batch.columns()) {
+                object.insert(
+                    field.name().clone(),
+                    array_value_to_json(array.as_ref(), row)?,
+                );
+            }
+            rows.push(Value::Object(object));
+        }
+        Ok(())
+    })?;
+    Ok(rows)
+}
+
+#[cfg(not(feature = "parquet"))]
+fn read_columnar_rows(path: &Path) -> Result<Vec<Value>> {
     Err(DatasetError::Validation(format!(
         "baseten_trace dataset {} requires an aiperf runner built with the `parquet` feature",
         path.display()
     )))
-}
-
-#[cfg(feature = "parquet")]
-fn parquet_schema_has_columns(path: &Path, columns: &[&str]) -> bool {
-    use parquet::file::reader::{FileReader, SerializedFileReader};
-
-    let Ok(file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(reader) = SerializedFileReader::new(file) else {
-        return false;
-    };
-    let names: std::collections::HashSet<&str> = reader
-        .metadata()
-        .file_metadata()
-        .schema()
-        .get_fields()
-        .iter()
-        .map(|field| field.name())
-        .collect();
-    columns.iter().all(|column| names.contains(column))
-}
-
-#[cfg(not(feature = "parquet"))]
-fn parquet_schema_has_columns(_path: &Path, _columns: &[&str]) -> bool {
-    false
 }
 
 #[async_trait]
@@ -478,16 +635,19 @@ impl DatasetLoader for BasetenTraceDatasetLoader {
         let Some(path) = &probe.path else {
             return false;
         };
-        if path.extension().and_then(|extension| extension.to_str()) != Some("parquet") {
+        if !matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("parquet" | "arrow" | "ipc")
+        ) {
             return false;
         }
-        parquet_schema_has_columns(path, &required_columns())
+        columnar_schema_has_columns(path, &required_columns())
     }
 
     async fn load(&self, config: &LoadConfig) -> Result<Vec<RawRow>> {
         let (raw_rows, origin_label) = match &config.source {
             DatasetSource::Path(path) => {
-                let rows = read_parquet_rows(path)?;
+                let rows = read_columnar_rows(path)?;
                 (rows, path.display().to_string())
             }
             DatasetSource::Url(_) | DatasetSource::HuggingFace { .. } => {
@@ -873,6 +1033,9 @@ fn build_request_body(
 mod tests {
     use std::sync::Arc;
 
+    use arrow::array::{Int64Array, RecordBatch, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ipc::writer::FileWriter;
     use parquet::data_type::{ByteArrayType, Int64Type};
     use parquet::file::writer::SerializedFileWriter;
     use parquet::schema::parser::parse_message_type;
@@ -998,6 +1161,51 @@ mod tests {
         path
     }
 
+    fn write_arrow_fixture(
+        directory: &Path,
+        suffix: &str,
+        rows: &[FixtureRow],
+    ) -> std::path::PathBuf {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(COL_TIME, DataType::Int64, false),
+            Field::new("prompt", DataType::Utf8, false),
+            Field::new("input_tokens", DataType::Int64, false),
+            Field::new("output_tokens", DataType::Int64, false),
+            Field::new(COL_SESSION, DataType::Utf8, false),
+            Field::new("duration_e2e_ms", DataType::Int64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from_iter_values(
+                    rows.iter().map(|row| row.timestamp_start_unix_ms),
+                )),
+                Arc::new(StringArray::from_iter_values(
+                    rows.iter().map(|row| row.prompt),
+                )),
+                Arc::new(Int64Array::from_iter_values(
+                    rows.iter().map(|row| row.input_tokens),
+                )),
+                Arc::new(Int64Array::from_iter_values(
+                    rows.iter().map(|row| row.output_tokens),
+                )),
+                Arc::new(StringArray::from_iter_values(
+                    rows.iter().map(|row| row.provided_session_id),
+                )),
+                Arc::new(Int64Array::from_iter_values(
+                    rows.iter().map(|row| row.duration_e2e_ms),
+                )),
+            ],
+        )
+        .unwrap();
+        let path = directory.join(format!("baseten.{suffix}"));
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = FileWriter::try_new(file, &schema).unwrap();
+        writer.write(&batch).unwrap();
+        writer.finish().unwrap();
+        path
+    }
+
     async fn build(
         path: std::path::PathBuf,
         options: Map<String, Value>,
@@ -1049,6 +1257,51 @@ mod tests {
             value: None,
             path: Some(not_parquet),
         }));
+    }
+
+    #[tokio::test]
+    async fn arrow_ipc_detection_and_composition_match_parquet() {
+        let directory = tempfile::tempdir().unwrap();
+        let rows = [
+            FixtureRow {
+                timestamp_start_unix_ms: 1_000,
+                prompt: "first",
+                input_tokens: 4,
+                output_tokens: 3,
+                provided_session_id: "shared",
+                duration_e2e_ms: 10,
+            },
+            FixtureRow {
+                timestamp_start_unix_ms: 1_250,
+                prompt: "second",
+                input_tokens: 5,
+                output_tokens: 2,
+                provided_session_id: "shared",
+                duration_e2e_ms: 20,
+            },
+        ];
+        let parquet = write_fixture(directory.path(), &rows);
+        let arrow = write_arrow_fixture(directory.path(), "arrow", &rows);
+        let ipc = write_arrow_fixture(directory.path(), "ipc", &rows);
+        for path in [&arrow, &ipc] {
+            assert!(BasetenTraceDatasetLoader.can_load(&DatasetProbe {
+                value: None,
+                path: Some(path.clone()),
+            }));
+        }
+
+        let parquet_dataset = build(parquet, Map::new()).await;
+        let arrow_dataset = build(arrow, Map::new()).await;
+        assert_eq!(parquet_dataset.conversations().len(), 1);
+        assert_eq!(arrow_dataset.conversations().len(), 1);
+        let parquet_turns = &parquet_dataset.conversations()[0].turns;
+        let arrow_turns = &arrow_dataset.conversations()[0].turns;
+        assert_eq!(arrow_turns.len(), parquet_turns.len());
+        for (arrow_turn, parquet_turn) in arrow_turns.iter().zip(parquet_turns) {
+            assert_eq!(arrow_turn.timestamp_ms, parquet_turn.timestamp_ms);
+            assert_eq!(arrow_turn.input_tokens, parquet_turn.input_tokens);
+            assert_eq!(arrow_turn.max_tokens, parquet_turn.max_tokens);
+        }
     }
 
     #[tokio::test]
