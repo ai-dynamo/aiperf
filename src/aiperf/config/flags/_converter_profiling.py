@@ -105,9 +105,12 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
     value from its own search range -- before search-space bounds/kind are
     even validated by the real parser. Malformed entries are skipped here;
     the real parser reports the actual grammar error. Only dimensions that
-    target ``phases.profiling.*`` are considered (bare aliases always
-    resolve there); a fully-qualified path targeting a different phase
-    (e.g. ``phases.warmup.*``) is ignored by this shape-inference helper --
+    target a direct ``phases.profiling.<field>`` scalar are considered
+    (bare aliases always resolve there); a fully-qualified path targeting a
+    different phase (e.g. ``phases.warmup.*``) OR a nested sub-field one
+    level deeper (e.g. ``phases.profiling.cancellation.rate``, the request-
+    cancellation rate -- an unrelated field that merely happens to share
+    the ``rate`` leaf name) is ignored by this shape-inference helper --
     the real search-space parser still processes it normally later, just
     not for the purpose of phase-shape inference.
 
@@ -133,7 +136,14 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
             path = _resolve_path_alias(path)
         if not path.startswith("phases.profiling."):
             continue
-        field = path.rsplit(".", 1)[-1]
+        remainder = path[len("phases.profiling.") :]
+        if "." in remainder:
+            # A nested sub-field (e.g. "phases.profiling.cancellation.rate")
+            # is not the phase's own scalar field -- matching it by leaf
+            # name alone would misclassify e.g. a cancellation-rate sweep
+            # as the phase's request rate. Not a shape-bearing dimension.
+            continue
+        field = remainder
         if field == "rate_series":
             raise ValueError(
                 "--search-space 'rate_series' is not a valid adaptive-search "

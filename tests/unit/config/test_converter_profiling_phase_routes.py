@@ -1186,3 +1186,19 @@ class TestSearchSpacePhaseShapeInference:
         prof = build_profiling(user)
         assert prof["type"] == PhaseType.CONCURRENCY
         assert "rate" not in prof
+
+    def test_nested_cancellation_rate_path_ignored_for_shape_inference(self) -> None:
+        """'phases.profiling.cancellation.rate' is the request-cancellation
+        rate (an unrelated CancellationConfig sub-field), not the phase's
+        own 'rate'. Matching by trailing path segment alone previously
+        misclassified this as a phase-shape-selecting 'rate' dimension,
+        wrongly switching the phase to POISSON and seeding prof["rate"]
+        from the cancellation-rate range."""
+        loadgen = CLIConfig(
+            search_space=["phases.profiling.cancellation.rate:1,50:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
