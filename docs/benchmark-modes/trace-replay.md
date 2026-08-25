@@ -109,6 +109,19 @@ aiperf profile \
 
 AIPerf refuses parameter sweeps (e.g. `--concurrency 1,2,4`) against an auto-promoted trace; either pin a single value or pass `--no-fixed-schedule` to keep your sweep semantics.
 
+### Large Baseten Parquet Traces
+
+The `baseten_trace` loader reads trace rows and sampled-session metadata in
+bounded batches and projects only the columns required by the selected replay
+options. It also skips `inputs.json` generation, which would otherwise
+duplicate large recorded prompts. This is independent of the mmap dataset
+cache; Baseten traces remain uncached.
+
+The same schema can be stored as one uncompressed Arrow IPC file with an
+`.arrow` or `.ipc` suffix. AIPerf memory-maps that file and materializes only
+rows selected for replay. Use `--custom-dataset-type baseten_trace`; no schema
+or row-order conversion beyond the storage format is required.
+
 ## Using Pre-formatted Messages
 
 Instead of synthetic prompts generated from `input_length` and `hash_ids`, you can provide an OpenAI-compatible `messages` array directly per trace entry. This is useful for replaying captured conversations (e.g., coding agent sessions) with exact prompt content.
