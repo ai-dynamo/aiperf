@@ -211,6 +211,20 @@ pub struct AccuracyAssociation {
     pub task: String,
 }
 
+/// Ground-truth outcome captured by a recorded trace.
+///
+/// These values describe the source request. They do not alter replay timing,
+/// request construction, or token accounting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordedOutcome {
+    /// Recorded end-to-end request duration in milliseconds.
+    pub duration_e2e_ms: Option<f64>,
+    /// Recorded time to first token in milliseconds.
+    pub duration_ttft_ms: Option<f64>,
+    /// Recorded reference count of cached input tokens.
+    pub cached_tokens_reference: Option<u64>,
+}
+
 /// Per-turn dispatch data; every potentially large value is a segment handle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Turn {
@@ -238,6 +252,9 @@ pub struct Turn {
     pub timestamp_ms: Option<f64>,
     /// Relative authored delay in milliseconds.
     pub delay_ms: Option<f64>,
+    /// Source-recorded outcome retained for later fidelity comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_outcome: Option<RecordedOutcome>,
     /// Source-trace cache identities, when the loader received `hash_ids`.
     #[serde(default)]
     pub trace_hash_ids: Option<Handle>,
@@ -294,6 +311,7 @@ impl Default for Turn {
             tool_tokens: 0,
             timestamp_ms: None,
             delay_ms: None,
+            recorded_outcome: None,
             trace_hash_ids: None,
             content: SmallVec::new(),
             raw_messages: None,
