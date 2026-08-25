@@ -11,10 +11,10 @@ import pytest
 from aiperf.kubernetes.cli_helpers import (
     ResolvedJob,
     ResolvedSweep,
-    format_age,
     resolve_job,
     resolve_target,
 )
+from aiperf.kubernetes.console import format_age
 from aiperf.kubernetes.constants import AIPerfLabels
 from aiperf.kubernetes.models import AIPerfJobInfo, AIPerfSweepInfo, JobSetInfo
 
