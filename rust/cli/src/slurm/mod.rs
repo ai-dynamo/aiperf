@@ -21,7 +21,12 @@
 //! The `AIPERF_CELL_*` environment every downstream stage reads is set here from the
 //! allocation, exactly where the k8s operator would inject it.
 //!
+//! `aiperf slurm generate` ([`generate`]) emits the sbatch script that submits
+//! such an allocation.
+//!
 //! [`SlurmLauncher`]: aiperf_runtime::engine::cell_launcher::SlurmLauncher
+
+pub mod generate;
 
 use aiperf_runtime::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
 use aiperf_runtime::engine::cell_launcher::CELL_LAUNCHER_ENV;
@@ -31,8 +36,9 @@ use aiperf_runtime::engine::slurm_topology::{
 };
 use anyhow::{Context, Result};
 
-/// The `slurm run` subcommand token intercepted natively; every other `slurm`
-/// subcommand (`generate`) is delegated to the Python CLI.
+/// The `slurm run` subcommand token: the per-task rank dispatch.
+///
+/// `slurm generate` is the other native subcommand ([`generate`]).
 pub const RUN_SUBCOMMAND: &str = "run";
 
 const CONTROLLER_BOOTSTRAP_FILE_ENV: &str = "AIPERF_CONTROLLER_BOOTSTRAP_FILE";
