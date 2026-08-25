@@ -262,21 +262,7 @@ def _apply_search_space_shape_seeds(
     phase_type = prof["type"]
 
     if phase_type == PhaseType.USER_CENTRIC and "users" in search_dims:
-        users_lo, users_kind = search_dims["users"]
-        if users_kind != "int":
-            raise ValueError(
-                "--search-space 'users' must use ':int' kind (e.g. "
-                "'users:1,50:int'), not ':real' -- the number of simulated "
-                "users must be a whole number."
-            )
-        if not math.isfinite(users_lo) or users_lo < 1:
-            raise ValueError(
-                f"--search-space 'users' lower bound must be >= 1 (got "
-                f"{users_lo!r}); the number of simulated users can't be "
-                "less than one."
-            )
-        if "users" not in prof:
-            prof["users"] = int(users_lo)
+        _seed_users_dimension(prof, search_dims)
 
     if phase_type in (
         PhaseType.POISSON,
@@ -284,17 +270,41 @@ def _apply_search_space_shape_seeds(
         PhaseType.CONSTANT,
         PhaseType.USER_CENTRIC,
     ):
-        has_base_rate = "rate" in prof or "rate_series" in prof
-        if "rate" in search_dims:
-            rate_lo, _rate_kind = search_dims["rate"]
-            if not math.isfinite(rate_lo) or rate_lo <= 0:
-                raise ValueError(
-                    f"--search-space 'rate' lower bound must be > 0 (got "
-                    f"{rate_lo!r}); rate must be positive."
-                )
-            if not has_base_rate:
-                prof["rate"] = rate_lo
-        elif not has_base_rate:
+        _seed_rate_dimension(prof, search_dims, phase_type)
+
+
+def _seed_users_dimension(
+    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]]
+) -> None:
+    """Validate and (if absent) seed prof["users"] from a 'users' dimension."""
+    users_lo, users_kind = search_dims["users"]
+    if users_kind != "int":
+        raise ValueError(
+            "--search-space 'users' must use ':int' kind (e.g. "
+            "'users:1,50:int'), not ':real' -- the number of simulated "
+            "users must be a whole number."
+        )
+    if not math.isfinite(users_lo) or users_lo < 1:
+        raise ValueError(
+            f"--search-space 'users' lower bound must be >= 1 (got "
+            f"{users_lo!r}); the number of simulated users can't be "
+            "less than one."
+        )
+    if "users" not in prof:
+        prof["users"] = int(users_lo)
+
+
+def _seed_rate_dimension(
+    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]], phase_type: Any
+) -> None:
+    """Validate and (if absent) seed prof["rate"] from a 'rate' dimension.
+
+    Raises when the phase needs a base rate that neither an explicit CLI
+    flag nor a 'rate' search-space dimension can supply.
+    """
+    has_base_rate = "rate" in prof or "rate_series" in prof
+    if "rate" not in search_dims:
+        if not has_base_rate:
             raise ValueError(
                 f"--search-space selects a rate-shaped benchmark (phase type "
                 f"{phase_type}), which also requires a base rate. Pass "
@@ -302,6 +312,25 @@ def _apply_search_space_shape_seeds(
                 "user-shaped benchmark), or add a 'rate' dimension to "
                 "--search-space."
             )
+        return
+
+    if "rate_series" in prof:
+        raise ValueError(
+            "--search-space targets 'rate', but --request-rate-series "
+            "already supplies a fixed rate schedule for this phase -- "
+            "'rate' and 'rate_series' are mutually exclusive on a "
+            "rate-controlled phase. Drop --request-rate-series to "
+            "search 'rate', or drop the 'rate' dimension to keep the "
+            "fixed schedule."
+        )
+    rate_lo, _rate_kind = search_dims["rate"]
+    if not math.isfinite(rate_lo) or rate_lo <= 0:
+        raise ValueError(
+            f"--search-space 'rate' lower bound must be > 0 (got "
+            f"{rate_lo!r}); rate must be positive."
+        )
+    if not has_base_rate:
+        prof["rate"] = rate_lo
 
 
 def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:

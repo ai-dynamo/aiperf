@@ -816,6 +816,32 @@ class TestSearchSpacePhaseShapeInference:
         with pytest.raises(ValueError, match="not a valid adaptive-search"):
             build_profiling(user)
 
+    def test_rate_keyword_with_request_rate_series_raises_mutual_exclusion_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Searching 'rate' (a valid scalar dimension on its own) while
+        --request-rate-series already supplies a fixed schedule passes
+        config conversion cleanly if left unchecked -- prof["rate_series"]
+        is already set, so the seed step's has_base_rate short-circuit
+        skips seeding prof["rate"] without complaint. But the planner
+        still samples 'rate' every trial and injects it into a phase dict
+        that already has rate_series, violating RatePhaseConfig's mutual
+        exclusion at the first trial instead of failing clearly here."""
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            build_profiling(user)
+
     def test_smoothness_keyword_with_request_rate_infers_gamma_phase(self) -> None:
         """--search-space 'smoothness:...' auto-switches to gamma, but still
         needs a base rate from somewhere -- --request-rate supplies it."""
