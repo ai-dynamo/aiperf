@@ -17,16 +17,18 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.config import AIPerfConfig
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader.errors import ConfigurationError
+from aiperf.config.phases import PhaseConfig
 
 
 def cli(**kwargs: object) -> CLIConfig:
     return CLIConfig(**CLIConfig(**kwargs).model_dump(exclude_unset=True))  # type: ignore[arg-type]
 
 
-def profiling(cfg):
+def profiling(cfg: AIPerfConfig) -> PhaseConfig:
     return next(p for p in cfg.benchmark.phases if p.name == "profiling")
 
 
@@ -152,7 +154,7 @@ def test_arrival_smoothness_rejected_on_non_gamma_phase(
 # ---------------------------------------------------------------------------
 
 
-def warmup(cfg):
+def warmup(cfg: AIPerfConfig) -> PhaseConfig | None:
     return next((p for p in cfg.benchmark.phases if p.name == "warmup"), None)
 
 
@@ -232,6 +234,46 @@ def test_secondary_warmup_flag_without_a_phase_or_trigger_errors(
     """Nowhere to land and nothing to create it: must be loud, not dropped."""
     with pytest.raises(ConfigurationError, match=r"warmup"):
         resolve_config(cli(warmup_concurrency=7), concurrency_yaml)
+
+
+def test_warmup_request_rate_onto_concurrency_yaml_errors(warmup_yaml: Path) -> None:
+    """--warmup-request-rate alone onto a YAML concurrency warmup phase must
+    raise a clear, named error rather than merge into an invalid phase.
+
+    _warmup_override_pattern emits `rate` independently of `type`, so this
+    used to produce {type: concurrency, rate: 5.0, ...} and fail deep inside
+    AIPerfConfig.model_validate with a raw "Extra inputs are not permitted"
+    pydantic error instead of naming the flag.
+    """
+    with pytest.raises(ConfigurationError, match=r"--warmup-request-rate"):
+        resolve_config(cli(warmup_request_rate=5.0), warmup_yaml)
+
+
+def test_warmup_arrival_pattern_onto_concurrency_yaml_errors(warmup_yaml: Path) -> None:
+    """--warmup-arrival-pattern alone onto a YAML concurrency warmup phase
+    must raise a clear, named error rather than merge into an invalid phase.
+
+    _warmup_override_pattern switches `type` to the rate phase without
+    setting `rate`, so this used to fail deep inside
+    AIPerfConfig.model_validate with "rate-controlled phases require rate or
+    rate_series" instead of naming the flag.
+    """
+    with pytest.raises(ConfigurationError, match=r"--warmup-arrival-pattern"):
+        resolve_config(cli(warmup_arrival_pattern="constant"), warmup_yaml)
+
+
+def test_warmup_request_rate_and_arrival_pattern_together_transitions_cleanly(
+    warmup_yaml: Path,
+) -> None:
+    """Setting both flags together is a complete, valid transition and must
+    not be rejected."""
+    resolved = resolve_config(
+        cli(warmup_request_rate=5.0, warmup_arrival_pattern="constant"),
+        warmup_yaml,
+    )
+    w = warmup(resolved)
+    assert w.type == "constant"
+    assert w.rate == 5.0
 
 
 # ---------------------------------------------------------------------------

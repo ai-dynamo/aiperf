@@ -863,8 +863,51 @@ def _apply_warmup_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
 
     _drop_alias_spellings(existing, built)
     merged_warmup = deep_merge(existing, built)
+    _reject_incompatible_warmup_transition(merged_warmup, warmup_set)
     existing.clear()
     existing.update(merged_warmup)
+
+
+def _reject_incompatible_warmup_transition(
+    merged_warmup: dict[str, Any], warmup_set: frozenset[str] | set[str]
+) -> None:
+    """Raise before writing back a warmup override that would merge into an
+    invalid phase.
+
+    ``_warmup_override_pattern`` emits ``rate``/``concurrency``/``type``
+    independently, so a flag that only touches one side of a type transition
+    can produce a structurally invalid phase: ``--warmup-request-rate`` onto
+    an existing concurrency phase adds ``rate``, which ``ConcurrencyPhase``
+    forbids as an extra field; ``--warmup-arrival-pattern`` onto one switches
+    ``type`` to a rate phase without a ``rate``, which that phase requires.
+    Passing both together is a complete, valid transition and is not
+    rejected here.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    final_type = merged_warmup.get("type")
+    if (
+        "warmup_request_rate" in warmup_set
+        and final_type == PhaseType.CONCURRENCY
+        and merged_warmup.get("rate") is not None
+    ):
+        raise ConfigurationError(
+            "--warmup-request-rate has no effect: the warmup phase is "
+            "type: concurrency, which has no rate field. Pass "
+            "--warmup-arrival-pattern too to switch it to a rate-controlled "
+            "phase, or drop --warmup-request-rate."
+        )
+    if (
+        "warmup_arrival_pattern" in warmup_set
+        and final_type != PhaseType.CONCURRENCY
+        and merged_warmup.get("rate") is None
+        and merged_warmup.get("rate_series") is None
+    ):
+        raise ConfigurationError(
+            f"--warmup-arrival-pattern switches the warmup phase to "
+            f"type: {final_type}, which requires a rate. Pass "
+            "--warmup-request-rate too, or drop --warmup-arrival-pattern."
+        )
 
 
 def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:
