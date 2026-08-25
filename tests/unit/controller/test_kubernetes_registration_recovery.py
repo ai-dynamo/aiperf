@@ -103,7 +103,10 @@ async def test_heartbeat_updates_registry_timestamp(
     await system_controller._handle_register_service_command(
         _registration("worker-pod-old")
     )
+    registered_ns = ServiceRegistry.get_service("worker_group_manager_0").last_seen_ns
 
+    # request_ns is stamped by the sender's clock and must be ignored: the
+    # controller stamps last_seen_ns on receipt with its own clock.
     await system_controller._process_heartbeat_message(
         HeartbeatMessage(
             service_id="worker_group_manager_0",
@@ -113,4 +116,7 @@ async def test_heartbeat_updates_registry_timestamp(
         )
     )
 
-    assert ServiceRegistry.get_service("worker_group_manager_0").last_seen_ns == 12345
+    assert (
+        ServiceRegistry.get_service("worker_group_manager_0").last_seen_ns
+        >= registered_ns
+    )
