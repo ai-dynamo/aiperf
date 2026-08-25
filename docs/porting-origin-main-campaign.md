@@ -35,7 +35,7 @@ implementation, test run, or review.
 | 7 | `86ea3f7deb` | detailed JSONL fallback | complete | already-covered | Merged in `f027104364`; native detailed aggregation already reads the canonical JSONL path directly, while the compatibility Python regression passes. Graham approved. |
 | 8 | `5566aae1e1` | ShareGPT batch encoding | pending | applicable | Native composition has no batch-tokenizer seam. |
 | 9 | `844efe1b36` | full synthesis prefix blocks | pending | already-covered | Native synthesis preserves block identity. |
-| 10 | `ffc943a9fe` | FFmpeg CVE bump | analysing | shared-product-action | Isolated #10 flow: coupled container and attribution upgrade plus static drift regression; await #9 ancestry. |
+| 10 | `ffc943a9fe` | FFmpeg CVE bump | complete | shared-product-action | Merged in `830f579589`; coupled FFmpeg 8.1.2 attribution contract test is green and reviews approved. Test-image build reached FFmpeg then exposed the unrelated missing `COPY contracts` wheel-builder defect; no rebuilt-image claim. |
 | 11 | `d55ae21d34` | ShareGPT tutorial timeout | pending | not-applicable | Documentation only. |
 | 12 | `8148999496` | LCB trust_remote_code | pending | already-covered | Rust-launched Python uses a script-free pinned loader; tokenizer policy is not the relevant evidence. |
 | 13 | `d32f4bb98e` | canonical spec-decode metrics | pending | applicable | Generic token fields exist; full canonical/vLLM model does not. |
