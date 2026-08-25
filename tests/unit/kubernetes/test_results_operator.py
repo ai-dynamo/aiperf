@@ -590,8 +590,10 @@ class TestModuleConstants:
     """Verify exported module constants."""
 
     def test_results_server_port_default(self) -> None:
-        # The sidecar container port shipped in the Helm chart.
-        assert RESULTS_SERVER_PORT == 8081
+        # Compatibility alias for callers importing the historical module constant.
+        from aiperf.operator.environment import OperatorEnvironment
+
+        assert RESULTS_SERVER_PORT == OperatorEnvironment.RESULTS.SERVER_PORT == 8081
 
     def test_results_server_port_uses_operator_environment(
         self, monkeypatch: pytest.MonkeyPatch

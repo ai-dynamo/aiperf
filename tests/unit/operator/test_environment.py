@@ -46,6 +46,10 @@ class TestResultsSettingsDefaults:
         """Verify default results directory."""
         assert Path("/data") == OperatorEnvironment.RESULTS.DIR
 
+    def test_server_port(self) -> None:
+        """Verify default results-server port."""
+        assert OperatorEnvironment.RESULTS.SERVER_PORT == 8081
+
     def test_max_retries(self) -> None:
         """Verify default results max retries."""
         assert OperatorEnvironment.RESULTS.MAX_RETRIES == 5
@@ -87,6 +91,16 @@ class TestEnvironmentVariableOverrides:
         monkeypatch.setenv("AIPERF_RESULTS_DIR", "/custom/results")
         settings = _ResultsSettings()
         assert Path("/custom/results") == settings.DIR
+
+    def test_results_server_port_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify AIPERF_RESULTS_SERVER_PORT overrides default."""
+        from aiperf.operator.environment import _ResultsSettings
+
+        monkeypatch.setenv("AIPERF_RESULTS_SERVER_PORT", "9001")
+        settings = _ResultsSettings()
+        assert settings.SERVER_PORT == 9001
 
     def test_results_max_retries_override(
         self, monkeypatch: pytest.MonkeyPatch
@@ -186,6 +200,31 @@ class TestMonitorSettingsValidation:
 
 class TestResultsSettingsValidation:
     """Tests for results settings validation bounds."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param(1, id="minimum"),
+            param(65535, id="maximum"),
+        ],
+    )  # fmt: skip
+    def test_server_port_accepts_bounds(self, value: int) -> None:
+        from aiperf.operator.environment import _ResultsSettings
+
+        assert _ResultsSettings(SERVER_PORT=value).SERVER_PORT == value
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param(0, id="below-minimum"),
+            param(65536, id="above-maximum"),
+        ],
+    )  # fmt: skip
+    def test_server_port_rejects_out_of_bounds(self, value: int) -> None:
+        from aiperf.operator.environment import _ResultsSettings
+
+        with pytest.raises(ValidationError):
+            _ResultsSettings(SERVER_PORT=value)
 
     def test_max_retries_accepts_zero(self) -> None:
         """Verify max retries can be 0 (no retries)."""
@@ -296,6 +335,7 @@ class TestEveryEnvVarMapsToField:
         ("AIPERF_OPERATOR_MONITOR_INTERVAL", "MONITOR.INTERVAL", 10.0),
         ("AIPERF_OPERATOR_MONITOR_INITIAL_DELAY", "MONITOR.INITIAL_DELAY", 5.0),
         ("AIPERF_RESULTS_DIR", "RESULTS.DIR", Path("/data")),
+        ("AIPERF_RESULTS_SERVER_PORT", "RESULTS.SERVER_PORT", 8081),
         ("AIPERF_RESULTS_MAX_RETRIES", "RESULTS.MAX_RETRIES", 5),
         ("AIPERF_RESULTS_RETRY_DELAY", "RESULTS.RETRY_DELAY", 2.0),
         ("AIPERF_RESULTS_TTL_DAYS", "RESULTS.TTL_DAYS", 30),
@@ -326,6 +366,7 @@ class TestEveryEnvVarMapsToField:
             param("AIPERF_OPERATOR_MONITOR_INTERVAL", "INTERVAL", "30.0", id="AIPERF_OPERATOR_MONITOR_INTERVAL"),
             param("AIPERF_OPERATOR_MONITOR_INITIAL_DELAY", "INITIAL_DELAY", "15.0", id="AIPERF_OPERATOR_MONITOR_INITIAL_DELAY"),
             param("AIPERF_RESULTS_DIR", "DIR", "/custom", id="AIPERF_RESULTS_DIR"),
+            param("AIPERF_RESULTS_SERVER_PORT", "SERVER_PORT", "9001", id="AIPERF_RESULTS_SERVER_PORT"),
             param("AIPERF_RESULTS_MAX_RETRIES", "MAX_RETRIES", "10", id="AIPERF_RESULTS_MAX_RETRIES"),
             param("AIPERF_RESULTS_RETRY_DELAY", "RETRY_DELAY", "5.0", id="AIPERF_RESULTS_RETRY_DELAY"),
             param("AIPERF_RESULTS_TTL_DAYS", "TTL_DAYS", "90", id="AIPERF_RESULTS_TTL_DAYS"),
@@ -364,7 +405,7 @@ class TestEveryEnvVarMapsToField:
 
     def test_all_env_vars_covered(self) -> None:
         """Guard: pin the list length so entries are not added or dropped silently."""
-        assert len(self.ENV_VAR_MAP) == 10
+        assert len(self.ENV_VAR_MAP) == 11
 
 
 # =============================================================================

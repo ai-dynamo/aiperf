@@ -33,6 +33,7 @@ from aiperf.common.endpoint_credentials import (
 from aiperf.common.redact import redact_endpoint_spec
 from aiperf.common.results_markers import EPOCH_RE
 from aiperf.kubernetes.models import AIPerfJobInfo
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.job_union import list_all_jobs
 from aiperf.operator.results_layout import (
     list_sweep_epochs_async,
@@ -946,7 +947,9 @@ def create_sweeps_router(
 ) -> APIRouter:
     """Build the sweeps router. Mirrors :func:`create_jobs_router`'s shape."""
     _holder = api_holder if api_holder is not None else [None]
-    _base_dir = results_dir if results_dir is not None else Path("/data")
+    _base_dir = (
+        results_dir if results_dir is not None else OperatorEnvironment.RESULTS.DIR
+    )
     router = APIRouter(prefix="/api/v1", tags=["sweeps"])
 
     def _require_api() -> ApiClient:

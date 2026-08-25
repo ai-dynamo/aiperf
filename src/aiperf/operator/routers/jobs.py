@@ -30,6 +30,7 @@ from aiperf.kubernetes.client import (
     list_pods_all_namespaces,
 )
 from aiperf.operator import runs_index
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.job_union import (
     _read_summary,
     _summary_path,
@@ -1015,7 +1016,9 @@ def create_jobs_router(
             archived (CR-deleted) runs alongside live ones.
     """
     _holder = api_holder if api_holder is not None else [None]
-    _results_dir = results_dir if results_dir is not None else Path("/data")
+    _results_dir = (
+        results_dir if results_dir is not None else OperatorEnvironment.RESULTS.DIR
+    )
     router = APIRouter(prefix="/api/v1", tags=["jobs"])
 
     def _require_api() -> ApiClient:
