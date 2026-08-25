@@ -55,6 +55,11 @@ def _get_worker_pod_limit_mib() -> float:
     )
 
 
+def _ceil_div(numerator: int, denominator: int) -> int:
+    """Return the maximum whole-number share across ``denominator`` members."""
+    return max(1, (numerator + max(denominator, 1) - 1) // max(denominator, 1))
+
+
 def _rp_queue_depth(conc_per_rp: int, avg_isl_tokens: int, avg_osl_tokens: int) -> int:
     """Model RP pull-queue depth under token pressure.
 
@@ -133,11 +138,13 @@ class MemoryEstimator:
                 p.total_benchmark_duration_s,
                 p.gpu_sample_interval_s,
                 p.num_gpu_metrics,
+                enabled=p.gpu_telemetry_enabled,
             ),
             _estimate_server_metrics(
                 p.num_server_metrics_endpoints,
                 p.total_benchmark_duration_s,
                 p.server_metrics_scrape_interval_s,
+                enabled=p.server_metrics_enabled,
                 unique_series=p.est_unique_metric_series,
                 histogram_count=p.est_histogram_metrics,
                 histogram_buckets=p.est_histogram_buckets,
@@ -162,9 +169,9 @@ class MemoryEstimator:
 
     def _estimate_worker_pod(self) -> PodEstimate:
         p = self.params
-        conc_per_worker = max(1, p.max_concurrency // max(p.total_workers, 1))
+        conc_per_worker = _ceil_div(p.max_concurrency, p.total_workers)
         pod_concurrency = conc_per_worker * p.workers_per_pod
-        conc_per_rp = max(1, pod_concurrency // max(p.record_processors_per_pod, 1))
+        conc_per_rp = _ceil_div(pod_concurrency, p.record_processors_per_pod)
         rp_queue_depth = _rp_queue_depth(
             conc_per_rp, p.avg_isl_tokens, p.avg_osl_tokens
         )
@@ -308,7 +315,7 @@ def _warn_http_trace(p: MemoryEstimationParams) -> list[str]:
 def _warn_multi_turn(p: MemoryEstimationParams) -> list[str]:
     if p.max_turns <= 1:
         return []
-    sessions_per_worker = max(1, p.max_concurrency // max(p.total_workers, 1))
+    sessions_per_worker = _ceil_div(p.max_concurrency, p.total_workers)
     if sessions_per_worker <= 100:
         return []
     return [

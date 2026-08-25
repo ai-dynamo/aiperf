@@ -446,45 +446,89 @@ class TestRecordProcessorEstimate:
 
 class TestGpuTelemetryEstimate:
     def test_disabled(self) -> None:
-        est = _estimate_gpu_telemetry(0, 300, 1.0, 12)
+        est = _estimate_gpu_telemetry(8, 300, 1.0, 12, enabled=False)
+        assert est.base_mib == 0
         assert est.variable_mib == 0
         assert "disabled" in est.formula
 
+    def test_enabled_without_gpu_sources_keeps_manager_base(self) -> None:
+        est = _estimate_gpu_telemetry(0, 300, 1.0, 12, enabled=True)
+        assert est.base_mib > 0
+        assert est.variable_mib == 0
+
     def test_enabled(self) -> None:
-        est = _estimate_gpu_telemetry(8, 300, 1.0, 12)
+        est = _estimate_gpu_telemetry(8, 300, 1.0, 12, enabled=True)
         assert est.variable_mib > 0
         assert est.name == "GPU Telemetry"
 
     def test_scales_with_gpus(self) -> None:
-        few = _estimate_gpu_telemetry(2, 300, 1.0, 12)
-        many = _estimate_gpu_telemetry(16, 300, 1.0, 12)
+        few = _estimate_gpu_telemetry(2, 300, 1.0, 12, enabled=True)
+        many = _estimate_gpu_telemetry(16, 300, 1.0, 12, enabled=True)
         assert many.variable_mib > few.variable_mib * 4
 
     def test_scales_with_duration(self) -> None:
-        short = _estimate_gpu_telemetry(8, 60, 1.0, 12)
-        long = _estimate_gpu_telemetry(8, 3600, 1.0, 12)
+        short = _estimate_gpu_telemetry(8, 60, 1.0, 12, enabled=True)
+        long = _estimate_gpu_telemetry(8, 3600, 1.0, 12, enabled=True)
         assert long.variable_mib > short.variable_mib
 
 
 class TestServerMetricsEstimate:
     def test_disabled(self) -> None:
         est = _estimate_server_metrics(
-            0, 300, 5.0, unique_series=200, histogram_count=20, histogram_buckets=10
+            2,
+            300,
+            5.0,
+            enabled=False,
+            unique_series=200,
+            histogram_count=20,
+            histogram_buckets=10,
         )
+        assert est.base_mib == 0
+        assert est.variable_mib == 0
+
+    def test_enabled_without_sources_keeps_manager_base(self) -> None:
+        est = _estimate_server_metrics(
+            0,
+            300,
+            5.0,
+            enabled=True,
+            unique_series=200,
+            histogram_count=20,
+            histogram_buckets=10,
+        )
+        assert est.base_mib > 0
         assert est.variable_mib == 0
 
     def test_enabled(self) -> None:
         est = _estimate_server_metrics(
-            2, 300, 5.0, unique_series=200, histogram_count=20, histogram_buckets=10
+            2,
+            300,
+            5.0,
+            enabled=True,
+            unique_series=200,
+            histogram_count=20,
+            histogram_buckets=10,
         )
         assert est.variable_mib > 0
 
     def test_scales_with_endpoints(self) -> None:
         one = _estimate_server_metrics(
-            1, 300, 5.0, unique_series=200, histogram_count=20, histogram_buckets=10
+            1,
+            300,
+            5.0,
+            enabled=True,
+            unique_series=200,
+            histogram_count=20,
+            histogram_buckets=10,
         )
         four = _estimate_server_metrics(
-            4, 300, 5.0, unique_series=200, histogram_count=20, histogram_buckets=10
+            4,
+            300,
+            5.0,
+            enabled=True,
+            unique_series=200,
+            histogram_count=20,
+            histogram_buckets=10,
         )
         assert four.variable_mib > one.variable_mib * 3
 
@@ -528,6 +572,8 @@ def _make_params(**overrides: object) -> MemoryEstimationParams:
         list_metric_backend="ragged",
         num_endpoints=1,
         connections_per_worker=500,
+        gpu_telemetry_enabled=True,
+        server_metrics_enabled=True,
         num_gpus=0,
         gpu_sample_interval_s=1.0,
         num_gpu_metrics=12,
@@ -583,6 +629,51 @@ class TestMemoryEstimator:
         params = _make_params(num_worker_pods=5)
         est = MemoryEstimator(params).estimate()
         assert est.worker_pod.replicas == 5
+
+    def test_non_divisible_concurrency_models_busiest_worker_and_processor(self) -> None:
+        params = _make_params(
+            total_workers=3,
+            workers_per_pod=3,
+            record_processors_per_pod=2,
+            max_concurrency=10,
+        )
+        est = MemoryEstimator(params).estimate()
+        workers = next(c for c in est.worker_pod.components if c.name == "Workers (x3)")
+        processors = next(
+            c for c in est.worker_pod.components if c.name == "RecordProcessors (x2)"
+        )
+
+        expected_worker = _estimate_worker(
+            4,
+            params.avg_osl_tokens,
+            streaming=params.streaming,
+            max_turns=params.max_turns,
+            avg_isl=params.avg_isl_tokens,
+            connections_per_worker=params.connections_per_worker,
+        )
+        expected_processor = _estimate_record_processor(
+            params.num_models,
+            avg_isl=params.avg_isl_tokens,
+            avg_osl=params.avg_osl_tokens,
+            streaming=params.streaming,
+            concurrency_per_rp=6,
+        )
+
+        assert workers.variable_mib == pytest.approx(expected_worker.variable_mib * 3)
+        assert processors.variable_mib == pytest.approx(
+            expected_processor.variable_mib * 2
+        )
+
+    def test_multi_turn_warning_uses_busiest_worker(self) -> None:
+        threshold = MemoryEstimator(
+            _make_params(max_turns=2, max_concurrency=300, total_workers=3)
+        ).estimate()
+        busiest = MemoryEstimator(
+            _make_params(max_turns=2, max_concurrency=301, total_workers=3)
+        ).estimate()
+
+        assert not any("Multi-turn" in warning for warning in threshold.warnings)
+        assert any("101 concurrent sessions" in warning for warning in busiest.warnings)
 
     def test_high_request_count_warning(self) -> None:
         params = _make_params(total_requests=1_000_000)
@@ -681,6 +772,7 @@ class TestFromConfig:
     """Test MemoryEstimationParams.from_config with a real AIPerfConfig."""
 
     def test_basic_config(self) -> None:
+        from aiperf.common.environment import Environment
         from aiperf.config.config import AIPerfConfig
 
         config = AIPerfConfig(
@@ -712,6 +804,41 @@ class TestFromConfig:
         assert params.avg_osl_tokens == 64
         assert params.dataset_count == 500
         assert params.num_models == 1
+        assert params.gpu_telemetry_enabled
+        assert params.server_metrics_enabled
+        assert params.gpu_sample_interval_s == Environment.GPU.COLLECTION_INTERVAL
+        assert (
+            params.server_metrics_scrape_interval_s
+            == Environment.SERVER_METRICS.COLLECTION_INTERVAL
+        )
+
+    def test_server_metrics_endpoint_union_deduplicates_normalized_urls(self) -> None:
+        from aiperf.config.config import AIPerfConfig
+
+        config = AIPerfConfig(
+            benchmark={
+                "models": "test-model",
+                "endpoint": {
+                    "urls": [
+                        "http://server-a:8000",
+                        "http://server-b:8000/v1/chat/completions",
+                    ]
+                },
+                "server_metrics": {
+                    "urls": [
+                        "http://server-a:8000/metrics",
+                        "http://server-b:8000/v1/chat/completions/metrics",
+                    ]
+                },
+                "datasets": [{"name": "main", "type": "synthetic", "entries": 100}],
+                "phases": [
+                    {"name": "profiling", "type": "concurrency", "requests": 100}
+                ],
+            }
+        )
+
+        params = MemoryEstimationParams.from_config(config)
+        assert params.num_server_metrics_endpoints == 2
 
     def test_multi_phase_max_concurrency(self) -> None:
         from aiperf.config.config import AIPerfConfig

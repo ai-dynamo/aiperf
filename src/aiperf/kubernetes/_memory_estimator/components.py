@@ -364,22 +364,21 @@ def _estimate_record_processor(
 
 
 def _estimate_gpu_telemetry(
-    num_gpus: int, duration_s: float, sample_interval_s: float, num_metrics: int
+    num_gpus: int,
+    duration_s: float,
+    sample_interval_s: float,
+    num_metrics: int,
+    *,
+    enabled: bool,
 ) -> ComponentEstimate:
-    """GPU telemetry: columnar numpy arrays per GPU per metric.
-
-    When DCGM is disabled (``num_gpus == 0``) the operator omits the
-    container entirely — we report 0 MiB so the controller-pod aggregate
-    matches measured RSS (which excludes containers that were never
-    scheduled).
-    """
-    if num_gpus == 0:
+    """GPU telemetry: columnar numpy arrays per GPU per metric."""
+    if not enabled:
         return ComponentEstimate(
             name="GPU Telemetry",
             base_mib=0,
             variable_mib=0,
             peak_mib=0,
-            formula="disabled (no DCGM URLs) — container not deployed",
+            formula="disabled — container not deployed",
             dominant_factor="N/A",
         )
 
@@ -412,23 +411,19 @@ def _estimate_server_metrics(
     duration_s: float,
     scrape_interval_s: float,
     *,
+    enabled: bool,
     unique_series: int,
     histogram_count: int,
     histogram_buckets: int,
 ) -> ComponentEstimate:
-    """Server metrics: scalar + histogram time series per endpoint.
-
-    When Prometheus scraping is disabled (``num_endpoints == 0``) the
-    operator omits the container — we report 0 MiB to match measured RSS
-    (which excludes never-scheduled containers).
-    """
-    if num_endpoints == 0:
+    """Server metrics: scalar + histogram time series per endpoint."""
+    if not enabled:
         return ComponentEstimate(
             name="Server Metrics",
             base_mib=0,
             variable_mib=0,
             peak_mib=0,
-            formula="disabled (no Prometheus URLs) — container not deployed",
+            formula="disabled — container not deployed",
             dominant_factor="N/A",
         )
 

@@ -8,13 +8,13 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.kubernetes._memory_estimator.constants import (
     _DEFAULT_GPU_METRICS,
     _DEFAULT_HISTOGRAM_BUCKETS,
     _DEFAULT_HISTOGRAM_METRICS,
     _DEFAULT_NUM_STANDARD_METRICS,
     _DEFAULT_PHASE_REQUEST_COUNT,
-    _DEFAULT_SCRAPE_INTERVAL_S,
     _DEFAULT_UNIQUE_METRIC_SERIES,
     _PHASE_AVG_SEC_PER_REQUEST,
 )
@@ -73,6 +73,12 @@ class MemoryEstimationParams:
     connections_per_worker: int
     """HTTP connection pool size per worker."""
 
+    gpu_telemetry_enabled: bool
+    """Whether the GPU telemetry manager container is deployed."""
+
+    server_metrics_enabled: bool
+    """Whether the server metrics manager container is deployed."""
+
     num_gpus: int
     """Estimated total GPUs across DCGM endpoints."""
 
@@ -127,7 +133,7 @@ class MemoryEstimationParams:
         max_conc, total_req, total_dur = _derive_load_profile(bench)
         ds = bench.get_default_dataset()
         isl, osl, turns, count = _extract_dataset_params(ds)
-        num_gpu_urls, est_gpus = _derive_gpu_telemetry(bench)
+        est_gpus = _derive_gpu_telemetry(bench)
         num_sm_urls = _derive_server_metrics(bench)
         export_trace = _derive_http_trace(bench)
         from aiperf.common.environment import Environment
@@ -148,11 +154,13 @@ class MemoryEstimationParams:
             list_metric_backend=Environment.METRICS.LIST_BACKEND,
             num_endpoints=len(bench.endpoint.urls),
             connections_per_worker=connections_per_worker,
+            gpu_telemetry_enabled=bench.gpu_telemetry.enabled,
+            server_metrics_enabled=bench.server_metrics.enabled,
             num_gpus=est_gpus,
-            gpu_sample_interval_s=1.0,
+            gpu_sample_interval_s=Environment.GPU.COLLECTION_INTERVAL,
             num_gpu_metrics=_DEFAULT_GPU_METRICS,
             num_server_metrics_endpoints=num_sm_urls,
-            server_metrics_scrape_interval_s=_DEFAULT_SCRAPE_INTERVAL_S,
+            server_metrics_scrape_interval_s=Environment.SERVER_METRICS.COLLECTION_INTERVAL,
             est_unique_metric_series=_DEFAULT_UNIQUE_METRIC_SERIES,
             est_histogram_metrics=_DEFAULT_HISTOGRAM_METRICS,
             est_histogram_buckets=_DEFAULT_HISTOGRAM_BUCKETS,
@@ -201,14 +209,28 @@ def _derive_load_profile(config: BenchmarkConfig) -> tuple[int, int, float]:
     return max_conc, total_req, total_dur
 
 
-def _derive_gpu_telemetry(config: BenchmarkConfig) -> tuple[int, int]:
-    """Return (num_gpu_urls, estimated_total_gpus). Rough: assumes 4 GPUs per endpoint."""
-    num_gpu_urls = len(config.gpu_telemetry.urls) if config.gpu_telemetry.enabled else 0
-    return num_gpu_urls, num_gpu_urls * 4 if num_gpu_urls else 0
+def _derive_gpu_telemetry(config: BenchmarkConfig) -> int:
+    """Estimate GPUs from configured DCGM endpoints when telemetry is enabled."""
+    if not config.gpu_telemetry.enabled:
+        return 0
+    from aiperf.common.environment import Environment
+
+    endpoints = [
+        *Environment.GPU.DEFAULT_DCGM_ENDPOINTS,
+        *(config.gpu_telemetry.urls or []),
+    ]
+    return len(dict.fromkeys(endpoints)) * 4
 
 
 def _derive_server_metrics(config: BenchmarkConfig) -> int:
-    return len(config.server_metrics.urls) if config.server_metrics.enabled else 0
+    """Count the normalized endpoint union used by the metrics manager."""
+    if not config.server_metrics.enabled:
+        return 0
+    endpoints = {
+        normalize_metrics_endpoint_url(url)
+        for url in [*config.endpoint.urls, *(config.server_metrics.urls or [])]
+    }
+    return len(endpoints)
 
 
 def _derive_http_trace(config: BenchmarkConfig) -> bool:
