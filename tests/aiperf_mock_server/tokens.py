@@ -18,6 +18,7 @@ from tests.aiperf_mock_server.models import (
     ImageGenerationRequest,
     RankingRequest,
     RequestT,
+    ResponsesRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
     flatten_completion_prompt_token_ids,
@@ -378,6 +379,8 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return text, request.max_output_tokens
     elif isinstance(request, SolidoRAGRequest):
         return " ".join(request.query), None
+    elif isinstance(request, ResponsesRequest):
+        return request.prompt_text, request.max_output_tokens
     else:
         raise ValueError(f"Unsupported request type: {type(request)}")
 
@@ -412,6 +415,16 @@ def _extract_osl_fingerprint(request: RequestT) -> dict[str, object]:
         fp["max_tokens"] = request.max_tokens
         fp["min_tokens"] = request.min_tokens
         fp["ignore_eos"] = request.ignore_eos
+    elif isinstance(request, ResponsesRequest):
+        # OpenAI Responses calls it `max_output_tokens` — recorded under
+        # `max_completion_tokens` because both name the same semantic (the
+        # OSL cap) and keeping the JSONL schema uniform is more useful than
+        # preserving the API name-space. The endpoint field on each row
+        # tells consumers which API the cap came from.
+        fp["max_completion_tokens"] = request.max_output_tokens
+        fp["min_tokens"] = request.min_tokens
+        fp["ignore_eos"] = request.ignore_eos
+        fp["reasoning_effort"] = request.reasoning_effort
     return fp
 
 

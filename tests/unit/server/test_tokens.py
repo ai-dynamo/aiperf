@@ -7,9 +7,12 @@ from tests.aiperf_mock_server.models import (
     ChatCompletionRequest,
     CompletionRequest,
     Message,
+    ResponsesRequest,
 )
 from tests.aiperf_mock_server.tokens import (
     TokenizedText,
+    _extract_osl_fingerprint,
+    _extract_request_content,
     _generate_seed,
     _tokenize,
     count_tokens,
@@ -406,3 +409,74 @@ class TestSeedDeterminism:
     def test_generate_seed_uses_first_five_tokens_only(self):
         base = ["a", "b", "c", "d", "e"]
         assert _generate_seed(base) == _generate_seed(base + ["f", "g"])
+
+
+class TestResponsesRequestDispatch:
+    """Dispatch sites in `tokens.py` for the new `ResponsesRequest` type."""
+
+    def test_extract_request_content_returns_prompt_and_max_output_tokens(self):
+        req = ResponsesRequest(
+            model="m",
+            input="hello world",
+            max_output_tokens=64,
+        )
+        text, max_tokens = _extract_request_content(req)
+        assert text == "hello world"
+        assert max_tokens == 64
+
+    def test_extract_request_content_walks_content_blocks(self):
+        req = ResponsesRequest(
+            model="m",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hello"},
+                        {"type": "input_text", "text": "world"},
+                    ],
+                }
+            ],
+        )
+        text, max_tokens = _extract_request_content(req)
+        assert text == "hello\nworld"
+        assert max_tokens is None
+
+    def test_extract_osl_fingerprint_canonicalizes_max_output_tokens(self):
+        """Responses' `max_output_tokens` is recorded under the existing
+        `max_completion_tokens` JSONL field — same semantic (the OSL cap),
+        and the row's endpoint tells consumers which API name-space it came
+        from. `max_tokens` stays None so it's clear the client didn't use
+        that field name.
+        """
+        req = ResponsesRequest(
+            model="m",
+            input="hi",
+            max_output_tokens=200,
+            reasoning_effort="high",
+            min_tokens=16,
+            ignore_eos=True,
+        )
+        fp = _extract_osl_fingerprint(req)
+        assert fp["max_completion_tokens"] == 200
+        assert fp["max_tokens"] is None
+        assert fp["reasoning_effort"] == "high"
+        assert fp["min_tokens"] == 16
+        assert fp["ignore_eos"] is True
+
+    def test_extract_osl_fingerprint_defaults(self):
+        fp = _extract_osl_fingerprint(ResponsesRequest(model="m"))
+        assert fp["max_completion_tokens"] is None
+        assert fp["max_tokens"] is None
+        assert fp["min_tokens"] is None
+        assert fp["ignore_eos"] is False
+        assert fp["reasoning_effort"] is None
+
+    def test_tokenize_request_handles_responses_request(self):
+        """ResponsesRequest is in the generation path, not the no-output
+        path (embedding/ranking/image-gen). Output tokens should be > 0."""
+        req = ResponsesRequest(
+            model="m", input="please summarize", max_output_tokens=32
+        )
+        result = tokenize_request(req)
+        assert result.prompt_token_count > 0
+        assert 0 < result.count <= 32

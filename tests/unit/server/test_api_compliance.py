@@ -748,3 +748,23 @@ class TestErrorHandling:
         data = resp.json()
         # Empty prompt should result in empty output
         assert data["usage"]["completion_tokens"] == 0
+
+
+# ============================================================================
+# Responses API Compliance
+# ============================================================================
+
+
+class TestResponses:
+    """Test /v1/responses endpoint dispatches the parsed ResponsesRequest."""
+
+    async def test_response_id_uses_resp_prefix(self, client: AsyncClient):
+        """The handler must route the real ResponsesRequest through make_ctx
+        so _create_request_id returns a `resp-` id, not a `chatcmpl-` id."""
+        resp = await client.post(
+            "/v1/responses",
+            json={"model": "test-model", "input": "Hello world"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"].startswith("resp-")
