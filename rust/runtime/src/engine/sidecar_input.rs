@@ -787,7 +787,10 @@ mod tests {
             .unwrap_err();
 
         let message = format!("{error:#}");
-        assert!(message.contains("unknown field `worker_module`"), "{message}");
+        assert!(
+            message.contains("unknown field `worker_module`"),
+            "{message}"
+        );
     }
 
     #[test]
