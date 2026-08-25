@@ -99,7 +99,6 @@ def test_inject_matches_inverse_of_ratio_percentile() -> None:
     ratio = np.array(latency_s) / 100.0
     assert results[P90].avg == pytest.approx(1.0 / np.percentile(ratio, 90))
     assert results[P75].avg == pytest.approx(1.0 / np.percentile(ratio, 75))
-    assert results[P90].count == 5
     assert results[P90].unit == "tokens/sec/user"
 
 
@@ -137,8 +136,12 @@ def test_slow_tail_convention_is_not_percentile_of_rate() -> None:
 def test_filter_drops_nonpositive_core_fields(bad: dict) -> None:
     """Requests with non-positive latency or OSL are excluded from the sample."""
     results = _inject(_store(**bad))
-    # Third request dropped -> two survive.
-    assert results[P90].count == 2
+    # Third request dropped -> two survive with ratios [0.01, 0.02]. Assert on the
+    # emitted value (count is not exported for this derived scalar), which also
+    # proves *which* requests survived, not just how many.
+    survivors = [0.01, 0.02]
+    assert results[P90].avg == pytest.approx(1.0 / np.percentile(survivors, 90))
+    assert results[P75].avg == pytest.approx(1.0 / np.percentile(survivors, 75))
 
 
 def test_filter_drops_nonpositive_ttft_and_isl() -> None:
@@ -150,7 +153,9 @@ def test_filter_drops_nonpositive_ttft_and_isl() -> None:
         isl=[100.0, 100.0, 0.0],  # 3rd dropped on ISL
     )
     results = _inject(store)
-    assert results[P90].count == 1
+    # Only request 0 survives (latency 1.0s / OSL 100 = 0.01 s/token), so the
+    # percentile of a single ratio inverts to 1 / 0.01 = 100.
+    assert results[P90].avg == pytest.approx(100.0)
 
 
 def test_noop_when_required_columns_absent() -> None:
@@ -173,7 +178,9 @@ def test_mask_restricts_sample() -> None:
     store = _store(latency_s=[1.0, 2.0, 3.0, 100.0], osl=[100.0] * 4)
     mask = np.array([True, True, True, False])  # drop the 100s outlier
     results = _inject(store, mask=mask)
-    assert results[P90].count == 3
+    # 3 survive with ratios [0.01, 0.02, 0.03] (the 100s outlier masked out).
+    survivors = [0.01, 0.02, 0.03]
+    assert results[P90].avg == pytest.approx(1.0 / np.percentile(survivors, 90))
 
 
 def test_deferred_derive_raises() -> None:

@@ -690,7 +690,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
             )
             # E2E Normalized Interactivity (AgentX/InferenceX Pareto x-axis):
             # 1 / p(request_latency_s / OSL), request-weighted over the masked
-            # columns. Run-scoped, injected here like the sibling families.
+            # columns. Reported run-scoped (not per timeslice) to match InferenceX,
+            # which defines this x-axis at run level only -- unlike the send-lag
+            # family above, the value is well-defined per slice, so per-slice
+            # support is a possible follow-up, not a correctness constraint.
             inject_e2e_normalized_interactivity_metrics(
                 self._column_store,
                 overall_results,

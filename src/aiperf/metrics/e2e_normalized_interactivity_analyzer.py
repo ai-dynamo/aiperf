@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.finite import is_finite_value
 from aiperf.common.models import MetricResult
@@ -48,6 +49,8 @@ from aiperf.metrics.types.ttft_metric import TTFTMetric
 if TYPE_CHECKING:
     from aiperf.metrics.column_store import ColumnStore
 
+_logger = AIPerfLogger(__name__)
+
 
 # The ``percentile`` each class declares is the single source of truth for both
 # its identity and the ratio percentile the analyzer inverts.
@@ -62,23 +65,25 @@ _PERCENTILE_METRICS: tuple[type[E2ENormalizedInteractivityPercentileBase], ...] 
 _FILTER_ONLY_TAGS = (TTFTMetric.tag, InputSequenceLengthMetric.tag)
 
 
-def inject_e2e_normalized_interactivity_metrics(
+def _compute_finite_ratios(
     store: ColumnStore,
-    results: dict[str, MetricResult],
-    mask: NDArray[np.bool_] | None = None,
-) -> None:
-    """Inject the E2E Normalized Interactivity percentile family.
+    mask: NDArray[np.bool_] | None,
+) -> NDArray[np.float64] | None:
+    """Return the finite per-request seconds-per-output-token ratios that pass the
+    positive/finite filter, or ``None`` when nothing qualifies.
 
-    No-op when ``request_latency`` or ``output_sequence_length`` are absent, or
-    when no request passes the positive-and-finite filter. Pure side effect on
-    ``results``.
+    Matches InferenceX's "all fields > 0" filter: request_latency and OSL are
+    required (no-op without them); TTFT and ISL are applied only when the run
+    produced them. Because ``count`` is dropped on export for the derived scalar,
+    this also logs how many requests the filter dropped so the sample size is not
+    silently invisible.
     """
     tags = store.numeric_tags()
     if (
         RequestLatencyMetric.tag not in tags
         or OutputSequenceLengthMetric.tag not in tags
     ):
-        return
+        return None
 
     def _column(tag: str) -> NDArray[np.float64]:
         col = store.numeric(tag)
@@ -94,19 +99,48 @@ def inject_e2e_normalized_interactivity_metrics(
             keep &= np.isfinite(col) & (col > 0)
 
     if not keep.any():
-        return
+        return None
 
-    # Seconds per output token, per surviving request. Drop any non-finite
-    # ratio (an extreme latency/OSL can overflow the division) so the
-    # percentile and its reciprocal stay finite -- injected metric values must
-    # be finite per the NaN/Inf discipline.
+    # Seconds per output token, per surviving request. Drop any non-finite ratio
+    # (an extreme latency/OSL can overflow the division) so the percentile and its
+    # reciprocal stay finite -- injected metric values must be finite per the
+    # NaN/Inf discipline.
     ratio = (latency_ns[keep] / NANOS_PER_SECOND) / osl[keep]
     ratio = ratio[np.isfinite(ratio)]
     if ratio.size == 0:
+        return None
+
+    dropped = int(latency_ns.size - ratio.size)
+    if dropped > 0:
+        total, kept = latency_ns.size, ratio.size
+        _logger.debug(
+            lambda: f"E2E normalized interactivity: {dropped} of {total} requests "
+            f"dropped by the positive/finite filter (TTFT<=0, ISL<=0, or non-finite "
+            f"ratio); percentiles computed over {kept} requests."
+        )
+    return ratio
+
+
+def inject_e2e_normalized_interactivity_metrics(
+    store: ColumnStore,
+    results: dict[str, MetricResult],
+    mask: NDArray[np.bool_] | None = None,
+) -> None:
+    """Inject the E2E Normalized Interactivity percentile family.
+
+    No-op when ``request_latency`` or ``output_sequence_length`` are absent, or
+    when no request passes the positive-and-finite filter. Pure side effect on
+    ``results``.
+    """
+    ratio = _compute_finite_ratios(store, mask)
+    if ratio is None:
         return
 
-    for cls in _PERCENTILE_METRICS:
-        ratio_p = float(np.percentile(ratio, cls.percentile))
+    # One introselect pass for both percentiles rather than one call per metric --
+    # this runs inside MetricsAccumulator.summarize() on every dashboard tick.
+    ratio_ps = np.percentile(ratio, [cls.percentile for cls in _PERCENTILE_METRICS])
+    for cls, ratio_p in zip(_PERCENTILE_METRICS, ratio_ps, strict=True):
+        ratio_p = float(ratio_p)
         if ratio_p <= 0:
             continue
         value = 1.0 / ratio_p
@@ -118,6 +152,9 @@ def inject_e2e_normalized_interactivity_metrics(
             header=cls.header,
             unit=str(cls.unit),
             avg=value,
-            count=int(ratio.size),
+            # count is dropped on export for DERIVED scalars; set 1 to match the
+            # run-scoped sibling convention (replay_sched_lag_analyzer) rather than
+            # imply a per-request sample size that never ships.
+            count=1,
             console_group=cls.console_group,
         )

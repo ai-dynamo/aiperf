@@ -80,6 +80,11 @@ class E2ENormalizedInteractivityPercentileBase(
     unit = MetricOverTimeUnit.TOKENS_PER_SECOND_PER_USER
     flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
     console_group = MetricConsoleGroup.NONE
+    # Reported run-scoped to match InferenceX, which defines this x-axis at run
+    # level only. The value is a plain per-record percentile and is well-defined
+    # per timeslice, so this is a convention choice (not a run-anchoring
+    # constraint like the send-lag family); per-slice support is a possible
+    # follow-up.
     timeslice_derivable = False
     required_metrics: ClassVar[set[str]] = {
         RequestLatencyMetric.tag,
