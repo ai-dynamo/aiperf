@@ -66,7 +66,7 @@ implementation, test run, or review.
 | 38 | `c26fe88bd8` | AgentX FAQ | complete | not-applicable | Merged in `233b71c98b`; closure: `docs/origin-main-findings/commit-038-c26fe88bd8.md`. |
 | 39 | `1e32a51318` | Baseten load performance | analysing | unassessed | Requires benchmark before claiming a port gap. |
 | 40 | `215be05b6a` | Baseten outcome fidelity | pending | applicable | Only `duration_ttft_ms` and `cached_tokens_reference` remain missing. |
-| 41 | `516faa12c8` | CODEOWNERS | pending | not-applicable | Repository metadata. |
+| 41 | `516faa12c8` | CODEOWNERS | complete | not-applicable | Exact merge in `eeb59a96d5`; closure note `docs/origin-main-findings/commit-041-516faa12c8.md`. |
 | 42 | `ce453582c7` | CONTRIBUTING spelling | pending | not-applicable | Documentation only. |
 | 43 | `6ed4823d12` | cache-bust help link | pending | not-applicable | Documentation only. |
 | 44 | `082a51827e` | TraceLab dataset | pending | applicable | No native loader/config path. |
