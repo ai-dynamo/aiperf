@@ -558,7 +558,16 @@ Behavior worth knowing:
   `--user-context-prompt-length` for a two-tier shared/per-session structure.
 
 > **Note:** `--num-prefix-prompts` and `--prefix-prompt-length` apply only to synthetic
-> datasets — they are dropped for file and public datasets. `--system-prompt` is not.
+> datasets, and AIPerf rejects them at startup when combined with `--input-file` or
+> `--public-dataset` rather than ignoring them. `--system-prompt` has no such restriction.
+>
+> The same rule now covers every synthetic-generation flag: the media *shape* options
+> (`--image-width-mean`/`--image-height-mean`/`--image-format`, `--audio-length-mean`,
+> `--audio-format`, `--audio-sample-rates`, the `--video-*` family) and the
+> `--rankings-*` options. A file or public dataset supplies its own media and passages,
+> so these previously did nothing at all; they are now an error. The per-modality
+> batch-size flags remain supported with `--custom-dataset-type random_pool`, where they
+> control how many items are packed per request.
 
 ---
 

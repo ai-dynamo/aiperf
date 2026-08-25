@@ -644,6 +644,44 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ("conversation_turn_delay_mean", "--conversation-turn-delay-mean"),
     ("conversation_turn_delay_stddev", "--conversation-turn-delay-stddev"),
     ("conversation_turn_delay_ratio", "--conversation-turn-delay-ratio"),
+    # Synthetic media SHAPE and rankings generation. The batch-size members of
+    # these families are listed above (and exempted for random_pool); the shape
+    # knobs below have no rescue path at all, so setting them alongside
+    # --input-file / --public-dataset was a pure no-op: a file dataset supplies
+    # its own media and passages, and FileDataset/PublicDataset have no field to
+    # receive the values. Kept in sync with the _build_* functions by
+    # tests/unit/config/test_synthetic_only_flag_rejection.py.
+    ("rankings_passages_mean", "--rankings-passages-mean"),
+    ("rankings_passages_stddev", "--rankings-passages-stddev"),
+    ("rankings_passages_prompt_token_mean", "--rankings-passages-prompt-token-mean"),
+    (
+        "rankings_passages_prompt_token_stddev",
+        "--rankings-passages-prompt-token-stddev",
+    ),
+    ("rankings_query_prompt_token_mean", "--rankings-query-prompt-token-mean"),
+    ("rankings_query_prompt_token_stddev", "--rankings-query-prompt-token-stddev"),
+    ("audio_length_mean", "--audio-length-mean"),
+    ("audio_length_stddev", "--audio-length-stddev"),
+    ("audio_format", "--audio-format"),
+    ("audio_depths", "--audio-depths"),
+    ("audio_sample_rates", "--audio-sample-rates"),
+    ("audio_num_channels", "--audio-num-channels"),
+    ("image_height_mean", "--image-height-mean"),
+    ("image_height_stddev", "--image-height-stddev"),
+    ("image_width_mean", "--image-width-mean"),
+    ("image_width_stddev", "--image-width-stddev"),
+    ("image_format", "--image-format"),
+    ("video_duration", "--video-duration"),
+    ("video_fps", "--video-fps"),
+    ("video_width", "--video-width"),
+    ("video_height", "--video-height"),
+    ("video_synth_type", "--video-synth-type"),
+    ("video_format", "--video-format"),
+    ("video_codec", "--video-codec"),
+    ("video_audio_sample_rate", "--video-audio-sample-rate"),
+    ("video_audio_channels", "--video-audio-num-channels"),
+    ("video_audio_codec", "--video-audio-codec"),
+    ("video_audio_depth", "--video-audio-depth"),
 )
 
 
