@@ -9,10 +9,10 @@ crash mid-export leaves the processing marker behind so the directory reads as
 not-ready rather than partially-ready.
 
 This module is deliberately dependency-free (stdlib plus a lazily imported
-``orjson``). ``aiperf.kubernetes.results_sidecar`` re-exports every name here
-and adds the FastAPI/uvicorn server on top; importing that module for the
-marker contract alone would drag uvicorn, FastAPI, starlette and aiofiles into
-processes that never serve a request.
+``orjson``). ``aiperf.kubernetes.results_sidecar`` imports the marker helpers
+it serves and adds the FastAPI/uvicorn server on top; importing that module
+for the marker contract alone would drag uvicorn, FastAPI, starlette and
+aiofiles into processes that never serve a request.
 """
 
 from __future__ import annotations
@@ -234,3 +234,105 @@ def _safe_size(entry: Path) -> int | None:
         return entry.stat().st_size
     except OSError:
         return None
+
+
+RESULT_CONTENT_TYPES: dict[str, str] = {
+    ".json": "application/json",
+    ".jsonl": "application/x-ndjson",
+    ".csv": "text/csv",
+    ".parquet": "application/vnd.apache.parquet",
+    ".txt": "text/plain",
+}
+
+
+class ResultFileUnavailable(Exception):
+    """A requested result file cannot be served.
+
+    Transport-neutral so the marker policy stays importable without FastAPI;
+    the HTTP adapters translate ``status_code``/``detail`` verbatim.
+    """
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+def content_type_for(file_path: Path) -> str:
+    """Return the download content type for a result artifact."""
+    return RESULT_CONTENT_TYPES.get(
+        file_path.suffix.lower(), "application/octet-stream"
+    )
+
+
+def not_ready_detail(base_dir: Path) -> str:
+    """Return the 404 detail served while an export is still in flight."""
+    processing_detail = " export still processing;" if _is_processing(base_dir) else ""
+    return (
+        f"Results not ready for {base_dir.name};{processing_detail} "
+        f"marker file {READY_MARKER_NAME} not present — retry after completion"
+    )
+
+
+def resolve_result_file(base_dir: Path, filename: str) -> Path:
+    """Resolve a downloadable result file, or raise ``ResultFileUnavailable``.
+
+    Enforces the same fail-closed policy on both results surfaces: traversal
+    and marker names are rejected outright, top-level artifacts stay hidden
+    until the ready marker commits, and checkpoint artifacts bypass that gate
+    because they are written incrementally by design.
+    """
+    file_path = _safe_resolve(base_dir, filename)
+    if file_path is None or file_path.name in _RESERVED_MARKER_NAMES:
+        raise ResultFileUnavailable(
+            400,
+            f"Invalid filename {filename!r}: path traversal or reserved marker name",
+        )
+    if not _is_ready(base_dir) and not _is_checkpoint_path(
+        base_dir.resolve(), file_path
+    ):
+        raise ResultFileUnavailable(404, not_ready_detail(base_dir))
+    return file_path
+
+
+def collect_ready_artifacts(
+    base_dir: Path, *, recursive: bool
+) -> list[tuple[str, int]]:
+    """Enumerate ``(relative_name, size)`` pairs for downloadable artifacts.
+
+    Top-level artifacts are gated on the ready marker; checkpoint artifacts
+    under ``checkpoints/`` are always listed so an in-flight run's checkpoint
+    stream stays fetchable. Marker files are never listed, and files that
+    vanish mid-walk are skipped rather than failing the whole listing.
+
+    ``recursive`` selects the surface's intended scope: the in-process router
+    lists only the run's own top-level artifacts (its artifact directory also
+    holds upload/scratch subdirectories that are not results), while the
+    sidecar walks its whole ``/results`` volume so nested sweep harvests
+    (``<ns>/sweeps/<sweep>/<epoch>/...``) surface too.
+    """
+    cp_dir = checkpoints_dir(base_dir)
+    files: list[tuple[str, int]] = []
+
+    def _append(entry: Path) -> None:
+        size = _safe_size(entry)
+        if size is not None:
+            files.append((entry.relative_to(base_dir).as_posix(), size))
+
+    if _is_ready(base_dir):
+        entries = base_dir.rglob("*") if recursive else base_dir.iterdir()
+        for entry in entries:
+            if (
+                not entry.is_file()
+                or entry.name in _RESERVED_MARKER_NAMES
+                or cp_dir in entry.parents
+            ):
+                continue
+            _append(entry)
+
+    if cp_dir.is_dir():
+        for entry in cp_dir.rglob("*"):
+            if entry.is_file():
+                _append(entry)
+
+    return sorted(files, key=lambda item: item[0])
