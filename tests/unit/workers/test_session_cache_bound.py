@@ -40,15 +40,15 @@ def _add(mgr: UserSessionManager, n: int) -> None:
 
 
 class TestSessionCacheIsBounded:
-    def test_default_cap_is_exposed(self):
+    def test_default_cap_is_exposed(self) -> None:
         assert DEFAULT_MAX_SESSIONS >= 1
 
-    def test_cache_never_exceeds_the_cap(self):
+    def test_cache_never_exceeds_the_cap(self) -> None:
         mgr = UserSessionManager(max_sessions=10)
         _add(mgr, 25)
         assert len(mgr._cache) == 10
 
-    def test_oldest_untouched_session_is_evicted_first(self):
+    def test_oldest_untouched_session_is_evicted_first(self) -> None:
         mgr = UserSessionManager(max_sessions=3)
         _add(mgr, 3)
         # touch the oldest so it is no longer the least-recently-used
@@ -60,11 +60,11 @@ class TestSessionCacheIsBounded:
         assert "sess-1" not in mgr._cache
         assert set(mgr._cache) == {"sess-0", "sess-2", "sess-3"}
 
-    def test_rejects_a_nonsensical_cap(self):
+    def test_rejects_a_nonsensical_cap(self) -> None:
         with pytest.raises(ValueError):
             UserSessionManager(max_sessions=0)
 
-    def test_explicit_removal_still_works(self):
+    def test_explicit_removal_still_works(self) -> None:
         mgr = UserSessionManager(max_sessions=5)
         _add(mgr, 2)
         mgr.evict("sess-0")
@@ -80,7 +80,7 @@ class TestOverflowNeverDropsAPinnedParent:
     a cache bug.
     """
 
-    def test_pinned_parent_survives_while_younger_sessions_are_evicted(self):
+    def test_pinned_parent_survives_while_younger_sessions_are_evicted(self) -> None:
         mgr = UserSessionManager(max_sessions=3)
         _add(mgr, 3)
         mgr.pin_for_fork_child("sess-0")  # oldest, would be the first LRU victim
@@ -92,7 +92,7 @@ class TestOverflowNeverDropsAPinnedParent:
         assert "sess-0" in mgr._cache, "a FORK-pinned parent was evicted"
         assert len(mgr._cache) == 3
 
-    def test_pending_fork_eviction_parent_survives(self):
+    def test_pending_fork_eviction_parent_survives(self) -> None:
         mgr = UserSessionManager(max_sessions=2)
         _add(mgr, 2)
         mgr._cache["sess-0"].pending_fork_eviction = True
@@ -102,7 +102,7 @@ class TestOverflowNeverDropsAPinnedParent:
         assert "sess-0" in mgr._cache
         assert "sess-1" not in mgr._cache
 
-    def test_all_pinned_keeps_the_cache_over_cap_rather_than_evicting(self):
+    def test_all_pinned_keeps_the_cache_over_cap_rather_than_evicting(self) -> None:
         mgr = UserSessionManager(max_sessions=2)
         _add(mgr, 2)
         mgr.pin_for_fork_child("sess-0")
@@ -114,7 +114,7 @@ class TestOverflowNeverDropsAPinnedParent:
         # and the cache is knowingly left over cap.
         assert set(mgr._cache) == {"sess-0", "sess-1"}
 
-    def test_unpinning_lets_the_parent_be_evicted_again(self):
+    def test_unpinning_lets_the_parent_be_evicted_again(self) -> None:
         mgr = UserSessionManager(max_sessions=2)
         _add(mgr, 2)
         mgr.pin_for_fork_child("sess-0")

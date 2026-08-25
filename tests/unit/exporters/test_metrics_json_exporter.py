@@ -4,6 +4,7 @@
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -339,7 +340,7 @@ class TestMetricsJsonExporter:
 
     @pytest.mark.asyncio
     async def test_degradation_is_recorded_in_the_json_artifact(
-        self, mock_results, mock_cfg
+        self, mock_results: Any, mock_cfg: CLIConfig
     ) -> None:
         """A stall-degraded run must be detectable by tooling, not just by eye.
 

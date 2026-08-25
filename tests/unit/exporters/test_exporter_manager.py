@@ -77,7 +77,7 @@ def output_config(tmp_path):
 
 
 @pytest.fixture
-def sample_records():
+def sample_records() -> list[MetricResult]:
     return [
         MetricResult(
             tag="Latency",
@@ -89,7 +89,7 @@ def sample_records():
 
 
 @pytest.fixture
-def mock_cfg(endpoint_config, output_config):
+def mock_cfg(endpoint_config, output_config) -> CLIConfig:
     config = CLIConfig(
         **endpoint_config.model_dump(exclude_unset=True),
         artifact_directory=output_config,
@@ -458,7 +458,7 @@ class TestExporterManager:
 
     @pytest.mark.asyncio
     async def test_cancelled_exporter_is_reported_as_a_failure(
-        self, sample_records, mock_cfg
+        self, sample_records: list[MetricResult], mock_cfg: CLIConfig
     ) -> None:
         """A shutdown-race cancellation leaves a partial artifact, not a success."""
         started = asyncio.Event()
@@ -496,7 +496,7 @@ class TestExporterManager:
 
     @pytest.mark.asyncio
     async def test_cancelled_deferred_exporter_keeps_deferred_flag(
-        self, sample_records, mock_cfg
+        self, sample_records: list[MetricResult], mock_cfg: CLIConfig
     ) -> None:
         """Cancellation must not blur the local/deferred artifact distinction."""
         manager = _make_manager(sample_records, mock_cfg)
@@ -566,14 +566,20 @@ class TestExporterManager:
 class TestIncompleteResultsWarning:
     """``ProfileResults.is_complete`` must reach a human, not just the model."""
 
-    def _manager_with_results(self, mock_cfg, **result_kwargs: Any) -> ExporterManager:
+    def _manager_with_results(
+        self,
+        mock_cfg: CLIConfig,
+        is_complete: bool = True,
+        incomplete_reason: str | None = None,
+    ) -> ExporterManager:
         return ExporterManager(
             results=ProfileResults(
                 records=[],
                 start_ns=0,
                 end_ns=0,
                 completed=0,
-                **result_kwargs,
+                is_complete=is_complete,
+                incomplete_reason=incomplete_reason,
             ),
             run=make_run_from_cli(mock_cfg),
             telemetry_results=None,
@@ -581,7 +587,7 @@ class TestIncompleteResultsWarning:
 
     @pytest.mark.asyncio
     async def test_incomplete_results_warn_on_console_and_in_artifact(
-        self, mock_cfg
+        self, mock_cfg: CLIConfig
     ) -> None:
         manager = self._manager_with_results(
             mock_cfg,
@@ -601,12 +607,14 @@ class TestIncompleteResultsWarning:
         assert "24 of 1200 records" in rendered
 
         txt_path = manager._run.cfg.artifacts.profile_export_console_txt_file
-        artifact = txt_path.read_text(encoding="utf-8")
+        artifact = await asyncio.to_thread(txt_path.read_text, encoding="utf-8")
         assert "INCOMPLETE RESULTS" in artifact
         assert "24 of 1200 records" in artifact
 
     @pytest.mark.asyncio
-    async def test_complete_results_render_no_warning(self, mock_cfg) -> None:
+    async def test_complete_results_render_no_warning(
+        self, mock_cfg: CLIConfig
+    ) -> None:
         manager = self._manager_with_results(mock_cfg)
 
         with patch(
@@ -624,12 +632,15 @@ class TestExportConsoleArtifactAndStyling:
 
     @pytest.mark.asyncio
     async def test_write_console_txt_writes_plain_artifact_via_asyncio_to_thread(
-        self, sample_records, mock_cfg, monkeypatch: pytest.MonkeyPatch
-    ):
+        self,
+        sample_records: list[MetricResult],
+        mock_cfg: CLIConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         real_to_thread = asyncio.to_thread
         to_thread_calls: list[tuple[Any, tuple, dict]] = []
 
-        async def _recording_to_thread(func: Any, /, *args: Any, **kwargs) -> Any:
+        async def _recording_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
             to_thread_calls.append((func, args, kwargs))
             return await real_to_thread(func, *args, **kwargs)
 
