@@ -162,6 +162,84 @@ class TestResponsesEndpoint:
 
         assert "instructions" not in payload
 
+    def test_format_payload_authored_system_item_merges_not_duplicates(
+        self, endpoint, model_endpoint
+    ):
+        """An authored ``role: system`` input item collides with instructions.
+
+        Both used to ship, so the server saw two system prompts. The verbatim
+        prompt is now folded into the authored item and ``instructions`` is
+        dropped, matching ChatEndpoint._format_messages.
+        """
+        turn = Turn(
+            raw_messages=[
+                {"role": "system", "content": "SYS-A", "type": "message"},
+                {"role": "user", "content": "hi", "type": "message"},
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="VERBATIM-SYS",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "instructions" not in payload
+        system_items = [i for i in payload["input"] if i.get("role") == "system"]
+        assert len(system_items) == 1
+        assert system_items[0]["content"] == "VERBATIM-SYS\n\nSYS-A"
+
+    def test_format_payload_authored_system_item_list_content_merges(
+        self, endpoint, model_endpoint
+    ):
+        """List content gets the Responses part shape, with the separator."""
+        turn = Turn(
+            raw_messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "SYS-A"}],
+                    "type": "message",
+                },
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="VERBATIM-SYS",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "instructions" not in payload
+        assert payload["input"][0]["content"] == [
+            {"type": "input_text", "text": "VERBATIM-SYS\n\n"},
+            {"type": "input_text", "text": "SYS-A"},
+        ]
+
+    def test_format_payload_merge_does_not_mutate_turn_state(
+        self, endpoint, model_endpoint
+    ):
+        """``raw_messages`` is reused across credits; a replay must not restack."""
+        raw_messages = [
+            {"role": "system", "content": "SYS-A", "type": "message"},
+        ]
+        turn = Turn(raw_messages=raw_messages, model="test-model")
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="VERBATIM-SYS",
+        )
+
+        first = endpoint.format_payload(request_info)
+        second = endpoint.format_payload(request_info)
+
+        assert first["input"][0]["content"] == "VERBATIM-SYS\n\nSYS-A"
+        assert second["input"][0]["content"] == "VERBATIM-SYS\n\nSYS-A"
+        assert raw_messages[0]["content"] == "SYS-A"
+
     def test_format_payload_user_context_message(self, endpoint, model_endpoint):
         """user_context_message is prepended as a user input item."""
         turn = Turn(texts=[Text(contents=["Hello"])], model="test-model")
