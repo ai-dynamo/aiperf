@@ -25,11 +25,20 @@ from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_PLURAL,
     AIPERF_JOB_VERSION,
 )
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.progress_client import ProgressClient
 
 logger = logging.getLogger(__name__)
 
-_MAX_CACHE_SIZE = 200
+
+def _max_cache_size() -> int:
+    """Return the per-cache entry bound for this process.
+
+    Read per call rather than latched at import so an operator can raise
+    ``AIPERF_CLIENT_CACHE_MAX_ENTRIES`` without a code change, and so tests
+    can shrink it without mutating module state.
+    """
+    return int(OperatorEnvironment.CLIENT_CACHE_MAX_ENTRIES)
 
 
 class _JobCacheState:
@@ -99,7 +108,7 @@ def request_cancellation(key: str) -> None:
         # live correctness signal until all in-flight handlers have observed
         # it. Let the cancellation registry exceed the client-cache bound
         # rather than revive work for a CR that is being deleted.
-        while len(_cancellation_events) >= _MAX_CACHE_SIZE:
+        while len(_cancellation_events) >= _max_cache_size():
             evictable = next(
                 (k for k, e in _cancellation_events.items() if not e.is_set()),
                 None,
@@ -178,7 +187,7 @@ async def get_or_create_progress_client(key: str) -> ProgressClient:
             _progress_clients[key] = _progress_clients.pop(key)
             return client
 
-        while len(_progress_clients) >= _MAX_CACHE_SIZE:
+        while len(_progress_clients) >= _max_cache_size():
             oldest_key = next(iter(_progress_clients))
             await _close_unlocked(oldest_key)
         client = ProgressClient()
@@ -236,8 +245,17 @@ def _latch_claim_timestamp(key: str, body: Any, timestamp: str) -> None:
     read-only ``kopf.Body`` (a ``Mapping``, no ``setdefault``) in production,
     but plain dicts flow through tests and non-kopf call paths, and mutating
     those keeps the body self-describing for downstream readers.
+
+    Eviction here is loss-tolerant, which is why plain FIFO is enough: the
+    authoritative claim timestamp is the ``COMPLETION_CLAIMED`` annotation the
+    caller just JSON-patched onto the CR, and every reader
+    (``_completion_retry._claim_age_seconds``) consults that annotation FIRST,
+    reaching this registry only for the same-tick case where the read-only
+    body snapshot predates the patch. Dropping an entry therefore degrades a
+    transient-fetch retry to the fail-fast path for one tick; it never loses
+    a claim.
     """
-    while len(_claim_timestamps) >= _MAX_CACHE_SIZE:
+    while len(_claim_timestamps) >= _max_cache_size():
         _claim_timestamps.pop(next(iter(_claim_timestamps)), None)
     _claim_timestamps[key] = timestamp
 

@@ -224,8 +224,11 @@ class KubeOptions(KubeManageOptions):
         int,
         Field(
             gt=0,
-            description="Total number of workers. Automatically distributed across pods "
-            "based on --workers-per-pod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers.",
+            description="Total number of workers, distributed across pods based on "
+            "--workers-per-pod (default 10). E.g., --total-workers 50 = 5 pods × 10 "
+            "workers. A JobSet cannot express a partial final pod, so a total that "
+            "is not a multiple of --workers-per-pod runs on a single pod instead: "
+            "--total-workers 25 = 1 pod × 25 workers.",
         ),
         CLIParameter(name="--total-workers", group=_KubeGroups.KUBERNETES),
     ] = 10

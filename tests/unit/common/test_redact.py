@@ -158,6 +158,131 @@ class TestExtractSensitiveHeaders:
 
 
 # =============================================================================
+# Custom auth-bearing headers (arbitrary user-supplied names)
+# =============================================================================
+
+
+class TestCustomAuthHeaderRedaction:
+    """``EndpointConfig.headers`` accepts arbitrary header names, so an
+    exact-name allowlist can never be complete. Credential-shaped names must be
+    caught even when the exact name was never enumerated.
+    """
+
+    @pytest.mark.parametrize(
+        "header_name",
+        [
+            param("Cookie", id="cookie"),
+            param("Set-Cookie", id="set-cookie"),
+            param("X-Auth-Token", id="x-auth-token"),
+            param("X-Access-Token", id="x-access-token"),
+            param("X-Session-Token", id="x-session-token"),
+            param("X-CSRF-Token", id="x-csrf-token"),
+            param("Proxy-Authorization", id="proxy-authorization"),
+            param("X-Acme-Token", id="vendor-token"),
+            param("X-Tenant-Secret", id="vendor-secret"),
+            param("X-Db-Password", id="password"),
+            param("X-Hub-Signature-256", id="signature"),
+            param("X-Vendor-Credential", id="credential"),
+            param("X-Custom-ApiKey", id="apikey-no-dash"),
+            param("X-Authorization", id="x-authorization"),
+        ],
+    )  # fmt: skip
+    def test_custom_auth_headers_are_redacted(self, header_name: str) -> None:
+        assert redact_headers({header_name: "secret-value"}) == {
+            header_name: REDACTED_VALUE
+        }
+
+    @pytest.mark.parametrize(
+        "header_name",
+        [
+            param("Content-Type", id="content-type"),
+            param("Accept", id="accept"),
+            param("X-Request-ID", id="x-request-id"),
+            param("User-Agent", id="user-agent"),
+            param("Cache-Control", id="cache-control"),
+            param("X-API-Version", id="x-api-version"),
+            param("X-Forwarded-For", id="x-forwarded-for"),
+            param("X-User-Email", id="x-user-email"),
+        ],
+    )  # fmt: skip
+    def test_benign_headers_are_not_over_redacted(self, header_name: str) -> None:
+        assert redact_headers({header_name: "plain"}) == {header_name: "plain"}
+
+    @pytest.mark.parametrize(
+        "header_name",
+        [
+            param("Cookie", id="cookie"),
+            param("X-Auth-Token", id="x-auth-token"),
+            param("X-Acme-Token", id="vendor-token"),
+        ],
+    )  # fmt: skip
+    def test_redaction_and_extraction_gates_agree(self, header_name: str) -> None:
+        """The out-of-band extractor must cover exactly what the redactor hides.
+
+        Both gates also drive ``validate_kubernetes_credential_transport``, so a
+        disagreement means a credential gets redacted from the config but is
+        never required to come from a Secret (leaking into a ConfigMap instead).
+        """
+        headers = {header_name: "secret-value"}
+        assert redact_headers(headers) == {header_name: REDACTED_VALUE}
+        assert extract_sensitive_headers(headers) == headers
+
+    def test_endpoint_config_serialization_hides_custom_auth_headers(self) -> None:
+        """The real serialization path, not just the helper, must redact."""
+        config = EndpointConfig(
+            urls=["http://localhost:8000"],
+            headers={"Cookie": "session=abc", "X-Auth-Token": "tok-123"},
+        )
+
+        dumped = config.model_dump(mode="json")
+
+        assert "session=abc" not in str(dumped)
+        assert "tok-123" not in str(dumped)
+        assert dumped["headers"]["Cookie"] == REDACTED_VALUE
+        assert dumped["headers"]["X-Auth-Token"] == REDACTED_VALUE
+
+    @pytest.mark.parametrize(
+        "header_name",
+        [
+            param("Authorization", id="authorization"),
+            param("Cookie", id="cookie"),
+            param("X-Auth-Token", id="x-auth-token"),
+            param("X-Acme-Token", id="vendor-token"),
+        ],
+    )  # fmt: skip
+    def test_k8s_transport_requires_secret_for_custom_auth_headers(
+        self, header_name: str
+    ) -> None:
+        """Credential-bearing headers must arrive via a Secret, not a ConfigMap.
+
+        Without a Secret-backed env var the whole BenchmarkRun (headers
+        included) is model_dumped into a plaintext ConfigMap.
+        """
+        from aiperf.common.endpoint_credentials import (
+            validate_kubernetes_credential_transport,
+        )
+
+        config = EndpointConfig(
+            urls=["http://localhost:8000"], headers={header_name: "secret-value"}
+        )
+
+        with pytest.raises(ValueError, match="Secret-backed"):
+            validate_kubernetes_credential_transport(config, pod_env=[])
+
+    def test_k8s_transport_allows_benign_headers_without_a_secret(self) -> None:
+        """Non-credential headers must not force a Secret on every run."""
+        from aiperf.common.endpoint_credentials import (
+            validate_kubernetes_credential_transport,
+        )
+
+        config = EndpointConfig(
+            urls=["http://localhost:8000"], headers={"X-Request-ID": "req-001"}
+        )
+
+        validate_kubernetes_credential_transport(config, pod_env=[])
+
+
+# =============================================================================
 # redact_string
 # =============================================================================
 

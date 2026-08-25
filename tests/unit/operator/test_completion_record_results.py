@@ -262,3 +262,65 @@ class TestSummaryFallbackFromFiles:
             )
 
         assert ready_marker_path(run_path).is_file()
+
+    def test_ready_marker_is_written_before_the_latest_pointer(
+        self, tmp_path: Path
+    ) -> None:
+        """Publication order must stay marker-then-pointer.
+
+        ``latest.txt`` is what makes readers resolve "latest" to this epoch,
+        and the ready marker is what makes the run readable at all. Writing
+        the pointer first would publish a run that still reads as not-ready
+        to ``job_union`` and the results routes; marker-first only risks a
+        readable run that "latest" has not advanced to yet.
+        """
+        _setup_export(tmp_path, "ns", "test-job")
+        run_path = tmp_path / "ns" / "test-job" / FIXTURE_EPOCH
+        (tmp_path / "ns" / "test-job" / "latest.txt").unlink(missing_ok=True)
+        order: list[str] = []
+        sb = MagicMock()
+        result = ControllerFetchResult(
+            metrics=None,
+            downloaded=["profile_export_aiperf.json"],
+        )
+
+        real_write_latest = write_latest
+
+        def _tracked_marker(dest_dir, **kwargs):
+            from aiperf.common.results_markers import (
+                write_ready_marker as real_marker,
+            )
+
+            order.append("marker")
+            return real_marker(dest_dir, **kwargs)
+
+        def _tracked_latest(*args, **kwargs):
+            order.append("latest")
+            assert ready_marker_path(run_path).is_file(), (
+                "latest.txt must never point at a run whose ready marker "
+                "has not been committed yet"
+            )
+            return real_write_latest(*args, **kwargs)
+
+        with (
+            _patch_results_dir(tmp_path),
+            patch(
+                "aiperf.operator.handlers.completion.write_ready_marker",
+                _tracked_marker,
+            ),
+            patch(
+                "aiperf.operator.handlers.completion.write_latest",
+                _tracked_latest,
+            ),
+        ):
+            _record_results_on_status(
+                body=_body(),
+                namespace="ns",
+                job_id="test-job",
+                result=result,
+                sb=sb,
+                has_metrics=False,
+                has_files=True,
+            )
+
+        assert order == ["marker", "latest"]

@@ -519,6 +519,12 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
     if total_workers % default_workers_per_pod:
         workers_per_pod = total_workers
         num_pods = 1
+        logger.warning(
+            f"total_workers={total_workers} is not a multiple of "
+            f"workers_per_pod={default_workers_per_pod}; a JobSet cannot express a "
+            f"partial final pod, so all {total_workers} workers run on a single pod. "
+            f"Use a multiple of {default_workers_per_pod} to spread them across pods."
+        )
     else:
         workers_per_pod = default_workers_per_pod
         num_pods = total_workers // workers_per_pod

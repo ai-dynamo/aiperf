@@ -12,7 +12,7 @@ from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.config.deployment import PodTemplateConfig
+from aiperf.config.deployment import DENIED_EXTRA_POD_SPEC_KEYS, PodTemplateConfig
 from aiperf.kubernetes.constants import AIPerfLabels
 from aiperf.kubernetes.enums import ImagePullPolicy, RestartPolicy
 
@@ -152,7 +152,17 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
                 **tmpl.pod_security_context,
             }
         if tmpl.extra_pod_spec:
-            pod_spec.update(tmpl.extra_pod_spec)
+            # Defense in depth: PodTemplateConfig already rejects these keys at
+            # validation time, but a raw update() here would silently defeat the
+            # hardening above, so drop them unconditionally rather than trusting
+            # that every construction path went through validation.
+            pod_spec.update(
+                {
+                    key: value
+                    for key, value in tmpl.extra_pod_spec.items()
+                    if key not in DENIED_EXTRA_POD_SPEC_KEYS
+                }
+            )
         return pod_spec
 
     def _build_pod_annotations(self) -> dict[str, str]:

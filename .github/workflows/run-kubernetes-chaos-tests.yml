@@ -136,7 +136,10 @@ jobs:
       - name: Run ${{ matrix.label }} tests
         id: pytest
         shell: bash
-        run: make ${{ matrix.make_target }} args='--k8s-skip-build ${{ inputs.pytest_args }}'
+        env:
+          PYTEST_ARGS: ${{ inputs.pytest_args }}
+          MAKE_TARGET: ${{ matrix.make_target }}
+        run: make "${MAKE_TARGET}" args="--k8s-skip-build ${PYTEST_ARGS}"
         timeout-minutes: 165
 
       - name: Collect cluster diagnostics on failure

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from aiperf.common.environment import Environment
-from aiperf.config.deployment import PodTemplateConfig
+from aiperf.config.deployment import PodTemplateConfig, privilege_escalating_keys
 from aiperf.kubernetes.environment import K8sEnvironment
 
 
@@ -35,13 +35,17 @@ def build_security_context(pod_template: PodTemplateConfig) -> dict[str, Any]:
     }
     overrides = pod_template.container_security_context
     if overrides:
+        # Defense in depth: PodTemplateConfig rejects privilege-escalating values
+        # at validation time, but this builder is also reachable from templates
+        # constructed directly in code, so drop them unconditionally here too.
+        escalating = set(privilege_escalating_keys(overrides))
         caps = overrides.get("capabilities")
         if isinstance(caps, dict):
             base_caps = dict(ctx.get("capabilities", {}))
             base_caps.update(caps)
             ctx["capabilities"] = base_caps
         for key, value in overrides.items():
-            if key == "capabilities":
+            if key == "capabilities" or key in escalating:
                 continue
             ctx[key] = value
     return ctx

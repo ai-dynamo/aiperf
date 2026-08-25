@@ -122,7 +122,7 @@ class TestGetOrCreateProgressClient:
             mock_patch(
                 "aiperf.operator.client_cache.ProgressClient", side_effect=make_client
             ),
-            mock_patch("aiperf.operator.client_cache._MAX_CACHE_SIZE", 2),
+            mock_patch("aiperf.operator.client_cache._max_cache_size", return_value=2),
         ):
             c1 = await get_or_create_progress_client("test/job-1")
             await get_or_create_progress_client("test/job-2")
@@ -374,7 +374,7 @@ class TestCacheEvictionPolicies:
             mock_patch(
                 "aiperf.operator.client_cache.ProgressClient", side_effect=make_client
             ),
-            mock_patch("aiperf.operator.client_cache._MAX_CACHE_SIZE", 2),
+            mock_patch("aiperf.operator.client_cache._max_cache_size", return_value=2),
         ):
             c1 = await get_or_create_progress_client("test/job-1")
             await get_or_create_progress_client("test/job-2")
@@ -403,7 +403,7 @@ class TestCacheEvictionPolicies:
             request_cancellation,
         )
 
-        with mock_patch("aiperf.operator.client_cache._MAX_CACHE_SIZE", 3):
+        with mock_patch("aiperf.operator.client_cache._max_cache_size", return_value=3):
             request_cancellation("ns/live-1")
             request_cancellation("ns/live-2")
             request_cancellation("ns/stale")
@@ -429,9 +429,61 @@ class TestCacheEvictionPolicies:
         )
 
         keys = [f"ns/sweep-v{i:04d}" for i in range(2_001)]
-        with mock_patch("aiperf.operator.client_cache._MAX_CACHE_SIZE", 200):
+        with mock_patch(
+            "aiperf.operator.client_cache._max_cache_size", return_value=200
+        ):
             for key in keys:
                 request_cancellation(key)
 
         assert len(_cancellation_events) == len(keys)
         assert all(is_cancellation_requested(key) for key in keys)
+
+    def test_cache_bound_is_operator_tunable(self, monkeypatch) -> None:
+        """The per-cache bound is configuration, not a module constant."""
+        from aiperf.operator.client_cache import _max_cache_size
+        from aiperf.operator.environment import OperatorEnvironment
+
+        monkeypatch.setattr(OperatorEnvironment, "CLIENT_CACHE_MAX_ENTRIES", 7)
+        assert _max_cache_size() == 7
+
+    def test_evicted_claim_timestamp_falls_back_to_cr_annotation(
+        self, monkeypatch
+    ) -> None:
+        """FIFO eviction of a latched claim never loses the claim itself.
+
+        ``_claim_age_seconds`` reads the durable ``COMPLETION_CLAIMED``
+        annotation first and only consults this registry for the same-tick
+        case where the read-only kopf body snapshot predates the JSON-patch.
+        So an evicted entry costs at most one fail-fast tick.
+        """
+        from aiperf.kubernetes.constants import Annotations
+        from aiperf.kubernetes.phase import format_timestamp
+        from aiperf.operator.client_cache import (
+            _claim_timestamps,
+            _latch_claim_timestamp,
+            get_claim_timestamp,
+            job_key,
+        )
+        from aiperf.operator.environment import OperatorEnvironment
+        from aiperf.operator.handlers._completion_retry import _claim_age_seconds
+
+        monkeypatch.setattr(OperatorEnvironment, "CLIENT_CACHE_MAX_ENTRIES", 2)
+        _claim_timestamps.clear()
+
+        stamp = format_timestamp()
+        key = job_key("ns", "job-evicted", "uid-1")
+        _latch_claim_timestamp(key, {}, stamp)
+        # Two later claims push the first out of the bounded registry.
+        _latch_claim_timestamp(job_key("ns", "job-2", "uid-2"), {}, stamp)
+        _latch_claim_timestamp(job_key("ns", "job-3", "uid-3"), {}, stamp)
+        assert get_claim_timestamp(key) is None
+
+        body = {
+            "metadata": {
+                "uid": "uid-1",
+                "annotations": {Annotations.COMPLETION_CLAIMED: stamp},
+            }
+        }
+        age = _claim_age_seconds(body, "ns", "job-evicted")
+        assert age is not None and age >= 0.0
+        _claim_timestamps.clear()

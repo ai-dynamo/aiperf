@@ -132,12 +132,17 @@ async def on_child_phase_transition(
         # Guard: skip the merge-patch when the parent sweep is already in a
         # terminal phase. The sweep-controller's aggregation_complete patch
         # writes completedRuns/failedRuns/runStates with authoritative values
-        # at terminal time; a delayed rollup tick that fires after the children
-        # are deleted (post-harvest) would find _count_owned_children returning
+        # at terminal time; a delayed rollup tick that fires after the child
+        # AIPerfJobs are gone (their own ttlSecondsAfterFinished reaped them,
+        # or a user deleted them) would find _count_owned_children returning
         # 0 and would overwrite those authoritative counts with zeros.
+        # Note this is about the CHILD CRs, not the JobSets the completion
+        # handler deletes on success: _count_owned_children lists aiperfjobs,
+        # so post-harvest JobSet deletion does not move these counts at all.
         # Fall through to _advance_parent_phase_if_complete regardless so the
         # _ingest_sweep_aggregate side-effect still fires; that helper reuses
-        # this same read instead of issuing a second GET.
+        # this same read instead of issuing a second GET, and it cannot be
+        # fooled by the same zero counts (see its total_terminal_phase gate).
         parent_status_pre = await _read_parent_status(
             namespace, sweep_name, expected_uid=sweep_uid, api=api
         )
@@ -285,6 +290,12 @@ async def _advance_parent_phase_if_complete(
     ``maxTotalRuns``, and a concurrent terminal write from the sweep-controller
     is caught by the ``test`` op inside ``_conditional_phase_set`` (422 → skip),
     so the second GET bought nothing.
+
+    A vanished-children tick (all owned children TTL-reaped before this tick
+    ran) cannot reach the ``accounted < maxTotalRuns`` comparison below with
+    misleading zeros: ``_tally_children`` only sets ``total_terminal_phase``
+    when it saw at least one owned child, so a zero tally returns at the guard
+    immediately above instead of being read as "no runs accounted".
     """
     terminal_phase = counts.get("total_terminal_phase")
     if not terminal_phase:

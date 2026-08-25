@@ -19,6 +19,7 @@ Out of scope: live Helm install/upgrade behavior; see
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -414,3 +415,47 @@ class TestGeneratedCrdConsistency:
             timeout=120,
         )
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+class TestPreCommitHookSelfInclusion:
+    """A generator/checker hook must re-run when its own tool changes.
+
+    Otherwise editing the checker silently skips the gate it enforces, and a
+    regression in the checker itself ships green.
+    """
+
+    @pytest.mark.parametrize(
+        "hook_id, tool_path",
+        [
+            param(
+                "check-chart-consistency",
+                "tools/check_chart_consistency.py",
+                id="check-chart-consistency",
+            ),
+            param("generate-crd", "tools/generate_crd.py", id="generate-crd"),
+            param(
+                "generate-config-schema",
+                "tools/generate_config_schema.py",
+                id="generate-config-schema",
+            ),
+        ],
+    )  # fmt: skip
+    def test_hook_files_regex_includes_its_own_tool(
+        self, hook_id: str, tool_path: str
+    ) -> None:
+        config = yaml.safe_load(
+            (PROJECT_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+        )
+        hooks = [
+            hook
+            for repo in config["repos"]
+            for hook in repo.get("hooks", [])
+            if hook.get("id") == hook_id
+        ]
+        assert hooks, f"missing pre-commit hook: {hook_id}"
+
+        pattern = re.compile(hooks[0]["files"])
+        assert pattern.search(tool_path), (
+            f"hook {hook_id!r} does not re-run when {tool_path} changes; "
+            "add it to the hook's `files:` regex"
+        )

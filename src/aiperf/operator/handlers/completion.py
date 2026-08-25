@@ -1565,6 +1565,23 @@ def _record_results_on_status(
         namespace, job_id, epoch, key_names=key_names.names
     ):
         dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
+        # Publication order is load-bearing and must stay marker-then-pointer.
+        # ``write_ready_marker`` is what makes ``dest_dir`` readable at all
+        # (results routes and ``job_union`` hide a run whose marker is absent),
+        # and ``write_latest`` is what makes readers resolve "latest" TO this
+        # epoch. Marker first means a crash between the two leaves a readable
+        # run that "latest" has not yet advanced to; the reverse order would
+        # publish a pointer at a run that still reads as not-ready. Both writes
+        # are individually atomic (fsync + rename), so there is no partial-file
+        # window on either side.
+        #
+        # The ``sb.set_*`` calls are NOT a third commit point: StatusBuilder
+        # only stages fields into the single kopf patch that is flushed once,
+        # after this handler returns, so resultsPath and runEpoch land together
+        # or not at all. ``_verify_final_artifact_publication`` re-checks the
+        # key-file fingerprint AND the marker after index publication and
+        # unwinds all of it (marker unlink, latest reconcile, staged-field pop)
+        # if the artifacts vanished meanwhile.
         write_ready_marker(
             dest_dir,
             terminal_phase=terminal_phase,

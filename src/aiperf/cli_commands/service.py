@@ -95,7 +95,7 @@ def service(
                 "with --benchmark-run."
             )
         run = BenchmarkRun.model_validate(orjson.loads(run_json))
-        credentials = consume_endpoint_credentials(allow_openai_api_key=True)
+        credentials = consume_endpoint_credentials()
         apply_endpoint_credentials(run, credentials, require_resolved=True)
 
         if health_host is not None:

@@ -916,7 +916,9 @@ spec:
                     description: Service account name for pods
                   containerSecurityContext:
                     type: object
-                    description: Container securityContext overrides (merged into each container spec)
+                    description: 'Container securityContext overrides (merged into each container spec). Privilege-escalating
+                      values are rejected: privileged=true, allowPrivilegeEscalation=true, runAsNonRoot=false, runAsUser=0,
+                      runAsGroup=0.'
                     x-kubernetes-preserve-unknown-fields: true
                   shareProcessNamespace:
                     type: boolean
@@ -970,7 +972,8 @@ spec:
                   podSecurityContext:
                     type: object
                     description: 'Pod-level securityContext (PodSecurityContext format: fsGroup, runAsUser, runAsNonRoot,
-                      supplementalGroups, sysctls, etc.). Distinct from container_security_context which applies per-container.'
+                      supplementalGroups, sysctls, etc.). Distinct from container_security_context which applies per-container.
+                      Privilege-escalating values are rejected: runAsNonRoot=false, runAsUser=0, runAsGroup=0.'
                     x-kubernetes-preserve-unknown-fields: true
                   initContainers:
                     type: array
@@ -985,7 +988,9 @@ spec:
                     description: 'Escape hatch: raw PodSpec keys merged into the rendered pod spec last (keys here override
                       typed fields above). Use for K8s PodSpec fields not yet modeled here (e.g. schedulingGates, resourceClaims,
                       overhead). Typed fields are preferred when available because preflight checks, env merging, and securityContext
-                      merging only apply to typed fields.'
+                      merging only apply to typed fields. Security-critical keys are NOT overridable and are rejected at validation
+                      time: securityContext, containers, hostNetwork, hostPID, hostIPC, hostUsers. The hardened pod securityContext
+                      is re-applied after this merge, so it cannot be weakened even if a denied key reaches the renderer.'
                     x-kubernetes-preserve-unknown-fields: true
               scheduling:
                 type: object

@@ -21,6 +21,8 @@ REDACTED_VALUE = "<redacted>"
 #   - x-functions-key: Azure Functions
 #   - aeg-sas-key: Azure Event Grid
 #   - x-amz-security-token: AWS STS temporary credentials
+#   - cookie / set-cookie: session credentials
+#   - x-auth-token / x-access-token / x-session-token: common custom auth headers
 _SENSITIVE_HEADER_NAMES = frozenset(
     {
         "authorization",
@@ -32,8 +34,58 @@ _SENSITIVE_HEADER_NAMES = frozenset(
         "x-functions-key",
         "aeg-sas-key",
         "x-amz-security-token",
+        "cookie",
+        "set-cookie",
+        "x-auth-token",
+        "x-access-token",
+        "x-session-token",
+        "x-csrf-token",
+        "x-xsrf-token",
     }
 )
+
+# ``EndpointConfig.headers`` accepts arbitrary user-supplied headers, so an
+# exact-name allowlist can never be complete: a deployment may authenticate with
+# ``X-Acme-Token`` or ``X-Tenant-Secret``. Any header whose name contains one of
+# these fragments is therefore treated as credential-bearing. Deliberately
+# fail-safe: over-redacting a benign header only costs readability, while
+# under-redacting leaks a credential into artifacts, logs, and (via
+# ``validate_kubernetes_credential_transport``) an unencrypted K8s ConfigMap.
+_SENSITIVE_HEADER_SUBSTRINGS: tuple[str, ...] = (
+    "auth",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "cookie",
+    "apikey",
+    "api-key",
+    "api_key",
+    "session",
+    "signature",
+    "sas-key",
+    "access-key",
+    "private-key",
+)
+
+
+def is_sensitive_header_name(name: str) -> bool:
+    """Return True if a header name is treated as credential-bearing.
+
+    Single source of truth for every header gate: the redactors, the
+    out-of-band credential extractor, and the Kubernetes Secret-transport
+    validator all route through this so they cannot disagree about which
+    headers need protection.
+
+    Args:
+        name: Header name, any casing.
+    """
+    lowered = name.lower()
+    if lowered in _SENSITIVE_HEADER_NAMES:
+        return True
+    return any(fragment in lowered for fragment in _SENSITIVE_HEADER_SUBSTRINGS)
+
 
 # Pre-compiled regex patterns for redacting credentials in arbitrary strings.
 # Patterns must handle plain text ("Authorization: Bearer <key>"),
@@ -76,13 +128,14 @@ _STRING_REDACTION_PATTERNS = [
 def redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
     """Return a copy of headers with sensitive values replaced by REDACTED_VALUE.
 
-    Matches against _SENSITIVE_HEADER_NAMES (case-insensitive).
+    Matches via :func:`is_sensitive_header_name` (case-insensitive: the exact
+    provider header list plus credential-shaped custom names).
     Returns None if input is None.
     """
     if headers is None:
         return None
     return {
-        k: (REDACTED_VALUE if k.lower() in _SENSITIVE_HEADER_NAMES else v)
+        k: (REDACTED_VALUE if is_sensitive_header_name(k) else v)
         for k, v in headers.items()
     }
 
@@ -99,7 +152,7 @@ def extract_sensitive_headers(headers: dict[str, str] | None) -> dict[str, str]:
     """
     if not headers:
         return {}
-    return {k: v for k, v in headers.items() if k.lower() in _SENSITIVE_HEADER_NAMES}
+    return {k: v for k, v in headers.items() if is_sensitive_header_name(k)}
 
 
 def redact_header_tuples(
@@ -111,7 +164,7 @@ def redact_header_tuples(
     used by InputConfig.headers.
     """
     return [
-        (name, REDACTED_VALUE if name.lower() in _SENSITIVE_HEADER_NAMES else value)
+        (name, REDACTED_VALUE if is_sensitive_header_name(name) else value)
         for name, value in headers
     ]
 

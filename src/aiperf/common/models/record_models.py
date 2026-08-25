@@ -1132,11 +1132,15 @@ class RequestRecord(AIPerfBaseModel):
     )
     clock_offset_ns: int | None = Field(
         default=None,
-        description="Measured offset between this worker's wall clock and the "
+        description="Estimated offset between this worker's wall clock and the "
         "controller's, in nanoseconds, at the moment the record was emitted. "
-        "Sign convention is ``received - issued``, so a worker clock running "
+        "Sign convention is worker-minus-controller, so a worker clock running "
         "ahead of the controller is positive and the correction SUBTRACTS: "
-        "``controller_time = worker_time - clock_offset_ns``. None outside "
+        "``controller_time = worker_time - clock_offset_ns``. This is "
+        "``ClockOffsetTracker.correction_ns``: the min-filtered one-way sample "
+        "(``received - issued``, i.e. skew PLUS transit) less the pre-flight "
+        "one-way transit estimate, falling back to the raw sample when no "
+        "baseline RTT could be measured. None outside "
         "Kubernetes mode, where both clocks are the same clock and no "
         "correction is meaningful. Signed, so no bounds apply. Measured in the "
         "tracker's anchored clock domain (a wall-clock anchor advanced by "

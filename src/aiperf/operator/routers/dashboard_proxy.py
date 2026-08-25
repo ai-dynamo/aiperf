@@ -36,6 +36,18 @@ _FORWARD_RESPONSE_HEADER_DROP = frozenset(
 )
 
 
+def _has_dot_segment(path: str) -> bool:
+    """Return True if ``path`` contains a ``.`` or ``..`` segment.
+
+    Starlette hands us the percent-DECODED path, so ``%2e%2e`` arrives here as
+    ``..``. yarl normalizes dot segments away when building the upstream URL,
+    which would escape the ``/dashboard/`` prefix entirely and let a request
+    reach unauthenticated sidecar routes such as ``POST /admin/refresh``.
+    Reject rather than normalize: the dashboard has no legitimate dot segments.
+    """
+    return any(segment in (".", "..") for segment in path.replace("\\", "/").split("/"))
+
+
 def create_dashboard_proxy_router() -> APIRouter:
     """Create the ``/dashboard/{path:path}`` proxy router.
 
@@ -66,6 +78,13 @@ def create_dashboard_proxy_router() -> APIRouter:
             return Response(
                 content=b"Dashboard is disabled on this cluster.",
                 status_code=503,
+                media_type="text/plain; charset=utf-8",
+            )
+
+        if _has_dot_segment(path):
+            return Response(
+                content=b"Invalid dashboard path.",
+                status_code=400,
                 media_type="text/plain; charset=utf-8",
             )
 

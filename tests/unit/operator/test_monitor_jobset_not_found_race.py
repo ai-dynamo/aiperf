@@ -23,7 +23,7 @@ The defenses are in :func:`_reconcile_missing_jobset`:
 
 The claim annotation is metadata, i.e. writable by anyone who can edit the
 AIPerfJob, so defenses 1 and 3 only honour a claim whose timestamp is present,
-parsable, and younger than ``_CLAIM_TRUST_WINDOW_SEC``. An older or forged
+parsable, and younger than ``_claim_trust_window_sec()``. An older or forged
 claim must not be able to suppress the FAILED stamp forever.
 """
 
@@ -39,7 +39,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from aiperf.kubernetes.constants import Annotations
 from aiperf.kubernetes.phase import Phase
 from aiperf.operator.handlers.monitor import (
-    _CLAIM_TRUST_WINDOW_SEC,
+    _claim_trust_window_sec,
     _reconcile_missing_jobset,
 )
 from aiperf.operator.status import StatusBuilder
@@ -273,7 +273,7 @@ async def test_stale_claim_annotation_does_not_suppress_failed_stamp() -> None:
         body=_body(
             claimed=True,
             phase="Running",
-            claim_age_sec=_CLAIM_TRUST_WINDOW_SEC + 60,
+            claim_age_sec=_claim_trust_window_sec() + 60,
         ),
         namespace="ns",
         name="job",
@@ -313,3 +313,29 @@ async def test_unparsable_claim_annotation_does_not_suppress_failed_stamp() -> N
 
     assert result is False
     assert patch.status["phase"] == str(Phase.FAILED)
+
+
+@pytest.mark.asyncio
+async def test_claim_trust_window_is_operator_tunable(monkeypatch) -> None:
+    """The trust window is configuration, not a baked-in constant.
+
+    It is deliberately absolute rather than derived from
+    ``spec.timeoutSeconds``: a claim is only ever stamped after completion
+    evidence, so what the window has to cover is result draining, not the
+    benchmark deadline. Operators with slow PVCs must be able to widen it.
+    """
+    from aiperf.operator.environment import OperatorEnvironment
+    from aiperf.operator.handlers.monitor import _completion_claim_is_live
+
+    body = _body(claimed=True, phase="Running", claim_age_sec=120.0)
+
+    monkeypatch.setattr(
+        OperatorEnvironment, "COMPLETION_CLAIM_TRUST_WINDOW_SECONDS", 60.0
+    )
+    assert _claim_trust_window_sec() == 60.0
+    assert _completion_claim_is_live(body, "ns") is False
+
+    monkeypatch.setattr(
+        OperatorEnvironment, "COMPLETION_CLAIM_TRUST_WINDOW_SECONDS", 600.0
+    )
+    assert _completion_claim_is_live(body, "ns") is True
