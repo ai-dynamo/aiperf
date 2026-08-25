@@ -712,7 +712,11 @@ class TestMemoryEstimator:
         )
 
     def test_adequate_headroom_recommendation(self) -> None:
-        params = _make_params(total_requests=1000)
+        params = _make_params(
+            total_requests=1000,
+            gpu_telemetry_enabled=False,
+            server_metrics_enabled=False,
+        )
         est = MemoryEstimator(params).estimate()
         assert any("adequate" in r.lower() for r in est.recommendations)
 
