@@ -378,6 +378,9 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # are non-negative by construction (summed from the neutral record's histogram).
     "ProfileResults.pooled_spec_decode_acceptance_histogram",
     "JsonExportData.pooled_spec_decode_acceptance_histogram",
+    # _Environment.ENDPOINT: nested _EndpointSettings object, not a numeric
+    # leaf. The heuristic fires because "int" appears in "_EndpointSettings".
+    "_Environment.ENDPOINT",
 }
 
 

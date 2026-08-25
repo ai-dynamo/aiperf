@@ -130,6 +130,14 @@ Dataset loading and configuration. Controls timeouts and behavior for dataset lo
 | `AIPERF_DATASET_WEKA_AUX_REDUCTION_RATIO` | `20.0` | ≥ 0.0 | Auxiliary (sidecar) classification, reduction arm: the minimum input-to-output token ratio for a same-model single-request large-input chain to be treated as a reduction sidecar (see WEKA_AUX_REDUCTION_OSL_MAX). A reduction consumes a large body and emits a short summary, so input/output is high (corpus median ~120); 20 is a conservative floor that still excludes balanced request/response calls. Only applies when WEKA_AUX_REDUCTION_OSL_MAX > 0. |
 | `AIPERF_DATASET_WEKA_WORKER_GROUP_MIN` | `3` | ≥ 0 | Parallel worker-group tagging: a coordinated parallel fan-out must BOTH share a deep spawned context AND run concurrently. Workers that forked from shared context (fork depth > 0) are first scoped by their fork point (the parent request they branched off), then within each scope split into connected components of overlapping active [t0, t1) intervals; a component with at least this many members is emitted as ::wg:{group}_{member} (group = the concurrent fan-out, member = index by start time) instead of the generic ::fa: agent marker. The fork-point scope keeps unrelated fan-outs apart (pure interval overlap bridges a busy trace into one blob); the overlap split drops members that share the fork point but never run concurrently. This isolates genuine parallel sub-agent fan-out (the dominant agent population) from solo agents, unlike keying on the first context block (shared by ~every worker all session). Auxiliary chains are classified first, so a one-shot sidecar never becomes a worker-group member. Set to 0 to disable worker-group tagging (parallel workers keep the generic ::fa: tag). Only applies when WEKA_SPLIT_FLATTENED_AGENTS is True. |
 
+## ENDPOINT
+
+Endpoint wire-format configuration. Controls how AIPerf serializes message content when building request payloads. The main knob is FORCE_CONTENT_PARTS, which overrides the single-text fast path that emits a plain string for simple turns.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_ENDPOINT_FORCE_CONTENT_PARTS` | `False` | — | When True, always emit the multi-part content array (e.g. [{"type": "text", "text": "..."}]) for synthetic turns, even when there is only a single text with no media. By default (False) single-text turns emit a plain string to stay compatible with servers that reject list-of-parts content for non-multimodal inputs (e.g. OpenAI Dynamo). Enable when the target server requires the structured content-parts shape unconditionally. |
+
 ## GPU
 
 GPU telemetry collection configuration. Controls GPU metrics collection frequency, endpoint detection, and shutdown behavior. Metrics are collected from DCGM endpoints at the specified interval.
