@@ -497,6 +497,7 @@ const GROUP_ORDER: &[MetricConsoleGroup] = &[
     MetricConsoleGroup::Prediction,
     MetricConsoleGroup::Audio,
     MetricConsoleGroup::Reasoning,
+    MetricConsoleGroup::SpecDecode,
     MetricConsoleGroup::Default,
 ];
 
@@ -621,13 +622,17 @@ pub(crate) fn metrics_tables(
         let header_refs: Vec<&str> = header.iter().map(String::as_str).collect();
         let justify: Vec<Justify> = std::iter::repeat_n(Justify::Right, header.len()).collect();
         let table_rows: Vec<Vec<String>> = rows.iter().map(|row| row.cells.clone()).collect();
-        blocks.push(render_table(
-            &title,
-            &header_refs,
-            &table_rows,
-            &justify,
-            width,
-        ));
+        let mut block = render_table(&title, &header_refs, &table_rows, &justify, width);
+        if *group == MetricConsoleGroup::SpecDecode
+            && let Some(histogram) = report
+                .pooled_spec_decode_acceptance_histogram
+                .as_ref()
+                .and_then(spec_decode_histogram_line)
+        {
+            block.push('\n');
+            block.push_str(&histogram);
+        }
+        blocks.push(block);
     }
 
     if blocks.is_empty() {
@@ -834,6 +839,45 @@ fn scaled_report_value(value: Option<&ReportValue>, scale: f64) -> Option<f64> {
     scaled.is_finite().then_some(scaled)
 }
 
+/// Render the exact accepted-draft bucket pool as percentages of verification steps.
+fn spec_decode_histogram_line(histogram: &BTreeMap<u64, u128>) -> Option<String> {
+    const CAP: u64 = 8;
+
+    let total = histogram
+        .values()
+        .try_fold(0_u128, |sum, count| sum.checked_add(*count))?;
+    if total == 0 {
+        return None;
+    }
+    let has_capped = histogram.range(CAP..).next().is_some();
+    let upper = if has_capped {
+        CAP - 1
+    } else {
+        *histogram.keys().next_back()?
+    };
+    let mut buckets = (0..=upper)
+        .map(|bucket| {
+            let count = histogram.get(&bucket).copied().unwrap_or(0);
+            format!("{bucket}: {}%", rounded_percent(count, total))
+        })
+        .collect::<Vec<_>>();
+    if has_capped {
+        let capped = histogram
+            .range(CAP..)
+            .try_fold(0_u128, |sum, (_, count)| sum.checked_add(*count))?;
+        buckets.push(format!(">={CAP}: {}%", rounded_percent(capped, total)));
+    }
+    Some(format!(
+        "Accepted drafts per step (% of steps):  {}",
+        buckets.join("   ")
+    ))
+}
+
+/// Round a display-only percentage to the nearest integer, ties to even.
+fn rounded_percent(count: u128, total: u128) -> i64 {
+    round_half_up(count as f64 * 100.0 / total as f64)
+}
+
 /// Map a configured console-group value onto the enum. Unknown values are hidden.
 fn console_group_from_str(group: &str) -> MetricConsoleGroup {
     match group {
@@ -843,6 +887,7 @@ fn console_group_from_str(group: &str) -> MetricConsoleGroup {
         "prediction" => MetricConsoleGroup::Prediction,
         "audio" => MetricConsoleGroup::Audio,
         "reasoning" => MetricConsoleGroup::Reasoning,
+        "spec_decode" => MetricConsoleGroup::SpecDecode,
         "effective" => MetricConsoleGroup::Effective,
         "active" => MetricConsoleGroup::Active,
         _ => MetricConsoleGroup::None,
@@ -858,7 +903,7 @@ fn group_title(group: MetricConsoleGroup, base: &str) -> String {
         MetricConsoleGroup::Prediction => format!("{base}: Prediction"),
         MetricConsoleGroup::Audio => format!("{base}: Audio"),
         MetricConsoleGroup::Reasoning => format!("{base}: Reasoning"),
-        MetricConsoleGroup::SpecDecode => format!("{base}: Speculative Decoding"),
+        MetricConsoleGroup::SpecDecode => "NVIDIA AIPerf: Spec Decode".to_string(),
         MetricConsoleGroup::Effective => format!("{base}: Effective"),
         MetricConsoleGroup::Active => format!("{base}: Active"),
     }

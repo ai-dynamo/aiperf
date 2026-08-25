@@ -30,6 +30,8 @@ use std::path::Path;
 use crate::export::{ExportConfig, Exporter, crlf_csv_writer, normalize_endpoint_display};
 use crate::metrics_core::{MetricEntry, MetricSeries, NativeReport, ReportStats, ReportValue};
 use chrono::{Local, TimeZone};
+use serde::Serialize;
+use serde::ser::SerializeMap;
 use serde_json::{Map, Value};
 
 /// AIPerf v1 summary-export policy. `stem` is the profile-export filename stem
@@ -630,8 +632,42 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         }
     }
 
-    serde_json::to_string_pretty(&Value::Object(root))
-        .expect("v1 summary JSON value is always serializable")
+    serde_json::to_string_pretty(&V1JsonRoot {
+        fields: &root,
+        pooled_spec_decode_acceptance_histogram: report
+            .pooled_spec_decode_acceptance_histogram
+            .as_ref()
+            .filter(|histogram| !histogram.is_empty()),
+    })
+    .expect("v1 summary JSON value is always serializable")
+}
+
+/// Serialize the dynamic v1 field set plus an exact `u128` histogram map.
+///
+/// `serde_json::Value` cannot represent integers above `u64::MAX`; serializing
+/// this typed field directly preserves the widened aggregate without changing
+/// the existing dynamic metric projection.
+struct V1JsonRoot<'a> {
+    fields: &'a Map<String, Value>,
+    pooled_spec_decode_acceptance_histogram: Option<&'a BTreeMap<u64, u128>>,
+}
+
+impl Serialize for V1JsonRoot<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(
+            self.fields.len() + usize::from(self.pooled_spec_decode_acceptance_histogram.is_some()),
+        ))?;
+        for (name, value) in self.fields {
+            map.serialize_entry(name, value)?;
+        }
+        if let Some(histogram) = self.pooled_spec_decode_acceptance_histogram {
+            map.serialize_entry("pooled_spec_decode_acceptance_histogram", histogram)?;
+        }
+        map.end()
+    }
 }
 
 /// Build `error_summary` from grouped errors. Each item is

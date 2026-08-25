@@ -354,6 +354,43 @@ fn empty_report_emits_only_scalar_top_level_fields() {
     assert_eq!(csv, "");
 }
 
+#[test]
+fn pooled_spec_decode_histogram_is_full_in_json_and_absent_from_csv() {
+    let mut report = report_with(BTreeMap::new());
+    report.pooled_spec_decode_acceptance_histogram =
+        Some(BTreeMap::from([(0, 1), (8, 1), (12, 2)]));
+
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
+    let value: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        value["pooled_spec_decode_acceptance_histogram"],
+        serde_json::json!({"0": 1, "8": 1, "12": 2})
+    );
+    assert_eq!(
+        render_csv(&report, &cfg("profile_export").genai_perf).unwrap(),
+        ""
+    );
+}
+
+#[test]
+fn pooled_spec_decode_histogram_json_preserves_counts_past_u64() {
+    let mut report = report_with(BTreeMap::new());
+    report.pooled_spec_decode_acceptance_histogram =
+        Some(BTreeMap::from([(0, u128::from(u64::MAX) + 1)]));
+
+    let json = render_json(&report, &cfg("profile_export").genai_perf);
+    assert!(json.contains("\"0\": 18446744073709551616"));
+}
+
+#[test]
+fn absent_spec_decode_histogram_is_omitted_from_v1_json() {
+    let json = render_json(
+        &report_with(BTreeMap::new()),
+        &cfg("profile_export").genai_perf,
+    );
+    assert!(!json.contains("pooled_spec_decode_acceptance_histogram"));
+}
+
 fn gpu_series(gpu: &str, uuid: &str, endpoint: &str, stats: ReportStats) -> MetricSeries {
     MetricSeries {
         labels: Some(BTreeMap::from([

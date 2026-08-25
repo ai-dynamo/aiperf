@@ -28,7 +28,7 @@ Ruling: concrete phase-index selection applies to exact row masks, sketch keys, 
 
 - Task 1: completed, GREEN, and independently approved
 - Task 2: completed, GREEN, and independently approved
-- Task 3: pending
+- Task 3: completed and GREEN; independent review pending
 - Task 4: pending
 
 Task 1: dispatch fallback — `spawn_agent` was denied because the root thread's other port agents occupied the team limit. Per the SDD skill's harness-denial rule, implementation proceeds inline; an independent task review remains required before Task 2.
@@ -68,3 +68,11 @@ are resolved and the remaining fix scan found no blockers. An external probe
 also confirmed exact `u64::MAX + 1` native-report JSON serialization while the
 compatible cellular MessagePack boundary refuses non-narrowable counts. Task 3
 may begin.
+
+Task 3 receipt: see `task-3-report.md`. The strict engine-enabled RED ran 29
+focused tests: 24 passed and five failed on the exact missing console, v1 JSON,
+and processed JSONL projections. The minimal implementation then passed 29/29.
+A self-review micro RED/GREEN added the authored-zero high-bucket cap contract;
+the final authoritative suite passed 30/30 with 2300 filtered tests. The full
+exporter neighborhood passed 120/120 and the processed-record neighborhood
+passed 10/10. Task 4 remains gated on independent Task 3 review.
