@@ -358,7 +358,7 @@ class TestPyNVMLMetricsCollection:
         gpu1 = next(r for r in records if r.gpu_index == 1)
 
         # GPU 0 verification
-        assert gpu0.dcgm_url == PYNVML_SOURCE_IDENTIFIER
+        assert gpu0.telemetry_source_url == PYNVML_SOURCE_IDENTIFIER
         assert gpu0.gpu_uuid == "GPU-abc123"
         assert gpu0.gpu_model_name == "NVIDIA GeForce RTX 4090"
         assert gpu0.telemetry_data.nvidia_power_usage == pytest.approx(350.0, rel=0.01)
