@@ -86,6 +86,10 @@ pub enum CacheBustTarget {
     FirstTurnPrefix,
     /// Append the marker after the first turn content.
     FirstTurnSuffix,
+    /// Constant marker during warmup at the system message.
+    WarmupIsolationSystem,
+    /// Constant marker during warmup at the first user turn.
+    WarmupIsolationFirstTurn,
 }
 
 /// Per-conversation cache-bust marker injection policy.

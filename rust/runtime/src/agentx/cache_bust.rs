@@ -27,6 +27,10 @@ pub enum CacheBustTarget {
     FirstTurnPrefix,
     /// Appended to the first turn.
     FirstTurnSuffix,
+    /// Constant marker applied only during warmup at the system message.
+    WarmupIsolationSystem,
+    /// Constant marker applied only during warmup at the first user turn.
+    WarmupIsolationFirstTurn,
 }
 
 impl CacheBustTarget {
@@ -61,6 +65,12 @@ pub fn build_cache_bust_marker(
 ) -> Option<String> {
     if target == CacheBustTarget::None {
         return None;
+    }
+    if matches!(
+        target,
+        CacheBustTarget::WarmupIsolationSystem | CacheBustTarget::WarmupIsolationFirstTurn
+    ) {
+        return Some("[warmup]\n\n".to_string());
     }
     let unique = format!("{benchmark_id}:{recycle_pass}:{trajectory_index}:{trace_id}");
     let digest = Sha256::digest(unique.as_bytes());
@@ -136,6 +146,30 @@ mod tests {
         assert_eq!(
             build_cache_bust_marker("b", 0, 0, "t", CacheBustTarget::None),
             None
+        );
+    }
+
+    #[test]
+    fn warmup_isolation_targets_use_constant_marker() {
+        assert_eq!(
+            build_cache_bust_marker(
+                "bench-a",
+                7,
+                3,
+                "trace-a",
+                CacheBustTarget::WarmupIsolationSystem,
+            ),
+            Some("[warmup]\n\n".to_string())
+        );
+        assert_eq!(
+            build_cache_bust_marker(
+                "bench-b",
+                0,
+                99,
+                "trace-b",
+                CacheBustTarget::WarmupIsolationFirstTurn,
+            ),
+            Some("[warmup]\n\n".to_string())
         );
     }
 

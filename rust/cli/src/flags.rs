@@ -241,7 +241,7 @@ pub struct ProfileFlags {
     /// Where to inject a per-conversation cache-bust marker (`--cache-bust`).
     #[arg(
         long = "cache-bust",
-        value_parser = ["none", "system_prefix", "system_suffix", "first_turn_prefix", "first_turn_suffix"]
+        value_parser = ["none", "system_prefix", "system_suffix", "first_turn_prefix", "first_turn_suffix", "warmup_isolation_system", "warmup_isolation_first_turn"]
     )]
     pub cache_bust: Option<String>,
 

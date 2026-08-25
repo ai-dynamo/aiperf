@@ -23,6 +23,8 @@ pub struct ChatRequestOptions {
     /// A cache-bust marker prepended to the first message content (or appended,
     /// per its own leading/trailing whitespace).
     pub cache_bust_marker: Option<String>,
+    /// Place the marker on the first user turn instead of the first message.
+    pub cache_bust_first_user_turn: bool,
 }
 
 fn message_json(m: &ChatMessage) -> Value {
@@ -66,13 +68,7 @@ pub(crate) fn chat_messages_array(
     cache_bust_marker: Option<&str>,
 ) -> Value {
     let mut msgs: Vec<ChatMessage> = messages.to_vec();
-    if let (Some(marker), Some(first)) = (cache_bust_marker, msgs.first_mut()) {
-        if marker.starts_with('\n') {
-            first.content.push_str(marker);
-        } else {
-            first.content = format!("{marker}{}", first.content);
-        }
-    }
+    apply_cache_bust(&mut msgs, cache_bust_marker, false);
     Value::Array(msgs.iter().map(message_json).collect())
 }
 
@@ -84,13 +80,11 @@ pub fn chat_request_body(
 ) -> Value {
     // Apply the cache-bust marker to the first message if requested.
     let mut msgs: Vec<ChatMessage> = messages.to_vec();
-    if let (Some(marker), Some(first)) = (&opts.cache_bust_marker, msgs.first_mut()) {
-        if marker.starts_with('\n') {
-            first.content.push_str(marker);
-        } else {
-            first.content = format!("{marker}{}", first.content);
-        }
-    }
+    apply_cache_bust(
+        &mut msgs,
+        opts.cache_bust_marker.as_deref(),
+        opts.cache_bust_first_user_turn,
+    );
 
     let mut body = Map::new();
     body.insert("model".into(), json!(model));
@@ -104,6 +98,21 @@ pub fn chat_request_body(
         body.insert("ignore_eos".into(), json!(true));
     }
     Value::Object(body)
+}
+
+fn apply_cache_bust(messages: &mut [ChatMessage], marker: Option<&str>, first_user_turn: bool) {
+    let Some(marker) = marker else { return };
+    let target = if first_user_turn {
+        messages.iter_mut().find(|message| message.role == "user")
+    } else {
+        messages.first_mut()
+    };
+    let Some(target) = target else { return };
+    if marker.starts_with('\n') {
+        target.content.push_str(marker);
+    } else {
+        target.content = format!("{marker}{}", target.content);
+    }
 }
 
 #[cfg(test)]
@@ -124,6 +133,7 @@ mod tests {
                 streaming: true,
                 ignore_eos: true,
                 cache_bust_marker: None,
+                cache_bust_first_user_turn: false,
             },
         );
         assert_eq!(body["model"], json!("my-model"));
@@ -144,11 +154,32 @@ mod tests {
                 streaming: false,
                 ignore_eos: false,
                 cache_bust_marker: Some("[rid:abc]\n\n".into()),
+                cache_bust_first_user_turn: false,
             },
         );
         assert_eq!(body["messages"][0]["content"], json!("[rid:abc]\n\nhi"));
         // max_tokens floors at 1.
         let z = chat_request_body("m", &msgs, 0, &ChatRequestOptions::default());
         assert_eq!(z["max_tokens"], json!(1));
+    }
+
+    #[test]
+    fn first_user_turn_cache_bust_skips_system_message() {
+        let msgs = vec![
+            ChatMessage::plain("system", "sys"),
+            ChatMessage::plain("user", "hi"),
+        ];
+        let body = chat_request_body(
+            "m",
+            &msgs,
+            4,
+            &ChatRequestOptions {
+                cache_bust_marker: Some("[warmup]\n\n".into()),
+                cache_bust_first_user_turn: true,
+                ..ChatRequestOptions::default()
+            },
+        );
+        assert_eq!(body["messages"][0]["content"], json!("sys"));
+        assert_eq!(body["messages"][1]["content"], json!("[warmup]\n\nhi"));
     }
 }
