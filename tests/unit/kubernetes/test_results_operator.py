@@ -600,6 +600,7 @@ class TestModuleConstants:
     ) -> None:
         """The CLI port-forward target uses the operator's typed server port."""
         import importlib.util
+        import sys
 
         from aiperf.kubernetes import results_operator
         from aiperf.operator.environment import OperatorEnvironment
@@ -609,15 +610,17 @@ class TestModuleConstants:
         # Execute a throwaway copy instead of reloading the cached module:
         # a reload rebinds module-level classes, so anything that already
         # imported them (``_JobDownloadOutcome``) would fail identity checks.
-        spec = importlib.util.spec_from_file_location(
-            "aiperf.kubernetes._results_operator_reimport",
-            results_operator.__file__,
-        )
+        name = "aiperf.kubernetes._results_operator_reimport"
+        spec = importlib.util.spec_from_file_location(name, results_operator.__file__)
         assert spec is not None and spec.loader is not None
         fresh = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(fresh)
-
-        assert fresh.RESULTS_SERVER_PORT == 9001
+        # @dataclass resolves annotations through sys.modules[cls.__module__].
+        sys.modules[name] = fresh
+        try:
+            spec.loader.exec_module(fresh)
+            assert fresh.RESULTS_SERVER_PORT == 9001
+        finally:
+            sys.modules.pop(name, None)
 
 
 class TestPartialJobDownloadIsReported:
