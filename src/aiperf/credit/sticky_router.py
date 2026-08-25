@@ -900,7 +900,7 @@ class StickyCreditRouter(CommunicationMixin):
         """Periodically drop workers whose heartbeats have stopped.
 
         Sweeps every ``STALE_TIME`` but evicts only workers silent for
-        ``STALE_TIME * 3`` on two consecutive sweeps, so a dead worker leaves
+        ``STALE_TIME * ROUTER_STALE_EVICTION_MULTIPLIER`` on two consecutive sweeps, so a dead worker leaves
         routing within roughly four to five sweeps. The margin keeps a worker
         that misses one or two heartbeats under load in the pool. Suppressed
         once credits are complete or a cancellation is in flight: workers
@@ -918,7 +918,10 @@ class StickyCreditRouter(CommunicationMixin):
         """
         if self._credits_complete or self._cancellation_pending:
             return
-        stale_after_s = Environment.WORKER.STALE_TIME * 3
+        stale_after_s = (
+            Environment.WORKER.STALE_TIME
+            * Environment.WORKER.ROUTER_STALE_EVICTION_MULTIPLIER
+        )
         candidates = set(self._stale_worker_candidates(stale_after_s))
 
         # Workers that heartbeated since the last sweep are no longer

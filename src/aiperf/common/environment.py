@@ -192,6 +192,13 @@ class _APIServerSettings(BaseSettings):
         default=[],
         description="List of CORS origins to allow (empty = no CORS, ['*'] = all origins)",
     )
+    SHUTDOWN_RESPONSE_DELAY_SECONDS: float = Field(
+        ge=0.0,
+        le=60.0,
+        default=0.5,
+        description="Seconds to wait after accepting POST /api/shutdown before stopping "
+        "the API service, allowing the HTTP response to reach the caller",
+    )
     SHUTDOWN_TIMEOUT: float = Field(
         ge=1.0,
         le=300.0,
@@ -217,6 +224,12 @@ class _APIServerSettings(BaseSettings):
         "is retired explicitly via POST /api/shutdown instead -- see "
         "FastAPIService._on_shutdown_command. A fixed window there is shorter than the "
         "operator's monitor interval and strands the AIPerfJob in a pre-terminal phase.",
+    )
+    WEBSOCKET_MAX_CONNECTIONS: int = Field(
+        ge=1,
+        le=100000,
+        default=100,
+        description="Maximum simultaneous clients accepted by the API WebSocket endpoint",
     )
 
 
@@ -957,12 +970,6 @@ class _MetricsSettings(BaseSettings):
         env_prefix="AIPERF_METRICS_",
     )
 
-    ARRAY_INITIAL_CAPACITY: int = Field(
-        ge=100,
-        le=1000000,
-        default=10000,
-        description="Initial array capacity for metric storage dictionaries to minimize reallocation",
-    )
     EXPORT_FLUSH_INTERVAL: float = Field(
         ge=0.05,
         le=60.0,
@@ -1276,6 +1283,12 @@ class _ServerMetricsSettings(BaseSettings):
         default=10,
         description="Timeout in seconds for checking server metrics endpoint reachability during init",
     )
+    REALTIME_PUBLISH_INTERVAL_SECONDS: float = Field(
+        gt=0.0,
+        le=300.0,
+        default=1.0,
+        description="Minimum seconds between realtime server-metrics snapshot messages",
+    )
     SHUTDOWN_DELAY: float = Field(
         ge=1.0,
         le=300.0,
@@ -1506,9 +1519,8 @@ class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
         le=100,
         default=3,
         description="Consecutive heartbeat intervals a registered service may "
-        "miss before the watchdog suspects it. A service is only failed after "
-        "appearing stale on two consecutive watchdog ticks, so worst-case "
-        "detection is HEARTBEAT_INTERVAL * (threshold + 1) seconds.",
+        "miss before the watchdog suspects it. Failure then requires "
+        "HEARTBEAT_STALE_CONFIRMATION_TICKS consecutive stale watchdog ticks.",
     )
     FAILURE_SHUTDOWN_TIMEOUT: float = Field(
         ge=1.0,
@@ -1580,6 +1592,32 @@ class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
         description="Total deadline in seconds for a group-local peer to get its "
         "GroupPeerHello acknowledged before startup is failed",
     )
+    GROUP_HELLO_RETRY_BACKOFF_SECONDS: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=0.25,
+        description="Maximum seconds to pause between group-local GroupPeerHello retries",
+    )
+    GROUP_PEER_POLL_INTERVAL_SECONDS: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=0.2,
+        description="Seconds between polls while waiting for group-local peer registration "
+        "or shutdown acknowledgements",
+    )
+    HEARTBEAT_STALE_CONFIRMATION_TICKS: int = Field(
+        ge=1,
+        le=100,
+        default=2,
+        description="Consecutive watchdog ticks a stale service must survive before being reaped",
+    )
+    HEARTBEAT_WATCHDOG_DELAY_FACTOR: float = Field(
+        ge=1.0,
+        le=100.0,
+        default=2.0,
+        description="Heartbeat interval multiplier above which a delayed watchdog tick "
+        "skips stale-service decisions",
+    )
     START_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -1591,14 +1629,6 @@ class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
         le=100000.0,
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
-    )
-    SPAWN_TIMEOUT: float = Field(
-        ge=1.0,
-        le=100000.0,
-        default=60.0,
-        description="Safety-net timeout in seconds for multiprocessing Process.start(). "
-        "Normal spawns complete in milliseconds; this guards against extreme system "
-        "conditions (memory pressure, fork failures) blocking the event loop indefinitely.",
     )
     # Event loop health monitoring settings
     EVENT_LOOP_HEALTH_ENABLED: bool = Field(
@@ -1730,6 +1760,44 @@ class _TokenizerSettings(BaseSettings):
         env_prefix="AIPERF_TOKENIZER_",
     )
 
+    BUNDLE_MAX_BYTES: int = Field(
+        ge=1,
+        le=1073741824,
+        default=52_428_800,
+        description="Maximum uncompressed tokenizer bundle size in bytes before the API "
+        "rejects it as containing unexpected model artifacts",
+    )
+    BUNDLE_BUILD_WARN_SECONDS: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=5.0,
+        description="On-demand tokenizer bundle build duration in seconds above which the "
+        "API logs a prewarm-miss warning",
+    )
+    DOWNLOAD_MAX_RETRIES: int = Field(
+        ge=1,
+        le=1000,
+        default=20,
+        description="Minimum retry budget for each tokenizer bundle download in a worker pod",
+    )
+    DOWNLOAD_INITIAL_BACKOFF_SECONDS: float = Field(
+        gt=0.0,
+        le=300.0,
+        default=0.5,
+        description="Initial seconds between tokenizer bundle download retries",
+    )
+    DOWNLOAD_MAX_BACKOFF_SECONDS: float = Field(
+        gt=0.0,
+        le=300.0,
+        default=8.0,
+        description="Maximum seconds between tokenizer bundle download retries",
+    )
+    DOWNLOAD_REQUEST_TIMEOUT_SECONDS: float = Field(
+        gt=0.0,
+        le=3600.0,
+        default=300.0,
+        description="Total timeout in seconds for each tokenizer bundle HTTP request",
+    )
     PRELOAD_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -1856,6 +1924,24 @@ class _WorkerSettings(BaseSettings):
         default=1.0,
         description="Interval in seconds between worker status checks by WorkerManager",
     )
+    CLOCK_OFFSET_MIN_SAMPLES: int = Field(
+        ge=1,
+        le=10000,
+        default=5,
+        description="Clock-offset observations required before a worker reports calibration",
+    )
+    CLOCK_OFFSET_WINDOW_SIZE: int = Field(
+        ge=1,
+        le=10000,
+        default=20,
+        description="Recent worker clock-offset observations retained by the min filter",
+    )
+    CLOCK_PROBE_COUNT: int = Field(
+        ge=1,
+        le=1000,
+        default=5,
+        description="Successful startup TimePing/TimePong round trips targeted per worker",
+    )
     CLOCK_PROBE_TIMEOUT: float = Field(
         ge=0.1,
         le=100000.0,
@@ -1952,6 +2038,27 @@ class _WorkerSettings(BaseSettings):
         "Packing exists because a node holds only ~65k ephemeral ports, which caps "
         "concurrent connections per node; see RuntimeConfig.workers_per_pod",
     )
+    DISPATCHABLE_POD_GRACE_PERIOD_SECONDS: float = Field(
+        ge=0.0,
+        le=300.0,
+        default=5.0,
+        description="Seconds the Kubernetes controller waits for every worker pod to "
+        "become dispatchable before allowing a healthy subset to start profiling",
+    )
+    ROUTER_STALE_EVICTION_MULTIPLIER: float = Field(
+        ge=1.0,
+        le=100.0,
+        default=3.0,
+        description="Worker stale-time multiplier used by the credit router before "
+        "evicting a silent dispatchable worker",
+    )
+    SESSION_CACHE_MAX_ENTRIES: int = Field(
+        ge=1,
+        le=10000000,
+        default=100_000,
+        description="Maximum multi-turn sessions cached by each worker before oldest "
+        "unpinned sessions are evicted",
+    )
 
 
 class _ZMQSettings(BaseSettings):
@@ -2036,6 +2143,18 @@ class _ZMQSettings(BaseSettings):
         le=10000000,
         default=300000,  # 5 minutes
         description="Socket receive timeout in milliseconds (default: 5 minutes)",
+    )
+    RECONNECT_IVL: int = Field(
+        ge=0,
+        le=600000,
+        default=100,
+        description="Milliseconds before the first reconnect attempt for connecting ZMQ sockets",
+    )
+    RECONNECT_IVL_MAX: int = Field(
+        ge=0,
+        le=600000,
+        default=5000,
+        description="Maximum milliseconds for exponential reconnect backoff on connecting ZMQ sockets",
     )
     SNDTIMEO: int = Field(
         ge=1,

@@ -290,10 +290,6 @@ GroupManagerToPeerMessage: TypeAlias = (
 )
 
 
-_HELLO_RETRY_BACKOFF: float = 0.25
-"""Minimum pause between GroupPeerHello attempts, so a fast-failing transport cannot hot-spin."""
-
-
 async def _send_group_peer_hello_with_retry(
     dealer_client: StreamingDealerClientProtocol,
     *,
@@ -345,7 +341,12 @@ async def _send_group_peer_hello_with_retry(
             # Back off. The loop relied entirely on request() consuming
             # attempt_timeout; any transport that fails fast turned this into
             # a hot spin (tens of millions of attempts against one deadline).
-            await asyncio.sleep(min(attempt_timeout, _HELLO_RETRY_BACKOFF))
+            await asyncio.sleep(
+                min(
+                    attempt_timeout,
+                    Environment.SERVICE.GROUP_HELLO_RETRY_BACKOFF_SECONDS,
+                )
+            )
             continue
         # Any non-TimeoutError reply is treated as "delivered"; the WGM's
         # ROUTER doesn't surface delivery-failed signals, so a successful

@@ -47,6 +47,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.environment import Environment
 from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.messages import TimePing, TimePong
 
@@ -104,8 +105,8 @@ class ClockOffsetTracker:
     def __init__(
         self,
         logger_name: str = "aiperf.worker",
-        window_size: int = 20,
-        min_samples: int = 5,
+        window_size: int = Environment.WORKER.CLOCK_OFFSET_WINDOW_SIZE,
+        min_samples: int = Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
     ) -> None:
         """Initialize the tracker.
 
@@ -273,7 +274,7 @@ class ClockOffsetTracker:
     async def measure_baseline_rtt(
         self,
         send_ping: SendPingCallback,
-        probe_count: int = 5,
+        probe_count: int = Environment.WORKER.CLOCK_PROBE_COUNT,
         timeout: float = 5.0,
         max_attempts: int | None = None,
     ) -> None:

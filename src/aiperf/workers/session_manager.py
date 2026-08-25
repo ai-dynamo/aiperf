@@ -9,6 +9,7 @@ from pydantic import Field
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
+from aiperf.common.environment import Environment
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
 
@@ -168,7 +169,7 @@ class UserSession(AIPerfBaseModel):
         self.turn_list.append(response_turn)
 
 
-DEFAULT_MAX_SESSIONS = 100_000
+DEFAULT_MAX_SESSIONS = Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
 """Default per-worker cap on cached multi-turn sessions.
 
 Sessions are normally evicted on the final turn or on cancellation. Abandoned
@@ -186,7 +187,9 @@ class UserSessionManager:
     Manages user sessions for multi-turn processing.
     """
 
-    def __init__(self, max_sessions: int = DEFAULT_MAX_SESSIONS) -> None:
+    def __init__(self, max_sessions: int | None = None) -> None:
+        if max_sessions is None:
+            max_sessions = Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
         if max_sessions < 1:
             raise ValueError(f"max_sessions ({max_sessions}) must be >= 1")
         self._max_sessions = max_sessions

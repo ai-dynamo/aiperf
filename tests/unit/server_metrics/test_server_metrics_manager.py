@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     PhaseBaselineRequestMessage,
     ProfileConfigureCommand,
@@ -748,6 +749,34 @@ class TestRealtimePublication:
             start_ns=profiling_start_ns
         )
         manager.publish.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_realtime_publication_uses_configured_interval(
+        self,
+        cfg_with_endpoint: CLIConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = MagicMock()
+        manager._accumulator = accumulator
+        manager._profiling_started = True
+        manager._profiling_start_ns = 1
+        manager._last_realtime_publish_ns = 10_000_000_000
+        manager.publish = AsyncMock()
+        monkeypatch.setattr(
+            Environment.SERVER_METRICS,
+            "REALTIME_PUBLISH_INTERVAL_SECONDS",
+            2.5,
+        )
+
+        with patch(
+            "aiperf.server_metrics.manager.time.time_ns",
+            return_value=12_000_000_000,
+        ):
+            await manager._publish_realtime_server_metrics()
+
+        accumulator.compute_endpoint_summaries.assert_not_called()
+        manager.publish.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_realtime_publication_before_profiling_remains_suppressed(

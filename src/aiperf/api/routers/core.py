@@ -16,6 +16,7 @@ from fastapi.responses import Response
 
 from aiperf.api.api_service import ServiceDep
 from aiperf.api.routers.base_router import BaseRouter
+from aiperf.common.environment import Environment
 from aiperf.common.models.export_models import RunInfo
 from aiperf.config.config import BenchmarkConfig
 
@@ -99,11 +100,11 @@ async def shutdown(svc: ServiceDep) -> dict[str, str]:
     svc.info("Shutdown requested via /api/shutdown")
 
     async def _delayed_stop() -> None:
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(Environment.API_SERVER.SHUTDOWN_RESPONSE_DELAY_SECONDS)
         await svc.stop()
 
     # asyncio holds only a weak reference to a running task, so a bare
-    # create_task here is GC-eligible during its 0.5 s sleep: the endpoint
+    # create_task here is GC-eligible during its configured sleep: the endpoint
     # answers "shutting_down" and the pod never stops. Retain until done.
     task = asyncio.create_task(_delayed_stop())
     _SHUTDOWN_TASKS.add(task)

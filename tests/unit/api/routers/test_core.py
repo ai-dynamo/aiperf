@@ -4,13 +4,16 @@
 """Tests for the core API router (config, run, healthz, readyz)."""
 
 import sys
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest import param
 from starlette.testclient import TestClient
 
 from aiperf.api.api_service import FastAPIService
+from aiperf.api.routers import core as core_router_mod
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.config.flags.cli_config import CLIConfig
 from tests.unit.conftest import make_run_from_cli
 
@@ -126,6 +129,32 @@ class TestRunEndpoint:
         response = api_test_client.get("/api/run")
         assert response.status_code == 503
         assert response.json() == {"detail": "No active benchmark run."}
+
+
+class TestShutdownEndpoint:
+    """Test deferred API shutdown behavior."""
+
+    @pytest.mark.asyncio
+    async def test_uses_configured_response_delay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        svc = MagicMock()
+        svc.app.state.results = None
+        svc.stop = AsyncMock()
+        monkeypatch.setattr(
+            Environment.API_SERVER, "SHUTDOWN_RESPONSE_DELAY_SECONDS", 1.25
+        )
+
+        with patch.object(
+            core_router_mod.asyncio, "sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            response = await core_router_mod.shutdown(svc)
+            tasks = list(core_router_mod._SHUTDOWN_TASKS)
+            await core_router_mod.asyncio.gather(*tasks)
+
+        assert response == {"status": "shutting_down"}
+        mock_sleep.assert_awaited_once_with(1.25)
+        svc.stop.assert_awaited_once()
 
 
 class TestHealthzEndpoint:

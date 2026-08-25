@@ -523,9 +523,14 @@ class TestKubectlCopyResults:
             "aiperf.kubernetes.results.run_command",
             new_callable=AsyncMock,
             return_value=_ok_result(),
-        ):
+        ) as mock_run:
             result = await kubectl_copy_results("ns", "pod-0", "container", tmp_path)
+
         assert result is True
+        assert (
+            mock_run.await_args.kwargs["timeout"]
+            == K8sEnvironment.RESULTS.KUBECTL_COPY_TIMEOUT_SECONDS
+        )
 
     @pytest.mark.asyncio
     async def test_successful_copy_with_stdout(self, tmp_path: Path) -> None:

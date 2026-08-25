@@ -897,7 +897,10 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         if self._accumulator is None or not self._profiling_started:
             return
         now_ns = time.time_ns()
-        if now_ns - self._last_realtime_publish_ns < 1_000_000_000:
+        publish_interval_ns = int(
+            Environment.SERVER_METRICS.REALTIME_PUBLISH_INTERVAL_SECONDS * 1_000_000_000
+        )
+        if now_ns - self._last_realtime_publish_ns < publish_interval_ns:
             return
         endpoint_summaries = self._accumulator.compute_endpoint_summaries(
             self._profiling_start_ns or 0, now_ns

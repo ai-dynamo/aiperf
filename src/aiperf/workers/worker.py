@@ -627,7 +627,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         # Worker clocks are not the controller's clock once workers live in
         # their own pods; every credit receipt is an offset sample.
-        self.clock_offset_tracker = ClockOffsetTracker(logger_name=self.service_id)
+        self.clock_offset_tracker = ClockOffsetTracker(
+            logger_name=self.service_id,
+            window_size=Environment.WORKER.CLOCK_OFFSET_WINDOW_SIZE,
+            min_samples=Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
+        )
         self._is_kubernetes = (
             self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         )
@@ -704,7 +708,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.memory_usage_before_profiling: float | None = None
 
-        self.session_manager: UserSessionManager = UserSessionManager()
+        self.session_manager: UserSessionManager = UserSessionManager(
+            max_sessions=Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
+        )
 
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
         # Initialized when DatasetConfiguredNotification is received via factory
@@ -979,6 +985,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             await asyncio.wait_for(
                 self.clock_offset_tracker.measure_baseline_rtt(
                     send_ping=self.credit_dealer_client.send,
+                    probe_count=Environment.WORKER.CLOCK_PROBE_COUNT,
                     timeout=probe_timeout,
                     max_attempts=max(1, int(budget / probe_timeout)),
                 ),

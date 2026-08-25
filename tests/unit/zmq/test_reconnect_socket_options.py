@@ -12,6 +12,7 @@ longer than necessary to come back.
 import pytest
 import zmq
 
+from aiperf.common.environment import Environment
 from aiperf.zmq.zmq_defaults import ZMQSocketDefaults
 
 
@@ -66,10 +67,10 @@ class TestReconnectOptions:
         client.socket = sock
         client._apply_socket_options()
 
-        assert sock.opts.get(zmq.RECONNECT_IVL) == ZMQSocketDefaults.RECONNECT_IVL
-        assert (
-            sock.opts.get(zmq.RECONNECT_IVL_MAX) == ZMQSocketDefaults.RECONNECT_IVL_MAX
-        )
+        assert ZMQSocketDefaults.RECONNECT_IVL == Environment.ZMQ.RECONNECT_IVL
+        assert ZMQSocketDefaults.RECONNECT_IVL_MAX == Environment.ZMQ.RECONNECT_IVL_MAX
+        assert sock.opts.get(zmq.RECONNECT_IVL) == Environment.ZMQ.RECONNECT_IVL
+        assert sock.opts.get(zmq.RECONNECT_IVL_MAX) == Environment.ZMQ.RECONNECT_IVL_MAX
 
     def test_binding_socket_does_not_set_reconnect(self) -> None:
         """Reconnect options are meaningless on a bound socket."""

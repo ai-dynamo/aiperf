@@ -222,7 +222,7 @@ async def wait_for_expected_peers(
             for service_type, expected_count in expected.items()
         ):
             return
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(Environment.SERVICE.GROUP_PEER_POLL_INTERVAL_SECONDS)
     counts = _registered_peer_counts(peer_types)
     raise TimeoutError(
         "Timed out waiting for group-local peers to register: "
@@ -462,7 +462,7 @@ async def wait_for_record_processor_shutdowns(
     while asyncio.get_running_loop().time() < deadline:
         if len(shutdown_set) >= record_processors_per_pod:
             return
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(Environment.SERVICE.GROUP_PEER_POLL_INTERVAL_SECONDS)
     logger.warning(
         "Timed out waiting for record processors to report local shutdown: "
         f"expected {record_processors_per_pod}, got {len(shutdown_set)}"
@@ -481,7 +481,7 @@ async def wait_for_exact_record_processor_shutdowns(
     while asyncio.get_running_loop().time() < deadline:
         if expected_service_ids <= shutdown_set:
             return
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(Environment.SERVICE.GROUP_PEER_POLL_INTERVAL_SECONDS)
     missing = sorted(expected_service_ids - shutdown_set)
     raise TimeoutError(
         "Timed out waiting for finalized record processors to report local "

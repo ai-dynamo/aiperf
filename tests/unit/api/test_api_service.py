@@ -25,6 +25,7 @@ from aiperf.common.compression import (
 )
 from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.config import BenchmarkRun
 from aiperf.plugin.enums import ServiceType
@@ -36,6 +37,17 @@ from .conftest import (
     make_mock_websocket,
     make_process_records_result,
 )
+
+
+def _api_server_settings(**overrides: object) -> object:
+    """Copy the real API-server settings, overriding only the fields under test.
+
+    Substituting a bare stub object breaks the moment production reads a field
+    the stub does not define, which is what happened when
+    ``WEBSOCKET_MAX_CONNECTIONS`` was added. Copying the real instance keeps
+    every other field at its declared default.
+    """
+    return Environment.API_SERVER.model_copy(update=overrides)
 
 
 class TestWebSocketManager:
@@ -1224,7 +1236,7 @@ class TestFastAPIServiceInit:
         api_run.cfg.runtime.api_port = None
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
-            type("_Fake", (), {"HOST": "0.0.0.0", "PORT": None, "CORS_ORIGINS": []})(),
+            _api_server_settings(HOST="0.0.0.0", PORT=None, CORS_ORIGINS=[]),
         )
         service = FastAPIService(
             run=api_run,
@@ -1238,7 +1250,7 @@ class TestFastAPIServiceInit:
     ) -> None:
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
-            type("_Fake", (), {"HOST": "0.0.0.0", "PORT": 8080, "CORS_ORIGINS": []})(),
+            _api_server_settings(HOST="0.0.0.0", PORT=8080, CORS_ORIGINS=[]),
         )
         service = FastAPIService(
             run=api_run,
@@ -1259,11 +1271,7 @@ class TestFastAPIServiceCORSMiddleware:
     ) -> None:
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
-            type(
-                "_Fake",
-                (),
-                {"HOST": "127.0.0.1", "PORT": 8080, "CORS_ORIGINS": ["*"]},
-            )(),
+            _api_server_settings(HOST="127.0.0.1", PORT=8080, CORS_ORIGINS=["*"]),
         )
         service = FastAPIService(
             run=api_run,
@@ -1280,9 +1288,7 @@ class TestFastAPIServiceCORSMiddleware:
     ) -> None:
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
-            type(
-                "_Fake", (), {"HOST": "127.0.0.1", "PORT": 8080, "CORS_ORIGINS": []}
-            )(),
+            _api_server_settings(HOST="127.0.0.1", PORT=8080, CORS_ORIGINS=[]),
         )
         service = FastAPIService(
             run=api_run,
@@ -1428,7 +1434,7 @@ class TestFastAPIServiceStartStop:
         api_run.cfg.runtime.api_port = None
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
-            type("_Fake", (), {"HOST": "0.0.0.0", "PORT": 8080, "CORS_ORIGINS": []})(),
+            _api_server_settings(HOST="0.0.0.0", PORT=8080, CORS_ORIGINS=[]),
         )
         service = FastAPIService(run=api_run, service_id="api-implicit-port")
         bind = MagicMock(side_effect=OSError("address already in use"))

@@ -23,10 +23,8 @@ import aiohttp
 import zstandard
 
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.environment import Environment
 from aiperf.transports.aiohttp_client import create_tcp_connector
-
-_INITIAL_BACKOFF_S = 0.5
-_MAX_BACKOFF_S = 8.0
 
 
 def slug_for_tokenizer(name: str) -> str:
@@ -71,12 +69,13 @@ async def download_tokenizer(
         if sentinel.exists():
             return dest
 
-        backoff = _INITIAL_BACKOFF_S
+        backoff = Environment.TOKENIZER.DOWNLOAD_INITIAL_BACKOFF_SECONDS
         last_exc: Exception | None = None
-        # 5-minute hard ceiling per request so we never hang forever on a
-        # broken connection — backoff loop still handles 503/transient
-        # failures with retries.
-        request_timeout = aiohttp.ClientTimeout(total=300.0)
+        # A per-request ceiling prevents a broken connection from hanging forever;
+        # the backoff loop still handles 503/transient failures with retries.
+        request_timeout = aiohttp.ClientTimeout(
+            total=Environment.TOKENIZER.DOWNLOAD_REQUEST_TIMEOUT_SECONDS
+        )
         async with aiohttp.ClientSession(
             connector=create_tcp_connector(), timeout=request_timeout
         ) as session:
@@ -92,7 +91,12 @@ async def download_tokenizer(
                     )
                     if compressed is None:
                         # Bundle not ready yet (503) — back off and retry.
-                        await asyncio.sleep(min(backoff, _MAX_BACKOFF_S))
+                        await asyncio.sleep(
+                            min(
+                                backoff,
+                                Environment.TOKENIZER.DOWNLOAD_MAX_BACKOFF_SECONDS,
+                            )
+                        )
                         backoff *= 2
                         continue
                     logger.info(
@@ -122,7 +126,12 @@ async def download_tokenizer(
                         f"transient error downloading tokenizer '{name}' "
                         f"({type(exc).__name__}: {exc}); attempt {attempt}/{max_retries}"
                     )
-                    await asyncio.sleep(min(backoff, _MAX_BACKOFF_S))
+                    await asyncio.sleep(
+                        min(
+                            backoff,
+                            Environment.TOKENIZER.DOWNLOAD_MAX_BACKOFF_SECONDS,
+                        )
+                    )
                     backoff *= 2
 
         raise RuntimeError(

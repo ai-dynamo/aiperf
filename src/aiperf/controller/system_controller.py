@@ -522,7 +522,9 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         if not self._is_kubernetes():
             return
         timeout = Environment.DATASET.CONFIGURATION_TIMEOUT
-        grace_period = min(5.0, timeout)
+        grace_period = min(
+            Environment.WORKER.DISPATCHABLE_POD_GRACE_PERIOD_SECONDS, timeout
+        )
         poll_interval = Environment.WORKER.STATUS_SUMMARY_INTERVAL
         begin = time.perf_counter()
         while True:

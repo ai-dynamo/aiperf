@@ -21,6 +21,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
+from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.messages import Message
 from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
@@ -37,7 +38,9 @@ class WebSocketRouter(MessageBusClientMixin, BaseRouter):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.ws_manager = WebSocketManager()
+        self.ws_manager = WebSocketManager(
+            max_connections=Environment.API_SERVER.WEBSOCKET_MAX_CONNECTIONS
+        )
 
     def get_router(self) -> APIRouter:
         return ws_router
@@ -151,9 +154,10 @@ class WebSocketManager(AIPerfLoggerMixin):
     Uses copy-on-write snapshots to prevent mutation during iteration.
     """
 
-    MAX_CONNECTIONS = 100
-
-    def __init__(self, max_connections: int = MAX_CONNECTIONS) -> None:
+    def __init__(
+        self,
+        max_connections: int = Environment.API_SERVER.WEBSOCKET_MAX_CONNECTIONS,
+    ) -> None:
         super().__init__()
         self.max_connections = max_connections
         self._clients: dict[str, WebSocket] = {}

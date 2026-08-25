@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketState
 from aiperf.api.api_service import FastAPIService
 from aiperf.api.routers.websocket import WebSocketManager, WebSocketRouter
 from aiperf.common.enums import LifecycleState, MessageType
+from aiperf.common.environment import Environment
 from aiperf.common.messages import HeartbeatMessage, RealtimeMetricsMessage
 
 
@@ -429,6 +430,18 @@ class TestWebSocketRouterLifecycle:
     @pytest.fixture
     def ws_router(self, mock_zmq, router_config) -> WebSocketRouter:
         return WebSocketRouter(run=router_config)
+
+    def test_uses_configured_connection_cap(
+        self,
+        mock_zmq,
+        router_config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(Environment.API_SERVER, "WEBSOCKET_MAX_CONNECTIONS", 7)
+
+        router = WebSocketRouter(run=router_config)
+
+        assert router.ws_manager.max_connections == 7
 
     @pytest.mark.asyncio
     async def test_subscribe_to_all_message_types(

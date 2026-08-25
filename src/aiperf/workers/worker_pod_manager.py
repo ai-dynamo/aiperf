@@ -310,7 +310,10 @@ class WorkerGroupManagerBase(BaseComponentService):
         # pod's api container has finished booting and warming the shared HF
         # cache. Use a generous retry budget so the natural api-startup
         # window doesn't fail the pull.
-        tokenizer_max_retries = max(20, Environment.DATASET.DOWNLOAD_MAX_RETRIES)
+        tokenizer_max_retries = max(
+            Environment.TOKENIZER.DOWNLOAD_MAX_RETRIES,
+            Environment.DATASET.DOWNLOAD_MAX_RETRIES,
+        )
         try:
             results = await asyncio.gather(
                 *(
