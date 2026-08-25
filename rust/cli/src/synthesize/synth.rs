@@ -60,6 +60,9 @@ pub struct SessionSynthesizer<'a> {
 impl<'a> SessionSynthesizer<'a> {
     /// Construct with precomputed Zipf weights and bias-corrected token parameters.
     pub fn new(config: &'a SessionDistributionConfig, seed: u64) -> anyhow::Result<Self> {
+        if config.max_prompt_tokens <= 1 {
+            anyhow::bail!("max_prompt_tokens must be > 1");
+        }
         let allocator = PrefixAllocator::new(&config.cache, config.block_size)?;
 
         let ng = config.cache.layer1_5_groups.num_groups;
@@ -124,10 +127,14 @@ impl<'a> SessionSynthesizer<'a> {
         self.rng.choice_weighted(&self.group_weights) as i64
     }
 
-    fn sample_initial_context(&mut self) -> i64 {
+    fn sample_initial_context(&mut self) -> anyhow::Result<i64> {
         let l2 = sample_lognormal(&self.config.cache.layer2, &mut self.rng, None, 100) as i64;
         let l2 = l2.max(1);
-        (self.fixed_prefix + l2).min(self.config.max_prompt_tokens - 1)
+        let initial_context = self
+            .fixed_prefix
+            .checked_add(l2)
+            .ok_or_else(|| anyhow::anyhow!("shared prefix plus layer2 context exceeds i64"))?;
+        Ok(initial_context.min(self.config.max_prompt_tokens - 1))
     }
 
     fn sample_output_length(&mut self) -> i64 {
@@ -190,7 +197,7 @@ impl<'a> SessionSynthesizer<'a> {
             let session_id = self.session_id();
             let group_id = self.sample_group_id();
 
-            let initial_ctx = self.sample_initial_context();
+            let initial_ctx = self.sample_initial_context()?;
             if initial_ctx >= self.config.max_prompt_tokens {
                 continue;
             }
@@ -294,7 +301,7 @@ impl<'a> SessionSynthesizer<'a> {
 
         let group_id = self.sample_group_id();
 
-        let initial_ctx = self.sample_initial_context();
+        let initial_ctx = self.sample_initial_context()?;
         let output_len = self.sample_output_length();
 
         let mut timestamp_ms = 0.0_f64;
@@ -576,5 +583,39 @@ mod tests {
         assert_eq!(first_turn.hash_ids.len(), 25);
         assert_eq!(&first_turn.hash_ids[..24], &(0..24).collect::<Vec<_>>());
         assert_eq!(first_turn.hash_ids[24], 200_016);
+    }
+
+    #[test]
+    fn rejects_initial_context_overflow_after_valid_shared_prefix() {
+        let mut config = SessionDistributionConfig::default();
+        config.block_size = i64::MAX;
+        config.max_prompt_tokens = i64::MAX;
+        config.cache.layer1_tokens = 1;
+        config.cache.layer1_5_tokens = 0;
+        config.cache.layer2 = LognormalParams::from_mean_median(1.0, 1.0);
+        config.cache.layer1_5_groups = Layer15GroupConfig {
+            num_groups: 1,
+            zipf_alpha: 1.0,
+        };
+        config.turns = Some(TurnCountConfig {
+            mean: 1,
+            median: 1,
+            min: 1,
+            max: 1,
+            allow_truncation: false,
+            max_session_attempts: Some(1),
+        });
+        config.reset = None;
+
+        let mut synthesizer = SessionSynthesizer::new(&config, 42).unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            synthesizer.synthesize_sessions(1)
+        }));
+
+        assert!(result.is_ok(), "initial context overflow must not panic");
+        let result = result.expect("panic was already rejected");
+        assert!(result.is_err(), "must reject overflow");
+        let error = result.err().expect("overflow must produce an error");
+        assert!(error.to_string().contains("shared prefix plus layer2"));
     }
 }
