@@ -48,20 +48,22 @@ _REDIRECT_STATUSES = {301, 302, 307, 308}
 # ============================================================
 
 
-@dataclass(frozen=True, slots=True)
-class _JobDownloadOutcome:
-    """Result of downloading every advertised file for one run."""
+if "_JobDownloadOutcome" not in globals():
 
-    downloaded: list[tuple[str, int]]
-    """(display name, size in bytes) for each file that landed on disk."""
+    @dataclass(frozen=True, slots=True)
+    class _JobDownloadOutcome:
+        """Result of downloading every advertised file for one run."""
 
-    failed: list[str]
-    """Display names the server advertised but did not deliver."""
+        downloaded: list[tuple[str, int]]
+        """(display name, size in bytes) for each file that landed on disk."""
 
-    @property
-    def complete(self) -> bool:
-        """True when every advertised file was retrieved."""
-        return not self.failed
+        failed: list[str]
+        """Display names the server advertised but did not deliver."""
+
+        @property
+        def complete(self) -> bool:
+            """True when every advertised file was retrieved."""
+            return not self.failed
 
 
 def _is_refused_name(display_name: str) -> bool:
