@@ -38,16 +38,16 @@ implementation, test run, or review.
 | 10 | `ffc943a9fe` | FFmpeg CVE bump | complete | shared-product-action | Merged in `830f579589`; coupled FFmpeg 8.1.2 attribution contract test is green and reviews approved. Test-image build reached FFmpeg then exposed the unrelated missing `COPY contracts` wheel-builder defect; no rebuilt-image claim. |
 | 11 | `d55ae21d34` | ShareGPT tutorial timeout | merged | not-applicable | Merged in `4d52f494e3`; documentation-only cold-cache timeout guidance, no native test candidate. Closure: `docs/origin-main-findings/commit-011-d55ae21d34.md`. |
 | 12 | `8148999496` | LCB trust_remote_code | complete | already-covered | Merged in `abd532d4b9`; the Rust-launched evaluator uses its script-free pinned raw-file loader. Upstream has no integration/E2E test to port. Closure: `docs/origin-main-findings/commit-012-8148999496.md`. |
-| 13 | `d32f4bb98e` | canonical spec-decode metrics | pending | applicable | Generic token fields exist; full canonical/vLLM model does not. |
-| 14 | `4fe3ff7154` | cache-bust enables wrapping | pending | already-covered | Native graph wrap policy has this rule. |
-| 15 | `2eb04aa2f8` | MMVU docs memory | pending | not-applicable | Documentation only. |
-| 16 | `5ad08166a1` | profiling grace default | pending | applicable | Omitted duration-based grace does not materialize upstream 30-second default. |
-| 17 | `c02d02db28` | idle cap after barrier | pending | already-covered | Native continuation guard handles pending tasks. |
-| 18 | `2f413f0dec` | minified schemas | pending | shared-product-action | Python schemas ship in the unified wheel; scheduler half has no native port. |
-| 19 | `9b5f5f7282` | warmup prefix stand-down | pending | superseded | Reassess together with #32 warmup-isolation targets. |
-| 20 | `446d2cd4b3` | empty raw_messages delta | pending | applicable | Rust currently synthesizes a turn; upstream treats `[]` as zero messages. |
-| 21 | `20eb25626a` | docstring policy | pending | not-applicable | Contributor docs only. |
-| 22 | `1d1829540b` | structured cache-bust | pending | already-covered | Native marker ownership is equivalent. |
+| 13 | `d32f4bb98e` | canonical spec-decode metrics | complete | applicable | Merged in `ee16a9aa82`; native vLLM metrics, artifacts, mock fixture, Rust E2E, and Graham review approved. |
+| 14 | `4fe3ff7154` | cache-bust enables wrapping | complete | already-covered | Merged in `0cc26e0c82`; native graph wrap policy covers it. |
+| 15 | `2eb04aa2f8` | MMVU docs memory | complete | not-applicable | Merged in `3bfb5271c2`; documentation-only. |
+| 16 | `5ad08166a1` | profiling grace default | complete | applicable | Merged in `dbcb9b53cf`; native duration grace default port reviewed. |
+| 17 | `c02d02db28` | idle cap after barrier | complete | already-covered | Merged in `c8b0935acc`; native continuation guard regression reviewed. |
+| 18 | `2f413f0dec` | minified schemas | complete | shared-product-action | Merged in `aad2729477`; generated schema minification verified. |
+| 19 | `9b5f5f7282` | warmup prefix stand-down | complete | superseded | Merged in `d014d9f8a3`; closure records #32 ownership. |
+| 20 | `446d2cd4b3` | empty raw_messages delta | complete | applicable | Merged in `38cba410fd`; native endpoint behavior and integration coverage reviewed. |
+| 21 | `20eb25626a` | docstring policy | complete | not-applicable | Merged in `c56a407c25`; contributor-doc guidance only. |
+| 22 | `1d1829540b` | structured cache-bust | complete | already-covered | Merged in `7bb2f67882`; native structured coverage reviewed. |
 | 23 | `fc7bbf3bdd` | DAG branches | pending | already-covered | Graph-IR is the replacement architecture; needs behavior-level regression only. |
 | 24 | `f8c8e36533` | BranchStats test | pending | not-applicable | Test-only Python correction. |
 | 25 | `5a24e0d7c7` | average error-rate SLA | pending | applicable | Search still projects p99/unscaled fractional threshold; pair with #48. |
