@@ -26,12 +26,14 @@ from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
 from aiperf.kubernetes.results_operator_common import (
-    RESULTS_SERVER_PORT,
     _REDIRECT_STATUSES,
+    RESULTS_SERVER_PORT,
     _download_and_decompress,
     _get_no_redirects,
     _is_refused_name,
     _JobDownloadOutcome,
+)
+from aiperf.kubernetes.results_operator_common import (
     _verify_operator_health as _shared_verify_operator_health,
 )
 from aiperf.kubernetes.results_operator_sweeps import (
@@ -53,7 +55,10 @@ if TYPE_CHECKING:
 
 async def _verify_operator_health(api_base: str) -> bool:
     """Preserve this module's configured results-server health timeout."""
-    return await _shared_verify_operator_health(api_base, K8sEnvironment.RESULTS.CONTROL_REQUEST_TIMEOUT_SECONDS)
+    return await _shared_verify_operator_health(
+        api_base, K8sEnvironment.RESULTS.CONTROL_REQUEST_TIMEOUT_SECONDS
+    )
+
 
 def _result_base_url(
     api_base: str, namespace: str, job_id: str, run: str | None
