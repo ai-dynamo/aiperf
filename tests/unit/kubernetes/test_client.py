@@ -268,13 +268,23 @@ class TestK8sClient:
         restored.assert_called_once_with("ctx")
 
     @pytest.mark.asyncio
-    async def test_k8s_client_applies_apiserver_tls_server_name_override(self) -> None:
+    async def test_k8s_client_applies_apiserver_tls_server_name_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Chaos apiserver proxy can dial toxiproxy while verifying the real apiserver name."""
         from kubernetes_asyncio import client as k8s_async_client
+
+        from aiperf.kubernetes.environment import K8sEnvironment
 
         original_config = k8s_async_client.Configuration.get_default_copy()
         fake_api = MagicMock()
         fake_api.close = AsyncMock()
+        monkeypatch.setattr(
+            K8sEnvironment,
+            "APISERVER_TLS_SERVER_NAME_OVERRIDE",
+            "kubernetes.default.svc",
+        )
 
         def load_incluster_config() -> None:
             cfg = k8s_async_client.Configuration()
@@ -285,12 +295,6 @@ class TestK8sClient:
 
         try:
             with (
-                patch.dict(
-                    "os.environ",
-                    {
-                        "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE": "kubernetes.default.svc"
-                    },
-                ),
                 patch("aiperf.kubernetes.client.suppress_noisy_http_loggers"),
                 patch(
                     "aiperf.kubernetes.client.config.load_incluster_config",

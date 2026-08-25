@@ -593,26 +593,21 @@ class TestModuleConstants:
         # The sidecar container port shipped in the Helm chart.
         assert RESULTS_SERVER_PORT == 8081
 
-    def test_results_server_port_env_override(self, monkeypatch) -> None:
-        """``AIPERF_RESULTS_SERVER_PORT`` env override propagates at module-load.
-
-        Same env var the operator's results-server reads
-        (``aiperf.operator.results_server:SERVER_PORT``) — single source of
-        truth so a non-default chart install (e.g. ``--set
-        resultsServer.port=9001``) plus ``export
-        AIPERF_RESULTS_SERVER_PORT=9001`` in the user's shell makes both
-        the server bind and the CLI port-forward target match.
-        """
+    def test_results_server_port_uses_operator_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CLI port-forward target uses the operator's typed server port."""
         import importlib
 
-        monkeypatch.setenv("AIPERF_RESULTS_SERVER_PORT", "9001")
+        from aiperf.operator.environment import OperatorEnvironment
+
+        monkeypatch.setattr(OperatorEnvironment.RESULTS, "SERVER_PORT", 9001)
         from aiperf.kubernetes import results_operator
 
         importlib.reload(results_operator)
         try:
             assert results_operator.RESULTS_SERVER_PORT == 9001
         finally:
-            monkeypatch.delenv("AIPERF_RESULTS_SERVER_PORT", raising=False)
             importlib.reload(results_operator)
 
 
