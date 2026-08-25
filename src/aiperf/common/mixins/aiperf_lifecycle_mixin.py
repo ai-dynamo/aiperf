@@ -364,10 +364,10 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
                         )
                         os._exit(1)
                     else:
-                    self.error(
-                        f"Shutdown after failure did not complete in {timeout}s; "
-                        f"continuing teardown and reporting the failure"
-                    )
+                        self.error(
+                            f"Shutdown after failure did not complete in {timeout}s; "
+                            f"continuing teardown and reporting the failure"
+                        )
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 

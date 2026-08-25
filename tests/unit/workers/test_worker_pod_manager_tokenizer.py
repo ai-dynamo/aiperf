@@ -39,7 +39,9 @@ async def test_prefetch_publishes_group_tokenizer_ready(
     await wpm.WorkerGroupManagerBase._prefetch_tokenizers(mgr)
 
     assert fake_download.await_count == 2
-    assert {call.kwargs["max_retries"] for call in fake_download.await_args_list} == {37}
+    assert {call.kwargs["max_retries"] for call in fake_download.await_args_list} == {
+        37
+    }
     assert len(published) == 1
     assert isinstance(published[0], GroupTokenizerReady)
     assert published[0].success

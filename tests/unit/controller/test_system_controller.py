@@ -107,9 +107,7 @@ class TestSystemController:
             "time",
             MagicMock(perf_counter=MagicMock(side_effect=[100.0, 107.0, 111.0])),
         )
-        monkeypatch.setattr(
-            system_controller_module, "asyncio", MagicMock(sleep=sleep)
-        )
+        monkeypatch.setattr(system_controller_module, "asyncio", MagicMock(sleep=sleep))
 
         await system_controller._wait_for_dispatchable_worker_pods()
 
