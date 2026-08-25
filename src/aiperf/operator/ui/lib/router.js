@@ -2,12 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { signal } from '@preact/signals';
-import { normalizePath, replaceHash } from './router-helpers.js';
 
 // Current route signal — path only (no query string)
 export const route = signal(parseHash().path);
 // Current query string signal — object map (decoded keys/values, never null)
 export const query = signal(parseHash().query);
+
+export function normalizePath(path) {
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
+export function replaceHash(win, path) {
+  const target = normalizePath(path);
+  const hash = `#${target}`;
+  if (win.location.hash === hash) return;
+  win.history.replaceState(null, '', hash);
+}
 
 function parseHash() {
   const hash = window.location.hash;

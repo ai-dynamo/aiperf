@@ -59,8 +59,8 @@ def test_multirun_config_accepts_camelcase_alias():
 
 
 def test_convergence_config_re_export_is_canonical():
-    """`aiperf.kubernetes.sweep_models.ConvergenceConfig` is a re-export of
-    the canonical class in `aiperf.config.multi_run`, not a separate class."""
+    """The `ConvergenceConfig` these sweep-CRD tests import is the canonical
+    class in `aiperf.config.sweep.multi_run`, not a separate class."""
     from aiperf.config.sweep.multi_run import ConvergenceConfig as Canonical
 
     assert ConvergenceConfig is Canonical

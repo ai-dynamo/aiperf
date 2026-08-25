@@ -20,10 +20,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.kubernetes.crd_models import AIPerfSweepSpec
-from aiperf.kubernetes.sweep_models import (
-    ObjectMetaPartial,
-)
+from aiperf.kubernetes.crd_models import AIPerfSweepSpec, ObjectMetaPartial
 
 # ============================================================================
 # Helpers
@@ -402,6 +399,6 @@ def test_benchmark_with_both_model_and_models_rejected() -> None:
 
 
 def test_object_meta_partial_rejects_top_level_typo_directly() -> None:
-    """ObjectMetaPartial (still used inside podTemplate) enforces extra=forbid."""
+    """ObjectMetaPartial (used for ``spec.childMetadata``) enforces extra=forbid."""
     with pytest.raises(ValidationError, match=r"(?i)extra|forbid|name"):
         ObjectMetaPartial.model_validate({"name": "should-not-be-here"})

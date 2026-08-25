@@ -18,7 +18,6 @@ ROUTER_PATH = (
     / "lib"
     / "router.js"
 )
-ROUTER_HELPERS_PATH = ROUTER_PATH.with_name("router-helpers.js")
 
 
 def router_import_script() -> str:
@@ -28,10 +27,6 @@ def router_import_script() -> str:
         source = source.replace(
           "import {{ signal }} from '@preact/signals';",
           "const signal = (value) => ({{ value }});",
-        );
-        source = source.replace(
-          "import {{ normalizePath, replaceHash }} from './router-helpers.js';",
-          "import {{ normalizePath, replaceHash }} from {ROUTER_HELPERS_PATH.as_uri()!r};",
         );
         const routerModuleUrl = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
         const router = await import(routerModuleUrl);

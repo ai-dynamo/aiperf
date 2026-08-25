@@ -30,7 +30,6 @@ from aiperf.kubernetes.client import find_aiperf_job, list_aiperf_jobs
 from aiperf.kubernetes.crd_models import MetricsSummary
 from aiperf.kubernetes.models import AIPerfJobInfo
 from aiperf.operator import runs_index
-from aiperf.operator._archived_stubs import archived_stub
 from aiperf.operator.artifact_names import find_summary_path
 from aiperf.operator.results_layout import resolve_run_dir
 from aiperf.operator.runs_index import zstd_decompress
@@ -177,6 +176,44 @@ def _mtime_iso(path: Path) -> str:
     )
 
 
+def archived_stub(
+    namespace: str,
+    name: str,
+    *,
+    run_dir: Path,
+    name_dir: Path,
+) -> AIPerfJobInfo:
+    """Build a minimal archived ``AIPerfJobInfo`` for a run dir with no summary.
+
+    A historical epoch directory may exist on disk (and be enumerated by
+    ``GET /api/v1/jobs/{ns}/{name}/epochs``) before any
+    ``profile_export_aiperf.json`` is written -- typically a run that failed or
+    was cancelled mid-flight. ``_archived_from_summary`` can't be used because
+    it requires a parsed summary, so this returns a stub that ``find_any_job``
+    hands back instead of ``None``, letting the run-detail page render an
+    "Unknown / archived" placeholder rather than 404ing the SPA into the
+    "Operator API unreachable" banner.
+
+    ``name_dir`` is the per-name parent (one above the epoch dir); the sweep
+    linkage marker -- when present -- is read from there so child jobs of a
+    sweep keep their breadcrumb wiring even when the controller never wrote
+    a summary. ``run_dir``'s mtime populates ``created`` for deterministic
+    ordering on archived list pages.
+    """
+    sweep_name, variation_index, variation_label = _sweep_linkage_from_marker(name_dir)
+    return AIPerfJobInfo(
+        name=name,
+        namespace=namespace,
+        phase="Unknown",
+        job_id=name,
+        created=_mtime_iso(run_dir),
+        source="archived",
+        sweep_name=sweep_name,
+        variation_index=variation_index,
+        variation_label=variation_label,
+    )
+
+
 def _utc_iso(value: Any) -> str | None:
     """Return an API timestamp as an RFC 3339 UTC string when it is parseable."""
     if not isinstance(value, str) or not value.strip():
@@ -314,10 +351,10 @@ def _scan_pvc_jobs(
 ) -> list[AIPerfJobInfo]:
     """Walk completed PVC run directories and build archived entries.
 
-    Skips namespaces other than ``namespace`` if supplied; skips dirs that
-    are not results-ready. Runs without a summary JSON are represented by a
-    minimal stub because ``artifacts.summary: false`` still produces a valid
-    CSV-only completed run.
+    Skips namespaces other than ``namespace`` if supplied; skips dirs with no
+    resolvable run dir. Runs without a summary JSON are represented by a
+    minimal stub when the readiness marker is present, because
+    ``artifacts.summary: false`` still produces a valid CSV-only completed run.
     """
     if not base_dir.exists() or not base_dir.is_dir():
         return []
@@ -408,7 +445,8 @@ def synthesize_status_from_summary(
         summary: The parsed ``profile_export_aiperf.json`` dict.
         conditions: Optional list of condition dicts to pass through verbatim.
             When omitted, a single ``{type: <phase>, status: "True"}`` entry
-            is synthesized from ``summary["status"]``.
+            is synthesized from the resolved ``phase`` argument, which
+            defaults to ``"Archived"``.
 
     Returns:
         A dict with keys ``jobId, phase, startTime, completionTime,

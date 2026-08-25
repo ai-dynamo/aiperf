@@ -133,7 +133,7 @@ class JobSetInfo:
 # bounded JSON object string, e.g. ``{"phases.profiling.concurrency":17}``.
 # Same key and encoding as
 # ``sweep_controller.k8s_executor.VARIATION_VALUES_ANNOTATION`` and
-# ``routers/_sweeps_live._VARIATION_VALUES_ANNOTATION``; duplicated as a
+# ``routers/sweeps._VARIATION_VALUES_ANNOTATION``; duplicated as a
 # literal rather than imported so this display model stays free of a
 # sweep-controller import.
 VARIATION_VALUES_ANNOTATION = "aiperf.nvidia.com/variation-values"
@@ -671,7 +671,7 @@ class AIPerfSweepCR(K8sCamelModel):
     Use ``AIPerfSweepCR.model_validate(raw_dict)`` to parse a raw K8s API
     response dict, then ``to_info()`` for a flat CLI display model. The
     spec is intentionally not modeled here — sweep spec validation lives
-    in :mod:`aiperf.kubernetes.sweep_models` (used by the operator on
+    in :mod:`aiperf.kubernetes.crd_models` (used by the operator on
     create), and CLI display only needs metadata + status fields.
     """
 

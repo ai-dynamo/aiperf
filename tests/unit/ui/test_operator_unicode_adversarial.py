@@ -12,7 +12,6 @@ from tests.unit.ui.node_utils import FORMAT_JS, run_node
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _UI_ROOT = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui"
 _ROUTER_PATH = _UI_ROOT / "lib" / "router.js"
-_ROUTER_HELPERS_PATH = _UI_ROOT / "lib" / "router-helpers.js"
 _JOB_TABLE_PATH = _UI_ROOT / "components" / "job-table.js"
 _PILLS_PATH = _UI_ROOT / "components" / "pills.js"
 _RELAUNCH_PATH = _UI_ROOT / "components" / "relaunch-button.js"
@@ -34,10 +33,6 @@ def _router_import_script() -> str:
         source = source.replace(
           "import {{ signal }} from '@preact/signals';",
           "const signal = (value) => ({{ value }});",
-        );
-        source = source.replace(
-          "import {{ normalizePath, replaceHash }} from './router-helpers.js';",
-          "import {{ normalizePath, replaceHash }} from {_ROUTER_HELPERS_PATH.as_uri()!r};",
         );
         const routerModuleUrl = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
         const router = await import(routerModuleUrl);
