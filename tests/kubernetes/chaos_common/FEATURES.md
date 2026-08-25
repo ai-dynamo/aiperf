@@ -41,9 +41,12 @@ Status legend:
 | `FaultPreconditionError` | [`base.py`](base.py) | shipped | raised when target is in unexpected state |
 | `FaultMechanismError` | [`base.py`](base.py) | shipped | raised when underlying mechanism fails |
 | `InjectorRegistry` | [`registry.py`](registry.py) | shipped | explicit `register()`; first matching prefix wins; `async with reg.inject(fault_id, ...)`; LIFO compose |
-| `RecoveryWaiter` helpers | [`recovery.py`](recovery.py) | shipped | wait_for_pod_ready / wait_for_cr_phase / etc., shared between A and dynamo |
+| `ClusterScopedMutation` + cache | [`recovery.py`](recovery.py) | shipped | on-disk journal of cluster-scoped mutations (`record_mutation`, `load_pending_mutations`, `reverse_cluster_scoped_mutations`, `clear_cache`) so a crashed session's residue can be unwound |
+| `--chaos-sweep` flag | [`recovery.py`](recovery.py) | shipped | registered via `pytest_addoption`/`pytest_configure`, re-exported from [`conftest.py`](conftest.py); reverses the journal then `pytest.exit`s |
+| `_chaos_namespace_sweeper` fixture | [`conftest.py`](conftest.py) | shipped | opt-in session-teardown force-delete of `aiperf-test-*` / `dynamo-test-*` / `chaos-toxiproxy` namespaces; hard-refuses unless `CHAOS_KUBE_CONTEXT` or `CHAOS_KUBECONFIG` is set |
 | `cilium_on_kind_required` mark | [`marks.py`](marks.py) | shipped | `pytest.mark.xfail(strict=True)` gate keyed on `KIND_HAS_CILIUM` env |
 | `faults` pytest fixture | [`conftest.py`](conftest.py) | shipped | echo-only function-scoped registry; overridden in `chaos_aiperf/conftest.py` |
+| `EchoInjector` | [`injectors/echo.py`](injectors/echo.py) | shipped | `HANDLES = ("echo",)`; records inject/restore calls in memory so registry contracts can be tested with no cluster |
 
 ## 2. Capability matrix (from spec § 2)
 
@@ -83,7 +86,7 @@ surface.
 
 | Capability | Owner | `fault_id` | Status |
 |---|---|---|---|
-| Kill operator pod | A->generic | `operator.kill` | shipped |
+| Kill operator pod | A->generic | `operator.kill` | shipped (served by `CRDInjector`, whose `HANDLES` covers both `crd` and `operator`) |
 
 ### 2e. Network faults (`network.*`)
 
@@ -96,7 +99,7 @@ surface.
 | Toxiproxy slow_close | A | `network.slow_close` | shipped |
 | Toxiproxy full proxy disable | A | `network.partition` | shipped |
 | Apiserver timeout through TLS-passthrough Toxiproxy route | A | `network.timeout` (target proxy `apiserver`) | shipped |
-| Operator -> controller HTTP timeout through Toxiproxy | A | `network.timeout` (target proxy `controller-http`) | shipped |
+| Operator -> controller HTTP timeout through Toxiproxy | A | `network.timeout` (target proxy `controller`) | shipped |
 
 ### 2f. Store faults (`store.*`)
 
@@ -146,13 +149,13 @@ flowchart LR
     T["test code\nasync with faults.inject('pod.kill', target=...)"] --> R["InjectorRegistry.resolve('pod.kill')"]
     R -->|prefix match| P["PodInjector\nHANDLES = ('pod',)"]
     R -->|prefix match| W["WorkloadInjector\nHANDLES = ('workload',)"]
-    R -->|prefix match| C["CRDInjector\nHANDLES = ('crd',)"]
-    R -->|prefix match| O["OperatorInjector\nHANDLES = ('operator',)"]
+    R -->|prefix match| C["CRDInjector\nHANDLES = ('crd', 'operator')"]
     R -->|prefix match| N["NetworkInjector\nHANDLES = ('network',)"]
     R -->|prefix match| S["StoreInjector\nHANDLES = ('store',)"]
     R -->|prefix match| Pr["ProcessInjector\nHANDLES = ('process',)"]
     R -->|prefix match| Cl["ClientInjector\nHANDLES = ('client',)"]
     R -->|prefix match| Cs["ClusterInjector\nHANDLES = ('cluster',)"]
+    R -->|prefix match| E["EchoInjector\nHANDLES = ('echo',)"]
 ```
 
 `InjectorRegistry.resolve` iterates registered injectors in registration

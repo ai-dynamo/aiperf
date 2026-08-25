@@ -27,27 +27,29 @@ Every test is marked `k8s_slow` because scenarios intentionally wait on pod term
 The `run-kubernetes-chaos-tests.yml` workflow runs this legacy suite and the
 parallel unified-API suite in separate Kind jobs on pushes to `main`, nightly,
 and by manual dispatch. They remain outside the trusted PR gate because each
-suite takes roughly an hour.
+suite is budgeted at up to 165 minutes of pytest time (210-minute job timeout).
 
 ## What's here
 
 ```
 tests/kubernetes/chaos/
   __init__.py
-  conftest.py                       # chaos_injector / toxiproxy_injector / mock_server_injector / operator_ready_shared_pid fixtures
+  conftest.py                       # chaos_injector / toxiproxy_injector / mock_server_injector / operator_ready_*_toxiproxy_routed fixtures
   chaos_injector.py                 # intent-revealing kubectl wrapper for faults
   toxiproxy.py                      # ToxiproxyInjector: REST admin API wrapper for proxies + toxics
-  mock_server_injector.py           # MockServerInjector: pause/resume/crash the mock-server Deployment
+  mock_server_injector.py           # MockServerInjector: restart/scale/crash/patch-env the mock-server Deployment
   fixtures/
     toxiproxy.yaml                  # Toxiproxy Deployment + Service manifest (aiperf-chaos-toxiproxy ns)
   test_chaos_cancellation.py        # C1, C3
   test_chaos_operator_resilience.py # C4, C5
-  test_chaos_jobset_pods.py         # C6, C7, C8, C9
+  test_chaos_jobset_pods.py         # C6, C7, C8, C9 (+ operator_ready_shared_pid fixture)
   test_chaos_helm.py                # H1, H2, H3, H4
   test_chaos_churn.py               # C10, C11, C12
   test_chaos_api_disruption.py      # C15, C16
   test_chaos_benchmark.py           # B1, B2, B3
   test_chaos_infra.py               # K1, K2, K3
+  test_sweep_controller_kill.py     # sweep-controller kill/resume
+  FEATURES.md                       # component-by-component feature inventory
   README.md                         # this file
 ```
 
@@ -55,11 +57,11 @@ The `ChaosInjector` helper is the single entry point for kubectl-level faults �
 
 ## Toxiproxy fixture
 
-`fixtures/toxiproxy.yaml` deploys a [toxiproxy](https://github.com/Shopify/toxiproxy) Deployment + Service in namespace `aiperf-chaos-toxiproxy`, exposing the `:8474` admin REST API and a small pool of listen ports for per-test proxy endpoints. The session-scoped `toxiproxy_injector` fixture in `conftest.py` port-forwards the admin API, wraps it in a typed `ToxiproxyInjector` client, and yields it to tests. API-disruption tests (`test_chaos_api_disruption.py`) and latency tests (`test_chaos_benchmark.py` B3) add proxies + toxics per-test and always call `await toxiproxy_injector.reset()` in `finally` so the next test starts from an empty proxy table. The Service is reachable cluster-internally as `toxiproxy.aiperf-chaos-toxiproxy.svc`, which lets tests route in-cluster traffic (operator → apiserver, benchmark → mock-server) through the proxy when the relevant endpoint-URL overrides are available.
+`fixtures/toxiproxy.yaml` deploys a [toxiproxy](https://github.com/Shopify/toxiproxy) Deployment + Service in namespace `aiperf-chaos-toxiproxy`, exposing the `:8474` admin REST API and a small pool of listen ports for per-test proxy endpoints (20000-20005 plus the reserved 20010). The package-scoped `toxiproxy_injector` fixture in `conftest.py` port-forwards the admin API, wraps it in a typed `ToxiproxyInjector` client, and yields it to tests. API-disruption tests (`test_chaos_api_disruption.py`) and latency tests (`test_chaos_benchmark.py` B3) add proxies + toxics per-test and always call `await toxiproxy_injector.reset()` in `finally` so the next test starts from an empty proxy table. The Service is reachable cluster-internally as `toxiproxy.aiperf-chaos-toxiproxy.svc`, which lets tests route in-cluster traffic (operator → apiserver, benchmark → mock-server) through the proxy when the relevant endpoint-URL overrides are available.
 
 ## Shared PID namespace
 
-An opt-in `podTemplate.shareProcessNamespace` Helm chart value (also exposed via the `AIPERF_K8S_SHARE_PROCESS_NAMESPACE` operator env) flips `Pod.spec.shareProcessNamespace` to true on JobSet pods. With it on, `kubectl exec <pod> -c <sidecar> -- kill ...` can reach the aiperf controller/worker PID in another container of the same pod; without it, each container has its own PID namespace and `kill` can only see PID 1 (the shim). The chaos suite sets it true for pods it drives via the `operator_ready_shared_pid` fixture; the production default remains false so normal deployments don't accidentally expose cross-container process introspection. The runtime image is distroless-python with only `bash` and a busybox multicall — there's no `pkill` or `pidof`, so `ChaosInjector._kill_process_by_cmdline_fragment` walks `/proc/*/cmdline` by hand to discover the target PID before invoking `kill`.
+An opt-in `podTemplate.shareProcessNamespace` Helm chart value (also exposed via the `AIPERF_K8S_SHARE_PROCESS_NAMESPACE` operator env) flips `Pod.spec.shareProcessNamespace` to true on JobSet pods. With it on, `kubectl exec <pod> -c <sidecar> -- kill ...` can reach the aiperf controller/worker PID in another container of the same pod; without it, each container has its own PID namespace and `kill` can only see PID 1 (the shim). The chaos suite sets it true for pods it drives via the `operator_ready_shared_pid` fixture in `test_chaos_jobset_pods.py`; the production default remains false so normal deployments don't accidentally expose cross-container process introspection. The runtime image is distroless-python with `bash` copied in and a busybox multicall on `PATH` — there's no `pkill` or `pidof`, so the module-level `_find_pid_by_cmdline` helper in `test_chaos_jobset_pods.py` walks `/proc/[0-9]*/cmdline` by hand to discover the target PID, then hands it to `ChaosInjector.kill_container_by_pid`.
 
 ## Scenarios and how they map to operator code
 
@@ -106,6 +108,14 @@ An opt-in `podTemplate.shareProcessNamespace` Helm chart value (also exposed via
 | `test_k2_dns_resolution_failure_fails_fast` | K2 | `endpoint.urls` pointing at an RFC 2606 `.invalid` hostname; asserts the CR reaches `Failed` within 120 s and status text names the DNS / endpoint failure domain |
 | `test_k3_resource_quota_exhaustion_fails_fast` | K3 | namespace `ResourceQuota` capped below the controller's memory request; asserts the CR reaches `Failed` within 120 s and status text or namespace events surface the quota admission rejection. Quota is unconditionally deleted in `finally` |
 
+### Sweep controller faults
+
+| Test | Design ID | Exercises |
+|------|-----------|-----------|
+| `test_sweep_controller_kill_resumes_correctly` | — | force-delete the sweep-controller pod mid-sweep; JobSet creates a replacement and the final aggregate covers all 8 child runs without re-running already-created children |
+
+`test_sweep_controller_kill.py` also carries `test_parse_find_file_count_handles_wc_output`, a pure unit test over the `find | wc -l` output parser used by that scenario. It needs no cluster but ships in this module (and therefore under `k8s_slow`) to keep the parser next to its only caller.
+
 ### Active xfail scenarios
 
 There are currently no active `@pytest.mark.xfail` scenarios in the chaos suite. If a future scenario depends on unavailable infrastructure, keep the xfail reason tied to a concrete flip-to-pass condition and update this section.
@@ -122,8 +132,9 @@ Current manual recipe:
 
 1. Deploy `fixtures/toxiproxy.yaml` and confirm the Service `toxiproxy.aiperf-chaos-toxiproxy.svc` is reachable.
 2. Re-render the operator Deployment with:
-   - `KUBERNETES_SERVICE_HOST=toxiproxy.aiperf-chaos-toxiproxy.svc`
+   - `KUBERNETES_SERVICE_HOST=toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local`
    - `KUBERNETES_SERVICE_PORT=20000`
+   - `AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE=kubernetes.default.svc`
 3. Configure toxiproxy proxy `apiserver` to forward `0.0.0.0:20000 -> kubernetes.default.svc:443`.
 4. Start the benchmark job.
 5. Add a `timeout` toxic for 30 s, then remove it.
@@ -139,8 +150,9 @@ Current manual recipe:
 
 1. Deploy `fixtures/toxiproxy.yaml`.
 2. Redeploy the operator with:
-   - `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE=http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002/v1`
-3. Create toxiproxy proxy `controller-http` on `0.0.0.0:20002` with upstream `<jobset>-controller-0-0.<jobset>.<namespace>.svc.cluster.local:9000`.
+   - `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE=http://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:20002`
+     (bare scheme+host+port — `ProgressClient` appends `/api/progress`, `/api/workers`, and `/healthz` itself, so any path suffix here 404s every call)
+3. Create toxiproxy proxy `controller` on `0.0.0.0:20002` with upstream `<jobset>-controller-0-0.<jobset>.<namespace>.svc.cluster.local:9090` (the `API_SERVICE` port).
 4. Start the benchmark job and wait until it is in profiling.
 5. Add a `timeout` toxic on the proxy so operator HTTP calls to the controller fail.
 6. Assert the CR still reaches `Completed` via sidecar-result recovery.

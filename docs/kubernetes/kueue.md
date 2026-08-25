@@ -34,11 +34,11 @@ Useful upstream entry points:
 
 ## Why Use Kueue With AIPerf
 
-An AIPerf benchmark runs as a JobSet of several coordinated pods: the
-controller, worker replicas, records manager, and optional telemetry
-sidecars. All pods must start together, or the controller sits idle while
-workers slowly trickle in and the benchmark either fails or produces
-misleading numbers.
+An AIPerf benchmark runs as a JobSet with two replicated jobs: one
+`controller` pod (control plane, records manager, results sidecar, and the
+optional telemetry containers) and N `workers` pods. All pods must start
+together, or the controller sits idle while workers slowly trickle in and
+the benchmark either fails or produces misleading numbers.
 
 Kueue solves three problems that matter for benchmark campaigns:
 
@@ -71,12 +71,14 @@ kubectl apply --server-side -f \
   https://github.com/kubernetes-sigs/kueue/releases/latest/download/manifests.yaml
 ```
 
-The `aiperf kube preflight` command verifies that the Kueue CRDs are
-present and that any referenced LocalQueue actually exists (see
-`src/aiperf/operator/preflight/_infra.py`). If Kueue is not installed and no
-queue was requested, the check is marked `SKIP` and AIPerfJobs run without
-gang-scheduling. If an explicit queue was requested, preflight fails because
-the resulting suspended JobSet would otherwise never be admitted.
+The operator runs a `Kueue Queue` preflight check during reconcile that
+verifies the Kueue CRDs are present and that any referenced LocalQueue
+actually exists (see `src/aiperf/operator/preflight/_infra.py`). If Kueue is
+not installed and no queue was requested, the check is marked `SKIP` and
+AIPerfJobs run without gang-scheduling. If an explicit queue was requested,
+the check fails because the resulting suspended JobSet would otherwise never
+be admitted. This check is operator-side only — the client-side
+`aiperf kube preflight` command does not include it.
 
 ---
 
@@ -133,8 +135,11 @@ description: "High-priority AIPerf benchmark runs"
 
 ## Binding an AIPerfJob to a Queue
 
-There are three ways to route a job to a LocalQueue. All three ultimately
-set the `kueue.x-k8s.io/queue-name` label on the JobSet.
+AIPerf stamps the `kueue.x-k8s.io/queue-name` label onto the JobSet (and
+starts it suspended) whenever it can resolve a queue name from either
+`spec.scheduling.queueName` or the operator-side
+`AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` env var. The Helm chart adds a
+third, Kueue-side namespace default that works differently.
 
 ### 1. CLI flags
 
@@ -187,8 +192,8 @@ spec:
 The `aiperf-operator` Helm chart exposes a `kueue.defaultQueueName` value
 (see `deploy/helm/aiperf-operator/values.yaml`). When set, the chart
 annotates the benchmark namespace with
-`kueue.x-k8s.io/default-queue-name`, and every AIPerfJob in that namespace
-is admitted through Kueue automatically — no per-job flag required.
+`kueue.x-k8s.io/default-queue-name` so Kueue itself can default the queue
+for workloads in that namespace.
 
 ```yaml
 # values.yaml
@@ -197,8 +202,21 @@ kueue:
 ```
 
 The annotation is applied by
-`deploy/helm/aiperf-operator/templates/benchmark-namespace.yaml` when the
-chart creates the benchmark namespace.
+`deploy/helm/aiperf-operator/templates/benchmark-namespace.yaml`, and only to
+`benchmarkNamespace.name` — the extra namespaces in
+`benchmarkRbacNamespaces` are created without it.
+
+Note that AIPerf's own manifest builder does **not** read this annotation:
+`AIPerfJobSetSpec._resolved_queue_name` in
+`src/aiperf/kubernetes/jobset.py` consults only
+`spec.scheduling.queueName` and the `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME`
+env var, so the annotation alone does not make AIPerf add the queue label or
+start the JobSet suspended. Operator preflight does read it, and treats an
+annotated namespace as a satisfied queue configuration. To make Kueue
+gang-scheduling default-on from AIPerf's side, set
+`AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` (and optionally
+`AIPERF_K8S_JOBSET_KUEUE_DEFAULT_PRIORITY_CLASS`) on the operator
+deployment.
 
 The chart can also provision the queue objects themselves instead of you
 applying the YAML above by hand. Set `kueue.createQueues=true` and the chart
@@ -207,8 +225,9 @@ renders a `ResourceFlavor`, `ClusterQueue`, and `LocalQueue` from
 `kueue.flavorName`, `kueue.clusterQueueName`, `kueue.localQueueName`, and the
 `kueue.resources` quota map (`cpu`, `memory`, and an optional `gpu` entry that
 is skipped when empty). It is off by default so the chart renders on clusters
-without Kueue CRDs. When `defaultQueueName` is left empty and
-`createQueues=true`, the namespace annotation falls back to
+without Kueue CRDs, and even when enabled the template is additionally gated
+on the `kueue.x-k8s.io/v1beta1` API being present. When `defaultQueueName` is
+left empty and `createQueues=true`, the namespace annotation falls back to
 `kueue.localQueueName`.
 
 ---
@@ -240,7 +259,7 @@ Concretely:
    watches the JobSet's `spec.suspend` field. While the JobSet is suspended
    and carries a Kueue queue label, the operator surfaces the
    `QUEUED` phase on the AIPerfJob status (see `Phase.QUEUED` in
-   `src/aiperf/operator/status.py`).
+   `src/aiperf/kubernetes/phase.py`).
 4. Once Kueue admits the workload, the JobSet unsuspends, pods start, and
    the monitor transitions the phase to `INITIALIZING` -> `RUNNING`.
 
@@ -263,22 +282,27 @@ not admitted it. Check in order:
    `QuotaReserved` and `Admitted` conditions. The message usually names
    the resource that is over quota.
 2. `kubectl get clusterqueue aiperf-cluster-queue -o yaml` — compare
-   `spec.resourceGroups.*.nominalQuota` to what the JobSet requests.
-   Benchmark worker pods request the CPU and memory listed in the CR's
-   `podTemplate.resources`; see
+   `spec.resourceGroups.*.nominalQuota` to what the JobSet requests. Each
+   worker pod requests the `AIPERF_K8S_WORKER_POD_CPU` /
+   `AIPERF_K8S_WORKER_POD_MEMORY` budget (default `150m` / `4Gi`), split
+   across its containers, and `spec.resourceMode` decides whether limits are
+   emitted alongside requests; see
    [`configuration.md`](configuration.md) for defaults.
 3. Another admitted Workload may be holding the quota. List active
    workloads with
    `kubectl get workloads -A -o wide` and cancel stale ones.
 
-**Preflight fails: `Kueue LocalQueue '<name>' not found`.** The
-`--queue-name` flag references a LocalQueue that does not exist in the
-target namespace. Either create it (see the YAML above) or drop the flag.
-The preflight logic distinguishes "CRD missing" (`SKIP`) from "queue
-missing" (`FAIL`) in `_verify_kueue_local_queue`.
+**Operator preflight fails: `Kueue LocalQueue '<name>' not found`.** The
+resolved `scheduling.queueName` references a LocalQueue that does not exist
+in the target namespace. Either create it (see the YAML above) or drop the
+field. `_verify_kueue_local_queue` reports `FAIL` for both causes but names
+them separately: "Kueue is not installed, but LocalQueue '<name>' was
+explicitly requested" versus "Kueue LocalQueue '<name>' not found". The
+`SKIP` outcome comes from `_check_kueue_queue`, and only when no queue was
+requested at all.
 
-**Preflight warns: `Kueue is installed but no queue configured`.** Kueue
-is present on the cluster but the job bypasses it. Fix by either passing
+**Operator preflight warns: `Kueue is installed but no queue configured`.**
+Kueue is present on the cluster but the job bypasses it. Fix by either passing
 `--queue-name`, setting `spec.scheduling.queueName` in the CR, or adding
 the namespace default:
 

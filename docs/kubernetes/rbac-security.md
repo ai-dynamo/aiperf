@@ -10,18 +10,21 @@ AIPerf separates cluster-wide operator authority from per-namespace benchmark
 authority. The operator Deployment runs under a ServiceAccount bound to a
 `ClusterRole` so a single operator replica can watch `AIPerfJob` custom
 resources across the cluster and create JobSets in benchmark namespaces.
-The chart grants no `coordination.k8s.io/leases` rule, so the operator is
-expected to run as a single replica rather than a leader-elected set.
+The chart grants no `coordination.k8s.io/leases` rule because the operator
+implements no leader election at all: `operator.replicas` defaults to 1 and
+`templates/deployment.yaml` calls `fail` on any other value, so a
+leader-elected set is not merely undocumented but unrenderable.
 Benchmark pods (controllers, workers, record
 processors) run under the `default` ServiceAccount of their namespace, bound
-to a namespace-scoped `Role` that grants only the verbs those pods need to
-discover peers, patch their JobSet status, and read the parent `AIPerfJob`.
+to namespace-scoped `Role`s so that nothing they hold reaches cluster scope.
 
 The split lets cluster admins pre-provision the operator's cluster-wide
 RBAC once (under a security review), then hand developers a `Role` template
 that cannot escalate beyond the benchmark namespace. Developers never touch
-cluster-scoped resources; operators never grant benchmark pods permissions
-they don't need.
+cluster-scoped resources. Within a benchmark namespace the grant is coarser:
+controller and worker pods share one ServiceAccount, so every pod holds the
+union of what the controller needs. Namespace boundaries, not per-pod roles,
+are what separate tenants.
 
 ```mermaid
 flowchart TB
@@ -38,25 +41,32 @@ flowchart TB
     end
 
     subgraph BenchNS[Benchmark namespace]
-        BRole[Role<br/>aiperf-operator-benchmark]
+        BRole[Role<br/>aiperf-operator-benchmark<br/>chart-managed]
+        JRole[Role<br/>&lt;jobset&gt;-role<br/>operator-created per job]
         BRB[RoleBinding]
+        JRB[RoleBinding<br/>&lt;jobset&gt;-binding]
         DefSA[ServiceAccount<br/>default]
         CtlPod[Controller pod]
         WkPod[Worker pod]
         BRole -.bound by.-> BRB
+        JRole -.bound by.-> JRB
         BRB -.subject.-> DefSA
+        JRB -.subject.-> DefSA
         CtlPod -->|runs as| DefSA
         WkPod -->|runs as| DefSA
     end
 
     CRB -.subject.-> OperSA
     OperPod -->|creates JobSet in| BenchNS
+    OperPod -->|creates per-job Role in| JRole
     OperPod -->|watches AIPerfJob across| ClusterScope
 ```
 
 The operator owns JobSet/ConfigMap/Role creation in the benchmark namespace.
-Benchmark pods only read what the operator placed there and patch their own
-status.
+Two distinct `Role`s apply to benchmark pods: the narrow chart-managed
+`aiperf-operator-benchmark` Role, and a broader per-job Role the operator
+creates on every reconcile. The effective grant is the union of the two --
+see [Benchmark-namespace Role catalog](#benchmark-namespace-role-catalog).
 
 ## Operator ClusterRole catalog
 
@@ -82,9 +92,9 @@ speculatively.
 | `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:76-78` |
 | `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get, list, watch` | Create the per-namespace benchmark `Role`/`RoleBinding` on first deploy | `clusterrole.yaml:81-83` |
 | `""` (core) | `namespaces` | `get, list, watch` | Resolve the benchmark namespace referenced by AIPerfJob | `clusterrole.yaml:86-88` |
-| `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs` | `clusterrole.yaml:91-93` |
-| `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml:96-98` |
-| `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events and let benchmark pods read them for UI display | `clusterrole.yaml:101-103` |
+| `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs` | `clusterrole.yaml:104-106` |
+| `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml:109-111` |
+| `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events and let benchmark pods read them for UI display | `clusterrole.yaml:114-116` |
 
 The binding
 (`deploy/helm/aiperf-operator/templates/clusterrolebinding.yaml:10-17`) connects
@@ -96,8 +106,10 @@ this `ClusterRole` to the operator `ServiceAccount` in the release namespace.
 and a matching `RoleBinding` in every namespace where benchmark pods may
 run: the configured `benchmarkNamespace.name` (default `aiperf-benchmarks`,
 whether the chart creates that namespace or it already exists) plus every
-entry in the `benchmarkRbacNamespaces` list. The `RoleBinding` subject is that
-namespace's `default` ServiceAccount — benchmark pods never need a custom SA.
+entry in the `benchmarkRbacNamespaces` list. The `RoleBinding` subject is
+hardcoded to that namespace's `default` ServiceAccount; unlike the
+operator-created Role below, it does not follow
+`podTemplate.serviceAccountName`.
 
 | API group | Resources | Verbs | Purpose | Source |
 |---|---|---|---|---|
@@ -105,9 +117,38 @@ namespace's `default` ServiceAccount — benchmark pods never need a custom SA.
 | `jobset.x-k8s.io` | `jobsets` | `get, list, watch, patch, update` | Controller patches JobSet status to signal graceful completion | `benchmark-rbac.yaml:24-26` |
 | `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | `get, list, watch, patch, update` | Controller reads AIPerfJob spec and patches per-phase progress fields | `benchmark-rbac.yaml:29-31` |
 
-Notice that benchmark pods have no create/delete permission on any
-resource, no access to Secrets, and no access to Events. They can only read
-what the operator placed there and patch the status subresources they own.
+This chart-managed Role grants no create or delete verbs and no access to
+Secrets or Events. It is not, however, the whole grant.
+
+### Operator-created per-job Role
+
+On every AIPerfJob reconcile the operator also creates a `Role` named
+`<jobset>-role` and a `RoleBinding` named `<jobset>-binding` in the benchmark
+namespace, owned by the AIPerfJob CR so it is garbage-collected with the job.
+The rules live in `RBACSpec._RULES`
+(`src/aiperf/kubernetes/resources.py:201-249`); the create path is
+`_create_rbac` in `src/aiperf/operator/handlers/create.py:275-294`. The
+`RoleBinding` subject is `podTemplate.serviceAccountName`, falling back to
+`default`, so it lands on the same identity the benchmark pods run under.
+
+| API group | Resources | Verbs |
+|---|---|---|
+| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | `get, list, watch, patch, update` |
+| `""` (core) | `configmaps` | `get, list, watch, create, update, patch, delete` |
+| `""` (core) | `pods`, `pods/log` | `get, list, watch` |
+| `""` (core) | `services`, `endpoints` | `get, list, watch, create, delete` |
+| `""` (core) | `events` | `get, list, watch, create, patch` |
+| `batch` | `jobs` | `get, list, watch` |
+| `jobset.x-k8s.io` | `jobsets` | `get, list, watch, create, update, patch, delete` |
+| `jobset.x-k8s.io` | `jobsets/status` | `get, list, watch` |
+
+The effective permission set for benchmark pods is therefore the union of this
+Role and the chart-managed one. Benchmark pods still have no access to Secrets,
+but they do hold create and delete verbs on `configmaps`, `services`,
+`endpoints`, and `jobsets`, plus create and patch on `events`. Treat the
+benchmark namespace as a single trust boundary: any pod in it can create a
+JobSet, and therefore run arbitrary containers under the same ServiceAccount.
+That is the concrete reason for the per-team namespace rule below.
 
 The one deliberate exception to namespace confinement is cross-namespace
 server-metrics discovery. Each entry in `serverMetricsDiscoveryNamespaces`
@@ -225,14 +266,25 @@ subjects:
   namespace: aiperf-benchmarks
 ```
 
-Under `rbac.create=false`, the operator still tries to call
-`create roles` and `create rolebindings` on the first reconcile of a new
-namespace (see the `rbac.authorization.k8s.io` rule in the `ClusterRole`
-catalog). If the admin pre-provisions the per-namespace `Role` and
-`RoleBinding` in every intended benchmark namespace, the operator's
-idempotent create returns `AlreadyExists` and reconciliation proceeds.
-If you intend to run in a single fixed namespace only, you can trim those
-verbs from the admin-owned `ClusterRole` without functional regression.
+`rbac.create=false` only suppresses the chart's own RBAC. The operator still
+creates its per-job `Role` and `RoleBinding` on every reconcile (see
+[Operator-created per-job Role](#operator-created-per-job-role)), and those
+names are derived from the JobSet, so pre-provisioning the chart-named
+`aiperf-operator-benchmark` Role does not satisfy them. The admin-owned
+`ClusterRole` must therefore keep `create` on
+`rbac.authorization.k8s.io/roles` and `rolebindings`: only HTTP 409
+`AlreadyExists` is tolerated by `create_idempotent_role`
+(`src/aiperf/operator/k8s_helpers.py:201-234`), so a 403 aborts the reconcile
+and the job never starts. Do not trim those verbs, even for a single fixed
+namespace.
+
+`rbac.create=false` also does not suppress the `helm test` hook RBAC. The
+chart unconditionally creates an `<fullname>-tests` ServiceAccount, namespaced
+`Role`/`RoleBinding` (`pods: get, list`), and a `ClusterRole`/`ClusterRoleBinding`
+scoped by `resourceNames` to the two AIPerf CRDs
+(`deploy/helm/aiperf-operator/templates/tests/rbac.yaml`). Account for these
+five objects in an RBAC review, or delete them after install if your policy
+forbids chart-managed cluster-scoped bindings.
 
 The helper
 `deploy/helm/aiperf-operator/templates/_helpers.tpl`'s
@@ -244,7 +296,7 @@ reference the pre-provisioned SA as expected.
 
 Every container in both the controller and worker pods receives a
 hardened `securityContext` assembled by
-`build_security_context()` in `src/aiperf/kubernetes/jobset_helpers.py:19-47`.
+`build_security_context()` in `src/aiperf/kubernetes/jobset_helpers.py:19-51`.
 The base context applied to every container is:
 
 ```yaml
@@ -263,18 +315,24 @@ securityContext:
 This context is applied to:
 
 - The five control-plane containers in the controller pod
-  (`jobset_builder.py:185`)
-- The event-bus proxy sidecar (`jobset_builder.py:236`)
-- The results-serving sidecar (`jobset_builder.py:263`)
+  (`jobset_builder.py:193`)
+- The event-bus proxy sidecar (`jobset_builder.py:244`)
+- The results-serving sidecar (`jobset_builder.py:271`)
 - Each worker and record-processor container
 
 ### Overriding via `podTemplate.containerSecurityContext`
 
 The CRD schema at
-`deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml:856` exposes
+`deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml:917` exposes
 `spec.podTemplate.containerSecurityContext` as a free-form object. Keys
 supplied there merge on top of the base context. `capabilities` is merged
 shallowly (user keys update the drop/add lists); all other keys are replaced.
+
+Privilege-escalating values cannot be merged in at all. `privileged: true`,
+`allowPrivilegeEscalation: true`, `runAsNonRoot: false`, `runAsUser: 0`, and
+`runAsGroup: 0` are rejected by `PodTemplateConfig` validation and dropped
+again by the builder as defense in depth -- see
+`privilege_escalating_keys()` in `src/aiperf/config/deployment.py:38-70`.
 
 ```yaml
 apiVersion: aiperf.nvidia.com/v1alpha1
@@ -305,9 +363,12 @@ spec:
 ### What `readOnlyRootFilesystem: true` requires
 
 The root filesystem is read-only. AIPerf writes to five locations, which
-must be provided as writable volumes (the JobSet builder already mounts
-these as `emptyDir` volumes on every container via
-`build_shared_volumes()` in `src/aiperf/kubernetes/jobset_helpers.py`):
+must be provided as writable volumes. The JobSet builder already handles
+this: `build_shared_volumes()` declares them as pod-level `emptyDir`
+volumes and `build_volume_mounts()` attaches them to each container, both in
+`src/aiperf/kubernetes/jobset_helpers.py`. (The results-serving sidecar is the
+one exception -- it carries a hand-written mount list of read-only `/results`
+plus writable `/tmp`, which is all it needs.)
 
 - `/aiperf/ipc` — ZMQ IPC socket files (controller mode)
 - `/aiperf/datasets` — shared dataset mmap files (dataset-manager writes, API serves to workers)
@@ -324,9 +385,10 @@ to bind IPC sockets on startup and pods will CrashLoopBackOff.
 The chart ships an opt-in `NetworkPolicy` template for the operator pod
 itself (`deploy/helm/aiperf-operator/templates/networkpolicy.yaml`, enabled
 via `networkPolicy.enabled=true`) — it restricts ingress to the health
-port 8080 and the results-server port (`resultsServer.port`, default
-8081) and permits egress to DNS (kube-system UDP/TCP 53), the Kubernetes
-API server (443/6443), and the configured benchmark namespace. See
+port 8080, the results-server port (`resultsServer.port`, default 8081), and
+the operator metrics port (`operator.metrics.port`, default 9090) and permits
+egress to DNS (kube-system UDP/TCP 53), the Kubernetes
+API server (443/6443), and the configured benchmark namespaces. See
 [Operator NetworkPolicy](#operator-networkpolicy) below. For benchmark-pod
 traffic — the flows listed in the table below — the chart does not ship a
 policy; policy is site-specific. When you enforce a default-deny policy
@@ -334,9 +396,9 @@ in the benchmark namespace, allow:
 
 | Source | Destination | Ports | Reason |
 |---|---|---|---|
-| Worker pods | Controller pod | 5557, 5564, 5661/5662, 5663/5664, 5665/5666, 5667, 5668, 5669 (TCP) | ZMQ records push/pull (5557), credit router (5564), dataset-manager proxy DEALER/ROUTER (5661/5662), event-bus XPUB/XSUB (5663/5664), raw-inference PUSH/PULL (5665/5666), control ROUTER/DEALER (5667), credit-return router (5668), credit-return PUSH/PULL fan-in (5669). See `src/aiperf/config/comm/tcp.py:109-178`. |
+| Worker pods | Controller pod | 5557, 5564, 5661/5662, 5663/5664, 5665/5666, 5667, 5668, 5669 (TCP) | ZMQ records push/pull (5557), credit router (5564), dataset-manager proxy DEALER/ROUTER (5661/5662), event-bus XPUB/XSUB (5663/5664), raw-inference PUSH/PULL (5665/5666), control ROUTER/DEALER (5667), credit-return router (5668), credit-return PUSH/PULL fan-in (5669). Kubernetes runs the dual-bind backend, so the authoritative defaults are `src/aiperf/config/comm/dual_bind.py:241-291`; the event-bus pair is bound by the proxy sidecar from `src/aiperf/kubernetes/environment.py:216-229`. |
 | All benchmark pods | Controller pod | 8080-8088 (TCP) | Health and readiness probes (`src/aiperf/kubernetes/environment.py:180-215`) |
-| Client / ingress | API service | 9090 (TCP) | UI dispatch, progress streaming (`environment.py:195-196`) |
+| Client / ingress | API service | 9090 (TCP) | UI dispatch, progress streaming (`environment.py:195-197`) |
 | Client / ingress | Results sidecar | 9091 (TCP) | Post-run result downloads (`environment.py:198-203`) |
 | Controller + worker pods | LLM inference endpoint | 443 (TCP) | Outbound HTTPS to the endpoint under benchmark |
 | All benchmark pods | `kube-dns` (UDP 53) | 53 | Pod DNS lookups for headless Service peer discovery |
@@ -405,26 +467,30 @@ it down to the endpoint's `Service`/`Endpoints` selector or an
 policy that locks down the **operator pod** (not the benchmark pods).
 Enable with `networkPolicy.enabled=true`. The rendered policy:
 
-- **Ingress** — allows TCP 8080 (operator health) and TCP
-  `resultsServer.port` (default 8081) from the benchmark namespace plus any
-  namespaces listed in `networkPolicy.allowedNamespaces`. CIDR blocks in
+- **Ingress** — allows TCP 8080 (operator health), TCP
+  `resultsServer.port` (default 8081), and TCP `operator.metrics.port`
+  (default 9090, omitted when set to 0) from four namespace selectors: the
+  release namespace itself (so `helm test` hook pods can reach `/healthz`),
+  `benchmarkNamespace.name`, every entry in `benchmarkRbacNamespaces`, and
+  every entry in `networkPolicy.allowedNamespaces`. CIDR blocks in
   `networkPolicy.allowedIngressCIDRs` are added as a second ingress rule
   for external scrapers (e.g. Prometheus, ingress controllers) on the same
-  two ports.
+  ports.
 - **Egress** — allows DNS (UDP/TCP 53 to `kube-system`), the Kubernetes
-  API server (TCP 443 and 6443, no selector), and full egress to the
-  benchmark namespace plus any `allowedNamespaces` entries.
+  API server (TCP 443 and 6443, no selector), and full egress to
+  `benchmarkNamespace.name` plus any `benchmarkRbacNamespaces` and
+  `allowedNamespaces` entries.
 
 Pair this with a default-deny in the operator namespace so only these
 flows are permitted. The policy's `podSelector` targets the operator
-Deployment labels (`aiperf-operator.selectorLabels`), so other workloads
-in the namespace are unaffected.
+Deployment labels (`aiperf-operator.operatorSelectorLabels`), so other
+workloads in the namespace are unaffected.
 
 ### Ingress
 
 `deploy/helm/aiperf-operator/templates/ingress.yaml` ships an opt-in
-`Ingress` that exposes the operator's **results-server** (the `API_SERVICE`
-on `resultsServer.port`, default 8081) outside the cluster. Disabled by
+`Ingress` that exposes the operator's **results-server** (the FastAPI app on
+`resultsServer.port`, default 8081) outside the cluster. Disabled by
 default — results are reachable via ClusterIP + `kubectl port-forward` or
 the `aiperf kube` CLI. Enable with `ingress.enabled=true`.
 
@@ -445,8 +511,10 @@ Security implications:
   misconfiguration.
 - **Backend** — each path's default backend port is
   `resultsServer.port`; override per-path with `portNumber` if you fan
-  multiple services behind a single host. The Ingress does not expose the
-  kopf operator's leader-election or health endpoints.
+  multiple services behind a single host. Nothing routes the kopf liveness
+  endpoint (8080) or the metrics port (9090) by default, so they stay
+  reachable only through the ClusterIP Service. Do not point a `portNumber`
+  at either one.
 
 Pair with `networkPolicy.enabled=true` (see above) so only the Ingress
 controller's namespace can reach the operator pod on the results port.
@@ -460,27 +528,37 @@ A hardened rollout checklist:
    chart with `rbac.create=false` and `serviceAccount.create=false`.
 2. **Dedicated benchmark namespace per team** — never share the benchmark
    namespace between teams. Benchmark pods have read access to every pod
-   in the namespace (`benchmark-rbac.yaml:22-24`), so coexisting unrelated
-   workloads leak metadata.
-3. **Distinct ServiceAccounts per namespace** — the benchmark `RoleBinding`
-   targets `default`. If multiple apps must coexist, rename the benchmark
-   SA (e.g. `aiperf-benchmark-sa`) and set `spec.podTemplate.serviceAccountName`
-   on the AIPerfJob instead of binding to `default`.
+   in the namespace (`benchmark-rbac.yaml:19-21`), so coexisting unrelated
+   workloads leak metadata. The operator-created per-job Role widens this
+   further: pods can also create and delete `configmaps`, `services`,
+   `endpoints`, and `jobsets` anywhere in the namespace.
+3. **Distinct ServiceAccounts per namespace** — the chart's benchmark
+   `RoleBinding` hardcodes `default` and exposes no values key to change it.
+   To avoid granting the namespace's `default` SA anything, create your own
+   SA (e.g. `aiperf-benchmark-sa`) and set
+   `spec.podTemplate.serviceAccountName` on the AIPerfJob. The operator's
+   per-job `RoleBinding` follows that field, so the pods still get the
+   permissions they need without the chart Role applying to `default`.
 4. **`runAsNonRoot: true` everywhere** — the base context already enforces
-   this. Do not override with `runAsUser: 0`.
+   this, and `runAsUser: 0` / `runAsNonRoot: false` overrides are rejected
+   rather than honored. Nothing to configure.
 5. **`readOnlyRootFilesystem: true`** — keep the default; cover the five
    writable paths above with `emptyDir` volumes.
 6. **Drop all Linux capabilities** — the base context drops `ALL`. If a
    sidecar demands `NET_BIND_SERVICE` for a low port, add via
    `containerSecurityContext.capabilities.add` rather than reverting the
-   drop.
+   drop. Note that `capabilities.add` is not on the rejected-override list,
+   so this field is the one remaining way a CR author can widen the
+   container's capability set; step 12 is what actually bounds it.
 7. **`seccompProfile: RuntimeDefault`** — default-applied. Do not downgrade
    to `Unconfined`.
 8. **NetworkPolicy default-deny + allow-list** — apply the sample above
    and lock the LLM endpoint egress to a CIDR or selector.
 9. **ResourceQuota on the benchmark namespace** — AIPerf preflight reads
-   quotas (`clusterrole.yaml:61-63`) and will fail fast if headroom is
-   insufficient.
+   quotas (`clusterrole.yaml:61-63`) and projects the run's CPU and memory
+   against them. Insufficient headroom is reported as a warning, not a
+   failure, so gate on it yourself with `aiperf kube preflight -o json` if
+   CI must stop there.
 10. **Audit logging** — enable Kubernetes audit logging on the
     `aiperf.nvidia.com` and `jobset.x-k8s.io` API groups. Operator
     reconciliation events, including status patches and JobSet creation,
@@ -491,7 +569,9 @@ A hardened rollout checklist:
     benchmark namespace. AIPerf's default container `securityContext`
     already satisfies it.
 
-With this profile, a compromised benchmark pod cannot escape the
-namespace, cannot read cluster-wide resources, cannot write outside its
-emptyDir volumes, cannot add capabilities, and can only reach the LLM
-endpoint and its own peers.
+With this profile, a compromised benchmark pod cannot escape its namespace,
+cannot read cluster-wide resources, cannot read Secrets, cannot write outside
+its emptyDir volumes, cannot escalate privilege or run as root, and can only
+reach the LLM endpoint and its own peers. It is not confined *within* the
+namespace: the operator-created per-job Role lets it create JobSets, Services,
+and ConfigMaps there. Namespace-per-team is the boundary that matters.

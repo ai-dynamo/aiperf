@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # AIPerf Chaos — Unified-API Sibling Suite
 
 This directory holds **unified-API ports** of the 23 legacy AIPerf chaos
@@ -20,16 +25,20 @@ See:
 |---|---|---|
 | Legacy AIPerf scenarios | `tests/kubernetes/chaos/` | Continues to ship as-is |
 | Unified-API ports | `tests/kubernetes/chaos_aiperf/` (this dir) | Parallel coverage via `faults.inject(...)` |
-| Dynamo D-series | `tests/kubernetes/chaos_dynamo/` | Same unified API, Dynamo-targeting |
+| Dynamo D-series | `tests/kubernetes/chaos_dynamo/` | Same unified API, Dynamo-targeting; not part of this checkout |
 | Adapter unit tests | `tests/kubernetes/chaos_common/` | Echo-only registry |
 
 The conftest in this package:
 
-1. Re-exports the legacy `chaos/conftest.py` via `pytest_plugins`, so every
-   ported test can still request `operator_ready`, `chaos_injector`,
+1. Re-exports the legacy `chaos/conftest.py` fixtures by importing them
+   directly (importing a fixture function into a conftest registers it for the
+   package — modern pytest rejects `pytest_plugins` in any non-rootdir
+   conftest), so every ported test can still request `chaos_injector`,
    `toxiproxy_injector`, `mock_server_injector`,
    `operator_ready_toxiproxy_routed`, and
    `operator_ready_apiserver_toxiproxy_routed` exactly as legacy tests do.
+   `operator_ready`, `kubectl`, and `operator_job_namespace` arrive via the
+   parent package-scoped `tests/kubernetes/conftest.py`.
 2. Overrides the echo-only `faults` fixture from
    `tests/kubernetes/chaos_common/conftest.py` with an `InjectorRegistry`
    pre-loaded with every concrete injector (`pod`, `workload`, `crd`,
@@ -57,8 +66,9 @@ Or invoke pytest directly while reusing an existing cluster:
     uv run pytest tests/kubernetes/chaos_aiperf/ -v -m k8s_slow \
       --k8s-reuse-cluster --k8s-skip-build -n auto
 
-Same fixtures as `chaos/`; same cluster (`aiperf-pytest` or `aiperf`). Run a
-single scenario:
+Same fixtures as `chaos/`; same cluster naming (`aiperf-pytest` under
+`--k8s-reuse-cluster`, otherwise `aiperf-<uuid-prefix>` or `aiperf-<xdist-worker>`).
+Run a single scenario:
 
     uv run pytest tests/kubernetes/chaos_aiperf/test_chaos_cancellation_unified.py -v
 
@@ -69,7 +79,7 @@ Every test file in this package must declare both markers at module level:
 ```python
 import pytest
 
-pytestmark = [pytest.mark.k8s_slow, pytest.mark.asyncio]
+pytestmark = [pytest.mark.asyncio, pytest.mark.k8s_slow]
 ```
 
 `k8s_slow` opts the test into the slow-only run gate (these scenarios spin

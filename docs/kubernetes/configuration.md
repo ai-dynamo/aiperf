@@ -110,7 +110,7 @@ The `benchmark` section mirrors the standard AIPerf YAML config. Any field you u
 | `models` | list[string] | Model name(s) served by the endpoint |
 | `endpoint.urls` | list[string] | Inference server URLs |
 | `endpoint.streaming` | bool | Enable streaming responses |
-| `endpoint.type` | string | Endpoint type (default: `chat`) |
+| `endpoint.type` | string | Endpoint type. The CRD deliberately carries **no** `default:` here so an omitted `type` stays absent and `endpoint.template` can infer `type: template`; Pydantic resolves an otherwise-omitted `type` to `chat` |
 | `datasets` | list | Named dataset configurations (each entry has a `name`) |
 | `phases` | list | Ordered load phases (warmup, profiling, etc.), each with a `name` |
 
@@ -143,7 +143,7 @@ benchmark artifacts still become ready. With `plotRequired: true`, rendering
 is part of the completion transaction: a failure leaves results unready and
 the controller exits non-zero. Inline plot mappings are the portable form for
 hand-authored CRs; `aiperf kube generate -f config.yaml` resolves a file-backed
-`plot: ./plots/config.yaml` before submitting the CR.
+`plot: ./plots/config.yaml` into the inline form when it emits the CR.
 
 ### Load Phases (`spec.benchmark.phases`)
 
@@ -165,12 +165,13 @@ phases:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `name` | string | required | Unique phase identity used in status and artifact paths |
+| `name` | string | required | Unique phase identity used in status and artifact paths. Must match `^[A-Za-z_][A-Za-z0-9_-]*$` and be unique case-insensitively |
 | `kind` | string | inferred for canonical names | Semantic role: `warmup` or `profiling`; warmup metrics are kept phase-scoped and excluded from profiling aggregates |
 | `type` | string | required | Load type: `concurrency`, `constant`, `poisson`, `gamma`, `user_centric`, or `fixed_schedule` |
-| `concurrency` | int | - | Number of concurrent requests |
-| `requests` | int | - | Total requests to send |
-| `duration` | float | - | Phase duration in seconds (alternative to `requests`) |
+| `concurrency` | int | - | Number of concurrent requests (>= 1) |
+| `requests` | int | - | Total requests to send (>= 1) |
+| `duration` | float \| string | - | Phase duration, alternative to `requests`. Seconds, or a suffixed string (`300`, `'5m'`, `'2h'`) |
+| `sessions` | int | - | Stop after this many sessions complete (>= 1) |
 
 ### Deployment Options (spec top level)
 
@@ -184,25 +185,51 @@ phases:
 | `timeoutSeconds` | int | 0 | Benchmark timeout in seconds (0 = no timeout) |
 | `cancel` | bool | `false` | Set to `true` to cancel a running benchmark |
 | `keepFailedPods` | bool | `false` | Preserve pods on failure for debugging (overrides `ttlSecondsAfterFinished`) |
-| `resultsTtlDays` | int | - | Override operator-level `AIPERF_RESULTS_TTL_DAYS` for this job or sweep archive |
+| `resultsTtlDays` | int | - | Override operator-level `AIPERF_RESULTS_TTL_DAYS` for this job or sweep archive (1-365) |
 | `skipEndpointCheck` | bool | `false` | Skip the operator-side endpoint reachability probe before deploying |
+| `failurePolicy.onChildFailure` | string | `continue` | `continue` or `abort`. On AIPerfJob governs the single benchmark; on AIPerfSweep whether a failed child aborts the sweep |
+| `failurePolicy.maxFailures` | int | 0 | Hard failure budget for the whole sweep; `0` = unbounded. When >0 the sweep stops scheduling children once `failedRuns >= maxFailures` and ends `Failed` |
+| `schemaVersion` | string | `2.0` | Config-v2 schema version; `2.0` is the only accepted value |
+
+`spec` also carries the remaining Config-v2 envelope fields as siblings of
+`benchmark`: `plot` (below), plus `sweep`, `multiRun`, `variables`,
+`randomSeed`, and `noSweepTable`. `sweep` and multi-run orchestration
+(`multiRun.numRuns > 1` or `multiRun.convergence`) are rejected on `AIPerfJob`
+and required/allowed on `AIPerfSweep` — see
+[CRD Validation Rules](crd-validation.md). `AIPerfSweep` additionally accepts
+`childMetadata` (labels/annotations stamped onto every child `AIPerfJob`).
 
 ### Pod Template (`spec.podTemplate`)
 
-Customize the pods that run your benchmark:
+Customize the pods that run your benchmark. Every field is optional; typed
+fields are preferred over `extraPodSpec` because preflight checks, env merging,
+and securityContext merging only apply to typed fields.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `nodeSelector` | map | Node labels to constrain scheduling |
 | `tolerations` | list | Tolerations for tainted nodes |
+| `affinity` | map | K8s `Affinity` (nodeAffinity, podAffinity, podAntiAffinity) |
+| `topologySpreadConstraints` | list | K8s `TopologySpreadConstraint` entries |
 | `imagePullSecrets` | list[object] | Secret references for private registries, K8s `LocalObjectReference` shape: `[{name: my-secret}]` |
-| `env` | list | Extra environment variables |
+| `env` | list | Extra environment variables (K8s `EnvVar` format) |
 | `volumes` | list | Additional volume definitions |
 | `volumeMounts` | list | Additional volume mounts |
 | `annotations` | map | Extra pod annotations |
 | `labels` | map | Extra pod labels |
 | `serviceAccountName` | string | Custom service account |
 | `containerSecurityContext` | map | SecurityContext applied to every container in the controller and worker pods |
+| `podSecurityContext` | map | Pod-level `PodSecurityContext` (fsGroup, runAsUser, sysctls, ...) |
+| `priorityClassName` | string | Native K8s PriorityClass. Distinct from `scheduling.priorityClass` (Kueue) |
+| `runtimeClassName` | string | K8s RuntimeClass (e.g. `nvidia`, `kata`) |
+| `schedulerName` | string | Alternate scheduler to dispatch the pod to |
+| `hostAliases` | list | Extra `/etc/hosts` entries (`{ip, hostnames}`) |
+| `dnsPolicy` | string | `ClusterFirst`, `ClusterFirstWithHostNet`, `Default`, or `None` |
+| `dnsConfig` | map | K8s `PodDNSConfig`; typically paired with `dnsPolicy: None` |
+| `terminationGracePeriodSeconds` | int | Grace period before SIGKILL (>= 0) |
+| `initContainers` | list | InitContainers run to completion before the main containers |
+| `shareProcessNamespace` | bool | Share a PID namespace across containers (chaos testing; keep `false` in production) |
+| `extraPodSpec` | map | Escape hatch: raw PodSpec keys merged last, overriding the typed fields above |
 
 ### Scheduling (`spec.scheduling`)
 
@@ -225,7 +252,7 @@ When using `aiperf kube profile`, you can set deployment options via CLI flags. 
 | `--image-pull-policy` | `spec.imagePullPolicy` | - | Image pull policy (Helm default: `IfNotPresent`) |
 | `--total-workers` | `spec.benchmark.runtime.workers` | 10 | Exact worker target (distributed across pods); when omitted, a YAML-authored `runtime.workers` wins before automatic sizing |
 | `--name` | `metadata.name` | auto-generated | Job name (DNS label, max 40 chars) |
-| `--namespace` | `metadata.namespace` | `aiperf-benchmarks` | Target namespace |
+| `--namespace`, `-n` | `metadata.namespace` | `aiperf-benchmarks` | Target namespace |
 | `--ttl-seconds` | `spec.ttlSecondsAfterFinished` | 300 | TTL after completion |
 | `--node-selector` | `spec.podTemplate.nodeSelector` | `{}` | Node selector labels |
 | `--tolerations` | `spec.podTemplate.tolerations` | `[]` | Pod tolerations |
@@ -233,9 +260,14 @@ When using `aiperf kube profile`, you can set deployment options via CLI flags. 
 | `--priority-class` | `spec.scheduling.priorityClass` | - | Kueue priority class |
 | `--image-pull-secrets` | `spec.podTemplate.imagePullSecrets` | `[]` | Pull secret names |
 | `--env-vars` | `spec.podTemplate.env` | `{}` | Non-sensitive extra env vars |
-| `--env-from-secrets` | `spec.podTemplate.env` | `{}` | Env vars from Kubernetes Secrets; required for endpoint API keys, sensitive headers, and credentialed URLs |
+| `--env-from-secrets` | `spec.podTemplate.env` | `{}` | Env vars from Kubernetes Secrets as `ENV_NAME: secret_name/key`; required for endpoint API keys, sensitive headers, and credentialed URLs |
+| `--secret-mounts` | `spec.podTemplate.volumes` + `volumeMounts` | `[]` | Secret volume mounts (`{name, mount_path, sub_path}`) |
+| `--annotations` | `spec.podTemplate.annotations` | `{}` | Extra pod annotations |
+| `--labels` | `spec.podTemplate.labels` | `{}` | Extra pod labels |
 | `--service-account` | `spec.podTemplate.serviceAccountName` | - | Pod service account |
-| `--detach` | - | `false` | Exit after deploying |
+| `--kubeconfig` | - | `~/.kube/config` or `KUBECONFIG` | Path to kubeconfig file |
+| `--kube-context` | - | current context | Kubernetes context to use |
+| `--detach`, `-d` | - | `false` | Exit after deploying. Auto-enabled in non-interactive environments |
 | `--dry-run` | - | `false` | Print CR without submitting |
 | `--operator` | - | `false` | Deploy through the operator without probing the cluster-scoped AIPerfJob CRD |
 | `--no-operator` | - | `false` | Deploy without operator |
@@ -315,7 +347,9 @@ storage:
   enabled: true           # default — PVC-backed; set false for ephemeral emptyDir
   size: 1Ti
   storageClassName: ""    # empty = cluster default
+  mountPath: "/data"      # mount path inside the operator pod
   accessMode: "ReadWriteOnce"
+  emptyDirSizeLimit: ""   # bounds the fallback emptyDir when enabled=false; empty = unbounded
 ```
 
 ### Results Server
@@ -339,8 +373,9 @@ the results-server container: `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED`
 fails closed). When disabled, the read-only APIs stay exposed while those
 mutating POSTs return 403, so serving the results-server does not grant write
 access through the operator ServiceAccount. The index-rebuild route is mounted
-disabled and always returns 503; restart the operator pod to run the single-writer
-startup rebuild.
+read-only on the results-server, so even with the routes enabled and a valid
+token it returns 503; restart the operator pod to run the single-writer startup
+rebuild.
 
 The bundled chart does **not** template these two variables (there is no `resultsServer.mutatingRoutes` value and no token-secret projection). To turn the routes on, set both env vars directly on the `results-server` container — e.g. via a deployment patch or a customized chart template — then have clients send `Authorization: Bearer <token>` on protected POST requests. The browser dashboard never receives this token and keeps create/cancel controls disabled; use `aiperf kube` or `kubectl` from an authenticated terminal for those mutations.
 
@@ -366,9 +401,11 @@ benchmarkNamespace:
 ```
 
 `benchmarkNamespace.create` controls only whether the chart creates the
-namespace. The chart always installs its benchmark `Role` and `RoleBinding` in
-`benchmarkNamespace.name`, including when the namespace already exists and
-`create` is `false`.
+namespace. The benchmark `Role` and `RoleBinding` in `benchmarkNamespace.name`
+are installed whenever `rbac.create` is `true` (the default) — including when
+the namespace already exists and `create` is `false`. Use
+`benchmarkRbacNamespaces` to provision the same namespace + RBAC pair in
+additional namespaces.
 
 ### Default Image
 
@@ -405,7 +442,7 @@ ingress:
 
 ### NetworkPolicy
 
-Restrict pod traffic to/from the operator. Disabled by default -- no restrictions applied. When enabled, ingress is allowed from the benchmark namespace on the health (8080) and results (`resultsServer.port`) ports, plus DNS, the K8s API server, and the benchmark namespace on egress.
+Restrict pod traffic to/from the operator. Disabled by default -- no restrictions applied. When enabled, ingress is allowed from the release namespace, the benchmark namespace, `benchmarkRbacNamespaces`, and `allowedNamespaces` on the health (8080), results (`resultsServer.port`), and metrics (`operator.metrics.port`, when non-zero) ports. Egress allows DNS, the K8s API server (443/6443), the benchmark namespace, `benchmarkRbacNamespaces`, and `allowedNamespaces`.
 
 ```yaml
 networkPolicy:
@@ -458,17 +495,21 @@ aiperf kube profile \
 
 ### Validating Before Deploying
 
-Check your config file for errors before submitting:
+`aiperf kube validate` checks `AIPerfJob` and `AIPerfSweep` CR YAML — files
+with `apiVersion: aiperf.nvidia.com/v1alpha1`, a `kind:`, `metadata.name`, and
+`spec.benchmark`. A plain benchmark config file is not a CR and will fail these
+structural checks; generate a CR first with
+`aiperf kube generate --operator --config benchmark.yaml`.
 
 ```bash
-# Validate YAML structure and fields
-aiperf kube validate benchmark.yaml
+# Validate CR structure and fields
+aiperf kube validate aiperfjob.yaml
 
-# Strict mode fails on unknown fields
-aiperf kube validate --strict benchmark.yaml
+# Strict mode fails on unknown spec fields
+aiperf kube validate --strict aiperfjob.yaml
 
 # JSON output for CI
-aiperf kube validate -o json benchmark.yaml
+aiperf kube validate -o json aiperfjob.yaml
 ```
 
 Preview what will be submitted without deploying:
@@ -525,7 +566,7 @@ an explicit `kind`.
 |---|---|---|---|
 | `burstable` (default) | `requests` only; no `limits`. | Burstable | Default. Cost-sensitive clusters, development, and any benchmark where the controller's aggregation phase may temporarily allocate beyond the request — limits-free pods are not OOM-killed by cgroup. Controller pods stay Burstable by default in the operator's own `values.yaml` for the same reason. |
 | `guaranteed` | `requests == limits` for CPU and memory. | Guaranteed | Production benchmarks where pods must not be evicted under pressure and noisy-neighbor behavior is unacceptable. Use this mode when you have measured the controller's peak memory and want a hard ceiling. |
-| `none` | Neither `requests` nor `limits`. | BestEffort | Environments where CPU/memory admission control is disabled (e.g. CI `kind` clusters with tight node budgets, or when an external scheduler handles admission). The resource-dependent preflight checks ("Node Resources", "Per-Node Schedulability", "Resource Quotas", "Memory Estimation") are auto-skipped.** |
+| `none` | Neither `requests` nor `limits`. | BestEffort | Environments where CPU/memory admission control is disabled (e.g. CI `kind` clusters with tight node budgets, or when an external scheduler handles admission). The resource-dependent preflight checks ("Node Resources", "Per-Node Schedulability", "Resource Quotas", "Memory Estimation") are auto-skipped. |
 
 The mode applies to both controller-pod and worker-pod containers; there is no per-container override. OOMKill semantics follow the QoS class — `guaranteed` pods will not be evicted for resource pressure, `burstable` pods may be throttled, and `none`/BestEffort pods can be evicted first.
 
@@ -542,6 +583,7 @@ Every control-plane container, the event-bus proxy sidecar, the results sidecar,
 | Variable | Default | Applies to |
 |---|---|---|
 | `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` / `_MEMORY` | `75m` / `192Mi` | SystemController container |
+| `AIPERF_K8S_SWEEP_CONTROLLER_CPU` / `_MEMORY` | `75m` / `512Mi` | Sweep-controller container (higher memory: adaptive search imports torch/BoTorch here) |
 | `AIPERF_K8S_TIMING_MANAGER_CPU` / `_MEMORY` | `50m` / `192Mi` | TimingManager container |
 | `AIPERF_K8S_DATASET_MANAGER_CPU` / `_MEMORY` | `50m` / `256Mi` | DatasetManager container |
 | `AIPERF_K8S_RECORDS_MANAGER_CPU` / `_MEMORY` | `75m` / `256Mi` | RecordsManager container (raise to 4000m+ for >500k concurrency) |

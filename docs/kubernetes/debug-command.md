@@ -18,7 +18,7 @@ AIPerf ships three cluster-inspection commands that overlap in theme but serve d
 
 | Command | Timing | Duration | What it answers |
 |---|---|---|---|
-| `aiperf kube preflight` | Before deploy | One-shot | "Will my cluster even accept this job?" (CRDs installed, operator healthy, permissions OK, nodes have capacity) |
+| `aiperf kube preflight` | Before deploy | One-shot | "Will my cluster even accept this job?" (JobSet CRD and controller present, RBAC permissions granted, nodes have capacity) |
 | `aiperf kube attach` | During a run | Streaming | "What is the job doing right now?" (live progress from the controller) |
 | `aiperf kube debug` | After something went wrong | One-shot | "Why did this job fail or stall?" (container-status problem map, recent events, node pressure, failed-pod logs) |
 
@@ -62,7 +62,7 @@ All flags are optional. With no flags, `debug` falls back to the namespace of th
 | `--verbose` | `-v` | `false` | Fetch logs from problem pods and show all recent events (not just `Warning`s). |
 | `--variation` | | (unset) | When `--job-id` is an AIPerfSweep name, target child variation index (0..199); resolves to `<sweep>-v<idx:02d>[-t<trial>]`. `-v` is reserved for `--verbose`, so use the long form. |
 | `--trial` | `-t` | (unset) | Trial index (0..9) within a sweep variation. Requires `--variation`. |
-| `--kubeconfig` | | `$KUBECONFIG` | Path to kubeconfig file. |
+| `--kubeconfig` | | `$KUBECONFIG` or `~/.kube/config` | Path to kubeconfig file. |
 | `--kube-context` | | current context | Kubernetes context to use. |
 
 ### Namespace resolution order
@@ -72,7 +72,7 @@ All flags are optional. With no flags, `debug` falls back to the namespace of th
 1. `-A` / `--all-namespaces` — list every namespace with an AIPerf JobSet.
 2. `-j <job-id>` — resolve the AIPerfJob / AIPerfSweep / JobSet with that name and use its namespace. For an AIPerfSweep, select the current child or latest completed child; use `--variation` and optionally `--trial` to choose a different child explicitly. Prints a warning and returns without a report when the sweep has not exposed any child yet.
 3. `-n <namespace>` — use the given namespace verbatim.
-4. Fall back to the namespace recorded for the last benchmark deployed from this machine, or `default` if none is recorded.
+4. Fall back to the namespace recorded for the last benchmark deployed from this machine (`default` when that record carries no namespace). When no last-benchmark record exists at all, `debug` prints `No job_id specified and no previous benchmark found` and returns without a report.
 
 ---
 
@@ -82,7 +82,7 @@ For each target namespace, `debug` gathers five independent slices of cluster st
 
 ### 1. Pod problem map
 
-Every AIPerf pod in the namespace (selected by the `app.kubernetes.io/part-of=aiperf` label — `AIPerfLabels.SELECTOR` in `src/aiperf/kubernetes/constants.py` — or a narrower per-job selector when `-j` is set) is walked for container-status problems. See [`_extract_pod_info`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/cli_commands/kube/_debug_extract.py) — each container status is classified into one of:
+Every AIPerf pod in the namespace (selected by the `app=aiperf` label — `AIPerfLabels.SELECTOR` in `src/aiperf/kubernetes/constants.py` — or a narrower per-job selector when `-j` is set, which appends `aiperf.nvidia.com/job-id=<job-id>`) is walked for container-status problems. See `_extract_pod_info` in `src/aiperf/cli_commands/kube/_debug_extract.py` — every init and app container status is classified into one of:
 
 | State | Severity | Suggested action |
 |---|---|---|
@@ -102,16 +102,18 @@ The report also shows each pod's `phase`, total restart count across init and ap
 When `-j` / `--job-id` targets a specific AIPerfJob, directly or by resolving
 an AIPerfSweep child, the operator-published
 `status.liveMetrics` is run through the detectors in
-[`benchmark_diagnosis.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/kubernetes/benchmark_diagnosis.py).
+`src/aiperf/kubernetes/benchmark_diagnosis.py` (`diagnose_benchmark`).
 These complement the pod problem map above: that section reports *container*
-faults, this one reports what the *benchmark* is doing.
+faults, this one reports what the *benchmark* is doing. When the CR's `.status`
+cannot be re-fetched, a minimal status is reconstructed from the cached job
+projection so the detectors still run.
 
 | Finding | Trips when | Threshold env var |
 |---|---|---|
 | `high_error_rate` | `error_count / request_count` exceeds the threshold | `AIPERF_K8S_DIAGNOSIS_HIGH_ERROR_RATE_THRESHOLD` (default `0.05`) |
 | `high_latency` | request-latency p99 exceeds N x the average | `AIPERF_K8S_DIAGNOSIS_HIGH_LATENCY_P99_MULTIPLIER` (default `10.0`) |
-| `stalled_pending` | phase is `Pending` for longer than the threshold | `AIPERF_K8S_DIAGNOSIS_STALLED_PENDING_THRESHOLD_SECONDS` (default `60`) |
-| `stalled_running` | phase is `Running` past the threshold with **zero** throughput **and** zero completed requests | `AIPERF_K8S_DIAGNOSIS_STALLED_RUNNING_THRESHOLD_SECONDS` (default `30`) |
+| `stalled_pending` | phase is `Pending` for longer than the threshold | `AIPERF_K8S_DIAGNOSIS_STALLED_PENDING_THRESHOLD_SECONDS` (default `60.0`) |
+| `stalled_running` | phase is `Running` past the threshold with **zero** throughput **and** zero completed requests | `AIPERF_K8S_DIAGNOSIS_STALLED_RUNNING_THRESHOLD_SECONDS` (default `30.0`) |
 
 `stalled_running` deliberately requires both signals to be absent: throughput
 legitimately reads `0.0` between liveMetrics windows on a healthy run, so
@@ -122,9 +124,14 @@ targeted (`-A` or a bare namespace), since the detectors need one CR's status.
 
 #### Worker-state source
 
-The operator copies worker counts from the controller pod's `/api/progress`
-response into `AIPerfJob.status.workers`. The API sidecar queries the
-SystemController's authoritative worker tracker for each response, so a sidecar
+`AIPerfJob.status.workers.total` is set at job creation from
+`RuntimeConfig.workers`, and `ready` comes from the JobSet's
+`replicatedJobsStatus[name="workers"].ready` pod count multiplied by
+`workersPerPod` (`_update_worker_counts` in
+`src/aiperf/operator/handlers/monitor.py`) —
+not from the controller pod. The controller's own worker view is served by its
+API sidecar, which queries the SystemController's authoritative worker tracker
+for each response, so a sidecar
 that starts late or misses a pub/sub update still reports current data. The
 internal `/api/debug/pod-states` and `/api/debug/worker-startup-states`
 endpoints use the same snapshot and identify it with `source: controller`.
@@ -144,7 +151,7 @@ Cluster-wide node information is collected once per invocation (shared across al
 - Ready condition
 - CPU capacity and allocatable
 - Memory capacity and allocatable
-- `nvidia.com/gpu` capacity and allocatable (omitted when zero)
+- `nvidia.com/gpu` capacity and allocatable (rendered as `-` when the node reports no GPUs)
 - Any active pressure conditions: `MemoryPressure`, `DiskPressure`, `PIDPressure`
 
 See `_get_node_resources` in `src/aiperf/cli_commands/kube/debug.py`.
@@ -160,12 +167,13 @@ When `-v` is passed, `debug` calls `read_namespaced_pod_log` on every container 
 `debug` renders a human-oriented Rich report to the terminal. Each namespace produces the same section sequence:
 
 1. `Diagnostic Report: <namespace>` header
-2. Pod overview table (pod, status, restarts, node, issues count)
-3. `Problems Found` list (or `No problems detected` on a clean namespace)
-4. `Warning Events` table (or `Recent Events` table under `-v`)
-5. `Node Resources` table
-6. `Problem Pod Logs` sections (only under `-v`, only for pods with problems)
-7. `Summary` footer (pod counts, warning-event count, nodes under pressure)
+2. Pod overview table (`POD`, `STATUS`, `RESTARTS`, `NODE`, `ISSUES`), or a `No pods found` warning
+3. `Problems Found` list (or a `Problems` header with `No problems detected` on a clean namespace)
+4. `Benchmark Diagnostics` list (only when a specific job was targeted and at least one detector tripped)
+5. `Warning Events` table (or `Recent Events` table under `-v`). Without `-v` and with no warning events, `No warning events found` is printed instead; under `-v` with no events at all the section is omitted
+6. `Node Resources` table (omitted when no nodes could be listed)
+7. `Problem Pod Logs` sections (only under `-v`, only for pods with problems)
+8. `Summary` footer (pod counts, warning-event count, nodes under pressure)
 
 The report is rendered by `_print_report` in `src/aiperf/cli_commands/kube/_debug_report.py`.
 
@@ -263,7 +271,7 @@ Fix by correcting the CR, clearing quota, or resolving the node-level issue befo
 | `0` | Report printed successfully. Note: `debug` exits `0` even when problems are found — the report is the payload. |
 | `0` | `-j <job-id>` was given, no job exists with that ID. A user-facing `No AIPerf job found with ID` error is printed and `debug` returns cleanly. |
 | `0` | `-A` was given and no namespace contained an AIPerf JobSet. A warning is printed. |
-| non-zero | Unrecoverable failure (kubeconfig missing, cluster unreachable, unexpected exception). The error is surfaced via the shared `cli_utils.exit_on_error("Error Running Diagnostics")` wrapper, which prints a red panel and propagates the cyclopts exit code. |
+| `1` | Unrecoverable failure (kubeconfig missing, cluster unreachable, unexpected exception). The error is surfaced via the shared `cli_utils.exit_on_error(title="Error Running Diagnostics")` wrapper, which prints a traceback and a red panel, then exits `1`. |
 
 If you are wrapping `debug` from a script and need to distinguish "ran clean, found problems" from "ran clean, no problems", parse the **Summary** section — specifically the `Pods: N total, M running, K with issues` line.
 
@@ -272,6 +280,6 @@ If you are wrapping `debug` from a script and need to distinguish "ran clean, fo
 ## See Also
 
 - [`aiperf kube attach`](./attach.md) — live progress stream for a running job.
-- [`aiperf kube preflight`](./getting-started.md) — pre-deploy checks that often prevent the failures `debug` diagnoses.
+- [`aiperf kube preflight`](./preflight.md) — pre-deploy checks that often prevent the failures `debug` diagnoses.
 - [AI Debugging Guide](./ai-debugging-guide.md) — structured troubleshooting recipes that use `debug` output as input.
-- Source: [`src/aiperf/cli_commands/kube/debug.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/cli_commands/kube/debug.py), [`_debug_extract.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/cli_commands/kube/_debug_extract.py), [`_debug_report.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/cli_commands/kube/_debug_report.py).
+- Source: `src/aiperf/cli_commands/kube/debug.py`, `src/aiperf/cli_commands/kube/_debug_extract.py`, `src/aiperf/cli_commands/kube/_debug_report.py`.

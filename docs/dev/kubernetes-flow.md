@@ -52,6 +52,10 @@ CLI commands defined in `src/aiperf/cli_commands/kube/`:
 | `profile` | Run a benchmark in Kubernetes |
 | `sweep` | Run a parameter sweep or multi-run benchmark in Kubernetes |
 | `generate` | Generate Kubernetes YAML manifests |
+| `delete` | Delete a benchmark and its backing Kubernetes resources |
+| `cleanup` | Bulk-remove finished benchmarks from a namespace |
+| `shutdown` | Retire a finished benchmark's controller pod |
+| `cancel` | Cancel a running benchmark (patches `spec.cancel` on the CR) |
 | `attach` | Attach to a running benchmark and stream progress |
 | `list` | List benchmark jobs and their status; pass `--watch` for live updates |
 | `logs` | Retrieve logs from benchmark pods |
@@ -183,7 +187,7 @@ service is on 9090 and the results sidecar on 9091.
 
 ### RBAC Permissions
 
-The Role rules are the `_RULES` class-var on the resource builder in
+The Role rules are the `_RULES` class-var on `RBACSpec` in
 `src/aiperf/kubernetes/resources.py`:
 
 | API group | Resources | Verbs |
@@ -210,8 +214,8 @@ flowchart TD
 ```
 
 Each worker pod resolves the controller through that headless-service DNS name,
-injected via the ZMQ controller-host environment variable
-(`AIPERF_K8S_PORT_*` settings in `src/aiperf/kubernetes/environment.py`).
+injected as `AIPERF_K8S_ZMQ_CONTROLLER_HOST` (the `AIPERF_K8S_ZMQ_` settings in
+`src/aiperf/kubernetes/environment.py`).
 
 ### Communication Channels
 
@@ -326,10 +330,10 @@ flowchart LR
 |--------|----------|
 | `run_service()` | For service types in `EXTERNAL_K8S_SERVICES`, spawns nothing — records the expected instance count with `ServiceRegistry` and waits for the sibling container/worker pod to register. Anything else falls through to `MultiProcessServiceManager.run_service` and spawns a subprocess. |
 | `stop_service()` | No-op for externally managed pods (they get shutdown over the control channel and exit on their own); otherwise delegates to the multiprocess manager. |
-| `shutdown_all_services()` | Stops any locally managed subprocesses and releases the `kubernetes_asyncio` API client. |
+| `shutdown_all_services()` | Marks shutdown complete and stops any locally managed subprocesses; the subprocess half is usually empty because sibling containers come straight from the pod spec. |
 | `check_pods_healthy()` / `_monitor_worker_pods()` | Polls worker-pod status so a crash-looping or evicted pod surfaces as a controller-side failure. |
 
-`wait_for_all_services_registration()` is inherited from `BaseServiceManager` and is what actually blocks until every expected service has registered over ZMQ.
+`wait_for_all_services_registration()` is overridden here (via `ServiceRegistry.wait_for_all`) so the gate counts every expected service *instance*, not just one per service type, and is what actually blocks until they have all registered over ZMQ.
 
 `SystemController` consumes both halves: `_verify_pods_healthy()` gates `PROFILE_START` on `check_pods_healthy()` (catching a pod that registered and then died), and `_watch_pod_failure_abort()` waits on `pod_failure_abort_event` so a mid-run breach of `AIPERF_POD_FAILURE_ABORT_THRESHOLD_PERCENT` cancels the benchmark through the same path as Ctrl+C. `BaseServiceManager` supplies inert defaults, so non-Kubernetes modes need no branch at the call site.
 
@@ -387,13 +391,17 @@ epoch is always protected from deletion.
 
 ### HTTP API
 
-Non-epoch routes now require an explicit run epoch and return `409 Conflict` if
-omitted. Callers must use the `/runs/<epoch>` form; there is no implicit
-"latest run" fallback (`_require_epoch_for_results` raises `HTTPException(409)`
-for all non-epoch routes in `src/aiperf/operator/routers/results_files.py`).
+Every route that reaches a concrete result artifact requires an explicit run
+epoch and returns `409 Conflict` if it is omitted. Callers must use the
+`/runs/<epoch>` form; there is no implicit "latest run" fallback
+(`_require_epoch_for_results` raises `HTTPException(409)` in
+`src/aiperf/operator/routers/results_files.py`). Pure discovery routes stay
+epoch-free, because they exist to tell a caller which epochs there are.
 
 | Route | Behavior |
 |---|---|
+| `GET /api/v1/results` | List every namespace/job that has stored results |
+| `GET /api/v1/results/<ns>/<name>/runs` | Run history for one job, newest first |
 | `GET /api/v1/results/<ns>/<name>` | **409** — epoch required |
 | `GET /api/v1/results/<ns>/<name>.zip` | **409** — epoch required |
 | `GET /api/v1/results/<ns>/<name>/<filename>` | **409** — epoch required |
@@ -401,16 +409,21 @@ for all non-epoch routes in `src/aiperf/operator/routers/results_files.py`).
 | `GET /api/v1/results/<ns>/<name>/runs/<epoch>.zip` | Zip bundle of the pinned run |
 | `GET /api/v1/results/<ns>/<name>/runs/<epoch>/<filename>` | Download one file from the pinned run |
 
-`<epoch>` is validated against `EPOCH_RE` (`^\d{9,10}(\d{6})?$`, in `src/aiperf/common/results_markers.py`) before any disk access — epoch-seconds, optionally carrying the single six-digit microsecond/uid suffix `epoch_key_from_body` appends.
+`<epoch>` is validated against `EPOCH_RE` (`\A\d{9,10}(\d{6})?\Z`, in `src/aiperf/common/results_markers.py`) before any disk access, and a non-matching value is rejected with `422` — epoch-seconds, optionally carrying the single six-digit microsecond/uid suffix `epoch_key_from_body` appends.
 
 ### Edge cases
 
-- **Rapid delete + resubmit within the same wall-clock second** produces colliding
-  epoch keys; the second submission overwrites the first. This matches the
-  legacy `EPOCH=$(date +%s)` semantics and is intentional.
+- **Rapid delete + resubmit within the same wall-clock second** does not collide:
+  `epoch_key_from_body` appends a deterministic six-digit suffix derived from the
+  CR's immutable `metadata.uid` (or the real microseconds, for a fractional
+  `creationTimestamp`), so the two submissions land in distinct directories.
+  A body with no uid falls back to bare epoch-seconds, matching the legacy
+  `EPOCH=$(date +%s)` semantics.
 - **A delayed older completion never rolls the pointer backward.**
   `write_latest` reads the current pointer first and no-ops when it already
-  names a numerically newer epoch.
+  names a wall-clock-newer epoch. The comparison is on the leading
+  whole-seconds component (`_epoch_wall_seconds`), not the full suffixed key,
+  because the uid and microsecond suffix spaces overlap.
 - **`latest.txt` points at a missing directory** (corruption, manual delete):
   default-route requests return 404 until the next successful completion
   rewrites the pointer. Historical routes still work.
@@ -678,13 +691,19 @@ JSONL file. The controller API stages each upload under a temporary name,
 fsyncs it, and atomically renames it before returning the size acknowledgement.
 Only then does the manager acknowledge the controller command.
 
-Any missing service, rejected RAW row, timeout, flush error, HTTP failure, or
-size mismatch fails the barrier. The controller skips aggregation/export and
-withholds both the
-results-ready marker and `ResultsExportedMessage`, so an incomplete RAW result
-set cannot be advertised as authoritative. Empty processors are valid and may
-produce no file; completion is proven by service acknowledgements rather than
-filename counts or file-size stability polling.
+A rejected RAW row, timeout, flush error, HTTP failure, or size mismatch fails
+the barrier: the controller withholds both the results-ready marker and
+`ResultsExportedMessage`, so an incomplete RAW result set cannot be advertised
+as authoritative. Missing worker-group managers are judged against the same
+pod-loss tolerance the rest of the run uses
+(`_raw_finalize_membership_is_acceptable` vs.
+`AIPERF_POD_FAILURE_ABORT_THRESHOLD_PERCENT`): inside the threshold the barrier
+proceeds against the managers that are still registered and records a
+`DegradedRawArtifactSet` exit error, so the run keeps its results but exits
+non-zero; outside the threshold — or with no manager left to ask — it fails
+closed as above. Empty processors are valid and may produce no file; completion
+is proven by service acknowledgements rather than filename counts or file-size
+stability polling.
 
 The controller performs final export before broadcasting service shutdown or
 stopping its message bus. After the durable marker commits, the still-running
@@ -753,7 +772,7 @@ The kopf operator registers sweep-lifecycle handlers in `src/aiperf/operator/mai
 - `@kopf.on.field AIPerfSweep field=status.aggregation.phase new=Complete` plus `@kopf.on.resume` — triggers `handlers/sweep/_aggregate_fetch.fetch_sweep_aggregate_to_disk` to pull the cross-variation aggregate off the sweep-controller's `emptyDir` results-sidecar before the JobSet is reaped, and resumes an interrupted harvest after an operator restart. The fetch reports `(downloaded, listed)` counts; a partial harvest (`downloaded < listed`) or a missing/unparsable `aggregate.json` raises `kopf.TemporaryError` so the JobSet — and with it the only other copy of the artifacts — stays alive for re-harvest. During commit, the operator materializes every child `sweep.json` backlink on its PVC from the canonical `children.json` manifest before status publication. Delayed callbacks carry the parent CR's immutable UID, verify the live parent and exact JobSet owner API version/kind/name/UID with `controller: true`, and publish status with a JSON Patch UID test before advancing `latest.txt` or the runs index. Only a full harvest with a parseable `aggregate.json` and durable child lineage on the PVC publishes the operator-backed `aggregateRef`, flips `resultsAvailable` to true, and deletes that exact JobSet with its resource UID as a delete precondition. A same-name replacement makes the old callback a no-op; transient reads and status-validation failures against the current owner retry.
 - `@kopf.on.delete AIPerfSweep` — cooperatively cancels only AIPerfJobs whose exact owner kind/name/UID matches the deleting sweep; sweep labels narrow discovery but never establish ownership. Kubernetes owner-reference GC tears down the sweep-controller JobSet and RBAC.
 - `@kopf.timer` `cleanup_old_sweeps` — TTL reaper for terminal `AIPerfSweep`s, evaluated at the operator monitor cadence rather than the daily result-retention cadence. A completed aggregate is not eligible until the operator-backed result reference is published, so even `ttlSecondsAfterFinished: 0` cannot delete the only `emptyDir` copy during harvest. Parent deletion uses the timer body's immutable UID as a Kubernetes delete precondition, so a stale timer cannot reap a same-name replacement.
-- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — this one is on **child AIPerfJobs**, not the AIPerfSweep CRD: for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, it recomputes the parent's `runStates`/`currentChildRef`/`lastChildEvent`. Standalone AIPerfJobs are no-ops.
+- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — this one is on **child AIPerfJobs**, not the AIPerfSweep CRD: for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, it recomputes the parent's `runStates`/`currentChildRef`/`lastChildEvent`. The rollup step is a no-op for a standalone AIPerfJob, but the same registration always also mirrors the new phase into the runs index (`handlers/lifecycle.record_phase_transition`).
 
 Sweep **result** retention is process-level rather than a CR timer. After the
 runs-index bootstrap and once per day, the operator scans durable sweep epoch
@@ -775,9 +794,13 @@ keeps the post-environment, pre-Jinja template leaves in the submitted CR. The
 operator and sweep-controller validate a rendered copy through
 `load_config_from_mapping`, while retaining that raw envelope so each variation
 can render its own values. The sweep-controller then calls
-`build_benchmark_plan`; its only plan adaptation is attaching the
-Kubernetes-only `failurePolicy`. Adaptive sweeps instantiate their planner
-through the shared `build_search_planner` factory, and
+`build_benchmark_plan` from `build_plan_from_sweep`
+(`src/aiperf/sweep_controller/plan_builder.py`), whose only plan adaptations are
+attaching the Kubernetes-only `failurePolicy` and, for an unseeded stochastic
+sweep (Sobol, Latin hypercube, adaptive search), deriving a seed from the CR's
+immutable `metadata.uid` so variations stay stable across sweep-controller pod
+restarts. Adaptive sweeps instantiate their planner through the shared
+`build_search_planner` factory, and
 `K8sChildJobExecutor` supplies the cluster execution backend behind the same
 `RunExecutor` protocol used by local sweeps.
 
@@ -811,11 +834,16 @@ regeneration overwrites it.
    (`_walk_dict_apply`) calls every decorator on every dict node, so the
    same set of CEL rules fires on both AIPerfJob's `spec.benchmark` and
    AIPerfSweep's `spec.benchmark` from a single pass.
-4. **Kind-specific attachment** — sweep-only rules are added in
-   `_build_aiperfsweep_crd_from_schema` by direct property indexing after the
-   walker runs: `has(self.sweep)` makes the sweep block required on AIPerfSweep
-   (the inverse `!has(self.sweep)` fires on AIPerfJob), plus `oldSelf == self`
-   immutability on `spec.sweep` / `spec.multiRun`. The old Tier-1D rule that
+4. **Kind-specific attachment** — after the walker runs, each builder attaches
+   its own rules to the top-level spec node: `has(self.sweep)` makes the sweep
+   block required in `_build_aiperfsweep_crd_from_schema`, and the inverse
+   `!has(self.sweep)` fires on AIPerfJob. `_tighten_sweep_schema` reaches into
+   the `sweep` property directly to pin its `type` enum and `parameters` shape.
+   Both builders then call `_apply_workload_spec_immutability`, which emits a
+   presence-safe `has(oldSelf.X) == has(self.X) && (!has(self.X) || oldSelf.X ==
+   self.X)` transition rule for *every* top-level spec field except that kind's
+   mutable set — `{cancel, timeoutSeconds}` for AIPerfJob and
+   `{cancel, ttlSecondsAfterFinished}` for AIPerfSweep. The old Tier-1D rule that
    forbade `sweep`/`multi_run` inside the per-child benchmark was removed —
    `AIPerfJobSpec.benchmark` is typed as `BenchmarkConfig` (no such fields), so
    the generated structural schema enforces it at the apiserver without CEL.
@@ -851,13 +879,17 @@ CEL constraints worth remembering:
 - Array items emitted as opaque preserve-unknown blobs cannot be
   dereferenced. Heterogeneous Pydantic discriminated unions
   (`phases[]`, `datasets[]`) end up opaque, so item-internal invariants
-  (phase-name uniqueness, phase→dataset reference integrity, "seamless not
-  on first") stay enforced in the operator's `@model_validator` decorators
-  on `AIPerfConfig` rather than at the apiserver.
+  (phase-name uniqueness, phase→dataset compatibility, "seamless not
+  on first") stay enforced by the shared `@model_validator` decorators in
+  `src/aiperf/config/config.py`, which the operator re-runs when it validates
+  the spec, rather than at the apiserver.
 - `oldSelf` is only available in transition rules and triggers on
-  `kubectl edit` / `kubectl patch`. Use `!has(oldSelf.X) || oldSelf.X ==
-  self.X` for "first-set freezes after that" semantics (e.g.
-  `artifacts.benchmarkId`, `scheduling.queueName`).
+  `kubectl edit` / `kubectl patch`. Kubernetes does not evaluate a
+  *field-scoped* transition rule when an optional field is added or removed, so
+  immutability rules go on the parent spec node in the
+  `has(oldSelf.X) == has(self.X) && (!has(self.X) || oldSelf.X == self.X)` form
+  (`_immutable_spec_field_rule`). The `has` parity is what rejects
+  first-set-after-create and removal as well as value changes.
 
 ## Fail-Closed Semantics Are Kubernetes-Only
 

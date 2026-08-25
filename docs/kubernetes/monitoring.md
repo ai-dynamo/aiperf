@@ -18,7 +18,10 @@ The `attach` command connects to a running benchmark via port-forward and stream
 aiperf kube attach
 ```
 
-This is what `aiperf kube profile` does automatically after deploying. Use `attach` to reconnect after detaching or from a different terminal.
+`aiperf kube profile` follows the run automatically after deploying unless you
+pass `--detach`, but in operator mode (the default) it polls the AIPerfJob CR
+rather than port-forwarding. Use `attach` to get the WebSocket progress stream,
+to reconnect after detaching, or to watch from a different terminal.
 
 Attach to a specific job:
 
@@ -26,7 +29,10 @@ Attach to a specific job:
 aiperf kube attach my-benchmark
 ```
 
-Press **Ctrl+C** to cancel the benchmark. AIPerf sends a cancellation signal (`spec.cancel=true`) to the cluster, and the operator cleans up the resources.
+Press **Ctrl+C** to detach. This only closes your local stream; the benchmark
+keeps running in the cluster. To stop the benchmark, run `aiperf kube cancel
+<job>`, which patches `spec.cancel: true` so the operator tears down the JobSet
+and stamps `status.phase=Cancelled`.
 
 ---
 
@@ -39,11 +45,14 @@ aiperf kube list
 ```
 
 ```
-NAME                 NAMESPACE           PHASE      PROGRESS  AGE
-qwen3-benchmark      aiperf-benchmarks   Running    67%       3m
-llama-throughput      aiperf-benchmarks   Completed  100%      15m
-mistral-test         aiperf-benchmarks   Failed     0%        20m
+NAME               NAMESPACE          PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY   AGE
+qwen3-benchmark    aiperf-benchmarks  Running      10/10       67%    142.3 rps  318.7 ms  3m
+llama-throughput   aiperf-benchmarks  Completed    10/10      100%    137.9 rps  330.1 ms  15m
+mistral-test       aiperf-benchmarks  Failed         0/4         -            -         -  20m
 ```
+
+`WORKERS` is `ready/total`, `THROUGHPUT` is requests per second, and `LATENCY`
+is the p99 request latency. A dash means the CR has not published that value.
 
 ### Filter by Status
 
@@ -126,9 +135,10 @@ aiperf kube debug -n aiperf-benchmarks
 
 It inspects:
 
-- **Pod states** -- Identifies CrashLoopBackOff, OOMKilled, ImagePullBackOff, Unschedulable, and other problem states
-- **Kubernetes events** -- Shows recent warning events with suggestions
+- **Pod states** -- Identifies CrashLoopBackOff, ImagePullBackOff, ErrImagePull, OOMKilled, CreateContainerConfigError, RunContainerError, and Unschedulable, each with a suggested fix
+- **Kubernetes events** -- Shows the most recent warning events (or all recent events with `--verbose`)
 - **Node resources** -- Reports CPU, memory, and GPU allocatable vs. capacity for each node
+- **Benchmark diagnostics** -- When `--job-id` targets a specific job, runs the metric detectors in `aiperf.kubernetes.benchmark_diagnosis` over `status.liveMetrics`: high error rate, high tail latency (p99 above a multiple of the average), and a stalled job (Pending too long, or Running with neither throughput nor completed requests). Thresholds are the `AIPERF_K8S_DIAGNOSIS_*` environment variables. The section is omitted when nothing tripped.
 - **Container logs** -- With `--verbose`, fetches recent logs from problem pods
 
 ### Debug a Specific Job
@@ -160,10 +170,10 @@ Diagnostic Report: aiperf-benchmarks
 
 POD                              STATUS    RESTARTS  NODE       ISSUES
 aiperf-bench-controller-0-0      Running   0         node-1     0
-aiperf-bench-worker-0-0          Running   3         node-2     1
+aiperf-bench-workers-0-0         Running   3         node-2     1
 
 Problems Found
-[aiperf-bench-worker-0-0] OOMKilled (container: worker)
+[aiperf-bench-workers-0-0] OOMKilled (previous) (container: worker-0)
   Suggestion: Container was killed due to out-of-memory. Increase memory limits.
 
 Node Resources
@@ -187,14 +197,17 @@ Before deploying, validate that the cluster is ready:
 aiperf kube preflight
 ```
 
-This checks:
+It runs these checks in order, and stops early only if cluster connectivity
+fails:
 
-- Cluster connectivity and API version
-- JobSet CRD installed
+- Cluster connectivity and Kubernetes version
+- Namespace exists (or can be created)
 - RBAC permissions in the target namespace
-- Resource quotas and node capacity
-- Image accessibility
-- Endpoint reachability (if specified)
+- JobSet CRD installed and JobSet controller running
+- Resource quotas and node resources
+- Referenced secrets and image-pull access
+- Network policies and DNS resolution
+- Endpoint connectivity (when `--endpoint-url` is given)
 
 ### With Specific Parameters
 
@@ -343,7 +356,22 @@ spec:
   connectionsPerWorker: 50    # reduce from default 100
 ```
 
-Increasing per-pod memory requests/limits is done on the operator deployment via the `AIPERF_K8S_*` environment variables (see `values.yaml`).
+`spec.connectionsPerWorker` is immutable after creation, so changing it means
+creating a new AIPerfJob.
+
+The per-pod memory budget is resolved by the process that renders the JobSet, so
+it is set on the operator container rather than in the CR. The chart has no
+values key for it; patch the Deployment directly:
+
+```bash
+kubectl set env -n aiperf-system deploy/aiperf-operator \
+  AIPERF_K8S_WORKER_POD_MEMORY=8Gi
+```
+
+Per job, `spec.resourceMode` selects the QoS shape: `burstable` (the default)
+sets requests without limits so containers are not cgroup-OOM-killed for
+exceeding their request, `guaranteed` sets `requests == limits`, and `none`
+omits both. It is also immutable after creation.
 
 ### Benchmark Timeout
 
@@ -371,9 +399,13 @@ kubectl run curl-test --rm -it --image=curlimages/curl -- \
 
 ### Stale Namespaces
 
-If old benchmark namespaces are accumulating, the watchdog will warn you. Clean up with:
+The CLI-side watchdog that runs while `aiperf kube profile` follows a benchmark
+warns when it finds more than two leftover `aiperf-*` namespaces. Remove the
+finished benchmarks inside one with `aiperf kube cleanup`, or delete the
+namespace outright:
 
 ```bash
+aiperf kube cleanup --namespace aiperf-benchmarks-old --force
 kubectl delete namespace aiperf-benchmarks-old
 ```
 
@@ -427,11 +459,34 @@ Exposed series:
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `aiperf_operator_handler_duration_seconds` | Histogram | `handler` | Wall-clock duration of each instrumented kopf reconcile handler. |
-| `aiperf_operator_handler_total` | Counter | `handler`, `outcome` | Reconcile-handler invocations by outcome (success / error / etc.). |
+| `aiperf_operator_handler_total` | Counter | `handler`, `outcome` | Reconcile-handler invocations by outcome. |
 | `aiperf_operator_completion_claim_races_total` | Counter | — | Lost `try_claim_completion` races (concurrent ticks contending for the completion claim). |
+
+`outcome` is one of four values: `success` (returned normally), `retry` (raised
+`kopf.TemporaryError`, so kopf will re-dispatch), `fatal` (raised
+`kopf.PermanentError`, so kopf stops retrying and the CR is stuck), and `error`
+(anything else, including `CancelledError`, `KeyboardInterrupt`, and
+`SystemExit`). `retry` and `fatal` are separated so you can alert on stuck CRs
+without false positives from transient apiserver hiccups.
 
 Only kopf reconcile handlers are instrumented (via the `@track_handler("name")`
 decorator); helper functions are not.
+
+### Benchmark Metrics from the Controller Pod
+
+Separately from the operator's own reconcile metrics, each benchmark's
+controller pod serves its live benchmark metrics in Prometheus exposition
+format from the `api` container at `/metrics` on the API port (default 9090).
+The controller pod is annotated with `prometheus.io/scrape: "true"`,
+`prometheus.io/port`, and `prometheus.io/path: /metrics`, so an
+annotation-based Prometheus scrape config picks it up without extra
+configuration.
+
+Set `serviceMonitor.enabled=true` in the chart to have a Prometheus Operator
+`ServiceMonitor` scrape the Service's `metrics` port at `/metrics`. It is off by
+default, and is skipped when `operator.metrics.port` is `0` or when the
+`monitoring.coreos.com/v1` CRDs are absent. The repository ships no Grafana
+dashboards or `PrometheusRule` alerts.
 
 ---
 

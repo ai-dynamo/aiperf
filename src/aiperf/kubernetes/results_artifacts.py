@@ -28,6 +28,7 @@ from aiperf.kubernetes.console import (
     print_success,
     print_warning,
 )
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
 
 if TYPE_CHECKING:
@@ -163,7 +164,7 @@ async def _download_artifact(
     filename: str,
     output_dir: Path,
     *,
-    max_retries: int = 2,
+    max_retries: int = K8sEnvironment.RESULTS.DOWNLOAD_MAX_RETRIES,
 ) -> tuple[str, int] | None:
     """Download one artifact by name with retries.
 
@@ -237,7 +238,9 @@ async def _download_all_artifacts(
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
-    timeout = aiohttp.ClientTimeout(total=300)
+    timeout = aiohttp.ClientTimeout(
+        total=K8sEnvironment.RESULTS.DOWNLOAD_TIMEOUT_SECONDS
+    )
     connector = create_tcp_connector()
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         available_files = await _list_available_artifacts(session, api_base, job_id)

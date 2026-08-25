@@ -34,8 +34,8 @@ aiperf kube logs [JOB_ID] [OPTIONS]
 | `-o`, `--output` | `Path` | *(stdout)* | Write logs to a directory instead of printing. See [bulk dump](#bulk-dump-to-disk). |
 | `-v`, `--variation` | `int` | unset | When `JOB_ID` names an `AIPerfSweep`, the child variation index (`0`..`199`). Resolves to `<sweep>-v<idx:02d>`. |
 | `-t`, `--trial` | `int` | unset | Trial index (`0`..`9`) within a sweep variation, resolving to `<sweep>-v<idx:02d>-t<trial>`. Requires `-v`. |
-| `--namespace` | `str` | `aiperf-benchmarks` (or cached) | Namespace that holds the AIPerfJob. Composite flag from `KubeManageOptions`. |
-| `--kubeconfig` | `Path` | `$KUBECONFIG` / `~/.kube/config` | kubeconfig file to use. Composite flag from `KubeManageOptions`. |
+| `-n`, `--namespace` | `str` | `aiperf-benchmarks` (or cached) | Namespace that holds the AIPerfJob. Composite flag from `KubeManageOptions`. |
+| `--kubeconfig` | `str` | `$KUBECONFIG` / `~/.kube/config` | kubeconfig file to use. Composite flag from `KubeManageOptions`. |
 | `--kube-context` | `str` | current context | kubeconfig context to use. Composite flag from `KubeManageOptions`. |
 
 Job resolution works exactly like every other `aiperf kube` subcommand:
@@ -59,7 +59,11 @@ declared constants. Feed any of them to `--container` verbatim.
 
 ### Controller pod
 
-The controller pod runs nine containers:
+The controller pod runs between six and nine containers — seven with stock
+settings. `create_controller_containers` always emits the five control-plane
+services plus `results-sidecar`, prepends `event-bus-proxy` when
+`AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED` is true (the default), and appends the
+two optional managers only when their features are enabled:
 
 | Container | Purpose |
 |---|---|
@@ -96,12 +100,12 @@ matches nothing and emits `No matching containers found`.
 ## Default behaviour (no `--container`)
 
 When `--container` is omitted, `aiperf kube logs` enumerates every pod
-that carries the AIPerf job label (`aiperf.nvidia.com/job-id=<JOB_ID>`)
+matching `app=aiperf,aiperf.nvidia.com/job-id=<JOB_ID>`
 and prints the logs of **every container on every pod**, in the order
 the API returns them. For a default JobSet with `worker_replicas=N` and
 `workers_per_pod=W`, this fans out to:
 
-- the 7–9 controller-pod containers (depending on which optional
+- the 6–9 controller-pod containers (depending on which optional
   managers are enabled and whether the event-bus proxy sidecar is
   configured), plus
 - `N * (1 + W + record_processors_per_pod)` worker-pod containers.
@@ -125,12 +129,10 @@ stdout as they arrive. Key properties:
 - **Single-target streaming.** The implementation breaks out of the
   target loop after the first streamed container (`if follow: break`).
   If you pass `-f` and the resolved target list has more than one
-  entry, the CLI prints a warning of the form:
+  entry, the CLI prints a single-line warning of the form:
 
   ```text
-  Follow mode streams one container at a time.
-  Showing controller-0/control-plane (9 targets total).
-  Use --container to select a specific container.
+  Follow mode streams one container at a time. Showing controller-0/control-plane (9 targets total). Use --container to select a specific container.
   ```
 
   and only the first target is followed.
@@ -150,20 +152,27 @@ stdout as they arrive. Key properties:
 
 ## Output format
 
-Output is plain UTF-8 text, one line per log record, with a short
-header per target:
+Output is plain UTF-8 text, one line per log record. Each target is
+introduced by `print_header("<pod>/<container>")`, which emits a blank
+line, the `<pod>/<container>` title, and a box-drawing rule as wide as
+the title. Because the header goes through the `aiperf.kube` Rich
+logger, those three lines also carry the logger's timestamp and level
+columns; the log lines themselves are written straight to the Rich
+console and carry no prefix:
 
 ```text
-==> controller-0/control-plane <==
+20:14:07 INFO
+20:14:07 INFO     controller-0/control-plane
+20:14:07 INFO     ──────────────────────────
 <log line 1>
 <log line 2>
 ...
 ```
 
-Bytes that cannot be decoded as UTF-8 are replaced (`errors="replace"`)
-so a single corrupt line never aborts the stream. The format is
-intentionally close to `kubectl logs` so the output is easy to pipe
-into `grep`, `rg`, or a pager.
+Log lines are printed with highlighting and markup disabled, so nothing
+in a log line is reinterpreted as Rich markup. Bytes that cannot be
+decoded as UTF-8 are replaced (`errors="replace"`) so a single corrupt
+line never aborts the stream.
 
 ---
 
@@ -180,7 +189,9 @@ With `-o <DIR>`:
   `kubectl logs -n <NAMESPACE> <POD_NAME> --all-containers=true --prefix`
   (forwarding `--kubeconfig` / `--context` when set) and writes the
   stdout to `<DIR>/logs/<POD_NAME>.log`.
-- On success, prints `Logs saved to <DIR>/logs/`.
+- Prints `Logs saved to <DIR>/logs/` when the walk finishes. The message
+  is unconditional, so it also appears when no pods matched and nothing
+  was written.
 
 Notes on the bulk dump path specifically:
 
@@ -201,8 +212,10 @@ Notes on the bulk dump path specifically:
 
 ### `No pods found for job ID: <JOB_ID>`
 
-The job label selector (`app.kubernetes.io/part-of=aiperf,aiperf.nvidia.com/job-id=<JOB_ID>`)
-matched nothing in the namespace. Usually one of:
+The job label selector built by `job_selector` in
+`src/aiperf/kubernetes/client_selectors.py`
+(`app=aiperf,aiperf.nvidia.com/job-id=<JOB_ID>`) matched nothing in the
+namespace. Usually one of:
 
 - The job ID is wrong (typo, stale cache). Run `aiperf kube list` to
   see live jobs.

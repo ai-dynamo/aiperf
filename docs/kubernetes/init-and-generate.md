@@ -99,6 +99,8 @@ spec:
   #
   # Run: aiperf profile --config minimal.yaml
 
+  schemaVersion: "2.0"
+
   benchmark:
     # "model:" is shorthand for models: { items: [{ name: ... }] }
     model: meta-llama/Llama-3.1-8B-Instruct
@@ -181,9 +183,9 @@ config-consuming command:
 | `aiperf kube profile` | Applies and runs the benchmark on the cluster. |
 
 `aiperf kube preflight` is deliberately absent from that table: it does
-not read a config file at all. It takes only `--image`,
-`--endpoint-url`, and `--workers` (plus the shared namespace/kubeconfig
-flags) and probes the cluster with them.
+not read a config file at all. It takes `--image`, `--image-pull-secrets`,
+`--secrets`, `--endpoint-url`, `--workers`, and `--output` (plus the shared
+namespace/kubeconfig flags) and probes the cluster with them.
 
 When invoking `profile` or `generate`, CLI flags for Kubernetes
 settings (`--image`, `--namespace`, `--total-workers`, etc.) still
@@ -275,7 +277,8 @@ Operator mode (`--operator`) emits one document:
 
 - `aiperf.nvidia.com/v1alpha1` `AIPerfJob` — for a single-run config, with
   `spec.benchmark` holding the benchmark body and deployment fields (`image`,
-  `podTemplate`, `scheduling`, `workers`, etc.) at the top of `spec`.
+  `podTemplate`, `scheduling`, `connectionsPerWorker`, etc.) at the top of
+  `spec`.
 - `aiperf.nvidia.com/v1alpha1` `AIPerfSweep` — when the resolved config has a
   parameter `sweep:` or needs multiple trials. A multi-run-only config receives
   a one-cell `base` scenario so the sweep controller executes the canonical
@@ -304,9 +307,10 @@ only the base cell.
 4. `v1` `ConfigMap` named `aiperf-<job_id>-config`, containing a single
    key `run_config.json` with the fully materialized `BenchmarkRun`
    (1 MiB hard cap — `generate` validates this before emitting).
-5. `jobset.x-k8s.io/v1alpha2` `JobSet` named `aiperf-<job_id>` — the
-   controller + worker + (optional) GPU telemetry + server-metrics
-   pods.
+5. `jobset.x-k8s.io/v1alpha2` `JobSet` named `aiperf-<job_id>` — two
+   replicated jobs, one `controller` pod and N `workers` pods. GPU
+   telemetry and server metrics are optional extra containers inside the
+   controller pod, not separate pods.
 
 Worker count is derived from the max phase concurrency and
 `connections_per_worker`; `generate` runs the same

@@ -28,10 +28,13 @@ Provides two layers:
 Endpoints:
     GET /healthz                                        - health check
 
-    File serving (``aiperf.operator.routers.results_files``):
-    GET /api/v1/results                                 - list all jobs
-    GET /api/v1/results/{namespace}/{job_id}             - list files for a job
-    GET /api/v1/results/{namespace}/{job_id}/{filename}  - download a file
+    File serving (``aiperf.operator.routers.results_files``). Every read of an
+    actual artifact is epoch-pinned; the unpinned job-level paths exist only to
+    reject the request and tell the caller to pin a run:
+    GET /api/v1/results                                          - list all jobs
+    GET /api/v1/results/{namespace}/{job_id}/runs                 - list a job's runs
+    GET /api/v1/results/{namespace}/{job_id}/runs/{epoch}         - list files for a run
+    GET /api/v1/results/{namespace}/{job_id}/runs/{epoch}/{file}  - download a file
 
     Analytics (``aiperf.operator.routers.results_analytics``):
     GET /api/v1/analytics/leaderboard                   - rank runs by metric
@@ -62,6 +65,7 @@ from fastapi.staticfiles import StaticFiles
 from kubernetes_asyncio.client.exceptions import ApiException
 from starlette.middleware.gzip import GZipMiddleware
 
+from aiperf.common.environment import Environment
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.routers.results_files import (
     _display_name,
@@ -229,9 +233,14 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     # Analytics and job-listing payloads are highly repetitive JSON, so the
     # operator UI pays a large transfer cost without compression. The 500-byte
     # floor keeps /healthz and other tiny responses uncompressed.
-    # compresslevel=6 is the standard "sweet spot": level 9 costs 2-4x CPU
-    # for under 2% additional size reduction, which is pure event-loop time.
-    app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
+    # The default compression level of 6 is the standard "sweet spot": level 9
+    # costs 2-4x CPU for under 2% additional size reduction, which is pure
+    # event-loop time. Operators can tune that tradeoff through the shared setting.
+    app.add_middleware(
+        GZipMiddleware,
+        minimum_size=500,
+        compresslevel=Environment.COMPRESSION.GZIP_LEVEL,
+    )
 
     _register_k8s_exception_handler(app)
 

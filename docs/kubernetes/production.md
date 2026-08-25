@@ -50,8 +50,8 @@ For automated pipelines, use JSON output:
 aiperf kube preflight -o json
 echo "Exit code: $?"    # 0 = all checks passed, 1 = failures
 
-# Validation with structured output
-aiperf kube validate -o json benchmark.yaml
+# Validation with structured output (takes AIPerfJob/AIPerfSweep CRs, not --config files)
+aiperf kube validate -o json aiperfjob.yaml
 
 ```
 
@@ -215,9 +215,10 @@ kubectl create secret generic llm-api-key \
   --from-literal=api-key='sk-...' \
   -n aiperf-benchmarks
 
-# Reference it as an environment variable
+# Reference it as an environment variable. --env-from-secrets is a mapping flag:
+# name the pod variable after the dot, and pass `<secret>/<key>` as the value.
 aiperf kube profile ... \
-  --env-from-secrets 'OPENAI_API_KEY=llm-api-key/api-key'
+  --env-from-secrets.OPENAI_API_KEY llm-api-key/api-key
 ```
 
 Endpoint credentials are transported out of band from the benchmark
@@ -254,8 +255,11 @@ For secrets that need to be files (e.g., certificates, tokens):
 
 ```bash
 aiperf kube profile ... \
-  --secret-mounts '[{"name": "tls-cert", "mount_path": "/certs/ca.pem", "sub_path": "ca.pem"}]'
+  --secret-mounts '{"name": "tls-cert", "mount_path": "/certs/ca.pem", "sub_path": "ca.pem"}'
 ```
+
+Each mount is a separate JSON object; repeat `--secret-mounts` for more than one.
+A JSON array covering several mounts in one token is rejected.
 
 ---
 
@@ -303,7 +307,13 @@ AIPerf distributes workers across pods automatically. The `--total-workers` flag
 | 100 | 10 | 10 |
 | 200 | 20 | 10 |
 
-Each worker maintains up to `connectionsPerWorker` concurrent requests (default: 100). The CLI auto-computes this from your concurrency and worker count: `connectionsPerWorker = ceil(concurrency / workers)`.
+A `--total-workers` value that is not a multiple of the per-pod count cannot be
+expressed as a JobSet of identical pods, so all workers collapse onto a single
+pod and the operator logs a warning. Keep the total a multiple of 10, or set
+`benchmark.runtime.workersPerPod` to change the packing factor -- there is no
+CLI flag for it.
+
+Each worker maintains up to `connectionsPerWorker` concurrent requests (default: 100). When you pass `--total-workers` explicitly, the CLI derives this from your concurrency and worker count: `connectionsPerWorker = ceil(concurrency / workers)`. Left unset, the relationship inverts and the worker count is derived instead: `workers = ceil(concurrency / connectionsPerWorker)`.
 
 For high-concurrency benchmarks, scale workers rather than increasing connections per worker. This distributes the load across pods and nodes.
 
@@ -391,11 +401,14 @@ spec:
         value: "200"
       - name: AIPERF_HTTP_KEEPALIVE_TIMEOUT
         value: "120"
-      - name: AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS
-        value: "30"
-      - name: AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD
-        value: "60"
 ```
+
+Probe tunables such as `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS` and
+`AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` do not belong here. They are read
+by whichever process renders the JobSet -- the operator pod, or the CLI in
+direct mode -- and baked into the pod spec's probe fields before the benchmark
+container exists. Setting them under `spec.podTemplate.env` has no effect; set
+them on the operator Deployment (or in the CLI's own environment) instead.
 
 There is no `AIPERF_HTTP_TIMEOUT` variable; set the per-request timeout with
 the `--request-timeout-seconds` CLI flag (or `request_timeout_seconds` in the
@@ -415,8 +428,9 @@ aiperf kube profile ... --namespace team-a-benchmarks --operator
 aiperf kube profile ... --namespace team-b-benchmarks --operator
 ```
 
-The operator watches all namespaces for AIPerfJob CRs. Each job gets its own
-RBAC scoped to its namespace. Here `--operator` bypasses cluster-scoped CRD
+By default the operator watches all namespaces for AIPerfJob CRs; set
+`operator.watchNamespaces` in the Helm values to restrict it to a fixed list.
+Each job gets its own RBAC scoped to its namespace. Here `--operator` bypasses cluster-scoped CRD
 discovery, and the explicit namespaces are treated as pre-provisioned: the CLI
 does not issue Namespace-create requests. A tenant therefore needs permission
 to create `AIPerfJob` resources in its namespace, not permission to read CRDs or
@@ -449,11 +463,12 @@ helm upgrade aiperf-operator deploy/helm/aiperf-operator \
 helm uninstall aiperf-operator --namespace aiperf-system
 ```
 
-Both CRDs carry `helm.sh/resource-policy: keep`, so the `AIPerfJob` and `AIPerfSweep` CRDs -- and any existing custom resources -- survive the uninstall. To remove everything:
+Both CRDs carry `helm.sh/resource-policy: keep`, so the `AIPerfJob` and `AIPerfSweep` CRDs -- and any existing custom resources -- survive the uninstall. The chart-created benchmark namespace carries the same annotation, so it also survives. To remove everything:
 
 ```bash
 kubectl delete crd aiperfjobs.aiperf.nvidia.com
 kubectl delete crd aiperfsweeps.aiperf.nvidia.com
+kubectl delete namespace aiperf-benchmarks
 kubectl delete namespace aiperf-system
 ```
 

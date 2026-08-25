@@ -41,7 +41,8 @@ AIPerf does **not** discover the in-cluster DCGM Exporter service via the
 Kubernetes API. The candidate endpoint list is built entirely from two
 sources:
 
-1. **`Environment.GPU.DEFAULT_DCGM_ENDPOINTS`** — hard-coded defaults:
+1. **`Environment.GPU.DEFAULT_DCGM_ENDPOINTS`** — built-in defaults
+   (overridable with `AIPERF_GPU_DEFAULT_DCGM_ENDPOINTS`):
    - `http://localhost:9400/metrics`
    - `http://localhost:9401/metrics`
 
@@ -64,8 +65,13 @@ aiperf kube profile \
         http://dcgm-exporter.gpu-operator.svc.cluster.local:9400/metrics
 ```
 
-The URL scheme prefix (`http://`) is optional. Bare `host:port` forms are
-normalized to `http://host:port` by `GPUTelemetryManager._normalize_dcgm_url`.
+The URL scheme prefix (`http://`) is optional: bare `host:port` forms get an
+`http://` prefix while the CLI flag is converted into the config section
+(`_url` in [`src/aiperf/config/flags/_converter_telemetry.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/flags/_converter_telemetry.py)),
+and a missing `/metrics` path suffix is appended later by
+`GPUTelemetryManager._normalize_dcgm_url`. An item with neither `http` nor a
+`:` in it is rejected as an invalid `--gpu-telemetry` value rather than
+treated as a bare hostname.
 
 There is **no `gpuTelemetry.*` section in the Helm chart**. Endpoint
 configuration is a per-run CLI flag, not a cluster-wide operator setting.
@@ -99,34 +105,42 @@ The scrape interval applies to every DCGM endpoint and is overridable via
 
 ## Ingest path into the benchmark report
 
-The sidecar scrapes each configured endpoint and accumulates records locally.
-Publishing happens once, coordinated by the lifecycle commands from
-`SystemController`:
+The sidecar does not accumulate anything itself: every scrape is pushed to
+`RecordsManager` as a `TelemetryRecordsMessage` on the records PUSH socket,
+and `RecordsManager` owns the GPU telemetry accumulator. Lifecycle commands
+from `SystemController` drive the boundaries:
 
-1. **`PROFILE_CONFIGURE`** — `GPUTelemetryManager` resolves endpoints,
-   probes reachability, and publishes a `TelemetryStatusMessage`
-   (including `endpoints_configured` / `endpoints_reachable`) back to the
-   controller.
-2. **`PROFILE_START`** — collectors initialize and begin periodic scrapes
-   at `COLLECTION_INTERVAL`.
+1. **`PROFILE_CONFIGURE`** — `GPUTelemetryManager` resolves endpoints, probes
+   reachability, initializes each reachable collector, takes one pre-warmup
+   baseline scrape, and publishes a `TelemetryStatusMessage` (including
+   `endpoints_configured` / `endpoints_reachable`) back to the controller.
+2. **`PROFILE_START`** — collectors start and begin periodic scrapes at
+   `COLLECTION_INTERVAL`; each scrape is pushed to `RecordsManager` as it
+   happens.
 3. **`PhaseBaselineRequestMessage` (profiling phase boundary)** — the timing
    service's phase publisher broadcasts this message; `GPUTelemetryManager`
-   handles it through `BaselineCollectorMixin.collect_baseline` and forces a
-   boundary scrape so counter/histogram deltas use a clean post-warmup
-   baseline instead of the pre-warmup reference captured at
-   `PROFILE_CONFIGURE`. Capture is best-effort — a failure is logged as a
-   warning, never fatal.
+   handles it through `BaselineCollectorMixin`, which calls the manager's
+   `collect_baseline` and forces a boundary scrape so counter deltas have a
+   sample sitting right at the post-warmup boundary rather than relying on
+   whichever periodic scrape happened to land last. Capture is best-effort —
+   a failure is logged as a warning, never fatal.
 4. **`PROFILE_COMPLETE`** — forces a final scrape, stops collectors, then
-   publishes exactly one `ProcessTelemetryResultMessage` containing the
-   accumulated `ProcessTelemetryResult`.
-5. **`SystemController._on_process_telemetry_result_message`** — receives the
+   pushes one terminal `TelemetryRecordsMessage` with
+   `collection_complete=True` so `RecordsManager` knows no further telemetry
+   records can follow.
+5. **`RecordsManager`** — exports the accumulated telemetry over the
+   profiling-phase window (plus `Environment.GPU.FINAL_SCRAPE_GRACE_NS` of
+   trailing grace so the final scrape is included) and publishes exactly one
+   `ProcessTelemetryResultMessage` carrying a `ProcessTelemetryResult`.
+6. **`SystemController._on_process_telemetry_result_message`** — receives the
    published message (see
    [`src/aiperf/controller/system_controller.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/controller/system_controller.py)),
-   stamps `endpoints_configured` / `endpoints_successful` onto the summary,
-   and stores the results for the unified export. `_check_and_trigger_shutdown`
-   waits for profile records, telemetry, and server metrics before triggering
-   final export and JobSet shutdown.
-6. **Export** — the accumulator's results are written into the top-level
+   overwrites `endpoints_configured` / `endpoints_successful` on the summary
+   with the values it recorded from the earlier `TelemetryStatusMessage`, and
+   stores the results for the unified export. `_check_and_trigger_shutdown`
+   waits for every registered result domain (profile records, telemetry,
+   server metrics, accuracy) before triggering the final export.
+7. **Export** — the accumulator's results are written into the top-level
    `telemetry_data` block of `profile_export_aiperf.json` (shape shown in the
    [general tutorial](../tutorials/gpu-telemetry.md#example-json-export))
    and, separately, streamed per-record to `gpu_telemetry_export.jsonl`
@@ -138,21 +152,23 @@ sequenceDiagram
     participant SC as SystemController
     participant TM as TimingManager
     participant GM as gpu-telemetry-manager
+    participant RM as records-manager
     participant DCGM as DCGM Exporter(s)
 
     SC->>GM: PROFILE_CONFIGURE
-    GM->>DCGM: probe each URL
+    GM->>DCGM: probe each URL + baseline scrape
     GM-->>SC: TelemetryStatus (configured, reachable)
     SC->>GM: PROFILE_START
     loop every 333ms
         GM->>DCGM: scrape /metrics
-        GM->>GM: accumulator.ingest(record)
+        GM->>RM: TelemetryRecordsMessage
     end
     TM-->>GM: PhaseBaselineRequestMessage (profiling boundary)
     GM->>DCGM: boundary scrape
     SC->>GM: PROFILE_COMPLETE
     GM->>DCGM: final scrape
-    GM-->>SC: ProcessTelemetryResultMessage
+    GM->>RM: TelemetryRecordsMessage (collection_complete)
+    RM-->>SC: ProcessTelemetryResultMessage
     SC->>SC: _check_and_trigger_shutdown
     SC->>SC: unified export (JSON + JSONL)
 ```
@@ -202,7 +218,7 @@ aiperf kube profile --model ... --no-gpu-telemetry
 After submitting the job, inspect the controller pod:
 
 ```bash
-kubectl -n aiperf get pod -l aiperf.nvidia.com/job-id=<job-id> \
+kubectl -n aiperf-benchmarks get pod -l aiperf.nvidia.com/job-id=<job-id> \
     -o jsonpath='{.items[*].spec.containers[*].name}'
 ```
 
@@ -213,7 +229,7 @@ missing, the JobSet was built with `gpu_telemetry_enabled=False` — either
 ### Verify reachability from inside the controller pod
 
 ```bash
-kubectl -n aiperf exec -c control-plane <controller-pod> -- \
+kubectl -n aiperf-benchmarks exec -c control-plane <controller-pod> -- \
     curl -s -o /dev/null -w '%{http_code}\n' \
     http://dcgm-exporter.gpu-operator.svc.cluster.local:9400/metrics
 ```
@@ -240,20 +256,29 @@ Either no endpoints were reachable, no records were produced before
 
 ### Endpoints listed as configured but not as successful
 
-`ProcessTelemetryResult.summary.endpoints_configured` includes every URL
-attempted; `endpoints_successful` includes only those that responded during
-the configuration probe. A URL in the first but not the second means the
-probe failed — typically DNS, NetworkPolicy, or the exporter not listening
-on the expected path. DCGM Exporter serves `/metrics` by default; verify
-the path suffix matches.
+`ProcessTelemetryResult.summary.endpoints_configured` is a display-filtered
+list, not every URL attempted: it is every URL you passed via
+`--gpu-telemetry` plus only those built-in defaults that turned out to be
+reachable (`GPUTelemetryManager._compute_endpoints_for_display`). Unreachable
+defaults are deliberately omitted so in-cluster runs don't show two dead
+`localhost` rows. `endpoints_successful` includes only the endpoints that
+responded during the configuration probe. A URL in the first but not the
+second means the probe failed — typically DNS, NetworkPolicy, or the exporter
+not listening on the expected path. DCGM Exporter serves `/metrics` by
+default; verify the path suffix matches.
 
 ### Counter metrics look wrong (energy, XID, violations)
 
-Counter-style DCGM metrics are reported as deltas between the profiling
-boundary and final scrapes. If the phase-boundary baseline scrape fails
-for an endpoint, the delta for that endpoint will fall back to the
-pre-warmup baseline captured at `PROFILE_CONFIGURE`, so warmup activity
-leaks into the reported value. `BaselineCollectorMixin` logs
+Counter-style DCGM metrics are reported as a single delta: the last valid
+in-window sample minus the last valid sample strictly *before* the profiling
+window (`to_metric_result_filtered` in
+[`src/aiperf/common/models/telemetry_models.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/models/telemetry_models.py)).
+Negative deltas are clamped to `0.0` so a DCGM restart mid-run reads as no
+movement rather than as a large negative number. If the phase-boundary
+baseline scrape fails for an endpoint, the reference falls back to whichever
+periodic scrape landed most recently before the boundary, so at most one
+collection interval of warmup tail leaks into the value.
+`BaselineCollectorMixin` logs
 `Baseline capture failed for phase '<name>' <kind>: ...` at WARN level
 when that happens — grep the `gpu-telemetry-manager` container logs for
 `Baseline capture failed`.
@@ -266,7 +291,7 @@ never count as URLs for estimation purposes — see
 `_derive_gpu_telemetry` in
 [`src/aiperf/kubernetes/_memory_estimator/params.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/kubernetes/_memory_estimator/params.py)).
 That is a display heuristic, not a runtime gate: the sidecar still runs
-and still tries the hard-coded defaults. To prevent it from running at
+and still tries the built-in defaults. To prevent it from running at
 all, use `--no-gpu-telemetry`.
 
 ## See also

@@ -1947,7 +1947,7 @@ Image pull policy (Always, IfNotPresent, Never). Use 'Never' for minikube (or lo
 
 #### `--total-workers` `<int>`
 
-Total number of workers. Automatically distributed across pods based on --workers-per-pod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers.
+Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod runs on a single pod instead: --total-workers 25 = 1 pod × 25 workers.
 <br/>_Constraints: > 0_
 <br/>_Default: `10`_
 
@@ -3540,7 +3540,7 @@ Image pull policy (Always, IfNotPresent, Never). Use 'Never' for minikube (or lo
 
 #### `--total-workers` `<int>`
 
-Total number of workers. Automatically distributed across pods based on --workers-per-pod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers.
+Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod runs on a single pod instead: --total-workers 25 = 1 pod × 25 workers.
 <br/>_Constraints: > 0_
 <br/>_Default: `10`_
 
@@ -5139,7 +5139,7 @@ Image pull policy (Always, IfNotPresent, Never). Use 'Never' for minikube (or lo
 
 #### `--total-workers` `<int>`
 
-Total number of workers. Automatically distributed across pods based on --workers-per-pod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers.
+Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod runs on a single pod instead: --total-workers 25 = 1 pod × 25 workers.
 <br/>_Constraints: > 0_
 <br/>_Default: `10`_
 

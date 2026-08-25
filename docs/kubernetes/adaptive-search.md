@@ -11,17 +11,19 @@ the Gaussian-process path supplied by BoTorch via the `[botorch]` extra) used
 in-process by `aiperf profile --search-*` runs cluster-side when an
 `AIPerfSweep` CR sets `spec.sweep.type: adaptive_search`. The planner
 proposes one variation at a time; the sweep-controller pod creates a child
-`AIPerfJob` for that variation, waits for it to terminate, scores the
-objective, and asks for the next point. Convergence detection (max iterations,
-improvement-patience plateau, or coefficient-of-variation plateau) terminates
-the loop early when further evaluations stop helping.
+`AIPerfJob` per trial of that variation (one when `multiRun.numRuns` is
+unset or 1), waits for them to terminate, scores the objective, and asks
+for the next point. Convergence detection (max iterations,
+improvement-patience plateau, or coefficient-of-variation plateau)
+terminates the loop early when further evaluations stop helping.
 
 Reach for adaptive search when the search space is too large to grid
 enumerate (e.g. concurrency 1–1000), when a single scalar objective
-captures what you care about, and when you want one `AIPerfJob` per
-proposed point so each iteration is durable, cancellable, and visible
-through normal `kubectl get aiperfjob` workflows. For the algorithm
-details, flag grammar, and `search_history.json` schema, defer to
+captures what you care about, and when you want the proposed points
+materialized as ordinary `AIPerfJob`s so each iteration is durable,
+cancellable, and visible through normal `kubectl get aiperfjob`
+workflows. For the algorithm details, flag grammar, and
+`search_history.json` schema, defer to
 [Bayesian-Optimization Outer Loop](../sweeping/bayesian-optimization.md);
 for the in-process tutorial, see
 [Adaptive Search](../tutorials/adaptive-search.md).
@@ -35,7 +37,7 @@ sequenceDiagram
     participant Op as kopf operator<br/>(BO-agnostic)
     participant Ctrl as sweep-controller pod<br/>BayesianSearchPlanner
     participant Job as AIPerfJob iter N
-    participant Disk as PVC<br/>search_history.json
+    participant Disk as controller /results<br/>search_history.json
 
     User->>API: kubectl apply AIPerfSweep<br/>sweep.type: adaptive_search
     API->>Op: watch event
@@ -100,7 +102,7 @@ spec:
     phases:
       - name: profiling
         type: poisson
-        rate: 1.0  # placeholder: overridden per-iteration by searchSpace below
+        rate: 1.0  # fixed; concurrency is what searchSpace below overrides
         duration: 120
   sweep:
     type: adaptive_search
@@ -125,9 +127,11 @@ spec:
     cooldownSeconds: 30
 ```
 
-`numRuns: 3` runs three benchmarks per proposed point and feeds their
-average objective back to the planner — confidence per point at the cost
-of triple the wall clock. Drop to `numRuns: 1` for fastest iteration.
+`numRuns: 3` runs three benchmarks — three child `AIPerfJob`s, one per
+trial — for each proposed point and feeds their pooled objective back to
+the planner (`objectivePooling`, default `mean`). Confidence per point at
+the cost of triple the wall clock. Drop to `numRuns: 1` for fastest
+iteration and exactly one `AIPerfJob` per proposed point.
 
 ## Multi-dimensional search
 
@@ -159,9 +163,10 @@ spec:
 
 `kind: int` declares an integer dimension — Optuna suggests integer
 parameters natively, no rounding step — while `kind: real` keeps
-floats. `nInitialPoints` Sobol-quasirandom draws fit before the GP
-takes over — bump it for higher-dimensional spaces (rule of thumb:
-`>= 2 * len(searchSpace)`).
+floats. `nInitialPoints` (default 5) becomes the sampler's
+`n_startup_trials`: that many randomly-drawn startup points are
+evaluated before the surrogate model takes over. Bump it for
+higher-dimensional spaces (rule of thumb: `>= 2 * len(searchSpace)`).
 
 ## Status fields you can watch
 
@@ -173,17 +178,19 @@ The CRD declares typed counters in `status`:
 | `status.totalVariations` | Upper bound: equal to `maxIterations`. Actual count may be lower on early stop. |
 | `status.maxTotalRuns` | Upper bound: `maxIterations * multiRun.numRuns`. |
 | `status.completedRuns` | Authoritative count of finished child `AIPerfJob`s. |
-| `status.failedRuns` | Authoritative failure count, fed by `failurePolicy`. |
-| `status.runEpoch` | Decimal sweep-run key used in the on-disk path. Whole-second Kubernetes timestamps carry a deterministic six-digit UID suffix so rapid same-name recreation cannot reuse an archive. |
+| `status.failedRuns` | Authoritative failure count, tallied from child phases. `failurePolicy` decides whether that count aborts the sweep, it does not feed the count. |
+| `status.runEpoch` | Integer sweep-run key (`int64`) used in the on-disk path: epoch-seconds, optionally suffixed with six digits. A fractional creation timestamp contributes real microseconds; a whole-second Kubernetes timestamp contributes a deterministic UID-derived suffix so rapid same-name recreation cannot reuse an archive. |
 
-`status` is a preserve-unknown object, so the operator also stamps
-untyped extras there (`runStates`, `currentChildRef`, `currentCell`,
-`aggregation`).
+`status` is a preserve-unknown object. `runStates`, `currentChildRef`,
+`currentCell`, and `aggregation` are declared there as open objects —
+the keys exist in the CRD but their inner shape is unvalidated.
 
 Both `totalVariations` and `maxTotalRuns` are upper bounds — early
-plateau or improvement-patience convergence shrinks the actual count.
-This mirrors how the trial-level convergence rule
-(`multiRun.numRuns`) caps trials on grid sweeps.
+plateau or improvement-patience convergence shrinks the actual count
+(the controller rewrites `totalVariations` to the number of distinct
+variation indexes it actually ran). This mirrors how the trial-level
+convergence rule (`multiRun.convergence`) can stop a grid sweep's cell
+short of `multiRun.numRuns`.
 
 ```bash
 $ kubectl -n bench get aiperfsweep bo-concurrency-llama8b
@@ -215,7 +222,7 @@ $ curl -s http://aiperf-operator.aiperf-system:8081/api/v1/sweeps/bench/bo-concu
 | `sla_filter_count` | How many SLA filters were configured. **Zero makes every `feasible` flag vacuously true** — check it before rendering any feasibility claim. |
 | `objectives` | The optimized targets, with `direction` normalized to lowercase. |
 | `best_trials` | Planner-selected winner (Pareto front for multi-objective), capped at 20 with `best_trials_truncated`. Each entry's `objective_values` is **positional against `objectives`** and is never compacted: an objective the scorer could not produce keeps its slot as an explicit `null`, so `objective_values[i]` always belongs to `objectives[i]`. A `null` there means "not measured for this trial" and must be rendered as such — substituting a neighbouring value silently relabels it. The whole field is `null` when the trial was not scored at all. |
-| `boundary_summary` | The empirical SLA boundary: `feasible_max`, `infeasible_min`, and the `first_breach` that defined it. `null` for multi-dimensional searches. |
+| `boundary_summary` | The empirical SLA boundary on the swept axis: `swept_dim_path`, `feasible_max`, and `infeasible_min` — the infeasible edge carries the `first_breach` that defined it. `null` for multi-dimensional searches and for runs with no iterations. |
 
 `search_summary` is `null` for grid-family sweeps, for adaptive sweeps
 whose trajectory has not been harvested to the operator PVC yet, and
@@ -235,7 +242,7 @@ the cardinality contract:
 |---|---|---|
 | `kind: AIPerfJob` + `spec.sweep` (any type) | Rejected at admission — single benchmarks must use `kind: AIPerfJob` with `spec.sweep` unset | CRD `x-kubernetes-validations` rule (`!has(self.sweep)` on AIPerfJob) |
 | `kind: AIPerfSweep` without `spec.sweep` | Rejected at admission — sweeps must declare a `sweep` block | CRD `x-kubernetes-validations` rule (`has(self.sweep)` on AIPerfSweep) |
-| `sweep.type: adaptive_search` + `spec.benchmark.sweep` | Rejected on reconcile (not at admission — `spec.benchmark` is a preserve-unknown node, so CEL cannot see the key) — sweep axes belong on the parent CR, not embedded in the per-iteration body | `BenchmarkConfig` has no `sweep` field and forbids extras |
+| `sweep.type: adaptive_search` + `spec.benchmark.sweep` | Silently pruned at admission — `spec.benchmark` is a structural node with no `x-kubernetes-preserve-unknown-fields`, so the apiserver drops the unknown key and the nested block never reaches the controller. Sweep axes belong on the parent CR, not embedded in the per-iteration body | Structural-schema pruning on `spec.benchmark`; `BenchmarkConfig` additionally has no `sweep` field and forbids extras |
 | Per-iteration `AIPerfJob` containing magic-list flags (`--concurrency 10,20,30`) | Rejected inside each child by `_reject_in_process_sweep_under_operator` | `src/aiperf/cli_runner/_multi_run.py` |
 
 These prevent sweeping on top of sweeping and keep a single source of
@@ -277,11 +284,11 @@ the restart-stable planner before execution advances.
 
 ## Output layout
 
-Artifacts land under the `RESULTS_DIR` PVC, scoped by namespace, sweep
-name, and the sweep run-epoch:
+Artifacts land under the operator's `AIPERF_RESULTS_DIR` PVC (default
+`/data`), scoped by namespace, sweep name, and the sweep run-epoch:
 
 ```
-<RESULTS_DIR>/
+<AIPERF_RESULTS_DIR>/
   <namespace>/
     sweeps/
       <sweep-name>/
@@ -292,6 +299,7 @@ name, and the sweep run-epoch:
           sweep_aggregate/             # mode-agnostic per-combination aggregate
             profile_export_aiperf_sweep.json
             profile_export_aiperf_sweep.csv
+            manifest.json              # epoch lineage of every child run
     <sweep-name>-v00-t0/               # per-iteration child AIPerfJob
       <child-run-epoch>/
         profile_export_aiperf.json     # full per-trial artifacts
@@ -309,9 +317,9 @@ Per-iteration child names follow the same `<sweep>-v<NN>[-t<N>]` budget
 as grid sweeps (`build_child_name` in `sweep_controller/_naming.py`):
 the variation index is the BO iteration index (`-v00` is the first
 proposed point), and the trial suffix is present whenever
-`multiRun.numRuns > 1`. Each child sits at the same path layer as a
-standalone `AIPerfJob` and is reachable through the standard
-`/api/v1/results/<ns>/<sweep>-v00-t1/` endpoints.
+`multiRun.numRuns > 1` or `multiRun.convergence` is set. Each child sits
+at the same path layer as a standalone `AIPerfJob` and is reachable
+through the standard `/api/v1/results/<ns>/<sweep>-v00-t1/` endpoints.
 
 `sweep_aggregate/` carries the same per-combination CSV/JSON schema
 produced by grid sweeps — `aggregate_sweep_and_export` groups by stamped

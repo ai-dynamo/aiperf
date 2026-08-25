@@ -29,7 +29,7 @@ operator has the full resolved deployment spec.
 
 The operator runs checks in tiers. Later tiers only run if earlier tiers pass —
 no point probing node capacity if the cluster is the wrong Kubernetes version.
-See `src/aiperf/operator/preflight/_checker.py:88` (`OperatorPreflightChecker.run_all`).
+See `src/aiperf/operator/preflight/_checker.py:89` (`OperatorPreflightChecker.run_all`).
 
 ```mermaid
 flowchart TD
@@ -53,10 +53,10 @@ collected regardless of individual failures — users see every problem in one p
 rather than fix-and-retry whack-a-mole.
 
 The whole sequence is bounded by `AIPERF_PREFLIGHT_TIMEOUT` (default 30 s,
-`src/aiperf/operator/environment.py:306`). A timeout is reported as a synthetic
+`src/aiperf/operator/environment.py:367`). A timeout is reported as a synthetic
 `Preflight Timeout` check with status `WARN` — a slow apiserver must not
 permanently fail a job when the aggregate deadline fires before individual checks
-can complete (see `_checker.py:154-168`).
+can complete (see `_checker.py:154-169`).
 
 ## Operator vs. CLI invocation
 
@@ -96,9 +96,10 @@ aiperf kube preflight [OPTIONS]
 | `-w`, `--workers` | int | 1 | Planned worker pod count. Used to project CPU and memory requirements against node capacity and namespace quotas. |
 | `-o`, `--output` | `text`\|`json` | `text` | Output format. `text` prints rich-formatted progress; `json` prints only the machine-parseable `PreflightResults` dict on stdout (all logging is suppressed to `WARNING`). |
 
-Composite flags inherited from `KubeManageOptions` — `--namespace`, `--kubeconfig`,
-`--kube-context` — resolve connection and namespace identically to every other
-`aiperf kube` subcommand.
+Composite flags inherited from `KubeManageOptions` — `-n`/`--namespace`,
+`--kubeconfig`, `--kube-context` — resolve connection and namespace identically to
+every other `aiperf kube` subcommand. When `--namespace` is omitted, preflight
+targets `aiperf-benchmarks`.
 
 Source: `src/aiperf/cli_commands/kube/preflight.py`.
 
@@ -149,7 +150,10 @@ aiperf kube preflight \
       "status": "warn",
       "message": "Benchmark may exceed resource quota(s)",
       "details": ["ResourceQuota 'team-quota':", "    cpu: 40 / 64"],
-      "hints": ["Request a quota increase or reduce worker count"],
+      "hints": [
+        "Request a quota increase or reduce worker count",
+        "Quota may not apply if benchmark creates its own namespace"
+      ],
       "duration_ms": 33.2
     }
   ]
@@ -163,9 +167,11 @@ aiperf kube preflight \
 - **Validates**: `client.VersionApi.get_code()` succeeds against the cluster.
 - **Source**: `src/aiperf/kubernetes/preflight_checks.py:check_cluster_connectivity`
 - **Fails if**: kubeconfig missing, cluster unreachable, TLS error, or auth rejected
-  in a noninteractive session. In an interactive terminal, a recognized expired
-  login pauses while AIPerf reloads kubeconfig until the normal external login is
-  completed; press **Ctrl+C** to stop waiting. HTTP 403 still fails immediately.
+  in a noninteractive session. In an interactive terminal (both stdin and stdout are
+  TTYs), an apiserver `401` — or a kubeconfig load failure whose text matches a
+  refreshable OIDC/exec-provider auth failure — pauses while AIPerf reloads
+  kubeconfig on a capped exponential backoff until the normal external login is
+  completed; press **Ctrl-C** to stop waiting. HTTP 403 still fails immediately.
 - **Fix**: set `KUBECONFIG`, check `~/.kube/config`, complete the usual credential-
   provider login, and verify VPN/tunnel and RBAC.
 
@@ -188,7 +194,8 @@ time handlers run). On CLI failure, the remaining checks are skipped.
   `list_cluster_custom_object` (operator) or `read_custom_resource_definition` (CLI).
 - **Source**: `src/aiperf/operator/preflight/_tier1.py:_check_jobset_crd`,
   `src/aiperf/kubernetes/preflight_checks.py:check_jobset_crd`
-- **Fails if**: the CRD is not installed (HTTP 404).
+- **Fails if**: the CRD is not installed (HTTP 404). Any other HTTP error also
+  fails — JobSet is a hard prerequisite, so neither side downgrades to a warning.
 - **Fix**: install JobSet per the install-hint emitted in the failure message.
   See [Getting Started](getting-started.md) for full install steps.
   Example: `kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/releases/latest/download/manifests.yaml`.
@@ -203,8 +210,11 @@ time handlers run). On CLI failure, the remaining checks are skipped.
 - **Source**: `src/aiperf/operator/preflight/_tier1.py:_check_rbac_permissions`,
   `src/aiperf/kubernetes/preflight_checks.py:check_rbac_permissions`,
   `src/aiperf/operator/preflight/_common.py:OPERATOR_RBAC_PERMISSIONS`
-- **Fails if**: any permission probe returns `allowed=false` or raises. Error message
-  lists every missing permission as `<verb> <group>/<resource>`.
+- **Fails if**: any permission probe returns `allowed=false`. Missing permissions are
+  listed as `<verb> <group>/<resource>` (core-group resources have no `<group>/`
+  prefix). A probe that raises instead — apiserver timeout, 5xx, or a
+  `SelfSubjectAccessReview` response with no `status` block — is classified as
+  transient and downgrades the check to `warn`, never `fail`.
 - **Fix**: bind a Role or ClusterRole granting the listed verbs on the namespace.
   The operator Helm chart installs these by default
   (`deploy/helm/aiperf-operator/templates/clusterrole.yaml` and
@@ -223,8 +233,9 @@ rolebindings, pods, pods/log, events (all core / rbac), jobsets, jobsets/status
 - **Source**: `src/aiperf/kubernetes/preflight_checks.py:check_namespace`
 - **Status**:
   - `pass` — namespace exists, or 404 + create permission granted.
-  - `fail` — namespace missing and no create permission.
+  - `fail` — namespace missing and no create permission, or a non-404/403 HTTP error.
   - `warn` — namespace missing and create-permission probe itself failed.
+  - `skip` — 403 on `read_namespace` (cannot verify; the namespace may still work).
 - **Fix**: create the namespace, or have an admin do so.
 
 ### JobSet Controller
@@ -250,17 +261,21 @@ rolebindings, pods, pods/log, events (all core / rbac), jobsets, jobsets/status
   - `skip` — no custom service account configured (operator uses default).
   - `pass` — service account exists.
   - `fail` — 404 on `read_namespaced_service_account`.
+  - `warn` — any other API error (cannot verify).
 - **Fix**: `kubectl create serviceaccount <name> -n <namespace>`.
 
 ### DNS Resolution
 
-- **Validates**: a deployment containing `"coredns"` in its name exists in
-  `kube-system` and is ready. Workers resolve the controller's DNS name for ZMQ
+- **Validates**: a `kube-system` deployment carrying the canonical
+  `k8s-app=kube-dns` label exists and is ready. The label is matched rather than a
+  `"coredns"` name substring so sibling deployments like `coredns-monitoring` do
+  not satisfy the check. Workers resolve the controller's DNS name for ZMQ
   connections, so a broken DNS plane is a silent killer.
 - **Source**: `src/aiperf/operator/preflight/_infra.py:_check_dns`,
   `src/aiperf/kubernetes/preflight_checks.py:check_dns`
-- **Status**: `pass` if ready, `warn` if found-but-not-ready or not found,
-  `skip` if `kube-system` is inaccessible.
+- **Status**: `pass` if ready, `warn` if found-but-not-ready or not found. The
+  operator returns `skip` on a 403 listing `kube-system`; the CLI reports any
+  API error — 403 included — as `warn`.
 - **Fix**: `kubectl get pods -n kube-system -l k8s-app=kube-dns`.
 
 ### Network Policies
@@ -311,21 +326,30 @@ rolebindings, pods, pods/log, events (all core / rbac), jobsets, jobsets/status
 
 ## Check catalog — Tier 3 (concurrent, resources)
 
-All resource checks are short-circuited to `skip` when `spec.resourceMode=none`
+Four checks — `Node Resources`, `Per-Node Schedulability`, `Resource Quotas`, and
+`Memory Estimation` — are short-circuited to `skip` when `spec.resourceMode=none`
 (controller and worker CPU/mem requests and limits are intentionally omitted).
-See `OperatorPreflightChecker._resource_mode_skip`.
+`Node Selector Match` and `Tolerations` inspect placement rather than capacity and
+still run. See `OperatorPreflightChecker._resource_mode_skip`.
 
 ### Node Resources
 
 - **Validates**: sum of allocatable CPU and memory across Ready nodes is at least
   the deployment's estimated requirement (controller pods + `workers * worker-pod`).
+  The operator additionally excludes Ready nodes whose `NoSchedule` / `NoExecute`
+  taints are not tolerated by `spec.podTemplate.tolerations`, so a cluster of
+  all-tainted GPU nodes does not report false capacity for a CPU-only workload.
 - **Source**: `src/aiperf/operator/preflight/_resources.py:_check_node_resources`,
   `src/aiperf/kubernetes/preflight_capacity_checks.py:check_node_resources`
 - **Status**:
   - `pass` — cluster has sufficient aggregate capacity and at least one node
     can fit the single largest pod (CLI combined check).
   - `warn` — aggregate shortfall. Message includes required vs. available CPU/mem.
-  - `fail` (CLI only) — no single node can fit any one pod.
+    The operator also warns when no nodes exist at all, or when no node is both
+    Ready and schedulable.
+  - `fail` (CLI only) — no nodes in the cluster, or no single node can fit any
+    one pod. (The operator covers the per-node case with `Per-Node
+    Schedulability` instead.)
 - **Fix**: reduce worker count, add nodes, or right-size the pods via
   `AIPERF_K8S_WORKER_POD_*` and the per-container control-plane resource vars
   (`AIPERF_K8S_SYSTEM_CONTROLLER_*`, `AIPERF_K8S_RECORDS_MANAGER_*`, etc.).
@@ -362,10 +386,15 @@ See `OperatorPreflightChecker._resource_mode_skip`.
 - **Source**: `src/aiperf/operator/preflight/_resources.py:_check_resource_quotas`,
   `src/aiperf/kubernetes/preflight_capacity_checks.py:check_resource_quotas`
 - **Status**:
-  - `pass` — no quotas, or all quotas have headroom.
+  - `pass` — no quotas, or (operator) all quotas have headroom.
   - `info` (CLI) — quotas exist, headroom available; details list each quota.
-  - `fail` — at least one quota would be exceeded. Message calls out which
-    resource and the overage.
+  - `fail` (operator) — at least one quota would be exceeded. Message calls out
+    which resource and the overage.
+  - `warn` (CLI) — the same overage, reported non-blocking so a quota that does
+    not actually apply cannot stop a local run; details list each quota plus the
+    projected requirement.
+  - `warn` — the quota list could not be read, or a quota quantity could not be
+    parsed.
 - **Fix**: request a quota increase, reduce worker count, or deploy to a
   different namespace.
 
@@ -397,17 +426,21 @@ See `OperatorPreflightChecker._resource_mode_skip`.
 
 ### Secrets
 
-- **Validates**: every secret referenced by the pod template — `imagePullSecrets`,
-  `volumes[].secret.secretName`, and `env[].valueFrom.secretKeyRef.name` — exists;
-  required `secretKeyRef.key` entries must also be present. References marked
+- **Validates** (operator): every secret referenced by the pod template —
+  `imagePullSecrets`, `volumes[].secret.secretName`, and
+  `env[].valueFrom.secretKeyRef.name` — exists in the namespace; required
+  `secretKeyRef.key` entries must also be present. References marked
   `optional: true` retain Kubernetes' optional-secret semantics.
-  in the namespace.
+- **Validates** (CLI): only the names passed on the command line via
+  `--image-pull-secret` and `--secret`. The CLI has no pod template to walk and
+  does not check individual secret keys.
 - **Source**: `src/aiperf/operator/preflight/_workload.py:_check_secrets`,
   `src/aiperf/kubernetes/preflight_capacity_checks.py:check_secrets`
 - **Status**:
-  - `skip` — no secrets referenced.
+  - `skip` — no secrets referenced (operator) or none passed on the CLI.
   - `pass` — all secrets readable.
-  - `fail` — a required secret returned 404 or a required key is absent.
+  - `fail` — a required secret returned 404 (or another non-403 error) or a
+    required key is absent.
   - `warn` — at least one secret returned 403 (cannot verify).
 - **Fix**: `kubectl create secret -n <namespace>` for missing names, or grant
   `get secrets` to the caller.
@@ -415,15 +448,18 @@ See `OperatorPreflightChecker._resource_mode_skip`.
 ### Image Reference (operator) / Image Pull (CLI)
 
 - **Validates**: the configured image has a well-formed reference and a pull path
-  that is plausibly authenticated.
+  that is plausibly authenticated. Neither side contacts the registry.
 - **Source**: `src/aiperf/operator/preflight/_workload.py:_check_image_reference`,
   `src/aiperf/kubernetes/preflight_capacity_checks.py:check_image`
-- **Warns on**:
-  - Implicit `:latest` tag — inconsistent deployments across reconciles.
-  - Non-public registry (`PUBLIC_REGISTRIES`: `docker.io`, `registry-1.docker.io`,
-    `ghcr.io`, `quay.io`, `nvcr.io`, `registry.k8s.io`) with no
-    `imagePullSecrets` configured.
-- **Fails on** (operator): empty image.
+- **Operator (`Image Reference`)** — `fail` on an empty image; `warn` on either an
+  implicit `:latest` tag (neither tag nor digest present — inconsistent deployments
+  across reconciles) or a registry outside `PUBLIC_REGISTRIES` (`docker.io`,
+  `registry-1.docker.io`, `ghcr.io`, `quay.io`, `nvcr.io`, `registry.k8s.io`) with
+  no `imagePullSecrets` configured; otherwise `pass`.
+- **CLI (`Image Pull`)** — `skip` when no `--image` was passed; `pass` when
+  `--image-pull-secret` was supplied; `info` for a public registry; `warn`
+  otherwise, hinting that the registry may need credentials. The CLI reports an
+  implicit `latest` tag as a detail line only, not as a warning.
 - **Fix**: pin an explicit tag; add `imagePullSecrets` for private registries.
 
 ### ConfigMap Size (operator only)
@@ -433,7 +469,8 @@ See `OperatorPreflightChecker._resource_mode_skip`.
 - **Source**: `src/aiperf/operator/preflight/_workload.py:_check_configmap_size`
 - **Status**:
   - `pass` — size below 1 MiB; exact byte count reported.
-  - `fail` — over 1 MiB (API server would reject the Create).
+  - `fail` — over 1 MiB (API server would reject the Create), or the size could
+    not be computed at all.
 - **Fix**: reduce input-dataset size, move large fixtures to a `PersistentVolume`,
   or drop optional config fields.
 
@@ -461,15 +498,17 @@ See `OperatorPreflightChecker._resource_mode_skip`.
   - `pass` — cluster service exists.
   - `fail` — cluster service not found.
   - `info` — external URL; connectivity verified later at runtime.
+  - `warn` — the URL could not be parsed.
 - **Fix**: `kubectl get svc -A | grep <service>`.
 
 ## Skipping preflight
 
 ### Skipping the endpoint reachability probe
 
-Endpoint reachability has a single operator-side probe. After an AIPerfJob is
-admitted, the operator runs `_check_endpoint_reachable` and records an
-`EndpointReachable` condition. Passing `--skip-endpoint-check` on
+Endpoint reachability has a single operator-side probe. In the create handler,
+after spec validation and before the preflight tiers run, the operator calls
+`_check_endpoint_reachable` and records an `EndpointReachable` condition. Passing
+`--skip-endpoint-check` on
 `aiperf kube profile` serializes `spec.skipEndpointCheck: true` for an
 operator-managed AIPerfJob, so the operator skips this probe and proceeds
 without setting the condition.
@@ -510,7 +549,7 @@ Several checks `skip` automatically when they have nothing to validate:
 | Node Selector Match | `nodeSelector` not set |
 | Tolerations | `tolerations` not set |
 | Secrets | no secrets referenced |
-| Kueue Queue | Kueue CRD not installed |
+| Kueue Queue | Kueue CRD not installed *and* no `scheduling.queueName` requested |
 | Endpoint Connectivity (CLI) | `--endpoint-url` not passed |
 | Image Pull (CLI) | `--image` not passed |
 
@@ -523,7 +562,7 @@ export AIPERF_PREFLIGHT_TIMEOUT=90
 ```
 
 Default: 30 s. Range: 0 (exclusive) to 120 s. Set on the operator pod's
-environment — not on the CLI. See `src/aiperf/operator/environment.py:306`.
+environment — not on the CLI. See `src/aiperf/operator/environment.py:367`.
 
 ## Exit codes
 
@@ -542,8 +581,9 @@ Warnings never block.
 ## Further reading
 
 - [ai-debugging-guide.md](ai-debugging-guide.md) — interpreting `PreflightResults`
-  JSON, surfacing failures in CI pipelines, and the full CR status-condition set
-  (`PreflightPassed`, `JobSetReady`, `BenchmarkComplete`).
+  JSON and surfacing failures in CI pipelines. The preflight-related CR status
+  conditions are `PreflightPassed` and `PreflightHasWarnings`
+  (`ConditionType` in `src/aiperf/operator/status.py`).
 - [configuration.md](configuration.md) — CRD fields consumed by preflight
   (`resourceMode`, `scheduling.queueName`, `podTemplate.nodeSelector`,
   `podTemplate.tolerations`, `podTemplate.serviceAccountName`).
