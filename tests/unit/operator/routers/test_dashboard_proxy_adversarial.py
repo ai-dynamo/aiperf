@@ -260,6 +260,30 @@ class TestDashboardProxyWireContract:
         assert "transfer-encoding" not in lowered
         assert captured.headers["x-aiperf-trace"] == "conv-2026-04-21-9c3a"
 
+    def test_proxy_fake_upstream_closes_real_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        original_init = aiohttp.ClientSession.__init__
+        opened: list[aiohttp.ClientSession] = []
+
+        def _record_init(
+            session: aiohttp.ClientSession, *args: object, **kwargs: object
+        ) -> None:
+            original_init(session, *args, **kwargs)
+            opened.append(session)
+
+        monkeypatch.setattr(aiohttp.ClientSession, "__init__", _record_init)
+        app = _make_dashboard_proxy_app(monkeypatch)
+        captured = _install_fake_upstream(monkeypatch)
+
+        with TestClient(app) as client:
+            response = client.get("/dashboard/assets/app.js")
+
+        assert response.status_code == 200
+        assert captured.closed is True
+        assert len(opened) == 1
+        assert opened[0].closed is True
+
     def test_proxy_response_filters_hop_by_hop_headers_and_preserves_chunks(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
