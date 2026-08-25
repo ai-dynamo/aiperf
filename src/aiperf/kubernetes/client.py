@@ -19,7 +19,6 @@ preserves the single import surface:
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -66,6 +65,7 @@ from aiperf.kubernetes.credential_retry import (
     print_credential_wait,
     print_credentials_restored,
 )
+from aiperf.kubernetes.environment import K8sEnvironment
 
 __all__ = [
     "asyncio",
@@ -112,7 +112,7 @@ APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV = "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_O
 
 def _apply_apiserver_tls_server_name_override() -> None:
     """Apply the chaos-only apiserver TLS hostname override when configured."""
-    server_name = os.environ.get(APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV, "").strip()
+    server_name = (K8sEnvironment.APISERVER_TLS_SERVER_NAME_OVERRIDE or "").strip()
     if not server_name:
         return
     cfg = client.Configuration.get_default_copy()

@@ -407,6 +407,10 @@ class _JobSetManifestBuilder:
                     "name": "AIPERF_RESULTS_SIDECAR_PORT",
                     "value": str(ports.RESULTS_SIDECAR),
                 },
+                {
+                    "name": "AIPERF_RESULTS_SIDECAR_LOG_LEVEL",
+                    "value": K8sEnvironment.RESULTS_SIDECAR_LOG_LEVEL,
+                },
             ],
             resources=self._resolve_pod_resources("RESULTS_SIDECAR"),
             volume_mounts=[

@@ -50,6 +50,7 @@ from aiperf.kubernetes.cr_refs import (
     JOBSET_PLURAL,
     JOBSET_VERSION,
 )
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.operator import runs_index
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers import cleanup, create, lifecycle, monitor
@@ -78,7 +79,7 @@ async def login_for_apiserver_proxy(
     connection = await kopf.login_via_async_client(logger=logger, settings=settings)
     if connection is None:
         return None
-    if not os.environ.get(APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV, "").strip():
+    if not (K8sEnvironment.APISERVER_TLS_SERVER_NAME_OVERRIDE or "").strip():
         return connection
     logger.warning(
         "Disabling kopf apiserver TLS verification because %s is set; "
@@ -449,10 +450,12 @@ def _write_sweep_harvest_sentinel(
 ) -> None:
     """Record that a full ``downloaded == listed`` harvest reached the PVC.
 
-    Written ONLY from the full-success path, immediately before ``latest.txt``
-    and the JobSet delete, so an operator that crashes between them converges
-    on the next tick. A write failure aborts the commit and preserves the
-    controller pod's emptyDir for a retry.
+    Written from the full-success path and from the pre-sentinel recovery path
+    (which back-fills the sentinel with ``downloaded == listed == 0`` for an
+    archive harvested before sentinels existed), immediately before
+    ``latest.txt`` and the JobSet delete, so an operator that crashes between
+    them converges on the next tick. A write failure aborts the commit and
+    preserves the controller pod's emptyDir for a retry.
     """
     sentinel = _sweep_harvest_sentinel_path(aggregate_path)
     tmp = sentinel.with_suffix(".tmp")

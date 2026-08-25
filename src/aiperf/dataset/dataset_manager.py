@@ -914,6 +914,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 else None
             ),
             all_turns_source_loaded_payloads=self._all_turns_source_loaded_payloads,
+            aiperf_version=mmap_cache.aiperf_cache_identity(),
             dataset_metadata_json=self.dataset_metadata.model_dump_json(),
         )
         try:

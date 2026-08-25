@@ -12,11 +12,12 @@ from __future__ import annotations
 import contextlib
 import logging
 import math
-from typing import Any
+from typing import Any, Literal
 
 import kopf
 from pydantic import ValidationError
 
+from aiperf.common.results_markers import EPOCH_RE
 from aiperf.config.deployment import PodTemplateConfig
 from aiperf.config.loader import ConfigurationError
 from aiperf.config.sweep import expand_sweep
@@ -196,13 +197,18 @@ async def handle(
 
     sweep_uid = body["metadata"]["uid"]
     epoch = epoch_key_from_body(body)
+    try:
+        _reject_unstorable_epoch(name, namespace, body, epoch)
+    except kopf.PermanentError as e:
+        _record_permanent_rejection(body, patch, e)
+        raise
 
     patch.status["phase"] = "Pending"
     patch.status["totalVariations"] = n_variations
     patch.status["maxTotalRuns"] = max_total_runs
     patch.status["completedRuns"] = 0
     patch.status["failedRuns"] = 0
-    patch.status["runEpoch"] = int(epoch) if epoch.isdigit() else 0
+    patch.status["runEpoch"] = int(epoch)
     patch.status["startedAt"] = format_timestamp()
     base_url = OperatorEnvironment.SERVICE.BASE_URL.rstrip("/")
     patch.status["apiUrl"] = f"{base_url}/api/v1/sweeps/{namespace}/{name}"
@@ -214,6 +220,11 @@ async def handle(
             namespace=namespace,
             sweep_uid=sweep_uid,
             epoch=epoch,
+            # Read off the validated model, NOT the exclude_unset dump below:
+            # an unset resourceMode is absent from that dump, so re-deriving it
+            # from the dict silently substituted a sentinel for the model's
+            # `burstable` default and rendered the pod Guaranteed instead.
+            resource_mode=validated.resource_mode,
             template_spec=validated.model_dump(
                 exclude={
                     "sweep",
@@ -415,6 +426,45 @@ def _reject_overlong_child_names(
         )
 
 
+def _reject_unstorable_epoch(
+    name: str,
+    namespace: str,
+    body: dict[str, Any],
+    epoch: str,
+) -> None:
+    """Reject a run epoch the results layout cannot address as a directory.
+
+    ``status.runEpoch`` is not just a number: the operator harvests the sweep
+    aggregate from ``<base>/<ns>/sweeps/<name>/<runEpoch>/`` (see
+    ``main._resolve_sweep_harvest_identity``, which does
+    ``str(status["runEpoch"])``), while the sweep-controller pod writes to the
+    epoch it receives verbatim in ``AIPERF_SWEEP_EPOCH``. The two must be the
+    same string, and it must be a shape :data:`EPOCH_RE` accepts, because every
+    downstream directory scan and API route filters on that regex.
+
+    ``epoch_key_from_body`` can emit a value that fails it -- a
+    ``creationTimestamp`` before 1970 makes the epoch-seconds negative and the
+    key keeps the minus sign (``'1969-04-25T18:22:03Z'`` -> ``'-21620277'``).
+    Coercing that to ``0`` produced two different epochs for one sweep: the
+    controller wrote to ``-21620277...`` and the operator harvested ``0``, so
+    the harvest found nothing (``fetched.downloaded == 0``) and ``latest.txt``
+    would have been pinned at ``"0"``.
+
+    Fail permanently instead. ``creationTimestamp`` is immutable, so no retry
+    can ever produce a storable epoch; the user must recreate the CR.
+    """
+    if EPOCH_RE.match(epoch):
+        return
+    created = (body.get("metadata") or {}).get("creationTimestamp")
+    raise kopf.PermanentError(
+        f"AIPerfSweep {namespace}/{name} derived an unstorable run epoch "
+        f"{epoch!r} from metadata.creationTimestamp {created!r}: the epoch is "
+        "used as a results directory name and must be 9-10 decimal digits, "
+        "optionally followed by a 6-digit suffix. creationTimestamp is "
+        "immutable, so this cannot be retried -- recreate the AIPerfSweep."
+    )
+
+
 async def _provision_rbac(*, name: str, namespace: str, sweep_uid: str) -> None:
     """Create namespace-scoped ServiceAccount + Role + RoleBinding for sweep-controller."""
     from kubernetes_asyncio import client as k8s
@@ -568,9 +618,15 @@ async def _create_sweep_controller_jobset(
     namespace: str,
     sweep_uid: str,
     epoch: str,
+    resource_mode: Literal["guaranteed", "burstable", "none"],
     template_spec: dict[str, Any],
 ) -> None:
     """Create a JobSet whose single replica runs `python -m aiperf.sweep_controller.main`.
+
+    ``resource_mode`` is passed separately from ``template_spec`` because that
+    dict is an ``exclude_unset=True`` dump: an unset ``resourceMode`` never
+    appears in it, so the resolved value must come from the validated
+    ``AIPerfSweepSpec`` (which always carries the field default).
 
     The pod runs two containers:
 
@@ -638,7 +694,6 @@ async def _create_sweep_controller_jobset(
     # these, the sweep-controller pod gets no requests/limits (rejected by
     # ResourceQuota on hardened clusters) and no securityContext (rejected
     # by Pod Security Admission baseline/restricted).
-    resource_mode = template_spec.get("resourceMode") or "default"
     if pod_template.get("resources") is not None:
         container["resources"] = pod_template["resources"]
     elif resource_mode != "none":
@@ -672,6 +727,10 @@ async def _create_sweep_controller_jobset(
         "env": [
             {"name": "AIPERF_RESULTS_DIR", "value": "/results"},
             {"name": "AIPERF_RESULTS_SIDECAR_PORT", "value": str(sidecar_port)},
+            {
+                "name": "AIPERF_RESULTS_SIDECAR_LOG_LEVEL",
+                "value": K8sEnvironment.RESULTS_SIDECAR_LOG_LEVEL,
+            },
         ],
         "volumeMounts": [
             {"name": "results", "mountPath": "/results", "readOnly": True},
