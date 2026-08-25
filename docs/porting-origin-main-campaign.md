@@ -68,7 +68,7 @@ implementation, test run, or review.
 | 40 | `215be05b6a` | Baseten outcome fidelity | complete | applicable | Merged exactly in `1d20f63c51`; native E2E, TTFT, and cached-token outcomes survive real-Parquet registry composition without dispatch leakage and are Graham-approved. |
 | 41 | `516faa12c8` | CODEOWNERS | complete | not-applicable | Exact merge in `eeb59a96d5`; closure note `docs/origin-main-findings/commit-041-516faa12c8.md`. |
 | 42 | `ce453582c7` | CONTRIBUTING spelling | complete | not-applicable | Exact merge completed on `ajc/port-origin-042`; closure note `docs/origin-main-findings/commit-042-ce453582c7.md`. |
-| 43 | `6ed4823d12` | cache-bust help link | analysing | not-applicable | Closure note drafted in `docs/origin-main-findings/commit-043-6ed4823d12.md`; exact merge and final verification pending. |
+| 43 | `6ed4823d12` | cache-bust help link | complete | not-applicable | Exact merge completed in `e9767333b6`; closure note `docs/origin-main-findings/commit-043-6ed4823d12.md`. |
 | 44 | `082a51827e` | TraceLab dataset | pending | applicable | No native loader/config path. |
 | 45 | `21f8ad7b3e` | high-resolution pacing | analysing | unassessed | timerfd exists; late-slot behavior needs characterization. |
 | 46 | `e659d2a95a` | FFmpeg codec allowlist | pending | shared-product-action | Audit native codec defaults before porting shared Dockerfile policy. |

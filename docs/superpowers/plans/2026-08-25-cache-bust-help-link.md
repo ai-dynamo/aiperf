@@ -17,8 +17,8 @@ separately so the ancestry remains auditable.
   cache-bust help text, regenerated CLI docs, and the local review-skill guard.
 - [x] Compare the diff against this branch and record that runtime behavior is
   unchanged even though the shared docs/review tree needs the same update.
-- [ ] Commit the closure evidence on the target branch before merging upstream.
-- [ ] Complete the exact two-parent `--no-ff` merge with upstream as the second
+- [x] Commit the closure evidence on the target branch before merging upstream.
+- [x] Complete the exact two-parent `--no-ff` merge with upstream as the second
   parent.
-- [ ] Run merge verification and perform a Graham-style review; the expected
+- [x] Run merge verification and perform a Graham-style review; the expected
   outcome is no findings.
