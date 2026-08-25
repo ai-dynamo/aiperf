@@ -24,10 +24,6 @@ function isBrowser() {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
 }
 
-export function getTheme() {
-  return THEME;
-}
-
 export function initTheme() {
   if (!isBrowser() || initialized) return;
   initialized = true;

@@ -9,9 +9,6 @@ export const jobs = signal([]);
 // Raw sweeps list from /api/v1/sweeps
 export const sweeps = signal([]);
 
-// Currently selected job (for detail page)
-export const selectedJob = signal(null);
-
 // Cluster info from /api/v1/cluster
 export const clusterInfo = signal(null);
 
@@ -119,61 +116,6 @@ export function clearFreshnessSource(source) {
 export const freshnessSources = computed(() =>
   Object.values(freshness.value).sort((a, b) => a.source.localeCompare(b.source)),
 );
-
-// Loading states
-export const loading = signal({
-  jobs: false,
-  cluster: false,
-  leaderboard: false,
-  history: false,
-});
-
-// Derived: jobs indexed by "namespace/name" key.
-// Note: /api/v1/jobs returns flat AIPerfJobInfo records, not raw CR objects.
-export const jobsById = computed(() => {
-  const map = {};
-  for (const job of jobs.value) {
-    const key = `${job.namespace ?? 'default'}/${job.name ?? ''}`;
-    map[key] = job;
-  }
-  return map;
-});
-
-// Derived: running jobs only
-export const runningJobs = computed(() =>
-  jobs.value.filter((j) => {
-    const phase = (j.phase ?? '').toLowerCase();
-    return phase === 'running' || phase === 'initializing';
-  }),
-);
-
-// Derived: completed jobs only
-export const completedJobs = computed(() =>
-  jobs.value.filter((j) => {
-    const phase = (j.phase ?? '').toLowerCase();
-    return phase === 'completed' || phase === 'succeeded';
-  }),
-);
-
-// Derived: non-success terminal jobs (failed, error, cancelled).
-// ``cancelled`` is a separate terminal phase from ``failed``
-// — keep both rolled into this signal so dashboard "Failed" tabs still
-// surface user-cancelled runs.
-export const failedJobs = computed(() =>
-  jobs.value.filter((j) => {
-    const phase = (j.phase ?? '').toLowerCase();
-    return phase === 'failed' || phase === 'error' || phase === 'cancelled';
-  }),
-);
-
-/**
- * Update the loading state for a specific key.
- * @param {string} key
- * @param {boolean} value
- */
-export function setLoading(key, value) {
-  loading.value = { ...loading.value, [key]: value };
-}
 
 /**
  * Set a global error. Pass null to clear.

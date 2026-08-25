@@ -47,12 +47,6 @@ export function fmtDuration(seconds) {
   return `${sec}s`;
 }
 
-/** Seconds since a backend-supplied ns timestamp. Returns null if not a number. */
-export function secondsSinceNs(ns) {
-  if (ns == null || !isFinite(Number(ns))) return null;
-  return (Date.now() - Number(ns) / 1e6) / 1000;
-}
-
 /** HH:MM:SS in local time for log lines. */
 export function fmtClock(date = new Date()) {
   return date.toLocaleTimeString();

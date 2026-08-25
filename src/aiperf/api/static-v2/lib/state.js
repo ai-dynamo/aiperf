@@ -99,23 +99,3 @@ export const runStartedAt = signal(null);
 export function markRunStarted() {
   if (runStartedAt.value == null) runStartedAt.value = Date.now();
 }
-
-/** Clear all live state (called on WebSocket disconnect). */
-export function resetLiveState() {
-  phases.value = {};
-  records.value = {
-    successRecords: 0,
-    errorRecords: 0,
-    finalRequestsCompleted: null,
-    startNs: null,
-    endNs: null,
-    active: false,
-    complete: false,
-  };
-  workerGroups.value = {};
-  serverMetrics.value = [];
-  realtimeMetrics.value = [];
-  telemetryMetrics.value = [];
-  timeseries.value = {};
-  runStartedAt.value = null;
-}
