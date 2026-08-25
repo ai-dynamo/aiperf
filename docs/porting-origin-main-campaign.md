@@ -29,7 +29,7 @@ Sol plan, TDD evidence, verification, and the required Graham review.
 | 1 | `817a8d84ddb9` | fix(accuracy): grade LCB codegen in an out-of-process worker (#1145) (#1175) | complete | Merge `1c03271dac3e`; port commits `63eb01a355`, `e62454bfcd`, and `9e859f6110`; Graham approved. Focused Python verification: 53 passed, 2 skipped, 2 deselected. Rust evaluator-worker verification: 7 passed. |
 | 2 | `0883bd1aee` | chore: bump aiperf version to 0.12.0 (#1194) | not-applicable | Merge `9596121af1` has upstream as second parent. The upstream change is Python package/mock-server/docs version metadata only; native crates own independent versions and no runtime behavior changed. |
 | 3 | `34b2be2ee1` | feat: support Speculative Decoding metrics in AIPerf (#1153) | complete | Merge `4d076c660f`; native SGLang/TRT-LLM speculative acceptance metrics already feed the speed-bench report, so no Rust delta is required. |
-| 4 | `6db948524e` | fix: uncaught valueerror in sagemaker loader (#1199) | pending | — |
+| 4 | `6db948524e` | fix: uncaught valueerror in sagemaker loader (#1199) | complete | Merge `586c529b96`; native SageMaker capture parsing already maps malformed inference timestamps to a typed validation error. |
 | 5 | `ce715ae849` | fix(agentic): preserve trace think time with global idle guard (#1201) | pending | — |
 | 6 | `93b6223373` | refactor(telemetry): rename TelemetryRecord.dcgm_url → telemetry_source_url (#1200) | pending | — |
 | 7 | `86ea3f7deb` | fix(cli-runner): fix multi-run detailed aggregation JSONL fallback (#1203) | pending | — |
@@ -188,3 +188,25 @@ The individual scope evidence is
 `docs/origin-main-findings/early-002-030.md` section 003. No new Rust feature
 or behavior change is required; the native counterpart existed before this
 merge, so no port-specific spec, Sol plan, or test change is necessary.
+
+## Per-commit record: 6db948524e82
+
+### Upstream intent and Rust comparison
+
+Upstream prevents malformed SageMaker `eventMetadata.inferenceTime` values from
+escaping as an unhandled Python `ValueError`. Native
+`SageMakerDataCaptureDatasetLoader::load` routes each row through
+`parse_capture`; that parser requires a string timestamp and maps
+`parse_iso8601_ms` failures into `DatasetError::Validation` in
+`rust/runtime/src/dataset/loader/trace.rs`. This is the native equivalent
+failure contract already in effect.
+
+### Merge evidence and decision
+
+`586c529b969f7e73c1febdbc12982dd5641a32c1` is a two-parent non-fast-forward
+merge with `6db948524e824164accc99faefca617d200c13ad` as its second parent.
+The independently reviewed individual finding is
+`docs/origin-main-findings/commit-004-6db948524e.md`. No Rust product change,
+spec, or Sol plan is required; a malformed-timestamp assertion alongside the
+existing Rust SageMaker success test is a future native-coverage improvement,
+not a behavioral port requirement.
