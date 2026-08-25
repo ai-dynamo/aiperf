@@ -27,7 +27,7 @@ Ruling: concrete phase-index selection applies to exact row masks, sketch keys, 
 ## Task state
 
 - Task 1: completed, GREEN, and independently approved
-- Task 2: review fix completed and GREEN; scoped re-review pending
+- Task 2: completed, GREEN, and independently approved
 - Task 3: pending
 - Task 4: pending
 
@@ -59,3 +59,12 @@ passed 20/20 with 1742 filtered tests, and formatting passed. The adjacent
 metrics-core sweep passed 130/131; its sole failure remains the unrelated
 shared-head `0.12.0` versus `0.0.0` report-golden drift. See `task-2-report.md`
 and `task-2-independent-review.md`. Task 3 remains gated on scoped re-review.
+
+Task 2 re-review: APPROVED at
+`d7b460325599057012ee67a1c7f1fdffb5d533b1`; see `task-2-rereview.md`. The
+reviewer reran the authoritative focused suite (20 passed, 0 failed, 1742
+filtered), formatting, and commit-range diff check. All five rejected findings
+are resolved and the remaining fix scan found no blockers. An external probe
+also confirmed exact `u64::MAX + 1` native-report JSON serialization while the
+compatible cellular MessagePack boundary refuses non-narrowable counts. Task 3
+may begin.

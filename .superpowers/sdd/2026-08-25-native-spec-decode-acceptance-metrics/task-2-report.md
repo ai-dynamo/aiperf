@@ -103,4 +103,10 @@ RUSTC_WRAPPER=sccache CARGO_TARGET_DIR=/mnt/4tb/aiperf-target-port-013 \
 Result: 20 passed, 0 failed, 1742 filtered out. `cargo fmt --all -- --check`
 also passed. The adjacent `metrics_core::` sweep passed 130 tests and retained
 only the already-recorded unrelated version-golden failure (`0.12.0` actual,
-`0.0.0` expected). Scoped re-review of the fix commit remains the Task 3 gate.
+`0.0.0` expected).
+
+Scoped re-review APPROVED exact fix commit
+`d7b460325599057012ee67a1c7f1fdffb5d533b1`; see `task-2-rereview.md`. The
+reviewer independently reran the 20-test suite, formatting, and commit-range
+diff check, confirmed all five findings resolved, and found no new blockers.
+Task 3 may begin.
