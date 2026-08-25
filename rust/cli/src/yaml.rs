@@ -3558,6 +3558,56 @@ benchmark:
             .expect("worker panicked");
     }
 
+    /// An explicit `--synthesis-*` flag must override the corresponding
+    /// YAML-authored `dataset.synthesis` field while preserving all other
+    /// authored synthesis values.
+    #[test]
+    fn cli_synthesis_flag_overlays_yaml_synthesis_and_preserves_other_yaml_values() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                let yaml = cfg(
+                    "  dataset:\n    type: file\n    path: /tmp/trace.jsonl\n    format: mooncake_trace\n    synthesis:\n      speedupRatio: 2.0\n      maxOsl: 16000\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+                );
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+                let flags = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--synthesis-max-osl".to_string(),
+                    "12000".to_string(),
+                ])
+                .expect("flags parse");
+                let run = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&flags),
+                )
+                .expect("overlay resolves");
+                let dataset = run
+                    .cfg
+                    .datasets
+                    .as_ref()
+                    .and_then(|datasets| datasets.first())
+                    .expect("dataset");
+                let crate::model::dataset::Dataset::File(file) = dataset else {
+                    panic!("expected a file dataset");
+                };
+                let synthesis = file.synthesis.as_ref().expect("synthesis survives");
+                assert_eq!(
+                    synthesis["max_osl"],
+                    serde_json::json!(12000),
+                    "explicit --synthesis-max-osl must override YAML"
+                );
+                assert_eq!(
+                    synthesis["speedup_ratio"],
+                    serde_json::json!(2.0),
+                    "other YAML-authored synthesis fields must be preserved"
+                );
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
     /// When synthetic dataset has no explicit entries and no phase.requests,
     /// a CLI --request-count N should become the entry pool size (matching
     /// Python _resolve_entries fallback). When entries is set by YAML, CLI
