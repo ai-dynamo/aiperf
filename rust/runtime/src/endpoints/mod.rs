@@ -37,6 +37,7 @@ pub use config::{
 };
 pub use dynosim::DynosimEndpointFactory;
 pub use extraction::extract_payload;
+pub(crate) use implementation::capture_endpoint_policy;
 pub use implementation::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
     RealtimeEndpoint, ResponsesEndpoint, ShapeLowerer, TurnMessageLowerer,

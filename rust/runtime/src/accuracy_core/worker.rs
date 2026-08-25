@@ -13,11 +13,14 @@ use std::fmt::{self, Display};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use parking_lot::Mutex as SyncMutex;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::{Mutex as AsyncMutex, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::accuracy_core::protocol::{
@@ -28,6 +31,7 @@ use crate::accuracy_core::protocol::{
 
 const MAX_PROTOCOL_LINE_BYTES: usize = 64 * 1024 * 1024;
 const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch", "shutdown"];
+const PROCESS_GROUP_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Exact parent-environment keys forwarded to the evaluator subprocess.
 ///
@@ -38,17 +42,12 @@ const REQUIRED_CAPABILITIES: &[&str] = &["load", "next_problems", "grade_batch",
 /// `env_clear()`; callers add anything else explicitly through
 /// [`WorkerProcessConfig::env`].
 const FORWARDED_ENVIRONMENT_KEYS: &[&str] = &[
-    // Executable lookup for the interpreter and any subprocesses it spawns.
     "PATH",
-    // Runtime home used for cache/config discovery and tempfile fallback.
     "HOME",
-    // Text codec / locale so the worker's stdio encoding matches the parent.
     "LANG",
     "LC_ALL",
     "LC_CTYPE",
-    // Temp-file root.
     "TMPDIR",
-    // Interpreter and module resolution for venv, editable, and src-layout installs.
     "PYTHONPATH",
     "PYTHONHOME",
     "VIRTUAL_ENV",
@@ -213,18 +212,31 @@ pub trait AccuracyEvaluator {
 
 /// Long-lived supervised Python evaluator process.
 pub struct PythonEvaluator {
-    child: Child,
-    stdin: BufWriter<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
-    stderr_task: Option<JoinHandle<()>>,
+    session: Option<EvaluatorSession>,
     next_id: u64,
     identity: EvaluatorIdentity,
-    shutdown: bool,
+}
+
+type PendingResponse = Result<WorkerResponse, EvaluatorWorkerError>;
+
+struct EvaluatorSession {
+    stdin: Arc<AsyncMutex<BufWriter<ChildStdin>>>,
+    child: Child,
+    responses: Arc<SyncMutex<ResponseState>>,
+    stderr_task: Option<JoinHandle<()>>,
+    reader_task: Option<JoinHandle<()>>,
+    #[cfg(unix)]
+    process_group_id: i32,
+}
+
+#[derive(Default)]
+struct ResponseState {
+    pending: BTreeMap<u64, oneshot::Sender<PendingResponse>>,
+    failure: Option<EvaluatorWorkerError>,
 }
 
 /// Whether a parent-environment key is on the evaluator forwarding allowlist.
 fn is_forwarded_environment_key(key: &OsStr) -> bool {
-    // Non-UTF-8 keys are never part of the curated allowlist.
     let Some(name) = key.to_str() else {
         return false;
     };
@@ -254,147 +266,194 @@ fn allowlisted_child_environment(
     environment
 }
 
-impl PythonEvaluator {
-    /// Spawn the worker, drain stderr, and negotiate protocol version 1.
-    pub async fn spawn(config: WorkerProcessConfig) -> Result<Self, EvaluatorWorkerError> {
-        // Clear the inherited environment and forward only a curated allowlist
-        // so host secrets never reach the Python evaluator.
-        let child_environment = allowlisted_child_environment(&config.environment);
-        let mut command = Command::new(&config.program);
-        command
-            .args(&config.args)
-            .env_clear()
-            .envs(&child_environment)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        if let Some(current_dir) = &config.current_dir {
-            command.current_dir(current_dir);
-        }
-        let mut child = command
-            .spawn()
-            .map_err(|error| EvaluatorWorkerError::Spawn {
-                program: config.program.to_string_lossy().into_owned(),
-                message: error.to_string(),
-            })?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or(EvaluatorWorkerError::MissingPipe("stdin"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or(EvaluatorWorkerError::MissingPipe("stdout"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or(EvaluatorWorkerError::MissingPipe("stderr"))?;
-        let sink = config.log_sink;
-        let stderr_task = tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => sink.log_line(&line),
-                    Ok(None) => break,
-                    Err(error) => {
-                        sink.log_line(&format!("failed to read evaluator stderr: {error}"));
-                        break;
-                    }
-                }
+#[cfg(unix)]
+fn configure_evaluator_process_group(command: &mut Command) {
+    // SAFETY: `setsid` is async-signal-safe in the forked child before exec.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
             }
+            Ok(())
         });
-        let placeholder = EvaluatorIdentity {
-            protocol: 0,
-            worker_version: String::new(),
-            python_version: String::new(),
-            python_executable: String::new(),
-            packages: BTreeMap::new(),
-            worker_source_sha256: String::new(),
-            dependency_lock_sha256: None,
-            container_digest: None,
-            capabilities: Vec::new(),
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_evaluator_process_group(_: &mut Command) {}
+
+#[cfg(unix)]
+fn signal_evaluator_process_group(
+    process_group_id: i32,
+    signal: libc::c_int,
+) -> Result<(), EvaluatorWorkerError> {
+    let result = unsafe { libc::kill(-process_group_id, signal) };
+    if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(EvaluatorWorkerError::Process(format!(
+            "cannot signal evaluator process group: {}",
+            std::io::Error::last_os_error()
+        )))
+    }
+}
+
+#[cfg(unix)]
+fn is_evaluator_process_group_alive(process_group_id: i32) -> Result<bool, EvaluatorWorkerError> {
+    let result = unsafe { libc::kill(-process_group_id, 0) };
+    if result == 0 {
+        return Ok(true);
+    }
+    match std::io::Error::last_os_error().raw_os_error() {
+        Some(libc::ESRCH) => Ok(false),
+        Some(libc::EPERM) => Ok(true),
+        _ => Err(EvaluatorWorkerError::Process(format!(
+            "cannot inspect evaluator process group: {}",
+            std::io::Error::last_os_error()
+        ))),
+    }
+}
+
+#[cfg(unix)]
+fn remaining_evaluator_deadline(
+    deadline: tokio::time::Instant,
+    message: &str,
+) -> Result<Duration, EvaluatorWorkerError> {
+    deadline
+        .checked_duration_since(tokio::time::Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| EvaluatorWorkerError::Process(message.to_owned()))
+}
+
+#[cfg(unix)]
+async fn wait_for_evaluator_process_group_exit(
+    process_group_id: i32,
+    deadline: tokio::time::Instant,
+) -> Result<(), EvaluatorWorkerError> {
+    while is_evaluator_process_group_alive(process_group_id)? {
+        let remaining = remaining_evaluator_deadline(
+            deadline,
+            "evaluator process-group reap deadline elapsed",
+        )?;
+        tokio::time::sleep(remaining.min(Duration::from_millis(10))).await;
+    }
+    Ok(())
+}
+
+fn fault_response_state(responses: &Arc<SyncMutex<ResponseState>>, error: EvaluatorWorkerError) {
+    let drained = {
+        let mut responses = responses.lock();
+        responses.failure = Some(error.clone());
+        std::mem::take(&mut responses.pending)
+    };
+    for sender in drained.into_values() {
+        let _ = sender.send(Err(error.clone()));
+    }
+}
+
+async fn run_response_reader(
+    mut stdout: BufReader<ChildStdout>,
+    responses: Arc<SyncMutex<ResponseState>>,
+) {
+    loop {
+        let mut line = String::new();
+        let bytes = match stdout.read_line(&mut line).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                fault_response_state(&responses, EvaluatorWorkerError::Io(error.to_string()));
+                break;
+            }
         };
-        let mut worker = Self {
-            child,
-            stdin: BufWriter::new(stdin),
-            stdout: BufReader::new(stdout),
-            stderr_task: Some(stderr_task),
-            next_id: 1,
-            identity: placeholder,
-            shutdown: false,
-        };
-        let id = worker.take_id()?;
-        let identity: EvaluatorIdentity = worker
-            .request(WorkerRequest::Hello {
-                id,
-                protocol: EVALUATOR_PROTOCOL_VERSION,
-            })
-            .await?;
-        if identity.protocol != EVALUATOR_PROTOCOL_VERSION {
-            return Err(EvaluatorWorkerError::Protocol(format!(
-                "worker negotiated protocol {}, expected {}",
-                identity.protocol, EVALUATOR_PROTOCOL_VERSION
-            )));
+        if bytes == 0 {
+            fault_response_state(
+                &responses,
+                EvaluatorWorkerError::Crashed {
+                    status: "worker exited before responding".to_string(),
+                },
+            );
+            break;
         }
-        validate_identity(&identity)?;
-        worker.identity = identity;
-        Ok(worker)
+        if bytes > MAX_PROTOCOL_LINE_BYTES {
+            fault_response_state(
+                &responses,
+                EvaluatorWorkerError::Protocol(format!(
+                    "evaluator response exceeded {MAX_PROTOCOL_LINE_BYTES} bytes"
+                )),
+            );
+            break;
+        }
+        let response: WorkerResponse = match serde_json::from_str(&line) {
+            Ok(response) => response,
+            Err(error) => {
+                fault_response_state(&responses, EvaluatorWorkerError::Json(error.to_string()));
+                break;
+            }
+        };
+        let Some(id) = response.id else {
+            fault_response_state(
+                &responses,
+                EvaluatorWorkerError::Protocol("evaluator response omitted request id".to_string()),
+            );
+            break;
+        };
+        let sender = {
+            let mut responses = responses.lock();
+            responses.pending.remove(&id)
+        };
+        if let Some(sender) = sender {
+            let _ = sender.send(Ok(response));
+        }
     }
+}
 
-    fn take_id(&mut self) -> Result<u64, EvaluatorWorkerError> {
-        let id = self.next_id;
-        self.next_id = self
-            .next_id
-            .checked_add(1)
-            .ok_or_else(|| EvaluatorWorkerError::Protocol("request id overflow".to_string()))?;
-        Ok(id)
-    }
-
-    async fn request<T: DeserializeOwned>(
-        &mut self,
+impl PythonEvaluator {
+    async fn dispatch_request<T: DeserializeOwned>(
+        stdin: Arc<AsyncMutex<BufWriter<ChildStdin>>>,
+        responses: Arc<SyncMutex<ResponseState>>,
         request: WorkerRequest<'_>,
     ) -> Result<T, EvaluatorWorkerError> {
-        if self.shutdown {
-            return Err(EvaluatorWorkerError::Protocol(
-                "evaluator request attempted after shutdown".to_string(),
-            ));
-        }
         let expected_id = request.id();
         let encoded = serde_json::to_vec(&request)
             .map_err(|error| EvaluatorWorkerError::Json(error.to_string()))?;
-        self.stdin
-            .write_all(&encoded)
-            .await
-            .map_err(EvaluatorWorkerError::io)?;
-        self.stdin
-            .write_all(b"\n")
-            .await
-            .map_err(EvaluatorWorkerError::io)?;
-        self.stdin.flush().await.map_err(EvaluatorWorkerError::io)?;
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut responses = responses.lock();
+            if let Some(error) = &responses.failure {
+                return Err(error.clone());
+            }
+            match responses.pending.entry(expected_id) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(sender);
+                }
+                std::collections::btree_map::Entry::Occupied(_) => {
+                    return Err(EvaluatorWorkerError::Protocol(format!(
+                        "duplicate pending evaluator request id {expected_id}"
+                    )));
+                }
+            }
+        }
 
-        let mut line = String::new();
-        let bytes = self
-            .stdout
-            .read_line(&mut line)
-            .await
-            .map_err(EvaluatorWorkerError::io)?;
-        if bytes == 0 {
-            return Err(self.crashed_error().await);
+        let write_result = async {
+            let mut stdin = stdin.lock().await;
+            stdin.write_all(&encoded).await?;
+            stdin.write_all(b"\n").await?;
+            stdin.flush().await
         }
-        if bytes > MAX_PROTOCOL_LINE_BYTES {
-            return Err(EvaluatorWorkerError::Protocol(format!(
-                "evaluator response exceeded {MAX_PROTOCOL_LINE_BYTES} bytes"
-            )));
+        .await;
+        if let Err(error) = write_result {
+            let mut responses = responses.lock();
+            responses.pending.remove(&expected_id);
+            return Err(EvaluatorWorkerError::io(error));
         }
-        let response: WorkerResponse = serde_json::from_str(&line)
-            .map_err(|error| EvaluatorWorkerError::Json(error.to_string()))?;
-        if response.id != Some(expected_id) {
-            return Err(EvaluatorWorkerError::Protocol(format!(
-                "evaluator response id {:?} did not match request {expected_id}",
-                response.id
-            )));
-        }
+
+        let response = match receiver.await {
+            Ok(response) => response?,
+            Err(_) => {
+                return Err(EvaluatorWorkerError::Crashed {
+                    status: "worker response channel closed".to_string(),
+                });
+            }
+        };
         if !response.ok {
             let error = response.error.ok_or_else(|| {
                 EvaluatorWorkerError::Protocol(
@@ -416,13 +475,257 @@ impl PythonEvaluator {
             .map_err(|error| EvaluatorWorkerError::Json(error.to_string()))
     }
 
-    async fn crashed_error(&mut self) -> EvaluatorWorkerError {
-        match self.child.wait().await {
-            Ok(status) => EvaluatorWorkerError::Crashed {
-                status: status.to_string(),
-            },
-            Err(error) => EvaluatorWorkerError::Io(error.to_string()),
+    async fn reap_session(
+        mut session: EvaluatorSession,
+        needs_successful_exit: bool,
+    ) -> Result<(), EvaluatorWorkerError> {
+        fault_response_state(
+            &session.responses,
+            EvaluatorWorkerError::Process("evaluator session terminated".to_string()),
+        );
+        {
+            let mut stdin = session.stdin.lock().await;
+            let _ = stdin.shutdown().await;
         }
+
+        let status = {
+            let child = &mut session.child;
+            #[cfg(unix)]
+            {
+                let deadline = tokio::time::Instant::now()
+                    .checked_add(PROCESS_GROUP_REAP_TIMEOUT)
+                    .ok_or_else(|| {
+                        EvaluatorWorkerError::Process(
+                            "evaluator process-group reap deadline is invalid".to_string(),
+                        )
+                    })?;
+                if !needs_successful_exit {
+                    signal_evaluator_process_group(session.process_group_id, libc::SIGKILL)?;
+                }
+                let remaining =
+                    remaining_evaluator_deadline(deadline, "evaluator reap deadline elapsed")?;
+                let status = match tokio::time::timeout(remaining, child.wait()).await {
+                    Ok(result) => result.map_err(EvaluatorWorkerError::io)?,
+                    Err(_) => {
+                        signal_evaluator_process_group(session.process_group_id, libc::SIGKILL)?;
+                        let remaining = remaining_evaluator_deadline(
+                            deadline,
+                            "evaluator reap deadline elapsed",
+                        )?;
+                        tokio::time::timeout(remaining, child.wait())
+                            .await
+                            .map_err(|_| {
+                                EvaluatorWorkerError::Process(
+                                    "evaluator reap deadline elapsed".to_string(),
+                                )
+                            })?
+                            .map_err(EvaluatorWorkerError::io)?
+                    }
+                };
+                signal_evaluator_process_group(session.process_group_id, libc::SIGKILL)?;
+                wait_for_evaluator_process_group_exit(session.process_group_id, deadline).await?;
+                status
+            }
+            #[cfg(not(unix))]
+            {
+                if !needs_successful_exit
+                    && child
+                        .try_wait()
+                        .map_err(EvaluatorWorkerError::io)?
+                        .is_none()
+                {
+                    child.kill().await.map_err(EvaluatorWorkerError::io)?;
+                }
+                child.wait().await.map_err(EvaluatorWorkerError::io)?
+            }
+        };
+
+        if let Some(task) = session.reader_task.take() {
+            task.abort();
+            let _ = task.await;
+        }
+        if let Some(task) = session.stderr_task.take() {
+            task.abort();
+            let _ = task.await;
+        }
+
+        if needs_successful_exit && !status.success() {
+            return Err(EvaluatorWorkerError::Crashed {
+                status: status.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn force_reap_session(&mut self) -> Result<(), EvaluatorWorkerError> {
+        if let Some(session) = self.session.take() {
+            Self::reap_session(session, false).await?;
+        }
+        Ok(())
+    }
+
+    fn needs_reap_after_request(error: &EvaluatorWorkerError) -> bool {
+        !matches!(error, EvaluatorWorkerError::Remote { .. })
+    }
+
+    /// Spawn the worker, drain stderr, and negotiate protocol version 1.
+    pub async fn spawn(config: WorkerProcessConfig) -> Result<Self, EvaluatorWorkerError> {
+        let child_environment = allowlisted_child_environment(&config.environment);
+        let mut command = Command::new(&config.program);
+        command
+            .args(&config.args)
+            .env_clear()
+            .envs(&child_environment)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        configure_evaluator_process_group(&mut command);
+        if let Some(current_dir) = &config.current_dir {
+            command.current_dir(current_dir);
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|error| EvaluatorWorkerError::Spawn {
+                program: config.program.to_string_lossy().into_owned(),
+                message: error.to_string(),
+            })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or(EvaluatorWorkerError::MissingPipe("stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or(EvaluatorWorkerError::MissingPipe("stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or(EvaluatorWorkerError::MissingPipe("stderr"))?;
+        #[cfg(unix)]
+        let process_group_id = i32::try_from(child.id().ok_or_else(|| {
+            EvaluatorWorkerError::Process("evaluator child process id was unavailable".to_string())
+        })?)
+        .map_err(|_| {
+            EvaluatorWorkerError::Process("evaluator child process id overflowed i32".to_string())
+        })?;
+        let sink = config.log_sink;
+        let stderr_task = tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => sink.log_line(&line),
+                    Ok(None) => break,
+                    Err(error) => {
+                        sink.log_line(&format!("failed to read evaluator stderr: {error}"));
+                        break;
+                    }
+                }
+            }
+        });
+        let responses = Arc::new(SyncMutex::new(ResponseState::default()));
+        let reader_task = tokio::spawn(run_response_reader(
+            BufReader::new(stdout),
+            Arc::clone(&responses),
+        ));
+        let placeholder = EvaluatorIdentity {
+            protocol: 0,
+            worker_version: String::new(),
+            python_version: String::new(),
+            python_executable: String::new(),
+            packages: BTreeMap::new(),
+            worker_source_sha256: String::new(),
+            dependency_lock_sha256: None,
+            container_digest: None,
+            capabilities: Vec::new(),
+        };
+        let mut worker = Self {
+            session: Some(EvaluatorSession {
+                stdin: Arc::new(AsyncMutex::new(BufWriter::new(stdin))),
+                child,
+                responses,
+                stderr_task: Some(stderr_task),
+                reader_task: Some(reader_task),
+                #[cfg(unix)]
+                process_group_id,
+            }),
+            next_id: 1,
+            identity: placeholder,
+        };
+        let id = worker.take_id()?;
+        let identity: EvaluatorIdentity = match worker
+            .request(WorkerRequest::Hello {
+                id,
+                protocol: EVALUATOR_PROTOCOL_VERSION,
+            })
+            .await
+        {
+            Ok(identity) => identity,
+            Err(error) => {
+                let _ = worker.force_reap_session().await;
+                return Err(error);
+            }
+        };
+        if identity.protocol != EVALUATOR_PROTOCOL_VERSION {
+            let error = EvaluatorWorkerError::Protocol(format!(
+                "worker negotiated protocol {}, expected {}",
+                identity.protocol, EVALUATOR_PROTOCOL_VERSION
+            ));
+            let _ = worker.force_reap_session().await;
+            return Err(error);
+        }
+        if let Err(error) = validate_identity(&identity) {
+            let _ = worker.force_reap_session().await;
+            return Err(error);
+        }
+        worker.identity = identity;
+        Ok(worker)
+    }
+
+    fn take_id(&mut self) -> Result<u64, EvaluatorWorkerError> {
+        let id = self.next_id;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| EvaluatorWorkerError::Protocol("request id overflow".to_string()))?;
+        Ok(id)
+    }
+
+    async fn request<T: DeserializeOwned>(
+        &mut self,
+        request: WorkerRequest<'_>,
+    ) -> Result<T, EvaluatorWorkerError> {
+        let session = self.session.as_ref().ok_or_else(|| {
+            EvaluatorWorkerError::Protocol("evaluator request attempted after shutdown".to_string())
+        })?;
+        let result = Self::dispatch_request(
+            Arc::clone(&session.stdin),
+            Arc::clone(&session.responses),
+            request,
+        )
+        .await;
+        if let Err(error) = &result
+            && Self::needs_reap_after_request(error)
+        {
+            let _ = self.force_reap_session().await;
+        }
+        result
+    }
+}
+
+impl Drop for PythonEvaluator {
+    fn drop(&mut self) {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        if let Some(task) = &session.reader_task {
+            task.abort();
+        }
+        if let Some(task) = &session.stderr_task {
+            task.abort();
+        }
+        #[cfg(unix)]
+        let _ = signal_evaluator_process_group(session.process_group_id, libc::SIGKILL);
     }
 }
 
@@ -572,29 +875,25 @@ impl AccuracyEvaluator for PythonEvaluator {
     }
 
     async fn shutdown(&mut self) -> Result<(), EvaluatorWorkerError> {
-        if self.shutdown {
+        if self.session.is_none() {
             return Ok(());
         }
         let id = self.take_id()?;
-        let result: ShutdownResult = self.request(WorkerRequest::Shutdown { id }).await?;
+        let result: ShutdownResult = match self.request(WorkerRequest::Shutdown { id }).await {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = self.force_reap_session().await;
+                return Err(error);
+            }
+        };
         if !result.shutdown {
-            return Err(EvaluatorWorkerError::Protocol(
-                "worker did not acknowledge shutdown".to_string(),
-            ));
+            let error =
+                EvaluatorWorkerError::Protocol("worker did not acknowledge shutdown".to_string());
+            let _ = self.force_reap_session().await;
+            return Err(error);
         }
-        self.shutdown = true;
-        self.stdin
-            .shutdown()
-            .await
-            .map_err(EvaluatorWorkerError::io)?;
-        let status = self.child.wait().await.map_err(EvaluatorWorkerError::io)?;
-        if !status.success() {
-            return Err(EvaluatorWorkerError::Crashed {
-                status: status.to_string(),
-            });
-        }
-        if let Some(task) = self.stderr_task.take() {
-            let _ = task.await;
+        if let Some(session) = self.session.take() {
+            Self::reap_session(session, true).await?;
         }
         Ok(())
     }
@@ -618,6 +917,8 @@ pub enum EvaluatorWorkerError {
     Json(String),
     /// JSONL protocol invariant failure.
     Protocol(String),
+    /// Session setup or teardown failure outside the JSONL protocol.
+    Process(String),
     /// Structured worker operation error. This is infrastructure failure, not an incorrect answer.
     Remote {
         /// Python exception type.
@@ -653,6 +954,7 @@ impl Display for EvaluatorWorkerError {
             Self::Io(message) => write!(formatter, "evaluator I/O failed: {message}"),
             Self::Json(message) => write!(formatter, "evaluator JSON failed: {message}"),
             Self::Protocol(message) => write!(formatter, "evaluator protocol failed: {message}"),
+            Self::Process(message) => write!(formatter, "evaluator process failed: {message}"),
             Self::Remote {
                 kind,
                 message,
@@ -674,6 +976,7 @@ impl std::error::Error for EvaluatorWorkerError {}
 mod tests {
     use super::*;
     use crate::accuracy_core::protocol::{EvaluatorGradeItem, ProblemId};
+    use tempfile::tempdir;
 
     const FAKE_WORKER: &str = r#"
 import json, sys
@@ -704,6 +1007,10 @@ for line in sys.stdin:
         .arg("-u")
         .arg("-c")
         .arg(script)
+    }
+
+    fn fixture_config_with_arg(script: &str, arg: &OsStr) -> WorkerProcessConfig {
+        fixture_config(script).arg(arg.to_os_string())
     }
 
     #[tokio::test]
@@ -748,6 +1055,218 @@ for line in sys.stdin:
             .await
             .unwrap_err();
         assert!(matches!(error, EvaluatorWorkerError::Crashed { .. }));
+    }
+
+    #[tokio::test]
+    async fn reader_fault_before_request_rejects_the_next_request() {
+        let script = r#"
+import json, sys, time
+for line in sys.stdin:
+    request = json.loads(line)
+    if request['op'] == 'hello':
+        result = {'protocol': 1, 'worker_version': 'fixture', 'python_version': '3', 'python_executable': sys.executable, 'packages': {'lighteval': 'fixture'}, 'worker_source_sha256': 'a' * 64, 'dependency_lock_sha256': 'b' * 64, 'container_digest': None, 'capabilities': ['load', 'next_problems', 'grade_batch', 'shutdown']}
+        print(json.dumps({'id': request['id'], 'ok': True, 'result': result}), flush=True)
+        print('not-json', flush=True)
+        time.sleep(3600)
+"#;
+        let mut evaluator = PythonEvaluator::spawn(fixture_config(script))
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+
+        let error = tokio::time::timeout(
+            Duration::from_millis(200),
+            evaluator.grade_batch(&[EvaluatorGradeItem {
+                problem_id: ProblemId::new("opaque-1").unwrap(),
+                response: "A".to_string(),
+            }]),
+        )
+        .await
+        .expect("reader failure must not leave the next request pending")
+        .unwrap_err();
+
+        assert!(matches!(error, EvaluatorWorkerError::Json(_)));
+    }
+
+    #[tokio::test]
+    async fn grade_batch_demuxes_out_of_order_responses() {
+        let script = r#"
+import json, sys
+pending = []
+for line in sys.stdin:
+    request = json.loads(line)
+    op = request['op']
+    if op == 'hello':
+        result = {'protocol': 1, 'worker_version': 'fixture', 'python_version': '3', 'python_executable': sys.executable, 'packages': {'lighteval': 'fixture'}, 'worker_source_sha256': 'a' * 64, 'dependency_lock_sha256': 'b' * 64, 'container_digest': None, 'capabilities': ['load', 'next_problems', 'grade_batch', 'shutdown']}
+        print(json.dumps({'id': request['id'], 'ok': True, 'result': result}), flush=True)
+    elif op == 'grade_batch':
+        pending.append(request)
+        if len(pending) == 2:
+            for queued in reversed(pending):
+                item = queued['items'][0]
+                result = {'items': [{'problem_id': item['problem_id'], 'task': 'fixture', 'correct': True, 'unparsed': False, 'confidence': float(queued['id']), 'reasoning': 'fixture', 'extracted_answer': item['response']}]}
+                print(json.dumps({'id': queued['id'], 'ok': True, 'result': result}), flush=True)
+            pending = []
+    elif op == 'shutdown':
+        print(json.dumps({'id': request['id'], 'ok': True, 'result': {'shutdown': True}}), flush=True)
+        break
+"#;
+        let mut evaluator = PythonEvaluator::spawn(fixture_config(script))
+            .await
+            .unwrap();
+        let first_id = evaluator.take_id().unwrap();
+        let second_id = evaluator.take_id().unwrap();
+        let session = evaluator.session.as_ref().unwrap();
+        let stdin = Arc::clone(&session.stdin);
+        let responses = Arc::clone(&session.responses);
+        let first_items = vec![EvaluatorGradeItem {
+            problem_id: ProblemId::new("opaque-1").unwrap(),
+            response: "first".to_string(),
+        }];
+        let second_items = vec![EvaluatorGradeItem {
+            problem_id: ProblemId::new("opaque-2").unwrap(),
+            response: "second".to_string(),
+        }];
+
+        let (first, second) = tokio::join!(
+            PythonEvaluator::dispatch_request::<EvaluatorGradeBatch>(
+                Arc::clone(&stdin),
+                Arc::clone(&responses),
+                WorkerRequest::GradeBatch {
+                    id: first_id,
+                    items: &first_items,
+                },
+            ),
+            PythonEvaluator::dispatch_request::<EvaluatorGradeBatch>(
+                stdin,
+                responses,
+                WorkerRequest::GradeBatch {
+                    id: second_id,
+                    items: &second_items,
+                },
+            ),
+        );
+        let first = first.unwrap();
+        let second = second.unwrap();
+        assert_eq!(first.items[0].problem_id.as_str(), "opaque-1");
+        assert_eq!(second.items[0].problem_id.as_str(), "opaque-2");
+        assert_eq!(first.items[0].confidence, first_id as f64);
+        assert_eq!(second.items[0].confidence, second_id as f64);
+        evaluator.shutdown().await.unwrap();
+    }
+
+    #[cfg(unix)]
+    fn is_process_alive(pid: i32) -> Result<bool, std::io::Error> {
+        let result = unsafe { libc::kill(pid, 0) };
+        if result == 0 {
+            return Ok(true);
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Ok(true),
+            _ => Err(std::io::Error::last_os_error()),
+        }
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_text_file(path: &std::path::Path) -> String {
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("timed out waiting for {}", path.display());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shutdown_reaps_worker_process_group_descendants() {
+        let tempdir = tempdir().unwrap();
+        let pid_file = tempdir.path().join("descendant.pid");
+        let script = r#"
+import json, pathlib, subprocess, sys
+pid_file = pathlib.Path(sys.argv[1])
+for line in sys.stdin:
+    request = json.loads(line)
+    op = request['op']
+    if op == 'hello':
+        sleeper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(3600)'])
+        pid_file.write_text(str(sleeper.pid))
+        result = {'protocol': 1, 'worker_version': 'fixture', 'python_version': '3', 'python_executable': sys.executable, 'packages': {'lighteval': 'fixture'}, 'worker_source_sha256': 'a' * 64, 'dependency_lock_sha256': 'b' * 64, 'container_digest': None, 'capabilities': ['load', 'next_problems', 'grade_batch', 'shutdown']}
+        print(json.dumps({'id': request['id'], 'ok': True, 'result': result}), flush=True)
+    elif op == 'shutdown':
+        print(json.dumps({'id': request['id'], 'ok': True, 'result': {'shutdown': True}}), flush=True)
+        break
+"#;
+        let mut evaluator =
+            PythonEvaluator::spawn(fixture_config_with_arg(script, pid_file.as_os_str()))
+                .await
+                .unwrap();
+        let descendant_pid = wait_for_text_file(&pid_file)
+            .await
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        assert!(is_process_alive(descendant_pid).unwrap());
+        evaluator.shutdown().await.unwrap();
+        assert!(!is_process_alive(descendant_pid).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn drop_signals_worker_process_group_descendants() {
+        let tempdir = tempdir().unwrap();
+        let pid_file = tempdir.path().join("descendant.pid");
+        let script = r#"
+import json, pathlib, subprocess, sys
+pid_file = pathlib.Path(sys.argv[1])
+for line in sys.stdin:
+    request = json.loads(line)
+    if request['op'] == 'hello':
+        sleeper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(3600)'])
+        pid_file.write_text(str(sleeper.pid))
+        result = {'protocol': 1, 'worker_version': 'fixture', 'python_version': '3', 'python_executable': sys.executable, 'packages': {'lighteval': 'fixture'}, 'worker_source_sha256': 'a' * 64, 'dependency_lock_sha256': 'b' * 64, 'container_digest': None, 'capabilities': ['load', 'next_problems', 'grade_batch', 'shutdown']}
+        print(json.dumps({'id': request['id'], 'ok': True, 'result': result}), flush=True)
+"#;
+        let evaluator =
+            PythonEvaluator::spawn(fixture_config_with_arg(script, pid_file.as_os_str()))
+                .await
+                .unwrap();
+        let descendant_pid = wait_for_text_file(&pid_file)
+            .await
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+
+        drop(evaluator);
+        let mut is_reaped = false;
+        for _ in 0..100 {
+            if !is_process_alive(descendant_pid).unwrap() {
+                is_reaped = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        if !is_reaped {
+            unsafe {
+                libc::kill(descendant_pid, libc::SIGKILL);
+            }
+        }
+        assert!(is_reaped, "drop must kill evaluator-owned descendants");
+    }
+
+    #[tokio::test]
+    async fn rejected_shutdown_faults_the_session() {
+        let script = FAKE_WORKER.replace("{'shutdown': True}", "{'shutdown': False}");
+        let mut evaluator = PythonEvaluator::spawn(fixture_config(&script))
+            .await
+            .unwrap();
+
+        let error = evaluator.shutdown().await.unwrap_err();
+
+        assert!(matches!(error, EvaluatorWorkerError::Protocol(_)));
+        assert!(evaluator.session.is_none());
     }
 
     #[tokio::test]

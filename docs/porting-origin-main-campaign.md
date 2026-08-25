@@ -60,7 +60,7 @@ implementation, test run, or review.
 | 32 | `1b34de0637` | warmup-isolation cache-bust | complete | applicable | Merged in `137b2f641d`; native phase-gated cache-bust target selection is covered by 12 runtime tests. |
 | 33 | `37467dc38c` | force content parts | complete | applicable | Merged in `73e1ab0761`; native bootstrap-captured endpoint policy and focused test coverage are green. |
 | 34 | `00ba1c5db3` | audio transcription | pending | applicable | New multipart endpoint, parser, and mock route. |
-| 35 | `03c9c6ddc5` | LCB grading concurrency | pending | applicable | Delegation/detail are present; upstream multiplexing and unconditional group reaping remain open. |
+| 35 | `03c9c6ddc5` | LCB grading concurrency | complete | applicable | Merged exactly in `7cd1a5bf29`; native response-id demultiplexing, persistent reader-fault state, shutdown/drop process-group cleanup, and a real Rust-launched batch/reap integration are green and Graham-approved after fixes in `429050fbf0`. |
 | 36 | `6480e5467f` | synthesis YAML overrides | complete | applicable | Merged in `445e2ec4d7`; native CLI-over-YAML overlay, resolver and CLI-path integration tests, exact upstream merge ancestry, and Graham approval recorded. |
 | 37 | `23ed221c3d` | CI speed | complete | not-applicable | Exact upstream merge completed on `ajc/port-origin-037`; Python harness regression passed and no Rust test candidate exists. Closure: `docs/origin-main-findings/commit-037-23ed221c3d.md`. |
 | 38 | `c26fe88bd8` | AgentX FAQ | complete | not-applicable | Merged in `233b71c98b`; closure: `docs/origin-main-findings/commit-038-c26fe88bd8.md`. |

@@ -110,7 +110,7 @@ read the record for the subsystem you are touching.
 | [2026-08-25-native-sglang-speculative-console.md](2026-08-25-native-sglang-speculative-console.md) | Approved native profile-console port for SGLang speculative-decoding gauges: configured-model and leader-rank selection, distinct endpoint/label rows, finite summaries, percent display scaling, and inactive-gauge suppression. |
 | [2026-08-25-native-spec-decode-acceptance-metrics.md](2026-08-25-native-spec-decode-acceptance-metrics.md) | Approved native per-request vLLM speculative-decode acceptance path: validated canonical records, exact record/derived metrics and phase-pooled histograms across exact/sketch/cellular folds, JSONL/summary/console projection, and a real-profile Rust mock E2E. |
 | [dataset-analysis.md](dataset-analysis.md) | Built `--dry-run` analytical report: dataset shape, turn-by-turn ISL/OSL, prefix/KV-cache reuse (ideal and finite-capacity), and the real execution timeline (concurrency, throughput, backlog) distilled from a dry run's records, emitted as `dataset_analysis.{txt,json,csv,html}`. |
-| [accuracy.md](accuracy.md) | The Rust dispatch/capture vs pinned-Python grading split, the injected evaluator seam, and sharded capture with a single grade. |
+| [accuracy.md](accuracy.md) | The Rust dispatch/capture vs pinned-Python grading split, the injected evaluator seam, concurrent response-id demultiplexing with persistent reader-fault state and shutdown/drop Unix process-group cleanup, and sharded capture with a single grade. |
 
 ### Targets
 

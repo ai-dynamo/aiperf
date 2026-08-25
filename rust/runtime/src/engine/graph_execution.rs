@@ -3773,6 +3773,7 @@ executable = "tools/adapter.sh"
             terminal_nodes: RefCell::new(HashSet::new()),
             events: Arc::new(ChannelRunnerGraphExecutionEventSink::new(sender)),
             cache_bust_marker: None,
+            cache_bust_target: crate::engine::graph_input::CacheBustTarget::None,
             arrivals: Cell::new(0),
             terminal_records: Cell::new(0),
             profiling_records: Cell::new(0),
