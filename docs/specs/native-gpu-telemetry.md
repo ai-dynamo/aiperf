@@ -100,9 +100,8 @@ case selects a replacement collector or changes benchmark execution.
 
 Local NVML records use `pynvml://localhost`; AMD SMI records use
 `amdsmi://localhost`, matching origin/main identifiers. These values remain the
-`GpuSeriesKey` source identity. The JSONL schema continues to write that value
-under its historical `dcgm_url` key for compatibility; the key name does not
-imply that every source is DCGM.
+`GpuSeriesKey` source identity. The JSONL schema writes that exact source
+identity under `telemetry_source_url`; `dcgm_url` is not dual-written.
 
 Both sources populate platform, index, UUID, model, and PCI/BDF identity when
 available. Missing optional identity fields remain absent; a metadata failure

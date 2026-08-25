@@ -243,8 +243,11 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """
         results: list[MetricResult] = []
 
-        for dcgm_url, gpu_data in self._hierarchy.dcgm_endpoints.items():
-            endpoint_display = normalize_endpoint_display(dcgm_url)
+        for (
+            telemetry_source_url,
+            gpu_data,
+        ) in self._hierarchy.telemetry_source_endpoints.items():
+            endpoint_display = normalize_endpoint_display(telemetry_source_url)
 
             for gpu_uuid, telemetry_data in gpu_data.items():
                 gpu_index = telemetry_data.metadata.gpu_index
@@ -257,7 +260,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 ) in get_gpu_telemetry_metrics_config():
                     try:
                         dcgm_tag = (
-                            dcgm_url.replace(":", "_")
+                            telemetry_source_url.replace(":", "_")
                             .replace("/", "_")
                             .replace(".", "_")
                         )
@@ -271,12 +274,12 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                         results.append(result)
                     except NoMetricValue:
                         self.debug(
-                            f"No data available for metric '{metric_name}' on GPU {gpu_uuid[:12]} from {dcgm_url}"
+                            f"No data available for metric '{metric_name}' on GPU {gpu_uuid[:12]} from {telemetry_source_url}"
                         )
                         continue
                     except Exception as e:
                         self.exception(
-                            f"Unexpected error generating metric result for '{metric_name}' on GPU {gpu_uuid[:12]} from {dcgm_url}: {e}"
+                            f"Unexpected error generating metric result for '{metric_name}' on GPU {gpu_uuid[:12]} from {telemetry_source_url}: {e}"
                         )
                         continue
 
@@ -323,8 +326,12 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
             else datetime.now()
         )
         summary = TelemetrySummary(
-            endpoints_configured=list(self._hierarchy.dcgm_endpoints.keys()),
-            endpoints_successful=list(self._hierarchy.dcgm_endpoints.keys()),
+            endpoints_configured=list(
+                self._hierarchy.telemetry_source_endpoints.keys()
+            ),
+            endpoints_successful=list(
+                self._hierarchy.telemetry_source_endpoints.keys()
+            ),
             start_time=start_time,
             end_time=end_time,
         )
@@ -332,12 +339,12 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         # Build endpoints dict with pre-computed metrics
         endpoints: dict[str, EndpointData] = {}
 
-        if self._hierarchy.dcgm_endpoints:
+        if self._hierarchy.telemetry_source_endpoints:
             for (
-                dcgm_url,
+                telemetry_source_url,
                 gpus_data,
-            ) in self._hierarchy.dcgm_endpoints.items():
-                endpoint_display = normalize_endpoint_display(dcgm_url)
+            ) in self._hierarchy.telemetry_source_endpoints.items():
+                endpoint_display = normalize_endpoint_display(telemetry_source_url)
                 gpus_dict: dict[str, GpuSummary] = {}
 
                 for gpu_uuid, gpu_data in gpus_data.items():
@@ -388,7 +395,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
     def _iter_gpus_for_platform(self, platform: str):
         """Yield (gpu_uuid, gpu_data) for GPUs whose metadata.platform matches."""
-        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
+        for gpu_data_dict in self._hierarchy.telemetry_source_endpoints.values():
             for gpu_uuid, gpu_data in gpu_data_dict.items():
                 if gpu_data.metadata.platform == platform:
                     yield gpu_uuid, gpu_data
@@ -442,7 +449,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         late scrape is captured, while still bounding the window so cooldown,
         idle, or subsequent-phase samples don't leak into the delta. An
         unbounded (`end_ns=None`) filter here would silently include every
-        post-phase sample present in `_hierarchy.dcgm_endpoints`, which only
+        post-phase sample present in `_hierarchy.telemetry_source_endpoints`, which only
         grows append-only across phase boundaries.
 
         Returns:
@@ -487,7 +494,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         per-vendor without hard-coding which platforms are present.
         """
         platforms: set[str] = set()
-        for gpu_data_dict in self._hierarchy.dcgm_endpoints.values():
+        for gpu_data_dict in self._hierarchy.telemetry_source_endpoints.values():
             for gpu_data in gpu_data_dict.values():
                 if gpu_data.metadata.platform:
                     platforms.add(gpu_data.metadata.platform)

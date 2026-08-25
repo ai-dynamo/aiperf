@@ -198,7 +198,12 @@ async fn test_gpu_telemetry_export() {
         let record: Value = serde_json::from_str(line).expect("valid telemetry record JSON");
 
         assert!(record["timestamp_ns"].as_i64().expect("timestamp_ns") > 0);
-        assert!(!record["dcgm_url"].is_null());
+        assert!(
+            record["telemetry_source_url"]
+                .as_str()
+                .is_some_and(|source| !source.is_empty())
+        );
+        assert!(record.get("dcgm_url").is_none());
         assert!(record["gpu_index"].as_i64().expect("gpu_index") >= 0);
         assert!(!record["gpu_uuid"].is_null());
         assert!(!record["gpu_model_name"].is_null());
@@ -230,18 +235,25 @@ async fn test_gpu_telemetry_export_with_custom_prefix() {
     ));
     assert!(r.success(), "run failed: {}", r.stderr);
 
-    if let Some(export) = r.artifacts.find_file("**/custom_test_gpu_telemetry.jsonl") {
-        let content = std::fs::read_to_string(&export).expect("read export file");
-        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
-        assert!(
-            !lines.is_empty(),
-            "Export file should contain telemetry records"
-        );
+    let export = r
+        .artifacts
+        .find_file("**/custom_test_gpu_telemetry.jsonl")
+        .expect("custom GPU telemetry export should exist");
+    let content = std::fs::read_to_string(&export).expect("read export file");
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        !lines.is_empty(),
+        "Export file should contain telemetry records"
+    );
 
-        let first: Value = serde_json::from_str(lines[0]).expect("valid first record JSON");
-        assert!(first["timestamp_ns"].as_i64().expect("timestamp_ns") > 0);
-        assert!(!first["dcgm_url"].is_null());
-    }
+    let first: Value = serde_json::from_str(lines[0]).expect("valid first record JSON");
+    assert!(first["timestamp_ns"].as_i64().expect("timestamp_ns") > 0);
+    assert!(
+        first["telemetry_source_url"]
+            .as_str()
+            .is_some_and(|source| !source.is_empty())
+    );
+    assert!(first.get("dcgm_url").is_none());
 }
 
 #[tokio::test]

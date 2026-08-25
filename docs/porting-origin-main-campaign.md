@@ -31,7 +31,7 @@ implementation, test run, or review.
 | 3 | `34b2be2ee1` | SGLang speculative metrics | merged | applicable | Native speed-bench recognition is not profile console-exporter parity. |
 | 4 | `6db948524e` | SageMaker malformed timestamp | merged | already-covered | Native loader returns validation error. |
 | 5 | `ce715ae849` | agentic think-time idle guard | complete | applicable | Merged in `6e8da730e8`; native scenario default/lock port in `ad4c2a54f4`, `6e78b41d35`, and `729c59f64a`; Graham approved. |
-| 6 | `93b6223373` | telemetry field rename | pending | applicable | Native artifact still emits `dcgm_url`; requires contract migration decision. |
+| 6 | `93b6223373` | telemetry field rename | complete | applicable | Merged in `4ab850c79d`; native artifact migration and custom-prefix closure in `726fcb614b`, `4763b53f0f`, and `978bc93fea`; Graham approved. |
 | 7 | `86ea3f7deb` | detailed JSONL fallback | pending | already-covered | Native aggregation uses `profile_export.jsonl`; separately sync independent Python profile. |
 | 8 | `5566aae1e1` | ShareGPT batch encoding | pending | applicable | Native composition has no batch-tokenizer seam. |
 | 9 | `844efe1b36` | full synthesis prefix blocks | pending | already-covered | Native synthesis preserves block identity. |
@@ -140,3 +140,44 @@ CLI resolver selector reported 2 passed using `/usr/bin/sccache` with a Cargo
 target below `/mnt/4tb`. Graham additionally exercised system-idle unit tests
 (3 passed) and real-binary E2E coverage (14 passed). The final re-review is
 `GRAHAM APPROVED` with no Important or Critical findings.
+
+## Per-commit record: 93b622337315
+
+### Upstream intent and Rust comparison
+
+Upstream replaces the vendor-specific public telemetry source field
+`dcgm_url` with `telemetry_source_url` throughout the telemetry dataflow and
+JSONL contract, without a compatibility alias. Native Rust already retained
+collector-neutral source identity internally as `GpuTelemetryRecord.endpoint_url`,
+but its public `TelemetryRow` serializer and product assertions still emitted
+the obsolete key.
+
+### Merge and implementation evidence
+
+`4ab850c79dceb3fae8995b7c2a83550d6450d5cc` is a two-parent merge with exact
+upstream commit `93b622337315a945d0f42511fefb314c8a1ff085` as its second parent.
+The native serializer, runtime/product assertions, and telemetry design record
+landed in `726fcb614b8320e87f955649fffcb6baec783489`; the serializer maps the
+unchanged `record.endpoint_url` to exactly `telemetry_source_url` and never
+dual-writes `dcgm_url`. Graham's first review made the custom-prefix artifact
+lookup mandatory in `4763b53f0f0766d550b79c25958938983a710794`. That stronger
+test exposed the native resolver dropping the documented GPU telemetry prefix;
+`978bc93fea50fa941f7e34cc1dc5812c4b0c646f` now projects the normalized stem
+to `<stem>_gpu_telemetry.jsonl` while preserving the no-prefix default.
+
+The design spec is
+`docs/specs/2026-08-25-native-telemetry-source-url.md`; the Sol plan and SDD
+evidence live under
+`.superpowers/sdd/2026-08-25-native-telemetry-source-url/`.
+
+### Verification and review
+
+The merged Python telemetry model/writer tests reported 88 passed. Native
+verification using `/usr/bin/sccache` and a Cargo target under `/mnt/4tb`
+reported 5 focused runtime telemetry tests, 1 focused CLI resolver test, and
+17 real-binary GPU telemetry E2E tests passed; the release CLI build and direct
+`rustfmt` checks on all four changed Rust files also passed. The final
+independent task review found zero Critical, Important, or Minor findings. The
+fresh Graham re-review found no Critical or Important findings, confirmed both
+earlier findings resolved, and ended `GRAHAM APPROVED`; its sole documentation
+whitespace minor was removed before closure.

@@ -2350,6 +2350,33 @@ mod tests {
     }
 
     #[test]
+    fn profile_export_prefix_rewrites_gpu_telemetry_artifact_stem() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "-u",
+                "http://localhost:8000",
+                "--gpu-telemetry",
+                "http://localhost:9400",
+                "--profile-export-prefix",
+                "myrun_gpu_telemetry.jsonl",
+            ]);
+            let run = super::resolve(&flags).expect("resolve");
+            let arts = run.cfg.artifacts.expect("artifacts");
+            assert_eq!(arts.records_path.as_deref(), Some("myrun.jsonl"));
+            let sidecar = run
+                .cfg
+                .sidecars
+                .and_then(|sidecars| sidecars.gpu_telemetry)
+                .expect("GPU telemetry sidecar");
+            assert_eq!(sidecar.records_path, "myrun_gpu_telemetry.jsonl");
+        });
+    }
+
+    #[test]
     fn vary_seed_per_trial_offsets_trial_seed() {
         run_on_big_stack(|| {
             let flags = parse(&[
