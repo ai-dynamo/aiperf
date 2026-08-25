@@ -120,6 +120,75 @@ fn overlay_bool(slot: &mut bool, flag: Option<bool>) {
     }
 }
 
+/// Build only the synthesis fields the user explicitly authored on the CLI.
+///
+/// The CLI-only path needs `build_synthesis`'s full identity-stamped object, but
+/// the YAML path must not clobber authored `dataset.synthesis` values with those
+/// defaults. This extracts just the keys whose corresponding flags were set so a
+/// YAML-authored synthesis block keeps every other field byte-for-byte.
+fn explicit_synthesis_overlay(
+    flags: &crate::flags::ProfileFlags,
+) -> anyhow::Result<Option<serde_json::Map<String, serde_json::Value>>> {
+    let Some(serde_json::Value::Object(full)) = load::build_synthesis(flags)? else {
+        return Ok(None);
+    };
+    let mut overlay = serde_json::Map::new();
+    let mut insert = |key: &str| {
+        if let Some(value) = full.get(key) {
+            overlay.insert(key.to_string(), value.clone());
+        }
+    };
+    if flags.synthesis_speedup_ratio.is_some() {
+        insert("speedup_ratio");
+    }
+    if flags.synthesis_prefix_len_multiplier.is_some() {
+        insert("prefix_len_multiplier");
+    }
+    if flags.synthesis_prefix_root_multiplier.is_some() {
+        insert("prefix_root_multiplier");
+    }
+    if flags.synthesis_prompt_len_multiplier.is_some() {
+        insert("prompt_len_multiplier");
+    }
+    if flags.synthesis_output_len_multiplier.is_some() {
+        insert("output_len_multiplier");
+    }
+    if flags.synthesis_max_isl.is_some() {
+        insert("max_isl");
+    }
+    if flags.synthesis_max_osl.is_some() {
+        insert("max_osl");
+    }
+    if flags.trace_idle_gap_cap_seconds.is_some() || flags.synthesis_idle_gap_cap.is_some() {
+        insert("idle_gap_cap_seconds");
+    }
+    if flags.max_context_length.is_some() {
+        insert("max_context_length");
+    }
+    if flags.allow_dataset_wrap.unwrap_or(false) || flags.no_allow_dataset_wrap.unwrap_or(false) {
+        insert("allow_dataset_wrap");
+    }
+    if flags.cache_bust.as_ref().is_some_and(|target| target != "none") {
+        insert("cache_bust_target");
+    }
+    if flags.dataset_sampling_strategy.is_some() {
+        insert("dataset_sampling_strategy");
+    }
+    if flags.trajectory_start_min_ratio.is_some() {
+        insert("trajectory_start_min_ratio");
+    }
+    if flags.trajectory_start_max_ratio.is_some() {
+        insert("trajectory_start_max_ratio");
+    }
+    if flags.random_seed.is_some() {
+        insert("t_star_random_seed");
+    }
+    if overlay.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(overlay))
+}
+
 /// Apply explicitly authored operational CLI flags over a config-derived run;
 /// model, dataset, and phase content remains config-owned. Operational endpoint
 /// and dataset bool toggles (`--streaming`, `--use-server-token-count`, …) overlay
@@ -225,6 +294,14 @@ fn apply_cli_overrides(
     }
     if let Some(corpus) = flags.prompt_corpus.clone() {
         inputs.prompt_corpus = Some(corpus);
+    }
+    if let Some(overlay) = explicit_synthesis_overlay(flags)? {
+        match inputs.synthesis.as_mut() {
+            Some(serde_json::Value::Object(existing)) => {
+                existing.extend(overlay);
+            }
+            _ => inputs.synthesis = load::build_synthesis(flags)?,
+        }
     }
     load::overlay_reset_kv_cache_config(
         &mut inputs.reset_kv_cache,

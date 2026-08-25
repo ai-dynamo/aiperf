@@ -676,7 +676,7 @@ fn parse_headers(raw: &[String]) -> anyhow::Result<std::collections::BTreeMap<St
 /// form is the only way to express a nested value (`{"stream_options":
 /// {"include_usage": true}}`): `key:value` splits on the first colon, so a
 /// nested object would otherwise be shredded into a garbage key and an
-/// unparseable request body.
+/// unparsable request body.
 fn parse_extra_inputs(
     raw: &[String],
 ) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
@@ -885,7 +885,7 @@ fn parse_dataset_filters(
 }
 
 /// Build recorded-graph synthesis configuration when any synthesis flag is set.
-fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<serde_json::Value>> {
+pub(crate) fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<serde_json::Value>> {
     let allow_wrap = if flags.allow_dataset_wrap.unwrap_or(false) {
         Some(true)
     } else if flags.no_allow_dataset_wrap.unwrap_or(false) {
