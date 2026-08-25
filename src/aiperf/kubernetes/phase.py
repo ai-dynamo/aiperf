@@ -64,3 +64,22 @@ class Phase(CaseInsensitiveStrEnum):
     def is_terminal(self) -> bool:
         """Return whether the job has reached a final lifecycle phase."""
         return self in (Phase.COMPLETED, Phase.FAILED, Phase.CANCELLED)
+
+
+def as_phase(value: Phase | str | None) -> Phase:
+    """Coerce a raw ``status.phase`` string into a real ``Phase`` member.
+
+    ``status.get("phase")`` and ``StatusBuilder.get_phase()`` both yield plain
+    ``str``. ``Enum.__hash__`` hashes by member *name*, not value, so
+    ``"Running" in frozenset({Phase.RUNNING})`` is ``False`` even though
+    ``"Running" == Phase.RUNNING`` is ``True``. Tuple membership (``in (...)``)
+    uses ``==`` and works; set membership silently does not. Any phase headed
+    for a set-membership test must therefore be a genuine member first.
+
+    Unrecognized values fall back to ``Phase.PENDING`` so a future phase string
+    written by a newer operator cannot crash an older monitor tick.
+    """
+    try:
+        return Phase(value)
+    except ValueError:
+        return Phase.PENDING

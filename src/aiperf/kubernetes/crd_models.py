@@ -13,7 +13,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
@@ -26,6 +26,9 @@ from aiperf.config.base import BaseConfig
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.resolution.plan import FailurePolicy
 from aiperf.kubernetes.k8s_models import K8sCamelModel
+
+if TYPE_CHECKING:
+    from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 
 
 class ObjectMetaPartial(BaseConfig):
@@ -629,3 +632,65 @@ class AIPerfSweepSpec(AIPerfWorkloadSpec):
     def from_crd_spec(cls, spec: dict[str, Any]) -> AIPerfSweepSpec:
         """Validate a raw CRD spec dict (back-compat alias for model_validate)."""
         return cls.model_validate(spec)
+
+
+def build_phase_progress(
+    stats: CombinedPhaseStats, *, allow_empty: bool = False
+) -> PhaseProgress | None:
+    """Build PhaseProgress from CombinedPhaseStats.
+
+    ``allow_empty`` keeps a phase that has started but has not sent a request
+    yet, instead of dropping it. Only the controller's live status push sets
+    it, and only for the phase it is about to name in ``status.currentPhase``,
+    which must always be a key of ``status.phases``. The completion handler's
+    final snapshot keeps the default and still excludes empty phases.
+    """
+    total = stats.total_expected_requests or 0
+    if total == 0 and stats.requests_sent == 0 and not allow_empty:
+        return None
+
+    elapsed = None
+    if stats.start_ns is not None and stats.last_update_ns is not None:
+        elapsed = round((stats.last_update_ns - stats.start_ns) / 1_000_000_000, 1)
+
+    phase_kind = stats.phase_kind
+    if phase_kind is None:
+        phase_kind = "warmup" if str(stats.phase) == "warmup" else "profiling"
+
+    return PhaseProgress(
+        phase_name=stats.phase_name or str(stats.phase),
+        phase_kind=phase_kind,
+        phase_index=stats.phase_index,
+        profiling_index=stats.profiling_index,
+        requests_completed=stats.requests_completed,
+        requests_sent=stats.requests_sent,
+        requests_total=total,
+        requests_cancelled=stats.requests_cancelled,
+        requests_errors=stats.request_errors,
+        requests_in_flight=stats.in_flight_requests,
+        requests_per_second=round(stats.requests_per_second or 0, 2),
+        requests_progress_percent=round(stats.requests_progress_percent or 0, 1),
+        sessions_sent=stats.sent_sessions,
+        sessions_completed=stats.completed_sessions,
+        sessions_cancelled=stats.cancelled_sessions,
+        sessions_in_flight=stats.in_flight_sessions,
+        records_success=stats.success_records,
+        records_error=stats.error_records,
+        records_per_second=round(stats.records_per_second or 0, 2),
+        records_progress_percent=round(stats.records_progress_percent or 0, 1),
+        sending_complete=stats.is_sending_complete,
+        is_requests_complete=stats.is_requests_complete,
+        is_records_complete=stats.is_records_complete,
+        timeout_triggered=stats.timeout_triggered,
+        was_cancelled=stats.was_cancelled,
+        requests_eta_seconds=round(stats.requests_eta_sec)
+        if stats.requests_eta_sec is not None
+        else None,
+        records_eta_seconds=round(stats.records_eta_sec)
+        if stats.records_eta_sec is not None
+        else None,
+        expected_duration_seconds=round(stats.expected_duration_sec, 1)
+        if stats.expected_duration_sec is not None
+        else None,
+        elapsed_time_seconds=elapsed,
+    )

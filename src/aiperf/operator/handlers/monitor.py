@@ -24,7 +24,6 @@ from kubernetes_asyncio.client import ApiClient, CustomObjectsApi
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.enums import SystemState
-from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import (
@@ -43,11 +42,10 @@ from aiperf.kubernetes.cr_refs import (
 from aiperf.kubernetes.crd_models import (
     ControllerFetchResult,
     MetricsSummary,
-    PhaseProgress,
 )
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
-from aiperf.kubernetes.phase import Phase, format_timestamp, parse_timestamp
+from aiperf.kubernetes.phase import Phase, as_phase, format_timestamp, parse_timestamp
 from aiperf.kubernetes.spec_converter import (
     DEFAULT_KEY_EXPORT_NAMES,
     key_export_names_from_body,
@@ -977,87 +975,6 @@ def _update_worker_counts(
 _NON_TERMINAL_RECOVERABLE_PHASES = frozenset({Phase.INITIALIZING, Phase.RUNNING})
 
 
-def _as_phase(value: Phase | str | None) -> Phase:
-    """Coerce a raw ``status.phase`` string into a real ``Phase`` member.
-
-    ``status.get("phase")`` and ``StatusBuilder.get_phase()`` both yield plain
-    ``str``. ``Enum.__hash__`` hashes by member *name*, not value, so
-    ``"Running" in frozenset({Phase.RUNNING})`` is ``False`` even though
-    ``"Running" == Phase.RUNNING`` is ``True``. Tuple membership (``in (...)``)
-    uses ``==`` and works; set membership silently does not. Any phase headed
-    for a set-membership test must therefore be a genuine member first.
-
-    Unrecognized values fall back to ``Phase.PENDING`` so a future phase string
-    written by a newer operator cannot crash an older monitor tick.
-    """
-    try:
-        return Phase(value)
-    except ValueError:
-        return Phase.PENDING
-
-
-def _build_phase_progress(
-    stats: CombinedPhaseStats, *, allow_empty: bool = False
-) -> PhaseProgress | None:
-    """Build PhaseProgress from CombinedPhaseStats.
-
-    ``allow_empty`` keeps a phase that has started but has not sent a request
-    yet, instead of dropping it. Only the controller's live status push sets
-    it, and only for the phase it is about to name in ``status.currentPhase``,
-    which must always be a key of ``status.phases``. The completion handler's
-    final snapshot keeps the default and still excludes empty phases.
-    """
-    total = stats.total_expected_requests or 0
-    if total == 0 and stats.requests_sent == 0 and not allow_empty:
-        return None
-
-    elapsed = None
-    if stats.start_ns is not None and stats.last_update_ns is not None:
-        elapsed = round((stats.last_update_ns - stats.start_ns) / 1_000_000_000, 1)
-
-    phase_kind = stats.phase_kind
-    if phase_kind is None:
-        phase_kind = "warmup" if str(stats.phase) == "warmup" else "profiling"
-
-    return PhaseProgress(
-        phase_name=stats.phase_name or str(stats.phase),
-        phase_kind=phase_kind,
-        phase_index=stats.phase_index,
-        profiling_index=stats.profiling_index,
-        requests_completed=stats.requests_completed,
-        requests_sent=stats.requests_sent,
-        requests_total=total,
-        requests_cancelled=stats.requests_cancelled,
-        requests_errors=stats.request_errors,
-        requests_in_flight=stats.in_flight_requests,
-        requests_per_second=round(stats.requests_per_second or 0, 2),
-        requests_progress_percent=round(stats.requests_progress_percent or 0, 1),
-        sessions_sent=stats.sent_sessions,
-        sessions_completed=stats.completed_sessions,
-        sessions_cancelled=stats.cancelled_sessions,
-        sessions_in_flight=stats.in_flight_sessions,
-        records_success=stats.success_records,
-        records_error=stats.error_records,
-        records_per_second=round(stats.records_per_second or 0, 2),
-        records_progress_percent=round(stats.records_progress_percent or 0, 1),
-        sending_complete=stats.is_sending_complete,
-        is_requests_complete=stats.is_requests_complete,
-        is_records_complete=stats.is_records_complete,
-        timeout_triggered=stats.timeout_triggered,
-        was_cancelled=stats.was_cancelled,
-        requests_eta_seconds=round(stats.requests_eta_sec)
-        if stats.requests_eta_sec is not None
-        else None,
-        records_eta_seconds=round(stats.records_eta_sec)
-        if stats.records_eta_sec is not None
-        else None,
-        expected_duration_seconds=round(stats.expected_duration_sec, 1)
-        if stats.expected_duration_sec is not None
-        else None,
-        elapsed_time_seconds=elapsed,
-    )
-
-
 async def _maybe_recover_exported_results_from_sidecar(
     *,
     body: dict[str, Any],
@@ -1278,7 +1195,7 @@ async def _run_worker_and_progress_phase(
         await close_progress_client(key)
         return
 
-    effective_phase = _as_phase(sb.get_phase() or current_phase)
+    effective_phase = as_phase(sb.get_phase() or current_phase)
     # Any non-terminal phase: a benchmark can finish between two monitor ticks
     # (a 2000-request mock run takes under a second), and the controller API
     # dies with it. The CR is then stuck in Initializing with no live API to
@@ -1816,7 +1733,7 @@ async def _live_startup_deadline_parent(
     if metadata.get("uid") != expected_uid or metadata.get("resourceVersion") is None:
         return None
     live_status = live_body.get("status") or {}
-    if _as_phase(live_status.get("phase")).is_terminal:
+    if as_phase(live_status.get("phase")).is_terminal:
         return None
     if (live_body.get("spec") or {}).get("cancel") is True:
         return None
@@ -1851,7 +1768,7 @@ def _startup_deadline_context(
     job_id = status.get("jobId")
     uid = body_uid(body)
     if (
-        _as_phase(status.get("phase")).is_terminal
+        as_phase(status.get("phase")).is_terminal
         or issue is None
         or not isinstance(jobset_name, str)
         or not isinstance(job_id, str)
@@ -2156,7 +2073,7 @@ def _controller_subphase_target(
         system_state = SystemState(new)
     except (TypeError, ValueError):
         return None
-    current_phase = _as_phase(status.get("phase"))
+    current_phase = as_phase(status.get("phase"))
     if current_phase.is_terminal:
         return None
 
@@ -2578,7 +2495,7 @@ async def handle_jobset_progress_event(
 ) -> None:
     """Project one exact JobSet readiness update onto its AIPerfJob status."""
     status = body.get("status") or {}
-    current_phase = _as_phase(status.get("phase"))
+    current_phase = as_phase(status.get("phase"))
     if current_phase.is_terminal:
         return
     jobset_name = status.get("jobSetName")

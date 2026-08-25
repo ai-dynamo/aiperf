@@ -3,10 +3,11 @@
 """Tests for pure helpers in ``aiperf.operator.handlers.monitor``.
 
 The end-to-end ``monitor_progress`` flow is exercised by ``test_main.py`` and
-``test_cancellation.py``. This file targets the small helper functions
+``test_cancellation.py``. This file targets the helper functions
 (``_classify_jobset_failure``, ``_handle_kueue_suspension``,
 ``_container_status_by_name``, ``_get_terminated_controller_info``,
-``_update_worker_counts``) which have no direct unit tests.
+``_update_worker_counts``, plus the pod-startup, cleanup-delete, and
+phase-coercion helpers) which have no direct coverage there.
 """
 
 from __future__ import annotations
@@ -27,10 +28,9 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
 from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
-from aiperf.kubernetes.phase import Phase
+from aiperf.kubernetes.phase import Phase, as_phase
 from aiperf.operator import results_layout, runs_index
 from aiperf.operator.handlers.monitor import (
-    _as_phase,
     _check_job_timeout,
     _classify_jobset_failure,
     _container_status_by_name,
@@ -1257,5 +1257,5 @@ class TestPhaseCoercionGate:
         ],
     )  # fmt: skip
     def test_as_phase_coerces_to_member(self, raw: Any, expected: Phase) -> None:
-        assert _as_phase(raw) is expected
-        assert _as_phase(raw) in frozenset({expected})
+        assert as_phase(raw) is expected
+        assert as_phase(raw) in frozenset({expected})

@@ -19,7 +19,11 @@ import zstandard
 
 from aiperf.common.finite import is_finite_value, scrub_non_finite
 from aiperf.common.results_markers import ready_marker_path, write_ready_marker
-from aiperf.kubernetes.crd_models import ControllerFetchResult, MetricsSummary
+from aiperf.kubernetes.crd_models import (
+    ControllerFetchResult,
+    MetricsSummary,
+    build_phase_progress,
+)
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.phase import Phase, parse_timestamp
@@ -1138,9 +1142,10 @@ def _gather_index_inputs(
     end_time, total_size_bytes) for the runs_index upsert. Returns
     (None, 0, None, 0) if nothing on disk yet (e.g. fetch failed).
 
-    summary_blob is always the zstd-compressed bytes of the
-    profile_export_aiperf.json payload — matches the on-disk .json.zst when
-    present, or compresses the raw .json otherwise.
+    summary_blob is always the zstd-compressed bytes of the ``json_name``
+    export (``profile_export_aiperf.json`` unless the run uses a custom
+    artifact prefix) — matches the on-disk .json.zst when present, or
+    compresses the raw .json otherwise.
     """
     dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
     if not dest_dir.exists():
@@ -1379,11 +1384,9 @@ async def _get_phase_refresh_client(
 
 def _build_final_phase_sample(progress: JobProgress) -> dict[str, Any]:
     """Convert one controller progress response to the CR status shape."""
-    from aiperf.operator.handlers.monitor import _build_phase_progress
-
     sample: dict[str, Any] = {}
     for phase, stats in progress.phases.items():
-        if phase_progress := _build_phase_progress(stats):
+        if phase_progress := build_phase_progress(stats):
             sample[phase] = phase_progress.to_k8s_dict()
     return sample
 
