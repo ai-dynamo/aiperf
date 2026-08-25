@@ -17,29 +17,14 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aiperf.common.endpoint_auth import auth_headers_for_endpoint
+
 if TYPE_CHECKING:
-    from aiperf.config import BenchmarkPlan, EndpointConfig
+    from aiperf.config import BenchmarkPlan
 
-# Anthropic Messages authenticates with x-api-key plus a required
-# anthropic-version header. Bearer auth or a missing version returns a 4xx,
-# which the readiness probe's "status < 500 == ready" rule would misread as
-# ready. Mirrors MessagesEndpoint.get_endpoint_headers().
-_ANTHROPIC_VERSION = "2023-06-01"
-
-
-def _readiness_auth_headers(cfg: EndpointConfig) -> dict[str, str]:
-    """Build readiness-probe headers matching the endpoint's auth scheme."""
-    headers = dict(cfg.headers or {})
-    if str(cfg.type) == "messages":
-        headers.setdefault("anthropic-version", _ANTHROPIC_VERSION)
-        if cfg.api_key:
-            # Hard-assign so --api-key overrides any preconfigured x-api-key,
-            # matching MessagesEndpoint.get_endpoint_headers(); otherwise
-            # preflight would probe a different key than real requests use.
-            headers["x-api-key"] = cfg.api_key
-    elif cfg.api_key:
-        headers["Authorization"] = f"Bearer {cfg.api_key}"
-    return headers
+# Re-export for callers still importing the private name; prefer
+# ``auth_headers_for_endpoint`` from ``aiperf.common.endpoint_auth``.
+_readiness_auth_headers = auth_headers_for_endpoint
 
 
 def _preflight_artifact_dir(plan: BenchmarkPlan) -> None:

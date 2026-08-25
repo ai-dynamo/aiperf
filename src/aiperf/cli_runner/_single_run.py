@@ -39,6 +39,17 @@ def _execute_python_run(run: BenchmarkRun) -> RunResult:
     )
 
 
+async def maybe_reset_kv_cache_before_run(run: BenchmarkRun) -> None:
+    """POST reset_kv_cache once before services start for this BenchmarkRun."""
+    endpoint = run.cfg.endpoint
+    if endpoint.reset_kv_cache is None:
+        return
+
+    hooks = prepare_endpoint_control_hooks(endpoint)
+    headers = auth_headers_for_endpoint(endpoint)
+    await run_reset_kv_cache(hooks, headers)
+
+
 def _run_single_benchmark(
     run: BenchmarkRun,
     *,

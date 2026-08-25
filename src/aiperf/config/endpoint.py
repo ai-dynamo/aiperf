@@ -27,6 +27,12 @@ from aiperf.common.enums import (
     RequestContentType,
 )
 from aiperf.config.base import BaseConfig
+from aiperf.config.control_hooks import (
+    ResetKvCacheConfig,
+    ServerProfilerConfig,
+    parse_enabled_or_config,
+    require_relative_path,
+)
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
@@ -448,6 +454,28 @@ class EndpointConfig(BaseConfig):
             "Only consulted when `--wait-for-model-timeout` is positive.",
         ),
     ]
+
+    reset_kv_cache: Annotated[
+        ResetKvCacheConfig | None,
+        parse_enabled_or_config(ResetKvCacheConfig),
+        Field(
+            default=None,
+            description="When enabled, POST a KV-cache reset once per logical "
+            "benchmark cell before warmup/profiling. Accepts false | true | "
+            "{timeout_seconds?, path?}.",
+        ),
+    ] = None
+
+    server_profiler: Annotated[
+        ServerProfilerConfig | None,
+        parse_enabled_or_config(ServerProfilerConfig),
+        Field(
+            default=None,
+            description="When enabled, start/stop the server profiler around "
+            "each profiling phase. Accepts false | true | "
+            "{timeout_seconds?, start_path?, stop_path?}.",
+        ),
+    ] = None
 
     @model_validator(mode="before")
     @classmethod

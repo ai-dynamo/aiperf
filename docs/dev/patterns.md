@@ -115,6 +115,33 @@ Then:
 - The CLI-to-envelope converter is the only module outside `cli_commands/` that may
   read `CLIConfig` attributes.
 
+### Bool|object nested endpoint fields + flat CLI lowering
+
+Some endpoint features (`reset_kv_cache`, `server_profiler`) are nested on
+`EndpointConfig` as `false | true | object` via
+`parse_enabled_or_config(ModelCls)` in `aiperf.config.control_hooks`. Nested
+YAML stays ergonomic; CLIConfig remains flat.
+
+Pattern:
+
+1. Nested config classes live in `src/aiperf/config/control_hooks.py`
+   (`ResetKvCacheConfig`, `ServerProfilerConfig`).
+2. `EndpointConfig` fields use
+   `Annotated[Model | None, parse_enabled_or_config(Model), Field(...)]`.
+3. Flat CLI flags (`--reset-kv-cache`, `--reset-kv-cache-path`, …) live on
+   `CLIConfig` and are listed in `ENDPOINT_FIELDS`.
+4. `_converter_endpoint.build_endpoint` lowers via helpers such as
+   `_maybe_build_reset_kv_cache` / `_maybe_build_server_profiler`: any
+   enable flag **or** path/timeout override produces the nested dict
+   (`{}` for defaults-only).
+5. Runtime prepares absolute control URLs with
+   `prepare_endpoint_control_hooks` (unique origins only) and fires them
+   from the owning plane (CLI cell for reset; `TimingManager` /
+   `PhaseOrchestrator` for profiler) — never from workers. Seamless
+   non-final profiling defers profiler stop until drain.
+
+See [Benchmark Control Hooks](../tutorials/benchmark-control-hooks.md).
+
 ## Adaptive Scale Implementation Pattern
 
 Adaptive scale is a YAML-only timing strategy configured on the phase it controls. When changing adaptive control variables, SLA semantics, artifacts, or YAML normalization, update [Adaptive Scale](../tutorials/adaptive-scale.md) and keep these invariants intact:
