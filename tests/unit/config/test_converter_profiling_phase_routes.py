@@ -962,6 +962,32 @@ class TestSearchSpacePhaseShapeInference:
         with pytest.raises(ValueError, match="must be >= 1"):
             build_profiling(user)
 
+    def test_smoothness_negative_lower_bound_raises_clear_error(self) -> None:
+        """'smoothness' isn't seeded into prof at config-build time (it's
+        optional, only ever written by the planner once trials start), so
+        it needs its own bound check independent of the seeding logic --
+        GammaPhase.smoothness has the same gt=0 constraint 'rate' has."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:-5,-1:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_rate_ramp_negative_lower_bound_raises_clear_error(self) -> None:
+        """Same as smoothness: 'rate_ramp' isn't seeded at config-build
+        time either, but RampConfig.duration has gt=0.0."""
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:-50,-10:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
     def test_explicit_request_rate_still_wins_without_search_space(self) -> None:
         """Regression guard: explicit --request-rate path (no search-space)
         is unaffected by the new inference logic."""

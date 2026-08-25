@@ -259,6 +259,18 @@ def _apply_search_space_shape_seeds(
     """
     from aiperf.config.phases import PhaseType
 
+    # 'smoothness' (GammaPhase.smoothness, gt=0) and 'rate_ramp'
+    # (RampConfig.duration, gt=0.0) aren't seeded into prof here -- both are
+    # optional fields the planner only ever writes once trials start -- but
+    # they share the same "validate the bound now, not at sample time" need
+    # as 'rate'/'users': a negative lower bound otherwise builds a valid
+    # base config and only fails once the planner happens to sample a
+    # negative value mid-search.
+    _reject_non_positive_bound(
+        search_dims, "smoothness", "the gamma distribution's shape parameter"
+    )
+    _reject_non_positive_bound(search_dims, "rate_ramp", "the ramp duration (seconds)")
+
     phase_type = prof["type"]
 
     if phase_type == PhaseType.USER_CENTRIC and "users" in search_dims:
@@ -271,6 +283,20 @@ def _apply_search_space_shape_seeds(
         PhaseType.USER_CENTRIC,
     ):
         _seed_rate_dimension(prof, search_dims, phase_type)
+
+
+def _reject_non_positive_bound(
+    search_dims: dict[str, tuple[float, str]], field: str, subject: str
+) -> None:
+    """Raise a clear error if `field`'s search-space lower bound isn't > 0."""
+    if field not in search_dims:
+        return
+    lo, _kind = search_dims[field]
+    if not math.isfinite(lo) or lo <= 0:
+        raise ValueError(
+            f"--search-space '{field}' lower bound must be > 0 (got {lo!r}); "
+            f"{subject} must be positive."
+        )
 
 
 def _seed_users_dimension(
