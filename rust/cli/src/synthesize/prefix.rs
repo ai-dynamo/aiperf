@@ -47,6 +47,11 @@ impl PrefixAllocator {
         })
     }
 
+    /// Token span reserved by whole L1 and L1.5 prefix blocks.
+    pub fn prefix_tokens(&self) -> i64 {
+        self.prefix_blocks * self.block_size
+    }
+
     fn group_base(&self, group_id: i64) -> i64 {
         self.l1_blocks + group_id * MAX_GROUP_BLOCKS
     }
