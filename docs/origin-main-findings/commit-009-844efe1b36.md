@@ -55,3 +55,9 @@ not present, and produced a false 512-versus-96 shared-block failure. The
 worktree-pinned focused regression also passed. Scoped `rustfmt --check` and
 `git diff --check` passed; workspace-wide formatting remains blocked solely by
 unrelated `runtime/src/engine/sidecar_input.rs` churn.
+
+Late remediation: JSON-supplied numeric bounds are now checked before prefix
+layout construction, and the synthesizer returns an error if its fixed shared
+prefix cannot be extended by L2. Focused boundaries cover
+`block_size=i64::MAX` with one L1 and one L1.5 token, plus the reachable valid
+`i64::MAX` fixed-prefix/L2 addition; neither path panics or wraps.

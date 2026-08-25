@@ -18,6 +18,7 @@ pub struct PrefixAllocator {
     l1_blocks: i64,
     l15_blocks: i64,
     prefix_blocks: i64,
+    prefix_tokens: i64,
     session_region_base: i64,
 }
 
@@ -38,18 +39,29 @@ impl PrefixAllocator {
                 config.layer1_5_tokens
             );
         }
+        let prefix_blocks = l1_blocks
+            .checked_add(l15_blocks)
+            .ok_or_else(|| anyhow::anyhow!("shared prefix block count exceeds i64"))?;
+        let prefix_tokens = prefix_blocks
+            .checked_mul(block_size)
+            .ok_or_else(|| anyhow::anyhow!("shared prefix token span exceeds i64"))?;
+        let session_region_base = l1_blocks
+            .checked_add(MAX_GROUPS * MAX_GROUP_BLOCKS)
+            .ok_or_else(|| anyhow::anyhow!("shared prefix layout exceeds i64"))?;
+
         Ok(Self {
             block_size,
             l1_blocks,
             l15_blocks,
-            prefix_blocks: l1_blocks + l15_blocks,
-            session_region_base: l1_blocks + MAX_GROUPS * MAX_GROUP_BLOCKS,
+            prefix_blocks,
+            prefix_tokens,
+            session_region_base,
         })
     }
 
     /// Token span reserved by whole L1 and L1.5 prefix blocks.
     pub fn prefix_tokens(&self) -> i64 {
-        self.prefix_blocks * self.block_size
+        self.prefix_tokens
     }
 
     fn group_base(&self, group_id: i64) -> i64 {
@@ -138,5 +150,33 @@ impl PrefixAllocator {
 }
 
 fn div_ceil(a: i64, b: i64) -> i64 {
-    if a <= 0 { 0 } else { (a + b - 1) / b }
+    if a <= 0 {
+        0
+    } else {
+        a / b + i64::from(a % b != 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PrefixAllocator;
+    use crate::synthesize::config::SessionDistributionConfig;
+
+    #[test]
+    fn rejects_shared_prefix_token_span_overflow() {
+        let config = SessionDistributionConfig::from_value(&serde_json::json!({
+            "block_size": i64::MAX,
+            "cache": {
+                "layer1_tokens": 1,
+                "layer1_5_tokens": 1,
+            },
+        }))
+        .expect("JSON config must parse");
+
+        let result = PrefixAllocator::new(&config.cache, config.block_size);
+        assert!(result.is_err(), "must reject overflow");
+        let error = result.err().expect("overflow must produce an error");
+
+        assert!(error.to_string().contains("shared prefix token span"));
+    }
 }
