@@ -173,6 +173,17 @@ class ZMQSubClient(BaseZMQClient):
 
         # strip the final TOPIC_END chars from the topic
         topic = topic_bytes.decode()[:-TOPIC_END_LENGTH]
+
+        # A well-formed SUB envelope is [topic, payload]. A topic-only frame
+        # (no payload part, or an empty one) is malformed; drop it explicitly
+        # instead of handing b"" to the JSON decoder, which would only surface
+        # as an opaque zero-length-document parse error.
+        if not message_bytes:
+            self.warning(
+                f"Dropping malformed message with empty payload on topic '{topic}'"
+            )
+            return
+
         self.trace(
             lambda: f"Received message from topic: '{topic}', message: {message_bytes}"
         )

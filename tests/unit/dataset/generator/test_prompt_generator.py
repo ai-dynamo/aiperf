@@ -498,6 +498,40 @@ class TestPromptGeneratorComprehensive:
         assert "longer than the corpus" in str(mock_warning.call_args)
         assert len(tokens) == corpus_size * 2
 
+    @patch("aiperf.common.mixins.aiperf_logger_mixin.AIPerfLoggerMixin.warning")
+    def test_sample_tokens_longer_than_corpus_warns_about_wraparound(
+        self, mock_warning, basic_config
+    ):
+        """The warning must describe wraparound, not a truncation that never happens."""
+        tokenizer, prompts, prefix_prompts = basic_config
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+        corpus_size = generator._corpus_size
+
+        with patch.object(generator._corpus_rng, "randrange", return_value=0):
+            tokens = generator._sample_tokens(corpus_size * 2)
+
+        message = str(mock_warning.call_args)
+        assert len(tokens) == corpus_size * 2
+        assert "Returning a prompt of length" not in message
+        assert "wrap" in message.lower()
+
+    def test_sample_tokens_multiple_corpus_lengths_returns_exact_count(
+        self, basic_config
+    ):
+        """Requests beyond twice the corpus size must still wrap to the full length."""
+        tokenizer, prompts, prefix_prompts = basic_config
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+        corpus_size = generator._corpus_size
+
+        with patch.object(generator._corpus_rng, "randrange", return_value=0):
+            tokens = generator._sample_tokens(corpus_size * 3 + 7)
+
+        assert len(tokens) == corpus_size * 3 + 7
+
     def test_sample_tokens_empty_corpus(self, basic_config):
         """Test _sample_tokens with empty corpus."""
         tokenizer, prompts, prefix_prompts = basic_config

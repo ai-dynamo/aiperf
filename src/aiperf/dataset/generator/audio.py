@@ -139,6 +139,7 @@ class AudioGenerator(BaseGenerator):
                 - audio length is less than 0.01 seconds
                 - sampling rate is not supported for MP3 format
                 - bit depth is not supported (must be 8, 16, 24, or 32)
+                - the configured audio format is not supported (must be wav or mp3)
         """
         length_dist = self.config.length
         length_mean = float(length_dist.expected_value)
@@ -183,6 +184,12 @@ class AudioGenerator(BaseGenerator):
             subtype = "MPEG_LAYER_III"
         elif self.config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
+        else:
+            supported_formats = sorted(f.value for f in AudioFormat)
+            raise ConfigurationError(
+                f"Unsupported audio format: {self.config.format}. "
+                f"Supported audio formats are: {supported_formats}"
+            )
 
         sf = import_soundfile()
 

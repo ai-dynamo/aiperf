@@ -107,3 +107,31 @@ def test_rankings_specific_token_options(synthetic_config, mock_tokenizer):
         # Query and passages should have content
         assert len(query.contents) == 1
         assert len(passages.contents) >= 1
+
+
+def test_create_dataset_with_shared_system_prompt_injects_system_message(
+    synthetic_config, mock_tokenizer
+):
+    """Rankings conversations must receive the configured shared system prompt."""
+    synthetic_config.prompt_prefix_shared_system_length = 20
+    composer = SyntheticRankingsDatasetComposer(
+        run=make_run(synthetic_config), tokenizer=mock_tokenizer
+    )
+
+    dataset = composer.create_dataset()
+
+    assert all(conv.system_message for conv in dataset)
+
+
+def test_create_dataset_with_user_context_injects_user_context_message(
+    synthetic_config, mock_tokenizer
+):
+    """Rankings conversations must receive per-session user context prompts."""
+    synthetic_config.prompt_prefix_user_context_length = 20
+    composer = SyntheticRankingsDatasetComposer(
+        run=make_run(synthetic_config), tokenizer=mock_tokenizer
+    )
+
+    dataset = composer.create_dataset()
+
+    assert all(conv.user_context_message for conv in dataset)

@@ -68,6 +68,10 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
             conversation.turns.append(turn)
             conversations.append(conversation)
 
+        # Conversation-level context prompts (shared system prompt, per-session
+        # user context) are set on the Conversation, not the Turn, so they apply
+        # to the single-turn rankings shape unchanged.
+        self._finalize_conversations(conversations)
         return conversations
 
     def _create_turn(self, num_passages: int) -> Turn:

@@ -212,6 +212,7 @@ Network latency calibration configuration. Controls the TCP-handshake RTT probes
 | `AIPERF_NETWORK_LATENCY_MIN_SAMPLES` | `5` | ≥ 1, ≤ 100000 | Minimum number of successful RTT samples to collect; extra probes are issued at profile completion if a short run did not reach this floor |
 | `AIPERF_NETWORK_LATENCY_CONNECT_TIMEOUT` | `5.0` | ≥ 0.001, ≤ 300.0 | Timeout in seconds for a single TCP-handshake RTT probe |
 | `AIPERF_NETWORK_LATENCY_COMPLETE_TOPUP_TIMEOUT` | `3.0` | ≥ 0.0, ≤ 30.0 | Wall-clock budget in seconds for the final MIN_SAMPLES top-up probes at PROFILE_COMPLETE, kept well under the command-response budget so a slow endpoint cannot stall completion |
+| `AIPERF_NETWORK_LATENCY_SHUTDOWN_DELAY` | `5.0` | ≥ 1.0, ≤ 300.0 | Delay in seconds before shutting down the network latency service to allow command response transmission |
 | `AIPERF_NETWORK_LATENCY_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for the network latency jsonl writer export results processor |
 
 ## OTEL

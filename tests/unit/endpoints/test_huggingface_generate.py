@@ -105,21 +105,65 @@ class TestHuggingFaceGenerateEndpoint:
         assert "vendor_x" not in payload["parameters"]
         assert "stream" not in payload["parameters"]
 
-    def test_parse_response_streaming_calls_streaming(self, endpoint):
+    @pytest.mark.parametrize("global_streaming", [True, False])  # fmt: skip
+    def test_parse_response_stream_event_shape_calls_streaming(
+        self, endpoint, global_streaming
+    ):
+        """A TGI stream event dispatches to the streaming parser regardless of
+        the global `endpoint.streaming` flag (per-request wire mode wins)."""
         response = Mock(spec=InferenceServerResponse)
-        endpoint.model_endpoint.endpoint.streaming = True
+        response.get_json.return_value = {"token": {"text": "hi"}}
+        endpoint.model_endpoint.endpoint.streaming = global_streaming
         endpoint._parse_streaming = Mock(return_value="stream_result")
         result = endpoint.parse_response(response)
         assert result == "stream_result"
         endpoint._parse_streaming.assert_called_once_with(response)
 
-    def test_parse_response_non_streaming_calls_non_streaming(self, endpoint):
+    @pytest.mark.parametrize("global_streaming", [True, False])  # fmt: skip
+    def test_parse_response_full_body_shape_calls_non_streaming(
+        self, endpoint, global_streaming
+    ):
+        """A full TGI /generate body dispatches to the non-streaming parser
+        regardless of the global `endpoint.streaming` flag."""
         response = Mock(spec=InferenceServerResponse)
-        endpoint.model_endpoint.endpoint.streaming = False
+        response.get_json.return_value = {"generated_text": "done"}
+        endpoint.model_endpoint.endpoint.streaming = global_streaming
         endpoint._parse_non_streaming = Mock(return_value="non_stream_result")
         result = endpoint.parse_response(response)
         assert result == "non_stream_result"
         endpoint._parse_non_streaming.assert_called_once_with(response)
+
+    def test_parse_response_stream_override_non_streaming_global_parses_token(
+        self, endpoint
+    ):
+        """End-to-end: a streamed event parsed while the global setting says
+        non-streaming still yields the incremental token text."""
+        response = Mock(spec=InferenceServerResponse)
+        response.get_json.return_value = {"token": {"text": "hi there"}}
+        response.perf_ns = 42
+        endpoint.model_endpoint.endpoint.streaming = False
+
+        result = endpoint.parse_response(response)
+
+        assert isinstance(result, ParsedResponse)
+        endpoint.make_text_response_data.assert_called_once_with("hi there")
+
+    def test_parse_response_list_body_calls_non_streaming(self, endpoint):
+        """TGI /generate may return a single-element list body."""
+        response = Mock(spec=InferenceServerResponse)
+        response.get_json.return_value = [{"generated_text": "ok"}]
+        response.perf_ns = 7
+        endpoint.model_endpoint.endpoint.streaming = True
+
+        result = endpoint.parse_response(response)
+
+        assert isinstance(result, ParsedResponse)
+        endpoint.make_text_response_data.assert_called_once_with("ok")
+
+    def test_parse_response_empty_json_returns_none(self, endpoint):
+        response = Mock(spec=InferenceServerResponse)
+        response.get_json.return_value = None
+        assert endpoint.parse_response(response) is None
 
     def test_parse_non_streaming_with_list(self, endpoint):
         response = Mock(spec=InferenceServerResponse)

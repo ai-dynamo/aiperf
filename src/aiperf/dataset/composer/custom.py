@@ -128,7 +128,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
             CustomDatasetType if successfully inferred
 
         Raises:
-            ValueError: If no loader can handle the data format
+            ValueError: If the file has no non-empty lines, or no loader can
+                handle the data format
         """
         try:
             path = Path(file_path)
@@ -151,6 +152,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
                         return self._infer_type(data=data, filename=file_path)
                 except UnicodeDecodeError:
                     return self._infer_type(data=None, filename=file_path)
+
+            raise ValueError(
+                f"Cannot infer the dataset type of '{file_path}': the file has "
+                "no non-empty lines. Provide a non-empty input file, or specify "
+                "--custom-dataset-type explicitly."
+            )
 
         except ValueError as e:
             self.exception(

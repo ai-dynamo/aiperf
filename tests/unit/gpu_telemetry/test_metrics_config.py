@@ -454,3 +454,56 @@ DCGM_FI_DEV_GPU_UTIL, invalid_type, Should be skipped
             assert new_dcgm_mappings == {}
         finally:
             csv_path.unlink()
+
+    def test_build_custom_metrics_from_csv_colliding_internal_names_dedupes(self):
+        """Two custom DCGM fields whose derived internal_name collides must not
+        both be emitted as metrics — the second one is skipped."""
+        csv_content = """DCGM_FI_DEV_CUSTOM_THING, gauge, Custom Thing (in W)
+DCGM_FI_PROF_CUSTOM_THING, gauge, Custom Thing Prof (in W)
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(csv_content)
+            csv_path = Path(f.name)
+
+        try:
+            loader = MetricsConfigLoader()
+            custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
+                custom_csv_path=csv_path
+            )
+
+            internal_names = [m[1] for m in custom_metrics]
+            assert internal_names == ["nvidia_custom_thing"]
+            assert len(internal_names) == len(set(internal_names))
+            assert new_dcgm_mappings == {
+                "DCGM_FI_DEV_CUSTOM_THING": "nvidia_custom_thing"
+            }
+        finally:
+            csv_path.unlink()
+
+    def test_build_custom_metrics_from_csv_collision_with_default_internal_name_skipped(
+        self,
+    ):
+        """A custom field deriving an internal_name already present in the default
+        config must be skipped even though its DCGM field name is new."""
+        default_internal = GPU_TELEMETRY_METRICS_CONFIG[0][1]
+        assert default_internal.startswith("nvidia_")
+        suffix = default_internal.removeprefix("nvidia_").upper()
+        csv_content = f"DCGM_FI_PROF_{suffix}, gauge, Colliding Metric (in W)\n"
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(csv_content)
+            csv_path = Path(f.name)
+
+        try:
+            loader = MetricsConfigLoader()
+            custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
+                custom_csv_path=csv_path
+            )
+            assert custom_metrics == []
+            assert new_dcgm_mappings == {}
+        finally:
+            csv_path.unlink()

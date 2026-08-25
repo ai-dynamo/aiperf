@@ -183,8 +183,10 @@ class SlimRecord(AIPerfBaseModel):
     timestamp_ns: int = Field(
         description="Nanosecond wall-clock timestamp representing when server generated metrics"
     )
-    endpoint_latency_ns: int = Field(
-        description="Nanoseconds for total HTTP round-trip (request start to completion)"
+    endpoint_latency_ns: int | None = Field(
+        default=None,
+        description="Nanoseconds for total HTTP round-trip (request start to completion). "
+        "None when no HTTP trace timing was captured for the scrape.",
     )
     metrics: dict[str, list[MetricSample]] = Field(
         description="Metrics grouped by family name, mapping directly to metric sample list"
@@ -257,7 +259,7 @@ class ServerMetricsRecord(AIPerfBaseModel):
         so they will be include in the final export, but not in the JSONL records.
 
         Returns:
-            ServerMetricsSlimRecord with only timestamp and slim samples (flat structure)
+            SlimRecord with only timestamp and slim samples (flat structure)
         """
         slim_metrics = {
             name: family.samples

@@ -41,10 +41,13 @@ class TaskManagerMixin(AIPerfLoggerMixin):
     async def cancel_all_tasks(
         self, timeout: float = Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
     ) -> None:
-        """Cancel all tasks in the set and wait for up to timeout seconds for them to complete.
+        """Cancel all tasks in the set and wait (bounded) for them to finish.
+
+        Tasks that do not finish within the timeout are abandoned rather than
+        blocking shutdown.
 
         Args:
-            timeout: The timeout to wait for the tasks to complete.
+            timeout: Maximum number of seconds to wait for cancelled tasks to finish.
         """
         if not self.tasks:
             return
@@ -52,6 +55,22 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         task_list = list(self.tasks)
         for task in task_list:
             task.cancel()
+
+        # Never await ourselves: cancel_all_tasks can be invoked from inside one of
+        # the managed tasks, and awaiting the current task would deadlock.
+        current = asyncio.current_task()
+        pending = [
+            task for task in task_list if not task.done() and task is not current
+        ]
+        if not pending:
+            return
+
+        _, still_pending = await asyncio.wait(pending, timeout=timeout)
+        if still_pending:
+            self.warning(
+                lambda: f"{len(still_pending)} task(s) did not finish within "
+                f"{timeout}s of cancellation; abandoning them."
+            )
 
     def start_background_task(
         self,
@@ -62,7 +81,8 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         stop_on_error: bool = False,
         stop_event: asyncio.Event | None = None,
     ) -> None:
-        """Run a task in the background, in a loop until cancelled."""
+        """Run a task in the background, in a loop until cancelled. If interval is None,
+        the task runs a single time and the loop exits."""
         self.execute_async(
             self._background_task_loop(
                 method, interval, immediate, stop_on_error, stop_event
@@ -81,9 +101,10 @@ class TaskManagerMixin(AIPerfLoggerMixin):
 
         Args:
             method: The method to run as a background task.
-            interval: The interval to run the task in seconds. Can be a callable that returns the interval, and will be called with 'self' as the argument.
+            interval: The interval to run the task in seconds. Can be a callable that returns the interval, and will be called with 'self' as the argument. If None, the method is run once and the loop exits.
             immediate: If True, run the task immediately on start, otherwise wait for the interval first.
             stop_on_error: If True, stop the task on any exception, otherwise log and continue.
+            stop_event: If set, the loop exits before the next iteration.
         """
         while stop_event is None or not stop_event.is_set():
             try:

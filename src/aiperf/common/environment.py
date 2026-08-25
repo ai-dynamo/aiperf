@@ -1208,6 +1208,12 @@ class _NetworkLatencySettings(BaseSettings):
         "at PROFILE_COMPLETE, kept well under the command-response budget so a slow "
         "endpoint cannot stall completion",
     )
+    SHUTDOWN_DELAY: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=5.0,
+        description="Delay in seconds before shutting down the network latency service to allow command response transmission",
+    )
     EXPORT_BATCH_SIZE: int = Field(
         ge=1,
         le=1000000,

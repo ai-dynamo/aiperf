@@ -1187,3 +1187,34 @@ class TestOutOfOrderDataHandling:
         assert result.stats.avg == pytest.approx(5.5)
         assert result.stats.min == 1.0
         assert result.stats.max == 10.0
+
+
+class TestHistogramTimeslicesBeforeFirstSample:
+    """Timeslices lying entirely before the first sample have no baseline and must
+    not be emitted as fabricated zero-delta slices."""
+
+    def test_histogram_timeslices_slices_before_first_sample_are_skipped(self):
+        ts = ServerMetricsTimeSeries()
+        # First sample lands at t=3s; the filter starts at t=0.
+        add_histogram_snapshots(
+            ts,
+            "latency",
+            [
+                (3 * NANOS_PER_SECOND, hist({"1.0": 1.0, "+Inf": 2.0}, 20.0, 2.0)),
+                (4 * NANOS_PER_SECOND, hist({"1.0": 2.0, "+Inf": 4.0}, 40.0, 4.0)),
+                (5 * NANOS_PER_SECOND, hist({"1.0": 3.0, "+Inf": 6.0}, 60.0, 6.0)),
+            ],
+        )
+
+        slices = _compute_histogram_timeslices(
+            get_histogram(ts, "latency"),
+            slice_duration=1.0,
+            time_filter=make_time_filter(start_ns=0, end_ns=5 * NANOS_PER_SECOND),
+        )
+
+        assert slices is not None
+        # [0-1), [1-2), [2-3) all end before the first sample at t=3s.
+        assert all(s.start_ns >= 3 * NANOS_PER_SECOND for s in slices), (
+            f"Slices before first sample were emitted: "
+            f"{[(s.start_ns, s.count) for s in slices]}"
+        )

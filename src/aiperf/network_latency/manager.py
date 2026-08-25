@@ -215,7 +215,7 @@ class NetworkLatencyManager(BaseComponentService):
 
     async def _delayed_shutdown(self) -> None:
         """Shutdown the service after a delay so the command response can be sent."""
-        await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
+        await asyncio.sleep(Environment.NETWORK_LATENCY.SHUTDOWN_DELAY)
         await asyncio.shield(self.stop())
 
     async def _on_network_latency_samples(

@@ -297,3 +297,16 @@ class TestSoundfileGuard:
         monkeypatch.setitem(sys.modules, "soundfile", None)
         with pytest.raises(ConfigurationError, match="libsndfile"):
             import_soundfile()
+
+
+class TestUnsupportedFormat:
+    """Tests for the unsupported-audio-format guard in ``generate``."""
+
+    def test_generate_unsupported_format_raises_configuration_error(self):
+        """A format that is neither MP3 nor WAV must raise ConfigurationError."""
+        config = make_config(mean=0.1, stddev=0.0)
+        generator = AudioGenerator(config)
+        object.__setattr__(generator.config, "format", "flac")
+
+        with pytest.raises(ConfigurationError, match="flac"):
+            generator.generate()
