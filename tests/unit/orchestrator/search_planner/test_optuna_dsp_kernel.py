@@ -92,13 +92,13 @@ def test_qlognei_candidates_func_fits_with_sla_constraints(n_sla_filters: int) -
     """
     func = build_qlognei_candidates_func()
     d = 3
+    torch.manual_seed(0)
     train_x = torch.rand(8, d, dtype=torch.float64)
     train_obj = torch.rand(8, 1, dtype=torch.float64)
-    # BoTorch treats con <= 0 as feasible. Force a mix rather than relying on
-    # random signs, which for n_sla_filters > 1 can leave every row infeasible
-    # and short-circuit the acquisition into a degenerate branch.
+    # BoTorch treats con <= 0 as feasible. Pin the signs rather than relying
+    # on random draws: even rows strictly feasible, odd rows strictly not.
     train_con = torch.rand(8, n_sla_filters, dtype=torch.float64) + 0.5
-    train_con[::2] -= 1.0
+    train_con[::2] *= -1.0
     bounds = torch.stack(
         [torch.zeros(d, dtype=torch.float64), torch.ones(d, dtype=torch.float64)]
     )
