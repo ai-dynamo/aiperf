@@ -244,7 +244,7 @@ def test_cleanup_timer_delay_overrides_reach_kopf_registration(
 
     timer = next(
         handler
-        for handler in isolated_registry._spawning
+        for handler in isolated_registry._spawning.get_all_handlers()  # noqa: SLF001
         if handler.fn is operator_main.cleanup_old_results
     )
     assert timer.initial_delay == 17.0
