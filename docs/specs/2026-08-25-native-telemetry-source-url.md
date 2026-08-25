@@ -57,6 +57,13 @@ Acceptance requires focused runtime unit tests and the GPU telemetry E2E test
 target using the configured `sccache` wrapper and a target directory below
 `/mnt/4tb`.
 
+When `profile_export_prefix` is configured, native resolution must apply the
+same normalized export stem to the GPU telemetry sidecar and produce
+`<stem>_gpu_telemetry.jsonl`. With no prefix, the existing
+`gpu_telemetry_export.jsonl` default remains unchanged. This is required so the
+custom-prefix product test reads and validates the migrated public schema
+instead of silently skipping the artifact.
+
 ## Non-goals
 
 - Backward-compatible parsing of historical JSONL artifacts.
@@ -64,4 +71,3 @@ target using the configured `sccache` wrapper and a target directory below
 - Renaming DCGM collector configuration or mock-server APIs.
 - Changing telemetry collection, accumulation, summaries, cadence, or error
   handling.
-

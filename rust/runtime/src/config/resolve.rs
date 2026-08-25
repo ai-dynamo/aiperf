@@ -158,6 +158,7 @@ fn artifact_export_stem(prefix: Option<&str>) -> String {
         "_server_metrics.jsonl",
         "_server_metrics.json",
         "_server_metrics.csv",
+        "_gpu_telemetry.jsonl",
         ".jsonl",
         ".parquet",
         ".csv",
@@ -1348,7 +1349,12 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         metrics_file: inputs.gpu_telemetry_metrics_file.clone(),
         urls: inputs.gpu_telemetry_urls.clone(),
     };
-    let gpu_sidecar = crate::config::model::telemetry::GpuTelemetrySidecar::from_config(&gpu_cfg)?;
+    let mut gpu_sidecar =
+        crate::config::model::telemetry::GpuTelemetrySidecar::from_config(&gpu_cfg)?;
+    if inputs.profile_export_prefix.is_some() {
+        let stem = artifact_export_stem(inputs.profile_export_prefix.as_deref());
+        gpu_sidecar.records_path = format!("{stem}_gpu_telemetry.jsonl");
+    }
     let sidecars = crate::config::model::telemetry::Sidecars {
         gpu_telemetry: gpu_enabled.then_some(gpu_sidecar),
         server_metrics: server_enabled.then(|| {
