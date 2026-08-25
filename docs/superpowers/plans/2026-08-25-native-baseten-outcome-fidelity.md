@@ -29,10 +29,10 @@
 - Consumes: the existing crate-private `implementation::capture_endpoint_policy` re-export.
 - Produces: exactly one crate-private re-export and no endpoint behavior change.
 
-- [ ] Retain the baseline compiler output showing duplicate-import error `E0252`.
-- [ ] Remove only the duplicate re-export introduced by the campaign merge.
-- [ ] Re-run the focused Baseten suite and record the clean baseline count before adding #40 tests.
-- [ ] Commit the prerequisite independently from the semantic port.
+- [x] Retain the baseline compiler output showing duplicate-import error `E0252`.
+- [x] Remove only the duplicate re-export introduced by the campaign merge.
+- [x] Re-run the focused Baseten suite and record the clean baseline count before adding #40 tests.
+- [x] Commit the prerequisite independently from the semantic port.
 
 ### Task 2: Prove the missing native behavior
 
@@ -42,13 +42,13 @@
 
 **Interfaces:**
 - Consumes: real Baseten Parquet rows and `LoaderRegistry::with_builtin_formats`.
-- Produces: failing unit assertions for default, omit-KV, closed-loop, and missing-column behavior plus a failing public-registry integration assertion.
+- Produces: failing unit assertions for default, omit-KV, closed-loop, and missing-value behavior plus a failing public-registry integration assertion.
 
-- [ ] Extend the private Parquet fixture with literal outcome values and add a focused default-replay test.
-- [ ] Run the focused unit test and observe a compile failure because `Turn::recorded_outcome` does not exist.
-- [ ] Add the omit-KV, closed-loop, and missing-column assertions without duplicating equivalent cases.
-- [ ] Add a public-registry integration fixture with hand-derived literal outcome assertions.
-- [ ] Run the integration test and observe the same missing-interface failure.
+- [x] Extend the private Parquet fixture with literal outcome values and add focused replay coverage.
+- [x] Run the focused unit test and observe a compile failure because `Turn::recorded_outcome` does not exist.
+- [x] Add the omit-KV, closed-loop, and missing-value assertions without duplicating equivalent cases.
+- [x] Add a public-registry integration fixture with hand-derived literal outcome assertions.
+- [x] Run the integration test and observe the same missing-interface failure.
 
 ### Task 3: Carry recorded outcomes without dispatch effects
 
@@ -60,12 +60,12 @@
 - Produces: public `RecordedOutcome { duration_e2e_ms, duration_ttft_ms, cached_tokens_reference }` and `Turn::recorded_outcome: Option<RecordedOutcome>`.
 - Consumes: optional Baseten source values through `parse_row`, `row_to_value`, and `row_from_value`.
 
-- [ ] Add the smallest serde-compatible `RecordedOutcome` model and defaulted `Turn` field.
-- [ ] Parse and round-trip `duration_ttft_ms` and `cached_tokens_reference` beside the existing E2E duration.
-- [ ] Attach an outcome only when at least one value exists; leave request construction unchanged.
-- [ ] Run the focused unit and integration tests and observe all cases pass.
-- [ ] Run direct rustfmt on both production files and the integration test.
-- [ ] Commit the semantic port and tests together.
+- [x] Add the smallest serde-compatible `RecordedOutcome` model and defaulted `Turn` field.
+- [x] Parse and round-trip `duration_ttft_ms` and `cached_tokens_reference` beside the existing E2E duration.
+- [x] Attach an outcome only when at least one value exists; leave request construction unchanged.
+- [x] Run the focused unit and integration tests and observe all cases pass.
+- [x] Run direct rustfmt on both production files and the integration test.
+- [x] Commit the semantic port and tests together.
 
 ### Task 4: Record exact ancestry and complete two Graham passes
 
@@ -79,9 +79,9 @@
 - Consumes: completed native first-parent tree and exact upstream commit `215be05b6a534fb19b84bf83f711db2d20f5bea1`.
 - Produces: a two-parent ours-tree merge, concrete verification receipt, and zero unresolved Critical or Important Graham findings.
 
-- [ ] Review every changed hunk for unnecessary allocation/cloning, serde compatibility, dispatch leakage, naming, comments, and test duplication.
-- [ ] Fix every validated review finding and record the first-pass findings.
-- [ ] Re-review the corrected range from the exact campaign base and record the final verdict.
-- [ ] Create the two-parent ours-tree merge and prove its second parent and tree identity.
-- [ ] Run focused unit and integration tests, runtime library tests with `parquet`, Clippy, formatting, docs checks, and exact-range whitespace checks.
-- [ ] Update the campaign ledger and finding with exact commit ids, test counts, ancestry proof, and Graham verdict.
+- [x] Review every changed hunk for unnecessary allocation/cloning, serde compatibility, dispatch leakage, naming, comments, and test duplication.
+- [x] Fix every validated review finding and record the first-pass findings.
+- [x] Re-review the corrected range from the exact campaign base and record the final verdict.
+- [x] Create the two-parent ours-tree merge and prove its second parent and tree identity.
+- [x] Run focused unit and integration tests, runtime library tests with `parquet`, Clippy, formatting, docs checks, and exact-range whitespace checks.
+- [x] Update the campaign ledger and finding with exact commit ids, test counts, ancestry proof, and Graham verdict.

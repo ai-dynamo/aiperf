@@ -44,3 +44,30 @@ columnar-loader changes. The closure merge therefore uses Git's `ours` tree
 strategy: it has the exact upstream commit as second parent while its tree is
 byte-identical to the completed native first parent. This records real
 two-parent ancestry without cherry-picking or importing #39's pending work.
+
+## Closure evidence
+
+The native implementation landed in `ccb8c27c14`; the isolated-base compiler
+prerequisite is `de4eccf95d`. Merge `1d20f63c51e7f0e12732d54d61996dc4dc577f71`
+has parents `b2dbbb0da77755c3837843f5f3db1808057f1a0c` and exact upstream
+`215be05b6a534fb19b84bf83f711db2d20f5bea1`. Its tree
+`a1e14c7c5250a9bc78259e7e32ff94c9bb6a1830` exactly equals its first-parent
+tree, and the base-to-merge diff for upstream's Python loader and unit test is
+empty; tracker #39 content was not imported.
+
+TDD first failed with `E0609` because `Turn::recorded_outcome` did not exist.
+After implementation and review fixes, all 13 Baseten loader unit tests and the
+one real-Parquet public-registry integration test passed. Runtime all-target
+Clippy exited successfully with pre-existing warnings. The complete runtime
+library run passed 1,777 tests and failed one unrelated existing version
+snapshot (`0.12.0` actual versus `0.0.0` expected) in
+`metrics_core::report::tests::v2_uses_type_specific_series_and_null_for_non_finite_tail`;
+the port does not change that module. Scoped Rust formatting, docs-current, and
+exact-range whitespace checks passed; workspace formatting reports one
+unrelated existing wrap difference in `rust/cli/src/yaml.rs`.
+
+The first Graham pass found and fixed an overstated evidence claim and an
+unsafe test-fixture `Default`. Re-review of `106019c5a1..964c3bc32a` approved
+the corrected production and test surface with no remaining finding. Review
+receipts live under
+`.superpowers/sdd/2026-08-25-native-baseten-outcome-fidelity/`.

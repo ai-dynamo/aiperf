@@ -65,7 +65,7 @@ implementation, test run, or review.
 | 37 | `23ed221c3d` | CI speed | complete | not-applicable | Exact upstream merge completed on `ajc/port-origin-037`; Python harness regression passed and no Rust test candidate exists. Closure: `docs/origin-main-findings/commit-037-23ed221c3d.md`. |
 | 38 | `c26fe88bd8` | AgentX FAQ | complete | not-applicable | Merged in `233b71c98b`; closure: `docs/origin-main-findings/commit-038-c26fe88bd8.md`. |
 | 39 | `1e32a51318` | Baseten load performance | analysing | unassessed | Requires benchmark before claiming a port gap. |
-| 40 | `215be05b6a` | Baseten outcome fidelity | pending | applicable | Only `duration_ttft_ms` and `cached_tokens_reference` remain missing. |
+| 40 | `215be05b6a` | Baseten outcome fidelity | complete | applicable | Merged exactly in `1d20f63c51`; native E2E, TTFT, and cached-token outcomes survive real-Parquet registry composition without dispatch leakage and are Graham-approved. |
 | 41 | `516faa12c8` | CODEOWNERS | pending | not-applicable | Repository metadata. |
 | 42 | `ce453582c7` | CONTRIBUTING spelling | pending | not-applicable | Documentation only. |
 | 43 | `6ed4823d12` | cache-bust help link | pending | not-applicable | Documentation only. |
@@ -260,3 +260,36 @@ passed (1 test) with `--features engine --lib` using `sccache` and the dedicated
 `/mnt/4tb/aiperf-origin-port-007-target` target directory. The independent
 review is recorded as `GRAHAM APPROVED` with no findings in
 `.superpowers/sdd/port-origin-007/graham-review.md`.
+
+## Per-commit record: 215be05b6a53
+
+### Upstream intent and Rust comparison
+
+Upstream always projects Baseten `duration_e2e_ms`, `duration_ttft_ms`, and
+`cached_tokens_reference` so fidelity outcomes survive loading independently
+of KV hints and replay mode. Native already retained E2E privately for
+closed-loop delay derivation but dropped TTFT and cached-token reference at its
+parse boundary.
+
+### Merge and implementation evidence
+
+`1d20f63c51e7f0e12732d54d61996dc4dc577f71` is a two-parent ours-tree merge
+with exact upstream commit `215be05b6a534fb19b84bf83f711db2d20f5bea1` as
+its second parent. Its tree equals the reviewed native first-parent tree, so
+upstream #39's pending Python content was not imported. Native model, loader,
+unit, and real-Parquet public-registry integration work landed in
+`ccb8c27c14`; design and exact-diff findings are in
+`docs/specs/2026-08-25-native-baseten-outcome-fidelity.md` and
+`docs/origin-main-findings/commit-040-215be05b6a.md`.
+
+### Verification and review
+
+TDD recorded the missing `Turn::recorded_outcome` interface first. After the
+native projection and Graham fixes, all 13 focused Baseten unit tests and the
+one real-Parquet built-in-registry integration test passed using `sccache` and
+the dedicated `/mnt/4tb/aiperf-origin-port-040-target`. Runtime all-target
+Clippy passed with pre-existing warnings. The complete runtime library run
+passed 1,777 tests with one unrelated pre-existing version-snapshot failure;
+scoped formatting, docs-current, and range whitespace checks passed. Graham's
+first pass found two evidence/test-quality defects, both fixed in `964c3bc32a`;
+re-review approved the corrected range with no remaining finding.
