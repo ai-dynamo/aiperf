@@ -359,6 +359,18 @@ def resolve_latest(base: Path, namespace: str, name: str) -> str | None:
     return value or None
 
 
+def _reconcile_latest_pointer(root: Path, epochs: list[str]) -> str | None:
+    """Point ``root/latest.txt`` at the newest epoch, or remove it."""
+    pointer = root / LATEST_POINTER
+    if not epochs:
+        pointer.unlink(missing_ok=True)
+        return None
+
+    epoch = max(epochs, key=lambda value: (_epoch_wall_seconds(value), value))
+    _write_pointer_atomic(root, epoch)
+    return epoch
+
+
 def reconcile_latest(base: Path, namespace: str, name: str) -> str | None:
     """Point ``latest.txt`` at the newest surviving epoch, or remove it.
 
@@ -373,15 +385,7 @@ def reconcile_latest(base: Path, namespace: str, name: str) -> str | None:
         '1714069323'
     """
     target = job_dir(base, namespace, name)
-    pointer = target / LATEST_POINTER
-    epochs = list_run_epochs(base, namespace, name)
-    if not epochs:
-        pointer.unlink(missing_ok=True)
-        return None
-
-    epoch = max(epochs, key=lambda value: (_epoch_wall_seconds(value), value))
-    _write_pointer_atomic(target, epoch)
-    return epoch
+    return _reconcile_latest_pointer(target, list_run_epochs(base, namespace, name))
 
 
 def resolve_run_dir(
@@ -496,15 +500,26 @@ def reconcile_sweep_latest(base: Path, namespace: str, name: str) -> str | None:
     removing the pointer when no archive epochs survive.
     """
     sweep_root = base / namespace / "sweeps" / name
-    pointer = sweep_root / LATEST_POINTER
     epochs = [entry.epoch for entry in list_sweep_epochs(base, namespace, name)]
-    if not epochs:
-        pointer.unlink(missing_ok=True)
-        return None
+    return _reconcile_latest_pointer(sweep_root, epochs)
 
-    epoch = max(epochs, key=lambda value: (_epoch_wall_seconds(value), value))
-    _write_pointer_atomic(sweep_root, epoch)
-    return epoch
+
+def _sweep_epoch_entry(path: Path, latest: str | None) -> RunEntry | None:
+    """Build one sweep archive listing entry, skipping unreadable directories."""
+    try:
+        mtime = int(path.stat().st_mtime)
+        children = list(path.iterdir())
+        file_count = len(children)
+        total_size_bytes = sum(child.stat().st_size for child in children if child.is_file())
+    except OSError:
+        return None
+    return RunEntry(
+        epoch=path.name,
+        mtime_epoch=mtime,
+        file_count=file_count,
+        total_size_bytes=total_size_bytes,
+        is_latest=(path.name == latest),
+    )
 
 
 def list_sweep_epochs(base: Path, namespace: str, name: str) -> list[RunEntry]:
@@ -528,26 +543,13 @@ def list_sweep_epochs(base: Path, namespace: str, name: str) -> list[RunEntry]:
         return []
     latest = resolve_sweep_latest(base, namespace, name)
     out: list[RunEntry] = []
-    for p in sweep_root.iterdir():
-        if not p.is_dir() or not EPOCH_RE.match(p.name):
+    for path in sweep_root.iterdir():
+        if not path.is_dir() or not EPOCH_RE.match(path.name):
             continue
-        try:
-            mtime = int(p.stat().st_mtime)
-            children = list(p.iterdir())
-            file_count = len(children)
-            total_size_bytes = sum(c.stat().st_size for c in children if c.is_file())
-        except OSError:
-            continue
-        out.append(
-            RunEntry(
-                epoch=p.name,
-                mtime_epoch=mtime,
-                file_count=file_count,
-                total_size_bytes=total_size_bytes,
-                is_latest=(p.name == latest),
-            )
-        )
-    return sorted(out, key=lambda e: e.epoch)
+        entry = _sweep_epoch_entry(path, latest)
+        if entry is not None:
+            out.append(entry)
+    return sorted(out, key=lambda entry: entry.epoch)
 
 
 async def list_sweep_epochs_async(
@@ -584,21 +586,10 @@ async def list_sweep_epochs_async(
         epoch_dir = sweep_root / epoch
         if not epoch_dir.is_dir():
             continue
-        try:
-            mtime = int(epoch_dir.stat().st_mtime)
-            children = list(epoch_dir.iterdir())
-            file_count = len(children)
-            total_size_bytes = sum(c.stat().st_size for c in children if c.is_file())
-        except OSError:
-            continue
-        by_epoch[epoch] = RunEntry(
-            epoch=epoch,
-            mtime_epoch=mtime,
-            file_count=file_count,
-            total_size_bytes=total_size_bytes,
-            is_latest=(epoch == latest),
-        )
-    return sorted(by_epoch.values(), key=lambda e: e.epoch)
+        entry = _sweep_epoch_entry(epoch_dir, latest)
+        if entry is not None:
+            by_epoch[epoch] = entry
+    return sorted(by_epoch.values(), key=lambda entry: entry.epoch)
 
 
 def list_run_epochs(base: Path, namespace: str, name: str) -> list[str]:
