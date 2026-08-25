@@ -44,6 +44,12 @@ pub struct ScenarioSpec {
     pub inter_turn_delay_cap_seconds: Option<f64>,
     /// Trace idle-gap cap (seconds).
     pub trace_idle_gap_cap_seconds: Option<f64>,
+    /// Default global system-idle cap (seconds); applied only when unset.
+    pub system_idle_gap_cap_seconds: Option<f64>,
+    /// Reject an authored per-trace idle-gap cap.
+    pub forbid_trace_idle_gap_cap: bool,
+    /// Reject an authored per-turn delay cap.
+    pub forbid_inter_turn_delay_cap: bool,
     /// Required cache-bust target.
     pub require_cache_bust: Option<CacheBustTarget>,
     /// Generic canonical recorded-agent replay policy when this scenario has one.
@@ -84,7 +90,10 @@ pub fn inferencex_agentx_mvp() -> ScenarioSpec {
         default_trajectory_start_min_ratio: Some(0.0),
         default_trajectory_start_max_ratio: Some(1.0),
         inter_turn_delay_cap_seconds: None,
-        trace_idle_gap_cap_seconds: Some(10.0),
+        trace_idle_gap_cap_seconds: None,
+        system_idle_gap_cap_seconds: Some(10.0),
+        forbid_trace_idle_gap_cap: true,
+        forbid_inter_turn_delay_cap: true,
         require_cache_bust: Some(CacheBustTarget::FirstTurnPrefix),
         recorded_agent: None,
     }
@@ -121,6 +130,9 @@ pub fn recorded_agent_default() -> ScenarioSpec {
         default_trajectory_start_max_ratio: None,
         inter_turn_delay_cap_seconds: None,
         trace_idle_gap_cap_seconds: None,
+        system_idle_gap_cap_seconds: None,
+        forbid_trace_idle_gap_cap: false,
+        forbid_inter_turn_delay_cap: false,
         require_cache_bust: None,
         recorded_agent: Some(RecordedAgentScenarioLock {
             workload_name: "recorded-agent-eight-v1".to_string(),
@@ -290,6 +302,10 @@ pub struct RunLockInputs {
     pub cache_bust: Option<CacheBustTarget>,
     /// Whether cache-bust was explicitly set.
     pub cache_bust_explicit: bool,
+    /// Authored per-trace idle-gap cap, if any.
+    pub trace_idle_gap_cap_seconds: Option<f64>,
+    /// Authored per-turn delay cap, if any.
+    pub inter_turn_delay_cap_seconds: Option<f64>,
     /// `--unsafe-override`.
     pub unsafe_override: bool,
     /// Whether the dataset is the synthetic CLI default (non-overridable under
@@ -375,6 +391,32 @@ pub fn apply_scenario_locks(
             &mut violations,
             &mut applied,
         );
+    }
+    if spec.forbid_trace_idle_gap_cap
+        && let Some(cap) = inputs.trace_idle_gap_cap_seconds
+    {
+        violations.push(ScenarioViolation {
+            flag: "--trace-idle-gap-cap-seconds".into(),
+            current_value: cap.to_string(),
+            required_value: "<unset>".into(),
+            message: format!(
+                "scenario {:?} preserves original per-trace request timing and forbids timeline compression",
+                spec.name
+            ),
+        });
+    }
+    if spec.forbid_inter_turn_delay_cap
+        && let Some(cap) = inputs.inter_turn_delay_cap_seconds
+    {
+        violations.push(ScenarioViolation {
+            flag: "--inter-turn-delay-cap-seconds".into(),
+            current_value: cap.to_string(),
+            required_value: "<unset>".into(),
+            message: format!(
+                "scenario {:?} preserves original inter-turn timing and forbids a per-turn delay cap",
+                spec.name
+            ),
+        });
     }
     if !spec.require_loader.is_empty() {
         if loader_allowed(inputs.loader.as_deref(), &spec.require_loader) {
@@ -878,7 +920,57 @@ mod tests {
         assert_eq!(s.min_benchmark_duration_seconds, 900);
         assert_eq!(s.require_cache_bust, Some(CacheBustTarget::FirstTurnPrefix));
         assert!(s.require_loader.contains(&"weka_trace".to_string()));
+        assert_eq!(s.inter_turn_delay_cap_seconds, None);
+        assert_eq!(s.trace_idle_gap_cap_seconds, None);
+        assert_eq!(s.system_idle_gap_cap_seconds, Some(10.0));
+        assert!(s.forbid_trace_idle_gap_cap);
+        assert!(s.forbid_inter_turn_delay_cap);
+
+        let recorded = recorded_agent_default();
+        assert_eq!(recorded.system_idle_gap_cap_seconds, None);
+        assert!(!recorded.forbid_trace_idle_gap_cap);
+        assert!(!recorded.forbid_inter_turn_delay_cap);
         assert!(get_scenario("nope").is_none());
+    }
+
+    #[test]
+    fn agentx_legacy_idle_caps_are_bypassable_violations() {
+        let spec = inferencex_agentx_mvp();
+        let clean = RunLockInputs {
+            streaming: true,
+            ignore_eos: Some(true),
+            loader: Some("weka_trace".into()),
+            cache_bust: Some(CacheBustTarget::FirstTurnPrefix),
+            ..Default::default()
+        };
+
+        for (flag, trace_cap, turn_cap) in [
+            ("--trace-idle-gap-cap-seconds", Some(10.0), None),
+            ("--inter-turn-delay-cap-seconds", None, Some(10.0)),
+        ] {
+            let authored = RunLockInputs {
+                trace_idle_gap_cap_seconds: trace_cap,
+                inter_turn_delay_cap_seconds: turn_cap,
+                ..clean.clone()
+            };
+            let error = apply_scenario_locks(&spec, &authored)
+                .expect_err("authored legacy cap must fail the AgentX scenario");
+            assert!(error.bypassable);
+            assert_eq!(error.violations.len(), 1);
+            assert_eq!(error.violations[0].flag, flag);
+            assert_eq!(error.violations[0].required_value, "<unset>");
+
+            let overridden = RunLockInputs {
+                unsafe_override: true,
+                ..authored
+            };
+            let outcome = apply_scenario_locks(&spec, &overridden)
+                .expect("unsafe override must retain a bypassable violation");
+            assert_eq!(outcome.submission_valid, Some(false));
+            assert_eq!(outcome.submission_invalid_reasons, vec!["unsafe_override"]);
+            assert_eq!(outcome.violations.len(), 1);
+            assert_eq!(outcome.violations[0].flag, flag);
+        }
     }
 
     #[test]
