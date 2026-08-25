@@ -159,6 +159,57 @@ class TestEnvironmentVariableOverrides:
         assert settings.ENDPOINT_CHECK_TIMEOUT == 30.0
 
 
+class TestMutatingRouteSettings:
+    """Tests for mutating-route environment aliases."""
+
+    def test_preferred_aliases_override_compatibility_aliases(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.operator.environment import _OperatorEnvironment
+
+        monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED", "false")
+        monkeypatch.setenv("AIPERF_MUTATING_ROUTES_ENABLED", "true")
+        monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "canonical-token")
+        monkeypatch.setenv("AIPERF_MUTATING_ROUTES_TOKEN", "legacy-token")
+
+        settings = _OperatorEnvironment()
+
+        assert settings.MUTATING_ROUTES_ENABLED is False
+        assert settings.MUTATING_ROUTES_TOKEN == "canonical-token"
+
+    def test_compatibility_aliases_are_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.operator.environment import _OperatorEnvironment
+
+        monkeypatch.setenv("AIPERF_MUTATING_ROUTES_ENABLED", "true")
+        monkeypatch.setenv("AIPERF_MUTATING_ROUTES_TOKEN", "legacy-token")
+
+        settings = _OperatorEnvironment()
+
+        assert settings.MUTATING_ROUTES_ENABLED is True
+        assert settings.MUTATING_ROUTES_TOKEN == "legacy-token"
+
+
+class TestResultsServerPort:
+    """Tests for typed results-server port configuration."""
+
+    def test_env_override_and_bounds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from aiperf.operator.environment import _ResultsSettings
+
+        monkeypatch.setenv("AIPERF_RESULTS_SERVER_PORT", "19081")
+        assert _ResultsSettings().SERVER_PORT == 19081
+        assert _ResultsSettings(SERVER_PORT=1).SERVER_PORT == 1
+        assert _ResultsSettings(SERVER_PORT=65535).SERVER_PORT == 65535
+
+    @pytest.mark.parametrize("port", [0, 65536])
+    def test_rejects_out_of_range_port(self, port: int) -> None:
+        from aiperf.operator.environment import _ResultsSettings
+
+        with pytest.raises(ValidationError, match="SERVER_PORT"):
+            _ResultsSettings(SERVER_PORT=port)
+
+
 class TestMonitorSettingsValidation:
     """Tests for monitor settings validation bounds."""
 
