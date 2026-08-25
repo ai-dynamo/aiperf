@@ -32,7 +32,7 @@ implementation, test run, or review.
 | 4 | `6db948524e` | SageMaker malformed timestamp | merged | already-covered | Native loader returns validation error. |
 | 5 | `ce715ae849` | agentic think-time idle guard | complete | applicable | Merged in `6e8da730e8`; native scenario default/lock port in `ad4c2a54f4`, `6e78b41d35`, and `729c59f64a`; Graham approved. |
 | 6 | `93b6223373` | telemetry field rename | complete | applicable | Merged in `4ab850c79d`; native artifact migration and custom-prefix closure in `726fcb614b`, `4763b53f0f`, and `978bc93fea`; Graham approved. |
-| 7 | `86ea3f7deb` | detailed JSONL fallback | pending | already-covered | Native aggregation uses `profile_export.jsonl`; separately sync independent Python profile. |
+| 7 | `86ea3f7deb` | detailed JSONL fallback | complete | already-covered | Merged in `f027104364`; native detailed aggregation already reads the canonical JSONL path directly, while the compatibility Python regression passes. Graham approved. |
 | 8 | `5566aae1e1` | ShareGPT batch encoding | pending | applicable | Native composition has no batch-tokenizer seam. |
 | 9 | `844efe1b36` | full synthesis prefix blocks | pending | already-covered | Native synthesis preserves block identity. |
 | 10 | `ffc943a9fe` | FFmpeg CVE bump | pending | shared-product-action | Shared shipped Dockerfile remains on 8.1.1; security port required. |
@@ -181,3 +181,30 @@ independent task review found zero Critical, Important, or Minor findings. The
 fresh Graham re-review found no Critical or Important findings, confirmed both
 earlier findings resolved, and ended `GRAHAM APPROVED`; its sole documentation
 whitespace minor was removed before closure.
+
+## Per-commit record: 86ea3f7deb74
+
+### Upstream intent and Rust comparison
+
+Upstream fixes the legacy Python `cli_runner` detailed aggregator so an absent
+`export_jsonl_file` uses `DEFAULT_JSONL_FILENAME` instead of an empty path
+component. The native `aiperf profile` path does not call that Python helper.
+Its Rust-owned detailed sweep aggregation reads
+`profile_export.jsonl` directly in `rust/cli/src/sweep/aggregate.rs`, so the
+native behavior was already equivalent and no Rust source change or design
+specification was needed.
+
+### Merge, verification, and review
+
+`f027104364e19361607a156a57b4051901abf62c` is a two-parent merge with exact
+upstream commit `86ea3f7deb74ef49ae84a1bee293eb724125788c` as its second
+parent. It retains the upstream Python fallback and focused regression test
+without semantic conflict.
+
+The focused Python regression passed (1 test) with this isolated worktree's
+`src/` first on `PYTHONPATH`. The closest Rust-owned JSONL artifact regression,
+`engine::shard_artifacts::tests::all_empty_shards_leave_empty_jsonl_and_no_csv`,
+passed (1 test) with `--features engine --lib` using `sccache` and the dedicated
+`/mnt/4tb/aiperf-origin-port-007-target` target directory. The independent
+review is recorded as `GRAHAM APPROVED` with no findings in
+`.superpowers/sdd/port-origin-007/graham-review.md`.
