@@ -33,6 +33,7 @@ from aiperf.kubernetes.port_forward import port_forward_with_status
 from aiperf.kubernetes.results_operator import (
     _REDIRECT_STATUSES,
     _get_no_redirects,
+    _get_with_request_timeout,
 )
 
 if TYPE_CHECKING:
@@ -208,7 +209,7 @@ async def _list_available_artifacts(
     """List artifact filenames from the controller API. Returns None on error."""
     list_url = f"{api_base}{API_RESULTS_LIST_PATH}"
     try:
-        async with session.get(list_url) as list_resp:
+        async with _get_with_request_timeout(session, list_url) as list_resp:
             list_resp.raise_for_status()
             list_data = await _response_json(list_resp)
             return [f["name"] for f in list_data.get("files", [])]

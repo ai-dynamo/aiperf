@@ -28,6 +28,7 @@ from pytest import param
 
 from aiperf.kubernetes.constants import Containers
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.models import JobSetInfo
 from aiperf.kubernetes.results import (
     API_RESULTS_FILES_PATH,
@@ -244,8 +245,11 @@ class TestRetrieveResultsFromApi:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_downloads_key_files_successfully(self, tmp_path: Path) -> None:
+    async def test_downloads_key_files_successfully(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         api = _make_api()
+        monkeypatch.setattr(K8sEnvironment.RESULTS, "REQUEST_TIMEOUT_SECONDS", 34.0)
 
         metrics_content = orjson.dumps({"throughput": 100})
         profile_content = b"profile data"
@@ -270,7 +274,7 @@ class TestRetrieveResultsFromApi:
                 "aiperf.kubernetes.results.port_forward_with_status",
                 side_effect=lambda *a, **kw: _mock_port_forward(9999),
             ),
-            patch("aiohttp.ClientSession", return_value=session),
+            patch("aiohttp.ClientSession", return_value=session) as client_session,
             patch(
                 "aiperf.transports.aiohttp_client.create_tcp_connector",
                 return_value=None,
@@ -281,6 +285,7 @@ class TestRetrieveResultsFromApi:
             )
 
         assert result is True
+        assert client_session.call_args.kwargs["timeout"].total == 34.0
         assert (tmp_path / "metrics.json").read_bytes() == metrics_content
         assert (tmp_path / "profile_export_aiperf.json").read_bytes() == profile_content
         assert (tmp_path / "profile_export_console.txt").read_bytes() == console_content

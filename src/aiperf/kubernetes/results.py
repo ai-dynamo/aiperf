@@ -283,7 +283,7 @@ async def retrieve_results_from_api(
 
             downloaded_any = False
             timeout = aiohttp.ClientTimeout(
-                total=K8sEnvironment.RESULTS.DOWNLOAD_TIMEOUT_SECONDS
+                total=K8sEnvironment.RESULTS.REQUEST_TIMEOUT_SECONDS
             )
             connector = create_tcp_connector()
             async with aiohttp.ClientSession(
@@ -584,7 +584,9 @@ async def stream_controller_logs(
             if not line:
                 await proc.wait()
                 break
-            console.print(line.decode().rstrip(), markup=False, highlight=False)
+            console.print(
+                line.decode().rstrip(), markup=False, highlight=False, soft_wrap=True
+            )
     except asyncio.CancelledError:
         proc.terminate()
         raise
