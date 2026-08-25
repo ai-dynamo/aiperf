@@ -43,7 +43,6 @@ pub use implementation::{
     RealtimeEndpoint, ResponsesEndpoint, ShapeLowerer, TurnMessageLowerer,
     WARMUP_SYSTEM_MESSAGE_PREFIX,
 };
-pub(crate) use implementation::capture_endpoint_policy;
 pub use kserve::{
     KServeChatFactory, KServeCompletionsFactory, KServeEmbeddingsFactory, KServeV1PredictFactory,
     KServeV2EmbeddingsFactory, KServeV2ImagesFactory, KServeV2InferFactory,
