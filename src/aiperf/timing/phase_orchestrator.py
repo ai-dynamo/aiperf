@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
@@ -145,6 +145,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         is_agentic_replay = any(
             pc.timing_mode == TimingMode.AGENTIC_REPLAY for pc in config.phase_configs
         )
+        benchmark_id = run.benchmark_id if run is not None else "unknown"
+        cache_bust_target = (
+            run.cfg.get_cache_bust_target() if run is not None else CacheBustTarget.NONE
+        )
         if is_agentic_replay:
             if config.concurrency is None:
                 raise ValueError(
@@ -180,7 +184,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             )
         else:
             self._conversation_source = ConversationSource(
-                self._dataset_metadata, self._dataset_sampler
+                self._dataset_metadata,
+                self._dataset_sampler,
+                benchmark_id=benchmark_id,
+                cache_bust_target=cache_bust_target,
             )
         self._concurrency_manager = ConcurrencyManager()
         self._session_tree_registry = (

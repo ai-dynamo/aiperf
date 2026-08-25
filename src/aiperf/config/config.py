@@ -624,64 +624,24 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
     @model_validator(mode="after")
     def validate_cache_bust_compatibility(self) -> Self:
-        """Refuse cache-bust on incompatible timing modes / endpoint types.
+        """Refuse cache-bust when endpoint metadata does not support it.
 
-        Marker minting only fires in the agentic-replay strategy and only the
-        chat / responses endpoint formatters consume the system-message field
-        that hosts the marker. Any other combination silently drops the marker
-        and would produce a benchmark that looks normal but exercises no cache-
-        busting at all — refuse loudly at config time.
-
-        Pure validation: this RAISES only, never mutates (per the v2 resolver
-        convention that cross-cutting config mutation belongs in a
-        ConfigResolver / scenario step, not a model_validator).
-
-        Deferral cases (the lockdown does NOT fire — the agentic timing mode is
-        resolved later, not at config-construction time):
-
-        * a config carrying a ``scenario`` is governed by that scenario's own
-          invariant locks (``apply_scenario`` stamps the agentic ``timing_mode``
-          onto the profiling phases and enforces ``require_cache_bust``)
-          POST-construction via field assignment, which does not re-trigger this
-          validator (e.g. inferencex-agentx-mvp = agentic timing + chat endpoint
-          + first_turn_prefix is valid once the scenario applies);
-        * no profiling phase carries an EXPLICIT ``timing_mode`` override. The
-          effective mode is then derived at runtime from the phase type (or set
-          by the agentic-replay engine itself), so the agentic-ness is not yet
-          knowable here. The lockdown only fires once a phase has explicitly
-          declared a (non-agentic) timing mode that is incompatible with the
-          requested cache-bust.
+        Cache-bust markers are minted by every timing strategy and injected by
+        the worker into structured endpoint turns. Endpoint plugins opt in via
+        ``supports_cache_bust`` metadata; timing mode is not a restriction.
         """
         from aiperf.common.enums import CacheBustTarget
-        from aiperf.plugin.enums import EndpointType, TimingMode
-
-        if self.scenario is not None:
-            return self
+        from aiperf.plugin import plugins
 
         if self.get_cache_bust_target() == CacheBustTarget.NONE:
             return self
 
-        profiling_phases = self.get_profiling_phases()
-        explicit_timing_modes = [
-            phase.timing_mode
-            for phase in profiling_phases
-            if phase.timing_mode is not None
-        ]
-        if not explicit_timing_modes:
-            return self
-        if TimingMode.AGENTIC_REPLAY not in explicit_timing_modes:
+        endpoint_metadata = plugins.get_endpoint_metadata(self.endpoint.type)
+        if not endpoint_metadata.supports_cache_bust:
             raise ValueError(
-                "cache-bust requires the agentic_replay timing mode "
-                "(set today by --scenario inferencex-agentx-mvp); the profiling "
-                "phase(s) are not agentic_replay. Cache-bust marker minting is "
-                "only implemented for agentic_replay."
-            )
-
-        if self.endpoint.type not in {EndpointType.CHAT, EndpointType.RESPONSES}:
-            raise ValueError(
-                f"cache-bust requires --endpoint-type chat or responses; "
-                f"got {self.endpoint.type}. Other endpoint formatters do not "
-                f"consume the system message field that hosts the marker."
+                "cache-bust is not supported by endpoint "
+                f"{self.endpoint.type}; select an endpoint whose plugin metadata "
+                "sets supports_cache_bust=true"
             )
 
         return self
