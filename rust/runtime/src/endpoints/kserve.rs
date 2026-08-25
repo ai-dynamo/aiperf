@@ -470,14 +470,17 @@ impl KServePreparedBehavior for V1PredictBehavior {
     }
 
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
-        let Some(object) = response.json.as_ref().and_then(Value::as_object) else {
+        let Some(value) = response.json.as_ref() else {
             return Ok(None);
         };
+        let Some(object) = value.as_object() else {
+            return Ok(auto_detect_response(response.perf_ns, value));
+        };
         let Some(predictions) = object.get("predictions").and_then(Value::as_array) else {
-            return Ok(auto_detect_response(response.perf_ns, object));
+            return Ok(auto_detect_response(response.perf_ns, value));
         };
         let Some(first) = predictions.first() else {
-            return Ok(auto_detect_response(response.perf_ns, object));
+            return Ok(auto_detect_response(response.perf_ns, value));
         };
         let data = if let Some(prediction) = first.as_object() {
             prediction
@@ -485,7 +488,7 @@ impl KServePreparedBehavior for V1PredictBehavior {
                 .and_then(Value::as_str)
                 .filter(|text| !text.is_empty())
                 .map(text_data)
-                .or_else(|| auto_detect_data(prediction))
+                .or_else(|| auto_detect_object_data(prediction))
         } else {
             first
                 .as_str()
@@ -1069,11 +1072,34 @@ fn text_data(text: &str) -> ResponseData {
     }
 }
 
-fn auto_detect_response(perf_ns: u64, object: &Map<String, Value>) -> Option<ParsedResponse> {
-    auto_detect_data(object).map(|data| parsed(perf_ns, data))
+fn auto_detect_response(perf_ns: u64, value: &Value) -> Option<ParsedResponse> {
+    auto_detect_data(value).map(|data| parsed(perf_ns, data))
 }
 
-fn auto_detect_data(object: &Map<String, Value>) -> Option<ResponseData> {
+fn auto_detect_data(value: &Value) -> Option<ResponseData> {
+    let Some(object) = value.as_object() else {
+        let values = value.as_array()?.as_slice();
+        if values.iter().all(Value::is_object) {
+            return (!values.is_empty()).then(|| ResponseData::Rankings {
+                rankings: values.to_vec(),
+            });
+        }
+        if let Some(embedding) = numeric_array(value) {
+            return Some(ResponseData::Embeddings {
+                embeddings: vec![embedding],
+            });
+        }
+        if !values.is_empty() && values.iter().all(|item| numeric_array(item).is_some()) {
+            return Some(ResponseData::Embeddings {
+                embeddings: values.iter().filter_map(numeric_array).collect(),
+            });
+        }
+        return None;
+    };
+    auto_detect_object_data(object)
+}
+
+fn auto_detect_object_data(object: &Map<String, Value>) -> Option<ResponseData> {
     if let Some(embeddings) = auto_detect_embeddings(object) {
         return Some(ResponseData::Embeddings { embeddings });
     }
@@ -1211,4 +1237,38 @@ fn number_value(value: f64) -> EndpointResult<Value> {
     Number::from_f64(value).map(Value::Number).ok_or_else(|| {
         EndpointError::InvalidConfig("KServe image parameters must be finite".to_string())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ResponseData, auto_detect_data};
+    use serde_json::json;
+
+    #[test]
+    fn auto_detects_top_level_ranking_array() {
+        let data = auto_detect_data(&json!([{ "index": 0, "score": 0.98 }]))
+            .expect("ranking array should be detected");
+        assert_eq!(
+            data,
+            ResponseData::Rankings {
+                rankings: vec![json!({ "index": 0, "score": 0.98 })],
+            }
+        );
+    }
+
+    #[test]
+    fn auto_detects_top_level_embedding_arrays() {
+        assert_eq!(
+            auto_detect_data(&json!([0.1, 0.2, 0.3])),
+            Some(ResponseData::Embeddings {
+                embeddings: vec![vec![0.1, 0.2, 0.3]],
+            })
+        );
+        assert_eq!(
+            auto_detect_data(&json!([[0.1, 0.2], [0.3, 0.4]])),
+            Some(ResponseData::Embeddings {
+                embeddings: vec![vec![0.1, 0.2], vec![0.3, 0.4]],
+            })
+        );
+    }
 }
