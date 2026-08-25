@@ -119,6 +119,7 @@ def _install_fake_upstream(
     """Capture proxied requests and return a deterministic fake sidecar response."""
     captured = _CapturedProxyRequest()
     upstream_response = response or _FakeUpstreamResponse()
+    original_close = aiohttp.ClientSession.close
 
     def _fake_request(
         self: aiohttp.ClientSession,
@@ -136,8 +137,8 @@ def _install_fake_upstream(
         return _FakeUpstreamStream(upstream_response)
 
     async def _fake_close(self: aiohttp.ClientSession) -> None:
-        del self
         captured.closed = True
+        await original_close(self)
 
     monkeypatch.setattr(aiohttp.ClientSession, "request", _fake_request)
     monkeypatch.setattr(aiohttp.ClientSession, "close", _fake_close)
