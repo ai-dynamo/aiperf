@@ -610,6 +610,7 @@ class TestModuleConstants:
         try:
             assert results_operator.RESULTS_SERVER_PORT == 9001
         finally:
+            monkeypatch.undo()
             importlib.reload(results_operator)
 
 
