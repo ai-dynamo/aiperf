@@ -39,7 +39,15 @@ from aiperf.common.results_markers import (
     write_processing_marker,
     write_ready_marker,
 )
-from aiperf.kubernetes.results_sidecar import create_app
+from aiperf.kubernetes.environment import K8sEnvironment
+from aiperf.kubernetes.results_sidecar import (
+    LOG_LEVEL_ENV_VAR,
+    PORT_ENV_VAR,
+    VALID_LOG_LEVELS,
+    create_app,
+    resolve_log_level,
+    resolve_server_port,
+)
 
 # ============================================================
 # Helpers
@@ -658,3 +666,82 @@ class TestCreateApp:
                 resp = await c.get("/api/results/list")
         names = {f["name"] for f in resp.json()["files"]}
         assert names == {"only.txt"}
+
+
+# ============================================================
+# Environment resolution
+# ============================================================
+
+
+class TestResolveServerPort:
+    """Port resolution defers to the operator-side default, never crash-loops."""
+
+    def test_unset_uses_operator_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(PORT_ENV_VAR, raising=False)
+        assert resolve_server_port() == K8sEnvironment.PORTS.RESULTS_SIDECAR
+
+    def test_injected_value_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(PORT_ENV_VAR, "19091")
+        assert resolve_server_port() == 19091
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            param("", id="empty"),
+            param("not-a-port", id="non_numeric"),
+            param("0", id="zero"),
+            param("-1", id="negative"),
+            param("65536", id="above_range"),
+        ],
+    )  # fmt: skip
+    def test_invalid_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch, raw: str
+    ) -> None:
+        monkeypatch.setenv(PORT_ENV_VAR, raw)
+        assert resolve_server_port() == K8sEnvironment.PORTS.RESULTS_SIDECAR
+
+
+class TestResolveLogLevel:
+    """Log level is validated against the operator-side allowed values."""
+
+    def test_unset_uses_operator_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(LOG_LEVEL_ENV_VAR, raising=False)
+        assert resolve_log_level() == K8sEnvironment.RESULTS_SIDECAR_LOG_LEVEL
+
+    def test_valid_levels_match_operator_side_literal(self) -> None:
+        assert {
+            "critical",
+            "error",
+            "warning",
+            "info",
+            "debug",
+            "trace",
+        } == VALID_LOG_LEVELS
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            param("debug", "debug", id="debug"),
+            param("TRACE", "trace", id="uppercase_normalized"),
+            param("  warning  ", "warning", id="whitespace_stripped"),
+        ],
+    )  # fmt: skip
+    def test_valid_value_wins(
+        self, monkeypatch: pytest.MonkeyPatch, raw: str, expected: str
+    ) -> None:
+        monkeypatch.setenv(LOG_LEVEL_ENV_VAR, raw)
+        assert resolve_log_level() == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            param("", id="empty"),
+            param("verbose", id="unknown_level"),
+            param("10", id="numeric"),
+        ],
+    )  # fmt: skip
+    def test_invalid_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch, raw: str
+    ) -> None:
+        monkeypatch.setenv(LOG_LEVEL_ENV_VAR, raw)
+        assert resolve_log_level() == K8sEnvironment.RESULTS_SIDECAR_LOG_LEVEL

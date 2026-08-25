@@ -198,9 +198,9 @@ If neither path returns the files, results can only be recovered from operator-s
 | `AIPERF_K8S_RESULTS_SIDECAR_CPU`     | `25m`   | Adequate; streaming is compression-bound not CPU-bound              |
 | `AIPERF_K8S_RESULTS_SIDECAR_MEMORY`  | `192Mi` | Adequate                                                            |
 | `AIPERF_RESULTS_DIR`                 | `/results` | Volume mount path; set explicitly by the JobSet builder. Do not change unless you also remount the `results` volume |
-| `AIPERF_RESULTS_SIDECAR_PORT`        | `9091`  | Container port; set by the JobSet builder to match `PORTS.RESULTS_SIDECAR` |
+| `AIPERF_RESULTS_SIDECAR_PORT`        | `9091`  | Container port; set by the JobSet builder to match `PORTS.RESULTS_SIDECAR`. A malformed or out-of-range value is ignored with a warning and the sidecar falls back to `AIPERF_K8S_PORT_RESULTS_SIDECAR` rather than crash-looping |
 | `AIPERF_K8S_RESULTS_SIDECAR_LOG_LEVEL` | `info` | Operator-side setting. Allowed values: `critical`, `error`, `warning`, `info`, `debug`, `trace`. Injected into benchmark-controller and sweep-controller results sidecars as `AIPERF_RESULTS_SIDECAR_LOG_LEVEL` |
-| `AIPERF_RESULTS_SIDECAR_LOG_LEVEL` | `info` | Sidecar process-local input written by the operator; do not set directly in Kubernetes manifests |
+| `AIPERF_RESULTS_SIDECAR_LOG_LEVEL` | `info` | Sidecar process-local input written by the operator; do not set directly in Kubernetes manifests. Validated against the same allowed values as the operator-side setting; anything else is ignored with a warning and falls back to `AIPERF_K8S_RESULTS_SIDECAR_LOG_LEVEL` |
 
 ---
 
