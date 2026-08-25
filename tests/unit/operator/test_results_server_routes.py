@@ -21,6 +21,14 @@ async def _post(app, path: str, *, token: str | None = None, json: dict | None =
         return await client.post(path, headers=headers, json=json)
 
 
+def _enable_mutating_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set process-startup settings for tests after the singleton is imported."""
+    from aiperf.operator.environment import OperatorEnvironment
+
+    monkeypatch.setattr(OperatorEnvironment, "MUTATING_ROUTES_ENABLED", True)
+    monkeypatch.setattr(OperatorEnvironment, "MUTATING_ROUTES_TOKEN", "correct-token")
+
+
 def test_create_app_includes_sweeps_router(tmp_path: Path) -> None:
     """`/api/v1/sweeps` endpoints must be registered alongside jobs."""
     from aiperf.operator.results_server import create_app
@@ -76,8 +84,7 @@ async def test_mutating_route_rejects_missing_or_wrong_token(
     """Enabled mutating routes still require the configured bearer token."""
     from aiperf.operator.results_server import create_app
 
-    monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED", "true")
-    monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "correct-token")
+    _enable_mutating_routes(monkeypatch)
     app = create_app(results_dir=tmp_path)
 
     missing = await _post(app, "/api/v1/jobs/default/bench/cancel")
@@ -102,8 +109,7 @@ async def test_mutating_route_allows_configured_token(
     """
     from aiperf.operator.results_server import create_app
 
-    monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED", "true")
-    monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "correct-token")
+    _enable_mutating_routes(monkeypatch)
     app = create_app(results_dir=tmp_path)
 
     bootstrap_calls: list[Path] = []
@@ -131,8 +137,7 @@ async def test_create_job_route_allows_configured_token(
     from aiperf.operator.routers.jobs import create_jobs_router
     from aiperf.operator.routers.mutating_auth import mutating_route_dependencies
 
-    monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED", "true")
-    monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "correct-token")
+    _enable_mutating_routes(monkeypatch)
     app = FastAPI()
     app.include_router(
         create_jobs_router([object()], tmp_path, mutating_route_dependencies())
@@ -162,8 +167,7 @@ async def test_cancel_job_route_allows_configured_token(
     from aiperf.operator.routers.jobs import create_jobs_router
     from aiperf.operator.routers.mutating_auth import mutating_route_dependencies
 
-    monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED", "true")
-    monkeypatch.setenv("AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN", "correct-token")
+    _enable_mutating_routes(monkeypatch)
     app = FastAPI()
     app.include_router(
         create_jobs_router([object()], tmp_path, mutating_route_dependencies())
