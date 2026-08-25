@@ -299,9 +299,16 @@ fn apply_cli_overrides(
         match inputs.synthesis.as_mut() {
             Some(serde_json::Value::Object(existing)) => {
                 existing.extend(overlay);
+                if flags.cache_bust.as_deref() == Some("none") {
+                    existing.remove("cache_bust_target");
+                }
             }
             _ => inputs.synthesis = load::build_synthesis(flags)?,
         }
+    } else if flags.cache_bust.as_deref() == Some("none")
+        && let Some(serde_json::Value::Object(existing)) = inputs.synthesis.as_mut()
+    {
+        existing.remove("cache_bust_target");
     }
     load::overlay_reset_kv_cache_config(
         &mut inputs.reset_kv_cache,
@@ -3678,6 +3685,54 @@ benchmark:
                     synthesis["speedup_ratio"],
                     serde_json::json!(2.0),
                     "other YAML-authored synthesis fields must be preserved"
+                );
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    /// An explicit `--cache-bust none` must clear a YAML-authored
+    /// `dataset.synthesis.cacheBustTarget` instead of preserving it.
+    #[test]
+    fn cli_cache_bust_none_clears_yaml_synthesis_cache_bust_target() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                let yaml = cfg(
+                    "  dataset:\n    type: file\n    path: /tmp/trace.jsonl\n    format: mooncake_trace\n    synthesis:\n      cacheBustTarget: system_prefix\n      speedupRatio: 2.0\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+                );
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+                let flags = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--cache-bust".to_string(),
+                    "none".to_string(),
+                ])
+                .expect("flags parse");
+                let run = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&flags),
+                )
+                .expect("overlay resolves");
+                let dataset = run
+                    .cfg
+                    .datasets
+                    .as_ref()
+                    .and_then(|datasets| datasets.first())
+                    .expect("dataset");
+                let crate::model::dataset::Dataset::File(file) = dataset else {
+                    panic!("expected a file dataset");
+                };
+                let synthesis = file.synthesis.as_ref().expect("synthesis survives");
+                assert!(
+                    synthesis.get("cache_bust_target").is_none(),
+                    "explicit --cache-bust none must clear the YAML-authored cache_bust_target"
+                );
+                assert_eq!(
+                    synthesis["speedup_ratio"],
+                    serde_json::json!(2.0),
+                    "other YAML-authored synthesis fields must still survive"
                 );
             })
             .expect("spawn worker")
