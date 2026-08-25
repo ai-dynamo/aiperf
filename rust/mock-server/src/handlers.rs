@@ -4051,6 +4051,36 @@ pub async fn image_edit(
     Ok(Json(body).into_response())
 }
 
+/// Accept a transcription multipart request and return deterministic text.
+pub async fn audio_transcription(
+    State(state): State<Arc<AppState>>,
+    mut multipart: axum::extract::Multipart,
+) -> AppResult<Response> {
+    if let Some(e) = maybe_inject_error(&state) {
+        return Err(e);
+    }
+    let mut has_file = false;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name() == Some("file") {
+            has_file = !field
+                .bytes()
+                .await
+                .map_err(|_| anyhow::anyhow!("invalid audio multipart field"))?
+                .is_empty();
+        } else {
+            let _ = field.bytes().await;
+        }
+    }
+    if !has_file {
+        return Err(AppError {
+            status: StatusCode::BAD_REQUEST,
+            message: "file is required".into(),
+            retry_after: None,
+        });
+    }
+    Ok(Json(json!({"text": "mock transcription", "usage": {"input_tokens": 1}})).into_response())
+}
+
 #[cfg(test)]
 mod content_url_tests {
     use super::*;
