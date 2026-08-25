@@ -50,7 +50,7 @@ Run the Profile subcommand.
 
 Generate visualizations from AIPerf profiling data.
 
-### [`plugins`](#aiperf-plugins)
+### [`plugins`](#aiperf-python-plugins)
 
 Explore AIPerf plugins: aiperf-python plugins [category] [type]
 
