@@ -9,6 +9,9 @@ use crate::config::model::rate_series::RateSeries;
 
 const PHASE_NAME_PATTERN: &str = r"^[A-Za-z_][A-Za-z0-9_-]*$";
 
+/// Default drain grace for duration-bounded profiling runs.
+pub(crate) const DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS: f64 = 30.0;
+
 /// Reserved Windows path component names (case-insensitive).
 const WINDOWS_RESERVED: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -234,6 +237,9 @@ pub(crate) fn apply_cli_loadgen_overlays(
     }
     if let Some(duration) = overlay.benchmark_duration {
         phase.common.duration = Some(duration);
+        if overlay.grace_period.is_none() && phase.common.grace_period.is_none() {
+            phase.common.grace_period = Some(DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS);
+        }
     }
     if let Some(grace) = overlay.grace_period {
         phase.common.grace_period = Some(grace);
@@ -330,6 +336,39 @@ mod tests {
             step_percent: 0.0,
             sla_filters: vec![],
         }
+    }
+
+    #[test]
+    fn duration_overlay_adds_default_profiling_grace_when_unset() {
+        let mut phase = concurrency_phase("profiling", Some(PhaseRole::Profiling));
+        apply_cli_loadgen_overlays(
+            std::slice::from_mut(&mut phase),
+            &LoadgenOverlay {
+                benchmark_duration: Some(5.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(phase.common.duration, Some(5.0));
+        assert_eq!(
+            phase.common.grace_period,
+            Some(DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS)
+        );
+    }
+
+    #[test]
+    fn duration_overlay_preserves_authored_grace() {
+        let mut phase = concurrency_phase("profiling", Some(PhaseRole::Profiling));
+        phase.common.grace_period = Some(15.0);
+        apply_cli_loadgen_overlays(
+            std::slice::from_mut(&mut phase),
+            &LoadgenOverlay {
+                benchmark_duration: Some(5.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(phase.common.grace_period, Some(15.0));
     }
 
     #[test]

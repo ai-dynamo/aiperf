@@ -28,7 +28,10 @@ use crate::config::model::runtime::Runtime;
 use crate::config::model::tokenizer::Tokenizer;
 use crate::config::model::{BenchmarkConfig, BenchmarkRun, Resolved};
 use crate::config::model::{DispatchMode, HopRouting};
-use crate::config::phase_validate::{apply_cli_loadgen_overlays, normalize_and_validate_phases};
+use crate::config::phase_validate::{
+    DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS, apply_cli_loadgen_overlays,
+    normalize_and_validate_phases,
+};
 
 /// Exact-match placeholder words used as an entire model name.
 const FAKE_MODEL_EXACT: &[&str] = &[
@@ -1159,6 +1162,11 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             && inputs.sessions.is_none())
         .then_some(DEFAULT_REQUEST_COUNT)
     });
+    let profiling_grace_period = inputs.grace_period.or_else(|| {
+        inputs
+            .benchmark_duration
+            .map(|_| DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS)
+    });
     let profiling = if let Some((rate, users)) = inputs.user_centric {
         Phase {
             common: PhaseCommon {
@@ -1171,7 +1179,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 sessions: inputs.sessions,
                 duration: inputs.benchmark_duration,
                 prefill_concurrency: None,
-                grace_period: inputs.grace_period,
+                grace_period: profiling_grace_period,
                 concurrency_ramp: None,
                 prefill_ramp: None,
                 rate_ramp: None,
@@ -1241,7 +1249,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             effective_requests,
             inputs.sessions,
             inputs.benchmark_duration,
-            inputs.grace_period,
+            profiling_grace_period,
         );
         phase.common.adaptive_scale = inputs.adaptive_scale.clone();
         phase.common.prefill_concurrency = inputs.prefill_concurrency;

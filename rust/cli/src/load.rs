@@ -2230,6 +2230,86 @@ mod tests {
     }
 
     #[test]
+    fn benchmark_duration_uses_default_profiling_grace() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--benchmark-duration",
+                "5",
+            ]);
+            let run = super::resolve(&flags).expect("resolve");
+            let profiling = run
+                .cfg
+                .phases
+                .as_ref()
+                .expect("phases")
+                .iter()
+                .find(|phase| !phase.common.exclude_from_results)
+                .expect("profiling");
+            assert_eq!(profiling.common.duration, Some(5.0));
+            assert_eq!(profiling.common.grace_period, Some(30.0));
+        });
+    }
+
+    #[test]
+    fn explicit_benchmark_grace_period_overrides_default() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--benchmark-duration",
+                "5",
+                "--benchmark-grace-period",
+                "0",
+            ]);
+            let run = super::resolve(&flags).expect("resolve");
+            let profiling = run
+                .cfg
+                .phases
+                .as_ref()
+                .expect("phases")
+                .iter()
+                .find(|phase| !phase.common.exclude_from_results)
+                .expect("profiling");
+            assert_eq!(profiling.common.grace_period, Some(0.0));
+        });
+    }
+
+    #[test]
+    fn explicit_positive_benchmark_grace_period_is_preserved() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--benchmark-duration",
+                "5",
+                "--benchmark-grace-period",
+                "15",
+            ]);
+            let run = super::resolve(&flags).expect("resolve");
+            let profiling = run
+                .cfg
+                .phases
+                .as_ref()
+                .expect("phases")
+                .iter()
+                .find(|phase| !phase.common.exclude_from_results)
+                .expect("profiling");
+            assert_eq!(profiling.common.grace_period, Some(15.0));
+        });
+    }
+
+    #[test]
     fn trace_session_sample_ratio_requires_baseten() {
         run_on_big_stack(|| {
             let flags = parse(&[
