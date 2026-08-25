@@ -139,6 +139,10 @@ navigation:
       path: tutorials/request-cancellation.md
     - page: Warmup Phase Configuration
       path: tutorials/warmup.md
+    - page: Benchmark Control Hooks
+      path: tutorials/benchmark-control-hooks.md
+    - page: Control Hooks by Server (vLLM / SGLang / TRT-LLM)
+      path: tutorials/control-hooks-by-server.md
   - section: Metrics & Analysis
     collapsed: true
     contents:
