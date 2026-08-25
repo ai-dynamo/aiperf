@@ -95,6 +95,8 @@ fn cache_bust_from_inputs(inputs: &Inputs) -> Option<crate::config::model::datas
         "system_suffix" => CacheBustTarget::SystemSuffix,
         "first_turn_prefix" => CacheBustTarget::FirstTurnPrefix,
         "first_turn_suffix" => CacheBustTarget::FirstTurnSuffix,
+        "warmup_isolation_system" => CacheBustTarget::WarmupIsolationSystem,
+        "warmup_isolation_first_turn" => CacheBustTarget::WarmupIsolationFirstTurn,
         other => {
             tracing::warn!(target = %other, "unknown cache_bust target; ignoring");
             return None;
@@ -1648,6 +1650,12 @@ fn resolve_scenario_outcome(inputs: &Inputs) -> anyhow::Result<Option<serde_json
             }
             "first_turn_suffix" => {
                 Some(crate::agentx::cache_bust::CacheBustTarget::FirstTurnSuffix)
+            }
+            "warmup_isolation_system" => {
+                Some(crate::agentx::cache_bust::CacheBustTarget::WarmupIsolationSystem)
+            }
+            "warmup_isolation_first_turn" => {
+                Some(crate::agentx::cache_bust::CacheBustTarget::WarmupIsolationFirstTurn)
             }
             "none" => Some(crate::agentx::cache_bust::CacheBustTarget::None),
             _ => None,

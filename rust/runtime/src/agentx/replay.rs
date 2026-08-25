@@ -276,14 +276,32 @@ pub fn build_dispatch_plan_with_cachebust(
             let max_tokens = rec["max_tokens"].as_i64().unwrap_or(1);
             // The marker rides only the first dispatched turn of the stream; it is
             // baked into that turn's back-seeded prefix and thereafter replayed.
-            let opts = if idx == 0 {
+            let phase = record_phase(&rec);
+            let warmup_isolation = matches!(
+                target,
+                CacheBustTarget::WarmupIsolationSystem | CacheBustTarget::WarmupIsolationFirstTurn
+            );
+            let marker_for_turn = if idx == 0 && (!warmup_isolation || phase == ReplayPhase::Warmup)
+            {
+                marker.clone()
+            } else {
+                None
+            };
+            let opts = if marker_for_turn.is_some() {
                 crate::agentx::wire::ChatRequestOptions {
-                    cache_bust_marker: marker.clone(),
+                    cache_bust_marker: marker_for_turn,
+                    cache_bust_first_user_turn: matches!(
+                        target,
+                        CacheBustTarget::FirstTurnPrefix
+                            | CacheBustTarget::FirstTurnSuffix
+                            | CacheBustTarget::WarmupIsolationFirstTurn
+                    ),
                     ..base_opts.clone()
                 }
             } else {
                 crate::agentx::wire::ChatRequestOptions {
                     cache_bust_marker: None,
+                    cache_bust_first_user_turn: false,
                     ..base_opts.clone()
                 }
             };
@@ -531,6 +549,7 @@ mod tests {
                 streaming: true,
                 ignore_eos: true,
                 cache_bust_marker: None,
+                cache_bust_first_user_turn: false,
             },
             &mut ledger,
             "bench",
@@ -577,6 +596,7 @@ mod tests {
                 streaming: true,
                 ignore_eos: true,
                 cache_bust_marker: None,
+                cache_bust_first_user_turn: false,
             },
         );
         let streams = streams_from_plan(plan);
@@ -613,6 +633,7 @@ mod tests {
                 streaming: true,
                 ignore_eos: true,
                 cache_bust_marker: None,
+                cache_bust_first_user_turn: false,
             },
         );
         assert_eq!(plan.len(), 2);

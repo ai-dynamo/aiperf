@@ -136,6 +136,10 @@ pub enum CacheBustTarget {
     /// Prepend a per-conversation `[rid:<digest>]\n\n` marker to the first user
     /// message of every request.
     FirstTurnPrefix,
+    /// Constant warmup-only marker at the system message.
+    WarmupIsolationSystem,
+    /// Constant warmup-only marker at the first user message.
+    WarmupIsolationFirstTurn,
 }
 
 impl CacheBustTarget {
@@ -145,6 +149,8 @@ impl CacheBustTarget {
     pub fn parse(value: Option<&str>) -> Self {
         match value {
             Some("first_turn_prefix") => Self::FirstTurnPrefix,
+            Some("warmup_isolation_system") => Self::WarmupIsolationSystem,
+            Some("warmup_isolation_first_turn") => Self::WarmupIsolationFirstTurn,
             _ => Self::None,
         }
     }

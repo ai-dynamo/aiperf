@@ -1153,6 +1153,13 @@ impl GraphCacheBust {
         if !self.target.is_enabled() {
             return None;
         }
+        if matches!(
+            self.target,
+            crate::engine::graph_input::CacheBustTarget::WarmupIsolationSystem
+                | crate::engine::graph_input::CacheBustTarget::WarmupIsolationFirstTurn
+        ) {
+            return Some("[warmup]\n\n".to_string());
+        }
         // The trace instance nonce supplies uniqueness; fixed zeros keep marker
         // length and token accounting stable.
         let unique = format!("{}:0:0:{trace_id}", self.benchmark_id);
@@ -1167,12 +1174,21 @@ impl GraphCacheBust {
 }
 
 /// Idempotently prepend `marker` to the first user message.
-fn prepend_first_turn_marker(messages: &mut [Value], marker: &str) {
+fn prepend_cache_bust_marker(
+    messages: &mut [Value],
+    marker: &str,
+    target: crate::engine::graph_input::CacheBustTarget,
+) {
+    let role = if target == crate::engine::graph_input::CacheBustTarget::WarmupIsolationSystem {
+        "system"
+    } else {
+        "user"
+    };
     for message in messages.iter_mut() {
         let Some(object) = message.as_object_mut() else {
             continue;
         };
-        if object.get("role").and_then(Value::as_str) != Some("user") {
+        if object.get("role").and_then(Value::as_str) != Some(role) {
             continue;
         }
         match object.get_mut("content") {
@@ -1488,6 +1504,13 @@ impl TracePlacement for GraphWorkerBackend {
         let cache_bust_marker = self
             .cache_bust
             .as_ref()
+            .filter(|cache_bust| {
+                !matches!(
+                    cache_bust.target,
+                    crate::engine::graph_input::CacheBustTarget::WarmupIsolationSystem
+                        | crate::engine::graph_input::CacheBustTarget::WarmupIsolationFirstTurn
+                ) || self.phase == Phase::Warmup
+            })
             .and_then(|cache_bust| cache_bust.marker(&plan.trace.id));
         let observer = self.observer.clone();
         let sink = Rc::new(EngineGraphSink {
@@ -1518,6 +1541,11 @@ impl TracePlacement for GraphWorkerBackend {
             terminal_nodes: RefCell::new(terminal_nodes),
             events: self.events.clone(),
             cache_bust_marker,
+            cache_bust_target: self
+                .cache_bust
+                .as_ref()
+                .map(|cache_bust| cache_bust.target)
+                .unwrap_or(crate::engine::graph_input::CacheBustTarget::FirstTurnPrefix),
             tool_dispatcher: RefCell::new(tool_dispatcher),
             arrivals: Cell::new(0),
             terminal_records: Cell::new(0),
@@ -1921,6 +1949,7 @@ struct EngineGraphSink {
     /// Per-conversation first-turn cache-bust marker, minted once per trace
     /// instance. `None` when cache-bust is disabled.
     cache_bust_marker: Option<String>,
+    cache_bust_target: crate::engine::graph_input::CacheBustTarget,
     /// Requests this trace registered with the shared observer (one per dispatched
     /// node). Compared against `terminal_records` at finalization; a shared
     /// worker observer makes its global `arrival_count` cumulative, so the
@@ -2050,7 +2079,7 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                 .collect::<Result<Vec<Value>>>()?;
             // Idempotent injection keeps accumulated requests on one cache-bust prefix.
             if let Some(marker) = self.cache_bust_marker.as_deref() {
-                prepend_first_turn_marker(&mut raw_messages, marker);
+                prepend_cache_bust_marker(&mut raw_messages, marker, self.cache_bust_target);
             }
             (Some(raw_messages), None)
         };
@@ -2511,6 +2540,7 @@ mod tests {
         EndpointRegistry, EndpointRegistryBuilder, EndpointResult, PreparedEndpoint,
         RawEndpointConfig, StatelessEndpointFactory,
     };
+    use crate::engine::graph_input::CacheBustTarget;
     use crate::eval::{
         HarborImporter, HarborSource, NativeGraphLiveTraceProgramDriverFactory,
         NativeSourceAcquirer, lower_native_graph,
@@ -4819,12 +4849,12 @@ executable = "tools/adapter.sh"
             serde_json::json!({"role": "assistant", "content": "hi"}),
             serde_json::json!({"role": "user", "content": "again"}),
         ];
-        prepend_first_turn_marker(&mut messages, marker);
+        prepend_cache_bust_marker(&mut messages, marker, CacheBustTarget::FirstTurnPrefix);
         assert_eq!(messages[0]["content"], format!("{marker}hello"));
         assert_eq!(messages[1]["content"], "hi");
         assert_eq!(messages[2]["content"], "again");
         // Re-applying the same marker is a no-op (shared prefix, every credit).
-        prepend_first_turn_marker(&mut messages, marker);
+        prepend_cache_bust_marker(&mut messages, marker, CacheBustTarget::FirstTurnPrefix);
         assert_eq!(messages[0]["content"], format!("{marker}hello"));
     }
 
@@ -4835,7 +4865,7 @@ executable = "tools/adapter.sh"
             "role": "user",
             "content": [{"type": "text", "text": "hello"}],
         })];
-        prepend_first_turn_marker(&mut messages, marker);
+        prepend_cache_bust_marker(&mut messages, marker, CacheBustTarget::FirstTurnPrefix);
         let parts = messages[0]["content"].as_array().unwrap();
         assert_eq!(
             parts[0],
@@ -4845,7 +4875,7 @@ executable = "tools/adapter.sh"
             parts[1],
             serde_json::json!({"type": "text", "text": "hello"})
         );
-        prepend_first_turn_marker(&mut messages, marker);
+        prepend_cache_bust_marker(&mut messages, marker, CacheBustTarget::FirstTurnPrefix);
         assert_eq!(messages[0]["content"].as_array().unwrap().len(), 2);
     }
 
