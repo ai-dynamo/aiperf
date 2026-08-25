@@ -5,6 +5,8 @@
 import time
 from collections.abc import AsyncIterator
 
+import orjson
+
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEMessage
@@ -14,6 +16,35 @@ _SSE_COMMENT_FIELD_NAME = "comment"
 _SSE_DATA_FIELD_NAME = "data"
 _SSE_ERROR_EVENT_VALUE = "error"
 _SSE_EVENT_FIELD_NAME = "event"
+
+
+def _raise_for_data_error(data_content: str) -> None:
+    """Raise when an SSE data payload contains a top-level structured error."""
+    try:
+        payload = orjson.loads(data_content)
+    except orjson.JSONDecodeError:
+        return
+
+    if not isinstance(payload, dict) or payload.get("error") is None:
+        return
+
+    error = payload["error"]
+    error_code = 502
+    if isinstance(error, dict):
+        error_message = error.get("message")
+        code = error.get("code")
+        if isinstance(code, int) and not isinstance(code, bool):
+            error_code = code
+        if not isinstance(error_message, str):
+            error_message = orjson.dumps(error).decode()
+    elif isinstance(error, str):
+        error_message = error
+    else:
+        error_message = orjson.dumps(error).decode()
+
+    raise SSEResponseError(
+        f"Error occurred in SSE response: {error_message}", error_code=error_code
+    )
 
 
 class AsyncSSEStreamReader:
@@ -81,16 +112,15 @@ class AsyncSSEStreamReader:
         return messages
 
     @staticmethod
-    def inspect_message_for_error(message: SSEMessage):
-        """Check if the message contains an error event packet and raise an SSEResponseError if so.
-
-        If so, look for any comment field and raise an SSEResponseError
-        with that comment as the error message, otherwise use the full message.
-        """
+    def inspect_message_for_error(message: SSEMessage) -> None:
+        """Raise for named SSE errors or structured ``data`` error payloads."""
         if (
             len(message.packets) == 1
             and message.packets[0].name == _SSE_DATA_FIELD_NAME
         ):
+            data_content = message.packets[0].value
+            if data_content is not None and '"error"' in data_content:
+                _raise_for_data_error(data_content)
             return
 
         has_error_event = any(
@@ -113,6 +143,10 @@ class AsyncSSEStreamReader:
             raise SSEResponseError(
                 f"Error occurred in SSE response: {error_message}", error_code=502
             )
+
+        data_content = message.extract_data_content()
+        if '"error"' in data_content:
+            _raise_for_data_error(data_content)
 
     async def __aiter__(self) -> AsyncIterator[SSEMessage]:
         """Iterate over the SSE stream in a performant manner and yield parsed SSE messages as they arrive."""

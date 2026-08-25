@@ -618,6 +618,10 @@ class TestInspectMessageForError:
         [
             'data: {"content": "Hello World"}\nevent: message\nid: msg_123',
             "event: message\n: This is a comment\ndata: content",
+            'data: {"metadata": {"error": "not a response error"}}',
+            'data: {"error": null}',
+            'data: {"error":',
+            "data: [DONE]",
             ": This is just a comment",
             "",
         ],
@@ -628,6 +632,51 @@ class TestInspectMessageForError:
         """Test that messages without error events pass through without raising."""
         message = SSEMessage.parse(raw_message, base_perf_ns)
         AsyncSSEStreamReader.inspect_message_for_error(message)
+
+    @pytest.mark.parametrize(
+        "raw_message,expected_error_text,expected_error_code",
+        [
+            param(
+                'data: {"error":{"message":"Internal server error","type":"internal_server_error","param":null,"code":500}}',
+                "Internal server error",
+                500,
+                id="object-error",
+            ),
+            param(
+                'data: {"error":"Rate limit exceeded"}',
+                "Rate limit exceeded",
+                502,
+                id="string-error",
+            ),
+            param(
+                'data: {"error":42}',
+                "42",
+                502,
+                id="other-error",
+            ),
+            param(
+                'event: message\ndata: {"error":\ndata: {"message":"Service unavailable","code":503}}',
+                "Service unavailable",
+                503,
+                id="multiline-data-error",
+            ),
+        ],
+    )  # fmt: skip
+    def test_data_error_payload_raises(
+        self,
+        raw_message: str,
+        expected_error_text: str,
+        expected_error_code: int,
+        base_perf_ns: int,
+    ) -> None:
+        """Structured data error payloads raise with their message and code."""
+        message = SSEMessage.parse(raw_message, base_perf_ns)
+
+        with pytest.raises(SSEResponseError) as exc_info:
+            AsyncSSEStreamReader.inspect_message_for_error(message)
+
+        assert expected_error_text in str(exc_info.value)
+        assert exc_info.value.error_code == expected_error_code
 
     @pytest.mark.parametrize(
         "raw_message,expected_error_text",

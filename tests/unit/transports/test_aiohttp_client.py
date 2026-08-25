@@ -181,6 +181,34 @@ class TestAioHttpClient:
             assert isinstance(record.responses[0], SSEMessage)
 
     @pytest.mark.asyncio
+    async def test_sse_stream_data_error_handling(
+        self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
+    ) -> None:
+        """Test that a structured data error in a 200 response fails the request."""
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_sse_response.content = MockStreamReader(
+                [
+                    b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
+                    b'data: {"error":{"message":"Internal server error","type":"internal_server_error","code":500}}\n\n',
+                    b"data: [DONE]\n\n",
+                ]
+            )
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+            )
+
+        assert record.error is not None
+        assert record.error.code == 500
+        assert record.error.type == "SSEResponseError"
+        assert "Internal server error" in record.error.message
+        assert len(record.responses) == 1
+        assert isinstance(record.responses[0], SSEMessage)
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "status_code,reason,error_text",
         [
