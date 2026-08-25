@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.pod_lifecycle_structs import GroupTokenizerReady
 
 
@@ -23,6 +24,8 @@ async def test_prefetch_publishes_group_tokenizer_ready(
         side_effect=lambda *, name, dest_root, **_: dest_root / name
     )
     monkeypatch.setattr(wpm, "download_tokenizer", fake_download)
+    monkeypatch.setattr(Environment.TOKENIZER, "DOWNLOAD_MAX_RETRIES", 37)
+    monkeypatch.setattr(Environment.DATASET, "DOWNLOAD_MAX_RETRIES", 3)
 
     published: list[GroupTokenizerReady] = []
 
@@ -36,6 +39,7 @@ async def test_prefetch_publishes_group_tokenizer_ready(
     await wpm.WorkerGroupManagerBase._prefetch_tokenizers(mgr)
 
     assert fake_download.await_count == 2
+    assert {call.kwargs["max_retries"] for call in fake_download.await_args_list} == {37}
     assert len(published) == 1
     assert isinstance(published[0], GroupTokenizerReady)
     assert published[0].success

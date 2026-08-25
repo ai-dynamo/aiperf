@@ -13,6 +13,7 @@ import asyncio
 import io
 import tarfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import zstandard
@@ -211,6 +212,35 @@ async def test_prewarm_failure_does_not_poison_request_path(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/api/tokenizer/flaky/bundle")
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_cold_bundle_warning_uses_configured_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    snap = _make_snapshot(tmp_path, {"tokenizer.json": "{}"})
+    _patch_resolver(monkeypatch, snap)
+    monkeypatch.setattr(
+        tokenizer_router_mod.Environment.TOKENIZER,
+        "BUNDLE_BUILD_WARN_SECONDS",
+        0.125,
+    )
+    monkeypatch.setattr(
+        tokenizer_router_mod,
+        "time",
+        MagicMock(monotonic=MagicMock(side_effect=[10.0, 10.25])),
+    )
+    app = FastAPI()
+    app.include_router(build_tokenizer_router())
+
+    with caplog.at_level("WARNING", logger="aiperf.api.tokenizer"):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://t"
+        ) as client:
+            response = await client.get("/api/tokenizer/gpt2/bundle")
+
+    assert response.status_code == 200
+    assert "built on request path in 0.2s" in caplog.text
 
 
 def _untar_names_and_sizes(payload: bytes) -> dict[str, int]:

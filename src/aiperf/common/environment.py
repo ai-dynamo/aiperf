@@ -1284,10 +1284,11 @@ class _ServerMetricsSettings(BaseSettings):
         description="Timeout in seconds for checking server metrics endpoint reachability during init",
     )
     REALTIME_PUBLISH_INTERVAL_SECONDS: float = Field(
-        gt=0.0,
+        ge=1e-9,
         le=300.0,
         default=1.0,
-        description="Minimum seconds between realtime server-metrics snapshot messages",
+        description="Minimum seconds between realtime server-metrics snapshot messages; "
+        "the one-nanosecond floor keeps conversion to integer nanoseconds positive",
     )
     SHUTDOWN_DELAY: float = Field(
         ge=1.0,
@@ -1798,6 +1799,17 @@ class _TokenizerSettings(BaseSettings):
         default=300.0,
         description="Total timeout in seconds for each tokenizer bundle HTTP request",
     )
+
+    @model_validator(mode="after")
+    def validate_download_backoff_order(self) -> Self:
+        """Keep exponential retry backoff from starting above its configured cap."""
+        if self.DOWNLOAD_INITIAL_BACKOFF_SECONDS > self.DOWNLOAD_MAX_BACKOFF_SECONDS:
+            raise ValueError(
+                "AIPERF_TOKENIZER_DOWNLOAD_INITIAL_BACKOFF_SECONDS must be less than "
+                "or equal to AIPERF_TOKENIZER_DOWNLOAD_MAX_BACKOFF_SECONDS"
+            )
+        return self
+
     PRELOAD_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,

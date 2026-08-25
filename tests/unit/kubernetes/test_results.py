@@ -518,7 +518,12 @@ class TestKubectlCopyResults:
     """Verify kubectl cp invocation and fallback listing."""
 
     @pytest.mark.asyncio
-    async def test_successful_copy_returns_true(self, tmp_path: Path) -> None:
+    async def test_successful_copy_uses_configured_timeout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            K8sEnvironment.RESULTS, "KUBECTL_COPY_TIMEOUT_SECONDS", 73.5
+        )
         with patch(
             "aiperf.kubernetes.results.run_command",
             new_callable=AsyncMock,
@@ -527,10 +532,7 @@ class TestKubectlCopyResults:
             result = await kubectl_copy_results("ns", "pod-0", "container", tmp_path)
 
         assert result is True
-        assert (
-            mock_run.await_args.kwargs["timeout"]
-            == K8sEnvironment.RESULTS.KUBECTL_COPY_TIMEOUT_SECONDS
-        )
+        assert mock_run.await_args.kwargs["timeout"] == 73.5
 
     @pytest.mark.asyncio
     async def test_successful_copy_with_stdout(self, tmp_path: Path) -> None:

@@ -3,15 +3,20 @@
 """Focused tests for the worker-group state core."""
 
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aiperf.common.enums import CommandType, WorkerStatus
+from aiperf.common.environment import Environment
 from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.messages.worker_messages import WorkerStatusSummaryMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
-from aiperf.common.pod_lifecycle_structs import GroupPeerCommandAck
+from aiperf.common.pod_lifecycle_structs import (
+    GroupPeerCommandAck,
+    _send_group_peer_hello_with_retry,
+)
+from aiperf.plugin.enums import ServiceType
 from aiperf.workers.worker_group_manager import (
     WorkerStatusInfo,
     build_worker_status_summary,
@@ -21,6 +26,7 @@ from aiperf.workers.worker_group_manager import (
 from aiperf.workers.worker_pod_helpers import (
     configure_local_peers,
     shutdown_local_peers,
+    wait_for_expected_peers,
 )
 
 DEFAULT_MEMORY = 1024 * 1024 * 100
@@ -94,6 +100,62 @@ def test_mark_stale_workers_uses_shared_activity_window() -> None:
 # =============================================================================
 # Group-local lifecycle fanout (worker_pod_helpers)
 # =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_group_hello_retry_uses_configured_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aiperf.common import pod_lifecycle_structs
+
+    dealer = MagicMock()
+    dealer.request = AsyncMock(side_effect=[TimeoutError, None])
+    sleep = AsyncMock()
+    monkeypatch.setattr(pod_lifecycle_structs.asyncio, "sleep", sleep)
+    monkeypatch.setattr(
+        Environment.SERVICE, "GROUP_HELLO_RETRY_BACKOFF_SECONDS", 0.137
+    )
+
+    await _send_group_peer_hello_with_retry(
+        dealer,
+        service_id="worker-0",
+        service_type=str(ServiceType.WORKER),
+        pod_index="0",
+        logger=MagicMock(),
+        attempt_timeout=0.2,
+        total_timeout=10.0,
+    )
+
+    sleep.assert_awaited_once_with(0.137)
+
+
+@pytest.mark.asyncio
+async def test_group_peer_wait_uses_configured_poll_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aiperf.workers import worker_pod_helpers
+
+    peer_types: dict[str, str] = {}
+
+    async def register_peers(delay: float) -> None:
+        assert delay == 0.731
+        peer_types.update(
+            {
+                "worker-0": str(ServiceType.WORKER),
+                "record-processor-0": str(ServiceType.RECORD_PROCESSOR),
+            }
+        )
+
+    monkeypatch.setattr(worker_pod_helpers.asyncio, "sleep", register_peers)
+    monkeypatch.setattr(
+        Environment.SERVICE, "GROUP_PEER_POLL_INTERVAL_SECONDS", 0.731
+    )
+
+    await wait_for_expected_peers(
+        workers_per_pod=1,
+        record_processors_per_pod=1,
+        peer_types=peer_types,
+    )
 
 
 class _StubRouter:

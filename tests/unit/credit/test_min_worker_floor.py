@@ -81,6 +81,23 @@ class TestWorkerFloor:
 
 class TestRouterDoesNotDecideTheBreach:
     @pytest.mark.asyncio
+    async def test_eviction_uses_configured_stale_multiplier(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        router = _router(alive=1, peak=1)
+        router.evict_stale_workers = MagicMock()
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 7.0)
+        monkeypatch.setattr(
+            Environment.WORKER, "ROUTER_STALE_EVICTION_MULTIPLIER", 4.25
+        )
+
+        await router._evict_stale_workers_task()
+
+        router.evict_stale_workers.assert_called_once_with(29.75)
+
+    @pytest.mark.asyncio
     async def test_breach_is_left_for_timing_manager(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

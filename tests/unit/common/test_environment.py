@@ -290,6 +290,26 @@ class TestRuntimeSettings:
         with pytest.raises(ValueError):
             settings_factory()
 
+    def test_tokenizer_initial_backoff_cannot_exceed_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "AIPERF_TOKENIZER_DOWNLOAD_INITIAL_BACKOFF_SECONDS", "2.5"
+        )
+        monkeypatch.setenv("AIPERF_TOKENIZER_DOWNLOAD_MAX_BACKOFF_SECONDS", "2.0")
+
+        with pytest.raises(ValueError, match="INITIAL_BACKOFF_SECONDS"):
+            _TokenizerSettings()
+
+    def test_realtime_publish_interval_accepts_one_nanosecond(self) -> None:
+        settings = _ServerMetricsSettings(REALTIME_PUBLISH_INTERVAL_SECONDS=1e-9)
+
+        assert int(settings.REALTIME_PUBLISH_INTERVAL_SECONDS * 1_000_000_000) == 1
+
+    def test_realtime_publish_interval_rejects_sub_nanosecond_value(self) -> None:
+        with pytest.raises(ValueError):
+            _ServerMetricsSettings(REALTIME_PUBLISH_INTERVAL_SECONDS=0.5e-9)
+
 
 class TestServiceSettingsUvloopWindows:
     """Test suite for automatic uvloop disabling on Windows."""
