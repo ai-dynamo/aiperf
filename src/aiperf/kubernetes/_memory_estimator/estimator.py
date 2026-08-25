@@ -170,7 +170,7 @@ class MemoryEstimator:
     def _estimate_worker_pod(self) -> PodEstimate:
         p = self.params
         conc_per_worker = _ceil_div(p.max_concurrency, p.total_workers)
-        pod_concurrency = conc_per_worker * p.workers_per_pod
+        pod_concurrency = _ceil_div(p.max_concurrency, p.num_worker_pods)
         conc_per_rp = _ceil_div(pod_concurrency, p.record_processors_per_pod)
         rp_queue_depth = _rp_queue_depth(
             conc_per_rp, p.avg_isl_tokens, p.avg_osl_tokens
@@ -234,6 +234,7 @@ class MemoryEstimator:
         warnings.extend(_warn_request_volume(self.params))
         warnings.extend(_warn_tokenizer(self.params))
         warnings.extend(_warn_http_trace(self.params))
+        warnings.extend(_warn_server_metrics_discovery(self.params))
         warnings.extend(_warn_multi_turn(self.params))
         est.warnings = warnings
         est.recommendations = _build_recommendations(est)
@@ -309,6 +310,15 @@ def _warn_http_trace(p: MemoryEstimationParams) -> list[str]:
     return [
         f"HTTP trace export with {p.total_requests:,} requests will accumulate "
         "per-chunk timing data in memory. Consider disabling for large runs."
+    ]
+
+
+def _warn_server_metrics_discovery(p: MemoryEstimationParams) -> list[str]:
+    if not p.server_metrics_discovery_enabled:
+        return []
+    return [
+        "Server metrics Kubernetes discovery may add endpoints beyond this estimate. "
+        "Increase controller memory if discovery finds additional inference servers."
     ]
 
 
