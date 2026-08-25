@@ -352,6 +352,37 @@ class TestK8sEnvironmentResults:
         assert settings.DOWNLOAD_MAX_RETRIES == 4
 
 
+class TestK8sEnvironmentRootSettings:
+    """Tests for Kubernetes root deployment settings."""
+
+    def test_results_sidecar_log_level_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.kubernetes.environment import _K8sEnvironment
+
+        monkeypatch.setenv("AIPERF_K8S_RESULTS_SIDECAR_LOG_LEVEL", "trace")
+        assert _K8sEnvironment().RESULTS_SIDECAR_LOG_LEVEL == "trace"
+
+    def test_results_sidecar_log_level_rejects_unknown_value(self) -> None:
+        from aiperf.kubernetes.environment import _K8sEnvironment
+
+        with pytest.raises(ValidationError, match="RESULTS_SIDECAR_LOG_LEVEL"):
+            _K8sEnvironment(RESULTS_SIDECAR_LOG_LEVEL="verbose")
+
+    def test_apiserver_tls_server_name_override_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.kubernetes.environment import _K8sEnvironment
+
+        monkeypatch.setenv(
+            "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE", "kubernetes.default.svc"
+        )
+        assert (
+            _K8sEnvironment().APISERVER_TLS_SERVER_NAME_OVERRIDE
+            == "kubernetes.default.svc"
+        )
+
+
 class TestK8sEnvironmentAllSettings:
     """Tests for K8sEnvironment comprehensive coverage."""
 
