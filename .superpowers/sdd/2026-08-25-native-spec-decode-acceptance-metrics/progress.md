@@ -27,7 +27,7 @@ Ruling: concrete phase-index selection applies to exact row masks, sketch keys, 
 ## Task state
 
 - Task 1: completed, GREEN, and independently approved
-- Task 2: pending
+- Task 2: completed and GREEN; independent review pending
 - Task 3: pending
 - Task 4: pending
 
@@ -38,3 +38,13 @@ Task 1 receipt: see `task-1-report.md`. Initial `cargo test -p aiperf-runtime sp
 Task 1 first review: rejected. Important: enforce `draft_acceptance_rate` in `0.0..=1.0`. Minor: prove the finish-only typed SSE stats traverse the real endpoint-dispatch loop into a terminal record. Review-fix RED ran eight focused engine tests: seven passed and the range test failed on the intended missing invariant. The minimal range check and dispatch integration regression are implemented. The identical GREEN command passed 8/8 with the same four baseline warnings. Scoped re-review is pending; Task 2 remains gated.
 
 Task 1 re-review: APPROVED at `579b2e7ce1`; see `task-1-rereview.md`. The reviewer reran the authoritative engine-enabled command: 8 passed, 0 failed, 2300 filtered, with four unchanged warnings. Both rejected findings are resolved and the remaining Task 1 scan found no blockers. Task 2 may begin.
+
+Task 2 receipt: see `task-2-report.md`. The strict RED failed to compile on
+the intended absent eleven tags, `MetricConsoleGroup::SpecDecode`, indexed
+phase context, pooled histogram accessor, and native-report field. The final
+focused GREEN command passed 12 tests with no failures. Catalog fingerprint,
+derived coverage, and definition-ID snapshot sentinels also pass. The adjacent
+metrics-core sweep has one unrelated pre-existing golden mismatch caused by
+shared-head version drift (`0.12.0` actual versus `0.0.0` expected); no Task 2
+code or fixture owns that version string. Task 3 remains gated on independent
+Task 2 review.

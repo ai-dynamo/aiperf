@@ -16,6 +16,7 @@ use crate::metrics_core::window::{ExportContext, Phase};
 use rustc_hash::{FxHashMap, FxHasher};
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
@@ -652,7 +653,7 @@ impl TagSketch {
     }
 }
 
-/// Per-`(phase, tag)` bounded-memory streaming sketches.
+/// Per-phase and per-phase-instance bounded-memory streaming sketches.
 ///
 /// Phase separation preserves the warmup/profiling phase
 /// mask the exact path applies over rows, and the whole structure merges
@@ -660,7 +661,7 @@ impl TagSketch {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SketchColumns {
     compression: f64,
-    tags: FxHashMap<(Phase, u16), TagSketch>,
+    tags: FxHashMap<(Phase, Option<usize>, u16), TagSketch>,
 }
 
 impl SketchColumns {
@@ -672,40 +673,54 @@ impl SketchColumns {
         }
     }
 
-    /// Ingests one finite value for a `(phase, tag)`.
-    pub fn add(&mut self, phase: Phase, tag: MetricTag, value: f64) {
+    /// Ingests one finite value into the phase aggregate and, when present, the
+    /// concrete phase-instance sketch.
+    pub fn add(&mut self, phase: Phase, phase_index: Option<usize>, tag: MetricTag, value: f64) {
         let compression = self.compression;
         self.tags
-            .entry((phase, tag.index() as u16))
+            .entry((phase, None, tag.index() as u16))
             .or_insert_with(|| TagSketch::with_compression(compression))
             .add(value);
+        if let Some(phase_index) = phase_index {
+            self.tags
+                .entry((phase, Some(phase_index), tag.index() as u16))
+                .or_insert_with(|| TagSketch::with_compression(compression))
+                .add(value);
+        }
     }
 
     /// Returns the sketch for one `(phase, tag)`, if any value was ingested.
     pub fn tag(&self, phase: Phase, tag: MetricTag) -> Option<&TagSketch> {
-        self.tags.get(&(phase, tag.index() as u16))
+        self.tags.get(&(phase, None, tag.index() as u16))
     }
 
-    /// Resolves a tag sketch for an optional phase context: a specific phase
-    /// returns that phase's sketch; `None` merges every phase's sketch for the tag.
-    pub fn resolve(&self, phase: Option<Phase>, tag: MetricTag) -> Option<TagSketch> {
+    /// Resolves a tag sketch for an optional phase and phase-instance context.
+    pub fn resolve(
+        &self,
+        phase: Option<Phase>,
+        phase_index: Option<usize>,
+        tag: MetricTag,
+    ) -> Option<TagSketch> {
         let index = tag.index() as u16;
-        match phase {
-            Some(phase) => self.tags.get(&(phase, index)).cloned(),
-            None => {
-                let mut merged: Option<TagSketch> = None;
-                for ((_, tag_index), sketch) in &self.tags {
-                    if *tag_index != index {
-                        continue;
-                    }
-                    match &mut merged {
-                        Some(accumulated) => accumulated.merge(sketch),
-                        None => merged = Some(sketch.clone()),
-                    }
+        if let Some(phase) = phase {
+            return self.tags.get(&(phase, phase_index, index)).cloned();
+        }
+        let mut merged: Option<TagSketch> = None;
+        for ((_, entry_phase_index, tag_index), sketch) in &self.tags {
+            if *tag_index != index
+                || match phase_index {
+                    Some(expected) => *entry_phase_index != Some(expected),
+                    None => entry_phase_index.is_some(),
                 }
-                merged
+            {
+                continue;
+            }
+            match &mut merged {
+                Some(accumulated) => accumulated.merge(sketch),
+                None => merged = Some(sketch.clone()),
             }
         }
+        merged
     }
 
     /// Merges another shard's sketch columns into this one.
@@ -740,6 +755,8 @@ pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
     session_nums: Vec<u64>,
     turn_indices: Vec<u32>,
     phase_codes: Vec<u32>,
+    #[serde(default)]
+    phase_indices: Vec<Option<usize>>,
     correlation_codes: Vec<u32>,
     dimension_codes: Vec<u32>,
     worker_codes: Vec<Option<u32>>,
@@ -763,6 +780,8 @@ pub struct ColumnStore<B: ListMetricBackend = RaggedSeries> {
     // sketch and clearing the rows so memory stays O(1) in the record count.
     #[serde(default)]
     sketch: Option<SketchColumns>,
+    #[serde(default)]
+    spec_decode_histograms: BTreeMap<(Phase, Option<usize>), BTreeMap<u64, u64>>,
     // Monotonic count of every record ever ingested, unaffected by [`Self::clear_rows`]
     // (which resets `occupied_count` after each sketch harvest) and summed on
     // [`Self::append_store`]. It is the true record total on the sketch path, where the
@@ -785,6 +804,7 @@ impl<B: ListMetricBackend> Default for ColumnStore<B> {
             session_nums: Vec::new(),
             turn_indices: Vec::new(),
             phase_codes: Vec::new(),
+            phase_indices: Vec::new(),
             correlation_codes: Vec::new(),
             dimension_codes: Vec::new(),
             worker_codes: Vec::new(),
@@ -801,6 +821,7 @@ impl<B: ListMetricBackend> Default for ColumnStore<B> {
             ragged: (0..MetricTag::COUNT).map(|_| None).collect(),
             ragged_present: Vec::new(),
             sketch: None,
+            spec_decode_histograms: BTreeMap::new(),
             ingested_total: 0,
         }
     }
@@ -833,7 +854,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     /// Harvests one populated row's finite metric values into the sketch columns,
     /// keyed by `phase`, so the row storage can then be cleared. A no-op when the
     /// store is not in sketch mode.
-    pub fn harvest_row_to_sketch(&mut self, row: usize, phase: Phase) {
+    pub fn harvest_row_to_sketch(&mut self, row: usize, phase: Phase, phase_index: Option<usize>) {
         let Some(mut sketch) = self.sketch.take() else {
             return;
         };
@@ -841,7 +862,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             if let Some(column) = &self.numeric[tag.index()]
                 && let Some(value) = column.get(row)
             {
-                sketch.add(phase, tag, value);
+                sketch.add(phase, phase_index, tag, value);
             }
         }
         if !self.ragged_present.is_empty() {
@@ -852,7 +873,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             for &tag in &self.ragged_present {
                 if let Some(backend) = &self.ragged[tag.index()] {
                     for value in backend.values_for_mask(&mask) {
-                        sketch.add(phase, tag, value);
+                        sketch.add(phase, phase_index, tag, value);
                     }
                 }
             }
@@ -873,6 +894,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         self.session_nums.clear();
         self.turn_indices.clear();
         self.phase_codes.clear();
+        self.phase_indices.clear();
         self.correlation_codes.clear();
         self.dimension_codes.clear();
         self.worker_codes.clear();
@@ -970,6 +992,12 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         if let (Some(sketch), Some(other_sketch)) = (self.sketch.as_mut(), other.sketch.as_ref()) {
             sketch.merge(other_sketch);
         }
+        for (key, histogram) in &other.spec_decode_histograms {
+            let pooled = self.spec_decode_histograms.entry(*key).or_default();
+            for (bucket, count) in histogram {
+                *pooled.entry(*bucket).or_default() += count;
+            }
+        }
         let row_offset = self.row_count();
         let other_rows = other.row_count();
         if other_rows == 0 {
@@ -1031,6 +1059,8 @@ impl<B: ListMetricBackend> ColumnStore<B> {
 
             self.phase_codes
                 .push(phase_remap[other.phase_codes[row] as usize]);
+            self.phase_indices
+                .push(other.phase_indices.get(row).copied().flatten());
             self.correlation_codes
                 .push(correlation_remap[other.correlation_codes[row] as usize]);
             self.dimension_codes
@@ -1208,6 +1238,30 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         self.phases.code(&phase)
     }
 
+    /// Resolves the exact pooled speculative-decoding histogram for a non-time context.
+    pub fn pooled_spec_decode_acceptance_histogram(
+        &self,
+        context: &ExportContext,
+    ) -> Option<BTreeMap<u64, u64>> {
+        if context.start_ns.is_some() || context.end_ns.is_some() {
+            return None;
+        }
+        let mut pooled = BTreeMap::new();
+        for ((phase, phase_index), histogram) in &self.spec_decode_histograms {
+            if context.phase.is_some_and(|expected| expected != *phase)
+                || context
+                    .phase_index
+                    .is_some_and(|expected| Some(expected) != *phase_index)
+            {
+                continue;
+            }
+            for (bucket, count) in histogram {
+                *pooled.entry(*bucket).or_default() += count;
+            }
+        }
+        (!pooled.is_empty()).then_some(pooled)
+    }
+
     /// Returns the dense code for a correlation id when it has appeared.
     pub fn correlation_code(&self, correlation_id: &str) -> Option<u32> {
         self.correlations.code(correlation_id)
@@ -1288,7 +1342,14 @@ impl<B: ListMetricBackend> ColumnStore<B> {
                 .phase_codes
                 .iter()
                 .zip(&self.occupied)
-                .map(|(code, occupied)| *occupied && Some(*code) == expected)
+                .enumerate()
+                .map(|(row, (code, occupied))| {
+                    *occupied
+                        && Some(*code) == expected
+                        && context.phase_index.is_none_or(|expected| {
+                            self.phase_indices.get(row).copied().flatten() == Some(expected)
+                        })
+                })
                 .collect();
         }
         self.mask_started_in(context.start_ns, context.end_ns)
@@ -1388,6 +1449,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         self.session_nums.resize(rows, 0);
         self.turn_indices.resize(rows, 0);
         self.phase_codes.resize(rows, u32::MAX);
+        self.phase_indices.resize(rows, None);
         self.correlation_codes.resize(rows, u32::MAX);
         self.dimension_codes.resize(rows, u32::MAX);
         self.worker_codes.resize(rows, None);
@@ -1413,6 +1475,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
         self.turn_indices[row] = record.turn_index;
         let phase = self.phases.intern(record.phase);
         self.phase_codes[row] = phase;
+        self.phase_indices[row] = record.phase_index;
         let correlation = self.correlations.intern_ref(&record.correlation_id);
         self.correlation_codes[row] = correlation;
         let dimensions = self.dimensions.intern_ref(&record.dimensions);
@@ -1437,6 +1500,7 @@ impl<B: ListMetricBackend> ColumnStore<B> {
     ) {
         let valid = !record.errored && !record.canceled;
         if valid {
+            self.populate_spec_decode_metrics(row, record);
             self.set_metric_f64(row, MetricTag::RequestCount, 1.0);
             self.set_metric_f64(row, MetricTag::MinRequestTimestamp, record.start_ns as f64);
             if record.end_ns >= record.start_ns {
@@ -1599,6 +1663,61 @@ impl<B: ListMetricBackend> ColumnStore<B> {
             MetricTag::UsagePromptAudioSeconds,
             usage.prompt_audio_seconds,
         );
+    }
+
+    fn populate_spec_decode_metrics(&mut self, row: usize, record: &RecordIngest) {
+        let Some(acceptance) = record.spec_decode_acceptance.as_ref() else {
+            return;
+        };
+        self.set_optional_f64(
+            row,
+            MetricTag::SpecDecodeAcceptanceLength,
+            Some(acceptance.mean_acceptance_length),
+        );
+        self.set_optional_f64(
+            row,
+            MetricTag::SpecDecodeDraftAcceptanceRate,
+            Some(acceptance.draft_acceptance_rate * 100.0),
+        );
+        let verified = acceptance
+            .num_draft_tokens
+            .checked_add(acceptance.num_spec_steps);
+        let emitted = acceptance
+            .num_accepted_draft_tokens
+            .checked_add(acceptance.num_spec_steps);
+        if let Some((emitted, verified)) = emitted.zip(verified)
+            && verified > 0
+        {
+            self.set_metric_f64(
+                row,
+                MetricTag::SpecDecodeAcceptedPerVerified,
+                emitted as f64 / verified as f64,
+            );
+        }
+        self.set_metric_f64(
+            row,
+            MetricTag::SpecDecodeSteps,
+            acceptance.num_spec_steps as f64,
+        );
+        self.set_metric_f64(
+            row,
+            MetricTag::SpecDecodeAcceptedDraftTokens,
+            acceptance.num_accepted_draft_tokens as f64,
+        );
+        self.set_metric_f64(
+            row,
+            MetricTag::SpecDecodeDraftTokens,
+            acceptance.num_draft_tokens as f64,
+        );
+        if !acceptance.acceptance_histogram.is_empty() {
+            let pooled = self
+                .spec_decode_histograms
+                .entry((record.phase, record.phase_index))
+                .or_default();
+            for (bucket, count) in &acceptance.acceptance_histogram {
+                *pooled.entry(*bucket).or_default() += count;
+            }
+        }
     }
 
     fn populate_http_metrics(&mut self, row: usize, trace: RequestTrace) {
@@ -1969,6 +2088,7 @@ mod tests {
             start_ns: Some(500),
             end_ns: Some(600),
             phase: Some(Phase::Warmup),
+            phase_index: None,
         };
         assert_eq!(store.mask_for(&context), vec![true]);
     }

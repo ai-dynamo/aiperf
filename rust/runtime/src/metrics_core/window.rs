@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Credit phase attached to a record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     /// Warmup traffic that should not count toward profiling-only summaries.
@@ -52,6 +52,8 @@ pub struct ExportContext {
     pub end_ns: Option<i64>,
     /// Optional phase filter. Phase masks are authoritative over wall-clock bounds.
     pub phase: Option<Phase>,
+    /// Optional concrete instance within the selected phase.
+    pub phase_index: Option<usize>,
 }
 
 impl ExportContext {
@@ -66,6 +68,7 @@ impl ExportContext {
             start_ns: Some(start_ns),
             end_ns: Some(end_ns),
             phase: None,
+            phase_index: None,
         }
     }
 
@@ -75,6 +78,17 @@ impl ExportContext {
             start_ns: None,
             end_ns: None,
             phase: Some(phase),
+            phase_index: None,
+        }
+    }
+
+    /// Summarizes records in one concrete phase instance.
+    pub fn phase_index(phase: Phase, phase_index: usize) -> Self {
+        Self {
+            start_ns: None,
+            end_ns: None,
+            phase: Some(phase),
+            phase_index: Some(phase_index),
         }
     }
 
@@ -122,6 +136,7 @@ mod tests {
             start_ns: Some(500),
             end_ns: Some(600),
             phase: Some(Phase::Warmup),
+            phase_index: None,
         };
         assert!(ctx.contains(Phase::Warmup, 100, 200));
         assert!(!ctx.contains(Phase::Profiling, 550, 560));

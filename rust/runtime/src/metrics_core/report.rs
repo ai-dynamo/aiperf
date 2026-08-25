@@ -1055,6 +1055,9 @@ impl Reporter for NativeReporter {
             run: ReportRun::unfinalized(outcome.run.clone()),
             summary: run_summary,
             metrics: build_metric_map(metrics),
+            pooled_spec_decode_acceptance_histogram: metrics
+                .pooled_spec_decode_acceptance_histogram()
+                .cloned(),
             warmup_metrics: outcome.warmup.as_ref().map(build_metric_map),
             server_metrics: build_sidecar_map(&outcome.server_metrics),
             warmup_server_metrics: build_sidecar_map(&outcome.warmup_server_metrics),
@@ -1087,6 +1090,9 @@ pub struct NativeReport {
     pub summary: ReportSummary,
     /// Profiling metrics keyed by stable name.
     pub metrics: BTreeMap<String, MetricEntry>,
+    /// Exact accepted-draft bucket counts pooled across the selected profiling phase.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pooled_spec_decode_acceptance_histogram: Option<BTreeMap<u64, u64>>,
     /// Warmup metrics using the same representation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warmup_metrics: Option<BTreeMap<String, MetricEntry>>,
@@ -1403,6 +1409,7 @@ fn console_group_name(group: MetricConsoleGroup) -> &'static str {
         MetricConsoleGroup::Prediction => "prediction",
         MetricConsoleGroup::Audio => "audio",
         MetricConsoleGroup::Reasoning => "reasoning",
+        MetricConsoleGroup::SpecDecode => "spec_decode",
         MetricConsoleGroup::Effective => "effective",
         MetricConsoleGroup::Active => "active",
     }
@@ -1411,10 +1418,37 @@ fn console_group_name(group: MetricConsoleGroup) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::sink::ObservedSpecDecodeAcceptance;
     use crate::metrics_core::{
         InferenceDimensions, MetricResult, MetricResultData, MetricsAccumulator, MetricsConfig,
         Phase, RecordIngest, SidecarMetric, SidecarSeries, SidecarStats, Unit,
     };
+
+    #[test]
+    fn native_report_retains_the_full_spec_decode_histogram() {
+        let mut accumulator = MetricsAccumulator::new();
+        let mut record = RecordIngest::minimal(0, 1, Phase::Profiling);
+        record.spec_decode_acceptance = Some(ObservedSpecDecodeAcceptance {
+            engine: "vllm".to_string(),
+            mean_acceptance_length: 3.25,
+            draft_acceptance_rate: 0.5625,
+            acceptance_histogram: BTreeMap::from([(0, 1), (1, 1), (2, 2), (3, 3), (4, 1)]),
+            num_accepted_draft_tokens: 18,
+            num_draft_tokens: 32,
+            num_spec_steps: 8,
+            num_spec_tokens: Some(4),
+            completion_tokens: Some(26),
+            per_step_accepted: None,
+            per_step_drafted: None,
+        });
+        accumulator.process_record(&record);
+
+        let report = NativeReport::new(&accumulator.summarize(), None);
+        assert_eq!(
+            report.pooled_spec_decode_acceptance_histogram,
+            Some(BTreeMap::from([(0, 1), (1, 1), (2, 2), (3, 3), (4, 1)]))
+        );
+    }
 
     #[test]
     fn v2_uses_type_specific_series_and_null_for_non_finite_tail() {

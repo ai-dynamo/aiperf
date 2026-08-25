@@ -858,6 +858,7 @@ fn group_title(group: MetricConsoleGroup, base: &str) -> String {
         MetricConsoleGroup::Prediction => format!("{base}: Prediction"),
         MetricConsoleGroup::Audio => format!("{base}: Audio"),
         MetricConsoleGroup::Reasoning => format!("{base}: Reasoning"),
+        MetricConsoleGroup::SpecDecode => format!("{base}: Speculative Decoding"),
         MetricConsoleGroup::Effective => format!("{base}: Effective"),
         MetricConsoleGroup::Active => format!("{base}: Active"),
     }

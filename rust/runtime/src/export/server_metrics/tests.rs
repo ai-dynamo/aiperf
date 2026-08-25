@@ -216,6 +216,7 @@ fn synthetic_report() -> NativeReport {
             ..ReportSummary::default()
         },
         metrics: BTreeMap::new(),
+        pooled_spec_decode_acceptance_histogram: None,
         warmup_metrics: None,
         server_metrics: BTreeMap::from([
             ("cache_config_info".to_string(), info),

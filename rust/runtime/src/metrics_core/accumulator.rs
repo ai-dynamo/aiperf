@@ -357,6 +357,8 @@ pub struct AccumulatorSummary {
     timeslices: Vec<MetricTimeslice>,
     inference_series: Vec<InferenceMetricSeriesSummary>,
     sidecar_metrics: BTreeMap<String, SidecarMetric>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pooled_spec_decode_acceptance_histogram: Option<BTreeMap<u64, u64>>,
 }
 
 impl AccumulatorSummary {
@@ -438,6 +440,11 @@ impl AccumulatorSummary {
     /// Returns side-channel metrics in stable name order.
     pub fn sidecar_metrics(&self) -> &BTreeMap<String, SidecarMetric> {
         &self.sidecar_metrics
+    }
+
+    /// Returns the exact selected speculative-decoding acceptance histogram.
+    pub fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u64>> {
+        self.pooled_spec_decode_acceptance_histogram.as_ref()
     }
 }
 
@@ -560,7 +567,8 @@ impl MetricsAccumulator {
             self.compute_good_request(row);
         }
         if sketch_mode {
-            self.store.harvest_row_to_sketch(row, record.phase);
+            self.store
+                .harvest_row_to_sketch(row, record.phase, record.phase_index);
             self.store.clear_rows();
         }
     }
@@ -646,6 +654,9 @@ impl MetricsAccumulator {
             timeslices,
             inference_series,
             sidecar_metrics: BTreeMap::new(),
+            pooled_spec_decode_acceptance_histogram: self
+                .store
+                .pooled_spec_decode_acceptance_histogram(context),
         }
     }
 
@@ -658,16 +669,23 @@ impl MetricsAccumulator {
     /// distributions. Counts, sums, averages, min/max, and rate derivations stay
     /// exact; percentiles are t-digest approximations.
     fn export_results_sketch(&self, context: &ExportContext) -> AccumulatorSummary {
-        let results = self.compute_result_map_sketch(context.phase);
+        let results = self.compute_result_map_sketch(context.phase, context.phase_index);
         AccumulatorSummary {
             results,
             timeslices: Vec::new(),
             inference_series: Vec::new(),
             sidecar_metrics: BTreeMap::new(),
+            pooled_spec_decode_acceptance_histogram: self
+                .store
+                .pooled_spec_decode_acceptance_histogram(context),
         }
     }
 
-    fn compute_result_map_sketch(&self, phase: Option<Phase>) -> BTreeMap<String, MetricResult> {
+    fn compute_result_map_sketch(
+        &self,
+        phase: Option<Phase>,
+        phase_index: Option<usize>,
+    ) -> BTreeMap<String, MetricResult> {
         let sketch = self
             .store
             .sketch()
@@ -679,7 +697,7 @@ impl MetricsAccumulator {
             .iter()
             .filter(|spec| spec.kind != MetricType::Derived)
         {
-            let Some(tag_sketch) = sketch.resolve(phase, spec.tag) else {
+            let Some(tag_sketch) = sketch.resolve(phase, phase_index, spec.tag) else {
                 continue;
             };
             if tag_sketch.count() == 0 {
@@ -1521,6 +1539,17 @@ fn derive_scalar(
         MetricTag::ImageSamplesPerSecond => rate(get(MetricTag::TotalNumImages)?),
         MetricTag::TotalOutputTokens => get(MetricTag::OutputTokenCount),
         MetricTag::TotalReasoningTokens => get(MetricTag::ReasoningTokenCount),
+        MetricTag::TotalSpecDecodeSteps => get(MetricTag::SpecDecodeSteps),
+        MetricTag::TotalAcceptedDraftTokens => get(MetricTag::SpecDecodeAcceptedDraftTokens),
+        MetricTag::TotalDraftTokens => get(MetricTag::SpecDecodeDraftTokens),
+        MetricTag::SpecDecodeTokenWeightedAcceptanceLength => {
+            let steps = get(MetricTag::TotalSpecDecodeSteps)?;
+            (steps > 0.0).then_some(1.0 + get(MetricTag::TotalAcceptedDraftTokens)? / steps)
+        }
+        MetricTag::SpecDecodeOverallDraftAcceptanceRate => {
+            let draft = get(MetricTag::TotalDraftTokens)?;
+            (draft > 0.0).then_some(100.0 * get(MetricTag::TotalAcceptedDraftTokens)? / draft)
+        }
         MetricTag::RequestThroughput => rate(get(MetricTag::RequestCount)?),
         MetricTag::InputTokenThroughput => rate(get(MetricTag::TotalInputSequenceLength)?),
         MetricTag::OutputTokenThroughput => rate(get(MetricTag::TotalOutputSequenceLength)?),
@@ -1681,9 +1710,10 @@ fn sweep_tag(tag: &str) -> Option<MetricTag> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::sink::ObservedSpecDecodeAcceptance;
     use crate::metrics_core::ingest::{RequestTrace, TokenCounts, UsageMetrics};
     use crate::metrics_core::window::Phase;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn successful_record(start_ns: i64, end_ns: i64) -> RecordIngest {
         let mut record = RecordIngest::minimal(start_ns, end_ns, Phase::Profiling);
@@ -1711,6 +1741,189 @@ mod tests {
             ..UsageMetrics::default()
         };
         record
+    }
+
+    fn spec_decode_record(
+        start_ns: i64,
+        phase: Phase,
+        phase_index: Option<usize>,
+        accepted_per_step: &[u64],
+    ) -> RecordIngest {
+        let mut record = RecordIngest::minimal(start_ns, start_ns + 10, phase);
+        record.phase_index = phase_index;
+        let steps = accepted_per_step.len() as u64;
+        let accepted = accepted_per_step.iter().sum::<u64>();
+        let drafted = steps * 4;
+        let mut histogram = BTreeMap::new();
+        for accepted in accepted_per_step {
+            *histogram.entry(*accepted).or_insert(0) += 1;
+        }
+        record.spec_decode_acceptance = Some(ObservedSpecDecodeAcceptance {
+            engine: "vllm".to_string(),
+            mean_acceptance_length: 1.0 + accepted as f64 / steps as f64,
+            draft_acceptance_rate: accepted as f64 / drafted as f64,
+            acceptance_histogram: histogram,
+            num_accepted_draft_tokens: accepted,
+            num_draft_tokens: drafted,
+            num_spec_steps: steps,
+            num_spec_tokens: Some(4),
+            completion_tokens: Some(accepted + steps),
+            per_step_accepted: Some(accepted_per_step.to_vec()),
+            per_step_drafted: Some(vec![4; accepted_per_step.len()]),
+        });
+        record
+    }
+
+    fn assert_close(actual: Option<f64>, expected: f64) {
+        let actual = actual.expect("metric is present");
+        assert!(
+            (actual - expected).abs() <= 1e-10,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn spec_decode_worked_example_scopes_all_eleven_metrics_and_full_pool() {
+        let mut accumulator = MetricsAccumulator::new();
+        accumulator.process_record(&spec_decode_record(
+            100,
+            Phase::Profiling,
+            Some(0),
+            &[2, 3, 1, 4, 2, 0, 3, 3],
+        ));
+        accumulator.process_record(&spec_decode_record(
+            200,
+            Phase::Profiling,
+            Some(1),
+            &[1, 1, 0],
+        ));
+        accumulator.process_record(&spec_decode_record(300, Phase::Warmup, Some(0), &[4]));
+
+        let profiling = accumulator.export_results(&ExportContext::phase(Phase::Profiling));
+        assert_close(
+            profiling.finite_value(MetricTag::SpecDecodeAcceptanceLength),
+            (3.25 + (1.0 + 2.0 / 3.0)) / 2.0,
+        );
+        assert_close(
+            profiling.finite_value(MetricTag::SpecDecodeDraftAcceptanceRate),
+            (56.25 + (2.0 / 12.0 * 100.0)) / 2.0,
+        );
+        assert_close(
+            profiling.finite_value(MetricTag::SpecDecodeAcceptedPerVerified),
+            (0.65 + (5.0 / 15.0)) / 2.0,
+        );
+        assert_close(profiling.finite_value(MetricTag::SpecDecodeSteps), 5.5);
+        assert_close(
+            profiling.finite_value(MetricTag::SpecDecodeAcceptedDraftTokens),
+            10.0,
+        );
+        assert_close(
+            profiling.finite_value(MetricTag::SpecDecodeDraftTokens),
+            22.0,
+        );
+        assert_close(
+            profiling.finite_value(MetricTag::TotalSpecDecodeSteps),
+            11.0,
+        );
+        assert_close(
+            profiling.finite_value(MetricTag::TotalAcceptedDraftTokens),
+            20.0,
+        );
+        assert_close(profiling.finite_value(MetricTag::TotalDraftTokens), 44.0);
+        assert_close(
+            profiling.finite_value(MetricTag::SpecDecodeTokenWeightedAcceptanceLength),
+            1.0 + 20.0 / 11.0,
+        );
+        assert_close(
+            profiling.finite_value(MetricTag::SpecDecodeOverallDraftAcceptanceRate),
+            20.0 / 44.0 * 100.0,
+        );
+        assert_eq!(
+            profiling.pooled_spec_decode_acceptance_histogram(),
+            Some(&BTreeMap::from([(0, 2), (1, 3), (2, 2), (3, 3), (4, 1)]))
+        );
+
+        let first = accumulator.export_results(&ExportContext::phase_index(Phase::Profiling, 0));
+        assert_eq!(
+            first.pooled_spec_decode_acceptance_histogram(),
+            Some(&BTreeMap::from([(0, 1), (1, 1), (2, 2), (3, 3), (4, 1)]))
+        );
+        assert_close(first.finite_value(MetricTag::TotalSpecDecodeSteps), 8.0);
+
+        let second = accumulator.export_results(&ExportContext::phase_index(Phase::Profiling, 1));
+        assert_eq!(
+            second.pooled_spec_decode_acceptance_histogram(),
+            Some(&BTreeMap::from([(0, 1), (1, 2)]))
+        );
+        assert_close(second.finite_value(MetricTag::TotalSpecDecodeSteps), 3.0);
+
+        let window = accumulator.export_results(&ExportContext::time_range(100, 150));
+        assert!(window.result(MetricTag::SpecDecodeSteps).is_some());
+        assert!(window.pooled_spec_decode_acceptance_histogram().is_none());
+    }
+
+    #[test]
+    fn spec_decode_absence_and_exact_sketch_append_are_consistent() {
+        let records = [
+            spec_decode_record(100, Phase::Profiling, Some(0), &[2, 3, 1, 4, 2, 0, 3, 3]),
+            spec_decode_record(200, Phase::Profiling, Some(1), &[1, 1, 0]),
+        ];
+        let mut absent = MetricsAccumulator::new();
+        absent.process_record(&RecordIngest::minimal(0, 1, Phase::Profiling));
+        let absent = absent.summarize();
+        assert!(
+            absent
+                .result(MetricTag::SpecDecodeAcceptanceLength)
+                .is_none()
+        );
+        assert!(absent.pooled_spec_decode_acceptance_histogram().is_none());
+
+        for mode in [
+            MetricsStorageMode::Exact,
+            MetricsStorageMode::Sketch { compression: 100.0 },
+        ] {
+            let config = MetricsConfig {
+                storage_mode: mode,
+                ..MetricsConfig::default()
+            };
+            let mut whole = MetricsAccumulator::with_config(config.clone());
+            let mut left = MetricsAccumulator::with_config(config.clone());
+            let mut right = MetricsAccumulator::with_config(config.clone());
+            for record in &records {
+                whole.process_record(record);
+            }
+            left.process_record(&records[0]);
+            right.process_record(&records[1]);
+            left.merge(&right).expect("compatible stores append");
+
+            for context in [
+                ExportContext::phase(Phase::Profiling),
+                ExportContext::phase_index(Phase::Profiling, 0),
+                ExportContext::phase_index(Phase::Profiling, 1),
+            ] {
+                let direct = whole.export_results(&context);
+                let merged = left.export_results(&context);
+                assert_eq!(
+                    direct.pooled_spec_decode_acceptance_histogram(),
+                    merged.pooled_spec_decode_acceptance_histogram()
+                );
+                for tag in [
+                    MetricTag::SpecDecodeAcceptanceLength,
+                    MetricTag::SpecDecodeTokenWeightedAcceptanceLength,
+                    MetricTag::SpecDecodeDraftAcceptanceRate,
+                    MetricTag::SpecDecodeOverallDraftAcceptanceRate,
+                    MetricTag::SpecDecodeAcceptedPerVerified,
+                    MetricTag::SpecDecodeSteps,
+                    MetricTag::SpecDecodeAcceptedDraftTokens,
+                    MetricTag::SpecDecodeDraftTokens,
+                    MetricTag::TotalSpecDecodeSteps,
+                    MetricTag::TotalAcceptedDraftTokens,
+                    MetricTag::TotalDraftTokens,
+                ] {
+                    assert_close(merged.finite_value(tag), direct.finite_value(tag).unwrap());
+                }
+            }
+        }
     }
 
     /// Deterministic pseudo-random unit values (a small LCG — no wall clock).
@@ -2181,6 +2394,7 @@ mod tests {
             start_ns: Some(500),
             end_ns: Some(600),
             phase: Some(Phase::Profiling),
+            phase_index: None,
         };
         assert_eq!(
             accumulator
@@ -2323,6 +2537,7 @@ mod tests {
             start_ns: Some(2_000_000_000),
             end_ns: Some(1_000_000_000),
             phase: Some(Phase::Profiling),
+            phase_index: None,
         };
         let summary = accumulator.export_results(&context);
         assert!(summary.result(MetricTag::RequestThroughput).is_none());
@@ -2446,6 +2661,11 @@ mod tests {
                             | MetricTag::TotalErrorInputSequenceLength
                             | MetricTag::TotalOutputTokens
                             | MetricTag::TotalReasoningTokens
+                            | MetricTag::TotalSpecDecodeSteps
+                            | MetricTag::TotalAcceptedDraftTokens
+                            | MetricTag::TotalDraftTokens
+                            | MetricTag::SpecDecodeTokenWeightedAcceptanceLength
+                            | MetricTag::SpecDecodeOverallDraftAcceptanceRate
                             | MetricTag::TotalNumImages
                             | MetricTag::ImageSamplesPerSecond
                             | MetricTag::RequestThroughput

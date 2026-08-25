@@ -429,11 +429,13 @@ impl std::error::Error for PartitionCodecError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::sink::ObservedSpecDecodeAcceptance;
     use crate::metrics_core::catalog::MetricTag;
     use crate::metrics_core::ingest::TokenCounts;
     use crate::metrics_core::store::NumericColumn;
     use crate::metrics_core::value::MetricValue;
     use crate::metrics_core::window::{ExportContext, Phase};
+    use std::collections::BTreeMap;
 
     /// A completed record at global dispatch ordinal `idx`, with real
     /// latency/TTFT/ITL/OSL so summaries are non-trivial.
@@ -462,6 +464,75 @@ mod tests {
             accumulator.process_record(record);
         }
         accumulator
+    }
+
+    fn spec_decode_partition_record(phase_index: usize, accepted: &[u64]) -> RecordIngest {
+        let mut record =
+            RecordIngest::minimal(phase_index as i64, phase_index as i64 + 1, Phase::Profiling);
+        record.phase_index = Some(phase_index);
+        let steps = accepted.len() as u64;
+        let accepted_total = accepted.iter().sum::<u64>();
+        let mut histogram = BTreeMap::new();
+        for value in accepted {
+            *histogram.entry(*value).or_insert(0) += 1;
+        }
+        record.spec_decode_acceptance = Some(ObservedSpecDecodeAcceptance {
+            engine: "vllm".to_string(),
+            mean_acceptance_length: 1.0 + accepted_total as f64 / steps as f64,
+            draft_acceptance_rate: accepted_total as f64 / (steps * 4) as f64,
+            acceptance_histogram: histogram,
+            num_accepted_draft_tokens: accepted_total,
+            num_draft_tokens: steps * 4,
+            num_spec_steps: steps,
+            num_spec_tokens: Some(4),
+            completion_tokens: Some(accepted_total + steps),
+            per_step_accepted: None,
+            per_step_drafted: None,
+        });
+        record
+    }
+
+    #[test]
+    fn spec_decode_pool_survives_exact_and_sketch_column_partition_codecs() {
+        for storage_mode in [
+            crate::metrics_core::MetricsStorageMode::Exact,
+            crate::metrics_core::MetricsStorageMode::Sketch { compression: 100.0 },
+        ] {
+            let config = MetricsConfig {
+                storage_mode,
+                ..MetricsConfig::default()
+            };
+            let mut first = MetricsAccumulator::with_config(config.clone());
+            let mut second = MetricsAccumulator::with_config(config.clone());
+            first.process_record(&spec_decode_partition_record(0, &[2, 3, 1, 4, 2, 0, 3, 3]));
+            second.process_record(&spec_decode_partition_record(1, &[1, 1, 0]));
+            let partitions = [
+                ColumnStorePartition::from_accumulator(0, &first),
+                ColumnStorePartition::from_accumulator(1, &second),
+            ]
+            .into_iter()
+            .map(|partition| {
+                ColumnStorePartition::from_bytes(&partition.to_bytes().expect("encode"))
+                    .expect("decode")
+            })
+            .collect();
+
+            let merged = merge_store_partitions(config, partitions);
+            let phase = merged.export_results(&ExportContext::phase(Phase::Profiling));
+            assert_eq!(
+                phase.pooled_spec_decode_acceptance_histogram(),
+                Some(&BTreeMap::from([(0, 2), (1, 3), (2, 2), (3, 3), (4, 1)]))
+            );
+            let indexed = merged.export_results(&ExportContext::phase_index(Phase::Profiling, 1));
+            assert_eq!(
+                indexed.pooled_spec_decode_acceptance_histogram(),
+                Some(&BTreeMap::from([(0, 1), (1, 2)]))
+            );
+            assert_eq!(
+                indexed.finite_value(MetricTag::TotalSpecDecodeSteps),
+                Some(3.0)
+            );
+        }
     }
 
     #[test]
