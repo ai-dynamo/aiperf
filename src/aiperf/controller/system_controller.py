@@ -1262,7 +1262,9 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     async def _await_server_metrics_results_for_cancel(self) -> None:
         """Bound cancellation until manager-owned server metrics are published."""
-        timeout = Environment.SERVER_METRICS.PROFILE_COMPLETE_RELAY_TIMEOUT
+        timeout = Environment.SERVER_METRICS.CANCEL_RESULT_WAIT_SEC
+        if not timeout:
+            return
         try:
             await asyncio.wait_for(self._server_metrics_result_arrived.wait(), timeout)
             self.debug("Server metrics results arrived during cancel wait")

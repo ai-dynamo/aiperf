@@ -1171,6 +1171,15 @@ class _ServerMetricsSettings(BaseSettings):
         "command response. A timeout is non-fatal because the controller's result "
         "join remains the authoritative completion barrier.",
     )
+    CANCEL_RESULT_WAIT_SEC: float = Field(
+        default=5.0,
+        ge=0.0,
+        description="Bounded time (seconds) the SystemController waits on the "
+        "cancel (Ctrl+C) path for the ServerMetricsManager's result message "
+        "before proceeding to export. The normal completion path blocks on the "
+        "server-metrics shutdown gate indefinitely, but the cancel path must "
+        "not hang. Set to 0 to skip the wait entirely.",
+    )
     COLLECTION_INTERVAL: float = Field(
         ge=0.001,
         le=300.0,
