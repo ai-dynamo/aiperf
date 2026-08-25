@@ -61,3 +61,28 @@ layout construction, and the synthesizer returns an error if its fixed shared
 prefix cannot be extended by L2. Focused boundaries cover
 `block_size=i64::MAX` with one L1 and one L1.5 token, plus the reachable valid
 `i64::MAX` fixed-prefix/L2 addition; neither path panics or wraps.
+
+## Native integration closure
+
+`rust/e2e-tests/tests/test_synthesized_mooncake_trace.rs` now covers the
+end-user command boundary omitted by the earlier unit and fixture checks. It
+writes both a generic block-aligned synthesis configuration and the upstream
+partial-prefix regression configuration (64-token blocks, L1=1000, L1.5=500,
+small L2 tails, three groups, seed 42), invokes native
+`aiperf synthesize agentic-code`, and replays the resulting Mooncake JSONL
+through native `aiperf profile` against the in-process Rust mock server.
+It asserts the request count, positive request and completion lengths, summary
+and CSV artifacts, absence of an unprojectable `inputs.json`, and the complete
+set of synthesized session identities.
+
+The native request-budget scheduler can redistribute turn counts among the
+selected sessions, so the Rust assertion intentionally compares the stable
+session-id set rather than assigning a source turn count to one particular
+session. Per-record sequence lengths are read from the native JSONL metrics
+wrapper (`metrics.<name>.value`). Those are harness/artifact-shape adaptations,
+not a product behavior gap.
+
+The controlled RED run temporarily restored the former raw 1500-token prefix
+calculation. Profile then refused the generated trace with `hash id 223 was
+first materialized with 34 tokens but is now requested with 56`; restoring
+`allocator.prefix_tokens()` made the full native E2E pass again.
