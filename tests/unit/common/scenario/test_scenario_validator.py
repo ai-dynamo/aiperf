@@ -92,7 +92,9 @@ def test_clean_weka_public_dataset_through_resolver_chain() -> None:
     assert run.cfg.endpoint.streaming is True
     assert run.cfg.get_cache_bust_target() == CacheBustTarget.FIRST_TURN_PREFIX
     assert run.cfg.endpoint.extra["ignore_eos"] is True
-    assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds == 10.0
+    assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds is None
+    assert run.cfg.get_default_dataset().inter_turn_delay_cap_seconds is None
+    assert phase.system_idle_gap_cap_seconds == 10.0
     outcome = run.resolved.scenario_outcome
     assert isinstance(outcome, ScenarioOutcome)
     assert outcome.submission_valid is True
@@ -467,11 +469,25 @@ def test_trajectory_ratios_explicit_honored() -> None:
     assert phase.trajectory_start_max_ratio == 0.9
 
 
-def test_trace_idle_gap_cap_auto_filled() -> None:
+def test_system_idle_gap_cap_auto_filled_without_changing_trace_timing() -> None:
     run = _build_run(streaming=True, extra={"ignore_eos": True})
+    phase = run.cfg.get_profiling_phases()[0]
     assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds is None
+    assert phase.system_idle_gap_cap_seconds is None
     apply_scenario(run)
-    assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds == 10.0
+    assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds is None
+    assert phase.system_idle_gap_cap_seconds == 10.0
+
+
+def test_system_idle_gap_cap_explicit_other_value_raises() -> None:
+    run = _build_run(
+        streaming=True,
+        extra={"ignore_eos": True},
+        profiling_overrides={"system_idle_gap_cap_seconds": 30.0},
+    )
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert "system-idle-gap-cap-seconds" in str(exc.value)
 
 
 def test_trace_idle_gap_cap_explicit_other_value_raises() -> None:
@@ -490,8 +506,8 @@ def test_trace_idle_gap_cap_explicit_other_value_raises() -> None:
     assert "trace-idle-gap-cap-seconds" in str(exc.value)
 
 
-def test_inter_turn_delay_cap_shipped_scenario_does_not_lock() -> None:
-    """The shipped AgentX MVP leaves inter_turn_delay_cap_seconds unlocked, so an explicit user value must not raise."""
+def test_inter_turn_delay_cap_shipped_scenario_forbids_value() -> None:
+    """AgentX preserves raw trace think times instead of capping each turn."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -502,10 +518,9 @@ def test_inter_turn_delay_cap_shipped_scenario_does_not_lock() -> None:
             "inter_turn_delay_cap_seconds": 30.0,
         },
     )
-    outcome = apply_scenario(run)
-    assert outcome.violations == []
-    assert outcome.submission_valid is True
-    assert run.cfg.get_default_dataset().inter_turn_delay_cap_seconds == 30.0
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert "inter-turn-delay-cap-seconds" in str(exc.value)
 
 
 def _register_inter_turn_cap_scenario(
@@ -521,6 +536,7 @@ def _register_inter_turn_cap_scenario(
             "name": name,
             "trace_idle_gap_cap_seconds": None,
             "inter_turn_delay_cap_seconds": cap,
+            "forbid_inter_turn_delay_cap": False,
         }
     )
     monkeypatch.setitem(registry.SCENARIOS, name, spec)

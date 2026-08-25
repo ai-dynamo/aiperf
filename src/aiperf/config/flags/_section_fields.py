@@ -173,6 +173,7 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "request_rate",
         "request_rate_ramp_duration",
         "request_rate_series",
+        "system_idle_gap_cap_seconds",
         "trace_idle_gap_cap_seconds",
         "trajectory_start_max_ratio",
         "trajectory_start_min_ratio",

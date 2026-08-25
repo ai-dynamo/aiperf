@@ -191,12 +191,11 @@ class TestComputeCacheKey:
             streaming=False, legacy=False, server_token_count=False
         )
 
-    def test_inter_turn_delay_cap_changes_key_on_file_dataset(
+    def test_load_time_delay_caps_change_key_on_file_dataset(
         self, tmp_path: Path
     ) -> None:
-        # v2 routes ``--inter-turn-delay-cap-seconds`` onto ``FileDataset`` only
-        # (``_apply_inter_turn_delay_cap`` returns early for non-FILE datasets),
-        # so the cap must distinguish the cache key on a file/trace dataset.
+        # These caps rewrite decoded turn timing at dataset-load time, so a
+        # capped entry must never serve a faithful uncapped replay.
         from aiperf.plugin.enums import CustomDatasetType
 
         trace = _write_input_file(
@@ -217,9 +216,11 @@ class TestComputeCacheKey:
             return mmap_cache.compute_cache_key_from_run(run)
 
         base = _key()
-        capped = _key(inter_turn_delay_cap_seconds=60.0)
-        assert base is not None and capped is not None
-        assert base != capped
+        turn_capped = _key(inter_turn_delay_cap_seconds=60.0)
+        trace_capped = _key(trace_idle_gap_cap_seconds=10.0)
+        assert base is not None
+        assert turn_capped is not None and trace_capped is not None
+        assert len({base, turn_capped, trace_capped}) == 3
 
     def test_random_seed_changes_key_on_trace_dataset(self, tmp_path: Path) -> None:
         # The base seed feeds per-block hash_id token derivation, so two runs
