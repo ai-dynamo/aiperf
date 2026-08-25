@@ -201,6 +201,22 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         Optional services (those absent from ``required_services``) are dropped
         with a warning instead of being failed, matching the startup-time
         contract in ``_reap_dead_processes_during_registration``.
+
+        Every exit path drains the reaped-service queue. A service reaped on a
+        previous tick is only handed to the controller by that drain, so an
+        early return would strand it in the result-join barrier for as long as
+        the skip condition holds -- indefinitely, in the shutdown case.
+        """
+        try:
+            await self._monitor_heartbeats_tick()
+        finally:
+            await self._drain_reaped_services()
+
+    async def _monitor_heartbeats_tick(self) -> None:
+        """One watchdog tick: strike bookkeeping plus per-service verdicts.
+
+        Split from ``_monitor_heartbeats`` so its early returns cannot skip the
+        reaped-service drain that the caller runs in a ``finally``.
         """
         if (
             self._shutdown_complete
@@ -239,8 +255,6 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
 
         for info in stale:
             self._judge_stale_service(info)
-
-        await self._drain_reaped_services()
 
     @on_start
     async def _start_service_manager(self) -> None:

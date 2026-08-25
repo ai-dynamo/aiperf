@@ -7,9 +7,12 @@ from collections import OrderedDict
 
 from pydantic import Field
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
+
+_logger = AIPerfLogger(__name__)
 
 
 def _compute_is_fork_parent(conversation: Conversation) -> bool:
@@ -189,6 +192,7 @@ class UserSessionManager:
         self._max_sessions = max_sessions
         self._cache: OrderedDict[str, UserSession] = OrderedDict()
         self._default_context_mode: ConversationContextMode | None = None
+        self._cap_warning_shown: bool = False
 
     @property
     def default_context_mode(self) -> ConversationContextMode | None:
@@ -296,8 +300,27 @@ class UserSessionManager:
         """
         self._cache[x_correlation_id] = user_session
         self._cache.move_to_end(x_correlation_id)
-        # Drop the least-recently-used entries; see DEFAULT_MAX_SESSIONS for
-        # why abandoned sessions would otherwise never leave.
+        if len(self._cache) > self._max_sessions:
+            self._evict_lru_overflow()
+
+    def _evict_lru_overflow(self) -> None:
+        """Trim the cache back to ``max_sessions``, least-recently-used first.
+
+        Only reached once the cap is exceeded, which does not happen for
+        realistic session counts (see DEFAULT_MAX_SESSIONS). Eviction is pure
+        LRU and therefore *can* drop a session whose conversation is still
+        in flight, so the one-shot warning names the cap: at that point the
+        run is either leaking abandoned sessions or genuinely running more
+        concurrent conversations than the bound allows, and both want the
+        operator's attention rather than silent turn failures.
+        """
+        if not self._cap_warning_shown:
+            self._cap_warning_shown = True
+            _logger.warning(
+                f"Session cache hit its {self._max_sessions}-entry cap; evicting "
+                "least-recently-used sessions. In-flight multi-turn "
+                "conversations may lose their history."
+            )
         while len(self._cache) > self._max_sessions:
             self._cache.popitem(last=False)
 

@@ -245,16 +245,20 @@ def stream_exporters_for_record_type(
 
 async def generate_realtime_metrics(
     accumulators: list[AccumulatorProtocol],
+    timeout: float = 30.0,
     phase: CreditPhase = CreditPhase.PROFILING,
     phase_index: int | None = None,
 ) -> list[MetricResult]:
     """Generate the real-time metrics for the profile run.
 
-    Runs every accumulator's ``summarize`` and flattens the results to a
-    single list of ``MetricResult``. Tolerates accumulators that return
-    either ``AccumulatorMetricsSummary`` (with a ``.results``
-    dict-of-MetricResult) or a plain ``list[MetricResult]`` — GPU telemetry /
-    server metrics accumulators return list shape.
+    Runs every accumulator's ``summarize`` under a per-accumulator ``timeout``
+    and flattens the results to a single list of ``MetricResult``. The bound
+    matters because this runs on a periodic tick: a hung accumulator would
+    otherwise stall the realtime loop forever instead of being skipped for one
+    tick. Tolerates accumulators that return either
+    ``AccumulatorMetricsSummary`` (with a ``.results`` dict-of-MetricResult) or
+    a plain ``list[MetricResult]`` — GPU telemetry / server metrics
+    accumulators return list shape.
 
     The realtime view is scoped to ``phase`` (PROFILING by default) so warmup
     records never dilute the live counts/throughput; the final export path
@@ -262,7 +266,10 @@ async def generate_realtime_metrics(
     """
     ctx = SummaryContext(phase=phase, phase_index=phase_index)
     results = await asyncio.gather(
-        *[acc.summarize(ctx) for acc in accumulators],
+        *[
+            asyncio.wait_for(acc.summarize(ctx), timeout=timeout)
+            for acc in accumulators
+        ],
         return_exceptions=True,
     )
     flat: list[MetricResult] = []

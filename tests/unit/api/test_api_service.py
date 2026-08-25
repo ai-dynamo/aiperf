@@ -728,9 +728,15 @@ class TestFastAPIServiceInit:
         assert len(mock_fastapi_service._routers) > 0
 
     @pytest.mark.asyncio
-    async def test_initialize_does_not_attach_tokenizer_router_as_lifecycle_child(
+    async def test_initialize_attaches_every_router_as_lifecycle_child(
         self, mock_fastapi_service: FastAPIService
     ) -> None:
+        # Routers are lifecycle children, so initialize/stop must propagate to
+        # each one exactly once rather than leaving orphaned components behind.
+        children = mock_fastapi_service._children
+        assert all(
+            router in children for router in mock_fastapi_service._routers.values()
+        )
         await mock_fastapi_service.initialize()
         await mock_fastapi_service.stop()
 

@@ -825,8 +825,26 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # abort, and the run would wait on the profile result domain forever.
         # Ctrl+C does not hit this because the command originates elsewhere.
         self._cancel_finalize_task = self.execute_async(
-            self._on_profile_cancel_command(command)
+            self._self_cancel_and_finalize(command)
         )
+
+    async def _self_cancel_and_finalize(self, command: ProfileCancelCommand) -> None:
+        """Run the local cancel handler with failure-safe result publishing.
+
+        This dispatch is fire-and-forget and the controller's join barrier only
+        closes on ``ProcessRecordsResultMessage``, so an exception escaping
+        result processing would hang the run forever. Convert it into a
+        published terminal failure exactly like the natural finalize path.
+        """
+        try:
+            await self._on_profile_cancel_command(command)
+        except Exception as e:
+            self.exception(
+                f"Failed-request abort finalization failed: {e!r}",
+            )
+            await self._publish_terminal_failure_result(
+                CreditPhase.PROFILING, cancelled=True, error=e
+            )
 
     def _maybe_hint_missing_cache_reporting(
         self, record_data: MetricRecordsData
@@ -2029,6 +2047,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                         result,
                         stage="stream_export_finalize",
                         exporter=str(exp_type),
+                        # A half-written stream artifact makes the whole export
+                        # set untrustworthy, so this is fatal rather than the
+                        # advisory diagnostics other stages emit.
+                        **{ERROR_FATAL_DETAIL_KEY: True},
                     )
                 )
         return errors

@@ -9,6 +9,7 @@ from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.record_models import RawRecordInfo
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
     RawRecordWriterProcessor,
@@ -184,9 +185,9 @@ class TestRawRecordWriterProcessorProcessRecord:
     async def test_finalize_artifact_closes_file_before_aggregation(
         self,
         cfg_raw: CLIConfig,
-        run_raw,
+        run_raw: BenchmarkRun,
         sample_parsed_record: ParsedResponseRecord,
-    ):
+    ) -> None:
         """Artifact finalization releases the staging file for Windows aggregation."""
         async with raw_record_processor("processor-1", run_raw) as processor:
             await processor.observe(

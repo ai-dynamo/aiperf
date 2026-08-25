@@ -37,7 +37,7 @@ from aiperf.records.records_manager import (
 
 
 def _finalize_manager(finalize_error: Exception) -> MagicMock:
-    """A manager whose artifact barrier fails, with the real path bound."""
+    """A manager whose result finalization fails, with the real path bound."""
     mgr = MagicMock()
     mgr.service_id = "records-manager-test"
     mgr.debug = MagicMock()
@@ -60,7 +60,7 @@ def _finalize_manager(finalize_error: Exception) -> MagicMock:
     mgr._records_tracker.create_stats_for_phase.return_value = stats
 
     # Everything from the fire-and-forget entry point down to the raising
-    # barrier is the real implementation.
+    # stage is the real implementation.
     mgr._finalize_and_process_results = (
         RecordsManager._finalize_and_process_results.__get__(mgr)
     )
@@ -72,7 +72,7 @@ def _finalize_manager(finalize_error: Exception) -> MagicMock:
     )
     mgr._process_results = RecordsManager._process_results.__get__(mgr)
     mgr._process_results_impl = RecordsManager._process_results_impl.__get__(mgr)
-    mgr._finalize_record_processor_artifacts = AsyncMock(side_effect=finalize_error)
+    mgr._await_telemetry_ingest_complete = AsyncMock(side_effect=finalize_error)
     return mgr
 
 
@@ -82,6 +82,60 @@ def _published_results(mgr: MagicMock) -> list[ProcessRecordsResultMessage]:
         for call in mgr.publish.await_args_list
         if isinstance(call.args[0], ProcessRecordsResultMessage)
     ]
+
+
+class TestFinalizationFailureIsPublished:
+    @pytest.mark.asyncio
+    async def test_failed_finalization_publishes_fatal_empty_result(self) -> None:
+        """A raising finalize must still close the controller's join barrier."""
+        mgr = _finalize_manager(RuntimeError("finalization blew up"))
+
+        await mgr._finalize_and_process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        published = _published_results(mgr)
+        assert len(published) == 1
+        result = published[0].results
+        assert result.results.records is None
+        assert result.results.is_complete is False
+        assert "finalization blew up" in result.results.incomplete_reason
+        assert result.errors[0].details[ERROR_FATAL_DETAIL_KEY] is True
+        assert result.errors[0].details["stage"] == "result_finalization"
+
+    @pytest.mark.asyncio
+    async def test_failure_after_a_real_result_does_not_overwrite_it(self) -> None:
+        """A late failure must not clobber an already-published real result."""
+        mgr = _finalize_manager(RuntimeError("too late"))
+        sentinel = object()
+        mgr._processed_results[CreditPhase.PROFILING] = sentinel
+
+        returned = await mgr._publish_terminal_failure_result(
+            CreditPhase.PROFILING, cancelled=False, error=RuntimeError("too late")
+        )
+
+        assert returned is sentinel
+        assert _published_results(mgr) == []
+
+
+class TestSelfCancelFinalizationIsFailureSafe:
+    @pytest.mark.asyncio
+    async def test_self_cancel_failure_publishes_terminal_result(self) -> None:
+        """The failed-request abort self-dispatch must not hang the run."""
+        mgr = _finalize_manager(RuntimeError("cancel path blew up"))
+        mgr._on_profile_cancel_command = AsyncMock(
+            side_effect=RuntimeError("cancel path blew up")
+        )
+        mgr._self_cancel_and_finalize = (
+            RecordsManager._self_cancel_and_finalize.__get__(mgr)
+        )
+
+        await mgr._self_cancel_and_finalize(MagicMock())
+
+        published = _published_results(mgr)
+        assert len(published) == 1
+        assert published[0].results.results.was_cancelled is True
+        assert published[0].results.errors[0].details[ERROR_FATAL_DETAIL_KEY] is True
 
 
 class TestTelemetryDrainIsNonFatal:

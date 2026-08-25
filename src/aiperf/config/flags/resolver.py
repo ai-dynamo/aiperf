@@ -1180,11 +1180,18 @@ def _apply_loadgen_value_overrides(
 def _apply_default_grace_period_override(
     target: dict[str, Any], cli: CLIConfig, fields_set: set[str]
 ) -> None:
+    # This helper runs before _coalesce_phase_aliases, so a YAML-authored
+    # ``gracePeriod`` is still under its camelCase spelling here. Checking only
+    # the snake_case key would miss it, write the CLI default under
+    # ``grace_period``, and let the coalesce step overwrite the user's value.
+    from pydantic.alias_generators import to_camel
+
     if (
         "benchmark_duration" in fields_set
         and "benchmark_grace_period" not in fields_set
         and cli.benchmark_duration is not None
         and "grace_period" not in target
+        and to_camel("grace_period") not in target
     ):
         target["grace_period"] = cli.benchmark_grace_period
 

@@ -182,10 +182,15 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         """Flush and close the staging file before raw-record aggregation.
 
         Windows keeps an open JSONL handle exclusively locked, so aggregation
-        must run only after this writer has released it.
+        must run only after this writer has released it. The close is in a
+        ``finally`` because a failed flush still has to release the handle --
+        otherwise the staging file leaks and aggregation deadlocks behind it --
+        while the flush error still propagates to the finalization barrier.
         """
-        await self.flush_buffer()
-        await self._close_file()
+        try:
+            await self.flush_buffer()
+        finally:
+            await self._close_file()
 
 
 class RawRecordAggregator(AIPerfLoggerMixin):

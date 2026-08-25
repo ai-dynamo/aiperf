@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -21,7 +21,7 @@ class ProxyManager(AIPerfLifecycleMixin):
         enable_event_bus: bool = True,
         enable_dataset_manager: bool = True,
         enable_raw_inference: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Initialize the proxy manager.
 

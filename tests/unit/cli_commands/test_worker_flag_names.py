@@ -5,26 +5,24 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
+import contextlib
+import io
 
 
 def _help(*command: str) -> str:
-    code = (
-        "import aiperf.cli\n"
-        "try:\n"
-        f"    aiperf.cli.app({[*command, '--help']!r})\n"
-        "except SystemExit:\n"
-        "    pass\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    return result.stdout
+    """Render ``aiperf <command> --help`` in-process and return its stdout.
+
+    Rendering help does not need process isolation: cyclopts writes to the
+    ambient stdout and raises SystemExit, both of which are captured here.
+    Spawning a real interpreter per assertion cost ~1s of import time for a
+    pure string check.
+    """
+    import aiperf.cli
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.suppress(SystemExit):
+        aiperf.cli.app([*command, "--help"])
+    return buf.getvalue()
 
 
 def test_local_profile_retains_workers_max() -> None:

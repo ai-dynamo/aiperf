@@ -16,26 +16,26 @@ from aiperf.zmq.zmq_defaults import ZMQSocketDefaults
 
 
 class _FakeSocket:
-    def __init__(self):
+    def __init__(self) -> None:
         self.opts: dict[int, int] = {}
 
-    def setsockopt(self, key, val):
+    def setsockopt(self, key: int, val: int) -> None:
         self.opts[key] = val
 
-    def bind(self, _addr): ...
-    def connect(self, _addr): ...
-    def close(self, **_kw): ...
+    def bind(self, _addr: str) -> None: ...
+    def connect(self, _addr: str) -> None: ...
+    def close(self, **_kw: object) -> None: ...
 
 
 @pytest.fixture
-def router(monkeypatch):
+def router(monkeypatch: pytest.MonkeyPatch) -> type:
     from aiperf.zmq.pull_client import ZMQPullClient  # any concrete client
 
     return ZMQPullClient
 
 
 class TestReconnectOptions:
-    def test_router_sets_handover(self):
+    def test_router_sets_handover(self) -> None:
         """A ROUTER must replace a stale identity, not reject the reconnect."""
         from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
 
@@ -46,7 +46,7 @@ class TestReconnectOptions:
 
         assert sock.opts.get(zmq.ROUTER_HANDOVER) == 1
 
-    def test_connecting_socket_bounds_reconnect_backoff(self):
+    def test_connecting_socket_bounds_reconnect_backoff(self) -> None:
         """A connecting peer recovers on a bounded backoff, not the default."""
         from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 
@@ -62,7 +62,7 @@ class TestReconnectOptions:
             sock.opts.get(zmq.RECONNECT_IVL_MAX) == ZMQSocketDefaults.RECONNECT_IVL_MAX
         )
 
-    def test_binding_socket_does_not_set_reconnect(self):
+    def test_binding_socket_does_not_set_reconnect(self) -> None:
         """Reconnect options are meaningless on a bound socket."""
         from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
 
@@ -73,7 +73,7 @@ class TestReconnectOptions:
 
         assert zmq.RECONNECT_IVL not in sock.opts
 
-    def test_non_router_does_not_set_handover(self):
+    def test_non_router_does_not_set_handover(self) -> None:
         """ROUTER_HANDOVER is only valid on a ROUTER."""
         from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 

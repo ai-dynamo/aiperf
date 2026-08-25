@@ -223,6 +223,13 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 await self._file_handle.write(bulk_data)
                 await self._file_handle.flush()
                 self._last_flush_monotonic = time.monotonic()
+            except asyncio.CancelledError:
+                # ``_close_file`` cancels pending flush tasks once the drain
+                # times out. The batch is already detached from ``self._buffer``
+                # here, so without restoring it those records would vanish
+                # before the final flush gets a chance to write them.
+                self._buffer = buffer_to_flush + self._buffer
+                raise
             except Exception as e:
                 self._buffer = buffer_to_flush + self._buffer
                 if self._write_error is None:

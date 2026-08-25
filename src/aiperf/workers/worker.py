@@ -666,10 +666,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
 
-        # Dispatchability gate. The worker announces WorkerConnected as soon as
-        # its return path is up, but only announces WorkerDispatchable once a
-        # dataset is actually open, so it never sits in the routing pool
-        # failing every credit it is given.
+        # Dispatchability gate. Both announcements go out at @on_start; the
+        # event exists so the WorkerDispatchable transition is sent exactly
+        # once. Credits cannot arrive before the dataset is open because
+        # PROFILE_CONFIGURE blocks on _dataset_configured_event.
         self._worker_ready_event = asyncio.Event()
         self._worker_ready_lock = asyncio.Lock()
         # True when the mmap dataset ships pre-encoded per-turn payload bytes
@@ -698,12 +698,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
-        """Announce connectivity, then become dispatchable when startup gates clear.
+        """Announce connectivity, then immediately announce dispatchability.
 
-        WorkerConnected and WorkerDispatchable are deliberately separate:
-        connectivity is announced as soon as the return path is up, while
-        dispatchability waits until the dataset is open, because a worker
-        without a dataset fails every credit routed to it.
+        WorkerConnected and WorkerDispatchable are separate messages so the
+        router can distinguish "identity registered" from "in the routing
+        pool", but both are sent here: the worker is dispatchable as soon as
+        its channels are up. The dataset is not a gate on this transition --
+        credits cannot reach a worker before PROFILE_CONFIGURE, which itself
+        blocks on ``_dataset_configured_event``.
         """
         await self.credit_dealer_client.send(WorkerConnected(worker_id=self.service_id))
 

@@ -82,11 +82,10 @@ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
 async def list_results(component: ResultsDep) -> ResultsListResponse:
     """List available result files in the artifacts directory.
 
-    Mirrors the readiness gate enforced by the controller's results sidecar:
-    until the ``.aiperf_results_ready.json`` marker is written, only
-    ``checkpoints/`` artifacts are listed. This prevents the operator from
-    fetching partial top-level exports during sub-second benchmarks where the
-    fetch can race the controller's export pipeline.
+    Lists only regular files at the top level of the artifact directory,
+    sorted by name. Files are listed as soon as they exist — there is no
+    readiness gate, so partial exports may appear while a run is still
+    writing them.
     """
     results_dir = component.run.cfg.artifacts.artifact_directory
     if not await aio_os.path.exists(results_dir):
@@ -113,9 +112,8 @@ async def get_result_file(
 ) -> StreamingResponse:
     """Download a result file by name.
 
-    Until the readiness marker is present, only files under ``checkpoints/``
-    are downloadable. This mirrors the sidecar's gate so the primary endpoint
-    cannot serve partial exports during the controller's sub-second export race.
+    Any file inside the artifact directory is downloadable as soon as it
+    exists; paths escaping the artifact directory are rejected with 400.
     """
     artifact_dir = component.run.cfg.artifacts.artifact_directory
     file_path = (artifact_dir / filename).resolve()

@@ -136,6 +136,6 @@ def apply_endpoint_credentials(
     if missing:
         names = ", ".join(missing)
         raise ValueError(
-            "benchmark-run contains redacted endpoint credentials; map Kubernetes "
-            f"Secret keys to the pod environment variable(s): {names}"
+            "benchmark-run contains redacted endpoint credentials; supply them "
+            f"through the environment variable(s): {names}"
         )

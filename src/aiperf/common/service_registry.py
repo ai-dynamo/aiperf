@@ -296,6 +296,27 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         )
         if not remaining and self._failure_event is not None:
             self._failure_event.clear()
+        if not remaining:
+            self._disarm_stale_waiters()
+
+    def _disarm_stale_waiters(self) -> None:
+        """Clear wait events force-set by a failure that has since been retracted.
+
+        ``_wake_all_waiters`` sets every registration event so blocked callers
+        re-check and see the failure. Those events stay armed afterwards, so
+        once the failure is cleared the next ``wait_for_*`` returns immediately
+        on a stale set() and then reports the still-unregistered services as a
+        registration timeout. Only events whose predicate is not yet satisfied
+        are cleared; ``_check_events`` re-fires the rest.
+        """
+        if self._all_event is not None and not self.all_registered():
+            self._all_event.clear()
+        for service_type, event in self._type_events.items():
+            if not self.all_types_registered(service_type):
+                event.clear()
+        for service_ids, event in self._id_events.items():
+            if not self.all_ids_registered(service_ids):
+                event.clear()
 
     def _wake_all_waiters(self) -> None:
         """Force-set every pending wait event so blocked callers unblock and re-check."""

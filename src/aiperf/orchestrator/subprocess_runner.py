@@ -87,7 +87,13 @@ def main() -> None:
             data = orjson.loads(f.read())
 
         run = BenchmarkRun.model_validate(data)
-        apply_endpoint_credentials(run, credentials)
+        # require_resolved: a run_config.json replayed by hand (the documented
+        # `python -m aiperf.orchestrator.subprocess_runner <file>` usage) still
+        # carries the redaction placeholder in api_key / sensitive headers /
+        # userinfo URLs. Without this the child would send the literal
+        # "<redacted>" upstream and report an opaque 401 instead of the real
+        # cause -- the injection env vars were never supplied.
+        apply_endpoint_credentials(run, credentials, require_resolved=True)
         _run_single_benchmark(run)
 
     except KeyError as e:

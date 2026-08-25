@@ -3,6 +3,7 @@
 """Dispatchable-worker floor and membership-notification tests."""
 
 from collections import defaultdict
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +12,7 @@ from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 
 
 @pytest.fixture(autouse=True)
-def _quiet_logging():
+def _quiet_logging() -> Iterator[None]:
     with (
         patch.object(StickyCreditRouter, "is_trace_enabled", False),
         patch.object(StickyCreditRouter, "is_debug_enabled", False),
@@ -19,7 +20,7 @@ def _quiet_logging():
         yield
 
 
-def _router(alive: int, peak: int):
+def _router(alive: int, peak: int) -> StickyCreditRouter:
     r = StickyCreditRouter.__new__(StickyCreditRouter)
     r._workers = {}
     r._workers_by_load = defaultdict(set)
@@ -45,28 +46,28 @@ def _router(alive: int, peak: int):
 
 
 class TestWorkerFloor:
-    def test_reports_a_breach_when_the_fleet_halves(self):
+    def test_reports_a_breach_when_the_fleet_halves(self) -> None:
         router = _router(alive=4, peak=10)
         assert router.check_worker_floor(min_fraction=0.5) is not None
 
-    def test_healthy_fleet_reports_nothing(self):
+    def test_healthy_fleet_reports_nothing(self) -> None:
         router = _router(alive=9, peak=10)
         assert router.check_worker_floor(min_fraction=0.5) is None
 
-    def test_exactly_at_the_floor_is_acceptable(self):
+    def test_exactly_at_the_floor_is_acceptable(self) -> None:
         router = _router(alive=5, peak=10)
         assert router.check_worker_floor(min_fraction=0.5) is None
 
-    def test_disabled_by_default(self):
+    def test_disabled_by_default(self) -> None:
         router = _router(alive=1, peak=100)
         assert router.check_worker_floor(min_fraction=0.0) is None
 
-    def test_message_names_the_numbers(self):
+    def test_message_names_the_numbers(self) -> None:
         router = _router(alive=2, peak=10)
         reason = router.check_worker_floor(min_fraction=0.5)
         assert "2" in reason and "10" in reason
 
-    def test_peak_tracks_the_high_water_mark(self):
+    def test_peak_tracks_the_high_water_mark(self) -> None:
         router = _router(alive=0, peak=0)
         router._note_peak_workers()
         assert router._peak_worker_count == 0
@@ -80,7 +81,9 @@ class TestWorkerFloor:
 
 class TestRouterDoesNotDecideTheBreach:
     @pytest.mark.asyncio
-    async def test_breach_is_left_for_timing_manager(self, monkeypatch):
+    async def test_breach_is_left_for_timing_manager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from aiperf.common.environment import Environment
 
         router = _router(alive=1, peak=10)
@@ -92,7 +95,9 @@ class TestRouterDoesNotDecideTheBreach:
         router.error.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_no_report_during_teardown(self, monkeypatch):
+    async def test_no_report_during_teardown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Workers legitimately stop reporting once credits are complete."""
         from aiperf.common.environment import Environment
 

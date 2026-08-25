@@ -38,7 +38,7 @@ from aiperf.config import AIPerfConfig, BenchmarkRun
 # ============================================================================
 
 
-def _benchmark_run() -> BenchmarkRun:
+def _benchmark_run(artifact_dir: Path) -> BenchmarkRun:
     """Real Pydantic benchmark run for router construction."""
     config = AIPerfConfig(
         benchmark={
@@ -66,7 +66,7 @@ def _benchmark_run() -> BenchmarkRun:
     return BenchmarkRun(
         benchmark_id="aiperf-bench-7f2a",
         cfg=config.benchmark,
-        artifact_dir=Path("/tmp/aiperf-bench-7f2a"),
+        artifact_dir=artifact_dir,
     )
 
 
@@ -78,8 +78,8 @@ def _progress_app(router: ProgressRouter) -> FastAPI:
 
 
 @pytest.fixture
-def progress_router(mock_zmq: object) -> ProgressRouter:
-    return ProgressRouter(run=_benchmark_run())
+def progress_router(mock_zmq: object, tmp_path: Path) -> ProgressRouter:
+    return ProgressRouter(run=_benchmark_run(tmp_path / "aiperf-bench-7f2a"))
 
 
 @pytest.fixture

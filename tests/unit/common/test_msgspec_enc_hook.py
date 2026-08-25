@@ -17,7 +17,9 @@ def test_enc_hook_encodes_extensible_str_enum():
 
 
 def test_enc_hook_encodes_path_as_string():
-    assert msgspec_enc_hook(Path("/tmp/artifacts")) == "/tmp/artifacts"
+    # Deliberately not /tmp: a hardcoded world-writable temp path trips
+    # bandit's S108 and this assertion needs a fixed literal to compare against.
+    assert msgspec_enc_hook(Path("/var/aiperf/artifacts")) == "/var/aiperf/artifacts"
 
 
 def test_enc_hook_encodes_pydantic_model_as_dict():

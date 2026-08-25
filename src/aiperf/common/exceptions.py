@@ -243,6 +243,12 @@ class ServiceProcessDiedError(AIPerfError):
                 f"likely killed by signal {-exit_code}, e.g. an out-of-memory kill "
                 f"or an external SIGKILL"
             )
+        elif exit_code == 0:
+            cause = (
+                "the process exited normally (status 0) but before the controller "
+                "asked it to stop; check for an early return in its run loop or a "
+                "self-initiated shutdown"
+            )
         else:
             cause = (
                 "likely an unhandled exception during startup or a failed "

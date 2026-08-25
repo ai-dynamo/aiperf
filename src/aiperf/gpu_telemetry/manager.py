@@ -534,22 +534,34 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         the records PUSH/PULL socket. This marker shares the records socket, so
         RecordsManager can wait for a causal boundary before finalizing its
         JSONL stream exporters.
+
+        Best-effort: several callers are shutdown paths, so a dead push
+        transport must not turn a clean teardown into an exception. The
+        sent-flag is only latched on success, leaving a later caller free to
+        retry. ``CancelledError`` is not an ``Exception`` and so still
+        propagates.
         """
         async with self._records_push_lock:
             if self._completion_marker_sent:
                 return
             self._telemetry_records_closed = True
-            await self.records_push_client.push(
-                TelemetryRecordsMessage(
-                    service_id=self.service_id,
-                    collector_id=self.service_id,
-                    telemetry_source_url="",
-                    records=[],
-                    error=None,
-                    sequence=self._telemetry_sequence,
-                    collection_complete=True,
+            try:
+                await self.records_push_client.push(
+                    TelemetryRecordsMessage(
+                        service_id=self.service_id,
+                        collector_id=self.service_id,
+                        telemetry_source_url="",
+                        records=[],
+                        error=None,
+                        sequence=self._telemetry_sequence,
+                        collection_complete=True,
+                    )
                 )
-            )
+            except Exception as e:
+                self.warning(
+                    f"GPU Telemetry: Failed to send collection-complete marker: {e!r}"
+                )
+                return
             self._completion_marker_sent = True
 
     async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:

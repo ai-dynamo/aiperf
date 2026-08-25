@@ -77,6 +77,7 @@ from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType, UIType
+from aiperf.records.records_manager import ERROR_FATAL_DETAIL_KEY
 from aiperf.ui.protocols import AIPerfUIProtocol
 
 if TYPE_CHECKING:
@@ -817,15 +818,32 @@ class SystemController(SignalHandlerMixin, BaseService):
             self.error(
                 f"Received process records result message with errors: {message.results.errors}"
             )
-            # Aggregation-side diagnostics, NOT a verdict on the export. A
-            # GPU-telemetry drain timeout or one malformed record must not
-            # withhold a fully valid inference result set, so this deliberately
-            # does not set ``_export_failed`` (which gates the Kubernetes
-            # results-ready marker and ResultsExportedMessage).
+            # Most aggregation-side errors are diagnostics, NOT a verdict on the
+            # export: a GPU-telemetry drain timeout or one malformed record must
+            # not withhold a fully valid inference result set, so they stay
+            # advisory and leave the exit code at zero.
             #
-            # These entries stay advisory: a no-GPU run whose telemetry drain
-            # times out must not exit 1 with an error panel despite complete,
-            # correct results.
+            # Errors the producer marked fatal are different -- they mean the
+            # artifact set itself is incomplete (e.g. a stream exporter failed to
+            # finalize). Announcing those as exported would publish a partial
+            # result set as if it were whole, so they set ``_export_failed``,
+            # which withholds ResultsExportedMessage.
+            fatal_errors = [
+                error
+                for error in message.results.errors
+                if isinstance(error.details, dict)
+                and error.details.get(ERROR_FATAL_DETAIL_KEY)
+            ]
+            if fatal_errors:
+                self._export_failed = True
+                self._exit_errors.extend(
+                    ExitErrorInfo(
+                        error_details=error,
+                        operation="process_records",
+                        service_id=message.service_id,
+                    )
+                    for error in fatal_errors
+                )
 
         self.debug(
             lambda: (

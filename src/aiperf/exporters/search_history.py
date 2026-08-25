@@ -191,11 +191,23 @@ def _serialize_trial(
 
 
 def _objective_at(iteration: SearchIteration, index: int) -> float | None:
-    """Read one objective, tolerating a short or absent objective vector."""
+    """Read one objective, tolerating a short or absent objective vector.
+
+    NaN/inf values are reported as unavailable: every comparison against NaN is
+    False, so letting one through would make a broken trial silently dominate or
+    be dominated depending on argument order. See ``docs/dev/patterns.md``
+    "NaN/Inf Discipline Pattern".
+    """
+    from aiperf.common.finite import is_finite_value
+
     values = iteration.objective_values
     if values is not None and index < len(values):
-        return values[index]
-    return iteration.objective_value if index == 0 else None
+        value = values[index]
+    elif index == 0:
+        value = iteration.objective_value
+    else:
+        return None
+    return value if is_finite_value(value) else None
 
 
 def _dominates(

@@ -145,13 +145,24 @@ class FastAPIService(BaseComponentService):
             self._api_port is not None or self.run.cfg.runtime.api_port is not None
         )
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-                probe.bind((self.api_host, self.api_port))
+            # Resolve the family from the host so IPv6 literals (--api-host ::1)
+            # and dual-stack hostnames probe with the right socket family
+            # instead of failing spuriously under a hardcoded AF_INET.
+            # socket.gaierror subclasses OSError, so an unresolvable host lands
+            # in the same handling as a bind failure.
+            family, _, _, _, sockaddr = socket.getaddrinfo(
+                self.api_host,
+                self.api_port,
+                type=socket.SOCK_STREAM,
+                flags=socket.AI_PASSIVE,
+            )[0]
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                probe.bind(sockaddr)
         except OSError as e:
             msg = f"API server cannot bind {self.api_host}:{self.api_port}: {e}"
             if explicit_port:
-                # User-explicit --api-port; surface as fatal so the controller
-                # aborts via process-monitor → pod_failure_abort_event.
+                # User-explicit --api-port: fail the service start so the run
+                # aborts instead of proceeding with no reachable API.
                 raise RuntimeError(msg) from e
             self.warning(f"{msg}; continuing without API server.")
             return

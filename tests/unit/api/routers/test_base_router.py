@@ -19,7 +19,7 @@ from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.config import AIPerfConfig, BenchmarkRun
+from aiperf.config import BenchmarkRun
 
 
 class _ConcreteRouter(BaseRouter):
@@ -108,7 +108,7 @@ class TestBaseRouterIntegrationWithTestClient:
     """End-to-end: subclass + component_dependency wired through FastAPI."""
 
     def test_endpoint_can_consume_resolved_component(
-        self, router_config: AIPerfConfig
+        self, router_config: BenchmarkRun
     ) -> None:
         router = _ConcreteRouter(run=router_config)
         sub_router = router.get_router()

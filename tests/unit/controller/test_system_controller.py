@@ -9,6 +9,7 @@ from aiperf.common.enums import (
     CommandType,
     LifecycleState,
     ServiceRegistrationStatus,
+    SystemState,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
@@ -81,8 +82,6 @@ class TestSystemController:
         self, system_controller: SystemController
     ) -> None:
         """A service-reported fatal error must cancel the whole active benchmark."""
-        from aiperf.common.enums import SystemState
-
         system_controller._system_state = SystemState.PROFILING
         system_controller._cancel_profiling = AsyncMock()
         system_controller._check_and_trigger_shutdown = AsyncMock()

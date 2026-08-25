@@ -80,9 +80,9 @@ def make_metric_result(
     header: str = "Test Metric",
     unit: str = "ms",
     avg: float | None = None,
-    min: float | None = None,
-    max: float | None = None,
-    sum: float | None = None,
+    min_value: float | None = None,
+    max_value: float | None = None,
+    sum_value: float | None = None,
     p50: float | None = None,
     p95: float | None = None,
     p99: float | None = None,
@@ -96,9 +96,9 @@ def make_metric_result(
         header: Human-readable header.
         unit: Unit of measurement.
         avg: Average value.
-        min: Minimum value.
-        max: Maximum value.
-        sum: Sum/total value.
+        min_value: Minimum value.
+        max_value: Maximum value.
+        sum_value: Sum/total value.
         p50: 50th percentile.
         p95: 95th percentile.
         p99: 99th percentile.
@@ -113,9 +113,9 @@ def make_metric_result(
         header=header,
         unit=unit,
         avg=avg,
-        min=min,
-        max=max,
-        sum=sum,
+        min=min_value,
+        max=max_value,
+        sum=sum_value,
         p50=p50,
         p95=p95,
         p99=p99,
@@ -126,8 +126,8 @@ def make_metric_result(
 
 def make_latency_metric(
     avg: float = 100.0,
-    min: float = 50.0,
-    max: float = 200.0,
+    min_value: float = 50.0,
+    max_value: float = 200.0,
     p50: float = 95.0,
     p95: float = 180.0,
     p99: float = 195.0,
@@ -136,8 +136,8 @@ def make_latency_metric(
 
     Args:
         avg: Average latency.
-        min: Minimum latency.
-        max: Maximum latency.
+        min_value: Minimum latency.
+        max_value: Maximum latency.
         p50: Median latency.
         p95: 95th percentile latency.
         p99: 99th percentile latency.
@@ -150,8 +150,8 @@ def make_latency_metric(
         header="Latency",
         unit="ms",
         avg=avg,
-        min=min,
-        max=max,
+        min_value=min_value,
+        max_value=max_value,
         p50=p50,
         p95=p95,
         p99=p99,
@@ -160,13 +160,13 @@ def make_latency_metric(
 
 def make_throughput_metric(
     avg: float = 50.0,
-    sum: float = 5000.0,
+    sum_value: float = 5000.0,
 ) -> MetricResult:
     """Create a typical throughput metric for testing.
 
     Args:
         avg: Average throughput.
-        sum: Total throughput.
+        sum_value: Total throughput.
 
     Returns:
         MetricResult configured as a throughput metric.
@@ -176,7 +176,7 @@ def make_throughput_metric(
         header="Throughput",
         unit="req/s",
         avg=avg,
-        sum=sum,
+        sum_value=sum_value,
     )
 
 

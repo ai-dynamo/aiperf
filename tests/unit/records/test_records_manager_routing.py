@@ -412,6 +412,7 @@ class TestFinalizeStreamExporters:
         assert errors[0].details == {
             "stage": "stream_export_finalize",
             "exporter": str(StreamExporterType.RECORD_EXPORT),
+            "fatal": True,
         }
 
     @pytest.mark.asyncio

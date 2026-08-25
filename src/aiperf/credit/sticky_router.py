@@ -851,8 +851,10 @@ class StickyCreditRouter(CommunicationMixin):
     async def _evict_stale_workers_task(self) -> None:
         """Periodically drop workers whose heartbeats have stopped.
 
-        Runs at the same cadence as the staleness window, so a dead worker
-        leaves routing within roughly two sweeps. Suppressed once credits are
+        Sweeps every ``STALE_TIME`` but evicts only workers silent for
+        ``STALE_TIME * 3``, so a dead worker leaves routing within roughly
+        three to four sweeps. The margin keeps a worker that misses one or two
+        heartbeats under load in the pool. Suppressed once credits are
         complete or a cancellation is in flight: workers legitimately stop
         talking then, and evicting during teardown would log noise about a
         normal shutdown.

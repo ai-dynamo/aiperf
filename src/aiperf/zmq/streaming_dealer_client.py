@@ -180,9 +180,18 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         zmq.Socket.send(self.socket, data, flags=zmq.NOBLOCK, copy=False)
 
     async def _send_direct_with_retry(self, data: bytes) -> None:
-        """NOBLOCK send with backoff, for the window before the FD driver exists."""
+        """NOBLOCK send with backoff, for the window before the FD driver exists.
+
+        The backoff sleep can straddle the receiver task creating the FD
+        driver, so the handoff is re-checked on every attempt: once the driver
+        owns the socket, a direct send here would race it on the shared FD
+        edge-trigger.
+        """
         max_retries = Environment.ZMQ.PUSH_MAX_RETRIES
         for attempt in range(max_retries + 1):
+            if self._fd_reader is not None:
+                self._fd_reader.send(data)
+                return
             try:
                 self._send_one_dealer(data)
                 return
