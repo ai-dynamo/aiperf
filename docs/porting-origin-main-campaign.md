@@ -53,12 +53,12 @@ implementation, test run, or review.
 | 25 | `5a24e0d7c7` | average error-rate SLA | complete | applicable | Merged in `ca54427a94`; native adaptive SLA projection and search tests reviewed. |
 | 26 | `093038afab` | JSON-array endpoint responses | complete | applicable | Merged in `6cd8137681`; native KServe JSON-array response parsing reviewed. |
 | 27 | `f0128e105b` | reset/profiler hooks | complete | already-covered | Merged in `fd3fd13087`; native lifecycle policy and E2E coverage reviewed. |
-| 28 | `aaaa72e69d` | arrival tutorial flag | pending | not-applicable | Documentation only. |
-| 29 | `c2f5e9d459` | Python enum cache | pending | not-applicable | Python-specific hot path. |
-| 30 | `9be59a9636` | AMD telemetry tests | pending | already-covered | Production source exists; CLI E2E parity remains a coverage improvement. |
-| 31 | `59cd43e43a` | Responses mock model | pending | applicable | Route/model exist but omit `min_tokens`, `ignore_eos`, and typed-request recording. |
-| 32 | `1b34de0637` | warmup-isolation cache-bust | pending | applicable | Native cannot represent phase-gated targets. |
-| 33 | `37467dc38c` | force content parts | pending | applicable | Add bootstrap-captured endpoint policy. |
+| 28 | `aaaa72e69d` | arrival tutorial flag | complete | not-applicable | Merged in `5c7fe69bf5`; documentation-only. |
+| 29 | `c2f5e9d459` | Python enum cache | complete | not-applicable | Merged in `d13e303b2f`; Python-specific hot path. |
+| 30 | `9be59a9636` | AMD telemetry tests | complete | already-covered | Merged in `2cd8de8d01`; native telemetry fixture lifecycle and CLI collector validation cover the applicable behavior. |
+| 31 | `59cd43e43a` | Responses mock model | complete | already-covered | Merged in `acf367397b`; native typed route/model/token/recording coverage already exists and a raw-record Rust E2E is green. |
+| 32 | `1b34de0637` | warmup-isolation cache-bust | complete | applicable | Merged in `137b2f641d`; native phase-gated cache-bust target selection is covered by 12 runtime tests. |
+| 33 | `37467dc38c` | force content parts | complete | applicable | Merged in `73e1ab0761`; native bootstrap-captured endpoint policy and focused test coverage are green. |
 | 34 | `00ba1c5db3` | audio transcription | pending | applicable | New multipart endpoint, parser, and mock route. |
 | 35 | `03c9c6ddc5` | LCB grading concurrency | pending | applicable | Delegation/detail are present; upstream multiplexing and unconditional group reaping remain open. |
 | 36 | `6480e5467f` | synthesis YAML overrides | pending | applicable | Flag-only support exists; CLI-over-YAML overlay is absent. |
